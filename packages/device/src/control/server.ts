@@ -1,6 +1,8 @@
-import { chmodSync, lstatSync, type Stats, statSync, unlinkSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, type Stats, statSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { dirname } from "node:path";
 import type { RunningOperation } from "../activity.js";
+import { machineDirOfConnection } from "../connections.js";
 import {
   CONTROL_LINE_MAX_BYTES,
   CONTROL_OPS,
@@ -34,14 +36,36 @@ export interface ControlServer {
 
 const mode = (st: Stats): string => `0${(st.mode & 0o777).toString(8)}`;
 
+/** Why `dir` is not a directory of this user closed to others (`label` names it), or undefined. */
+function ownerOnlyDirReason(label: string, dir: string, st: Stats): string | undefined {
+  if (!st.isDirectory()) return `${label} ${dir} is not a directory`;
+  const uid = process.getuid?.();
+  if (uid !== undefined && st.uid !== uid) {
+    return `${label} ${dir} belongs to another user (uid ${st.uid})`;
+  }
+  if ((st.mode & 0o077) !== 0) {
+    return `${label} ${dir} has mode ${mode(st)}, open to other users; run chmod 700 ${dir}`;
+  }
+  return undefined;
+}
+
 /**
- * Why no control socket can be made for this state directory, from what is visible without
- * binding: a path over {@link CONTROL_PATH_MAX_BYTES}, or a state directory that is missing, not
- * the user's or open to other users (the same owner and mode rule the credential file follows).
- * Undefined when nothing is in the way. `status` uses it to explain a runner that does not answer.
+ * Why no control socket can be made for the connection whose directory is `stateDir`, from what
+ * is visible without binding: a directory that is not a connection's, a path over
+ * {@link CONTROL_PATH_MAX_BYTES}, a machine directory or a `run/` directory that is missing, not
+ * the user's or open to other users (the same owner and mode rule the credential file follows; a
+ * missing `run/` is fine, the server makes it 0700). Undefined when nothing is in the way. `status`
+ * uses it to explain a runner that does not answer.
  */
 export function controlUnavailableReason(stateDir: string): string | undefined {
-  const path = controlSocketPath(stateDir);
+  let path: string;
+  let machineDir: string;
+  try {
+    path = controlSocketPath(stateDir);
+    machineDir = machineDirOfConnection(stateDir);
+  } catch (e) {
+    return (e as Error).message;
+  }
   const bytes = Buffer.byteLength(path);
   if (bytes > CONTROL_PATH_MAX_BYTES) {
     return (
@@ -51,22 +75,21 @@ export function controlUnavailableReason(stateDir: string): string | undefined {
   }
   let st: Stats;
   try {
-    st = statSync(stateDir);
+    st = statSync(machineDir);
   } catch (e) {
-    return `the state directory ${stateDir} cannot be read (${(e as Error).message})`;
+    return `the machine directory ${machineDir} cannot be read (${(e as Error).message})`;
   }
-  if (!st.isDirectory()) return `the state directory ${stateDir} is not a directory`;
-  const uid = process.getuid?.();
-  if (uid !== undefined && st.uid !== uid) {
-    return `the state directory ${stateDir} belongs to another user (uid ${st.uid})`;
+  const machineReason = ownerOnlyDirReason("the machine directory", machineDir, st);
+  if (machineReason !== undefined) return machineReason;
+  const run = dirname(path);
+  try {
+    // lstat: a symlink in place of run/ is refused, never followed
+    st = lstatSync(run);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return `the socket directory ${run} cannot be read (${(e as Error).message})`;
   }
-  if ((st.mode & 0o077) !== 0) {
-    return (
-      `the state directory ${stateDir} has mode ${mode(st)}, open to other users; ` +
-      `run chmod 700 ${stateDir}`
-    );
-  }
-  return undefined;
+  return ownerOnlyDirReason("the socket directory", run, st);
 }
 
 /** Whether something answers on the socket at `path`: "live", "stale" (nothing listens) or why not. */
@@ -133,13 +156,24 @@ function listen(server: Server, path: string): Promise<void> {
 }
 
 /**
- * Starts the control socket at `<stateDir>/control.sock` (mode 0600). Answers `{ unavailable }`
- * with the reason instead when the socket cannot be made safely; the runner keeps serving then.
+ * Starts the control socket of the connection in `stateDir` at {@link controlSocketPath} (mode
+ * 0600, in `<machineDir>/run/`, made 0700 when absent). Answers `{ unavailable }` with the reason
+ * instead when the socket cannot be made safely; the runner keeps serving then.
  */
 export async function startControlServer(
   opts: ControlServerOptions,
 ): Promise<ControlServer | { unavailable: string }> {
+  const early = controlUnavailableReason(opts.stateDir);
+  if (early !== undefined) return { unavailable: early };
   const path = controlSocketPath(opts.stateDir);
+  try {
+    mkdirSync(dirname(path), { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
+      return { unavailable: `${dirname(path)} cannot be made (${(e as Error).message})` };
+    }
+  }
+  // checked again: run/ exists now, whoever made it
   const blocked = controlUnavailableReason(opts.stateDir) ?? (await clearPath(path));
   if (blocked !== undefined) return { unavailable: blocked };
 

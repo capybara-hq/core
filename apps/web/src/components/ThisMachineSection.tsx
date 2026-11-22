@@ -16,8 +16,8 @@ import type { Device } from "../lib/devices";
 import { deviceRunningQuery } from "../lib/query/device-running";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import type { DeviceCapabilityV1, KeepAwakeMode } from "../lib/shell";
-import { type Connected, useIsThisMachine } from "../lib/use-this-machine";
+import type { DeviceCapabilityV2, KeepAwakeMode, ThisMachineConnection } from "../lib/shell";
+import { useIsThisMachine } from "../lib/use-this-machine";
 
 /** How often the running list is read again (an operation starting or ending is no status change). */
 const RUNNING_POLL_MS = 5000;
@@ -51,42 +51,50 @@ function useLastView(deviceId: string): string | null {
 const isCancelled = (e: unknown) => (e as { code?: unknown } | null)?.code === "cancelled";
 
 /**
- * "This machine" on the device page of the device the shell says is this machine (desktop client spec §9.6):
- * the live running list (`device@1.running`, no command text), pause / disconnect or resume when stopped, the
- * keep-awake choice with what it cannot prevent (§9.7), and the "computer was asleep" note when the machine woke
- * since the person last looked. Every action is a mutation that invalidates the shell status;
- * a native confirmation the person declines (`cancelled`) shows nothing. Nothing renders in a
- * browser or on another device.
+ * "This machine" on the page of a device this machine holds a connection to (desktop client spec
+ * §9.6, device provider spec §9): that device's live running list (`device@2.running`, no command
+ * text), pause / disconnect or resume when stopped, the keep-awake choice with what it cannot
+ * prevent (§9.7), and the "computer was asleep" note when the machine woke since the person last
+ * looked. Every call names this device; every action is a mutation that invalidates the shell
+ * status; a native confirmation the person declines (`cancelled`) shows nothing. Nothing renders
+ * in a browser or on a device this machine is not connected to.
  */
 export function ThisMachineSection({ orgId, device }: { orgId: string; device: Device }) {
   const here = useIsThisMachine(orgId, device.id);
   if (here === undefined) return null;
-  return <Section cap={here.cap} status={here.status} />;
+  return <Section cap={here.cap} connection={here.connection} />;
 }
 
-function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }) {
+function Section({
+  cap,
+  connection: status,
+}: {
+  cap: DeviceCapabilityV2;
+  connection: ThisMachineConnection;
+}) {
   const t = useTranslations("devices.thisMachine");
   const toast = useToast();
   const qc = useQueryClient();
-  const lastView = useLastView(status.deviceId);
+  const deviceId = status.deviceId;
+  const lastView = useLastView(deviceId);
   const running = useQuery({
-    ...deviceRunningQuery(cap),
+    ...deviceRunningQuery(cap, deviceId),
     refetchInterval: RUNNING_POLL_MS,
     retry: false,
   });
   useEffect(() => {
     const off = cap.onStatus(() => {
-      void qc.invalidateQueries({ queryKey: keys.shell().running() });
+      void qc.invalidateQueries({ queryKey: keys.shell().running(deviceId) });
     });
     // a shell that returns no unsubscribe must not break the effect's cleanup
     return typeof off === "function" ? off : undefined;
-  }, [cap, qc]);
-  const invalidates = () => [keys.shell().deviceStatus(), keys.shell().running()];
+  }, [cap, qc, deviceId]);
+  const invalidates = () => [keys.shell().deviceStatus(), keys.shell().running(deviceId)];
   const run = useAppMutation({
-    fn: (call: (c: DeviceCapabilityV1) => Promise<unknown>) => call(cap),
+    fn: (call: (c: DeviceCapabilityV2) => Promise<unknown>) => call(cap),
     invalidates,
   });
-  const act = async (call: (c: DeviceCapabilityV1) => Promise<unknown>) => {
+  const act = async (call: (c: DeviceCapabilityV2) => Promise<unknown>) => {
     if (run.isPending) return;
     try {
       await run.mutateAsync(call);
@@ -123,7 +131,7 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
             <Button
               density="dense"
               disabled={run.isPending}
-              onClick={() => void act((c) => c.resume())}
+              onClick={() => void act((c) => c.resume({ deviceId }))}
             >
               {t("resume")}
             </Button>
@@ -133,7 +141,7 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
                 <Button
                   density="dense"
                   disabled={run.isPending}
-                  onClick={() => void act((c) => c.pause())}
+                  onClick={() => void act((c) => c.pause({ deviceId }))}
                 >
                   {t("pause")}
                 </Button>
@@ -141,7 +149,7 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
               <Button
                 density="dense"
                 disabled={run.isPending}
-                onClick={() => void act((c) => c.disconnect())}
+                onClick={() => void act((c) => c.disconnect({ deviceId }))}
               >
                 {t("disconnect")}
               </Button>
@@ -153,7 +161,9 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
             label={t("keepAwake.title")}
             value={ka.mode}
             disabled={run.isPending}
-            onChange={(v) => void act((c) => c.setKeepAwake(v as KeepAwakeMode))}
+            onChange={(v) =>
+              void act((c) => c.setKeepAwake({ deviceId, mode: v as KeepAwakeMode }))
+            }
             options={[
               { value: "off", label: t("keepAwake.off") },
               { value: "while-busy", label: t("keepAwake.whileBusy") },

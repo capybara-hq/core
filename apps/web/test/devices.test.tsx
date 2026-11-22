@@ -757,13 +757,13 @@ describe("local devices (environments spec §6, §9)", () => {
     function installShell(device: Record<string, unknown>) {
       (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
         version: 1,
-        capabilities: { "device@1": device },
+        capabilities: { "device@2": device },
         on: () => () => {},
       };
     }
     afterEach(() => Reflect.deleteProperty(window, "capybaraShell"));
-    const shellDevice = (connect: unknown) => ({
-      status: vi.fn().mockResolvedValue({ state: "not_connected" }),
+    const shellDevice = (connect: unknown, connections: unknown[] = []) => ({
+      status: vi.fn().mockResolvedValue({ connections }),
       onStatus: () => () => {},
       connect,
     });
@@ -778,6 +778,22 @@ describe("local devices (environments spec §6, §9)", () => {
       expect(connect).toHaveBeenCalledWith({ orgId: "o1" });
     });
 
+    it("an existing connection into this org still offers it (device@2 adds one)", async () => {
+      const connection = {
+        deviceId: "d7",
+        orgId: "o1",
+        mode: "os",
+        connection: "online",
+        serviceInstalled: true,
+        keepAwake: { mode: "while-busy", held: false },
+      };
+      installShell(shellDevice(vi.fn(), [connection]));
+      const { dialog } = await openLocal([env("e1", null), device("d7", "grant-mbp")]);
+      expect(
+        await within(dialog).findByRole("button", { name: "Connect this machine" }),
+      ).toBeTruthy();
+    });
+
     it("cancelled leaves the dialog as it was; a failure shows an error", async () => {
       const connect = vi.fn().mockResolvedValue("cancelled");
       installShell(shellDevice(connect));
@@ -786,11 +802,21 @@ describe("local devices (environments spec §6, §9)", () => {
       await vi.waitFor(() => expect(connect).toHaveBeenCalled());
       await settle();
       expect(within(dialog).queryByRole("alert")).toBeNull();
+      expect(router.push).not.toHaveBeenCalled();
       connect.mockRejectedValue({ code: "failed" });
       await user.click(within(dialog).getByRole("button", { name: "Connect this machine" }));
       expect((await within(dialog).findByRole("alert")).textContent).toContain(
         E.create.connectFailed,
       );
+    });
+
+    it("a connect answering an error shows an error, never the shell's text", async () => {
+      installShell(shellDevice(vi.fn().mockResolvedValue({ error: "login failed" })));
+      const { user, dialog } = await openLocal([env("e1", null)]);
+      await user.click(await within(dialog).findByRole("button", { name: "Connect this machine" }));
+      const alert = await within(dialog).findByRole("alert");
+      expect(alert.textContent).toContain(E.create.connectFailed);
+      expect(alert.textContent).not.toContain("login failed");
     });
 
     it("in a browser the block renders nothing", async () => {

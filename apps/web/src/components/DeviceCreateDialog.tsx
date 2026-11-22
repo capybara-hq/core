@@ -26,7 +26,7 @@ import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useThisMachine } from "../lib/use-this-machine";
+import { useConnectThisMachine } from "../lib/use-this-machine";
 import { FormError } from "./form-error";
 import { SetupGuideSection } from "./SetupGuideSection";
 
@@ -230,54 +230,22 @@ function useWatchNewDevice(
 
 /**
  * The guide's shell-action block: the primary Connect this machine button, only in a shell that
- * offers `device@1` (a browser draws nothing). `connect` runs inside the click-driven mutation, so
- * the shell sees the person's activation.
+ * offers `device@2` (a browser draws nothing). The shell's `connect` adds a connection into this
+ * org and runs inside the click-driven mutation (`useConnectThisMachine`), so the shell sees the
+ * person's activation; a cancel shows nothing.
  */
 function ConnectThisMachine({ orgId, label }: { orgId: string; label: string }) {
-  const { cap } = useThisMachine();
-  if (cap === undefined) return null;
-  return <ConnectButton orgId={orgId} label={label} cap={cap} />;
-}
-
-/** {@link ConnectThisMachine}'s button, inside a shell that offers `device@1`. */
-function ConnectButton({
-  orgId,
-  label,
-  cap,
-}: {
-  orgId: string;
-  label: string;
-  cap: NonNullable<ReturnType<typeof useThisMachine>["cap"]>;
-}) {
   const t = useTranslations("devices.create");
-  const [connectError, setConnectError] = useState<string>();
-  const connect = useAppMutation({
-    fn: () => cap.connect({ orgId }),
-    invalidates: () => [keys.shell().deviceStatus()],
-  });
-  const onConnect = async () => {
-    if (connect.isPending) return;
-    setConnectError(undefined);
-    try {
-      await connect.mutateAsync(undefined);
-    } catch (e) {
-      const code = (e as { code?: unknown } | null)?.code;
-      if (code !== "cancelled") setConnectError(t("connectFailed"));
-    }
-  };
+  const { offered, pending, failed, connect } = useConnectThisMachine(orgId);
+  if (!offered) return null;
   return (
     <Stack gap={8}>
       <Stack direction="row">
-        <Button
-          variant="primary"
-          loading={connect.isPending}
-          disabled={connect.isPending}
-          onClick={() => void onConnect()}
-        >
+        <Button variant="primary" loading={pending} disabled={pending} onClick={connect}>
           {label}
         </Button>
       </Stack>
-      {connectError !== undefined && <FormError message={connectError} />}
+      {failed && <FormError message={t("connectFailed")} />}
     </Stack>
   );
 }

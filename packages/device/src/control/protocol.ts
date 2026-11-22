@@ -1,8 +1,10 @@
-import { join } from "node:path";
+import { basename } from "node:path";
+import { controlSocketPathFor, machineDirOfConnection } from "../connections.js";
 
 /**
- * The local control socket of a running `capybara-device` (JSON lines over a unix socket, mode
- * 0600, in the owner-only state directory): what the desktop app and `status` ask the runner.
+ * The local control socket of a running `capybara-device` connection (JSON lines over a unix
+ * socket, mode 0600, in the machine's owner-only `run/` directory): what the desktop app and
+ * `status` ask the runner.
  */
 
 /** The longest socket path this program binds: macOS `sun_path` holds 104 bytes with its NUL. */
@@ -14,9 +16,13 @@ export const CONTROL_LINE_MAX_BYTES = 64 * 1024;
 /** The most unread answer bytes a connection may queue; past it the connection is closed. */
 export const CONTROL_WRITE_MAX_BYTES = 1024 * 1024;
 
-/** `<stateDir>/control.sock`. */
+/**
+ * The control socket of the connection whose directory is `stateDir`
+ * (`<machineDir>/connections/<deviceId>`): `<machineDir>/run/<first 16 hex of sha256(deviceId)>.sock`.
+ * Throws when `stateDir` is not a connection directory.
+ */
 export function controlSocketPath(stateDir: string): string {
-  return join(stateDir, "control.sock");
+  return controlSocketPathFor(machineDirOfConnection(stateDir), basename(stateDir));
 }
 
 export const CONTROL_OPS = ["status", "running", "subscribe", "drain", "stop"] as const;

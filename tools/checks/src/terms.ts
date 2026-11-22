@@ -53,7 +53,7 @@ export const SHELL_CAPABILITY_NAMES: ReadonlySet<string> = new Set([
   "SHELL_CAPABILITIES",
   "SHELL_CAPABILITY_KEYS",
   "ChromeCapabilityV1",
-  "DeviceCapabilityV1",
+  "DeviceCapabilityV2",
   "NotifyCapabilityV1",
   "OpenExternalCapabilityV1",
   "SignInCapabilityV1",

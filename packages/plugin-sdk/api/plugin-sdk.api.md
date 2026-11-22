@@ -939,26 +939,42 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
-export interface DeviceCapabilityV1 {
-    connect(input: {
+export interface DeviceCapabilityV2 {
+    connect(a: {
         orgId: string;
-        deviceId?: string;
-    }): Promise<"connected" | "cancelled">;
-    disconnect(): Promise<void>;
-    onStatus(listener: (s: ThisMachineStatus) => void): () => void;
-    pause(): Promise<void>;
-    requestCeiling(input: DeviceCeilingRequest): Promise<"applied" | "cancelled">;
-    resume(): Promise<"resumed" | "cancelled">;
-    running(): Promise<RunningOperationView[]>;
-    setKeepAwake(mode: KeepAwakeMode): Promise<"applied" | "cancelled">;
-    status(): Promise<ThisMachineStatus>;
+    }): Promise<"connected" | "cancelled" | {
+        error: string;
+    }>;
+    disconnect(a: {
+        deviceId: string;
+    }): Promise<void>;
+    onStatus(cb: () => void): () => void;
+    pause(a: {
+        deviceId: string;
+    }): Promise<void>;
+    requestCeiling(a: {
+        deviceId: string;
+    } & DeviceCeilingRequest): Promise<"applied" | "cancelled">;
+    resume(a: {
+        deviceId: string;
+    }): Promise<"resumed" | "cancelled">;
+    running(a: {
+        deviceId: string;
+    }): Promise<DeviceRunningOp[]>;
+    setKeepAwake(a: {
+        deviceId: string;
+        mode: KeepAwakeMode;
+    }): Promise<"applied" | "cancelled">;
+    status(): Promise<{
+        connections: ThisMachineConnection[];
+    }>;
 }
 
 // @public
 export interface DeviceCeilingRequest {
     network?: "open" | "allowlist";
     outsideSandbox?: boolean;
-    projectReach?: "workspace" | "os-user";
+    projectReach?: "machine" | "paths" | "workspace";
 }
 
 // @public
@@ -1072,6 +1088,15 @@ export interface DeviceReportLimit {
 // @public
 export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
     readonly notSent: true;
+}
+
+// @public
+export interface DeviceRunningOp {
+    accountId: string | null;
+    conversationId: string | null;
+    isolation: "restricted" | "full";
+    startedAt: string;
+    tag: string;
 }
 
 // @public
@@ -3409,15 +3434,6 @@ export type RouteCaller = {
 };
 
 // @public
-export interface RunningOperationView {
-    accountId: string | null;
-    conversationId: string | null;
-    isolation: "restricted" | "full";
-    startedAt: string;
-    tag: string;
-}
-
-// @public
 export const SANDBOX_FAKE_IP_DNS: {
     readonly fakeIpCidr: string;
     readonly endpoints: readonly string[];
@@ -3975,7 +3991,7 @@ export const SHELL_CAPABILITIES: readonly {
 // @public
 export const SHELL_CAPABILITY_KEYS: {
     readonly chrome: "chrome@1";
-    readonly device: "device@1";
+    readonly device: "device@2";
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
@@ -4502,26 +4518,20 @@ export interface ThemeSchemeOverride {
 export const THINKING_VALUES: readonly string[];
 
 // @public
-export type ThisMachineStatus = {
-    state: "not_connected";
-} | {
-    state: "connected_elsewhere";
-    origin: string;
-} | {
-    state: "connected";
-    deviceId: string;
-    orgId: string;
-    mode: "os" | "docker";
+export interface ThisMachineConnection {
     connection: DeviceConnection;
-    offlineReason?: string;
-    serviceInstalled: boolean;
+    deviceId: string;
     keepAwake: {
         mode: KeepAwakeMode;
         held: boolean;
         unavailable?: string;
     };
     lastWakeAt?: string;
-};
+    mode: "os" | "docker";
+    offlineReason?: string;
+    orgId: string;
+    serviceInstalled: boolean;
+}
 
 // @public
 export const TOOL_KEY_ARGS_MAX = 3;

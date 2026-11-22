@@ -18,6 +18,7 @@ import { CommandLog } from "../src/command-log.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, MISSING_POLICY_NOTICE, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
+import { connectionDir } from "../src/connections.js";
 import { queryControl } from "../src/control/client.js";
 import { controlSocketPath } from "../src/control/protocol.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
@@ -40,11 +41,15 @@ const ps: ProcessLookup = () => ({
   started: new Date(0),
 });
 
+/** The machine directory, and `dir` the connection directory in it. */
+let m: string;
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "device-start-"));
+  m = mkdtempSync(join(tmpdir(), "device-start-"));
+  dir = connectionDir(m, "e1");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => rmSync(m, { recursive: true, force: true }));
 
 const cred = {
   url: "http://x.test",
@@ -362,7 +367,8 @@ describe("a login service", () => {
     }) as typeof process.kill;
     // the service file launchd would have written
     mkdirSync(join(dir, "Library", "LaunchAgents"), { recursive: true });
-    writeFileSync(join(dir, "Library", "LaunchAgents", "top.capybara.device.plist"), "plist");
+    writeFileSync(join(dir, "Library", "LaunchAgents", "top.capybara.device.e1.plist"), "plist");
+    writeCredential(dir, cred);
     writePid(dir, 4242);
     const err: string[] = [];
     // launchd has the agent loaded and runs the pid file's program
@@ -581,7 +587,7 @@ describe("start: the control socket", () => {
 
   it("a control socket that cannot be made leaves the program serving", async () => {
     writeCredential(dir, cred);
-    chmodSync(dir, 0o755);
+    chmodSync(m, 0o755);
     const errs: string[] = [];
     const code = await start({
       stateDir: dir,
@@ -670,5 +676,70 @@ describe("start: keep-awake in the live status", () => {
     expect(readFileSync(join(dir, "commands.log"), "utf8")).toContain('"op":"wake"');
     expect(await queryControl(dir, "stop")).toBeNull();
     expect(await p).toBe(0);
+  });
+});
+
+describe("start: two connections on one machine", () => {
+  it("two runners each hold their own keep-awake assertion, pid file and control socket", async () => {
+    const dirs = { a: connectionDir(m, "dev-a"), b: connectionDir(m, "dev-b") };
+    const runners = Object.entries(dirs).map(([key, d], i) => {
+      mkdirSync(d, { recursive: true, mode: 0o700 });
+      writeCredential(d, { ...cred, deviceId: `dev-${key}` });
+      writePolicy(d, DEFAULT_POLICY);
+      const running = new RunningOperations();
+      const spawned: string[][] = [];
+      const spawn = ((_c: string, args: string[]) => {
+        spawned.push(args);
+        return Object.assign(new EventEmitter(), { kill() {} });
+      }) as never;
+      const calls: string[] = [];
+      let finish!: (code: number) => void;
+      const conn: Connection = {
+        done: new Promise<number>((r) => {
+          finish = r;
+        }),
+        drain: () => {},
+        stop: () => finish(0),
+      };
+      const pid = 4300 + i;
+      const p = start({
+        stateDir: d,
+        out: () => {},
+        err: () => {},
+        proc: Object.assign(new EventEmitter(), { pid }) as never,
+        service: { home: m, platform: "darwin" },
+        createStaged: () =>
+          ({
+            ...stagedParts(calls),
+            owner: { running, store: undefined, log: new CommandLog(d) },
+          }) as unknown as StagedDevice,
+        connectStaged: () => {
+          calls.push("connectStaged");
+          return conn;
+        },
+        keepAwakeSpawn: spawn,
+        tickMs: 5,
+      });
+      return { d, running, spawned, calls, p, pid };
+    });
+    for (const r of runners) await vi.waitFor(() => expect(r.calls).toContain("connectStaged"));
+    for (const r of runners) {
+      expect(existsSync(pidPath(r.d))).toBe(true);
+      expect(await queryControl(r.d, "status")).toMatchObject({ pid: r.pid });
+    }
+    expect(controlSocketPath(dirs.a)).not.toBe(controlSocketPath(dirs.b));
+    // only the busy runner holds an assertion
+    runners[0]?.running.begin(
+      { tag: "t", conversationId: "c", accountId: "a", isolation: "full", startedAt: "x" },
+      "op1",
+    );
+    expect(await queryControl(dirs.a, "status")).toMatchObject({ keepAwake: { held: true } });
+    expect(await queryControl(dirs.b, "status")).toMatchObject({ keepAwake: { held: false } });
+    expect(runners[0]?.spawned).toEqual([["-i", "-w", "4300"]]);
+    expect(runners[1]?.spawned).toEqual([]);
+    for (const r of runners) {
+      expect(await queryControl(r.d, "stop")).toBeNull();
+      expect(await r.p).toBe(0);
+    }
   });
 });

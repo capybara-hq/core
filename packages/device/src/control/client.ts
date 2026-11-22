@@ -14,16 +14,18 @@ export class ControlError extends Error {
 
 /**
  * Asks the running program one op over its control socket and answers the result; `undefined`
- * when no runner answers (no socket, nothing listening, or no answer within `timeoutMs`). Throws
- * {@link ControlError} when the runner answered `ok: false`. Only a socket of this user is asked.
+ * when no runner answers (not a connection directory, no socket, nothing listening, or no answer
+ * within `timeoutMs`). Throws {@link ControlError} when the runner answered `ok: false`. Only a
+ * socket of this user is asked.
  */
 export async function queryControl(
   stateDir: string,
   op: ControlRequest["op"],
   timeoutMs = 500,
 ): Promise<unknown | undefined> {
-  const path = controlSocketPath(stateDir);
+  let path: string;
   try {
+    path = controlSocketPath(stateDir);
     const st = lstatSync(path);
     const uid = process.getuid?.();
     if (!st.isSocket() || (uid !== undefined && st.uid !== uid)) return undefined;

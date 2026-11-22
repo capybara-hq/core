@@ -146,6 +146,10 @@ export interface DeviceGrant extends Grant {
    * does not allow it, even when the machine's owner ceiling does.
    */
   outsideSandbox: "allowed" | "off";
+  /** The device's name (`devices.name`; null when it has none), for `capybara-device status`. */
+  deviceName: string | null;
+  /** The organization's name (`orgs.name`), for `capybara-device status`. */
+  orgName: string;
 }
 
 const codeInvalid = () =>
@@ -262,9 +266,21 @@ export class DialInAuthService {
       case "approved": {
         const grant = JSON.parse(r[1] as string) as Grant;
         const dialIn = this.config.get().devices.dialIn;
-        const [deployment, settings] = await Promise.all([
+        const [deployment, settings, device, org] = await Promise.all([
           readDeploymentDevicePolicy(this.db.db, this.config),
           readOrgSettings(this.db.db, grant.orgId),
+          this.db.db
+            .selectFrom("devices")
+            .select("name")
+            .where("org_id", "=", grant.orgId)
+            .where("id", "=", grant.deviceId)
+            .executeTakeFirst(),
+          this.db.db
+            .selectFrom("orgs")
+            .select("name")
+            .where("id", "=", grant.orgId)
+            // the grant's org exists: the device row it names references it
+            .executeTakeFirstOrThrow(),
         ]);
         return {
           ...grant,
@@ -275,6 +291,8 @@ export class DialInAuthService {
             allowedDeviceMode(deployment.fullAccess, settings.outsideSandbox) === "auto"
               ? "allowed"
               : "off",
+          deviceName: device?.name ?? null,
+          orgName: org.name,
         };
       }
       case "slow_down":

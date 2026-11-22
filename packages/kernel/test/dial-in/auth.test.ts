@@ -211,6 +211,8 @@ interface Granted {
   reconnectGraceSeconds: number;
   maxFrameBytes: number;
   outsideSandbox: "allowed" | "off";
+  deviceName: string | null;
+  orgName: string;
 }
 
 /** Authorize, confirm into a new device named `name`, take the credential. */
@@ -346,7 +348,15 @@ describe("device authorization", () => {
       reconnectGraceSeconds: 120,
       maxFrameBytes: 16 * 1024 * 1024,
       outsideSandbox: "allowed",
+      deviceName: "Laptop",
+      orgName: expect.any(String),
     });
+    const org = await db
+      .selectFrom("orgs")
+      .select("name")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    expect(g.orgName).toBe(org.name);
 
     // the credential authenticates the machine; it is never an /api credential
     const who = await machines.authenticate(g.credential);
@@ -405,6 +415,21 @@ describe("device authorization", () => {
     const m = await member();
     const g = await login(m.req, "Mode line");
     expect(g.outsideSandbox).toBe("off");
+  });
+
+  it("a device without a name gives deviceName null in the token", async () => {
+    const m = await member();
+    const a = await authorize();
+    const c = await confirm(m.req, { userCode: a.userCode, name: "Nameless" });
+    expect(c.statusCode, c.body).toBe(200);
+    const { deviceId } = c.json() as { deviceId: string };
+    await db.updateTable("devices").set({ name: null }).where("id", "=", deviceId).execute();
+    const t = await token(a.deviceCode);
+    expect(t.statusCode, t.body).toBe(200);
+    const g = t.json() as Granted;
+    expect(g.deviceId).toBe(deviceId);
+    expect(g.deviceName).toBeNull();
+    expect(g.orgName).toEqual(expect.any(String));
   });
 
   it("token before confirm is authorization_pending", async () => {

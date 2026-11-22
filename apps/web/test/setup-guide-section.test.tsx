@@ -760,8 +760,8 @@ describe("a device-connection guide (新建设备)", () => {
     (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
       version: 1,
       capabilities: {
-        "device@1": {
-          status: vi.fn().mockResolvedValue({ state: "not_connected" }),
+        "device@2": {
+          status: vi.fn().mockResolvedValue({ connections: [] }),
           onStatus: () => () => {},
           connect: vi.fn(),
         },

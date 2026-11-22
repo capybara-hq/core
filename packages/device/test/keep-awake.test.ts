@@ -5,8 +5,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseCommandLine, UsageError } from "../src/args.js";
 import { runCli } from "../src/cli.js";
+import { connectionDir } from "../src/connections.js";
 import { KeepAwake } from "../src/keep-awake.js";
-import { DEFAULT_POLICY, policyPath, readPolicy, writePolicy } from "../src/state.js";
+import {
+  DEFAULT_POLICY,
+  policyPath,
+  readCredential,
+  readPolicy,
+  writeCredential,
+  writePolicy,
+} from "../src/state.js";
 
 /** A fake holder process: records its spawn and whether it was killed. */
 class FakeChild extends EventEmitter {
@@ -156,7 +164,7 @@ describe("keep-awake command", () => {
   let state: string;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "device-keep-awake-"));
-    state = join(root, "capybara-device");
+    state = connectionDir(join(root, "capybara-device"), "dev");
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -164,6 +172,19 @@ describe("keep-awake command", () => {
     const out: string[] = [];
     const err: string[] = [];
     const asked: string[] = [];
+    if (readCredential(state) === undefined) {
+      writeCredential(state, {
+        url: "https://x.test",
+        connectUrl: "wss://x.test",
+        credential: "c",
+        orgId: "o",
+        deviceId: "dev",
+        dir: join(root, "work"),
+        mode: "os",
+        reconnectGraceSeconds: 120,
+        maxFrameBytes: 1048576,
+      });
+    }
     const code = await runCli(["keep-awake", ...argv], {
       env: { XDG_CONFIG_HOME: root },
       home: join(root, "home"),

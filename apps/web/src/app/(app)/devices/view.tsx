@@ -13,7 +13,7 @@ import { labelLocale } from "../../../lib/extension-label";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
-import { useThisMachineDeviceId } from "../../../lib/use-this-machine";
+import { useThisMachineDeviceIds } from "../../../lib/use-this-machine";
 import NotFound from "../not-found";
 
 /**
@@ -39,7 +39,7 @@ function Devices({ orgId }: { orgId: string }) {
   const t = useTranslations("devices");
   const [creating, setCreating] = useState(false);
   const list = usePageQuery(devicesQuery(orgId));
-  const thisMachine = useThisMachineDeviceId(orgId);
+  const thisMachine = useThisMachineDeviceIds(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   // New device needs a provider to create on: without one it is not offered
@@ -78,7 +78,7 @@ function Devices({ orgId }: { orgId: string }) {
         {...(callout ? { callout } : {})}
       >
         {items.map((e) => (
-          <DeviceCard key={e.id} device={e} thisMachine={e.id === thisMachine} />
+          <DeviceCard key={e.id} device={e} thisMachine={thisMachine.has(e.id)} />
         ))}
       </ListPage>
       {creating && (
