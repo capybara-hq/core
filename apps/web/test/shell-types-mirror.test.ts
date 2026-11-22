@@ -39,4 +39,12 @@ describe("the nav@1 limits", () => {
       `export const NATIVE_NAV_LIMITS = { label: ${label}, count: ${count} } as const;`,
     );
   });
+
+  it("design's NATIVE_NAV_ACCOUNT_NAME equals the SDK's navAccountName", () => {
+    const sdk = read("../../../packages/plugin-sdk/src/shell-capabilities.ts");
+    const design = read("../../../packages/design/src/native.ts");
+    const name = Number(/navAccountName: (\d+)/.exec(sdk)?.[1]);
+    expect(name).toBeGreaterThan(0);
+    expect(design).toContain(`export const NATIVE_NAV_ACCOUNT_NAME = ${name};`);
+  });
 });

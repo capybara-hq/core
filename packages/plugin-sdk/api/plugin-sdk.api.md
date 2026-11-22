@@ -2696,6 +2696,7 @@ export const MOBILE_SHELL_LIMITS: {
     readonly url: 2048;
     readonly navLabel: 32;
     readonly navCount: 9999;
+    readonly navAccountName: 64;
 };
 
 // @public
@@ -2885,6 +2886,21 @@ export interface ModelUsage {
 export const NAV_SECTION_ORDER: readonly NavSectionId[];
 
 // @public
+export interface NavAccountV1 {
+    avatarUrl?: string | null;
+    badge?: number;
+    initial: string;
+    name: string;
+}
+
+// @public
+export interface NavActionV1 {
+    icon: "plus" | "square-pen";
+    id: string;
+    label: string;
+}
+
+// @public
 export interface NavBadgeV1 {
     count?: number;
     countMore?: boolean;
@@ -2892,9 +2908,11 @@ export interface NavBadgeV1 {
 
 // @public
 export interface NavCapabilityV1 {
-    onMenu(listener: () => void): () => void;
+    onAccount(listener: () => void): () => void;
+    onAction(listener: () => void): () => void;
     onSelect(listener: (id: NavSectionId) => void): () => void;
     set(state: NavStateV1): Promise<void>;
+    readonly side?: "left" | "right";
 }
 
 // @public
@@ -2904,18 +2922,14 @@ export interface NavItemV1 extends NavBadgeV1 {
 }
 
 // @public
-export interface NavMenuV1 extends NavBadgeV1 {
-    label: string;
-}
-
-// @public
-export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
 // @public
 export interface NavStateV1 {
+    account?: NavAccountV1;
+    action: NavActionV1;
     current: NavSectionId | null;
     items: NavItemV1[];
-    menu: NavMenuV1 | null;
 }
 
 // @public

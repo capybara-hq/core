@@ -16,8 +16,15 @@ import {
   WEB_UI_TEMPLATES,
 } from "../src/web-ui.js";
 import {
+  dialogFooterFindings,
+  dialogFooterTreeFindings,
+  type FooterPending,
   filtersScopeFindings,
   filtersScopeTreeFindings,
+  LOAD_MORE_PENDING,
+  type LoadMorePending,
+  loadMoreFindings,
+  loadMoreTreeFindings,
   type ScopePending,
   type SizeBranchAllowed,
   sizeBranchFindings,
@@ -30,7 +37,12 @@ const run = (
   pending: SsrPending[] = [],
   queryPending: QueryPending[] = [],
   boxPending: BoxPending[] = [],
-  responsive: ResponsiveLists = { sizeAllowed: [], scopePending: [], dualPending: [] },
+  responsive: ResponsiveLists = {
+    sizeAllowed: [],
+    scopePending: [],
+    footerPending: [],
+    dualPending: [],
+  },
 ) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
   return checkWebUi(
@@ -52,11 +64,22 @@ describe("checkWebUi", () => {
     expect(run("clean")).toEqual([]);
   });
 
-  it("bad-import -> web-ui-import，行号正确", () => {
+  it("bad-import (a Radix dialog) -> web-ui-overlay-primitive，行号正确", () => {
     const f = run("bad-import");
-    expect(f.map((x) => x.rule)).toEqual(["web-ui-import"]);
+    expect(f.map((x) => x.rule)).toEqual(["web-ui-overlay-primitive"]);
     expect(f[0]?.line).toBe(2);
     expect(f[0]?.message).toContain("@capybara-hq/design");
+  });
+
+  it("overlay packages -> web-ui-overlay-primitive; other Radix packages stay web-ui-import", () => {
+    const f = run("overlay-import");
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["web-ui-overlay-primitive", 2],
+      ["web-ui-import", 3],
+      ["web-ui-overlay-primitive", 4],
+      ["web-ui-overlay-primitive", 5],
+      ["web-ui-overlay-primitive", 6],
+    ]);
   });
 
   it("class-name -> web-ui-class-name", () => {
@@ -474,6 +497,8 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-size-branch", 52],
         ["web-ui-size-branch", 53],
         ["web-ui-size-branch", 54],
+        // useNative: a page never reads the shell
+        ["web-ui-size-branch", 58],
       ]);
       expect(f[0]?.message).toContain("design package");
     });
@@ -539,6 +564,78 @@ describe("responsive guards (spec §5.3, §7)", () => {
         "web-ui-filters-scope-stale",
         "web-ui-filters-scope-stale",
       ]);
+    });
+  });
+
+  describe("web-ui-dialog-footer", () => {
+    it("a Dialog footer wrapped in an element fails, also in a conditional branch or by a member name", () => {
+      const f = dialogFooterFindings(parse("dialog-footer.tsx"));
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-dialog-footer", 11],
+        ["web-ui-dialog-footer", 26],
+        ["web-ui-dialog-footer", 35],
+      ]);
+      expect(f[0]?.message).toContain("fragment");
+    });
+
+    it("fragments (React.Fragment too), arrays, a single Button / LinkButton, values and other components pass", () => {
+      const f = dialogFooterFindings(parse("dialog-footer.tsx"));
+      expect(f.some((x) => x.line >= 40)).toBe(false);
+    });
+
+    it("the tree: a pending entry hides it; a clean or missing entry fails as stale", () => {
+      const pend = (path: string): FooterPending => ({ path, fix: "test" });
+      expect(dialogFooterTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+        "pages/footer.tsx",
+      ]);
+      expect(dialogFooterTreeFindings(tree, [pend("pages/footer.tsx")])).toEqual([]);
+      const f = dialogFooterTreeFindings(tree, [
+        pend("pages/footer.tsx"),
+        pend("pages/clean.tsx"),
+        pend("pages/gone.tsx"),
+      ]);
+      expect(f.map((x) => x.rule)).toEqual([
+        "web-ui-dialog-footer-stale",
+        "web-ui-dialog-footer-stale",
+      ]);
+    });
+  });
+
+  describe("web-ui-load-more", () => {
+    it("a Load more button (by message key, by text) or the LoadMore wrapper fails", () => {
+      const f = loadMoreFindings(parse("load-more.tsx"));
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-load-more", 10],
+        ["web-ui-load-more", 19],
+        ["web-ui-load-more", 27],
+        ["web-ui-load-more", 31],
+        ["web-ui-load-more", 35],
+      ]);
+      expect(f[0]?.message).toContain("onLoadMore");
+    });
+
+    it("lists given onLoadMore, other buttons and non-button text pass", () => {
+      const f = loadMoreFindings(parse("load-more.tsx"));
+      expect(f.some((x) => x.line >= 38)).toBe(false);
+    });
+
+    it("the tree: a pending entry hides it; a clean or missing entry fails as stale", () => {
+      const pendMore = (path: string): LoadMorePending => ({ path, fix: "test" });
+      expect(loadMoreTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+        "pages/more.tsx",
+      ]);
+      expect(loadMoreTreeFindings(tree, [pendMore("pages/more.tsx")])).toEqual([]);
+      const f = loadMoreTreeFindings(tree, [
+        pendMore("pages/more.tsx"),
+        pendMore("pages/clean.tsx"),
+        pendMore("pages/gone.tsx"),
+      ]);
+      expect(f.map((x) => x.rule)).toEqual(["web-ui-load-more-stale", "web-ui-load-more-stale"]);
+    });
+
+    it("every pending page still draws a Load more button (the list only shrinks)", () => {
+      const web = fileURLToPath(new URL("../../../apps/web/src", import.meta.url));
+      expect(loadMoreTreeFindings(web, LOAD_MORE_PENDING)).toEqual([]);
     });
   });
 

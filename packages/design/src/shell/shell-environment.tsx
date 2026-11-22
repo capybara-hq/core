@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PAGE_BACKGROUND } from "../tokens";
 
 export { SHELL_ENVIRONMENT_SCRIPT, ShellEnvironmentScript } from "./shell-environment-script";
@@ -19,6 +19,11 @@ export interface ShellEnvironment {
   platform: ShellPlatform | null;
   insets: { top: number; right: number; bottom: number; left: number };
   controls: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * The native strip's side while one shows (`nav@1` present; interaction model §10.7, D16): the
+   * side `nav@1` reports, else the side whose inset is the larger, else right. Null without one.
+   */
+  strip: "left" | "right" | null;
 }
 
 /** The part of the global the design package uses: its change subscription and capabilities. */
@@ -57,6 +62,17 @@ function shellOf(win: Window): (Record<string, unknown> & ShellHandle) | null {
   }
 }
 
+/** The strip's side (the inline script applies the same rule): see {@link ShellEnvironment}. */
+function stripOf(shell: Record<string, unknown>, left: number, right: number) {
+  const caps = shell.capabilities;
+  if (caps === null || typeof caps !== "object" || !Object.hasOwn(caps, "nav@1")) return null;
+  const nav = (caps as Record<string, unknown>)["nav@1"];
+  if (nav === null || typeof nav !== "object") return null;
+  const side = (nav as Record<string, unknown>).side;
+  if (side === "left" || side === "right") return side;
+  return left > right ? "left" : "right";
+}
+
 /**
  * The shell's environment, checked (spec §9.1, §9.3): null outside the top frame, without the
  * global, for another envelope version or an unknown kind. Insets are clamped to 0–512; a controls
@@ -88,25 +104,59 @@ export function readShellEnvironment(win: Window): ShellEnvironment | null {
         controls = { x: round(x), y: round(y), width: round(width), height: round(height) };
       }
     }
+    const insets = {
+      top: ins("top"),
+      right: ins("right"),
+      bottom: ins("bottom"),
+      left: ins("left"),
+    };
     return {
       kind,
       platform:
         typeof platform === "string" && PLATFORMS.includes(platform)
           ? (platform as ShellPlatform)
           : null,
-      insets: { top: ins("top"), right: ins("right"), bottom: ins("bottom"), left: ins("left") },
+      insets,
       controls,
+      strip: stripOf(shell, insets.left, insets.right),
     };
   } catch {
     return null;
   }
 }
 
+function subscribeKind(notify: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const shell = shellOf(window);
+  if (shell === null) return () => {};
+  try {
+    const off = shell.on("change", notify);
+    return typeof off === "function" ? () => off() : () => {};
+  } catch {
+    return () => {};
+  }
+}
+
+const kindNow = (): ShellKind | null =>
+  typeof window === "undefined" ? null : (readShellEnvironment(window)?.kind ?? null);
+
+/**
+ * The native shell's declared kind (`window.capybaraShell.kind`, checked as the shell environment
+ * reads it: never the user agent), following the envelope's `change`; null in a browser, on the
+ * server and during hydration.
+ */
+export function useShellKind(): ShellKind | null {
+  return useSyncExternalStore<ShellKind | null>(subscribeKind, kindNow, () => null);
+}
+
 /**
  * Writes a checked environment on `<html>` (the attributes and properties the inline script
- * sets), or clears them all for null. Only these two attributes and eight properties are written.
+ * sets), or clears them all for null. Only these three attributes and eight properties are
+ * written (`data-native-nav` is the AppShell's, which follows the `nav@1` handle).
  */
 export function applyShellEnvironment(root: HTMLElement, env: ShellEnvironment | null): void {
+  if (env === null || env.strip === null) root.removeAttribute("data-strip");
+  else root.setAttribute("data-strip", env.strip);
   if (env === null) {
     root.removeAttribute("data-shell");
     root.removeAttribute("data-shell-platform");

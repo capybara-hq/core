@@ -1,9 +1,11 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { useNow, useTimeZone } from "../clock";
 import { Button, IconButton } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Avatar, type AvatarValue } from "../display/avatar";
 import { type DayBucket, dayBucket, formatListTime } from "../display/date-time";
+import { useListSentinel } from "../display/list-sentinel";
+import { PullToRefresh } from "../display/pull-refresh";
 import { SkeletonBox, SkeletonText } from "../display/skeleton";
 import type { DesignKey } from "../i18n";
 import { Icon } from "../icons/icon";
@@ -59,6 +61,8 @@ export type ConversationListProps = {
    * (`onMore`), never by a button; a failure shows its message and Retry at the end.
    */
   end?: { more: boolean; loading: boolean; error?: string | null; onMore(): void };
+  /** A pull down in a native shell reads the list again (interaction spec §3, D4). */
+  onRefresh?: () => Promise<unknown>;
 };
 
 const BUCKETS: readonly DayBucket[] = ["today", "yesterday", "week", "older"];
@@ -71,9 +75,6 @@ const BUCKET_KEY: Record<DayBucket, DesignKey> = {
 
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
-
-/** How far before the list's end the next page is asked for. */
-const END_MARGIN = "600px";
 
 /**
  * A conversation list sectioned by time (design spec §6.60): the drawer's recent conversations and
@@ -93,6 +94,7 @@ export function ConversationList({
   empty,
   actions,
   end,
+  onRefresh,
 }: ConversationListProps) {
   const t = useDesignT();
   const locale = useDesignLocale();
@@ -194,7 +196,7 @@ export function ConversationList({
       </ul>
     );
   }
-  return (
+  const list = (
     <section
       className="cb-convlist"
       data-part="conversation-list"
@@ -229,6 +231,7 @@ export function ConversationList({
       ) : null}
     </section>
   );
+  return onRefresh ? <PullToRefresh onRefresh={onRefresh}>{list}</PullToRefresh> : list;
 }
 
 function Row({
@@ -314,25 +317,16 @@ function Row({
   );
 }
 
-/** The list's end: it asks for the next page as it comes near; a failure offers Retry. */
+/**
+ * The list's end (the shared list sentinel, {@link useListSentinel}): it asks for the next page
+ * once as it comes near; a failure offers Retry.
+ */
 function End({ end }: { end: NonNullable<ConversationListProps["end"]> }) {
   const t = useDesignT();
-  const ref = useRef<HTMLDivElement>(null);
-  const latest = useRef(end);
-  latest.current = end;
-  const wanted = end.more && !end.loading && !end.error;
-  useEffect(() => {
-    const el = ref.current;
-    if (!wanted || el === null || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) latest.current.onMore();
-      },
-      { rootMargin: END_MARGIN },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [wanted]);
+  const ref = useListSentinel(end.onMore, {
+    hasMore: end.more && !end.error,
+    loading: end.loading,
+  });
   if (!end.more && !end.error) return null;
   return (
     <div className="cb-convlist-end" data-part="convlist-end" ref={ref}>

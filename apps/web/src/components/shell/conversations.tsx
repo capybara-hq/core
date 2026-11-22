@@ -456,6 +456,7 @@ export function useDrawerRecent(
     state: q.data !== undefined ? "ready" : q.error !== null ? "error" : "loading",
     items: rows.map((c) => conversationRow(c, byId)),
     onRetry: () => void q.refetch(),
+    onRefresh: () => q.refetch(),
     actions,
     ...(activeId ? { activeId } : {}),
   };

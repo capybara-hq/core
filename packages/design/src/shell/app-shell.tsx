@@ -12,21 +12,16 @@ import {
 import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { ConvMenu } from "../conversation/menu";
-import type { NavBadge } from "../display/nav-badge";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
-import {
-  NATIVE_NAV_LIMITS,
-  type NativeNavHandle,
-  type NativeSectionId,
-  useHaptics,
-} from "../native";
+import type { NativeNavHandle } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import type { MenuItem } from "../overlays/menus";
-import { popOverlaysThen } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
 import { backTarget, FloatingBar, type FloatingLead, routeCommitted } from "./floating-bar";
+import { INSET_SETTLE_MS, KEYBOARD_INSET_SETTLED_EVENT } from "./keyboard-settled";
+import { useNativeStrip } from "./native-strip";
 import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
@@ -222,6 +217,7 @@ export function AppShell({
       if (p.menu !== undefined) merged.menu = p.menu;
       if (p.onBack !== undefined) merged.onBack = p.onBack;
       if (p.actions !== undefined) merged.actions = p.actions;
+      if (p.primary !== undefined) merged.primary = p.primary;
     }
     // The scrolled title belongs to the title drawn: only the layer that gave the title reports it
     // (a pushed part's own title is not "away" because the page under it scrolled).
@@ -326,105 +322,24 @@ export function AppShell({
     );
   }, [pathname, root]);
 
-  // The native strip (mobile app spec §6.1): its state comes from the drawer's data and the route.
-  const haptics = useHaptics();
-  const hasNav = nativeNav !== undefined;
-  const navState = drawer
-    ? {
-        items: [
-          { id: "chats" as const, label: navLabel(t("shell.chats")) },
-          ...drawer.sections.map((s) => ({
-            id: s.id,
-            label: navLabel(s.label),
-            ...navBadge(s.badge),
-          })),
-        ],
-        current: currentSection(pathname, surface, drawer),
-        menu:
-          hydrated && sizeClass === "compact"
-            ? { label: navLabel(t("shell.menu")), ...navBadge(drawer.menuBadge) }
-            : null,
-      }
-    : null;
-  const navKey = navState === null ? null : JSON.stringify(navState);
-  const navSent = useRef<string | null>(null);
-  const navLatest = useRef({ nav: nativeNav, drawer, onNavigate, haptics, navState, pathname });
-  navLatest.current = { nav: nativeNav, drawer, onNavigate, haptics, navState, pathname };
-  // `nav.set` is the one capability call made from an effect: a state push, not confirming. Only
-  // the handle's presence and the state key it: an equivalent new handle sends nothing.
-  useEffect(() => {
-    const { nav, navState: state } = navLatest.current;
-    if (!hasNav) {
-      navSent.current = null;
-      return;
-    }
-    if (nav === undefined || state === null || navSent.current === navKey) return;
-    navSent.current = navKey;
-    try {
-      nav.set(state);
-    } catch {
-      // the strip keeps its last state
-    }
-  }, [hasNav, navKey]);
-  // `<html data-native-nav>` (set before the first paint by the environment script) also reaches
-  // the drawer and the menus, which portal out of the shell element: set while the handle is
-  // there, cleared once it goes (the strip went away), never touched before a handle was seen.
-  const hadNav = useRef(false);
-  useEffect(() => {
-    if (reference !== undefined) return;
-    const root = document.documentElement;
-    if (hasNav) {
-      hadNav.current = true;
-      root.setAttribute("data-native-nav", "");
-    } else if (hadNav.current) {
-      hadNav.current = false;
-      root.removeAttribute("data-native-nav");
-    }
-  }, [hasNav, reference]);
-  // The strip's taps and its menu button: subscribed per handle (resubscribing sends no state).
-  useEffect(() => {
-    if (nativeNav === undefined) return;
-    const offs: (() => void)[] = [];
-    const listen = (subscribe: () => unknown) => {
-      try {
-        const off = subscribe();
-        if (typeof off === "function") offs.push(off as () => void);
-      } catch {
-        // a shell that cannot subscribe: its taps do nothing
-      }
-    };
-    listen(() =>
-      nativeNav.onSelect((id) => {
-        const { drawer: d, onNavigate: go, haptics: buzz, pathname: now } = navLatest.current;
-        const href = d === undefined ? undefined : sectionHref(id, d);
-        if (href === undefined) return;
-        buzz("selection");
-        // An open drawer or sheet closes first: on a touch window its history entries are popped
-        // and the move runs once that landed (Task 28's pick rule), else it closes at once. A tap
-        // on the section whose root is already shown moves nowhere.
-        const move = () => {
-          if (href === now) return;
-          // a tab switch swaps at once (no slide)
-          instantRoute.current = href;
-          if (go) go(href, { transition: "none" });
-          else window.location.assign(href);
-        };
-        const popped = popOverlaysThen(move);
-        setDrawerOpen(false);
-        if (!popped) move();
-      }),
-    );
-    listen(() => nativeNav.onMenu(() => setDrawerOpen((open) => !open)));
-    return () => {
-      for (const off of offs) {
-        try {
-          off();
-        } catch {
-          // already gone
-        }
-      }
-    };
-  }, [nativeNav]);
+  // The native strip (mobile app spec §6.1, interaction model §10.2–10.4): native-strip.tsx.
+  const stripAccountSheet = useNativeStrip({
+    nativeNav,
+    drawer,
+    pathname,
+    surface,
+    primary: page.primary,
+    compact: hydrated && sizeClass === "compact",
+    searchable: commands !== undefined,
+    reference: reference !== undefined,
+    onNavigate,
+    instantRoute,
+    openPalette: () => setPaletteOpen(true),
+    closeOverlays: () => {
+      setDrawerOpen(false);
+      setPaletteOpen(false);
+    },
+  });
 
   const openSteps = useCallback(() => {
     stepsPushed.current = true;
@@ -484,6 +399,8 @@ export function AppShell({
     if (reference !== undefined) return;
     const vv = window.visualViewport;
     let frame = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastInset = 0;
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
@@ -496,6 +413,20 @@ export function AppShell({
           );
           if (shell) {
             shell.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            // The root carries the state too: sheets portal to the body, outside the shell.
+            const root = document.documentElement;
+            root.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            if (inset > 0) root.dataset.keyboard = "open";
+            else delete root.dataset.keyboard;
+            if (inset !== lastInset) {
+              lastInset = inset;
+              // The inset stopped changing (the keyboard's animation ended): fields scroll into view.
+              clearTimeout(settleTimer);
+              settleTimer = setTimeout(
+                () => window.dispatchEvent(new Event(KEYBOARD_INSET_SETTLED_EVENT)),
+                INSET_SETTLE_MS,
+              );
+            }
             if (inset > 0) shell.dataset.keyboard = "open";
             else delete shell.dataset.keyboard;
           }
@@ -516,6 +447,9 @@ export function AppShell({
     vv?.addEventListener("scroll", update);
     return () => {
       cancelAnimationFrame(frame);
+      clearTimeout(settleTimer);
+      document.documentElement.style.removeProperty("--cb-keyboard-inset");
+      delete document.documentElement.dataset.keyboard;
       document.removeEventListener("focusout", update);
       vv?.removeEventListener("resize", update);
       vv?.removeEventListener("scroll", update);
@@ -699,6 +633,8 @@ export function AppShell({
             data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
           />
         ) : null}
+        {/* The strip's account avatar opens the account sheet on its own (no drawer on the Duo). */}
+        {stripAccountSheet}
         {commands ? (
           <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
         ) : null}
@@ -717,44 +653,6 @@ function navigationApi(): NavigationApi | null {
   if (typeof window === "undefined") return null; // the server render: read during render now
   const nav = (window as { navigation?: NavigationApi }).navigation;
   return nav?.currentEntry ? nav : null;
-}
-
-const under = (pathname: string, href: string) =>
-  pathname === href || pathname.startsWith(`${href}/`);
-
-/** A label within the strip's bound (`navLabel`), cut by code point. */
-function navLabel(label: string): string {
-  const chars = Array.from(label);
-  return chars.length > NATIVE_NAV_LIMITS.label
-    ? chars.slice(0, NATIVE_NAV_LIMITS.label).join("")
-    : label;
-}
-
-/** A badge in the strip's shape: a count within `navCount`, `countMore` past it; none at 0. */
-function navBadge(badge: NavBadge | undefined): { count?: number; countMore?: boolean } {
-  const n = badge?.count ?? 0;
-  if (!(n > 0)) return {};
-  const count = Math.min(Math.floor(n), NATIVE_NAV_LIMITS.count);
-  const more = badge?.more === true || n > NATIVE_NAV_LIMITS.count;
-  return { count, ...(more ? { countMore: true } : {}) };
-}
-
-/** The section a route belongs to: chats for a chat surface and the conversations list. */
-function currentSection(
-  pathname: string | undefined,
-  surface: boolean,
-  drawer: DrawerNavData,
-): NativeSectionId | null {
-  if (surface) return "chats";
-  if (pathname === undefined) return null;
-  if (under(pathname, drawer.allConversations.href)) return "chats";
-  return drawer.sections.find((s) => under(pathname, s.href))?.id ?? null;
-}
-
-/** A section's root: the new conversation for chats, else the drawer's entry. */
-function sectionHref(id: NativeSectionId, drawer: DrawerNavData): string | undefined {
-  if (id === "chats") return drawer.newConversation.href;
-  return drawer.sections.find((s) => s.id === id)?.href;
 }
 
 /**

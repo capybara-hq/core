@@ -24,6 +24,7 @@ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ClassForms, useClassForm } from "../shell/class-forms";
 import { Avatar, type AvatarValue } from "./avatar";
 import { EmptyState, type EmptyStateProps } from "./empty-state";
+import { ListEnd, ListMoreButton, type ListMoreProps } from "./list-end";
 import { MarkImage } from "./object-mark";
 import { type PersonLike, PersonName } from "./person-name";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
@@ -210,19 +211,23 @@ function moveTo(key: string, at: number, count: number, cols: number): number | 
  * that card goes away it moves to the neighbour, and so does focus if it was inside the card. The
  * children are a flat list of keyed cards (fragments are opened). `loading` (true: six cards, or a count)
  * draws skeleton cards in the card's anatomy and marks the list busy; `empty` draws the EmptyState
- * instead of the grid. Loading wins over empty.
+ * instead of the grid. Loading wins over empty. A grid with more pages (`onLoadMore`, `hasMore`,
+ * `loadingMore`, `loadMoreError`; {@link ListMoreProps}) reads the next one as its end comes into
+ * view on phones (a skeleton row, a failure with Retry, in the grouped card) and draws Load more
+ * under the grid from 600 up.
  */
 export function CardGrid({
   label,
   loading,
   empty,
   children,
+  ...more
 }: {
   label: string;
   loading?: boolean | number;
   empty?: EmptyStateProps;
   children?: ReactNode;
-}) {
+} & ListMoreProps) {
   const t = useDesignT();
   const announces = useSkeletonAnnounces();
   const [stop, setStop] = useState<string | null>(null);
@@ -295,6 +300,7 @@ export function CardGrid({
         className="cb-card-grid"
         data-part="card-grid"
         aria-label={label}
+        aria-busy={more.loadingMore === true ? true : undefined}
         onKeyDown={onKeyDown}
       >
         {entries.map((entry) => (
@@ -315,7 +321,9 @@ export function CardGrid({
             <CardKey.Provider value={entry.key}>{entry.node}</CardKey.Provider>
           </SlotContext.Provider>
         ))}
+        <ListEnd more={more} skeleton={<SkeletonCard end />} />
       </ul>
+      <ListMoreButton more={more} />
       {form === "compact" || sheet !== null ? (
         // One sheet for the grid, beside the list: mounted while a card is chosen, so leaving
         // compact with the sheet up does not drop it.
@@ -332,14 +340,19 @@ export function CardGrid({
   );
 }
 
-/** The skeleton card: the loaded card's boxes, each text a bar slot (spec §6.29). */
-function SkeletonCard({ announce }: { announce?: string | undefined }) {
+/**
+ * The skeleton card: the loaded card's boxes, each text a bar slot (spec §6.29). `end`: the row a
+ * grid with more pages shows at its end while the next page loads (the end's status announces).
+ */
+function SkeletonCard({ announce, end }: { announce?: string | undefined; end?: boolean }) {
   return (
     <li
       className="cb-object-card"
       data-part="object-card"
       data-cap-part="card"
       data-skeleton="true"
+      data-end={end ? "skeleton" : undefined}
+      aria-hidden={end ? true : undefined}
     >
       <span className="cb-object-card-head" data-part="object-card-head">
         <span className="cb-object-card-avatar" data-part="object-card-avatar" aria-hidden="true">

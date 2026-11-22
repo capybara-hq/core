@@ -925,3 +925,18 @@
     transition: none;
   }
 }
+
+/* The recents' wrapper takes no box of its own: the list stays the sidebar's flex child. */
+.cb-sidebar-recents {
+  display: contents;
+}
+/* A native strip (interaction model §10.2, §10.5): its pill holds search, the new conversation
+   and the recent conversations as well as the sections, so the drawer, the rail and the sidebar
+   drop them (`data-nav-pill`) while it shows; the filler then keeps the account at the foot. */
+[data-native-nav] [data-nav-pill],
+.cb-sidebar-fill[data-native-fill] {
+  display: none;
+}
+[data-native-nav] .cb-sidebar-fill[data-native-fill] {
+  display: block;
+}

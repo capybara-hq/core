@@ -59,3 +59,13 @@
     transition: none;
   }
 }
+
+/* The Duo (interaction model §10.3, D10): while the native strip shows (`nav@1`, `data-native-nav`
+   on <html>) the list's primary is the strip pill's, so below 600 the FAB form is hidden entirely
+   and the list reserves no room for it (templates.css keys that on its absence). From 600 the head keeps its button (D14); without
+   `nav@1` the FAB rules of templates.css (§6.62) apply. */
+@media not all and (min-width: 600px) {
+  :root[data-native-nav] .cb-template[data-fab="true"] [data-head-primary="true"][data-form="fab"] {
+    display: none;
+  }
+}

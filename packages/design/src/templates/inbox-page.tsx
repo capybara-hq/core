@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateProps, SkeletonGroup, SkeletonText } from "../display/index";
+import { PullToRefresh } from "../display/pull-refresh";
 import { ListDetail, type ListDetailFact, ListDetailItem } from "../layout/list-detail";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
@@ -77,6 +78,11 @@ type InboxPageProps = {
   open?: boolean;
   /** The stack's back: the page closes the open item (sets `open` false). */
   onBack?: () => void;
+  /**
+   * Reads the list again: a pull down from the top in a native shell calls it (interaction spec
+   * §3, D4); absent or in a browser: no pull.
+   */
+  onRefresh?: () => Promise<unknown>;
   empty?: EmptyStateProps;
   /** The open item's content, after its facts. */
   children?: ReactNode;
@@ -106,6 +112,7 @@ export function InboxPage({
   actionRow,
   open = false,
   onBack,
+  onRefresh,
   empty,
   loading,
   children,
@@ -183,6 +190,8 @@ export function InboxPage({
     <div className="cb-template" data-template="InboxPage" data-width="content">
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
+      ) : onRefresh ? (
+        <PullToRefresh onRefresh={onRefresh}>{page}</PullToRefresh>
       ) : (
         page
       )}

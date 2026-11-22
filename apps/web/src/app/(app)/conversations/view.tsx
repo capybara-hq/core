@@ -129,6 +129,7 @@ function Conversations({ orgId }: { orgId: string }) {
         sections
         state={loading ? "loading" : "ready"}
         actions={actions}
+        onRefresh={() => read.refetch()}
         end={{
           // the previous search's rows stand in while a new one loads: no page past them
           more: pages.next !== null && !read.isPlaceholderData,

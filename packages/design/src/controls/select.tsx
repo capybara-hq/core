@@ -1,8 +1,12 @@
 import { type JSX, type KeyboardEvent, useId, useLayoutEffect, useRef, useState } from "react";
-import { ConvMenu, type ConvMenuEntry } from "../conversation/menu";
+import { ConvMenu, type ConvMenuEntry, MENU_FILTER_THRESHOLD } from "../conversation/menu";
 import { Avatar } from "../display/avatar";
 import { Icon } from "../icons/icon";
 import { useHaptics } from "../native";
+import { BottomSheet, SheetOptionList } from "../overlays/bottom-sheet";
+import { SheetGroup } from "../overlays/sheet-parts";
+import { useDesignT } from "../provider";
+import { useClassForm } from "../shell/class-forms";
 import { type Density, useDensity } from "./density";
 
 export type SelectOption = {
@@ -114,6 +118,39 @@ export function Select({
     setListName(label.id ? { labelledBy: label.id } : { label: label.textContent ?? "" });
   }, [ariaLabel, ariaLabelledBy]);
 
+  const t = useDesignT();
+  // The compact class (and only after hydration: `null` before it draws the desktop form) opens
+  // a picker sheet instead of the anchored list (interaction spec §2.5).
+  const compact = useClassForm() === "compact";
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  if (sheetOpen && (disabled || !compact)) setSheetOpen(false);
+  const closeSheet = () => {
+    setSheetOpen(false);
+    setQuery("");
+    triggerRef.current?.focus();
+  };
+  // The sheet's title: the field's label (by id, else its text), else the trigger's aria-label.
+  const sheetTitle = () => {
+    const by = ariaLabelledBy ? document.getElementById(ariaLabelledBy)?.textContent : undefined;
+    return (
+      by ??
+      ariaLabel ??
+      triggerRef.current?.labels?.[0]?.textContent ??
+      placeholder ??
+      chosen?.label ??
+      t("select.title")
+    );
+  };
+  const openSheet = () => {
+    if (disabled) return;
+    // focus first (a menu trigger takes none on press): the sheet returns it here on close
+    triggerRef.current?.focus();
+    setTitle(sheetTitle());
+    setSheetOpen(true);
+  };
+  const [title, setTitle] = useState("");
+
   const haptics = useHaptics();
   const pick = (v: string) => {
     if (value === undefined) setOwn(v);
@@ -131,7 +168,7 @@ export function Select({
       id={triggerId}
       role="combobox"
       aria-haspopup="listbox"
-      aria-expanded={referenceOpen === true || (!disabled && open)}
+      aria-expanded={referenceOpen === true || (!disabled && (compact ? sheetOpen : open))}
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       aria-describedby={describedBy}
@@ -147,13 +184,15 @@ export function Select({
       // a click on the Field's label reaches the button as a click without a pointer (detail 0):
       // it focuses the field, as a native select's label does (Radix opens on pointerdown)
       onClick={(e) => {
+        if (compact) return openSheet();
         if (e.detail === 0 && !open) triggerRef.current?.focus();
       }}
       onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => {
         // ↓, Enter and Space open it (Radix); ↑ too, as a native select
         if (e.key === "ArrowUp" && !open) {
           e.preventDefault();
-          setOpen(true);
+          if (compact) openSheet();
+          else setOpen(true);
         }
       }}
     >
@@ -207,9 +246,20 @@ export function Select({
     onSelect: () => pick(o.value),
   }));
 
+  const needle = query.trim().toLowerCase();
+  const sheetOptions = options
+    .filter((o) => !needle || o.label.toLowerCase().includes(needle))
+    .map((o) => ({
+      id: o.value,
+      label: o.label,
+      checked: o === chosen,
+      ...(o.disabled ? { disabled: true } : {}),
+    }));
+
   return (
     <div className="cb-select-root">
-      {/* always the same tree: toggling `disabled` (a save in flight) keeps the button mounted */}
+      {/* always the same tree (the class is `null` until hydration): the trigger never remounts;
+          on compact the menu stays closed and its open request opens the sheet */}
       <ConvMenu
         trigger={trigger}
         entries={entries}
@@ -217,10 +267,54 @@ export function Select({
         listbox
         {...(listName.labelledBy ? { labelledBy: listName.labelledBy } : {})}
         {...(listName.label ? { label: listName.label } : {})}
-        open={!disabled && open}
-        onOpenChange={(o) => setOpen(o && !disabled)}
+        open={!compact && !disabled && open}
+        onOpenChange={(o) => {
+          if (compact) {
+            if (o) openSheet();
+            return;
+          }
+          setOpen(o && !disabled);
+        }}
         {...(referenceOpen ? { inline: true } : {})}
       />
+      {compact ? (
+        <BottomSheet
+          open={sheetOpen && !disabled}
+          onOpenChange={(o) => (o ? setSheetOpen(true) : closeSheet())}
+          title={title}
+          part="select-sheet"
+        >
+          {options.length > MENU_FILTER_THRESHOLD ? (
+            <input
+              type="search"
+              className="cb-cmenu-filter cb-select-sheet-search"
+              data-part="select-sheet-search"
+              value={query}
+              placeholder={t("menu.filter")}
+              aria-label={t("menu.filter")}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          ) : null}
+          {sheetOptions.length === 0 ? (
+            <div className="cb-cmenu-empty" data-part="select-sheet-empty">
+              {t("menu.noMatch")}
+            </div>
+          ) : (
+            <SheetGroup>
+              <SheetOptionList
+                label={title}
+                options={sheetOptions}
+                onPick={(v) => {
+                  pick(v);
+                  closeSheet();
+                }}
+              />
+            </SheetGroup>
+          )}
+        </BottomSheet>
+      ) : null}
       {name !== undefined || required || form !== undefined ? (
         // the form's copy: submits the value, validates `required`; its options carry no text
         <select

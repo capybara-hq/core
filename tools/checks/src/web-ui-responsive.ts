@@ -20,6 +20,8 @@ export const SIZE_BRANCH_STALE_RULE = "web-ui-size-branch-stale";
 export const FILTERS_SCOPE_RULE = "web-ui-filters-scope";
 export const FILTERS_SCOPE_STALE_RULE = "web-ui-filters-scope-stale";
 export const TEMPLATE_ONLY_RULE = "web-ui-template-only-props";
+export const DIALOG_FOOTER_RULE = "web-ui-dialog-footer";
+export const DIALOG_FOOTER_STALE_RULE = "web-ui-dialog-footer-stale";
 
 // --- shared helpers --------------------------------------------------------------------------
 
@@ -97,6 +99,7 @@ const SIZE_NAMES = new Set([
   "useTouch",
   "useMobileSizes",
   "useClassForm",
+  "useNative",
   "ClassForms",
   "SIZE_CLASS_QUERIES",
   "TOUCH_QUERY",
@@ -563,4 +566,185 @@ export function templateOnlyPropsTreeFindings(webSrcDir: string): Finding[] {
     if (!isParseError(p)) out.push(...templateOnlyPropsFindings(p));
   }
   return out;
+}
+
+// --- web-ui-dialog-footer --------------------------------------------------------------------
+
+const FOOTER_SINGLE = new Set(["Button", "LinkButton"]);
+
+export const DIALOG_FOOTER_MESSAGE =
+  "a Dialog `footer` is a fragment or an array of buttons (or one Button): the compact sheet stacks and reverses its direct children, so a wrapper element such as <Stack> or <div> breaks the order and the full-width buttons";
+
+export interface FooterPending {
+  /** Under apps/web/src, `/`-separated. */
+  path: string;
+  /** The task that drops the wrapper. */
+  fix: string;
+}
+
+/** Pages whose Dialog footer is still wrapped; a ratchet, new pages are never added. */
+export const FOOTER_PENDING: readonly FooterPending[] = [];
+
+/** The first wrapper element a footer value can draw, through conditionals and `&&`. */
+function footerWrapper(v: Node | null | undefined): Node | undefined {
+  if (!v) return undefined;
+  switch (v.type) {
+    case "ConditionalExpression":
+      return footerWrapper(v.consequent as Node) ?? footerWrapper(v.alternate as Node);
+    case "LogicalExpression":
+      return footerWrapper(v.right as Node);
+    case "ParenthesizedExpression":
+      return footerWrapper(v.expression as Node);
+    case "JSXElement": {
+      const name = (v.openingElement as Node).name as Node;
+      if (name.type === "JSXMemberExpression") {
+        // only React.Fragment is a fragment; UI.Stack and the like are wrappers
+        const obj = name.object as Node;
+        const prop = name.property as Node;
+        const fragment =
+          obj.type === "JSXIdentifier" && obj.name === "React" && prop.name === "Fragment";
+        return fragment ? undefined : v;
+      }
+      const id = name.name as string;
+      return id === "Fragment" || FOOTER_SINGLE.has(id) ? undefined : v;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** `web-ui-dialog-footer` over one parsed file. */
+export function dialogFooterFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  walk(p.program, (n) => {
+    if (n.type !== "JSXOpeningElement" || jsxName(n) !== "Dialog") return;
+    const a = attrNamed(n, "footer");
+    const v = a?.value as Node | null | undefined;
+    if (v?.type !== "JSXExpressionContainer") return;
+    const bad = footerWrapper(v.expression as Node);
+    if (bad)
+      out.push({
+        file: p.file,
+        line: p.lineOf(bad.start),
+        rule: DIALOG_FOOTER_RULE,
+        message: DIALOG_FOOTER_MESSAGE,
+      });
+  });
+  return out;
+}
+
+export function dialogFooterTreeFindings(
+  webSrcDir: string,
+  pending: readonly FooterPending[] = FOOTER_PENDING,
+): Finding[] {
+  const raw: Finding[] = [];
+  for (const { file, isTest } of listSourceFiles(webSrcDir)) {
+    if (isTest) continue;
+    const p = parseFile(file);
+    if (!isParseError(p)) raw.push(...dialogFooterFindings(p));
+  }
+  return applyPathRatchet(
+    raw,
+    pending,
+    webSrcDir,
+    DIALOG_FOOTER_STALE_RULE,
+    "wrapped Dialog footer",
+    "FOOTER_PENDING in tools/checks/src/web-ui-responsive.ts",
+  );
+}
+
+// --- web-ui-load-more ------------------------------------------------------------------------
+
+export const LOAD_MORE_RULE = "web-ui-load-more";
+export const LOAD_MORE_STALE_RULE = "web-ui-load-more-stale";
+
+export const LOAD_MORE_MESSAGE =
+  "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
+
+export interface LoadMorePending {
+  /** Under apps/web/src, `/`-separated. */
+  path: string;
+  /** The task that moves the page onto the list's `onLoadMore`. */
+  fix: string;
+}
+
+const LOAD_MORE_FIX = "pass onLoadMore / hasMore / loadingMore / loadMoreError to the list";
+
+/** Pages that still draw their own Load more button; a ratchet, new pages are never added. */
+export const LOAD_MORE_PENDING: readonly LoadMorePending[] = [
+  { path: "app/(app)/admin/accounts/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/agents/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/audit/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/connectors/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/overview/AttentionSection.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/evals/runs/[runId]/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/settings/audit/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/trajectories/view.tsx", fix: LOAD_MORE_FIX },
+];
+
+const LOAD_MORE_BUTTONS = new Set(["Button", "LinkButton"]);
+/** The apps/web wrapper that draws a Load more row (components/cursor-pages.tsx). */
+const LOAD_MORE_WRAPPER = "LoadMore";
+const LOAD_MORE_TEXT = /加载更多|\bload more\b/i;
+
+/** A message key whose last segment is `loadMore` (`t("loadMore")`, `t("run.loadMore")`). */
+const isLoadMoreKey = (v: unknown) => typeof v === "string" && v.split(".").at(-1) === "loadMore";
+
+/** Does a button's content say Load more: a `loadMore` message key or the words themselves? */
+function saysLoadMore(children: Node[]): boolean {
+  let found = false;
+  for (const child of children) {
+    walk(child, (n) => {
+      if (found) return;
+      if (n.type === "JSXText" && LOAD_MORE_TEXT.test(n.value as string)) found = true;
+      else if (n.type === "Literal" && typeof n.value === "string") {
+        if (LOAD_MORE_TEXT.test(n.value) || isLoadMoreKey(n.value)) found = true;
+      }
+    });
+  }
+  return found;
+}
+
+/**
+ * `web-ui-load-more` over one parsed file: a `Button` / `LinkButton` whose content is a
+ * `loadMore` message or the words 加载更多 / Load more, and the `LoadMore` wrapper, fail
+ * (english-comments-ok: the zh words the rule matches).
+ */
+export function loadMoreFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  walk(p.program, (n) => {
+    if (n.type !== "JSXElement") return;
+    const name = jsxName(n.openingElement as Node);
+    const bad =
+      name === LOAD_MORE_WRAPPER ||
+      (name !== undefined && LOAD_MORE_BUTTONS.has(name) && saysLoadMore(n.children as Node[]));
+    if (bad)
+      out.push({
+        file: p.file,
+        line: p.lineOf(n.start),
+        rule: LOAD_MORE_RULE,
+        message: LOAD_MORE_MESSAGE,
+      });
+  });
+  return out;
+}
+
+export function loadMoreTreeFindings(
+  webSrcDir: string,
+  pending: readonly LoadMorePending[] = LOAD_MORE_PENDING,
+): Finding[] {
+  const raw: Finding[] = [];
+  for (const { file, isTest } of listSourceFiles(webSrcDir)) {
+    if (isTest) continue;
+    const p = parseFile(file);
+    if (!isParseError(p)) raw.push(...loadMoreFindings(p));
+  }
+  return applyPathRatchet(
+    raw,
+    pending,
+    webSrcDir,
+    LOAD_MORE_STALE_RULE,
+    "Load more button",
+    "LOAD_MORE_PENDING in tools/checks/src/web-ui-responsive.ts",
+  );
 }

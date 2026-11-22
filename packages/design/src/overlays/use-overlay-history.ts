@@ -25,6 +25,14 @@ let afterPopTimer: ReturnType<typeof setTimeout> | null = null;
 /** How long a pick waits for its pop's popstate before it runs anyway. */
 export const POP_SETTLE_LIMIT_MS = 500;
 let listening = false;
+/**
+ * Pushes waiting for this module's own traversal to land. A browser runs `history.back()` later, as
+ * a traversal of its own: a push made meanwhile (a confirmation opened from an action sheet's pick
+ * as the sheet's entry is popped) would be the entry that traversal pops.
+ */
+let waiting: (() => void)[] = [];
+/** The bound on that wait (as {@link POP_SETTLE_LIMIT_MS}): its popstate may never come. */
+let waitTimer: ReturnType<typeof setTimeout> | null = null;
 
 const hrefNow = () => `${window.location.pathname}${window.location.search}`;
 
@@ -39,6 +47,7 @@ function onPopState() {
   if (selfPops > 0) {
     selfPops--;
     if (selfPops === 0 && afterPop !== null) runAfterPop();
+    if (selfPops === 0) runWaiting();
     return;
   }
   // A back that is not ours leaves the top overlay's entry: that overlay closes.
@@ -55,6 +64,28 @@ function runAfterPop() {
   run?.();
 }
 
+/** Defers `push` until this module's traversals have landed (bounded). */
+function whenSettled(push: () => void) {
+  waiting.push(push);
+  waitTimer ??= setTimeout(() => {
+    waitTimer = null;
+    // The pops never landed: they are no longer counted as ours, or they would swallow the next
+    // real back (as the bound of popOverlaysThen does); a pick still waiting runs now.
+    selfPops = 0;
+    if (afterPop !== null) runAfterPop();
+    runWaiting();
+  }, POP_SETTLE_LIMIT_MS);
+}
+
+/** Runs the deferred pushes, in order, once nothing of ours is in flight (or the bound ran out). */
+function runWaiting() {
+  if (waitTimer !== null) clearTimeout(waitTimer);
+  waitTimer = null;
+  const list = waiting;
+  waiting = [];
+  for (const push of list) push();
+}
+
 function listen() {
   if (listening) return;
   listening = true;
@@ -69,7 +100,10 @@ function flushReleased() {
   // would travel the wrong way.
   const here = hrefNow();
   const count = items.filter((i) => i.href === here).length;
-  if (count === 0) return;
+  if (count === 0) {
+    if (selfPops === 0) runWaiting();
+    return;
+  }
   selfPops++;
   if (count === 1) window.history.back();
   else window.history.go(-count);
@@ -98,6 +132,7 @@ export function popOverlaysThen(then: () => void): boolean {
     if (afterPop !== then) return;
     selfPops = Math.max(0, selfPops - 1);
     runAfterPop();
+    if (selfPops === 0) runWaiting();
   }, POP_SETTLE_LIMIT_MS);
   const n = count + pending;
   if (n === 1) window.history.back();
@@ -124,14 +159,25 @@ export function useOverlayHistory(open: boolean, close: () => void): { leaveEntr
     if (!open || !active()) return;
     leave.current = false;
     listen();
-    window.history.pushState(
-      { ...(window.history.state as object | null), [OVERLAY_HISTORY_MARKER]: id },
-      "",
-    );
-    const href = hrefNow();
     const entry = { id, close: () => latest.current() };
-    entries.push(entry);
+    let href: string | null = null;
+    const push = () => {
+      window.history.pushState(
+        { ...(window.history.state as object | null), [OVERLAY_HISTORY_MARKER]: id },
+        "",
+      );
+      href = hrefNow();
+      entries.push(entry);
+    };
+    // A pop of ours still in flight (an overlay closed just before this one opened) lands first.
+    if (selfPops > 0 || releasing.length > 0) whenSettled(push);
+    else push();
     return () => {
+      if (href === null) {
+        // closed before its entry was pushed: nothing to pop
+        waiting = waiting.filter((p) => p !== push);
+        return;
+      }
       const at = entries.indexOf(entry);
       if (at < 0) return; // a back already took it
       entries.splice(at, 1);

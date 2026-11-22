@@ -5,6 +5,7 @@ import {
   CardGrid,
   EmptyState,
   type EmptyStateProps,
+  type ListMoreProps,
   ObjectList,
   type ScopeChipOption,
   ScopeChips,
@@ -20,8 +21,10 @@ import {
   type ActionRowProps,
   Body,
   ClassForms,
+  type HeaderAction,
   type PageHeaderProps,
   useClassForm,
+  useRegisterShellPage,
 } from "../shell/index";
 import { HeadSearch } from "../shell/page-header";
 import { type Column, DataTable } from "../table/index";
@@ -139,6 +142,7 @@ export function ListPage({
   filters,
   filterCount,
   scope,
+  more,
   children,
 }: {
   header: PageHeaderProps;
@@ -160,6 +164,11 @@ export function ListPage({
   filterCount?: number;
   /** The view choice (level 2): chips on compact, a Segmented above the list from 600. Kept while loading. */
   scope?: ListScope;
+  /**
+   * Reads the next page (`objects` and `cards`): passed to the list, which reads it as its end
+   * comes into view below 600 and shows Load more from 600 (see `ListMoreProps`).
+   */
+  more?: ListMoreProps;
   children?: ReactNode;
 }) {
   assertScope(scope, filters);
@@ -196,6 +205,29 @@ export function ListPage({
   // Below 600 the head's primary is restyled as the floating action button (responsive system
   // spec §2.5, §5.4): CSS only, keyed on `data-fab`, so nothing differs between renders.
   const fab = (onePrimary.actions ?? []).some((a) => "variant" in a && a.variant === "primary");
+  // The Duo (interaction model §10.3, D10, D14): the head's primary is also the strip pill's, which
+  // the shell sends on compact only. It is registered whatever the class (server and first paint
+  // agree); with `nav@1` the compact stylesheet hides the FAB form. An empty state carrying the
+  // primary leaves it out above, so the pill keeps the new conversation (one primary per screen).
+  const primaryAction = (onePrimary.actions ?? []).find(
+    (a): a is Extract<HeaderAction, { variant: string }> =>
+      "variant" in a && a.variant === "primary",
+  );
+  useRegisterShellPage({
+    ...(primaryAction && !primaryAction.disabled && !primaryAction.loading
+      ? {
+          primary: {
+            id: "list-primary",
+            label: primaryAction.label,
+            icon: primaryAction.icon === "square-pen" ? "square-pen" : "plus",
+            // a link is followed by the shell's own navigation (the app's router)
+            ...(primaryAction.href !== undefined
+              ? { href: primaryAction.href }
+              : { run: () => primaryAction.onSelect?.() }),
+          },
+        }
+      : {}),
+  });
   const head = callout ? { ...onePrimary, notice: <Callout {...callout} /> } : onePrimary;
 
   // The compact bar: the search, the head's tabs and the scope chips (spec §2.6).
@@ -313,9 +345,13 @@ export function ListPage({
   ) : empty ? (
     <EmptyState {...empty} />
   ) : variant === "objects" ? (
-    <ObjectList label={listLabel ?? header.title}>{children}</ObjectList>
+    <ObjectList label={listLabel ?? header.title} {...more}>
+      {children}
+    </ObjectList>
   ) : variant === "cards" ? (
-    <CardGrid label={listLabel ?? header.title}>{children}</CardGrid>
+    <CardGrid label={listLabel ?? header.title} {...more}>
+      {children}
+    </CardGrid>
   ) : (
     children
   );

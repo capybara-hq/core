@@ -22,6 +22,7 @@ export {
   type NativeHandlers,
   type NativeHapticKind,
   type NativeNavHandle,
+  type NativeNavState,
   type NativeSectionId,
   useHaptics,
   useNative,

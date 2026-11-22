@@ -56,6 +56,7 @@ export {
 } from "./shell-environment";
 export {
   type ShellPage,
+  type ShellPrimary,
   useRegisterScrolledTitle,
   useRegisterShellPage,
 } from "./shell-page";

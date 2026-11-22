@@ -1,5 +1,14 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  Children,
+  Fragment,
+  isValidElement,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { FIELDS } from "../controls/a11y";
 import { Button, IconButton } from "../controls/index";
 import { Input } from "../controls/inputs";
@@ -7,6 +16,8 @@ import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
+import { ClassForms } from "../shell/class-forms";
+import { BottomSheet } from "./bottom-sheet";
 import { useFocusReturn } from "./focus-return";
 
 export type DialogProps = {
@@ -17,8 +28,9 @@ export type DialogProps = {
   size?: 480 | 640 | 760 | 1060;
   footer: ReactNode;
   /**
-   * Where focus starts: by default the first field of the body when the dialog asks for input,
-   * else the primary action; `cancel` (a dangerous dialog) always starts on Cancel.
+   * Where focus starts: from 600 up by default the first field of the body when the dialog asks
+   * for input, else the primary action; below 600 the sheet's close (§6.59); `cancel` (a dangerous
+   * dialog) always starts on Cancel.
    */
   initialFocus?: "primary" | "cancel" | undefined;
   /**
@@ -26,12 +38,66 @@ export type DialogProps = {
    * title stay ordinary, only its destructive button is red (spec §6.7).
    */
   danger?: boolean;
-  /** 描述正文的元素 id，作为对话框的 aria-describedby。 */
+  /** The id of the element that describes the dialog (its `aria-describedby`). */
   describedBy?: string | undefined;
+  /**
+   * The body. The dialog is drawn anew when the window crosses 600 while it is open (a rotation:
+   * the sheet becomes the centred dialog), so the body and the footer keep no state of their own
+   * (an uncontrolled field's text would be lost): it lives with the caller (responsive spec §5.3).
+   */
   children?: ReactNode;
 };
 
-export function Dialog({
+/**
+ * The footer's Cancel, picked by its place among all the footer's controls (first as given, last
+ * when drawn reversed), never among the enabled ones only: a disabled Cancel gives `undefined`
+ * (focus falls back to the close), never the destructive button beside it.
+ */
+function cancelButton(footer: HTMLElement | null, reversed: boolean): HTMLElement | undefined {
+  const all = Array.from(footer?.querySelectorAll<HTMLElement>("button, a[href]") ?? []);
+  const cancel = reversed ? all[all.length - 1] : all[0];
+  return cancel === undefined || cancel.matches(":disabled") ? undefined : cancel;
+}
+
+/**
+ * Where a dialog's focus starts (spec §6.7): `cancel` on the footer's first button; otherwise the
+ * body's first field when it asks for input, else the primary (or destructive) action, else the
+ * last button.
+ */
+function focusTarget(
+  body: HTMLElement | null,
+  footer: HTMLElement | null,
+  initialFocus: DialogProps["initialFocus"],
+): HTMLElement | undefined {
+  if (initialFocus === "cancel") return cancelButton(footer, false);
+  const buttons = Array.from(
+    footer?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ?? [],
+  );
+  // A dialog that asks for input starts on its first field (spec §6.7)
+  return (
+    body?.querySelector<HTMLElement>(FIELDS) ??
+    buttons.find((b) =>
+      ["primary", "danger-solid"].includes(b.getAttribute("data-variant") ?? ""),
+    ) ??
+    buttons[buttons.length - 1]
+  );
+}
+
+/**
+ * A modal dialog: centred from 600 up; below 600 the same dialog is a bottom sheet (interaction
+ * model spec §2.2, D1; design spec §6.59): the sheet's handle and head (the centred title, the
+ * round close), the body, then the footer's buttons full width, the primary on top. The two forms
+ * differ in interaction (a drag, the system back), so each class draws its own (`ClassForms`).
+ *
+ * Both forms portal their content out of ClassForms' wrappers, so the `inert` it sets on the hidden
+ * copy before the prune does not reach it. Accepted: a portal draws nothing until it has mounted,
+ * after hydration, by which time only the matching copy is left (one dialog, one focus trap).
+ */
+export function Dialog(props: DialogProps) {
+  return <ClassForms compact={<DialogSheet {...props} />} wide={<CentredDialog {...props} />} />;
+}
+
+function CentredDialog({
   open,
   onOpenChange,
   title,
@@ -59,20 +125,7 @@ export function Dialog({
           onCloseAutoFocus={focusReturn.restore}
           onOpenAutoFocus={(e) => {
             focusReturn.capture();
-            const buttons = Array.from(
-              footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ??
-                [],
-            );
-            // A dialog that asks for input starts on its first field (spec §6.7)
-            const field = bodyRef.current?.querySelector<HTMLElement>(FIELDS) ?? undefined;
-            const target =
-              initialFocus === "cancel"
-                ? buttons[0]
-                : (field ??
-                  buttons.find((b) =>
-                    ["primary", "danger-solid"].includes(b.getAttribute("data-variant") ?? ""),
-                  ) ??
-                  buttons[buttons.length - 1]);
+            const target = focusTarget(bodyRef.current, footerRef.current, initialFocus);
             if (target) {
               e.preventDefault();
               target.focus();
@@ -100,6 +153,66 @@ export function Dialog({
         </RD.Content>
       </RD.Portal>
     </RD.Root>
+  );
+}
+
+/**
+ * A footer's items drawn last first (a fragment's or an array's children), so the compact stack
+ * puts the primary on top with the tab order matching; `null` when the footer is one element.
+ */
+function reversedItems(footer: ReactNode): ReactNode[] | null {
+  if (Array.isArray(footer)) return Children.toArray(footer).reverse();
+  if (isValidElement<{ children?: ReactNode }>(footer) && footer.type === Fragment) {
+    return Children.toArray(footer.props.children).reverse();
+  }
+  return null;
+}
+
+/**
+ * The compact form: a bottom sheet (§6.59) with the dialog's body in its scrolling body and the
+ * footer's buttons, primary first, in its footer under it. Focus starts on the sheet's close
+ * (§6.59: no keyboard jumps up for a field), on Cancel for a dangerous dialog, quietly after a
+ * pointer (§2.5), and returns to the opener; the sheet holds one history entry on a compact touch
+ * window, so the system back closes it. The size does not apply: a sheet spans the window.
+ */
+function DialogSheet({
+  open,
+  onOpenChange,
+  title,
+  footer,
+  initialFocus = "primary",
+  danger,
+  describedBy,
+  children,
+}: DialogProps) {
+  const footerRef = useRef<HTMLDivElement>(null);
+  const reversed = reversedItems(footer);
+  return (
+    <BottomSheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title={title}
+      part="dialog-sheet"
+      describedBy={describedBy}
+      initialFocus={() => {
+        if (initialFocus !== "cancel") return undefined;
+        // Cancel comes first in the footer as given, so last once it is drawn reversed
+        return cancelButton(footerRef.current, reversed !== null);
+      }}
+      footer={
+        <div className="cb-dialog-sheet-foot" ref={footerRef}>
+          {reversed ?? footer}
+        </div>
+      }
+    >
+      <div
+        className="cb-dialog-sheet"
+        data-cap-part="dialog"
+        data-danger={danger ? "true" : undefined}
+      >
+        <BoxScope kind="dialog">{children}</BoxScope>
+      </div>
+    </BottomSheet>
   );
 }
 

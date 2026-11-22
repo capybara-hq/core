@@ -241,8 +241,10 @@ a read-only 管理 group on a phone, because management is not offered on touch 
 admin navigation of 2026-11-20 goes with it.
 
 While the native strip shows (the mobile app on the iPhone Duo, mobile app spec §6.1), the drawer
-drops its section entries (收件箱, 智能体, 定时任务) and the shell draws no menu button of its own:
-the strip's menu button opens the drawer.
+drops its section entries (收件箱, 智能体, 定时任务) and the shell draws no menu button of its own.
+The strip has no menu button either (amended 2026-11-22, interaction model D12): the strip's pill
+is the navigation, the recents are reached through 对话 (the conversations page) and 「技能、连接器、
+设备…」 through the account sheet.
 
 ### 4.3 Medium: the rail (decided)
 
@@ -625,9 +627,9 @@ The design:
   the strip: the outer display is the phone layout (the menu button and the drawer, §4.1), the
   inner display and a tablet the rail or the sidebar with their section entries.
 - **In the mobile app on the iPhone Duo** (decided 2026-11-21) the sections are native: a vertical
-  system tab bar in the strip on both displays, with a native menu button that asks the web to
-  open its drawer on the outer display; the web hides its own section entries while the strip
-  shows (`nav@1`, mobile app spec §6.1). On ordinary phones and on Android the app has no strip
+  system tab bar in the strip on both displays (amended 2026-11-22, interaction model D12: no
+  native menu button; the account avatar and the pill's primary action join the strip); the web
+  hides its own section entries while the strip shows (`nav@1`, mobile app spec §6.1). On ordinary phones and on Android the app has no strip
   and the web keeps its drawer or sidebar.
 - Safe areas on the outer display come from `env(safe-area-inset-*)` whatever Apple decides
   (§7.5); nothing assumes content behind the side controls.
@@ -722,7 +724,7 @@ declare global {
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
   | `signIn@1` | Desktop spec (§6.5 there) | `start()`: sign in through the system browser (`/apps/authorize`, PKCE, back through the app's `capybara://auth/callback` scheme; `features.appSignIn` in `/api/v1/meta`). Offered by the desktop shell and by the later mobile app shell, which reuses the same flow (an `ASWebAuthenticationSession` / Custom Tabs style browser session returning through its scheme) |
   | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background, tokens?, singleScheme? })`. `tokens` (2026-11-20, desktop spec §6.10) is `{ bg, panel, ink, muted, line, accent, onAccent }`, the computed `--cb-*` colors, so a shell's own local pages follow the platform's UI theme; `singleScheme: true` says the UI theme has one scheme (no light / dark toggle anywhere). Both optional and additive: a shell accepts a call with or without them, and validates each token like `background`. `ready()` once per document after the first paint (optional; mobile app spec §5.2) |
-  | `nav@1` | Mobile app spec (§5.2 there; decided 2026-11-21) | The native strip's sections on the iPhone Duo in the app: `set({ items, current, menu })`, `onSelect`, `onMenu`; offered exactly while the window has a strip, so its presence is the strip's visibility |
+  | `nav@1` | Mobile app spec (§5.2 there; decided 2026-11-21) | The native strip on the iPhone Duo in the app: `set({ items, current, action, account? })`, `onSelect`, `onAction`, `onAccount`, `side` (minor version 2026-11-22, no menu button, D12); offered exactly while the window has a strip, so its presence is the strip's visibility |
   | `profiles@1` | Mobile app spec (§5.2 there; designer's call 2026-11-21) | `show()`: the native profile switcher (the app's deployments), opened from the account sheet; the page learns nothing about other profiles |
   | `haptics@1` | Mobile app spec (§5.2 there) | `impact(kind)`: `selection`, `light`, `success` or `warning` |
   | `share@1` | Mobile app spec (§5.2 there) | `share({ title?, text?, url? })`: the system share sheet |

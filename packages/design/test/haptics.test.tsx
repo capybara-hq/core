@@ -1,7 +1,7 @@
 // Haptics (mobile app spec §6.4): sending a message `light`, an approval granted `success`, a
 // destructive confirmation `warning`, a selection change `selection`. Without a handler (the
 // browser) nothing happens and nothing throws.
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -15,6 +15,7 @@ import {
   Segmented,
   Select,
 } from "../src/index";
+import { LONG_PRESS_MS, useLongPress } from "../src/overlays/long-press";
 
 afterEach(cleanup);
 
@@ -25,6 +26,11 @@ const wrap = (ui: React.ReactElement, native?: NativeHandlers) =>
       {ui}
     </DesignProvider>,
   );
+
+function Pressable({ onLongPress }: { onLongPress: () => void }) {
+  const handlers = useLongPress(onLongPress);
+  return <div data-testid="row" {...handlers} />;
+}
 
 const composer = (onClick: () => void): ComposerBoxProps => ({
   value: "你好",
@@ -155,5 +161,58 @@ describe("haptics", () => {
     wrap(<ComposerBox {...composer(onClick)} />, { haptics });
     await userEvent.setup().click(screen.getByRole("button", { name: "发送" }));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  describe("long press opens a sheet: light", () => {
+    afterEach(() => vi.useRealTimers());
+    const touch = { pointerType: "touch", clientX: 5, clientY: 5 };
+
+    it("the touch timer fires light once; the contextmenu that follows does not repeat it", () => {
+      vi.useFakeTimers();
+      const haptics = vi.fn();
+      const onLongPress = vi.fn();
+      wrap(<Pressable onLongPress={onLongPress} />, { haptics });
+      const row = screen.getByTestId("row");
+      fireEvent.pointerDown(row, touch);
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+      });
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+      expect(haptics).toHaveBeenCalledTimes(1);
+      expect(haptics).toHaveBeenCalledWith("light");
+      fireEvent.contextMenu(row);
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+      expect(haptics).toHaveBeenCalledTimes(1);
+    });
+
+    it("a contextmenu before the timer (Android) fires light once", () => {
+      vi.useFakeTimers();
+      const haptics = vi.fn();
+      wrap(<Pressable onLongPress={vi.fn()} />, { haptics });
+      const row = screen.getByTestId("row");
+      fireEvent.pointerDown(row, touch);
+      fireEvent.contextMenu(row);
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+      });
+      expect(haptics).toHaveBeenCalledTimes(1);
+      expect(haptics).toHaveBeenCalledWith("light");
+    });
+
+    it("a mouse right click and a short touch give no haptic", () => {
+      vi.useFakeTimers();
+      const haptics = vi.fn();
+      const onLongPress = vi.fn();
+      wrap(<Pressable onLongPress={onLongPress} />, { haptics });
+      const row = screen.getByTestId("row");
+      fireEvent.contextMenu(row);
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+      fireEvent.pointerDown(row, touch);
+      fireEvent.pointerUp(row);
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+      });
+      expect(haptics).not.toHaveBeenCalled();
+    });
   });
 });
