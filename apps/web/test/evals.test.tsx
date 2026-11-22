@@ -1309,7 +1309,8 @@ describe("eval tables at 390", () => {
     await renderRouteWithCache("/evals/s1", lastStubRoutes(), { locale: "en" });
     const table = await vi.waitFor(compact);
     expect(within(table).getByText("Delete the stale item")).toBeTruthy();
-    expect(within(table).getByText(/v2/)).toBeTruthy();
+    const subtitle = table.querySelector('[data-part="compact-subtitle"]') as HTMLElement;
+    expect(subtitle.textContent).toMatch(/v2/);
     fireEvent.contextMenu(within(table).getByText("Delete the stale item"));
     expect(screen.getByRole("button", { name: E.set.removeCase })).toBeTruthy();
   });
@@ -1351,8 +1352,74 @@ describe("eval tables at 390", () => {
     expect(within(table).getByText(E.run.resultStatus.done)).toBeTruthy();
     expect(within(table).queryByText(E.run.verdict.fail)).toBeNull();
     // the page draws no Load more of its own: the list's end reads the next page
-    expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     await vi.waitFor(() => expect(calls.some((c) => c.url.includes("after=res1"))).toBe(true));
     expect(await within(compact()).findByText("Summarize the doc")).toBeTruthy();
+  });
+  it("/evals/[setId]: a run's date leads, its mode is the subtitle, its status trails", async () => {
+    stubWindowWidth(390);
+    resetNavigation("/evals/s1");
+    stubApi({
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
+      [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: AGENT }),
+      [`GET ${SETS}/s1/runs`]: () => json(200, { runs: [evalRun()] }),
+    });
+    await renderRouteWithCache("/evals/s1", lastStubRoutes(), { locale: "en" });
+    await vi.waitFor(compact);
+    await userEvent.setup().click(screen.getByRole("tab", { name: E.set.tabs.runs }));
+    const table = await vi.waitFor(() => {
+      const el = compact();
+      expect(el.querySelector('[data-part="compact-trailing"]')).not.toBeNull();
+      return el;
+    });
+    const part = (name: string) =>
+      table.querySelector(`[data-part="compact-${name}"]`) as HTMLElement;
+    expect(part("title").textContent).toContain(formatDateTime(T, "full", "UTC").slice(0, 4));
+    expect(part("subtitle").textContent).toContain(E.mode.step);
+    expect(part("trailing").textContent).toContain(E.runStatus.completed);
+  });
+
+  it("/evals/runs/[runId]: a failed next page shows the error with Retry; Retry reads it again", async () => {
+    stubWindowWidth(390);
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(private readonly cb: IntersectionObserverCallback) {}
+        observe(target: Element) {
+          this.cb(
+            [{ target, isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+        }
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+    resetNavigation("/evals/runs/er1");
+    const RUN = `${ORG}/eval-runs/er1`;
+    let attempts = 0;
+    stubApi({
+      [`GET ${RUN}`]: () => json(200, { run: evalRun() }),
+      [`GET ${RUN}/results`]: (c: Call) => {
+        if (!c.url.includes("after=")) {
+          return json(200, { results: [light(result())], next: "res1", asOf: T });
+        }
+        attempts += 1;
+        return attempts === 1
+          ? json(403, { error: { code: "forbidden", message: "no" } })
+          : json(200, {
+              results: [light(result({ id: "res2", caseId: "k2" }))],
+              next: null,
+              asOf: T,
+            });
+      },
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
+    });
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes(), { locale: "en" });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(within(compact()).queryByText("Summarize the doc")).toBeNull();
+    await userEvent.setup().click(retry);
+    expect(await within(compact()).findByText("Summarize the doc")).toBeTruthy();
+    expect(attempts).toBe(2);
   });
 });

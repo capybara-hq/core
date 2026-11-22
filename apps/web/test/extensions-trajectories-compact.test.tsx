@@ -2,9 +2,10 @@
 // subtitle, trailing), the extension tabs stay one scrolling row, the trajectory filters move into
 // the Filter sheet and later pages are read as the list's end comes into view (spec §4, §6.1).
 import { cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { json, lastStubRoutes, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { stubWindowWidth } from "./support/width";
@@ -68,8 +69,10 @@ const EXT = {
 describe("/extensions at 390", () => {
   it("grouped rows: name title, capabilities subtitle, the enable switch trailing", async () => {
     resetNavigation("/extensions");
-    stubApi({
+    const browser = stubApi({
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXT] }),
+      [`PUT ${O}/extensions/fancy-ai`]: (c) =>
+        json(200, { extension: { ...EXT, ...(bodyOf(c) as object) } }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [] }),
       [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
       [`GET ${O}/extension-points`]: () => json(200, { points: [] }),
@@ -82,8 +85,16 @@ describe("/extensions at 390", () => {
     const trailing = table.querySelector('[data-part="compact-trailing"]') as HTMLElement;
     const toggle = within(trailing).getByRole("switch", { name: /Fancy AI/ });
     expect(toggle).toBeTruthy();
-    // the tabs are still one row (D4)
-    expect(screen.getByRole("tablist")).toBeTruthy();
+    // the tabs are still one row (D4): every tab is in the tablist, the first with its count
+    const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
+    expect(tabs.length).toBeGreaterThan(1);
+    expect(tabs[0]?.textContent).toMatch(/1/);
+    // tapping the switch toggles the extension and does not open the detail (the row tap)
+    await userEvent.setup().click(toggle);
+    await vi.waitFor(() =>
+      expect(bodyOf(browser.find((c) => c.method === "PUT"))).toEqual({ enabled: false }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
@@ -118,8 +129,25 @@ describe("/trajectories at 390", () => {
     expect(within(trailing).getByText(en.trajectories.status.completed)).toBeTruthy();
     // no inline filters, no hand-drawn Load more button
     expect(screen.queryByRole("combobox", { name: en.trajectories.filters.agent })).toBeNull();
-    expect(screen.queryByRole("button", { name: en.trajectories.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     expect(await screen.findByText("Third")).toBeTruthy();
     expect(browser.map((c) => c.url)).toEqual([`${O}/trajectories?limit=50&before=c1`]);
+  });
+  it("the Filter button carries the count and the sheet holds both selects", async () => {
+    resetNavigation("/trajectories");
+    stubApi({});
+    await renderRouteWithCache("/trajectories?agentId=ag1&status=failed", {
+      [`GET ${O}/agents`]: () => json(200, { agents: [AGENT] }),
+      [`GET ${O}/trajectories`]: () => json(200, { items: [ITEM("c1", "Clean up")], next: null }),
+    });
+    await vi.waitFor(compact);
+    expect(screen.queryByRole("combobox")).toBeNull();
+    const button = screen.getByRole("button", { name: /^Filters/ });
+    expect(button.querySelector('[data-part="filter-count"]')?.textContent).toContain("2");
+    await userEvent.setup().click(button);
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText(en.trajectories.filters.agent)).toBeTruthy();
+    expect(within(sheet).getByText(en.trajectories.filters.status)).toBeTruthy();
+    expect(within(sheet).getAllByRole("combobox")).toHaveLength(2);
   });
 });

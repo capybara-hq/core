@@ -510,7 +510,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(calls.filter((c) => c.url.includes("/results")).map((c) => c.url)).toEqual([
       `${O}/eval-runs/er1/results?view=light&limit=200`,
     ]);
-    expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -558,13 +558,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
         json(200, { results: [ROW("res1"), ROW("res2")], next: "res2", asOf: T }),
     });
     expect(browser).toEqual([]);
-    await userEvent.setup().click(screen.getByRole("button", { name: E.run.loadMore }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Load more" }));
     const table = screen.getByRole("table", { name: E.run.resultsLabel });
     await waitFor(() => expect(within(table).getAllByText("Delete the stale item").length).toBe(3));
     expect(browser.map((c) => c.url)).toEqual([
       `${O}/eval-runs/er1/results?view=light&limit=200&after=res2`,
     ]);
-    expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
   it("/evals/runs/[runId]: a Load more that lands while a poll is in flight survives the poll", async () => {
@@ -597,7 +597,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     // Load more lands first
     await userEvent
       .setup({ advanceTimers: vi.advanceTimersByTime })
-      .click(screen.getByRole("button", { name: E.run.loadMore }));
+      .click(screen.getByRole("button", { name: "Load more" }));
     const table = screen.getByRole("table", { name: E.run.resultsLabel });
     await waitFor(() => expect(within(table).getAllByText("Delete the stale item").length).toBe(3));
     // then the poll answers: the loaded page and its newer cursor stay
@@ -607,10 +607,10 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     );
     await act(() => vi.advanceTimersByTimeAsync(50));
     expect(within(table).getAllByText("Delete the stale item").length).toBe(3);
-    expect(screen.getByRole("button", { name: E.run.loadMore })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
     await userEvent
       .setup({ advanceTimers: vi.advanceTimersByTime })
-      .click(screen.getByRole("button", { name: E.run.loadMore }));
+      .click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(browser.some((c) => c.url.includes("after=res3"))).toBe(true));
   });
 

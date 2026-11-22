@@ -1,6 +1,7 @@
 // The org settings tables at 390: members, tokens, schedules and the audit log declare their compact
 // rows (title, subtitle, trailing; responsive spec §4.2), and the audit log pages by infinite scroll.
 import { cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import type { Me } from "../src/lib/session";
@@ -29,7 +30,23 @@ const admin: Me = {
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "admin" }],
 };
 
-beforeEach(() => void stubWindowWidth(390));
+/** An IntersectionObserver that reports every observed element as in view at once. */
+class InView {
+  constructor(private readonly cb: IntersectionObserverCallback) {}
+  observe(target: Element) {
+    this.cb(
+      [{ target, isIntersecting: true } as IntersectionObserverEntry],
+      this as unknown as IntersectionObserver,
+    );
+  }
+  disconnect() {}
+  unobserve() {}
+}
+
+beforeEach(() => {
+  stubWindowWidth(390);
+  vi.stubGlobal("IntersectionObserver", InView);
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -59,6 +76,8 @@ describe("org settings tables at 390", () => {
     await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: admin });
     await screen.findByText("Bob");
     expect(part("subtitle")).toContain("bob@corp.example");
+    const trailing = document.querySelector('[data-part="compact-trailing"]') as HTMLElement;
+    expect(within(trailing).getByRole("combobox")).toBeTruthy();
     expect(part("trailing").join()).toContain(en.members.roles.member);
     expect(compact().queryByText(en.members.columns.joined)).toBeNull();
   });
@@ -164,7 +183,8 @@ describe("org settings tables at 390", () => {
             },
           ],
         }),
-      [`GET ${O}/agents`]: () => json(200, { agents: [] }),
+      [`GET ${O}/agents`]: () =>
+        json(200, { agents: [{ id: "ag1", definition: { name: "Helper" } }] }),
       [`GET ${O}/members`]: () =>
         json(200, {
           members: [
@@ -181,7 +201,67 @@ describe("org settings tables at 390", () => {
     await screen.findByText("Daily report");
     expect(part("title").join()).toContain("Daily report");
     expect(await screen.findByText("Mei")).toBeTruthy();
+    // the owner is the subtitle, the agent the meta part after it
+    expect(part("subtitle").join()).toContain("Mei");
+    expect(part("subtitle").join()).not.toContain("Helper");
+    expect(await vi.waitFor(() => part("meta").join())).toContain("Helper");
     expect(part("trailing").join()).toContain(en.schedules.state.active);
     expect(compact().queryByText(en.schedules.columns.lastResult)).toBeNull();
+  });
+  describe("audit paging at 390", () => {
+    const EVENT = (id: string, name: string) => ({
+      id,
+      at: T,
+      actor: { id: "a1", name, email: null },
+      viaToken: false,
+      viaAgent: false,
+      action: "org.created",
+      target: "x",
+    });
+
+    it("reads the next page as the end comes into view and stops at the end of the list", async () => {
+      resetNavigation("/settings/audit");
+      const browser = stubApi({
+        [`GET ${O}/audit?limit=20&after=9`]: () =>
+          json(200, { events: [EVENT("8", "Second")], next: null }),
+      });
+      await renderRouteWithCache(
+        "/settings/audit",
+        {
+          [`GET ${O}/audit?limit=20`]: () =>
+            json(200, { events: [EVENT("9", "First")], next: "9" }),
+        },
+        { me: admin },
+      );
+      expect(await screen.findByText("Second")).toBeTruthy();
+      expect(browser.map((c) => c.url)).toEqual([`${O}/audit?limit=20&after=9`]);
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    });
+
+    it("a failed read shows the error with Retry, and Retry reads the page again", async () => {
+      resetNavigation("/settings/audit");
+      let attempts = 0;
+      const browser = stubApi({
+        [`GET ${O}/audit?limit=20&after=9`]: () => {
+          attempts += 1;
+          return attempts === 1
+            ? json(403, { error: { code: "forbidden", message: "no" } })
+            : json(200, { events: [EVENT("8", "Second")], next: null });
+        },
+      });
+      await renderRouteWithCache(
+        "/settings/audit",
+        {
+          [`GET ${O}/audit?limit=20`]: () =>
+            json(200, { events: [EVENT("9", "First")], next: "9" }),
+        },
+        { me: admin },
+      );
+      const retry = await screen.findByRole("button", { name: "Retry" });
+      expect(screen.queryByText("Second")).toBeNull();
+      await userEvent.setup().click(retry);
+      expect(await screen.findByText("Second")).toBeTruthy();
+      expect(browser).toHaveLength(2);
+    });
   });
 });
