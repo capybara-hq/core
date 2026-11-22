@@ -3,7 +3,6 @@ import {
   DEVICE_DIAL_IN_PROTOCOL,
   DEVICE_PROTOCOL_VERSION,
   DeviceProtocolError,
-  LEGACY_DEVICE_PROTOCOL_VERSION,
   parseDeviceFrame,
   parseOperationResult,
   parseOwnerCeilingReport,
@@ -52,7 +51,6 @@ describe("protocol 5 operations", () => {
     expect(DEVICE_PROTOCOL_VERSION).toBe(5);
     expect(DEVICE_DIAL_IN_PROTOCOL).toBe("capybara-device/5");
     expect(DIAL_IN_PROTOCOL_RE.test(DEVICE_DIAL_IN_PROTOCOL)).toBe(true);
-    expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(4);
     for (const op of ["readFile", "writeFile", "stat", "list", "scan"]) {
       const args = {
         scope,

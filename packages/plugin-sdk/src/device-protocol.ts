@@ -2,10 +2,8 @@
  * The device protocol: the WebSocket frames between the kernel and a `capybara-device` program
  * (a connected machine that serves as a device). Pure types and hand-written guards.
  *
- * Protocol 5 (the bodies of the dial-in envelope, `parseDeviceFrame`) is defined in the second
- * half of this file. Protocol 2's frames keep a `Legacy` prefix where a newer name replaced them
- * (`LegacyDeviceHello`, `parseLegacyDeviceFrame`, ...); protocol 5 reuses their value guards, and
- * they go with the legacy device surface.
+ * The bodies of the dial-in envelope are parsed by `parseDeviceFrame` (second half of this file);
+ * the per-operation argument and result guards of the first half are its value guards.
  */
 
 import {
@@ -43,14 +41,6 @@ export const DEVICE_PROTOCOL_VERSION = 5;
  */
 export const DEVICE_DIAL_IN_PROTOCOL = `capybara-device/${DEVICE_PROTOCOL_VERSION}` as const;
 
-/**
- * Protocol 4's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
- * on the header, a protocol close on the hello): its operation frames carry read roots in the
- * filesystem scope, which protocol 5 replaced with the project root, so a protocol 4 program must
- * be updated.
- */
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 4;
-
 /** The operations the kernel asks a device to run. */
 export type DeviceOp =
   | "create"
@@ -61,48 +51,22 @@ export type DeviceOp =
   | "killTagged"
   | "killAll"
   | "stop"
-  | "policy"
-  | "policyStatus"
   | "list"
   | "scan";
 
-const DEVICE_OPS: readonly DeviceOp[] = [
-  "create",
-  "exec",
-  "readFile",
-  "writeFile",
-  "stat",
-  "killTagged",
-  "killAll",
-  "stop",
-  "policy",
-  "policyStatus",
-  "list",
-  "scan",
-];
-
 /**
- * Optional capabilities a device announces in its hello. `policyOp`: the device takes the `policy`
- * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
- * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
- * carry `network`; `projects` means the device serves `list` and
- * `scan` (the kernel keeps a device's projects itself and asks the device only what it can read).
- * The kernel gates each op on its feature, as it gates `policy` on `policyOp` / `policyOpId`: it
- * never sends `list` or `scan` to a device that did not announce `projects`.
+ * Optional capabilities a device announces in its hello: `networkReport` means exec results may
+ * carry `network`; `projects` means the device serves `list` and `scan` (the provider never sends
+ * `list` or `scan` to a device that did not announce `projects`).
  */
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "projects";
-const DEVICE_FEATURES: readonly DeviceFeature[] = [
-  "networkReport",
-  "policyOp",
-  "policyOpId",
-  "projects",
-];
+export type DeviceFeature = "networkReport" | "projects";
+const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "projects"];
 
 /** The most entries a `list` op may ask for and its result may carry. */
 export const MAX_DEVICE_LIST_ENTRIES = 1000;
 
 /**
- * What a device knows of its local policy and reports (in the hello or a `policy` op). The owner
+ * What a device knows of its local policy and reports (in the hello or a `policy` event). The owner
  * ceiling travels separately, in the owner report ({@link DeviceOwnerCeiling}).
  */
 export interface DeviceLocalPolicySummary {
@@ -123,124 +87,22 @@ export interface DeviceProjectCandidate {
 /** The most blocked hosts an exec result reports; the parser cuts longer lists. */
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
 
-/** The most hosts a `policy` op's `remove` or an exec's `grants` may carry. */
+/** The most hosts an exec's `grants` may carry. */
 const MAX_POLICY_HOSTS = 100;
 
 /**
- * Why a `policy` op naming hosts to `add` is refused: the deployment may only narrow a local
- * device's sandbox; its owner widens it on the machine.
+ * The identity of a host's OS boot or of a program run: 1 to 128 characters of letters, digits,
+ * `.`, `_`, `:` and `-`.
  */
-export const POLICY_ADD_REFUSED =
-  "The deployment may not add hosts to a device's sandbox allowlist: widening happens only on the machine (capybara-device policy add allowedDomains <host>)";
-
-/** The longest `opId` a `policy` / `policyStatus` op may carry. */
-export const MAX_POLICY_OP_ID_LENGTH = 128;
-
-/** The most entries a hello's `recentOps` carries; the parser keeps the newest. */
-export const MAX_RECENT_POLICY_OPS = 100;
-
-/**
- * What a device recorded of a `policy` op: `started` (written before the change, so an op the
- * device was stopped in the middle of stays `started`), then `applied` or `refused`.
- */
-export type DevicePolicyOpOutcome = "applied" | "refused" | "started";
-
-/** One entry of a hello's `recentOps`. */
-export interface DevicePolicyOpReport {
-  opId: string;
-  outcome: DevicePolicyOpOutcome;
-}
-
-/** First frame from the device after the WebSocket opens. */
-export interface LegacyDeviceHello {
-  type: "hello";
-  protocol: number;
-  programVersion: string;
-  os: "darwin" | "linux";
-  arch: string;
-  mode: "os" | "docker";
-  roots: SandboxRoots;
-  sessionIsolation: boolean;
-  /** Optional capabilities (absent on older devices; unknown entries are dropped by the parser). */
-  features?: DeviceFeature[];
-  /** The device's local policy at connect time (absent on older devices). */
-  policy?: DeviceLocalPolicySummary;
-  /**
-   * The outcomes of the latest `policy` ops by op id, oldest first, at most
-   * {@link MAX_RECENT_POLICY_OPS} (devices with `policyOpId`; malformed entries are dropped by
-   * the parser).
-   */
-  recentOps?: DevicePolicyOpReport[];
-  /**
-   * The owner's home directory, an absolute path (a local device; the base of an auto-mode
-   * project's relative path). A malformed value is dropped by the parser.
-   */
-  home?: string;
-  /**
-   * The identity of the host's current OS boot (Linux `/proc/sys/kernel/random/boot_id`; macOS
-   * `kern.bootsessionuuid`): a value that differs from an earlier one of the
-   * same machine proves the host restarted since, so no process of that earlier boot can exist.
-   * A malformed value is dropped by the parser.
-   */
-  bootId?: string;
-  /**
-   * The identity of this run of the program: random, chosen once when the process starts and
-   * the same on every connection it makes (never the OS pid). The results a program keeps for a
-   * reconnect live in its memory, so a value that differs from the one a request was sent to
-   * proves that request's result can no longer arrive: the kernel ends its wait at once instead of
-   * at the deadline. Same format as {@link bootId}; a malformed value is dropped by the parser.
-   */
-  programRunId?: string;
-}
-
-/** A hello's `bootId`: 1 to 128 characters of letters, digits, `.`, `_`, `:` and `-`. */
 export const DEVICE_BOOT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
-/** Whether `v` is a well-formed {@link LegacyDeviceHello.bootId}. */
+/** Whether `v` is a well-formed boot or program-run identity ({@link DEVICE_BOOT_ID_RE}). */
 export function isDeviceBootId(v: unknown): v is string {
   return typeof v === "string" && DEVICE_BOOT_ID_RE.test(v);
 }
 
 /** Error kinds a device reports for a failed request. */
 export type DeviceErrorKind = "gone" | "fs_gone" | "policy" | "error";
-
-/** The device's answer to a {@link KernelReq}. */
-export type DeviceRes =
-  | { type: "res"; id: string; ok: true; result: unknown }
-  | { type: "res"; id: string; ok: false; error: { kind: DeviceErrorKind; message: string } };
-
-/** A request from the kernel. */
-export interface KernelReq {
-  type: "req";
-  id: string;
-  op: DeviceOp;
-  args: unknown;
-  deadlineMs: number;
-}
-
-/** The kernel gives up on a request (abort or deadline). */
-export interface KernelCancel {
-  type: "cancel";
-  id: string;
-}
-
-/**
- * The device's local policy changed while connected (its file was edited on the machine, the owner
- * switched mode): the summary as it is now, sent only when it differs from the last one sent on
- * this connection. `policy` is absent when the frame's summary was unreadable; the kernel then
- * learns the policy later, as for the hello.
- */
-export interface LegacyDevicePolicyChanged {
-  type: "policy";
-  policy?: DeviceLocalPolicySummary;
-}
-
-export type LegacyDeviceFrame =
-  | LegacyDeviceHello
-  | DeviceRes
-  | LegacyDevicePolicyChanged
-  | KernelReq
-  | KernelCancel;
 
 export interface DeviceExecArgs {
   command: string;
@@ -291,42 +153,6 @@ export interface DeviceCreateResult {
 }
 export interface DeviceStopArgs {
   reason: "revoked" | "deleted";
-}
-/**
- * Edits the device's local policy. The kernel may only narrow: it removes hosts from the sandbox
- * allowlist and narrows the owner ceiling (protocol 4). Widening happens only on the
- * machine (`capybara-device policy add`, `capybara-device ceiling set`): the frame parser refuses
- * an `add` and the protocol 3 `mode`.
- */
-export interface LegacyDevicePolicyArgs {
-  /**
-   * The kernel's id of this change (non-empty, no `:`, at most {@link MAX_POLICY_OP_ID_LENGTH}
-   * characters): the device logs the op's outcome under it, for `policyStatus` and the hello's
-   * `recentOps`.
-   */
-  opId: string;
-  /** Hosts to remove from `allowedDomains`. */
-  remove?: string[];
-  /** Who decided, for the device's local audit line. */
-  source: { approvalId?: string; accountId: string; accountName: string; via: "web" | "im" };
-}
-/** The policy as the device wrote it. */
-export interface LegacyDevicePolicyResult {
-  policy: DeviceLocalPolicySummary;
-}
-/** Asks what became of the `policy` op with this id. Read-only on the device. */
-export interface DevicePolicyStatusArgs {
-  opId: string;
-}
-/**
- * What the device logged of a `policy` op: its {@link DevicePolicyOpOutcome}, or `unknown` when
- * the id is not in its log (never received, or dropped from the log since). `policy` is the
- * device's summary now; `message` the refusal's.
- */
-export interface LegacyDevicePolicyStatus {
-  outcome: DevicePolicyOpOutcome | "unknown";
-  policy?: DeviceLocalPolicySummary;
-  message?: string;
 }
 /**
  * Lists one directory (absolute `path`, {@link validateSandboxPathShape}): at most `limit` entries
@@ -560,69 +386,22 @@ function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   return { allowedDomains: strArray(o, "allowedDomains") };
 }
 
-/**
- * Whether `v` is a valid policy op id: non-empty, no `:`, at most
- * {@link MAX_POLICY_OP_ID_LENGTH} characters.
- */
-export function isPolicyOpId(v: unknown): v is string {
-  return (
-    typeof v === "string" && v !== "" && v.length <= MAX_POLICY_OP_ID_LENGTH && !v.includes(":")
-  );
-}
-
-function opId(o: Record<string, unknown>): string {
-  const v = o.opId;
-  if (!isPolicyOpId(v)) {
-    throw new DeviceProtocolError(
-      `field "opId" must be a non-empty string without ":" of at most ${MAX_POLICY_OP_ID_LENGTH} characters`,
-    );
-  }
-  return v;
-}
-
-const OP_OUTCOMES: readonly DevicePolicyOpOutcome[] = ["applied", "refused", "started"];
-
-/**
- * The valid entries of a hello's `recentOps`, one per op id (the last listed), the newest
- * {@link MAX_RECENT_POLICY_OPS}.
- */
-function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
-  // one entry per op id: the last one listed (the newest outcome), where it is listed
-  const byId = new Map<string, DevicePolicyOpReport>();
-  for (const e of v) {
-    if (!isRecord(e) || !isPolicyOpId(e.opId)) continue;
-    if (!OP_OUTCOMES.includes(e.outcome as DevicePolicyOpOutcome)) continue;
-    byId.delete(e.opId);
-    byId.set(e.opId, { opId: e.opId, outcome: e.outcome as DevicePolicyOpOutcome });
-  }
-  return [...byId.values()].slice(-MAX_RECENT_POLICY_OPS);
-}
-
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
 function optionalHelloFields(
   o: Record<string, unknown>,
-): Pick<
-  LegacyDeviceHello,
-  "features" | "policy" | "recentOps" | "home" | "bootId" | "programRunId"
-> {
-  const out: Pick<
-    LegacyDeviceHello,
-    "features" | "policy" | "recentOps" | "home" | "bootId" | "programRunId"
-  > = {};
+): Pick<DeviceHello, "features" | "policy" | "home"> {
+  const out: Pick<DeviceHello, "features" | "policy" | "home"> = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
-  if (Array.isArray(o.recentOps)) out.recentOps = parseRecentOps(o.recentOps);
   if (typeof o.home === "string" && validateSandboxPathShape(o.home).length === 0) {
     out.home = o.home;
   }
-  if (isDeviceBootId(o.bootId)) out.bootId = o.bootId;
-  if (isDeviceBootId(o.programRunId)) out.programRunId = o.programRunId;
   return { ...out, ...optionalPolicy(o.policy) };
 }
 
 /** A summary field that is dropped when absent or unreadable. */
-function optionalPolicy(v: unknown): Pick<LegacyDeviceHello, "policy"> {
+function optionalPolicy(v: unknown): Pick<DeviceHello, "policy"> {
   if (v === undefined) return {};
   try {
     return { policy: parsePolicySummary(v) };
@@ -653,56 +432,6 @@ function parseNetworkReport(v: unknown): { blocked: NetworkBlockedHost[] } | und
     blocked.push({ host, port, layer: layer as NetworkBlockLayer });
   }
   return { blocked };
-}
-
-function parseHello(o: Record<string, unknown>): LegacyDeviceHello {
-  const os = str(o, "os");
-  if (os !== "darwin" && os !== "linux") throw new DeviceProtocolError(`unsupported os "${os}"`);
-  const mode = str(o, "mode");
-  if (mode !== "os" && mode !== "docker") {
-    throw new DeviceProtocolError(`unsupported mode "${mode}"`);
-  }
-  if (typeof o.sessionIsolation !== "boolean") {
-    throw new DeviceProtocolError('field "sessionIsolation" must be a boolean');
-  }
-  return {
-    type: "hello",
-    protocol: posInt(o, "protocol"),
-    programVersion: str(o, "programVersion"),
-    os,
-    arch: str(o, "arch"),
-    mode,
-    roots: parseRoots(o.roots),
-    sessionIsolation: o.sessionIsolation,
-    ...optionalHelloFields(o),
-  };
-}
-
-function parseRes(o: Record<string, unknown>): DeviceRes {
-  const id = nonEmptyStr(o, "id");
-  if (o.ok === true) return { type: "res", id, ok: true, result: o.result };
-  if (o.ok !== false) throw new DeviceProtocolError('field "ok" must be a boolean');
-  const e = o.error;
-  if (!isRecord(e)) throw new DeviceProtocolError('field "error" must be an object');
-  const kind = str(e, "kind");
-  if (kind !== "gone" && kind !== "fs_gone" && kind !== "policy" && kind !== "error") {
-    throw new DeviceProtocolError(`unknown error kind "${kind}"`);
-  }
-  return { type: "res", id, ok: false, error: { kind, message: str(e, "message") } };
-}
-
-function parseReq(o: Record<string, unknown>): KernelReq {
-  const op = str(o, "op");
-  if (!DEVICE_OPS.includes(op as DeviceOp)) throw new DeviceProtocolError(`unknown op "${op}"`);
-  const args = obj(o.args, 'field "args"');
-  validateArgs(op as DeviceOp, args);
-  return {
-    type: "req",
-    id: nonEmptyStr(o, "id"),
-    op: op as DeviceOp,
-    args,
-    deadlineMs: posInt(o, "deadlineMs"),
-  };
 }
 
 function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
@@ -765,25 +494,6 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       }
       return;
     }
-    case "policy": {
-      opId(a);
-      if (a.add !== undefined) throw new DeviceProtocolError(POLICY_ADD_REFUSED);
-      if (a.mode !== undefined)
-        throw new DeviceProtocolError(
-          'field "mode" is not part of device protocol 4; narrow with "ownerCeiling" instead',
-        );
-      if (a.remove !== undefined) hostArray(a, "remove");
-      const src = obj(a.source, 'field "source"');
-      nonEmptyStr(src, "accountId");
-      str(src, "accountName");
-      const via = str(src, "via");
-      if (via !== "web" && via !== "im") throw new DeviceProtocolError(`unknown via "${via}"`);
-      if (src.approvalId !== undefined) str(src, "approvalId");
-      return;
-    }
-    case "policyStatus":
-      opId(a);
-      return;
     case "list": {
       absolutePath(a.path, 'field "path"');
       const limit = posInt(a, "limit");
@@ -808,8 +518,6 @@ export interface DeviceOpResults {
   killTagged: null;
   killAll: null;
   stop: null;
-  policy: LegacyDevicePolicyResult;
-  policyStatus: LegacyDevicePolicyStatus;
   list: DeviceListResult;
   scan: DeviceScanResult;
 }
@@ -836,17 +544,6 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
       if (network) out.network = network;
       return out;
     }
-    case "policy":
-      return { policy: parsePolicySummary(obj(result, "policy result").policy) };
-    case "policyStatus": {
-      const r = obj(result, "policyStatus result");
-      const out: LegacyDevicePolicyStatus = {
-        outcome: oneOf(r, "outcome", [...OP_OUTCOMES, "unknown"] as const),
-      };
-      if (r.policy !== undefined) out.policy = parsePolicySummary(r.policy);
-      if (r.message !== undefined) out.message = str(r, "message");
-      return out;
-    }
     case "readFile": {
       if (result === null) return null;
       const r = obj(result, "readFile result");
@@ -869,47 +566,16 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
   }
 }
 
-/**
- * Parses one WebSocket text frame. `from` is the sender: a device may send `hello`, `res` and
- * `policy`, the
- * kernel `req` and `cancel`. Throws {@link DeviceProtocolError} on bad JSON, an unknown `type`,
- * missing fields or a frame of the wrong direction.
- */
-export function parseLegacyDeviceFrame(raw: string, from: "device" | "kernel"): LegacyDeviceFrame {
-  let o: unknown;
-  try {
-    o = JSON.parse(raw);
-  } catch {
-    throw new DeviceProtocolError("frame is not valid JSON");
-  }
-  if (!isRecord(o)) throw new DeviceProtocolError("frame must be a JSON object");
-  const type = o.type;
-  switch (type) {
-    case "hello":
-    case "res":
-    case "policy":
-      if (from !== "device") throw new DeviceProtocolError(`"${type}" must come from the device`);
-      if (type === "policy") return { type, ...optionalPolicy(o.policy) };
-      return type === "hello" ? parseHello(o) : parseRes(o);
-    case "req":
-    case "cancel":
-      if (from !== "kernel") throw new DeviceProtocolError(`"${type}" must come from the kernel`);
-      return type === "req" ? parseReq(o) : { type: "cancel", id: nonEmptyStr(o, "id") };
-    default:
-      throw new DeviceProtocolError(`unknown frame type "${String(type)}"`);
-  }
-}
-
-// ---- Protocol 4: scope-bearing operations ----
+// ---- Protocol 5: scope-bearing operations ----
 
 /**
  * The operations the kernel asks a protocol 5 device to run: every user operation carries its
  * admitted scope; there is no broad kill (`killTagged` / `killAll`) and no deployment-side change
- * of the machine's policy (`policy` / `policyStatus`): the owner changes it on the machine and the
- * device reports the change ({@link DevicePolicyChanged}).
+ * of the machine's policy: the owner changes it on the machine and the device reports the change
+ * ({@link DevicePolicyChanged}).
  */
 export type DeviceOperation =
-  | Exclude<DeviceOp, "killTagged" | "killAll" | "policy" | "policyStatus">
+  | Exclude<DeviceOp, "killTagged" | "killAll">
   | "prepareReadFile"
   | "prepareWriteFile"
   | "prepareStat"

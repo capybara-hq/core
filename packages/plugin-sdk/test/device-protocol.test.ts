@@ -7,76 +7,91 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
-  type DeviceLocalPolicySummary,
   DeviceProtocolError,
   isDeviceBootId,
-  type LegacyDeviceHello,
-  type LegacyDevicePolicyStatus,
   MAX_DEVICE_LIST_ENTRIES,
   MAX_NETWORK_BLOCKED_HOSTS,
-  MAX_POLICY_OP_ID_LENGTH,
-  MAX_RECENT_POLICY_OPS,
-  parseLegacyDeviceFrame,
+  parseDeviceFrame,
   parseOpResult,
 } from "../src/device-protocol.js";
 
+/*
+ * The value guards of the device protocol (per-operation arguments and results, the hello's
+ * optional fields), exercised through the protocol 5 bodies (`parseDeviceFrame`) that use them.
+ */
+
+const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
+/** A protocol 5 hello body of a bound instance. */
 const hello = {
-  type: "hello",
-  protocol: 2,
-  programVersion: "0.1.0",
-  os: "darwin",
-  arch: "arm64",
   mode: "os",
-  roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+  roots,
   sessionIsolation: true,
+  permissionSupport: {
+    version: 2,
+    boundary: "operation",
+    restricted: null,
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: false,
+    background: false,
+  },
+  ownerCeiling: {
+    version: 3,
+    sequence: 0,
+    revision: "r",
+    outsideSandbox: false,
+    network: "allowlist",
+    allowedDomains: [],
+    restrictedProjectReach: "workspace",
+  },
+  instanceGeneration: "g",
 };
+const parseHello = (o: unknown) => parseDeviceFrame(o, "hello");
 
-describe("device protocol", () => {
-  it("parses a hello from the device", () => {
-    const f = parseLegacyDeviceFrame(JSON.stringify(hello), "device");
-    expect(f.type).toBe("hello");
-  });
+const scope = {
+  operationId: "op",
+  admitBeforeMs: 1000,
+  deviceId: "d",
+  rootConversationId: "r",
+  profileRevision: 1,
+  ceilingRevision: "c",
+  profile: "approve-for-me",
+  actor: { accountId: "a", conversationId: "r" },
+  tag: "op",
+  filesystem: { kind: "scoped", projectRoot: "/w", writeRoots: ["/w"] },
+  network: { kind: "none" },
+};
+/** A request body: a native operation carries its admitted scope, a lifecycle one does not. */
+const req = (op: string, args: unknown) => ({
+  op,
+  args:
+    op === "create" || op === "stop" || typeof args !== "object" || args === null
+      ? args
+      : { ...args, scope },
+});
+const parse = (op: string, args: unknown) => () => parseDeviceFrame(req(op, args), "req");
 
-  it("rejects a req sent by the device", () => {
-    const req = { type: "req", id: "1", op: "stop", args: { reason: "revoked" }, deadlineMs: 5 };
-    expect(() => parseLegacyDeviceFrame(JSON.stringify(req), "device")).toThrow(
-      DeviceProtocolError,
-    );
-    expect(parseLegacyDeviceFrame(JSON.stringify(req), "kernel").type).toBe("req");
-  });
+const limits = {
+  cpu: 1,
+  memoryMb: 512,
+  diskMb: 1024,
+  network: { kind: "allowlist", hosts: [] },
+};
+const exec = { command: "ls", timeoutMs: 1000, maxOutputBytes: 100, limits };
 
-  it("rejects a res without id", () => {
-    const res = { type: "res", ok: true, result: null };
-    expect(() => parseLegacyDeviceFrame(JSON.stringify(res), "device")).toThrow(
-      DeviceProtocolError,
-    );
-  });
-
-  it("rejects bad JSON and unknown types", () => {
-    expect(() => parseLegacyDeviceFrame("{", "device")).toThrow(DeviceProtocolError);
-    expect(() => parseLegacyDeviceFrame('{"type":"x"}', "device")).toThrow(DeviceProtocolError);
-  });
-
+describe("device protocol value guards", () => {
   it("rootsOf falls back to DEFAULT_SANDBOX_ROOTS", () => {
     expect(rootsOf({ id: "a" })).toEqual(DEFAULT_SANDBOX_ROOTS);
-    const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
     expect(rootsOf({ id: "a", roots })).toBe(roots);
   });
 
-  it("rejects a hello with a relative root", () => {
-    const bad = { ...hello, roots: { ...hello.roots, workspace: "workspace" } };
-    expect(() => parseLegacyDeviceFrame(JSON.stringify(bad), "device")).toThrow(
-      DeviceProtocolError,
-    );
-  });
-
-  it("rejects roots with a trailing slash, empty or .. segments, or control characters", () => {
-    for (const workspace of ["/w/", "/", "/a//w", "/a/../w", "/a/..", "/a/\u0001w"]) {
-      const bad = { ...hello, roots: { ...hello.roots, workspace } };
-      expect(() => parseLegacyDeviceFrame(JSON.stringify(bad), "device"), workspace).toThrow(
-        DeviceProtocolError,
-      );
-      expect(() => parseOpResult("create", { roots: bad.roots }), workspace).toThrow(
+  it("rejects roots that are relative, end in a slash, have empty or .. segments or control characters", () => {
+    for (const workspace of ["workspace", "/w/", "/", "/a//w", "/a/../w", "/a/..", "/a/\u0001w"]) {
+      const bad = { ...roots, workspace };
+      expect(() => parseHello({ ...hello, roots: bad }), workspace).toThrow(DeviceProtocolError);
+      expect(() => parseOpResult("create", { roots: bad }), workspace).toThrow(DeviceProtocolError);
+    }
+    for (const tmp of ["C:\\w", "C:/w"]) {
+      expect(() => parseHello({ ...hello, roots: { ...roots, tmp } }), tmp).toThrow(
         DeviceProtocolError,
       );
     }
@@ -84,86 +99,20 @@ describe("device protocol", () => {
     expect(parseOpResult("create", { roots: ok }).roots).toEqual(ok);
   });
 
-  const parse = (o: unknown, from: "device" | "kernel") => () =>
-    parseLegacyDeviceFrame(JSON.stringify(o), from);
-  const limits = {
-    cpu: 1,
-    memoryMb: 512,
-    diskMb: 1024,
-    network: { kind: "allowlist", hosts: [] },
-  };
-  const exec = {
-    command: "ls",
-    timeoutMs: 1000,
-    maxOutputBytes: 100,
-    tag: "t",
-    actor: { accountId: "a", conversationId: "c" },
-    limits,
-  };
-  const req = (op: string, args: unknown) => ({ type: "req", id: "1", op, args, deadlineMs: 5 });
-  const resOk = { type: "res", id: "1", ok: true, result: null };
-  const resErr = { type: "res", id: "1", ok: false, error: { kind: "gone", message: "m" } };
-  const cancel = { type: "cancel", id: "1" };
-
-  it("rejects each frame type in the wrong direction", () => {
-    expect(parse(hello, "kernel")).toThrow(DeviceProtocolError);
-    expect(parse(resOk, "kernel")).toThrow(DeviceProtocolError);
-    expect(parse(req("killAll", {}), "device")).toThrow(DeviceProtocolError);
-    expect(parse(cancel, "device")).toThrow(DeviceProtocolError);
-  });
-
-  it("parses every frame type", () => {
-    expect(parse(hello, "device")().type).toBe("hello");
-    expect(parse(resOk, "device")()).toEqual(resOk);
-    expect(parse(resErr, "device")()).toEqual(resErr);
-    expect(parse(req("exec", exec), "kernel")().type).toBe("req");
-    expect(parse(cancel, "kernel")()).toEqual(cancel);
-  });
-
   it("rejects bad hello fields", () => {
-    for (const bad of [
-      { os: "win32" },
-      { mode: "vm" },
-      { sessionIsolation: "yes" },
-      { protocol: 1.5 },
-      { protocol: 0 },
-      { roots: { ...hello.roots, tmp: "C:\\w" } },
-      { roots: { ...hello.roots, tmp: "C:/w" } },
-    ]) {
-      expect(parse({ ...hello, ...bad }, "device")).toThrow(DeviceProtocolError);
+    for (const bad of [{ mode: "vm" }, { sessionIsolation: "yes" }]) {
+      expect(() => parseHello({ ...hello, ...bad }), JSON.stringify(bad)).toThrow(
+        DeviceProtocolError,
+      );
     }
   });
 
-  it("rejects bad res and cancel frames", () => {
-    for (const bad of [
-      { ...resErr, error: { kind: "weird", message: "m" } },
-      { ...resErr, error: { kind: "gone" } },
-      { type: "res", id: "1", result: null },
-      { ...resOk, ok: "true" },
-    ]) {
-      expect(parse(bad, "device")).toThrow(DeviceProtocolError);
-    }
-    expect(parse({ type: "cancel" }, "kernel")).toThrow(DeviceProtocolError);
-  });
-
-  it("rejects non-object frames", () => {
-    expect(() => parseLegacyDeviceFrame("[]", "device")).toThrow(DeviceProtocolError);
-    expect(() => parseLegacyDeviceFrame("null", "device")).toThrow(DeviceProtocolError);
-  });
-
-  it("rejects a bad deadline, unknown op and bad args per op", () => {
-    expect(parse({ ...req("killAll", {}), deadlineMs: 1.5 }, "kernel")).toThrow(
-      DeviceProtocolError,
-    );
-    expect(parse({ ...req("killAll", {}), deadlineMs: 0 }, "kernel")).toThrow(DeviceProtocolError);
-    expect(parse(req("nope", {}), "kernel")).toThrow(DeviceProtocolError);
+  it("rejects bad args per op", () => {
     const bads: [string, unknown][] = [
       ["exec", "x"],
       ["exec", { ...exec, command: 1 }],
       ["exec", { ...exec, timeoutMs: 0 }],
       ["exec", { ...exec, maxOutputBytes: 1.5 }],
-      ["exec", { ...exec, tag: 1 }],
-      ["exec", { ...exec, actor: { accountId: "a" } }],
       ["exec", { ...exec, limits: { ...limits, cpu: undefined } }],
       ["exec", { ...exec, limits: { ...limits, network: undefined } }],
       ["exec", { ...exec, limits: { ...limits, network: { ...limits.network, kind: "x" } } }],
@@ -176,7 +125,7 @@ describe("device protocol", () => {
         "exec",
         { ...exec, limits: { ...limits, network: { ...limits.network, hosts: ["10.0.0.1"] } } },
       ],
-      // protocol 4 removed the mode tier: unknown limits keys are refused, not ignored
+      // the mode tier is gone: unknown limits keys are refused, not ignored
       ["exec", { ...exec, limits: { ...limits, mode: "auto" } }],
       ["exec", { ...exec, limits: { ...limits, network: { ...limits.network, extra: true } } }],
       ["create", { limits: { ...limits, mode: "auto" } }],
@@ -186,46 +135,36 @@ describe("device protocol", () => {
       ["readFile", { path: 1, maxBytes: 1 }],
       ["writeFile", { path: "/a" }],
       ["stat", {}],
-      ["killTagged", { tags: [1] }],
-      ["killAll", []],
       ["create", {}],
       ["stop", { reason: "x" }],
+      ["killTagged", { tags: ["a"] }],
+      ["killAll", {}],
     ];
     for (const [op, args] of bads) {
-      expect(parse(req(op, args), "kernel"), op).toThrow(DeviceProtocolError);
+      expect(parse(op, args), `${op} ${JSON.stringify(args)}`).toThrow(DeviceProtocolError);
     }
     const goods: [string, unknown][] = [
       ["exec", { ...exec, cwd: "/w", env: { A: "b" } }],
       ["readFile", { path: "/a", maxBytes: 0 }],
       ["writeFile", { path: "/a", dataB64: "" }],
       ["stat", { path: "/a" }],
-      ["killTagged", { tags: ["a"] }],
       ["create", { limits }],
       [
         "exec",
         {
           ...exec,
-          limits: {
-            ...limits,
-            network: { kind: "allowlist", hosts: ["registry.npmjs.org"] },
-          },
+          limits: { ...limits, network: { kind: "allowlist", hosts: ["registry.npmjs.org"] } },
         },
       ],
       ["exec", { ...exec, limits: { ...limits, network: { kind: "open-public", hosts: [] } } }],
       ["stop", { reason: "deleted" }],
     ];
-    for (const [op, args] of goods) expect(parse(req(op, args), "kernel")().type).toBe("req");
+    for (const [op, args] of goods) expect(parse(op, args)().op, op).toBe(op);
   });
 
   it("names the nested path when network.hosts is malformed", () => {
     const bad = { ...exec, limits: { ...limits, network: { ...limits.network, hosts: [1] } } };
-    expect(parse(req("exec", bad), "kernel")).toThrow(
-      'field "network.hosts" must be an array of strings',
-    );
-    // a top-level array key keeps its own name
-    expect(parse(req("killTagged", { tags: [1] }), "kernel")).toThrow(
-      'field "tags" must be an array of strings',
-    );
+    expect(parse("exec", bad)).toThrow('field "network.hosts" must be an array of strings');
   });
 
   it("parseOpResult validates results per op", () => {
@@ -247,8 +186,8 @@ describe("device protocol", () => {
       expect(parseOpResult(op, null)).toBeNull();
       expect(() => parseOpResult(op, {})).toThrow(DeviceProtocolError);
     }
-    expect(parseOpResult("create", { roots: hello.roots }).roots).toEqual(hello.roots);
-    expect(() => parseOpResult("create", { roots: { ...hello.roots, tmp: "t" } })).toThrow(
+    expect(parseOpResult("create", { roots }).roots).toEqual(roots);
+    expect(() => parseOpResult("create", { roots: { ...roots, tmp: "t" } })).toThrow(
       DeviceProtocolError,
     );
     expect(() => parseOpResult("create", null)).toThrow(DeviceProtocolError);
@@ -318,8 +257,6 @@ describe("device protocol", () => {
 
   describe("hello features and policy summary", () => {
     const summary = { allowedDomains: ["files.slack.com", "*.github.com"] };
-    const parseHello = (o: unknown) =>
-      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
     it("still parses a hello without them", () => {
       const h = parseHello(hello);
@@ -330,19 +267,19 @@ describe("device protocol", () => {
     it("keeps known features and a valid policy summary", () => {
       const h = parseHello({
         ...hello,
-        // `mode` (protocol 3: the device applied limits.mode) is no feature any more
-        features: ["networkReport", "teleport", "policyOp", "mode", "projects", 3],
+        // the removed policy-op and mode features are dropped like any unknown one
+        features: ["networkReport", "teleport", "policyOp", "policyOpId", "mode", "projects", 3],
         policy: summary,
       });
-      expect(h.features).toEqual(["networkReport", "policyOp", "projects"]);
+      expect(h.features).toEqual(["networkReport", "projects"]);
       expect(h.policy).toEqual(summary);
-      // a protocol 3 summary's mode is not part of the summary: dropped
+      // a mode in the summary is not part of it: dropped
       expect(parseHello({ ...hello, policy: { ...summary, mode: "auto" } }).policy).toEqual(
         summary,
       );
     });
 
-    it("drops the tiers feature and unreadable or legacy policy summaries (old devices)", () => {
+    it("drops unreadable features and policy summaries", () => {
       expect(parseHello({ ...hello, features: "networkReport" }).features).toBeUndefined();
       expect(parseHello({ ...hello, features: ["tiers"] }).features).toEqual([]);
       for (const policy of [
@@ -356,82 +293,41 @@ describe("device protocol", () => {
       }
     });
 
-    it("a policy frame carries the summary now; only the device sends it", () => {
-      const frame = (o: unknown) => parseLegacyDeviceFrame(JSON.stringify(o), "device");
-      expect(frame({ type: "policy", policy: summary })).toEqual({
-        type: "policy",
-        policy: summary,
-      });
-      // an unreadable summary is dropped, never failing the connection
-      expect(frame({ type: "policy", policy: { ...summary, allowedDomains: [1] } })).toEqual({
-        type: "policy",
-      });
-      expect(frame({ type: "policy" })).toEqual({ type: "policy" });
-      expect(() =>
-        parseLegacyDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "kernel"),
-      ).toThrow(DeviceProtocolError);
-    });
-  });
-
-  describe("no projects on the policy summary", () => {
-    const summary = { allowedDomains: ["files.slack.com"] };
-    const parseHello = (o: unknown) =>
-      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
-
-    it("drops a projects field a device still reports: the kernel keeps the projects", () => {
-      const policy = { ...summary, projects: [{ name: "core", path: "/w/core" }] };
-      expect(parseHello({ ...hello, policy }).policy).toEqual(summary);
-      expect(parseLegacyDeviceFrame(JSON.stringify({ type: "policy", policy }), "device")).toEqual({
-        type: "policy",
-        policy: summary,
-      });
-      expect(parseOpResult("policy", { policy })).toEqual({ policy: summary });
-      expect(parseOpResult("policyStatus", { outcome: "applied", policy }).policy).toEqual(summary);
-    });
-
-    it("refuses the removed project ops", () => {
-      for (const op of ["projectList", "projectCandidates", "projectAdd", "projectRemove"]) {
-        expect(parse(req(op, {}), "kernel"), op).toThrow(/unknown op/);
-      }
+    it("a policy event carries the summary; an unreadable one is dropped", () => {
+      const event = (policy?: unknown) =>
+        parseDeviceFrame(
+          {
+            type: "policy",
+            ...(policy !== undefined && { policy }),
+            ownerCeiling: hello.ownerCeiling,
+          },
+          "event",
+        );
+      expect(event(summary).policy).toEqual(summary);
+      expect(event({ ...summary, allowedDomains: [1] }).policy).toBeUndefined();
+      expect(event().policy).toBeUndefined();
+      // the projects a device may still list are no part of the summary
+      expect(event({ ...summary, projects: [{ name: "core", path: "/w/core" }] }).policy).toEqual(
+        summary,
+      );
     });
   });
 
   describe("the hello's home", () => {
-    const parseHello = (o: unknown) =>
-      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
-
     it("keeps an absolute home and drops a malformed one", () => {
       expect(parseHello({ ...hello, home: "/Users/ann" }).home).toBe("/Users/ann");
       expect(parseHello(hello).home).toBeUndefined();
       for (const home of ["Users/ann", "", "/Users/../ann", "/Users/a\nn", 1, null]) {
-        const h = parseHello({ ...hello, home });
-        expect(h.home, JSON.stringify(home)).toBeUndefined();
-        expect(h.type).toBe("hello");
+        expect(parseHello({ ...hello, home }).home, JSON.stringify(home)).toBeUndefined();
       }
     });
   });
 
-  describe("the hello's boot identity", () => {
-    const parseHello = (o: unknown) =>
-      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
-
-    it("keeps a well-formed boot identity and drops a malformed one", () => {
-      for (const bootId of ["0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f", "boottime-1763370000.123456"])
-        expect(parseHello({ ...hello, bootId }).bootId).toBe(bootId);
-      expect(parseHello(hello).bootId).toBeUndefined();
-      for (const bootId of ["", "-x", "a b", "a\nb", "x".repeat(129), 1, null]) {
-        expect(parseHello({ ...hello, bootId }).bootId, JSON.stringify(bootId)).toBeUndefined();
-        expect(isDeviceBootId(bootId)).toBe(false);
-      }
-    });
-
-    it("keeps a well-formed program run identity and drops a malformed one", () => {
-      const programRunId = "0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f";
-      expect(parseHello({ ...hello, programRunId }).programRunId).toBe(programRunId);
-      expect(parseHello(hello).programRunId).toBeUndefined();
-      for (const bad of ["", "a b", "x".repeat(129), 1, null])
-        expect(parseHello({ ...hello, programRunId: bad }).programRunId).toBeUndefined();
-    });
+  it("isDeviceBootId accepts a well-formed boot or run identity only", () => {
+    for (const id of ["0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f", "boottime-1763370000.123456"])
+      expect(isDeviceBootId(id)).toBe(true);
+    for (const id of ["", "-x", "a b", "a\nb", "x".repeat(129), 1, null])
+      expect(isDeviceBootId(id), JSON.stringify(id)).toBe(false);
   });
 
   describe("project names", () => {
@@ -461,10 +357,10 @@ describe("device protocol", () => {
   describe("the list op", () => {
     it("parses the request", () => {
       const args = { path: "/w/core/.agents/skills", limit: 200 };
-      expect(parse(req("list", args), "kernel")()).toMatchObject({ op: "list", args });
-      expect(
-        parse(req("list", { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES }), "kernel")(),
-      ).toMatchObject({ op: "list" });
+      expect(parse("list", args)()).toMatchObject({ op: "list", args });
+      expect(parse("list", { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES })()).toMatchObject({
+        op: "list",
+      });
     });
 
     it("rejects malformed args", () => {
@@ -479,9 +375,7 @@ describe("device protocol", () => {
         { path: "/w", limit: 1.5 },
         { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES + 1 },
       ]) {
-        expect(parse(req("list", args), "kernel"), JSON.stringify(args)).toThrow(
-          DeviceProtocolError,
-        );
+        expect(parse("list", args), JSON.stringify(args)).toThrow(DeviceProtocolError);
       }
     });
 
@@ -533,7 +427,7 @@ describe("device protocol", () => {
   describe("the scan op", () => {
     it("parses the request", () => {
       const args = { base: "/Users/ann" };
-      expect(parse(req("scan", args), "kernel")()).toMatchObject({ op: "scan", args });
+      expect(parse("scan", args)()).toMatchObject({ op: "scan", args });
     });
 
     it("rejects malformed args", () => {
@@ -544,9 +438,7 @@ describe("device protocol", () => {
         { base: "/Users/../ann" },
         { base: "/Users/a\nn" },
       ]) {
-        expect(parse(req("scan", args), "kernel"), JSON.stringify(args)).toThrow(
-          DeviceProtocolError,
-        );
+        expect(parse("scan", args), JSON.stringify(args)).toThrow(DeviceProtocolError);
       }
     });
 
@@ -585,182 +477,23 @@ describe("device protocol", () => {
     });
   });
 
-  describe("the policy op", () => {
-    const source = { accountId: "acc_1", accountName: "Ann", via: "web" };
-    const opId = "op_1";
-
-    it("validates the args", () => {
-      const goods: unknown[] = [
-        { opId, source },
-        { opId, remove: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
-        { opId, remove: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
-      ];
-      for (const args of goods) {
-        expect(parse(req("policy", args), "kernel")().type, JSON.stringify(args)).toBe("req");
-      }
-      const bads: unknown[] = [
-        {},
-        { opId },
-        { opId, remove: ["a.example.com"] },
-        { opId, remove: "a.example.com", source },
-        { opId, remove: [null], source },
-        { opId, remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
-        // protocol 4: the deployment never adds hosts (widening happens on the machine) and
-        // narrows through ownerCeiling, never a mode
-        { opId, add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
-        { opId, add: [], source },
-        { opId, mode: "sandbox", source },
-        { opId, mode: "auto", source },
-        { opId, source: { ...source, via: "pat" } },
-        { opId, source: { ...source, accountId: 1 } },
-        { opId, source: { accountId: "acc_1", via: "web" } },
-        { opId, source: { ...source, approvalId: 1 } },
-        { opId, source: "x" },
-      ];
-      for (const args of bads) {
-        expect(parse(req("policy", args), "kernel"), JSON.stringify(args)).toThrow(
-          DeviceProtocolError,
-        );
-      }
-    });
-
-    it("a policy op without opId is a protocol error", () => {
-      for (const args of [
-        { source },
-        { opId: "", source },
-        { opId: 1, source },
-        { opId: "op:1", source },
-        { opId: "x".repeat(MAX_POLICY_OP_ID_LENGTH + 1), source },
-      ]) {
-        expect(parse(req("policy", args), "kernel"), JSON.stringify(args)).toThrow(
-          DeviceProtocolError,
-        );
-      }
-      const longest = { opId: "x".repeat(MAX_POLICY_OP_ID_LENGTH), source };
-      expect(parse(req("policy", longest), "kernel")().type).toBe("req");
-    });
-
-    it("policyStatus args and result round-trip", () => {
-      const f = parseLegacyDeviceFrame(JSON.stringify(req("policyStatus", { opId })), "kernel");
-      expect(f).toEqual({ ...req("policyStatus", { opId }), type: "req" });
-      for (const args of [{}, { opId: "" }, { opId: 1 }, { opId: "a:b" }]) {
-        expect(parse(req("policyStatus", args), "kernel"), JSON.stringify(args)).toThrow(
-          DeviceProtocolError,
-        );
-      }
-      const policy: DeviceLocalPolicySummary = { allowedDomains: ["a.example.com"] };
-      const goods: LegacyDevicePolicyStatus[] = [
-        { outcome: "applied", policy },
-        { outcome: "refused", message: "This device does not accept network changes." },
-        { outcome: "started" },
-        { outcome: "unknown" },
-        { outcome: "unknown", policy },
-      ];
-      for (const good of goods) {
-        expect(parseOpResult("policyStatus", JSON.parse(JSON.stringify(good)))).toEqual(good);
-      }
-      for (const bad of [
-        null,
-        {},
-        { outcome: "maybe" },
-        { outcome: "applied", policy: { ...policy, allowedDomains: [1] } },
-        { outcome: "refused", message: 1 },
-      ]) {
-        expect(() => parseOpResult("policyStatus", bad), JSON.stringify(bad)).toThrow(
-          DeviceProtocolError,
-        );
-      }
-    });
-
-    it("hello recentOps keeps the last entry of a repeated op id", () => {
-      const h = parseLegacyDeviceFrame(
-        JSON.stringify({
-          ...hello,
-          recentOps: [
-            { opId: "a", outcome: "started" },
-            { opId: "b", outcome: "applied" },
-            { opId: "a", outcome: "refused" },
-          ],
-        }),
-        "device",
-      ) as LegacyDeviceHello;
-      expect(h.recentOps).toEqual([
-        { opId: "b", outcome: "applied" },
-        { opId: "a", outcome: "refused" },
-      ]);
-    });
-
-    it("hello recentOps keeps valid entries and drops the rest, at most 100", () => {
-      const parseHello = (o: unknown) =>
-        parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
-      expect(parseHello(hello).recentOps).toBeUndefined();
-      expect(parseHello({ ...hello, recentOps: "x" }).recentOps).toBeUndefined();
-      const h = parseHello({
-        ...hello,
-        features: ["policyOp", "policyOpId"],
-        recentOps: [
-          { opId: "a", outcome: "applied" },
-          { opId: "b", outcome: "refused" },
-          { opId: "c", outcome: "started" },
-          { opId: "d", outcome: "unknown" },
-          { opId: "", outcome: "applied" },
-          { opId: "e:f", outcome: "applied" },
-          { opId: 1, outcome: "applied" },
-          { outcome: "applied" },
-          "g",
-          null,
-        ],
-      });
-      expect(h.features).toEqual(["policyOp", "policyOpId"]);
-      expect(h.recentOps).toEqual([
-        { opId: "a", outcome: "applied" },
-        { opId: "b", outcome: "refused" },
-        { opId: "c", outcome: "started" },
-      ]);
-      // oldest first: a longer list keeps its last (newest) 100 entries
-      const many = Array.from({ length: 150 }, (_, i) => ({ opId: `op${i}`, outcome: "applied" }));
-      const kept = parseHello({ ...hello, recentOps: many }).recentOps ?? [];
-      expect(kept).toHaveLength(MAX_RECENT_POLICY_OPS);
-      expect(MAX_RECENT_POLICY_OPS).toBe(100);
-      expect(kept[0]?.opId).toBe("op50");
-      expect(kept.at(-1)?.opId).toBe("op149");
-    });
-
-    it("validates the result", () => {
-      const policy = { allowedDomains: ["a.example.com"] };
-      expect(parseOpResult("policy", { policy })).toEqual({ policy });
-      for (const bad of [
-        null,
-        {},
-        { policy: { ...policy, allowedDomains: [1] } },
-        { policy: { ...policy, allowedDomains: undefined } },
-      ]) {
-        expect(() => parseOpResult("policy", bad), JSON.stringify(bad)).toThrow(
-          DeviceProtocolError,
-        );
-      }
-    });
-  });
-
-  describe("exec grants and run id", () => {
+  describe("exec grants", () => {
     const grants = {
       hosts: ["a.example.com"],
       source: { kind: "run", id: "run_1", accountId: "a" },
     };
 
-    it("accepts exec args with and without grants and runId", () => {
+    it("accepts exec args with and without grants", () => {
       const goods: unknown[] = [
+        exec,
         { ...exec, grants },
         { ...exec, grants: { ...grants, source: { ...grants.source, kind: "task" } } },
         { ...exec, grants: { ...grants, hosts: [] } },
-        { ...exec, actor: { ...exec.actor, runId: "run_1" } },
       ];
-      for (const args of goods) {
-        expect(parse(req("exec", args), "kernel")().type, JSON.stringify(args)).toBe("req");
-      }
+      for (const args of goods) expect(parse("exec", args)().op, JSON.stringify(args)).toBe("exec");
     });
 
-    it("rejects malformed grants and runId", () => {
+    it("rejects malformed grants", () => {
       const bads: unknown[] = [
         { ...exec, grants: "x" },
         { ...exec, grants: { hosts: "a.example.com", source: grants.source } },
@@ -776,12 +509,9 @@ describe("device protocol", () => {
         { ...exec, grants: { ...grants, source: { ...grants.source, kind: "forever" } } },
         { ...exec, grants: { ...grants, source: { kind: "run", accountId: "a" } } },
         { ...exec, grants: { ...grants, source: { kind: "run", id: "r" } } },
-        { ...exec, actor: { ...exec.actor, runId: 1 } },
       ];
       for (const args of bads) {
-        expect(parse(req("exec", args), "kernel"), JSON.stringify(args)).toThrow(
-          DeviceProtocolError,
-        );
+        expect(parse("exec", args), JSON.stringify(args)).toThrow(DeviceProtocolError);
       }
     });
   });

@@ -494,8 +494,9 @@ describe("staged connection (W3-M)", () => {
     for (const key of ["protocol", "programVersion", "os", "arch", "bootId", "programRunId"])
       expect(hello.body).not.toHaveProperty(key);
     // no policy op is served any more: the deployment changes no policy on this machine
-    expect(body.features).not.toContain("policyOp");
-    expect(body.features).not.toContain("policyOpId");
+    const announced = (hello.body as { features?: unknown[] }).features ?? [];
+    expect(announced).not.toContain("policyOp");
+    expect(announced).not.toContain("policyOpId");
     expect(hello.body).not.toHaveProperty("recentOps");
   });
 
