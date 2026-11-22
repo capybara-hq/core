@@ -13,9 +13,9 @@ const wrap = (ui: ReactElement, locale: "zh" | "en" = "en") =>
 
 const css = readFileSync(resolve(import.meta.dirname, "../src/styles/field-row.css"), "utf8");
 
-/** The bodies of every `@media (max-width: 599px) {…}` block. */
+/** The bodies of every `@media not all and (min-width: 600px) {…}` block. */
 function narrow(text: string): string {
-  const open = "@media (max-width: 599px) {";
+  const open = "@media not all and (min-width: 600px) {";
   let out = "";
   let at = text.indexOf(open);
   while (at >= 0) {

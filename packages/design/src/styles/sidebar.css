@@ -843,7 +843,7 @@
     display: none;
   }
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-sidebar[data-responsive="true"][data-mode="rail"] {
     display: none;
   }
@@ -911,7 +911,7 @@
   bottom: 16px;
   display: flex;
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-auth-prefs {
     right: 16px;
   }

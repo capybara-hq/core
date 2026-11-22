@@ -89,7 +89,7 @@ describe("template forms per size class", () => {
 
 describe("SetupPage on compact", () => {
   it("the steps page shows only on compact while open; the setup home hides behind it", () => {
-    const at = "(max-width: 599px)";
+    const at = "not all and (min-width: 600px)";
     expect(decl("templates.css", ".cb-setup-steps-page", "display")).toBe("none");
     expect(decl("templates.css", '.cb-setup-steps-page[data-open="true"]', "display", at)).toBe(
       "block",

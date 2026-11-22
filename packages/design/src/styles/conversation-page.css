@@ -172,7 +172,7 @@ span.cb-title-btn {
    after the shell's menu button: the title is the centre pill (no path) and every icon folds into
    the trailing overflow; the new conversation's bar is not drawn (the home's centre and trailing
    slots stay empty, plan Decision 27). The thread and the new conversation clear the row. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-shell .cb-title-bar {
     position: absolute;
     z-index: calc(var(--cb-z-sheet) - 10);
@@ -684,7 +684,7 @@ span.cb-title-btn {
 .cb-mode-button.cb-btn .cb-icon {
   flex: none;
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-composer-pickers,
   .cb-composer-mode {
     display: none;
@@ -1038,7 +1038,7 @@ span.cb-title-btn {
 .cb-options-title + .cb-options-sheet-note {
   margin: 0 0 var(--cb-space-2);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-agents-chip-label,
   .cb-agents-chip-activity {
     display: none;
@@ -1557,7 +1557,7 @@ button.cb-property-row {
  * the user bubbles never run past the right edge. Title-bar buttons are 40 px tap targets; the
  * right padding is space.1 so an icon's glyph lines up with the 16 px content edge.
  */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-conv-main {
     min-width: 0;
   }
@@ -1896,7 +1896,7 @@ button.cb-property-row {
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-conv-latest {
     right: calc(var(--cb-space-4) + var(--cb-inset-right));
   }

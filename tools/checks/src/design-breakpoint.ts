@@ -20,6 +20,9 @@ const SEGMENTS = /\b(horizontal|vertical)-viewport-segments\s*:\s*([^\s)]*)/gi;
 
 const FEATURE = /\b(min|max)-(width|height)\s*:\s*([\d.]+[a-z%]*)/gi;
 const MEDIA = /@media\b([^{]*)\{/gi;
+/** A plain compact width; the size query pairs it with the touch features, which exempt it. */
+const COMPACT_WIDTH = /\(\s*max-width\s*:\s*599px\s*\)/i;
+const TOUCH_PART = /\bany-pointer\s*:\s*coarse|\(\s*pointer\s*:\s*coarse/i;
 const VH = /\b100vh\b/;
 
 /**
@@ -42,7 +45,17 @@ export function breakpointFindings(file: string, css: string): Finding[] {
         message: `${f[1]}-viewport-segments: ${f[2]} is not a segment query of the design system; only (horizontal-viewport-segments: 2) and (vertical-viewport-segments: 2) are allowed (spec §8)`,
       });
     }
-    for (const f of (m[1] ?? "").matchAll(FEATURE)) {
+    const prelude = m[1] ?? "";
+    if (COMPACT_WIDTH.test(prelude) && !TOUCH_PART.test(prelude)) {
+      out.push({
+        file,
+        line: lineAt(start),
+        rule: BREAKPOINT_RULE,
+        message:
+          "(max-width: 599px) alone leaves fractional widths between 599 and 600 unstyled; a compact block uses the ClassForms complement `@media not all and (min-width: 600px)` (nest it inside another @media for a combined query). Only the size query `(max-width: 599px), <touch>` (tokens.css) keeps the max-width form",
+      });
+    }
+    for (const f of prelude.matchAll(FEATURE)) {
       const dimension = f[2]?.toLowerCase();
       const value = (f[3] ?? "").toLowerCase();
       const allowed: readonly string[] = dimension === "width" ? ALLOWED_WIDTHS : ALLOWED_HEIGHTS;
