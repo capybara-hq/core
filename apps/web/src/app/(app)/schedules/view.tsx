@@ -9,6 +9,7 @@ import { NoAccess } from "../../../components/NoAccess";
 import { ScheduleCalendarView } from "../../../components/ScheduleCalendarView";
 import {
   DeleteScheduleDialog,
+  type ScheduleColumnKey,
   scheduleColumns,
   useScheduleActions,
   useScheduleWords,
@@ -106,7 +107,7 @@ function Schedules({
 }
 
 /** Compact rows (below 600): the name leads, the next run under it, the state at the end. */
-const COMPACT: Record<string, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
+const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
   name: "title",
   next: "subtitle",
   agent: "meta",

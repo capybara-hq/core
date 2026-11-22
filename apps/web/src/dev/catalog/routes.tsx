@@ -50,16 +50,13 @@ export const PAGE_ROUTES = [
 ] as const;
 
 /** The member pages drawn at `pages/member-<page>` (`member-pages.tsx`). */
-export const MEMBER_PAGES = [
-  "agents",
-  "skills",
-  "connectors",
-  "schedules",
-  "conversations",
-  "inbox",
-  "profile",
-] as const;
-export type MemberPage = (typeof MEMBER_PAGES)[number];
+export const MEMBER_PAGES = PAGE_ROUTES.filter((r) => r.startsWith("pages/member-")).map((r) =>
+  r.slice("pages/member-".length),
+) as readonly MemberPage[];
+export type MemberPage =
+  Extract<(typeof PAGE_ROUTES)[number], `pages/member-${string}`> extends `pages/member-${infer P}`
+    ? P
+    : never;
 
 export const CATALOG_ROUTES = [
   "components",

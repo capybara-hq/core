@@ -440,7 +440,7 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
     {
       // The full error, expandable: wide tables only
       key: "detail",
-      header: "",
+      header: t("columns.detail"),
       compact: "hidden",
       cell: (r) =>
         r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null,

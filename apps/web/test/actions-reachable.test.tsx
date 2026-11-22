@@ -47,7 +47,10 @@ const AUTH = {
 };
 
 beforeEach(() => resetNavigation("/connectors"));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("connector card actions are on the connector's page", () => {
   it.each([
@@ -193,7 +196,9 @@ describe("the skill detail tables at 390 draw grouped rows", () => {
     );
     expect(row?.querySelector("[data-part=compact-title]")?.textContent).toBe("v2");
     expect(row?.querySelector("[data-part=compact-subtitle]")?.textContent).toBe("Version 2.");
-    // the bare file count (1) is not among the meta parts
-    expect(row?.querySelector("[data-part=compact-meta]")?.textContent).not.toMatch(/^1 · /);
+    // the meta is the creation time alone (a local-time stamp): the file count is hidden in compact rows
+    expect(row?.querySelector("[data-part=compact-meta]")?.textContent).toMatch(
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+    );
   });
 });

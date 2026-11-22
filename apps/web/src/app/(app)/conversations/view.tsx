@@ -3,7 +3,7 @@
 import { ConversationList, ListPage, useToast } from "@capybara-hq/design";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { conversationRow, useConversationRowActions } from "../../../components/conversation-rows";
 import { useCursorPages } from "../../../components/cursor-pages";
 import { ErrorFrame } from "../../../components/ErrorFrame";
@@ -82,16 +82,13 @@ function Conversations({ orgId }: { orgId: string }) {
     name: g.agent.name,
     avatar: avatarValue(g.agent, orgId),
   }));
-  // The kernel counts on the first page only: a later page keeps the last known total.
-  const lastTotal = useRef<number | undefined>(undefined);
-  if (read.data?.total !== undefined) lastTotal.current = read.data.total;
   const actions = useConversationRowActions(orgId, pathname, (e) => toast.error(errorMessage(e)));
   if (read.error?.status === 404) return <NotFound />;
   const loading = read.data === undefined && read.error === null;
   if (read.data === undefined && read.error !== null) {
     return <ErrorFrame reset={() => void read.refetch()} />;
   }
-  const count = loading ? undefined : (lastTotal.current ?? rows.length);
+  const count = loading ? undefined : (read.data?.total ?? rows.length);
   const header = {
     path: [...scope, { label: "conversations" }],
     title: t("title"),
