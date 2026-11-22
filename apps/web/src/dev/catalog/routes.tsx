@@ -39,7 +39,27 @@ export const PAGE_ROUTES = [
   "pages/schedules-calendar",
   "pages/schedules-calendar-month",
   "pages/schedules-calendar-admin",
+  // the member pages of the responsive matrix (`member-pages.tsx`)
+  "pages/member-agents",
+  "pages/member-skills",
+  "pages/member-connectors",
+  "pages/member-schedules",
+  "pages/member-conversations",
+  "pages/member-inbox",
+  "pages/member-profile",
 ] as const;
+
+/** The member pages drawn at `pages/member-<page>` (`member-pages.tsx`). */
+export const MEMBER_PAGES = [
+  "agents",
+  "skills",
+  "connectors",
+  "schedules",
+  "conversations",
+  "inbox",
+  "profile",
+] as const;
+export type MemberPage = (typeof MEMBER_PAGES)[number];
 
 export const CATALOG_ROUTES = [
   "components",
