@@ -341,7 +341,7 @@ export class ConversationsController {
   /**
    * My conversations, most recently updated first, each with its agent: `next` is the next page's
    * cursor (passed back as `after`), null when there are no more; `total` counts every match of
-   * the filters and comes on the first page (no `after`) only.
+   * the filters and comes only when asked (`withTotal=true`) on the first page (no `after`).
    */
   @Get()
   @OrgAction("agents.use")
@@ -356,7 +356,7 @@ export class ConversationsController {
       p.account.id,
       {
         limit: q.limit + 1,
-        total: q.after === undefined,
+        total: q.withTotal === "true" && q.after === undefined,
         ...(q.after !== undefined && { after: q.after }),
         ...(q.agentId !== undefined && { agentId: q.agentId }),
         ...(q.q !== undefined && { q: q.q }),
