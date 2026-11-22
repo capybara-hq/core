@@ -11,7 +11,7 @@ the template lists and the like) are scopes, and the super admin lists page thro
 at its end.
 
 The `SCOPE_PENDING` and `LOAD_MORE_PENDING` allowlists of the guards are gone: `check:web-ui` now
-fails any page that declares a view choice as local state or a long list without paging.
+fails a `Segmented` / `Tabs` inside `ListPage.filters` and a Load more row drawn by a page.
 
 Sizing audit: three super admin pages (a list, a detail and a form) join the responsive visual
 matrix, with the 44 px hit-size and no-horizontal-scroll checks at 390.
