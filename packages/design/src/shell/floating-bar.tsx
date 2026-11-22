@@ -8,18 +8,28 @@ import { withViewTransition } from "./view-transition";
  * Where back goes (design spec §4.6): the previous in-app history entry when there is one, else
  * the last linked segment of the page's `path` above the page itself (the path's last segment is
  * the current page, whatever its link; every page head has a path), else the home, so a deep link
- * opened from outside still has a way up (mobile app plan Decision 19).
+ * opened from outside still has a way up (mobile app plan Decision 19). A segment that links to
+ * the current page (`pathname`; a section whose home is its first page, as `/account/profile`
+ * under 个人资料) is skipped: a link to the page itself replaces its entry and changes nothing,
+ * so back would never leave.
  */
 export function backTarget(
   path: readonly { href?: string | undefined }[],
   hasInAppHistory: boolean,
+  pathname?: string | undefined,
 ): "history" | string {
   if (hasInAppHistory) return "history";
   for (let i = path.length - 2; i >= 0; i--) {
     const href = path[i]?.href;
-    if (href) return href;
+    if (href && (pathname === undefined || pathOf(href) !== pathOf(pathname))) return href;
   }
   return "/";
+}
+
+/** A link's path without its query or hash, and without a trailing slash (the root aside). */
+function pathOf(href: string): string {
+  const path = href.split(/[?#]/, 1)[0] ?? "";
+  return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
 /** The longest a view transition waits for the page behind a back to arrive. */

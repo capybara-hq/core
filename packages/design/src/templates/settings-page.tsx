@@ -29,7 +29,8 @@ export type SettingsNavGroup = {
  * has one height and the sub-nav sits at the same y on every settings page, its top aligned with
  * the content's. Below
  * 600 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
- * labels, 40 px tap targets) above the content, the current item scrolled into view.
+ * labels, 40 px tap targets) above the content, the current item scrolled into view. A sub-nav
+ * switch replaces the history entry (sibling views of one page add no back step).
  *
  * `loading` draws the page's frame while its data is on the way (spec §5.4): the header keeps its
  * rows, the sub-nav and the header's description stay real (they are static per page), an
@@ -107,6 +108,9 @@ export function SettingsPage({
             <Link
               key={n.id}
               href={n.href}
+              // the items are sibling views of one page (on phones a row of tabs): a switch
+              // replaces the entry, so back leaves the page instead of retracing every switch
+              replace
               className="cb-settings-nav-item"
               data-current={n.id === activeNav ? "true" : undefined}
               {...(n.id === activeNav ? { "aria-current": "page" as const } : {})}

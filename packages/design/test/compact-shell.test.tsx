@@ -275,6 +275,29 @@ describe("back (Decision 19): history, else the last linked path segment, else /
     expect(back().getAttribute("href")).toBe("/");
   });
 
+  it("a section's home whose parent segment links to the page itself: back skips it, never a self link", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const account = (current: string) => [
+      { label: "~" },
+      { label: "account", href: "/account/profile" },
+      { label: current },
+    ];
+    const { rerender } = render(page("/account/profile", account("profile")));
+    // a link to the page itself replaces its entry and changes nothing: the person is stuck
+    expect(back().getAttribute("href")).toBe("/");
+    rerender(page("/account/preferences", account("preferences")));
+    expect(back().getAttribute("href")).toBe("/account/profile");
+    // the query or hash of the current address does not make the segment another page
+    rerender(
+      page("/account/profile", [
+        { label: "~" },
+        { label: "a", href: "/account/profile?x=1" },
+        { label: "p" },
+      ]),
+    );
+    expect(back().getAttribute("href")).toBe("/");
+  });
+
   it("a deep link, one push, a pop: the second back goes up the path, not out through the history", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     window.history.replaceState(null, "", "/agents/new");

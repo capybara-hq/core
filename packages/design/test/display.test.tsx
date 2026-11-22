@@ -142,6 +142,32 @@ describe("Tabs", () => {
     expect(screen.getByRole("link", { name: /A/ }).getAttribute("aria-current")).toBeNull();
     expect(screen.queryByRole("tablist")).toBeNull();
   });
+  it("link tabs replace the history entry: a switch adds no back step", () => {
+    const replaced: Record<string, boolean | undefined> = {};
+    render(
+      <DesignProvider
+        locale="zh"
+        link={({ href, children, replace, ...rest }) => {
+          replaced[href] = replace;
+          return (
+            <a href={href} {...rest}>
+              {children}
+            </a>
+          );
+        }}
+      >
+        <Tabs
+          label="导航"
+          value="a"
+          items={[
+            { id: "a", label: "A", href: "/a" },
+            { id: "b", label: "B", href: "/b" },
+          ]}
+        />
+      </DesignProvider>,
+    );
+    expect(replaced).toEqual({ "/a": true, "/b": true });
+  });
   it("无 href：tablist、aria-selected、onChange、禁用", async () => {
     const onChange = vi.fn();
     wrap(

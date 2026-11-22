@@ -30,15 +30,18 @@ export function Link({
   href,
   children,
   locale: _locale,
+  replace,
   ...rest
 }: {
   href: string;
   children?: ReactNode;
   locale?: string;
+  replace?: boolean;
   [k: string]: unknown;
 }) {
+  // next/link's `replace` is no DOM attribute: a test reads it as `data-replace`
   return (
-    <a href={href} {...rest}>
+    <a href={href} {...(replace ? { "data-replace": "true" } : {})} {...rest}>
       {children}
     </a>
   );

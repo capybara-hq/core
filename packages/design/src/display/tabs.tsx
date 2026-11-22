@@ -149,6 +149,8 @@ export function Tabs({ items, value, onChange, label, look }: TabsProps) {
               key={it.id}
               className="cb-tab"
               href={it.href}
+              // sibling views of one page: a switch replaces the entry, so back leaves the page
+              replace
               aria-current={current ? "page" : undefined}
             >
               {it.label}

@@ -785,6 +785,42 @@ describe("SettingsPage column (blind round 2)", () => {
     const nav = screen.getByRole("navigation", { name: "设置导航" });
     expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("组织");
   });
+
+  it("a sub-nav switch replaces the history entry: the sibling views add no back step", () => {
+    const seen: { href: string; replace: boolean | undefined }[] = [];
+    const link: design.LinkComponent = ({ href, children, replace, ...rest }) => {
+      seen.push({ href, replace });
+      return (
+        <a href={href} {...rest}>
+          {children}
+        </a>
+      );
+    };
+    render(
+      <DesignProvider locale="zh" link={link}>
+        <SettingsPage
+          header={{ path: [], title: "个人资料" }}
+          nav={[
+            {
+              group: "g",
+              items: [
+                { id: "profile", label: "个人资料", href: "/account/profile" },
+                { id: "preferences", label: "偏好设置", href: "/account/preferences" },
+              ],
+            },
+          ]}
+          activeNav="profile"
+        >
+          <p>内容</p>
+        </SettingsPage>
+      </DesignProvider>,
+    );
+    const items = seen.filter((s) => s.href.startsWith("/account/"));
+    expect(items.map((s) => s.href)).toEqual(
+      expect.arrayContaining(["/account/profile", "/account/preferences"]),
+    );
+    expect(items.every((s) => s.replace === true)).toBe(true);
+  });
 });
 
 describe("SetupPage (the guided setup layout)", () => {

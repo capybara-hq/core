@@ -462,7 +462,9 @@ export function AppShell({
     setup !== null && stepsOpen
       ? closeSteps
       : (page.onBack ??
-        (pushedPage && setup === null ? backTarget(page.path ?? [], depth > 0) : undefined));
+        (pushedPage && setup === null
+          ? backTarget(page.path ?? [], depth > 0, pathname)
+          : undefined));
   const lead: FloatingLead | undefined =
     back !== undefined
       ? { kind: "back", target: back }
