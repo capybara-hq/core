@@ -46,7 +46,6 @@ function window_(width: number) {
 
 function fakeNav(side?: "left" | "right") {
   const select = new Set<(id: string) => void>();
-  const menu = new Set<() => void>();
   const action = new Set<() => void>();
   const account = new Set<() => void>();
   const sub =
@@ -62,7 +61,6 @@ function fakeNav(side?: "left" | "right") {
     nav: {
       set: vi.fn(async (_state: unknown) => {}),
       onSelect: vi.fn(sub(select)),
-      onMenu: vi.fn(sub(menu)),
       onAction: vi.fn(sub(action)),
       onAccount: vi.fn(sub(account)),
       ...(side ? { side } : {}),
@@ -70,7 +68,6 @@ function fakeNav(side?: "left" | "right") {
     select: (id: string) => {
       for (const l of [...select]) l(id);
     },
-    menuListeners: () => menu.size,
     action: () => fire(action),
     account: () => fire(account),
   };
@@ -121,13 +118,11 @@ describe("AppFrame with nav@1", () => {
     expect(state.items[1]?.count).toBe(3);
     expect(state.current).toBe("chats");
     // no menu button on the strip (D12); the pill's top item is New conversation on a page without a primary
-    expect(state.menu).toBeNull();
+    expect(state).not.toHaveProperty("menu");
     expect(state.action).toEqual({ id: "new-conversation", label: "新会话", icon: "square-pen" });
     expect(state.account).toEqual(
       expect.objectContaining({ name: ME.account.displayName, initial: "G" }),
     );
-    // the web never listens for the retired menu button
-    expect(fake.menuListeners()).toBe(0);
   });
 
   it("a section tap navigates without opening the drawer", () => {
@@ -344,7 +339,8 @@ describe("DesignRoot", () => {
         <Probe />
       </DesignRoot>,
     );
-    expect(getByRole("button").getAttribute("data-has")).toBe("haptics");
+    // haptics@1 is the mobile app's: its lists pull to refresh too
+    expect(getByRole("button").getAttribute("data-has")).toBe("haptics,pullToRefresh");
     getByRole("button").click();
     expect(impact).toHaveBeenCalledWith("light");
   });
