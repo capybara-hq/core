@@ -627,10 +627,11 @@ export function dialogFooterTreeFindings(
 export const LOAD_MORE_RULE = "web-ui-load-more";
 
 export const LOAD_MORE_MESSAGE =
-  "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
+  "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable, ItemList), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
 
 const LOAD_MORE_BUTTONS = new Set(["Button", "LinkButton"]);
 /** The apps/web wrapper that draws a Load more row (components/cursor-pages.tsx). */
+// A banned name: the wrapper that used to exist is gone, so a page drawing one is drawing its own.
 const LOAD_MORE_WRAPPER = "LoadMore";
 const LOAD_MORE_TEXT = /加载更多|\bload more\b/i;
 
@@ -654,7 +655,7 @@ function saysLoadMore(children: Node[]): boolean {
 
 /**
  * `web-ui-load-more` over one parsed file: a `Button` / `LinkButton` whose content is a
- * `loadMore` message or the words 加载更多 / Load more, and the `LoadMore` wrapper, fail
+ * `loadMore` message or the words 加载更多 / Load more, and the name `LoadMore`, fail
  * (english-comments-ok: the zh words the rule matches).
  */
 export function loadMoreFindings(p: ParsedFile): Finding[] {

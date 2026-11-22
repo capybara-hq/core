@@ -491,8 +491,8 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
 }
 
 /**
- * The All / Platform / Org-created owner choice of a template list, a `ListPage` `scope` (chips on a
- * compact window, a Segmented on a wide one), and the rows it leaves.
+ * The All / Platform / Org-created owner choice of a template list, a `ListPage` `scope` (chips on
+ * a compact window, a Segmented on a wide one), and the rows it leaves.
  */
 export function useOwnerFilter(rows: PlatformComponent[] | null): {
   scope: ListScope;

@@ -203,7 +203,10 @@ function AdminAgents({ filter }: { filter: Filter }) {
   );
 }
 
-/** The list under one filter: its first page, then the later pages by `next` (the list's own paging). */
+/**
+ * The list under one filter: its first page, then the later pages by `next` (the list's own
+ * paging).
+ */
 function AgentTable({
   filter,
   first,
