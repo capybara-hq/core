@@ -2,14 +2,16 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type BindInstanceResult,
-  DEVICE_PROTOCOL_VERSION,
   FileSystemGoneError,
-  type KernelRequest,
-  parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
+import {
+  type BindInstanceResult,
+  DEVICE_PROTOCOL_VERSION,
+  type KernelRequest,
+  parseDeviceFrame,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DISCONNECTED_MESSAGE,

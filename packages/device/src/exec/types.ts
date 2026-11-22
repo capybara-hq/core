@@ -1,4 +1,4 @@
-import type { DeviceErrorKind } from "@capybara-hq/plugin-sdk";
+import type { DeviceErrorKind } from "@capybara-hq/plugin-sdk/device-protocol";
 
 /** A device failure with a protocol error kind (default `error`). */
 export class DeviceOpError extends Error {

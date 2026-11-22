@@ -5,11 +5,11 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
-  DeviceHello,
   DeviceProvider,
   SandboxExecutionRef,
   SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceHello } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

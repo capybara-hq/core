@@ -1,16 +1,16 @@
 import { randomBytes } from "node:crypto";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type {
   DeviceFeature,
   DeviceLocalPolicySummary,
   DeviceStopArgs,
-  ExtensionContext,
   LegacyDeviceHello,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import {
   type DeviceHello,
   type DeviceOwnerCeiling,
   parseDeviceFrame,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { audit } from "../identity/audit.js";

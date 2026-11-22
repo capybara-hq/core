@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import {
   isFileSystemGoneError,
   isSandboxGoneError,
-  MAX_DEVICE_LIST_ENTRIES,
   parseSkillMd,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
+import { MAX_DEVICE_LIST_ENTRIES } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { EventPayload } from "../../conversations/events.js";
 import { POLICY_REFUSAL_PREFIX } from "../../local-devices/relay.js";
 import { PROJECT_SKILLS_DIR } from "../../sandbox/kernel-read.js";

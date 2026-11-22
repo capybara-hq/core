@@ -1,6 +1,5 @@
 import { posix } from "node:path";
 import {
-  DeviceProtocolError,
   type DeviceProvider,
   isDeviceProjectName,
   isFileSystemGoneError,
@@ -13,6 +12,7 @@ import {
   ToolError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";

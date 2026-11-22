@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DeviceLocalPolicySummary,
-  DeviceOwnerCeilingNarrowing,
   DeviceReport,
   LocalizedName,
   SandboxBrowseScope,
   SandboxLimits,
   SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceLocalPolicySummary,
+  DeviceOwnerCeilingNarrowing,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";

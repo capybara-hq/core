@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type {
-  DeviceExecGrants,
-  ExtensionContext,
-  KernelReq,
-  SandboxLimits,
-} from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { parseDeviceReport, SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants, KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";

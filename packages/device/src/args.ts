@@ -1,5 +1,5 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
-import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk";
+import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import { isKeepAwakeMode, type KeepAwakeMode, type RestrictedProjectReach } from "./state.js";
 
 export type DeviceMode = "os" | "docker";

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceFrame,
   type DeviceResponse,
-  type ExtensionContext,
   type KernelCancel,
   type KernelRequest,
   parseDeviceFrame,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";

@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type KernelRequest, parseDeviceFrame } from "@capybara-hq/plugin-sdk";
+import { type KernelRequest, parseDeviceFrame } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseCommandLine, USAGE } from "../src/args.js";
 import { runCli } from "../src/cli.js";

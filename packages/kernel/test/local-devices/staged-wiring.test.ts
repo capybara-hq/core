@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { SandboxPermissionUnsupportedError, ToolError } from "@capybara-hq/plugin-sdk";
 import {
   type DeviceHello,
   type DeviceOwnerCeiling,
   type KernelReady,
   parseDeviceFrame,
-  SandboxPermissionUnsupportedError,
-  ToolError,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";

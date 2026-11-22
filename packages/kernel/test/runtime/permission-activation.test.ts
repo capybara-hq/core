@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { KernelReq, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import {
   fakeDm as dm,
   type FakeChannelServer,

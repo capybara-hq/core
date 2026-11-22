@@ -1,4 +1,10 @@
 import {
+  type SandboxExecutionRef,
+  type SandboxHandle,
+  type SandboxLimits,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
+import {
   type BindInstanceRequest,
   type DeviceExecGrants,
   type DeviceLocalPolicySummary,
@@ -12,11 +18,7 @@ import {
   type LegacyDevicePolicyArgs,
   type LegacyDevicePolicyStatus,
   POLICY_ADD_REFUSED,
-  type SandboxExecutionRef,
-  type SandboxHandle,
-  type SandboxLimits,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import type { RunningOperations } from "./activity.js";
 import type { CommandLog, CommandLogEntry } from "./command-log.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
@@ -406,7 +408,7 @@ export async function serveOwnerPolicyV3(
   req: KernelReq,
   signal: AbortSignal,
 ): Promise<DeviceResponse> {
-  const sdk = await import("@capybara-hq/plugin-sdk");
+  const proto = await import("@capybara-hq/plugin-sdk/device-protocol");
   const facts: SummaryFacts = { mode: "os" };
   try {
     if (req.op === "policyStatus") {
@@ -415,7 +417,7 @@ export async function serveOwnerPolicyV3(
         type: "res",
         id: req.id,
         ok: true,
-        result: sdk.parseOperationResult("policyStatus", {
+        result: proto.parseOperationResult("policyStatus", {
           ...status,
           ...(status.outcome === "applied" && { ownerCeiling: owner.report() }),
         }),
@@ -430,7 +432,7 @@ export async function serveOwnerPolicyV3(
       type: "res",
       id: req.id,
       ok: true,
-      result: sdk.parseOperationResult("policy", {
+      result: proto.parseOperationResult("policy", {
         ...(res.result as object),
         ownerCeiling: owner.report(),
       }),
@@ -465,9 +467,10 @@ export async function serveOperationV3(
   owner?: StagedOwnerPolicy,
 ): Promise<DeviceResponse> {
   const sdk = await import("@capybara-hq/plugin-sdk");
+  const proto = await import("@capybara-hq/plugin-sdk/device-protocol");
   try {
-    const parsed = sdk.parseDeviceFrame(JSON.stringify(request), "kernel");
-    if (parsed.type !== "req") throw new sdk.DeviceProtocolError("Expected an operation request");
+    const parsed = proto.parseDeviceFrame(JSON.stringify(request), "kernel");
+    if (parsed.type !== "req") throw new proto.DeviceProtocolError("Expected an operation request");
     const a = parsed.args;
     signal.throwIfAborted();
     let result: unknown;
@@ -487,7 +490,7 @@ export async function serveOperationV3(
         type: "res",
         id: request.id,
         ok: true,
-        result: sdk.parseOperationResult("bindInstance", await binder.bind(bind, signal), bind),
+        result: proto.parseOperationResult("bindInstance", await binder.bind(bind, signal), bind),
       };
     }
     if (parsed.op === "revokeOperation") {
@@ -622,7 +625,7 @@ export async function serveOperationV3(
       type: "res",
       id: request.id,
       ok: true,
-      result: sdk.parseOperationResult(
+      result: proto.parseOperationResult(
         parsed.op,
         result,
         parsed.op === "backgroundReadOutput"

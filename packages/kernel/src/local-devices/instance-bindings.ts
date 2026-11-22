@@ -1,10 +1,10 @@
+import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import {
   type BindInstanceRequest,
   type BindInstanceResult,
   DeviceProtocolError,
   parseOperationResult,
-  type SandboxPermissionSupport,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";

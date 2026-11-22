@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type KernelRequest,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   SandboxScopeValidationError,
   SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
+import type { KernelRequest } from "@capybara-hq/plugin-sdk/device-protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { PolicyStore } from "../src/policy-store.js";

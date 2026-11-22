@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk";
+import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { type BindInstanceResult, DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import type { BindInstanceResult } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";

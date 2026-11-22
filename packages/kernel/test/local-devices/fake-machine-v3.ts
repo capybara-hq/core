@@ -8,7 +8,7 @@ import {
   type KernelReq,
   type LegacyDeviceHello,
   parseDeviceFrame,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import WebSocket from "ws";
 import {
   FakeMachine as FakeMachineV2,

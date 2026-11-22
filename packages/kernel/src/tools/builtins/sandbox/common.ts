@@ -1,6 +1,5 @@
 import {
   DEFAULT_SANDBOX_ROOTS,
-  DeviceProtocolError,
   isFileSystemGoneError,
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
@@ -17,6 +16,7 @@ import {
   validateSandboxPath,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { BackgroundTaskFinisher } from "../../../background/finish.js";
 import type { BackgroundTaskStopper } from "../../../background/stop.js";
 import type { BackgroundTaskStore } from "../../../background/store.js";

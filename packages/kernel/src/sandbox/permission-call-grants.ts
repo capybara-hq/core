@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
-  type DeviceExecGrants,
   SandboxOperationOutcomeUnknownError,
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Selectable } from "kysely";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";

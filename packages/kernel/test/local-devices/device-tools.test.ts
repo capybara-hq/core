@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { type KernelReq, type SandboxRoots, ToolError } from "@capybara-hq/plugin-sdk";
+import { type SandboxRoots, ToolError } from "@capybara-hq/plugin-sdk";
+import type { KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";

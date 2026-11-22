@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
-import {
-  type DeviceFeature,
-  type DeviceLocalPolicySummary,
-  type DeviceOwnerCeilingNarrowing,
-  type DevicePolicyArgs,
-  type LegacyDevicePolicyArgs,
-  type LegacyDevicePolicyStatus,
-  ToolError,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
+import { ToolError, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceFeature,
+  DeviceLocalPolicySummary,
+  DeviceOwnerCeilingNarrowing,
+  DevicePolicyArgs,
+  LegacyDevicePolicyArgs,
+  LegacyDevicePolicyStatus,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";

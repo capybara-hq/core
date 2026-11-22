@@ -1,4 +1,4 @@
-import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
+import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Controller, Delete, Get, HttpCode, Inject, Patch, Post } from "@nestjs/common";
 import type { z } from "zod";
 import {

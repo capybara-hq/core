@@ -3,16 +3,18 @@ import { constants } from "node:fs";
 import { mkdir, open, rename } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  type BindInstanceRequest,
-  type BindInstanceResult,
-  type DeviceOwnerCeiling,
-  type DeviceRuntimeIdentity,
   type SandboxHandle,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   type SandboxStopResult,
   SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
+import type {
+  BindInstanceRequest,
+  BindInstanceResult,
+  DeviceOwnerCeiling,
+  DeviceRuntimeIdentity,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import type { MacOperationBackend } from "./mac-operation-backend.js";
 import type { VerifiedRuntime } from "./runtime-manifest.js";
 

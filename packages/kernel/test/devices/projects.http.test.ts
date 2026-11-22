@@ -6,10 +6,9 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
-  type KernelReq,
-  type LegacyDeviceHello,
   type SandboxBrowseScope,
 } from "@capybara-hq/plugin-sdk";
+import type { KernelReq, LegacyDeviceHello } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";

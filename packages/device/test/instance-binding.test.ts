@@ -3,14 +3,16 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type DeviceHello,
-  type DeviceResponse,
-  parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceHello,
+  type DeviceResponse,
+  parseDeviceFrame,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { bindingFile, InstanceBinder } from "../src/exec/instance-binding.js";

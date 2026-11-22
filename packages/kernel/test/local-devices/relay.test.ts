@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import {
-  DeviceProtocolError,
-  type DeviceResponse,
   type ExtensionContext,
   isFileSystemGoneError,
   isSandboxGoneError,
   isSandboxWorkUnsettledError,
-  type KernelReq,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
+import {
+  DeviceProtocolError,
+  type DeviceResponse,
+  type KernelReq,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";

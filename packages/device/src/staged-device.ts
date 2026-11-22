@@ -2,9 +2,6 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
-  DEVICE_PROTOCOL_VERSION,
-  type DeviceFeature,
-  type DeviceHello,
   FileSystemGoneError,
   type SandboxHandle,
   type SandboxPermissionSupport,
@@ -13,6 +10,11 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import {
+  DEVICE_PROTOCOL_VERSION,
+  type DeviceFeature,
+  type DeviceHello,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { RunningOperations } from "./activity.js";
 import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";

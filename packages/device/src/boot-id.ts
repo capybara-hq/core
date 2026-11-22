@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { isDeviceBootId } from "@capybara-hq/plugin-sdk";
+import { isDeviceBootId } from "@capybara-hq/plugin-sdk/device-protocol";
 
 /** What reading the boot identity needs (injected in tests). */
 export interface BootIdSources {

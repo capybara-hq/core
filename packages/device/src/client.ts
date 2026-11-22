@@ -3,7 +3,7 @@
  * and the running connection's interface. The connection itself is the protocol 4 one
  * (`staged-connect.ts`).
  */
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk/device-protocol";
 
 export const OUTDATED_MESSAGE =
   "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device@next";

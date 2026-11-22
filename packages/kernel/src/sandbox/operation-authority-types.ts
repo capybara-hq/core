@@ -1,10 +1,10 @@
 import {
-  type DeviceExecGrants,
   type SandboxBrowseScope,
   type SandboxOperationScope,
   SandboxScopeDeniedError,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 /**
  * A call that asked to run outside the sandbox (`sandbox: "escalated"`) whose escalation grant no
  * longer matches at admission: the device, its outside-sandbox setting or the permission scope

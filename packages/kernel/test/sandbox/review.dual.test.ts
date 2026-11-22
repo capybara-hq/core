@@ -1,4 +1,4 @@
-import type { DeviceExecArgs, KernelReq } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecArgs, KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { createDualReplicaHarness, type Harness } from "@capybara-hq/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";

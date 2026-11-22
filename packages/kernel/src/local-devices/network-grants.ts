@@ -1,9 +1,9 @@
 import {
-  type DeviceExecGrants,
   type NetworkBlockedHost,
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";

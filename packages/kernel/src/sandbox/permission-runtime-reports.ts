@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import {
   instanceSupported,
-  parseSandboxPermissionSupport,
   type SandboxHandle,
   type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
+import { parseSandboxPermissionSupport } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";

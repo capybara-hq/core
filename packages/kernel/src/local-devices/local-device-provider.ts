@@ -9,10 +9,6 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import {
-  type BackgroundReadOutputResult,
-  type DeviceOperation,
-  parseDeviceFrame,
-  parseOperationResult,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
@@ -23,6 +19,12 @@ import {
   SandboxPermissionUnsupportedError,
   type SandboxPreparation,
 } from "@capybara-hq/plugin-sdk";
+import {
+  type BackgroundReadOutputResult,
+  type DeviceOperation,
+  parseDeviceFrame,
+  parseOperationResult,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hostGrantable } from "../sandbox/device-sandbox.js";

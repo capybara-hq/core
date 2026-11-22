@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  type DeviceExecGrants,
   instanceSupported,
   type PermissionProfile,
   parseSandboxBrowseScope,
@@ -10,6 +9,7 @@ import {
   type SandboxBrowseScope,
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import {

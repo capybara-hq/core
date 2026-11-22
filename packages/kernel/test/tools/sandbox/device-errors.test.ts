@@ -1,5 +1,4 @@
 import {
-  DeviceProtocolError,
   FileSystemGoneError,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
@@ -8,6 +7,7 @@ import {
   SandboxWorkUnsettledError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../src/errors.js";
 import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";

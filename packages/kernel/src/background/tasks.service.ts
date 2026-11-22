@@ -1,10 +1,10 @@
 import {
-  DeviceProtocolError,
   isSandboxGoneError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";

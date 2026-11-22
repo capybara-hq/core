@@ -1,4 +1,4 @@
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Controller, Get, Header, Inject } from "@nestjs/common";
 import { z } from "zod";
 import { Public } from "../identity/principal.js";

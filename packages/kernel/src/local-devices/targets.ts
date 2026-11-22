@@ -1,4 +1,5 @@
-import type { DeviceFeature, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { DeviceFeature } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { KernelDb } from "../infra/database/kernel-db.js";

@@ -1,4 +1,7 @@
-import { type DeviceOwnerCeiling, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceOwnerCeiling,
+  parseOwnerCeilingReport,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";

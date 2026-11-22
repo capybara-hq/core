@@ -6,7 +6,7 @@ import {
   type KernelReq,
   type KernelRequest,
   POLICY_ADD_REFUSED,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";

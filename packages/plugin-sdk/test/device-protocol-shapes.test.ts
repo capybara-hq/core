@@ -4,7 +4,7 @@ import {
   parseOwnerCeilingNarrowing,
   parseOwnerCeilingReport,
   parseSandboxPermissionSupport,
-} from "../src/index.js";
+} from "../src/device-protocol.js";
 
 const RESTRICTED = { filesystem: true, network: true, native: true, concurrentScopes: true };
 

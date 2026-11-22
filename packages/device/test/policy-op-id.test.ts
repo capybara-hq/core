@@ -1,11 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type DeviceOwnerCeiling,
-  type KernelRequest,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
+import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import {

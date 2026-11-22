@@ -10,11 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import {
-  type DeviceOwnerCeiling,
-  type KernelRequest,
-  SandboxScopeDeniedError,
-} from "@capybara-hq/plugin-sdk";
+import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
+import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.js";
 import { CommandLog } from "../src/command-log.js";

@@ -4,7 +4,7 @@ import type {
   DevicePolicyOpOutcome,
   KernelReq,
   LegacyDeviceHello,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";

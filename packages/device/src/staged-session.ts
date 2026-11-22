@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxHandle } from "@capybara-hq/plugin-sdk";
 import {
   type DeviceHello,
   type DeviceResponse,
   type KernelReady,
   parseDeviceFrame,
-  type SandboxHandle,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import type WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
 import { credentialIdentity, type InstanceBinder } from "./exec/instance-binding.js";
@@ -174,6 +174,7 @@ async function serveMachineControl(
   signal: AbortSignal,
 ): Promise<DeviceResponse> {
   const sdk = await import("@capybara-hq/plugin-sdk");
+  const proto = await import("@capybara-hq/plugin-sdk/device-protocol");
   try {
     if (!machine)
       throw new sdk.SandboxPermissionUnsupportedError(
@@ -184,11 +185,11 @@ async function serveMachineControl(
         type: "res",
         id: req.id,
         ok: true,
-        result: sdk.parseOperationResult("create", await machine.create(signal)),
+        result: proto.parseOperationResult("create", await machine.create(signal)),
       };
     const reason = (req.args as { reason?: unknown }).reason;
     if (reason !== "revoked" && reason !== "deleted")
-      throw new sdk.DeviceProtocolError("A machine stop names its reason: revoked or deleted");
+      throw new proto.DeviceProtocolError("A machine stop names its reason: revoked or deleted");
     await machine.stop(reason, signal);
     return { type: "res", id: req.id, ok: true, result: null };
   } catch (error) {

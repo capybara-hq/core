@@ -1,4 +1,4 @@
-import type { DeviceOwnerCeiling } from "@capybara-hq/plugin-sdk";
+import type { DeviceOwnerCeiling } from "@capybara-hq/plugin-sdk/device-protocol";
 
 /**
  * A stored owner report (`device_machines.owner_report`) for a seeded machine row: without one a

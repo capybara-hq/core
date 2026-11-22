@@ -1,11 +1,11 @@
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import {
   type DeviceErrorKind,
   type DeviceRes,
-  type ExtensionContext,
   type KernelCancel,
   type KernelReq,
   parseLegacyDeviceFrame,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import type { Redis } from "ioredis";
 import {
   deviceLeaseKey,

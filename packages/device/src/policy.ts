@@ -2,10 +2,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   DEVICE_DENIED_SECRET_PATHS,
-  type DeviceExecGrants,
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { OwnerCeilingPolicy, Policy } from "./state.js";
 
 /**

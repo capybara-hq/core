@@ -1,9 +1,8 @@
+import type { SandboxBrowseScope, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import {
   type DeviceOwnerCeiling,
   parseOwnerCeilingReport,
-  type SandboxBrowseScope,
-  type SandboxOperationScope,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { coversHost } from "../sandbox/modes.js";
 import { isExecutionMethod, isFullExecutionScope } from "../sandbox/operation-authority-types.js";
 

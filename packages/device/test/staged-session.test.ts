@@ -2,12 +2,12 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import {
   type DeviceHello,
   type DeviceResponse,
   parseDeviceFrame,
-  type SandboxExecutionRef,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createStagedSessionState, drainStagedSession, serveStagedSession } from "../src/client.js";

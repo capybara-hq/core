@@ -4,7 +4,7 @@ import {
   type DevicePolicyOpOutcome,
   type DevicePolicyOpReport,
   isPolicyOpId,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { policyOpsPath, withPolicyLock, writePrivate } from "./state.js";
 
 /** The most `policy` op outcomes the log keeps; the oldest is dropped first. */

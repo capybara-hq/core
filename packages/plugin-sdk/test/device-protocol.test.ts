@@ -1,22 +1,24 @@
-import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  isDeviceProjectName,
+  MAX_DEVICE_PROJECT_NAME_LENGTH,
+  MAX_DEVICE_SCAN_RESULTS,
+  rootsOf,
+} from "@capybara-hq/plugin-sdk";
+import { describe, expect, it } from "vitest";
+import {
   type DeviceLocalPolicySummary,
   DeviceProtocolError,
   isDeviceBootId,
-  isDeviceProjectName,
   type LegacyDeviceHello,
   type LegacyDevicePolicyStatus,
   MAX_DEVICE_LIST_ENTRIES,
-  MAX_DEVICE_PROJECT_NAME_LENGTH,
-  MAX_DEVICE_SCAN_RESULTS,
   MAX_NETWORK_BLOCKED_HOSTS,
   MAX_POLICY_OP_ID_LENGTH,
   MAX_RECENT_POLICY_OPS,
   parseLegacyDeviceFrame,
   parseOpResult,
-  rootsOf,
-} from "../src/index.js";
+} from "../src/device-protocol.js";
 
 const hello = {
   type: "hello",

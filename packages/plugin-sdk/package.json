@@ -20,6 +20,12 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./device-protocol": {
+      "@capybara-hq/source": "./src/device-protocol.ts",
+      "types": "./dist/device-protocol.d.ts",
+      "import": "./dist/device-protocol.js",
+      "default": "./dist/device-protocol.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -28,6 +34,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "default": "./dist/index.js"
+      },
+      "./device-protocol": {
+        "types": "./dist/device-protocol.d.ts",
+        "import": "./dist/device-protocol.js",
+        "default": "./dist/device-protocol.js"
       },
       "./package.json": "./package.json"
     }

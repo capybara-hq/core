@@ -3,7 +3,7 @@ import type {
   DeviceLocalPolicySummary,
   DeviceOwnerCeiling,
   LegacyDeviceHello,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

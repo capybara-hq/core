@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sdk";
+import type { DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";

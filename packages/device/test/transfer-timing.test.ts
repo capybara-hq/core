@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KernelRequest } from "@capybara-hq/plugin-sdk";
+import type { KernelRequest } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";

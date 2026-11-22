@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { DeviceFeature, ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { DeviceFeature } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";

@@ -4,7 +4,7 @@ import {
   type DeviceOperation,
   type KernelRequest,
   LEGACY_DEVICE_PROTOCOL_VERSION,
-} from "@capybara-hq/plugin-sdk";
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";

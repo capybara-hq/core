@@ -50,6 +50,15 @@ const pkg = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
 const one = (p: unknown, sdk = "0.1.0") =>
   validatePluginPackageJsonFor(p, extensionPlugin(demo()), sdk).join("\n");
 
+describe("the device-protocol subpath", () => {
+  it("resolves and the root no longer exports protocol frames", async () => {
+    const sub = await import("@capybara-hq/plugin-sdk/device-protocol");
+    const root = await import("@capybara-hq/plugin-sdk");
+    expect(sub.parseDeviceFrame).toBeTypeOf("function");
+    expect(root).not.toHaveProperty("parseDeviceFrame");
+  });
+});
+
 describe("HOST_PROVIDED_PACKAGES", () => {
   it("only the SDK and zod", () => {
     expect([...HOST_PROVIDED_PACKAGES]).toEqual(["@capybara-hq/plugin-sdk", "zod"]);

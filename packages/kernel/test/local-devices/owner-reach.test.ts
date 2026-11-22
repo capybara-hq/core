@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS, type DeviceOwnerCeiling } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import type { DeviceOwnerCeiling } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";

@@ -1,4 +1,4 @@
-import { isDeviceBootId } from "@capybara-hq/plugin-sdk";
+import { isDeviceBootId } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";

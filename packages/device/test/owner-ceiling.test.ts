@@ -10,7 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type KernelRequest, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
+import {
+  type KernelRequest,
+  parseOwnerCeilingReport,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { CEILING_WIDENING_TEXT } from "../src/commands/ceiling.js";

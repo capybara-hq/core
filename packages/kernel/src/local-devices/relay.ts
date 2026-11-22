@@ -1,19 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  type BindInstanceRequest,
-  type DeviceOp,
-  type DeviceOperation,
-  type DeviceOpResults,
-  DeviceProtocolError,
-  type DeviceResponse,
-  type DeviceStopArgs,
   type ExtensionContext,
   FileSystemGoneError,
-  type KernelReq,
-  parseDeviceFrame,
-  parseLegacyDeviceFrame,
-  parseOperationResult,
-  parseOpResult,
   SandboxGoneError,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
@@ -22,6 +10,20 @@ import {
   SandboxWorkUnsettledError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
+import {
+  type BindInstanceRequest,
+  type DeviceOp,
+  type DeviceOperation,
+  type DeviceOpResults,
+  DeviceProtocolError,
+  type DeviceResponse,
+  type DeviceStopArgs,
+  type KernelReq,
+  parseDeviceFrame,
+  parseLegacyDeviceFrame,
+  parseOperationResult,
+  parseOpResult,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { machineRevoked } from "../devices/errors.js";
