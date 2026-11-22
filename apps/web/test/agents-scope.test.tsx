@@ -1,4 +1,4 @@
-// `/agents` declares its 全部 / 我的 / 组织共享 choice as ListPage's `scope`: three chips on a
+// `/agents` declares its All / Mine / Shared choice as ListPage's `scope`: three chips on a
 // compact window (a radiogroup), a Segmented on a wide one (responsive spec §4, §6.1).
 import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

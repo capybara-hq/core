@@ -26,10 +26,10 @@ import { useUrlTab } from "../../../lib/url-tab";
 import NotFound from "../not-found";
 
 /**
- * `/agents` (rulings P4-14 to P4-16): one page with the tabs 智能体 and 模板 (`?tab=templates`,
+ * `/agents` (rulings P4-14 to P4-16): one page with the tabs Agents and Templates (`?tab=templates`,
  * members up: guests cannot create agents, so they get the agents and no tabs), both lists as
- * cards. 智能体: the org's agents with the scope 全部 / 我的 / 组织共享 (ListPage `scope`); 模板: the
- * templates the org can use and the platform ones offered to it, with the org admin's switch. One
+ * cards. Agents: the org's agents with the scope All / Mine / Shared with the org (ListPage
+ * `scope`); Templates: the templates the org can use and the platform ones offered to it, with the org admin's switch. One
  * search per tab (cleared on a switch). From the query cache (the layout prefetched both tabs'
  * lists on a first load, so a switch paints at once and the head counts both).
  */
@@ -144,7 +144,7 @@ function useTabError(): (retry: () => void) => EmptyStateProps {
 }
 
 /**
- * 智能体: the agents as cards with the scope 全部 / 我的 / 组织共享 (a page-local view
+ * Agents tab: the agents as cards with the scope All / Mine / Shared with the org (a page-local view
  * choice, as the old head tabs were) and the search. The owner names come from the members list
  * (members up; a guest's cards show the visibility only).
  */
