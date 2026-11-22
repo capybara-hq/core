@@ -424,17 +424,26 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
       ),
     },
     {
-      key: "detail",
-      compact: "hidden",
+      // Plain text only (skip reason, refused tools, the error's first line): it is the compact
+      // rows' subtitle, where the interactive `ErrorDetail` below is not drawn
+      key: "reason",
       header: t("columns.detail"),
+      compact: "subtitle",
       wrap: true,
+      tone: "muted",
       cell: (r) => {
-        if (r.skipReason !== null) return <Text tone="muted">{t(`skip.${r.skipReason}`)}</Text>;
-        if (r.missingGrants.length > 0) {
-          return <Text tone="warn">{t("missing", { tools: r.missingGrants.join(", ") })}</Text>;
-        }
-        return r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null;
+        if (r.skipReason !== null) return t(`skip.${r.skipReason}`);
+        if (r.missingGrants.length > 0) return t("missing", { tools: r.missingGrants.join(", ") });
+        return r.error?.split("\n")[0] ?? null;
       },
+    },
+    {
+      // The full error, expandable: wide tables only
+      key: "detail",
+      header: "",
+      compact: "hidden",
+      cell: (r) =>
+        r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null,
     },
   ];
   return (
