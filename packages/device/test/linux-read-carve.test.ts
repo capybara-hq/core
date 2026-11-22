@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { carveReadRoots, MAX_CARVED_READ_ROOTS } from "../src/exec/linux-read-carve.js";
+import {
+  carveReadRoots,
+  fsNameBytes,
+  fsNameString,
+  launcherAcceptsRoot,
+  MAX_CARVED_READ_ROOTS,
+} from "../src/exec/linux-read-carve.js";
 import { within } from "../src/exec/operation-types.js";
 
 /** An injected file system: `tree` maps each directory to its entries (directories only). */
@@ -150,5 +156,50 @@ describe("carveReadRoots", () => {
     const tree: Record<string, string[]> = { "/w": ["secret", ...many], "/w/secret": [] };
     for (const m of many) tree[`/w/${m}`] = [];
     expect(carveReadRoots(["/w"], ["/w/secret"], fakeFs(tree))).toHaveLength(MAX_CARVED_READ_ROOTS);
+  });
+
+  it("skips names the launcher would refuse as roots, so the launch still starts", () => {
+    for (const name of ["back\\slash", "ctl\u0001x", "pct%2Fslash", "pct%5cback", "%2e%2e"])
+      mkdirSync(join(R, "a", name));
+    expect(carveReadRoots([R], [`${R}/a/x`])).toEqual([`${R}/a/y`, `${R}/b`]);
+  });
+});
+
+describe("launcherAcceptsRoot", () => {
+  it("refuses what the SDK launcher's valid_path refuses", () => {
+    expect(launcherAcceptsRoot("/home/u/src")).toBe(true);
+    expect(launcherAcceptsRoot("/home/u/100%")).toBe(true);
+    expect(launcherAcceptsRoot("/home/u/caf%C3%A9")).toBe(true);
+    for (const path of [
+      "/home/u/a\\b",
+      "/home/u/new\nline",
+      "/home/u/del\u007f",
+      "/home/u/x%2Fy",
+      "/home/u/x%5Cy",
+      "/home/u/%2E%2e",
+      "/home/u/.%2e",
+      `/${"a".repeat(4096)}`,
+    ])
+      expect(launcherAcceptsRoot(path), JSON.stringify(path)).toBe(false);
+  });
+});
+
+describe("file names as bytes", () => {
+  it("reads UTF-8 as text and each other byte as U+DC80-U+DCFF, and back exactly", () => {
+    const cases: [number[], string][] = [
+      [[0x61, 0x62], "ab"],
+      [[0xc3, 0xa9], "é"],
+      [[0xf0, 0x90, 0x82, 0x80], "\u{10080}"], // a pair whose low half is in U+DC80-U+DCFF
+      [[0x6e, 0xff, 0x6d], "n\udcffm"],
+      [[0xc0, 0xaf], "\udcc0\udcaf"], // overlong
+      [[0xed, 0xa0, 0x80], "\udced\udca0\udc80"], // an encoded surrogate
+      [[0xe2, 0x82, 0x41], "\udce2\udc82A"], // a cut sequence
+      [[0xe2, 0xe2, 0x82, 0xac], "\udce2€"],
+      [[0xf4, 0x90, 0x80, 0x80], "\udcf4\udc90\udc80\udc80"], // above U+10FFFF
+    ];
+    for (const [bytes, text] of cases) {
+      expect(fsNameString(Uint8Array.from(bytes)), JSON.stringify(text)).toBe(text);
+      expect([...fsNameBytes(text)], JSON.stringify(text)).toEqual(bytes);
+    }
   });
 });

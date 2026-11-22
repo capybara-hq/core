@@ -96,7 +96,8 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
   };
 
   beforeAll(async () => {
-    device = await startLinuxDevice();
+    // a home outside the workspace reach whose version manager tools can run
+    device = await startLinuxDevice({ tmpfs: ["/home/tools"] });
     await installServer(device);
     device.run("mkdir -m 700 /home/sandbox/state");
     server = new HostServer(device);
@@ -331,10 +332,18 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     await until(async () => (await alive([child])).length === 0);
   });
 
-  it("a restricted command reads the version manager files of the home, read only, and no more", async () => {
+  it("a restricted command reads the version manager files of its home, read only, never mise's config", async () => {
     const root = project("tool-homes");
-    // the device process's own home (the image's home of the device user)
-    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    // the device process's own home, outside the workspace reach (the image's home is the
+    // workspace itself, so a stand-in home keeps the tool homes the only grant there)
+    const home = "/home/tools";
+    device.run("mkdir -m 700 -p /home/sandbox/state-tools");
+    const homed = new HostServer(device, { HOME: home });
+    servers.push(homed);
+    const tools = await hostBackend(homed, {
+      stateDir: "/home/sandbox/state-tools",
+      deviceId: "device-tools",
+    });
     const q = (path: string) => JSON.stringify(path);
     device.run(
       `mkdir -p ${q(`${home}/.asdf`)} && printf shim > ${q(`${home}/.asdf/x`)} && printf 'nodejs 22.12.0' > ${q(`${home}/.tool-versions`)} && printf private > ${q(`${home}/outside.txt`)}`,
@@ -345,48 +354,51 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     device.run(
       `mkdir -p ${q(miseBin)} ${q(`${home}/.config/mise`)} && printf '#!/bin/sh\necho mise-tool-ran\n' > ${q(`${miseBin}/tool`)} && chmod +x ${q(`${miseBin}/tool`)} && printf 'TOKEN=secret' > ${q(`${home}/.config/mise/config.toml`)}`,
     );
-    try {
-      const scope = restricted(root);
-      const result = await backend.operation(scope, authorityFor(scope.operationId)).exec({
-        command: [
-          `H=${q(home)}`,
-          'printf %s "$ASDF_DATA_DIR" > env',
-          'cat "$ASDF_DATA_DIR/x" > got-x',
-          'cat "$H/.tool-versions" > got-versions',
-          '(printf y >> "$H/.asdf/x") 2>/dev/null && printf w > wrote-x',
-          '(printf y >> "$H/.tool-versions") 2>/dev/null && printf w > wrote-versions',
-          'cat "$H/outside.txt" > got-outside 2>/dev/null || rm -f got-outside',
-          '"$MISE_DATA_DIR/installs/tool/1.0/bin/tool" > got-mise',
-          'if [ -n "$MISE_CONFIG_DIR" ]; then printf set; else printf unset; fi > mise-config-env',
-          'cat "$H/.config/mise/config.toml" > got-mise-config 2>/dev/null || rm -f got-mise-config',
-          "true",
-        ].join("; "),
-        cwd: root,
-        timeoutMs: 20_000,
-        maxOutputBytes: 4096,
-        signal: new AbortController().signal,
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(text(await read(`${root}/env`))).toBe(`${home}/.asdf`);
-      expect(text(await read(`${root}/got-x`)), result.stderr).toBe("shim");
-      expect(text(await read(`${root}/got-versions`)), result.stderr).toBe("nodejs 22.12.0");
-      for (const name of ["wrote-x", "wrote-versions", "got-outside", "got-mise-config"])
-        expect(await read(`${root}/${name}`), name).toBeNull();
-      expect(text(await read(`${root}/got-mise`)), result.stderr).toBe("mise-tool-ran\n");
-      expect(text(await read(`${root}/mise-config-env`))).toBe("unset");
-      expect(text(await read(`${home}/.asdf/x`))).toBe("shim");
-      expect(text(await read(`${home}/.tool-versions`))).toBe("nodejs 22.12.0");
-    } finally {
-      device.run(
-        `rm -rf ${q(`${home}/.asdf`)} ${q(`${home}/.tool-versions`)} ${q(`${home}/outside.txt`)} ${q(`${home}/.local/share/mise`)} ${q(`${home}/.config/mise`)}`,
-      );
-    }
+    // reads follow the reach: another project in the workspace is readable
+    const other = project("tool-homes-other");
+    device.run(`printf neighbour > ${other}/file`);
+    const scope = scopeFor(tools.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
+      network: { kind: "none" },
+    });
+    const result = await tools.operation(scope, authorityFor(scope.operationId)).exec({
+      command: [
+        `H=${q(home)}`,
+        'printf %s "$ASDF_DATA_DIR" > env',
+        'cat "$ASDF_DATA_DIR/x" > got-x',
+        'cat "$H/.tool-versions" > got-versions',
+        '(printf y >> "$H/.asdf/x") 2>/dev/null && printf w > wrote-x',
+        '(printf y >> "$H/.tool-versions") 2>/dev/null && printf w > wrote-versions',
+        'cat "$H/outside.txt" > got-outside 2>/dev/null || rm -f got-outside',
+        '"$MISE_DATA_DIR/installs/tool/1.0/bin/tool" > got-mise',
+        'if [ -n "$MISE_CONFIG_DIR" ]; then printf set; else printf unset; fi > mise-config-env',
+        'cat "$H/.config/mise/config.toml" > got-mise-config 2>/dev/null || rm -f got-mise-config',
+        `cat ${other}/file > got-other`,
+        "true",
+      ].join("; "),
+      cwd: root,
+      timeoutMs: 20_000,
+      maxOutputBytes: 4096,
+      signal: new AbortController().signal,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(text(await read(`${root}/env`))).toBe(`${home}/.asdf`);
+    expect(text(await read(`${root}/got-x`)), result.stderr).toBe("shim");
+    expect(text(await read(`${root}/got-versions`)), result.stderr).toBe("nodejs 22.12.0");
+    for (const name of ["wrote-x", "wrote-versions", "got-outside", "got-mise-config"])
+      expect(await read(`${root}/${name}`), name).toBeNull();
+    expect(text(await read(`${root}/got-mise`)), result.stderr).toBe("mise-tool-ran\n");
+    expect(text(await read(`${root}/mise-config-env`))).toBe("unset");
+    expect(text(await read(`${root}/got-other`)), result.stderr).toBe("neighbour");
+    expect(text(await read(`${home}/.asdf/x`))).toBe("shim");
+    expect(text(await read(`${home}/.tool-versions`))).toBe("nodejs 22.12.0");
   });
 
-  it("never reaches an owner-denied path: exec grants around it are refused, native links stop", async () => {
+  it("never reaches an owner-denied path: a write root around it is refused, reads carve it out, native links stop", async () => {
     const root = project("denied");
     device.run(
-      `mkdir -p ${root}/secret ${root}/open && printf top > ${root}/secret/key && ln -s ${root}/secret/key ${root}/open/link`,
+      `mkdir -p ${root}/secret ${root}/open && printf top > ${root}/secret/key && ln -s ${root}/secret/key ${root}/open/link && printf near > ${root}/open/near`,
     );
     device.run(`mkdir -m 700 /home/sandbox/state-denied`);
     const guarded = new HostServer(device);
@@ -403,7 +415,8 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
         network: { kind: "none" },
       });
     const signal = new AbortController().signal;
-    // Landlock cannot carve the denied directory out of a granted root: refused, nothing runs
+    // a write root is granted whole (its writes brokered, its reads not): one around the denied
+    // directory is refused, nothing runs
     const around = scope([root]);
     await expect(
       denying.operation(around, authorityFor(around.operationId)).exec({
@@ -424,22 +437,33 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     await expect(
       denying.operation(direct).readFile(`${root}/secret/key`, { maxBytes: 10, signal }),
     ).rejects.toMatchObject({ name: "SandboxScopeDeniedError" });
-    // a grant beside the denied directory works as usual
+    // a write root beside the denied directory runs; the workspace reach is carved around it
     const beside = scope([`${root}/open`]);
     const ok = await denying.operation(beside, authorityFor(beside.operationId)).exec({
-      command: "printf ok > here && cat here",
+      command: [
+        "printf ok > here",
+        `cat ${root}/secret/key > leaked 2>/dev/null || rm -f leaked`,
+        "cat link > linked 2>/dev/null || rm -f linked",
+        `ls ${root}/secret > listed 2>/dev/null || rm -f listed`,
+        "cat here near",
+      ].join("; "),
       cwd: `${root}/open`,
       timeoutMs: 10_000,
       maxOutputBytes: 100,
       signal,
     });
-    expect(ok).toMatchObject({ exitCode: 0, stdout: "ok" });
+    expect(ok).toMatchObject({ exitCode: 0, stdout: "oknear" });
+    for (const name of ["leaked", "linked", "listed"])
+      expect(await read(`${root}/open/${name}`), name).toBeNull();
   });
 
-  // A kernel read narrows `AGENTS.md` to itself: a read root that is a regular file.
-  it("a native read whose only read root is a regular file reads it and nothing beside it", async () => {
+  // A kernel read narrows `AGENTS.md` to itself; the project reach still decides what is read.
+  it("a native read whose project root is a regular file reads within the reach, nothing beyond it", async () => {
     const root = project("file-root");
-    device.run(`printf rules > ${root}/AGENTS.md && printf secret > ${root}/secret`);
+    device.run(`printf rules > ${root}/AGENTS.md && printf beside > ${root}/beside`);
+    // outside the workspace reach (workspace, skills, tmp)
+    const outside = `/home/sandbox/outside-${Math.random().toString(36).slice(2, 8)}`;
+    device.run(`printf secret > ${outside}`);
     const agents = `${root}/AGENTS.md`;
     const scope = () =>
       scopeFor(backend.deviceId, {
@@ -454,9 +478,87 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       isDir: false,
       size: 5,
     });
+    // reads follow the reach: beside the file, inside the workspace
+    const near = await backend
+      .operation(scope())
+      .readFile(`${root}/beside`, { maxBytes: 10, signal });
+    expect(text(near?.data ?? null)).toBe("beside");
     await expect(
-      backend.operation(scope()).readFile(`${root}/secret`, { maxBytes: 10, signal }),
+      backend.operation(scope()).readFile(outside, { maxBytes: 10, signal }),
     ).rejects.toThrow();
+  });
+
+  it("machine reach reads beside a denied path, never inside it", async () => {
+    const base = project("carve");
+    const B = `${base}/b`;
+    const U = `${base}/u`;
+    const q = (path: string) => JSON.stringify(path);
+    device.run(
+      [
+        `mkdir -p ${B}/secret ${U}/sub ${B}/near`,
+        `printf top > ${B}/secret/key`,
+        `printf readable > ${U}/sub/file`,
+        `printf near > ${B}/near/file`,
+        // a link in a carved parent (skipped, never followed), one to the denied directory
+        `ln -s ${B}/secret ${B}/to-secret`,
+        `ln -s /nonexistent ${B}/dangling`,
+        // names the launcher refuses as roots (skipped, so the launch still starts) and a name
+        // that is not UTF-8 (granted byte for byte)
+        `mkdir ${q(`${B}/back\\slash`)} ${q(`${B}/pct%2Fslash`)} "$(printf '${B}/ctl\\001x')"`,
+        `mkdir "$(printf '${B}/raw\\377name')" && printf raw > "$(printf '${B}/raw\\377name/file')"`,
+      ].join(" && "),
+    );
+    device.run("mkdir -m 700 /home/sandbox/state-carve");
+    const carving = new HostServer(device);
+    servers.push(carving);
+    const machine = await hostBackend(carving, {
+      stateDir: "/home/sandbox/state-carve",
+      deviceId: "device-carve",
+      projectReach: "machine",
+      deniedReadRoots: [`${B}/secret`],
+    });
+    const scope = () =>
+      scopeFor(machine.deviceId, {
+        profile: "approve-for-me",
+        filesystem: { kind: "scoped", projectRoot: U, writeRoots: [U] },
+        network: { kind: "none" },
+      });
+    const signal = new AbortController().signal;
+    const exec = (command: string) => {
+      const s = scope();
+      return machine.operation(s, authorityFor(s.operationId)).exec({
+        command,
+        cwd: U,
+        timeoutMs: 20_000,
+        maxOutputBytes: 4096,
+        signal,
+      });
+    };
+    expect(await exec(`cat ${U}/sub/file`)).toMatchObject({ exitCode: 0, stdout: "readable" });
+    expect(await exec(`cat ${B}/near/file`)).toMatchObject({ exitCode: 0, stdout: "near" });
+    expect(await exec(`cat "$(printf '${B}/raw\\377name/file')"`)).toMatchObject({
+      exitCode: 0,
+      stdout: "raw",
+    });
+    // a system directory, read whole
+    expect((await exec("cat /etc/hostname")).exitCode).toBe(0);
+    for (const command of [
+      `cat ${B}/secret/key`,
+      `ls ${B}/secret`,
+      `cat ${B}/to-secret/key`,
+      // the device's state directory (its files lock) is denied like any secret
+      "ls /home/sandbox/state-carve",
+    ])
+      expect((await exec(command)).exitCode, command).not.toBe(0);
+    // native work keeps the machine root and checks each resolved path against the denied ones
+    const near = await machine
+      .operation(scope())
+      .readFile(`${B}/near/file`, { maxBytes: 10, signal });
+    expect(text(near?.data ?? null)).toBe("near");
+    for (const path of [`${B}/secret/key`, `${B}/to-secret/key`])
+      await expect(
+        machine.operation(scope()).readFile(path, { maxBytes: 10, signal }),
+      ).rejects.toMatchObject({ name: "SandboxScopeDeniedError" });
   });
 
   it("a restricted exec's home is the device's sandbox home: writable, kept, the real home not", async () => {

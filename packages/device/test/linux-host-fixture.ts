@@ -197,10 +197,12 @@ export async function hostBackend(
 ): Promise<HostBackend> {
   await server.ready;
   const deviceId = options.deviceId ?? "device-linux";
+  // as in production, the device's own state directory is always denied to restricted work
+  const denied = [...(options.deniedReadRoots ?? []), options.stateDir];
   const ceiling = {
     ...fixtureCeiling({ workspace: "/workspace", skills: "/home/sandbox/skills", tmp: "/tmp" }),
-    secretAndStateDenies: options.deniedReadRoots ?? [],
-    restrictedDeniedReadRoots: options.deniedReadRoots ?? [],
+    secretAndStateDenies: denied,
+    restrictedDeniedReadRoots: denied,
     ...(options.network ? { network: options.network } : {}),
     ...(options.allowedDomains ? { allowedDomains: options.allowedDomains } : {}),
     ...(options.projectReach ? { projectReach: options.projectReach } : {}),

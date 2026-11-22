@@ -196,7 +196,10 @@ export async function startLinuxDevice(
     bindWorkspace?: string;
     /** The open-network fixture ({@link FixtureNetworks}) instead of no network at all. */
     networks?: boolean;
-    /** Extra writable tmpfs mounts owned by the device user (a system path's stand-in). */
+    /**
+     * Extra writable tmpfs mounts owned by the device user, programs runnable from them (a system
+     * path's or a home's stand-in).
+     */
     tmpfs?: string[];
   } = {},
 ): Promise<LinuxDevice> {
@@ -295,7 +298,10 @@ export async function startLinuxDevice(
     ...(hostsDir
       ? ["--mount", `type=bind,source=${hostsDir}/hosts,target=/etc/hosts,readonly`]
       : []),
-    ...(options.tmpfs ?? []).flatMap((path) => ["--tmpfs", `${path}:uid=1000,gid=1000,mode=755`]),
+    ...(options.tmpfs ?? []).flatMap((path) => [
+      "--tmpfs",
+      `${path}:exec,uid=1000,gid=1000,mode=755`,
+    ]),
     ...(options.bindWorkspace
       ? ["--mount", `type=bind,source=${options.bindWorkspace}/tmp,target=/tmp`]
       : ["--tmpfs", "/tmp:size=64m"]),

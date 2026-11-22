@@ -201,7 +201,7 @@ describe("Linux operation worker", () => {
     await handle.completion;
     const [sent] = await fake.lines();
     expect(sent).toMatchObject({
-      readRoots: ["/repo", join(home, ".asdf")],
+      readRoots: [join(home, ".asdf"), "/repo"],
       readFiles: [join(home, ".tool-versions")],
       writeRoots: ["/work"],
       env: {
@@ -213,6 +213,103 @@ describe("Linux operation worker", () => {
     });
     // read only: never a write root
     expect(sent?.writeRoots).not.toContain(join(home, ".asdf"));
+  });
+
+  it("a machine-reach exec sends carved read roots, never /", async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "cap-tool-home-")));
+    dirs.push(home);
+    await mkdir(join(home, ".asdf"));
+    // a stand-in machine (the real one would make the walk depend on this host): the denied
+    // secret and the device's state lie under it, beside readable directories and a link
+    const tree: Record<string, Record<string, "dir" | "link" | "file">> = {
+      "/": { h: "dir", usr: "dir", state: "dir", "top.txt": "file" },
+      "/h": { u: "dir" },
+      "/h/u": { ".ssh": "dir", src: "dir", link: "link" },
+    };
+    const kind = (path: string) => {
+      if (path === "/") return "dir";
+      const at = path.lastIndexOf("/");
+      return tree[at === 0 ? "/" : path.slice(0, at)]?.[path.slice(at + 1)];
+    };
+    const carveFs = {
+      readdir: (path: string) => {
+        const entries = tree[path];
+        if (!entries) throw new Error("ENOENT");
+        return Object.keys(entries);
+      },
+      lstat: (path: string) => {
+        const k = kind(path);
+        if (!k) throw new Error("ENOENT");
+        return { isDirectory: () => k === "dir", isSymbolicLink: () => k === "link" };
+      },
+      canOpen: () => true,
+    };
+    const denied = ["/h/u/.ssh", "/state"];
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+        carveFs,
+      })(
+        execRequest(false, {
+          grant: { ...grant(false), readRoots: ["/"], deniedReadRoots: denied },
+        }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [sent] = await fake.lines();
+    const roots = sent?.readRoots as string[];
+    expect(roots).not.toContain("/");
+    for (const root of roots)
+      for (const d of denied) {
+        expect(root === d || root.startsWith(`${d}/`), `${root} inside ${d}`).toBe(false);
+        expect(d.startsWith(`${root}/`), `${root} holds ${d}`).toBe(false);
+      }
+    // beside the denied paths, and the tool homes (clear of every denied path) kept whole
+    expect(roots).toEqual(["/h/u/src", "/usr", join(home, ".asdf")].sort());
+    // native work keeps the reach as granted: the agent checks each resolved path against denied
+    const native = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...native,
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+        carveFs,
+      })(
+        {
+          ...execRequest(false, {
+            grant: { ...grant(false), readRoots: ["/"], deniedReadRoots: denied },
+          }),
+          kind: "native",
+          native: { method: "readFile", path: "/h/u/src/a" },
+          purpose: "operation",
+        } as unknown as MacWorkerRequest,
+        new AbortController().signal,
+      )
+    ).completion.catch(() => {});
+    const [nativeSent] = await native.lines();
+    expect(nativeSent).toMatchObject({ op: "native", readRoots: ["/"], denied });
+  });
+
+  it("a container's worker refuses a grant with denied paths rather than carve this host", async () => {
+    const fake = await fakeTransport("exit");
+    const handle = await linuxOperationWorker({
+      ...fake,
+      transport: { ...fake.transport, kind: "docker" },
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(
+      execRequest(false, {
+        grant: { ...grant(false), readRoots: ["/workspace"], deniedReadRoots: ["/workspace/s"] },
+      }),
+      new AbortController().signal,
+    );
+    await expect(handle.completion).rejects.toMatchObject({ name: "SandboxScopeDeniedError" });
+    expect(fake.spawned()).toBe(0);
   });
 
   it("a restricted exec on the host has the device's sandbox home: HOME, XDG, read and write", async () => {
@@ -243,7 +340,7 @@ describe("Linux operation worker", () => {
     ).completion;
     const [sent] = await fake.lines();
     expect(sent).toMatchObject({
-      readRoots: ["/repo", home],
+      readRoots: [home, "/repo"],
       writeRoots: ["/work", home],
       env: {
         HOME: home,
