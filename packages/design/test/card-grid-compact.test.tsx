@@ -114,6 +114,54 @@ describe("CardGrid at 390", () => {
     expect(sheet()).toBeNull();
   });
 
+  it("a card without href keeps only its primary; its menu items go to the sheet", () => {
+    renderAtClass(390, grid([without(card(), "href")]));
+    const item = screen.getByRole("listitem");
+    expect(
+      within(item)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["开始会话"]);
+    expect(prevented(item, "contextmenu")).toBe(true);
+    expect(within(sheet() as HTMLElement).getByRole("heading").textContent).toBe("研究助手");
+    expect(sheetItems()).toEqual(["设置", "运行记录"]);
+  });
+
+  it("a card without href or primary keeps its lone item as the button and opens no sheet", () => {
+    renderAtClass(
+      390,
+      grid([
+        without(card({ menu: [{ label: "查看", href: "/agents/a/view" }] }), "href", "primary"),
+      ]),
+    );
+    const item = screen.getByRole("listitem");
+    expect(within(item).getByRole("link", { name: "查看" })).toBeTruthy();
+    expect(prevented(item, "contextmenu")).toBe(false);
+    expect(sheet()).toBeNull();
+  });
+
+  it("while the primary runs, every sheet item waits", () => {
+    // Button rows: ActionSheet draws a link row without its disabled state (an overlays matter).
+    renderAtClass(
+      390,
+      grid([
+        card({
+          primary: { label: "开始会话", onSelect: () => {}, loading: true },
+          menu: [
+            { label: "复制", onSelect: () => {} },
+            { label: "删除", danger: true, onSelect: () => {} },
+          ],
+        }),
+      ]),
+    );
+    expect(prevented(screen.getByRole("link", { name: "研究助手" }), "contextmenu")).toBe(true);
+    const rows = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-part="action-sheet-item"]'),
+    ];
+    expect(rows.map((r) => r.textContent?.trim())).toEqual(["开始会话", "复制", "删除"]);
+    for (const r of rows) expect(r.disabled).toBe(true);
+  });
+
   it("contextmenu opens the sheet with 开始会话 then the menu items", () => {
     renderAtClass(390, three());
     const link = screen.getByRole("link", { name: "研究助手" });
@@ -166,7 +214,7 @@ describe("CardGrid at 390", () => {
     expect(sheet()).toBeNull();
   });
 
-  it("skeleton rows sit in the same card at 390", () => {
+  it("loading keeps the skeleton cards as items of the grid's one list (the row look is CSS)", () => {
     renderAtClass(390, <CardGrid label="智能体" loading={3} />);
     const list = screen.getByRole("list", { name: "智能体" });
     expect(list.className).toBe("cb-card-grid");
@@ -203,7 +251,7 @@ describe("CardGrid at 1440", () => {
 
 describe("compact CSS (below 600)", () => {
   const rules = parseCss(css("card-grid.css"));
-  const at = (selector: string, query: string | null = "(max-width: 599px)") =>
+  const at = (selector: string, query: string | null = "not all and (min-width: 600px)") =>
     Object.assign(
       {},
       ...rules
@@ -236,6 +284,19 @@ describe("compact CSS (below 600)", () => {
     expect(at(".cb-object-card-desc ~ .cb-object-card-foot .cb-object-card-meta").display).toBe(
       "none",
     );
+  });
+
+  it("a name with nothing under it spans both lines, centred against the avatar", () => {
+    const rule = rules.find(
+      (r) => r.at === "not all and (min-width: 600px)" && r.selector.includes(":not(:has("),
+    );
+    expect(rule?.selector).toContain(".cb-object-card-desc, .cb-object-card-meta:not(:empty)");
+    expect(rule?.selector).toContain(".cb-object-card-link");
+    expect(rule?.decls["grid-row"]).toBe("1 / span 2");
+  });
+
+  it("the compact block uses ClassForms' query, never max-width 599", () => {
+    expect(rules.some((r) => r.at === "(max-width: 599px)")).toBe(false);
   });
 
   it("the chevron shows only below 600; the skeleton draws no button box", () => {

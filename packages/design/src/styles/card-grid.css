@@ -173,8 +173,9 @@
    one muted line (the description, else the meta), then the state and the chevron; head and foot
    give up their boxes (display: contents) so their parts are the row's grid items. Hairlines are
    inset to the text column. A long press opens the actions, never the system callout or a text
-   selection. */
-@media (max-width: 599px) {
+   selection. The query is ClassForms' compact one (the complement of min-width 600), so a
+   fractional width between 599 and 600 is styled as the form ClassForms mounted. */
+@media not all and (min-width: 600px) {
   .cb-card-grid {
     grid-template-columns: 1fr;
     gap: 0;
@@ -238,8 +239,13 @@
   .cb-object-card-desc ~ .cb-object-card-foot .cb-object-card-meta {
     display: none;
   }
+  /* Nothing under the name: it is centred against the avatar. */
+  .cb-object-card:not(:has(.cb-object-card-desc, .cb-object-card-meta:not(:empty)))
+  :is(.cb-object-card-link, .cb-object-card-head > .cb-object-card-name) {
+    grid-row: 1 / span 2;
+  }
   /* The trailing parts, in DOM order after the text column: the state, a card without a link's
-     buttons, the chevron. */
+     one button, the chevron. */
   .cb-object-card-state,
   .cb-object-card-foot .cb-btn,
   .cb-object-card-chevron {

@@ -9,9 +9,12 @@ Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};
-// 默认不匹配任何媒体查询；测试可覆盖 window.matchMedia。
+// By default no media query matches except ClassForms' wide query: a test window is a wide one
+// (ClassForms mounts the medium / expanded copy, useClassForm is "wide"), while every other query
+// (size classes, touch, reduced motion) stays false. Tests override window.matchMedia (see
+// renderAtClass in width.ts for a window of a given width).
 window.matchMedia ??= ((query: string) => ({
-  matches: false,
+  matches: query.trim() === "(min-width: 600px)",
   media: query,
   addEventListener: () => {},
   removeEventListener: () => {},

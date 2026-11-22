@@ -19,8 +19,11 @@ Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};
+// By default no media query matches except ClassForms' wide query: pages render their medium /
+// expanded form (ClassForms mounts the wide copy), while every other query (size classes, touch,
+// reduced motion) stays false. A test that needs another window stubs window.matchMedia itself.
 window.matchMedia ??= ((query: string) => ({
-  matches: false,
+  matches: query.trim() === "(min-width: 600px)",
   media: query,
   addEventListener: () => {},
   removeEventListener: () => {},

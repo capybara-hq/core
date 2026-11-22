@@ -430,15 +430,6 @@ function LoadedCard({
   const actions = menuActions(menu ?? []);
   const lone = oneButton && primary !== undefined ? undefined : menuLone(menu ?? []);
   const waiting = primary?.loading === true;
-  const form = useClassForm();
-  const [sheetOpen, setSheetOpen] = useState(false);
-  // A card that opens nothing keeps its buttons on compact, so only a linked card has the sheet.
-  const sheetItems =
-    href === undefined
-      ? []
-      : actionSheetItems({ ...(primary ? { primary } : {}), items: menu ?? [] });
-  const pressable = form === "compact" && sheetItems.length > 0;
-  const press = useLongPress(() => setSheetOpen(true), { enabled: pressable });
   const buttons: ObjectCardAction[] = [];
   if (primary) buttons.push(primary);
   if (lone) {
@@ -448,6 +439,23 @@ function LoadedCard({
       ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
     });
   }
+  const form = useClassForm();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // Compact (spec §6.34 "Phones", responsive system spec §2.3): a linked card draws no button and
+  // offers its primary and menu in the sheet; a card without a link keeps its one button (the
+  // primary, else the lone item) and offers the rest of its menu there. A running primary makes
+  // every item wait, as the wide card's buttons do.
+  const listed: MenuItem[] =
+    href !== undefined
+      ? actionSheetItems({ ...(primary ? { primary } : {}), items: menu ?? [] })
+      : primary === undefined && lone !== undefined
+        ? []
+        : actionSheetItems({ items: menu ?? [] });
+  const sheetItems = waiting
+    ? listed.map((i) => (i === "separator" ? i : { ...i, disabled: true }))
+    : listed;
+  const pressable = form === "compact" && sheetItems.length > 0;
+  const press = useLongPress(() => setSheetOpen(true), { enabled: pressable });
   /** The card's link, from an element inside the card. */
   const linkOf = (el: Element) => el.closest(CARD)?.querySelector<HTMLAnchorElement>(LINK) ?? null;
   // The description sits over the stretched link (so its tooltip shows) and passes a click on to
@@ -472,37 +480,36 @@ function LoadedCard({
     }
     if (e.button === 0) link.click();
   };
+  /** A button of the card, keyed by its slot: 0 the primary (else the lone item), 1 the lone item. */
+  const button = (a: ObjectCardAction, i: number) =>
+    a.href !== undefined ? (
+      <LinkButton
+        key={i}
+        href={a.href}
+        variant="default"
+        density="dense"
+        aria-describedby={nameId}
+        {...(tabIndex !== undefined ? { tabIndex } : {})}
+      >
+        {a.label}
+      </LinkButton>
+    ) : (
+      <Button
+        key={i}
+        variant="default"
+        density="dense"
+        loading={a.loading === true}
+        disabled={waiting}
+        tabIndex={tabIndex}
+        aria-describedby={nameId}
+        {...(a.onSelect ? { onClick: a.onSelect } : {})}
+      >
+        {a.label}
+      </Button>
+    );
   const controls = (
     <>
-      {buttons.map((a, i) =>
-        a.href !== undefined ? (
-          <LinkButton
-            // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the primary, a lone menu item)
-            key={i}
-            href={a.href}
-            variant="default"
-            density="dense"
-            aria-describedby={nameId}
-            {...(tabIndex !== undefined ? { tabIndex } : {})}
-          >
-            {a.label}
-          </LinkButton>
-        ) : (
-          <Button
-            // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the primary, a lone menu item)
-            key={i}
-            variant="default"
-            density="dense"
-            loading={a.loading === true}
-            disabled={waiting}
-            tabIndex={tabIndex}
-            aria-describedby={nameId}
-            {...(a.onSelect ? { onClick: a.onSelect } : {})}
-          >
-            {a.label}
-          </Button>
-        ),
-      )}
+      {buttons.map(button)}
       {actions.length > 0 && lone === undefined ? (
         <Menu
           items={menu ?? []}
@@ -623,7 +630,10 @@ function LoadedCard({
                   ))}
           </span>
           {/* Interaction differs per class (spec §6.64): buttons from 600, the action sheet below. */}
-          {href === undefined ? controls : <ClassForms compact={null} wide={controls} />}
+          <ClassForms
+            compact={href === undefined && buttons[0] !== undefined ? button(buttons[0], 0) : null}
+            wide={controls}
+          />
         </span>
         {href === undefined ? null : (
           <span

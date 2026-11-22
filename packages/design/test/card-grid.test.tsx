@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactElement, type ReactNode, useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Card,
   CardGrid,
@@ -14,22 +14,11 @@ import {
   type ObjectCardProps,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
-import { matchMediaFor } from "./width";
 
 // CardGrid and ObjectCard (spec §6.34, ruling P4-15): one box per card on the page ground, one
 // link per card with the primary and the menu beside it (never inside it), roving focus by row.
 
-// These tests describe the card from 600 up (buttons, the ⋯ menu); setup.ts's matchMedia matches
-// nothing, which is the compact class now, so the window is a desktop one here.
-// card-grid-compact.test.tsx covers the rows below 600.
-const real = window.matchMedia;
-beforeEach(() => {
-  window.matchMedia = matchMediaFor(1440).matchMedia;
-});
-afterEach(() => {
-  cleanup();
-  window.matchMedia = real;
-});
+afterEach(cleanup);
 
 /** A design link that records navigations instead of letting jsdom follow them. */
 function withNav(ui: ReactElement) {
@@ -707,7 +696,7 @@ describe("CardGrid states", () => {
     );
     expect(rule).toMatch(/gap:\s*var\(--cb-space-3\)/);
     expect(css).toMatch(
-      /@media \(max-width: 599px\)\s*\{[^@]*\.cb-card-grid\s*\{\s*grid-template-columns:\s*1fr;/,
+      /@media not all and \(min-width: 600px\)\s*\{[^@]*\.cb-card-grid\s*\{\s*grid-template-columns:\s*1fr;/,
     );
   });
 });
