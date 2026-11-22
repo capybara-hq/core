@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,8 +15,8 @@ import {
   type KernelRequest,
   parseOwnerCeilingReport,
 } from "@capybara-hq/plugin-sdk/device-protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runCli } from "../src/cli.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultCreateStaged, runCli } from "../src/cli.js";
 import {
   CEILING_NEEDS_YES,
   CEILING_OTHER_CONNECTIONS_TEXT,
@@ -23,7 +24,11 @@ import {
 } from "../src/commands/ceiling.js";
 import { connectionDir, connectionsDir, machineDirOfConnection } from "../src/connections.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
-import { readStrictOwnerCeiling, within } from "../src/exec/operation-types.js";
+import {
+  readStrictOwnerCeiling,
+  readStrictOwnerCeilingSync,
+  within,
+} from "../src/exec/operation-types.js";
 import { issueOwnerReport, ownerReportPath } from "../src/owner-report.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { serveOperationV3 } from "../src/server-ops.js";
@@ -597,6 +602,13 @@ describe("capybara-device ceiling", () => {
     writeFileSync(join(connectionsDir(machine), "broken", "credential.json"), "{", { mode: 0o600 });
     const broken = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
     expect(broken.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
+    // and so does a logged-out one (no credential.json; its state and work dir remain)
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    rmSync(join(connectionsDir(machine), "broken"), { recursive: true });
+    writePolicy(connectionDir(machine, "out"), DEFAULT_POLICY);
+    const loggedOut = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
+    expect(loggedOut.code).toBe(0);
+    expect(loggedOut.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
     // the changed-meanwhile refusal names them again with the widening text
     writePolicy(state, FULL_POLICY);
     const meanwhile = await cli(["ceiling", "set", "--outside-sandbox", "on"], {
@@ -736,5 +748,94 @@ describe("other connections under the machine layout", () => {
     const set = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
     expect(set.code).toBe(0);
     expect(set.out.split("\n")).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
+  });
+});
+
+describe("the owner state layout fails closed", () => {
+  it("refuses a state root that is not the machine directory of the connection", async () => {
+    writePolicy(state, FULL_POLICY);
+    const read = (stateDir: string, stateRoot: string) => () =>
+      readStrictOwnerCeilingSync({
+        stateDir,
+        stateRoot,
+        deviceId: "dev",
+        dir: join(root, "device"),
+        home: join(root, "home"),
+      });
+    // the connection dir as the root would scan <conn>/connections (absent: no other connection)
+    expect(read(state, state)).toThrow(/Owner state layout mismatch/);
+    expect(read(state, root)).toThrow(/Owner state layout mismatch/);
+    // a flat state directory is no connection directory
+    writePolicy(machine, FULL_POLICY);
+    expect(read(machine, machine)).toThrow(/Owner state layout mismatch/);
+    expect(read(machine, root)).toThrow(/Owner state layout mismatch/);
+    expect(read(state, machine)).not.toThrow();
+    expect(() => report()).not.toThrow();
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "refuses a strict ceiling and an owner report while connections/ cannot be read",
+    async () => {
+      writePolicy(state, FULL_POLICY);
+      // searchable (this connection's policy still opens) but not listable
+      chmodSync(connectionsDir(machine), 0o100);
+      try {
+        await expect(strict()).rejects.toThrow(/cannot be read/);
+        expect(() => report()).toThrow(/cannot be read/);
+      } finally {
+        chmodSync(connectionsDir(machine), 0o700);
+      }
+    },
+  );
+
+  it("refuses a strict ceiling and an owner report while connections/ is a symlink", async () => {
+    // the real connection directory lives elsewhere; connections/ links to it
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    writePolicy(join(elsewhere, "dev"), FULL_POLICY);
+    mkdirSync(machine, { recursive: true });
+    symlinkSync(elsewhere, connectionsDir(machine));
+    await expect(strict()).rejects.toThrow(/cannot be read/);
+    expect(() => report()).toThrow(/cannot be read/);
+  });
+
+  it("the runner the CLI starts builds its ceiling with the machine directory as the root", async () => {
+    const seen: { stateDir: string; stateRoot: string }[] = [];
+    vi.doMock("../src/staged-device.js", () => ({
+      createStagedDevice: (o: { stateDir: string; stateRoot: string }) => {
+        seen.push({ stateDir: o.stateDir, stateRoot: o.stateRoot });
+        return {};
+      },
+    }));
+    try {
+      writePolicy(state, FULL_POLICY);
+      const cred = {
+        url: "https://x.test",
+        connectUrl: "wss://x.test",
+        credential: "c",
+        orgId: "o",
+        deviceId: "dev",
+        dir: join(root, "device"),
+        mode: "os" as const,
+        reconnectGraceSeconds: 120,
+        maxFrameBytes: 1048576,
+      };
+      writeCredential(state, cred);
+      await defaultCreateStaged(state, join(root, "home"))(cred, new PolicyStore(state));
+      expect(seen).toEqual([{ stateDir: state, stateRoot: machine }]);
+      const ceiling = readStrictOwnerCeilingSync({
+        ...(seen[0] as { stateDir: string; stateRoot: string }),
+        deviceId: "dev",
+        dir: cred.dir,
+        home: join(root, "home"),
+      });
+      expect(ceiling.restrictedDeniedReadRoots).toContain(machine);
+      // a flat state directory never gets a runner
+      expect(() => defaultCreateStaged(machine, join(root, "home"))).toThrow(
+        /not a connection directory/,
+      );
+    } finally {
+      vi.doUnmock("../src/staged-device.js");
+    }
   });
 });

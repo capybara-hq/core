@@ -95,13 +95,14 @@ const describe = (p: Policy): string[] => [
 ];
 
 /**
- * True when this machine has more than one connection (readable or not); a connections directory
- * that cannot be listed counts as having others (fail closed).
+ * True when this machine has more than one connection directory (readable, unreadable or logged
+ * out: a logged-out one's leftover state and working directory are reachable outside the sandbox
+ * too); a connections directory that cannot be listed counts as having others (fail closed).
  */
 function otherConnectionsExist(stateRoot: string): boolean {
   try {
-    const { readable, unreadable } = scanConnections(stateRoot);
-    return readable.length + unreadable.length > 1;
+    const { readable, unreadable, credentialless } = scanConnections(stateRoot);
+    return readable.length + unreadable.length + credentialless.length > 1;
   } catch {
     return true;
   }

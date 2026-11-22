@@ -69,7 +69,7 @@ async function askOnTerminal(question: string): Promise<string> {
  * generation, built for this host (macOS, Linux) or the device's container (docker mode). Loaded
  * on demand: only start needs them.
  */
-function defaultCreateStaged(stateDir: string, home: string) {
+export function defaultCreateStaged(stateDir: string, home: string) {
   // the program state root is the machine directory holding every connection (this one included)
   const stateRoot = machineDirOfConnection(stateDir);
   return async (cred: Credential, store: PolicyStore): Promise<StagedDevice> => {

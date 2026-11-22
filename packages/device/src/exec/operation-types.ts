@@ -16,7 +16,7 @@ import type {
   DeviceNetworkMode,
   DeviceProjectRefusal,
 } from "@capybara-hq/plugin-sdk/device-protocol";
-import { scanConnections } from "../connections.js";
+import { machineDirOfConnection, scanConnections } from "../connections.js";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
 import { policyPath, readPolicyFile } from "../state.js";
 import {
@@ -166,6 +166,21 @@ function canonicalProjectPaths(paths: readonly string[]): string[] {
  * working directory) is carried in `unreadableConnections`, which refuses every sandboxed grant.
  */
 export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwnerCeiling {
+  // Correct by construction: the state root must be the machine directory holding this
+  // connection's directory. Any other root would scan the wrong connections/ (an absent one reads
+  // as no connections) and leave the other connections readable: refused instead.
+  const stateRoot = resolve(input.stateRoot);
+  let layoutRoot: string | undefined;
+  try {
+    layoutRoot = machineDirOfConnection(resolve(input.stateDir));
+  } catch {
+    layoutRoot = undefined;
+  }
+  if (layoutRoot !== stateRoot)
+    throw new SandboxScopeDeniedError(
+      `Owner state layout mismatch: ${resolve(input.stateDir)} is not a connection directory ` +
+        `of ${stateRoot} (<machineDir>/connections/<deviceId>)`,
+    );
   const file = policyPath(input.stateDir);
   const before = statSync(file);
   if (!before.isFile()) throw new SandboxScopeDeniedError("Owner policy must be a regular file");
@@ -180,7 +195,6 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
   if (policy.allowedDomains.some((h) => validateAllowHost(h).length > 0))
     throw new SandboxScopeDeniedError("Owner policy contains invalid allowed domains");
   const roots = Object.freeze(osRoots(resolve(input.dir)));
-  const stateRoot = resolve(input.stateRoot);
   const connections = input.connections ? input.connections() : scanConnections(stateRoot);
   const others = connections.readable.filter((c) => c.deviceId !== input.deviceId);
   const unreadable = [
