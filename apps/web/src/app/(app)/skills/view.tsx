@@ -228,8 +228,10 @@ function Skills({ orgId }: { orgId: string }) {
 }
 
 /**
- * 管理员的上传卡片：说明可接受的布局与上限；一次一个 .zip，上传中不能再选。上传中显示进度、可以取消；
- * 失败（不是前端预检拦下的）可以用同一个文件重试。状态在页面的 `useSkillUpload`，卡片可随尺寸类重挂。
+ * The admin's upload card: the accepted layout and limits; one .zip at a time, no new pick while one
+ * uploads. An upload shows its progress and can be cancelled; a failure (not one the front-end check
+ * stopped) can be retried with the same file. The state is the page's `useSkillUpload`, so the card
+ * may remount when the window crosses a size class.
  */
 function UploadCard({ up }: { up: SkillUpload }) {
   const t = useTranslations("skills.upload");
