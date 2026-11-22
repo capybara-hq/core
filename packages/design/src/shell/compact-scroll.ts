@@ -14,6 +14,15 @@ const NONE: CompactScroll = { titleAway: false, barHidden: false };
 
 /** What counts as a person scrolling (a programmatic restore comes with none of these). */
 const GESTURES = ["wheel", "touchstart", "pointerdown"] as const;
+/** The keys that scroll a page; typing in a field is no scroll gesture. */
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+
+function isScrollKey(e: KeyboardEvent): boolean {
+  if (!SCROLL_KEYS.has(e.key)) return false;
+  const t = e.target;
+  return !(t instanceof Element && t.closest(EDITABLE) !== null);
+}
 
 /**
  * The scrolled title and the quick-return bar of a pushed page that scrolls as one scroller on
@@ -25,17 +34,22 @@ const GESTURES = ["wheel", "touchstart", "pointerdown"] as const;
  * watched again and the old one is let go.
  *
  * - `titleAway` holds while the title's bottom is under the floating row: at or above the
- *   scroller's top plus `--cb-float-row` (read from the scroller; 0 where it is not set).
+ *   scroller's top plus `--cb-float-row` (read from the scroller when it attaches and again on
+ *   every window or visual viewport resize; 0 where it is not set). The scroller must start
+ *   under the floating row (its top at the row's top), as the shell's pushed page does.
  * - `barHidden` turns on when a person scrolls down past the title's bottom (the bar comes after
  *   the title; its own offset is useless once it is stuck), off on any upward scroll, and never
  *   while the content fits (an elastic overscroll still fires scroll events). Until the first
- *   gesture (wheel, touch, pointer, key) a scroll has no direction, so a programmatic restore
- *   keeps the bar shown. An overscroll bounce counts as no movement. Without `bar` it stays false.
+ *   gesture (wheel, touch or pointer on the scroller, or a scrolling key outside an editable
+ *   field) a scroll has no direction, so a programmatic restore keeps the bar shown. The gesture
+ *   is latched per attach: once a person has scrolled this scroller, every later scroll has a
+ *   direction until the scroller changes. An overscroll bounce counts as no movement. Without
+ *   `bar` it stays false.
  *
  * The scroll is read in one passive listener, at most once per animation frame. The first read
  * happens before paint when the listener attaches, so a page whose scroller was restored before it
  * mounted (back from a detail to a scrolled list) starts with the matching `titleAway` and the bar
- * shown. Outside compact the hook attaches nothing and reports both false.
+ * shown. Outside compact, or without a scroller, the hook attaches nothing and reports both false.
  */
 export function useCompactScroll(
   scroller: HTMLElement | null,
@@ -48,7 +62,7 @@ export function useCompactScroll(
   useLayoutEffect(() => {
     const el = scroller;
     if (!compact || !el) return;
-    const floatRow = floatRowOf(el);
+    let floatRow = floatRowOf(el);
     // The last position read, clamped to the scroll range so a rubber band past either end is
     // no movement.
     let last = clampTop(el);
@@ -82,20 +96,33 @@ export function useCompactScroll(
     const onGesture = () => {
       gesture = true;
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (isScrollKey(e)) gesture = true;
+    };
+    // The floating row follows the window (a rotation, a safe-area inset): read it again.
+    const onResize = () => {
+      floatRow = floatRowOf(el);
+      onScroll();
+    };
+    const viewport = window.visualViewport;
     // The first read: a restored position, never a direction (the bar starts shown).
     read(null);
     el.addEventListener("scroll", onScroll, { passive: true });
     for (const g of GESTURES) el.addEventListener(g, onGesture, { passive: true });
-    window.addEventListener("keydown", onGesture, { passive: true });
+    window.addEventListener("keydown", onKey, { passive: true });
+    window.addEventListener("resize", onResize, { passive: true });
+    viewport?.addEventListener("resize", onResize, { passive: true });
     return () => {
       el.removeEventListener("scroll", onScroll);
       for (const g of GESTURES) el.removeEventListener(g, onGesture);
-      window.removeEventListener("keydown", onGesture);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onResize);
+      viewport?.removeEventListener("resize", onResize);
       if (frame !== 0) cancelAnimationFrame(frame);
     };
   }, [compact, scroller, title, bar]);
 
-  return compact ? state : NONE;
+  return compact && scroller ? state : NONE;
 }
 
 function clampTop(el: HTMLElement): number {

@@ -278,4 +278,51 @@ describe("useCompactScroll", () => {
     act(() => mm.resize(768));
     expect(seen).toEqual({ titleAway: false, barHidden: false });
   });
+
+  it("a scroller that goes away while compact resets both", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const p = page();
+    const { rerender } = render(<Probe {...p.els} />);
+    p.scrollTo(500);
+    flushFrames();
+    expect(seen).toEqual({ titleAway: true, barHidden: true });
+    rerender(<Probe scroller={null} title={p.els.title} bar={p.els.bar} />);
+    expect(seen).toEqual({ titleAway: false, barHidden: false });
+  });
+
+  it("the floating row is read again when the window resizes", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const p = page();
+    render(<Probe {...p.els} />);
+    p.scrollTo(64);
+    flushFrames();
+    expect(seen.titleAway).toBe(false);
+    // the shell's row grows (a safe-area inset after a rotation): 56 px from now on
+    p.scroller.style.setProperty("--cb-float-row", "56px");
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    flushFrames();
+    expect(seen.titleAway).toBe(true);
+  });
+
+  it("typing is no scroll gesture; a navigation key outside a field is", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const p = page();
+    const field = document.createElement("input");
+    document.body.append(field);
+    render(<Probe {...p.els} />);
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    p.scrollTo(900, true);
+    flushFrames();
+    expect(seen).toEqual({ titleAway: true, barHidden: false });
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    p.scrollTo(1200, true);
+    flushFrames();
+    expect(seen.barHidden).toBe(true);
+    field.remove();
+  });
 });
+
