@@ -118,6 +118,13 @@ export type BottomSheetContentProps = {
   /** The sheet's `data-part` (the default "sheet"). */
   part?: string;
   handleLabel?: string | undefined;
+  /** The id of the element that describes the sheet (its `aria-describedby`). */
+  describedBy?: string | undefined;
+  /**
+   * Where focus starts on open (a dialog drawn as a sheet keeps its own start, §6.7); by default,
+   * or when it returns nothing, the first control (the close).
+   */
+  initialFocus?: ((sheet: HTMLElement) => HTMLElement | null | undefined) | undefined;
   children?: ReactNode;
 };
 
@@ -131,6 +138,8 @@ export function BottomSheetContent({
   onDismiss,
   part = "sheet",
   handleLabel,
+  describedBy,
+  initialFocus,
   children,
 }: BottomSheetContentProps) {
   const t = useDesignT();
@@ -157,12 +166,17 @@ export function BottomSheetContent({
         ref={sheet}
         className="cb-bsheet"
         data-part={part}
-        aria-describedby={undefined}
+        aria-describedby={describedBy}
         onOpenAutoFocus={(e) => {
           focusReturn.capture();
-          // the first control (the close button), ringed only when opened from the keyboard (§2.5)
+          // the caller's start, else the first control (the close button), ringed only when
+          // opened from the keyboard (§2.5)
           e.preventDefault();
-          focusOnOpen(sheet.current?.querySelector<HTMLElement>(FIRST_FOCUSABLE));
+          const el = sheet.current;
+          focusOnOpen(
+            (el ? initialFocus?.(el) : undefined) ??
+              el?.querySelector<HTMLElement>(FIRST_FOCUSABLE),
+          );
         }}
         onCloseAutoFocus={focusReturn.restore}
         {...drag.handleProps}

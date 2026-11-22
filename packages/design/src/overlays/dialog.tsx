@@ -7,6 +7,8 @@ import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
+import { ClassForms } from "../shell/class-forms";
+import { BottomSheet } from "./bottom-sheet";
 import { useFocusReturn } from "./focus-return";
 
 export type DialogProps = {
@@ -31,7 +33,41 @@ export type DialogProps = {
   children?: ReactNode;
 };
 
-export function Dialog({
+/**
+ * Where a dialog's focus starts (spec §6.7): `cancel` on the footer's first button; otherwise the
+ * body's first field when it asks for input, else the primary (or destructive) action, else the
+ * last button.
+ */
+function focusTarget(
+  body: HTMLElement | null,
+  footer: HTMLElement | null,
+  initialFocus: DialogProps["initialFocus"],
+): HTMLElement | undefined {
+  const buttons = Array.from(
+    footer?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ?? [],
+  );
+  if (initialFocus === "cancel") return buttons[0];
+  // A dialog that asks for input starts on its first field (spec §6.7)
+  return (
+    body?.querySelector<HTMLElement>(FIELDS) ??
+    buttons.find((b) =>
+      ["primary", "danger-solid"].includes(b.getAttribute("data-variant") ?? ""),
+    ) ??
+    buttons[buttons.length - 1]
+  );
+}
+
+/**
+ * A modal dialog: centred from 600 up; below 600 the same dialog is a bottom sheet (interaction
+ * model spec §2.2, D1; design spec §6.59): the sheet's handle and head (the centred title, the
+ * round close), the body, then the footer's buttons full width, the primary on top. The two forms
+ * differ in interaction (a drag, the system back), so each class draws its own (`ClassForms`).
+ */
+export function Dialog(props: DialogProps) {
+  return <ClassForms compact={<DialogSheet {...props} />} wide={<CentredDialog {...props} />} />;
+}
+
+function CentredDialog({
   open,
   onOpenChange,
   title,
@@ -59,20 +95,7 @@ export function Dialog({
           onCloseAutoFocus={focusReturn.restore}
           onOpenAutoFocus={(e) => {
             focusReturn.capture();
-            const buttons = Array.from(
-              footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ??
-                [],
-            );
-            // A dialog that asks for input starts on its first field (spec §6.7)
-            const field = bodyRef.current?.querySelector<HTMLElement>(FIELDS) ?? undefined;
-            const target =
-              initialFocus === "cancel"
-                ? buttons[0]
-                : (field ??
-                  buttons.find((b) =>
-                    ["primary", "danger-solid"].includes(b.getAttribute("data-variant") ?? ""),
-                  ) ??
-                  buttons[buttons.length - 1]);
+            const target = focusTarget(bodyRef.current, footerRef.current, initialFocus);
             if (target) {
               e.preventDefault();
               target.focus();
@@ -100,6 +123,51 @@ export function Dialog({
         </RD.Content>
       </RD.Portal>
     </RD.Root>
+  );
+}
+
+/**
+ * The compact form: a bottom sheet (§6.59) holding the dialog's body and footer. Focus starts
+ * where the centred dialog's does, quietly after a pointer (§2.5), and returns to the opener; the
+ * sheet holds one history entry on a compact touch window, so the system back closes it. The size
+ * does not apply: a sheet spans the window.
+ */
+function DialogSheet({
+  open,
+  onOpenChange,
+  title,
+  footer,
+  initialFocus = "primary",
+  danger,
+  describedBy,
+  children,
+}: DialogProps) {
+  const footerRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  return (
+    <BottomSheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title={title}
+      part="dialog-sheet"
+      describedBy={describedBy}
+      initialFocus={() => focusTarget(bodyRef.current, footerRef.current, initialFocus)}
+    >
+      <div
+        className="cb-dialog-sheet"
+        data-cap-part="dialog"
+        data-danger={danger ? "true" : undefined}
+      >
+        <BoxScope kind="dialog">
+          <div className="cb-dialog-sheet-body" ref={bodyRef}>
+            {children}
+          </div>
+          <div className="cb-dialog-sheet-foot" ref={footerRef}>
+            {footer}
+          </div>
+        </BoxScope>
+      </div>
+    </BottomSheet>
   );
 }
 
