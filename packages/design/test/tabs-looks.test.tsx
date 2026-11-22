@@ -36,7 +36,9 @@ describe("Tabs look", () => {
 });
 
 describe("Tabs segmented look CSS", () => {
-  const rules = parseCss(css("display.css")).filter((r) => r.at === "(max-width: 599px)");
+  const rules = parseCss(css("display.css")).filter(
+    (r) => r.at !== null && /^\(\s*max-width:\s*599px\s*\)$/.test(r.at),
+  );
   const find = (selector: string) =>
     rules.find((r) =>
       r.selector
@@ -46,12 +48,20 @@ describe("Tabs segmented look CSS", () => {
     );
 
   it("below 600 the tabs share the width equally at control.default / touch.hit", () => {
-    expect(find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls["flex"]).toBe("1 1 0");
-    expect(find('.cb-tabs[data-look="segmented-compact"]')?.decls["height"]).toBe(
+    expect(find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls.flex).toBe("1 1 0");
+    expect(find('.cb-tabs[data-look="segmented-compact"]')?.decls.height).toBe(
       "var(--cb-control-default)",
     );
     expect(find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls["min-height"]).toBe(
       "var(--cb-touch-hit)",
+    );
+  });
+
+  it("the selected tab takes the selected ground and tabs keep the touch padding", () => {
+    const sel = find('.cb-tabs[data-look="segmented-compact"] > .cb-tab[data-state="selected"]');
+    expect(sel?.decls.background).toBe("var(--cb-selected)");
+    expect(find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls.padding).toBe(
+      "0 var(--cb-space-4)",
     );
   });
 });
