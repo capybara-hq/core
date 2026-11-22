@@ -634,6 +634,69 @@ describe("head actions and the scrolled title in the compact top row (responsive
     expect(onNavigate).toHaveBeenCalledWith("/agents/a1/v");
   });
 
+  it("desktop-only head actions stay out of the touch overflow", async () => {
+    touchWindow(390);
+    function Page() {
+      useRegisterShellPage({
+        title: "研究助手",
+        actions: [
+          { label: "导出", onSelect: () => {} },
+          { label: "编辑流程", desktopOnly: true, href: "/agents/a1/flow" },
+        ],
+      });
+      return null;
+    }
+    render(pushed(<Page />));
+    await userEvent.click(more());
+    expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual(["导出"]);
+  });
+
+  it("a submenu's run is set apart by separators", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Page() {
+      useRegisterShellPage({
+        title: "研究助手",
+        actions: [
+          { label: "导出", onSelect: () => {} },
+          { label: "语言", submenu: [{ label: "English", onSelect: () => {} }] },
+          { label: "删除", danger: true, onSelect: () => {} },
+        ],
+      });
+      return null;
+    }
+    render(pushed(<Page />));
+    await userEvent.click(more());
+    const menu = await screen.findByRole("menu");
+    const kinds = [...menu.querySelectorAll('[role="menuitem"], [role="separator"]')].map((e) =>
+      e.getAttribute("role") === "separator" ? "|" : e.textContent,
+    );
+    expect(kinds).toEqual(["导出", "|", "English", "|", "删除"]);
+    expect(within(menu).getByText("语言")).toBeTruthy();
+  });
+
+  it("titleAway comes only from the layer that gave the title", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Page() {
+      useRegisterShellPage({ title: "智能体" });
+      useRegisterScrolledTitle(true);
+      return null;
+    }
+    function Item() {
+      useRegisterShellPage({ title: "研究助手", onBack: () => {} }, 1);
+      return null;
+    }
+    render(
+      pushed(
+        <>
+          <Page />
+          <Item />
+        </>,
+      ),
+    );
+    expect(bar().querySelector('[data-part="floating-title"]')).toBeNull();
+    expect(document.querySelector(".cb-shell-column")?.hasAttribute("data-title-away")).toBe(false);
+  });
+
   it("titleAway draws the centred title and the hairline mark", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     function Page() {

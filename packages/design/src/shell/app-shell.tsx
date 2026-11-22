@@ -211,13 +211,22 @@ export function AppShell({
   const page = useMemo(() => {
     const merged: ShellPage = {};
     // later registrations win within a layer, a higher layer over a lower one (a stable sort)
-    for (const { page: p } of [...pages.values()].sort((a, b) => a.layer - b.layer)) {
-      if (p.title !== undefined) merged.title = p.title;
+    const sorted = [...pages.values()].sort((a, b) => a.layer - b.layer);
+    let titleLayer: number | undefined;
+    for (const { page: p, layer } of sorted) {
+      if (p.title !== undefined) {
+        merged.title = p.title;
+        titleLayer = layer;
+      }
       if (p.path !== undefined) merged.path = p.path;
       if (p.menu !== undefined) merged.menu = p.menu;
       if (p.onBack !== undefined) merged.onBack = p.onBack;
       if (p.actions !== undefined) merged.actions = p.actions;
-      if (p.titleAway !== undefined) merged.titleAway = p.titleAway;
+    }
+    // The scrolled title belongs to the title drawn: only the layer that gave the title reports it
+    // (a pushed part's own title is not "away" because the page under it scrolled).
+    for (const { page: p, layer } of sorted) {
+      if (layer === titleLayer && p.titleAway !== undefined) merged.titleAway = p.titleAway;
     }
     return merged;
   }, [pages]);
@@ -531,8 +540,10 @@ export function AppShell({
   // The trailing "…" (responsive system spec §2.5): the page's menu, then the head's actions.
   const overflow = joinOverflow(
     page.menu ?? menu ?? [],
-    headActionEntries(page.actions ?? [], (href) =>
-      onNavigate ? onNavigate(href) : window.location.assign(href),
+    headActionEntries(
+      page.actions ?? [],
+      (href) => (onNavigate ? onNavigate(href) : window.location.assign(href)),
+      touch === true,
     ),
   );
   const titleAway = page.titleAway === true && page.title !== undefined;
@@ -769,24 +780,31 @@ function joinOverflow(menu: ConvMenuEntry[], actions: ConvMenuEntry[]): ConvMenu
 /**
  * The head's secondary actions as the floating row's overflow entries (responsive system spec
  * §2.5): a link calls `go(href)` after its own `onSelect`; a submenu becomes a labelled run of its
- * items. Separators at either end or doubled are dropped.
+ * items between separators; a desktop-only entry is left out on touch (as a menu hides it there).
+ * Separators at either end or doubled are dropped.
  */
 function headActionEntries(
   items: readonly MenuItem[],
   go: (href: string) => void,
+  touch: boolean,
 ): ConvMenuEntry[] {
   const out: ConvMenuEntry[] = [];
+  const separate = () => {
+    if (out.length > 0 && out[out.length - 1]?.kind !== "separator")
+      out.push({ kind: "separator" });
+  };
   const walk = (list: readonly MenuItem[], prefix: string) => {
     list.forEach((item, i) => {
       if (item === "separator") {
-        if (out.length > 0 && out[out.length - 1]?.kind !== "separator") {
-          out.push({ kind: "separator" });
-        }
+        separate();
         return;
       }
+      if (item.desktopOnly && touch) return;
       if (item.submenu) {
+        separate();
         out.push({ kind: "label", label: item.label });
         walk(item.submenu, `${prefix}${i}-`);
+        separate();
         return;
       }
       const { href, onSelect } = item;

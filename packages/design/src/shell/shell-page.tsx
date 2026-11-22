@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useLayoutEffect, useRef } from "react";
 import type { ConvMenuEntry } from "../conversation/menu";
 import type { MenuItem } from "../overlays/menus";
 
@@ -41,11 +41,13 @@ export function useRegisterShellPage(page: ShellPage, layer = 0): void {
   const register = useContext(ShellPageContext);
   const id = useRef<symbol>(Symbol("shell-page"));
   const key = JSON.stringify([page.title, page.path, page.titleAway]);
+  // Layout effects: the row follows the page before paint (a restored scroll's titleAway lands
+  // with the restored position, no late flash).
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for title, path and titleAway
-  useEffect(() => {
+  useLayoutEffect(() => {
     register?.(id.current, page, layer);
   }, [register, key, page.menu, page.actions, page.onBack, layer]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const own = id.current;
     return () => register?.(own, null);
   }, [register]);
