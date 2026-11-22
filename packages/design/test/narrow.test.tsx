@@ -82,24 +82,16 @@ describe("tabs", () => {
   });
 });
 
-describe("ObjectRow below 640", () => {
-  const narrow = media(css("templates.css"));
+describe("ObjectRow below 600", () => {
+  const narrow = media(css("templates.css"), "not all and (min-width: 600px)");
   const row = '.cb-object-row:not([data-skeleton="true"])';
 
-  it("dissolves the text column so its lines and the row's buttons wrap as one row", () => {
-    expect(decls(narrow, ".cb-object-row")).toContain("flex-wrap: wrap;");
-    expect(decls(narrow, `${row} .cb-object-text`)).toContain("display: contents;");
-    // the skeleton rows keep the mark and the text column side by side
-    expect(decls(narrow, '.cb-object-row[data-skeleton="true"] .cb-object-text')).toContain(
-      "flex-basis:",
+  it("lays the row out as a grid of the mark, the text column and the trailing parts", () => {
+    expect(decls(narrow, '.cb-object-list > .cb-object-row:not([data-skeleton="true"])')).toContain(
+      "display: grid;",
     );
-  });
-
-  it("puts the ⋯ menu on the name line and breaks the line after it", () => {
-    expect(decls(narrow, `${row} .cb-object-menu`)).toContain("order: 1;");
-    const brk = decls(narrow, `${row}::after`);
-    expect(brk).toContain("order: 1;");
-    expect(brk).toContain("flex-basis: 100%;");
+    expect(decls(narrow, `${row} > .cb-object-text`)).toContain("grid-column: 2;");
+    expect(decls(narrow, `${row} > .cb-object-mark`)).toContain("grid-column: 1;");
   });
 
   it("draws the state at the end of the meta line in its tone and hides the state label", () => {
@@ -114,17 +106,18 @@ describe("ObjectRow below 640", () => {
     expect(decls(narrow, `${row} > .cb-object-state`)).toContain("display: none;");
   });
 
-  it("aligns the action group right on the meta line (it wraps under it as a whole)", () => {
-    const actions = decls(narrow, `${row} .cb-object-actions`);
-    expect(actions).toContain("order: 2;");
-    expect(actions).toContain("margin-left: auto;");
-    expect(actions).toContain("display: flex;");
+  it("stretches the name's link over a row that opens, and draws its chevron", () => {
+    expect(decls(narrow, '.cb-object-row[data-open="true"] .cb-object-name::after')).toContain(
+      "inset: 0;",
+    );
+    expect(decls(narrow, ".cb-object-chevron")).toContain("display: block;");
   });
 
-  it("changes nothing above 640: the action group dissolves, a state-only meta line is hidden", () => {
+  it("changes nothing above 600: the action group dissolves, a state-only meta line and the chevron are hidden", () => {
     const wide = css("templates.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
     expect(decls(wide, ".cb-object-actions")).toContain("display: contents;");
     expect(decls(wide, '.cb-object-meta[data-empty="true"]')).toContain("display: none;");
+    expect(decls(wide, ".cb-object-chevron")).toContain("display: none;");
   });
 });
 

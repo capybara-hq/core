@@ -460,6 +460,8 @@ export function DataTable<T>({
           const key = rowKey(row);
           const disabled = !!isDisabled?.(row);
           const menuItems = rowMenu?.(row);
+          // The ⋯ button names its row, as the sidebar's does
+          const rowName = rowLabel?.(row) ?? rowNameOf(compactRoles(columns).title?.cell(row));
           return (
             <CompactRow<T>
               key={key}
@@ -477,7 +479,11 @@ export function DataTable<T>({
               open={onOpen && !disabled ? () => onOpen(row) : undefined}
               menuItems={menuItems}
               menuColumn={rowMenu !== undefined}
-              menuLabel={t("table.rowActions")}
+              menuLabel={
+                rowName === undefined
+                  ? t("table.rowActions")
+                  : t("table.rowActionsOf").replace("{title}", rowName)
+              }
               onMenu={() => setSheetKey(key)}
               extra={expand?.(row)}
             />

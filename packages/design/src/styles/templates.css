@@ -799,80 +799,116 @@ a.cb-object-name:hover {
 .cb-object-meta[data-empty="true"] {
   display: none;
 }
-/* Phones (below 600, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
-   the right; the description and the meta line sit under the name, and the state closes the meta
-   line in its tone (read from the meta's data-state, so the label is one node); the row action,
-   dense, sits at the right of the meta line, or under it as a whole when both do not fit. The text
-   column dissolves into the row (display: contents), so its lines and the row's buttons wrap as
-   one flex row; DOM (and tab) order stays name, action, menu. The skeleton rows keep the mark and
-   the text column side by side. */
-@media (max-width: 599px) {
-  .cb-object-row {
-    flex-wrap: wrap;
+/* The row's chevron (spec §6.17 "Grouped list"): drawn below 600 only, on a row with a link. */
+.cb-object-chevron {
+  display: none;
+}
+/* Phones (below 600, spec §6.17 "Grouped list", responsive system spec §2.3): the list is one
+   rounded card of grouped rows from the shared --cb-grouped-* values (as CardGrid and DataTable):
+   the mark in the 40 px lead, the text column (name and chips, the description, the meta line),
+   then the trailing text, a row without a link's one button, and the chevron of a row with one.
+   The state closes the meta line in its tone (read from the meta's data-state, so the label
+   stays one node). A row with a link is one tap target (the name's link stretched over it) and
+   opens its actions as a sheet on a long press, never the system callout or a text selection.
+   The query is ClassForms' compact one (the complement of min-width 600), so a fractional width
+   between 599 and 600 is styled as the form ClassForms mounted. The selectors are specific
+   enough to win over the touch row sizes (touch.css), which stay for the wide touch classes. */
+@media not all and (min-width: 600px) {
+  ul.cb-object-list {
+    overflow: hidden;
+    border: var(--cb-grouped-line);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
   }
-  .cb-object-row[data-skeleton="true"] .cb-object-text {
-    flex-basis: calc(100% - 36px - var(--cb-space-3));
+  ul.cb-object-list > .cb-object-row {
+    padding: var(--cb-grouped-pad);
+    border-top: 0;
+    min-height: var(--cb-grouped-row-lead);
   }
-  .cb-object-row:not([data-skeleton="true"]) {
-    align-content: flex-start;
+  .cb-object-list > .cb-object-row + .cb-object-row {
+    background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+    background-repeat: no-repeat;
+    background-position: right top;
+    background-size: calc(100% - var(--cb-grouped-inset-lead)) 1px;
+  }
+  .cb-object-list > .cb-object-row:not([data-skeleton="true"]) {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--cb-grouped-lead) minmax(0, 1fr);
+    grid-auto-columns: auto;
+    align-items: center;
+    column-gap: var(--cb-space-3);
     row-gap: 0;
+    min-height: var(--cb-grouped-row-lead);
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-text {
-    display: contents;
+  .cb-object-row[data-open="true"]:active {
+    background-color: var(--cb-hover);
   }
-  /* The mark overhangs line 1 (a dense control high) into the indent of the lines below, as the
-     text column sits beside it from 600. */
+  .cb-object-row:has(.cb-object-name:focus-visible) {
+    outline: 1px solid var(--cb-accent);
+    outline-offset: -1px;
+  }
   .cb-object-row:not([data-skeleton="true"]) > .cb-object-mark {
-    align-self: flex-start;
-    margin-bottom: calc(var(--cb-control-dense) - 36px);
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: center;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-line {
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: var(--cb-control-dense);
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-text {
+    grid-column: 2;
+    grid-row: 1;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-menu {
-    order: 1;
-  }
-  /* The line break after line 1. */
-  .cb-object-row:not([data-skeleton="true"])::after {
-    content: "";
-    order: 1;
-    flex-basis: 100%;
-    height: 0;
-  }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc,
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-meta,
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-trailing,
   .cb-object-row:not([data-skeleton="true"]) .cb-object-actions {
-    order: 2;
-    margin-top: 2px;
+    display: flex;
+    flex: none;
+    gap: var(--cb-space-2);
+  }
+  .cb-object-chevron {
+    display: block;
+    color: var(--cb-faint);
+    line-height: 0;
+  }
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-trailing,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-actions,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-menu,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-class-form > .cb-object-actions,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-class-form > .cb-object-menu,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-chevron {
+    grid-row: 1;
+  }
+  .cb-object-row[data-open="true"] .cb-object-name::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .cb-object-row[data-open="true"] {
+    cursor: pointer;
   }
   .cb-object-row:not([data-skeleton="true"]) .cb-object-desc {
-    flex: 1 1 100%;
-    min-width: 0;
-    margin-left: calc(36px + var(--cb-space-3));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cb-object-row:not([data-skeleton="true"]) .cb-object-meta {
     display: flex;
-    flex: 0 1 auto;
     min-width: 0;
-    margin-left: calc(36px + var(--cb-space-3));
   }
   .cb-object-meta-text {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cb-object-meta[data-state]:not([data-empty="true"])::before {
     content: " · ";
-    order: 1;
     flex: none;
     white-space: pre;
   }
   .cb-object-meta[data-state]::after {
     content: attr(data-state);
-    order: 2;
     flex: none;
   }
   .cb-object-meta[data-state-tone="ok"]::after {
@@ -887,14 +923,6 @@ a.cb-object-name:hover {
   .cb-object-row:not([data-skeleton="true"]) > .cb-object-state {
     display: none;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-actions {
-    display: flex;
-    flex: none;
-    gap: var(--cb-space-2);
-    margin-left: auto;
-  }
-  /* The row action and the ⋯ menu are dense buttons at the mobile control height (44, spec
-     §2.5), so they are their own tap targets. */
 }
 
 /* EmptyState (spec §6.18) */

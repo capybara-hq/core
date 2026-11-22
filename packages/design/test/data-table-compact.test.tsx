@@ -317,8 +317,10 @@ describe("DataTable grouped rows", () => {
     const [head, first] = within(table).getAllByRole("row");
     // the actions column has a header so the cells stay aligned
     expect(within(head as HTMLElement).getAllByRole("columnheader")).toHaveLength(5);
-    const more = within(first as HTMLElement).getByRole("button", { name: "行操作" });
-    expect(within(table).getAllByRole("button", { name: "行操作" })).toHaveLength(ROWS.length);
+    // each ⋯ names its row, as the sidebar's does
+    const more = within(first as HTMLElement).getByRole("button", { name: "行操作：Ada" });
+    expect(within(table).getByRole("button", { name: "行操作：Bo" })).toBeTruthy();
+    expect(within(table).getAllByRole("button", { name: /^行操作：/ })).toHaveLength(ROWS.length);
     expect(screen.queryByText("Remove")).toBeNull();
     act(() => {
       fireEvent.click(more);
@@ -329,7 +331,7 @@ describe("DataTable grouped rows", () => {
   it("a row that opens keeps the chevron and no ⋯ button; its menu cell stays, empty", () => {
     renderAtClass(390, <DataTable {...base} columns={declared} rowMenu={menu} onOpen={() => {}} />);
     const table = screen.getByRole("table", { name: "Members" });
-    expect(within(table).queryByRole("button", { name: "行操作" })).toBeNull();
+    expect(within(table).queryByRole("button", { name: /^行操作/ })).toBeNull();
     const [, first] = within(table).getAllByRole("row");
     expect(within(first as HTMLElement).getAllByRole("cell")).toHaveLength(5);
   });

@@ -192,12 +192,13 @@ describe("ObjectRow", () => {
     expect(meta.hasAttribute("data-empty")).toBe(false);
     expect(meta.textContent).toBe("1 个扩展 · 平台 · 组织自选");
     expect(within(full as HTMLElement).getAllByText("已启用")).toHaveLength(1);
-    // The row action sits in its group, the menu is the row's last child (named 更多操作)
+    // The row action sits in its group, the menu is the last of the row's buttons (named 更多操作)
     const group = full?.querySelector(".cb-object-actions") as HTMLElement;
     expect(within(group).getByRole("link", { name: "组织配置" })).toBeTruthy();
     const menu = within(full as HTMLElement).getByRole("button", { name: "更多操作" });
     expect(menu.classList.contains("cb-object-menu")).toBe(true);
-    expect(full?.lastElementChild).toBe(menu);
+    // (the buttons sit in the class form wrapper, the row's last child)
+    expect(full?.lastElementChild?.contains(menu)).toBe(true);
     // Tab order: name link, action, menu
     const focusable = [...(full as HTMLElement).querySelectorAll("a, button")].map(
       (el) => el.textContent || el.getAttribute("aria-label"),
