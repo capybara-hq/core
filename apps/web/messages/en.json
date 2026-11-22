@@ -7059,8 +7059,7 @@
     "title": "Audit log",
     "description": "Actions in this organization, newest first: members, settings, agents, connectors, skills, plugins and extensions. Only admins see this page.",
     "empty": "No actions recorded yet.",
-    "emptyHint": "Changes made in this organization show up here.",
-    "loadMore": "Load more"
+    "emptyHint": "Changes made in this organization show up here."
   },
   "shares": {
     "dialog": {

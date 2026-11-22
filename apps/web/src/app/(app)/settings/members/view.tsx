@@ -133,6 +133,7 @@ function Members({ orgId }: { orgId: string }) {
     {
       key: "name",
       header: t("columns.name"),
+      compact: "title",
       cell: (m) => (
         <Stack direction="row" gap={8}>
           <PersonName
@@ -148,12 +149,16 @@ function Members({ orgId }: { orgId: string }) {
     {
       key: "email",
       header: t("columns.email"),
+      compact: "subtitle",
       tone: "muted",
       cell: (m) => m.account.email ?? "—",
     },
     {
       key: "role",
       header: t("columns.role"),
+      // The role select is a control: the grouped rows carry it as their trailing cell
+      compact: "trailing",
+      ...(manage ? { interactive: true } : {}),
       cell: (m) =>
         manage ? (
           <Select
@@ -173,6 +178,7 @@ function Members({ orgId }: { orgId: string }) {
     {
       key: "joined",
       header: t("columns.joined"),
+      compact: "hidden",
       tone: "muted",
       cell: (m) => <DateTime value={m.joinedAt} />,
     },
@@ -349,10 +355,16 @@ function Invitations({
   }
 
   const columns: Column<Invitation>[] = [
-    { key: "role", header: t("invitations.columns.role"), cell: (i) => t(`roles.${i.role}`) },
+    {
+      key: "role",
+      header: t("invitations.columns.role"),
+      compact: "title",
+      cell: (i) => t(`roles.${i.role}`),
+    },
     {
       key: "status",
       header: t("invitations.columns.status"),
+      compact: "trailing",
       cell: (i) => (
         <StatusMark
           status={
@@ -365,12 +377,14 @@ function Invitations({
     {
       key: "created",
       header: t("invitations.columns.created"),
+      compact: "subtitle",
       tone: "muted",
       cell: (i) => <DateTime value={i.createdAt} />,
     },
     {
       key: "expires",
       header: t("invitations.columns.expires"),
+      compact: "meta",
       tone: "muted",
       cell: (i) => <DateTime value={i.expiresAt} />,
     },

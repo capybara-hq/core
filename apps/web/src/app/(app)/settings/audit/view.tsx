@@ -1,9 +1,9 @@
 "use client";
 
-import { DataTable, SettingsPage, Stack } from "@capybara-hq/design";
+import { type Column, DataTable, SettingsPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { auditSlice, useAuditColumns } from "../../../../components/audit-log";
-import { LoadMore, useCursorPages } from "../../../../components/cursor-pages";
+import { useCursorPages } from "../../../../components/cursor-pages";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
@@ -16,7 +16,8 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/audit`: the org's audit log (SettingsPage, group Organization; `org.update`, org admins): the
- * org's own events, newest first, in the admin console's audit table, Load more by cursor. The first
+ * org's own events, newest first, in the admin console's audit table, Load more by cursor
+ * (the table reads the next page as its end comes into view on a compact window, a button on a wide one). The first
  * page comes from the query cache (the layout prefetched it on a first load); later pages are read
  * through the cache and appended.
  */
@@ -27,11 +28,20 @@ export default function OrgAuditView() {
   return <OrgAudit orgId={ws.orgId} />;
 }
 
+/** The audit columns with their compact roles: the action leads, the actor and the time under it. */
+function useOrgAuditColumns(): Column<AuditEvent>[] {
+  const compact = { action: "title", actor: "subtitle", at: "subtitle", target: "hidden" } as const;
+  return useAuditColumns().map((c) => ({
+    ...c,
+    compact: compact[c.key as keyof typeof compact] ?? "hidden",
+  }));
+}
+
 function OrgAudit({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("orgAudit");
   const nav = useOrgSettingsNav();
-  const columns = useAuditColumns();
+  const columns = useOrgAuditColumns();
   const read = usePageQuery(orgAuditQuery(orgId));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -62,19 +72,20 @@ function OrgAudit({ orgId }: { orgId: string }) {
 
 function AuditTable({ orgId, first }: { orgId: string; first: AuditPage }) {
   const t = useTranslations("orgAudit");
-  const columns = useAuditColumns();
+  const columns = useOrgAuditColumns();
   const pages = useCursorPages(first, (after) => orgAuditQuery(orgId, after), auditSlice);
   return (
-    <Stack gap={12}>
-      <DataTable<AuditEvent>
-        label={t("title")}
-        columns={columns}
-        rows={pages.rows}
-        rowKey={(e) => e.id}
-        state="ready"
-        empty={{ title: t("empty"), hint: t("emptyHint") }}
-      />
-      <LoadMore pages={pages} label={t("loadMore")} />
-    </Stack>
+    <DataTable<AuditEvent>
+      label={t("title")}
+      columns={columns}
+      rows={pages.rows}
+      rowKey={(e) => e.id}
+      state="ready"
+      empty={{ title: t("empty"), hint: t("emptyHint") }}
+      onLoadMore={pages.loadMore}
+      hasMore={pages.next !== null}
+      loadingMore={pages.loadingMore}
+      loadMoreError={pages.error}
+    />
   );
 }
