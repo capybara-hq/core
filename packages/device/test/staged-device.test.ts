@@ -636,8 +636,10 @@ describe("staged connection (W3-M)", () => {
     expect(body.policy?.sharedProjectRoots).toEqual(["/p/shared"]);
     expect(JSON.stringify(event)).not.toContain("other-dev");
     expect(JSON.stringify(event)).not.toContain("other.test");
-    // nothing more while nothing changes
-    await new Promise((r) => setTimeout(r, 50));
+    // nothing more while nothing changes: two further checks complete without an event (a check
+    // decides synchronously once it has read the summary, so the third read follows two decisions)
+    const read = vi.spyOn(s.device, "policySummary");
+    await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(3));
     expect(k.of("event")).toHaveLength(1);
   });
 

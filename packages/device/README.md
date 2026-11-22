@@ -90,6 +90,9 @@ error naming it; once running, the program re-reads the file when it changes, an
 is no authority: operations and owner reports are refused with the reason until it is fixed, never
 served from a policy read earlier). Changes made with `capybara-device policy` take
 `policy.json.lock`, so two writers never lose an update; keys this version does not know are kept.
+`projects.json` (mode 0600) lists the project directory of each scoped operation that launched,
+most recent first, at most 256; the other connections of the machine read it only to learn which
+directories they share.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`, and `home/`, the sandboxed commands' home (created when missing).
 
@@ -285,7 +288,16 @@ or more than 1 MiB of answers a peer leaves unread, closes it.
 
 - `control`: `ok` (the running program answered), `absent` (no program runs) or `unavailable`
   (a program runs but has no socket, with the reason in `controlReason`);
-- `live`: the live status above, or `null`.
+- `live`: the live status above, or `null`;
+- `sharedProjects`: this connection's project directories that another connection on this machine
+  also uses (from the connections' `projects.json`).
+
+A directory two connections both use as a project stays allowed. `status` marks such a connection's
+line "(N project directories also used by another connection on this machine)" and never names the
+other connection. The deployment gets the same list, also without the other connection's name, as
+the optional `sharedProjectRoots` of the policy summary in the hello and the `policy` event. The
+summary is sent again when the list changes. The field is part of protocol 6, and older peers ignore
+it.
 
 The credential is never part of any answer.
 
