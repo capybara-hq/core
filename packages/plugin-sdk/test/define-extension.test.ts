@@ -27,7 +27,7 @@ describe("defineExtension", () => {
     expect(defineExtension(m)).toBe(m);
   });
   it("checks permissions.dialIn against the manifest's provides", () => {
-    const permissions = { dialIn: { protocol: "capybara-device/5" } };
+    const permissions = { dialIn: { protocol: "capybara-device/6" } };
     const m = valid({ provides: ["device-provider@1"], permissions });
     expect(defineExtension(m)).toBe(m);
     expect(() => defineExtension(valid({ permissions }))).toThrow(/device-provider@1/);

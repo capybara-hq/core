@@ -229,13 +229,13 @@ describe("permissions.dialIn", () => {
   const provides = ["device-provider@1"];
   it("accepts permissions.dialIn with a protocol", () => {
     expect(
-      validatePermissions("p", { dialIn: { protocol: "capybara-device/5" } }, provides),
+      validatePermissions("p", { dialIn: { protocol: "capybara-device/6" } }, provides),
     ).toEqual([]);
   });
   it("rejects dialIn without provides device-provider@1", () => {
     for (const other of [undefined, [], ["channel@1"]]) {
       expect(
-        validatePermissions("p", { dialIn: { protocol: "capybara-device/5" } }, other).join(),
+        validatePermissions("p", { dialIn: { protocol: "capybara-device/6" } }, other).join(),
       ).toMatch(/device-provider@1/);
     }
   });
@@ -245,8 +245,8 @@ describe("permissions.dialIn", () => {
       { protocol: "Capybara/5" },
       { protocol: 5 },
       {},
-      { protocol: "capybara-device/5", extra: true },
-      "capybara-device/5",
+      { protocol: "capybara-device/6", extra: true },
+      "capybara-device/6",
       null,
     ]) {
       expect(validatePermissions("p", { dialIn }, provides), JSON.stringify(dialIn)).not.toEqual(

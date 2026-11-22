@@ -443,7 +443,7 @@ describe("staged connection (W3-M)", () => {
   const send = (k: FakeKernel, conn: number, id: string, op: string, args: object) =>
     k.request(conn, id, op, args);
 
-  it("sends x-capybara-device-protocol capybara-device/5", async () => {
+  it("sends x-capybara-device-protocol capybara-device/6", async () => {
     const k = await kernel();
     const s = staged({ cred: credential({ connectUrl: k.url }) });
     const conn = connectStaged(s.device, { err: () => {}, bootId: null });
@@ -452,7 +452,7 @@ describe("staged connection (W3-M)", () => {
       return conn.done;
     });
     await k.waitFor("hello", () => k.of("hello")[0]);
-    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("capybara-device/5");
+    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("capybara-device/6");
     expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe(DEVICE_DIAL_IN_PROTOCOL);
     expect(k.headers[0]?.authorization).toBe("Bearer cap_dev_a");
   });
@@ -475,7 +475,7 @@ describe("staged connection (W3-M)", () => {
     if (hello.type !== "hello") throw new Error("expected a hello");
     expect(hello).toEqual({
       type: "hello",
-      protocol: "capybara-device/5",
+      protocol: "capybara-device/6",
       // this process's run: every connection it makes names the same one
       programRunId: PROGRAM_RUN_ID,
       program: {
@@ -794,7 +794,7 @@ describe("staged connection (W3-M)", () => {
           : {
               error: {
                 code: "device.program_outdated",
-                message: `This device is served with ${kernelProtocol}, not capybara-device/5.`,
+                message: `This device is served with ${kernelProtocol}, not capybara-device/6.`,
               },
             };
       const s = staged({ cred: credential({ connectUrl: k.url }) });
@@ -810,7 +810,7 @@ describe("staged connection (W3-M)", () => {
       JSON.stringify({
         error: {
           code: "device.program_outdated",
-          message: `This device is served by device-local2, which speaks ${expected}; this program speaks capybara-device/5. Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.`,
+          message: `This device is served by device-local2, which speaks ${expected}; this program speaks capybara-device/6. Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.`,
         },
       });
     expect(outdatedMessage(body("capybara-device/4"))).toBe(

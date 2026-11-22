@@ -820,7 +820,7 @@ it("the hello is the dial-in envelope around the device protocol body", async ()
   const [raw] = (await first) as [Buffer];
   expect(JSON.parse(raw.toString())).toEqual({
     type: "hello",
-    protocol: "capybara-device/5",
+    protocol: "capybara-device/6",
     programRunId: PROGRAM_RUN_ID,
     program: { version: "1.0.0", os: "linux", arch: "x64", bootId: "boot-1" },
     transport: { maxFrameBytes: 69632 },

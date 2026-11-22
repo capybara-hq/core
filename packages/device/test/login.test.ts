@@ -242,7 +242,7 @@ describe("login", () => {
     expect(seen[0]?.body).toMatchObject({
       os: "linux",
       name: expect.any(String),
-      protocol: "capybara-device/5",
+      protocol: "capybara-device/6",
     });
     expect(seen[1]?.body).toEqual({ deviceCode: "cap_dvc_x" });
     expect(statSync(credFile()).mode & 0o777).toBe(0o600);
