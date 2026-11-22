@@ -1,9 +1,60 @@
-import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import {
+  type FocusEvent,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+  useEffect,
+  useRef,
+} from "react";
 import { useDesignT } from "../provider";
+import { KEYBOARD_INSET_SETTLED_EVENT } from "../shell/keyboard-settled";
+import { useMobileSizes } from "../shell/touch";
 import type { ControlA11y } from "./a11y";
 import { type Density, useDensity } from "./density";
 import { useNumberDraft } from "./number-draft";
 import { stepDecimals } from "./step";
+
+function inScroller(el: HTMLElement): boolean {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (/(auto|scroll|overlay)/.test(getComputedStyle(p).overflowY)) return true;
+  }
+  return false;
+}
+
+/**
+ * Under the mobile query, a focused field inside a scroller is scrolled into view above the
+ * keyboard once the shell's inset has settled (mobile interaction model §5); props for the control.
+ */
+function useScrollIntoViewOnKeyboard<E extends HTMLElement>(
+  onFocus?: (e: FocusEvent<E>) => void,
+  onBlur?: (e: FocusEvent<E>) => void,
+) {
+  const mobile = useMobileSizes() === true;
+  const focused = useRef<E | null>(null);
+  useEffect(() => {
+    if (!mobile) return;
+    const settled = () => {
+      const el = focused.current;
+      if (el && inScroller(el)) el.scrollIntoView({ block: "nearest" });
+    };
+    window.addEventListener(KEYBOARD_INSET_SETTLED_EVENT, settled);
+    return () => window.removeEventListener(KEYBOARD_INSET_SETTLED_EVENT, settled);
+  }, [mobile]);
+  return {
+    onFocus: (e: FocusEvent<E>) => {
+      focused.current = e.currentTarget;
+      // The keyboard is already open (moving between fields): no inset change will follow.
+      const shell = e.currentTarget.closest<HTMLElement>("[data-keyboard='open']");
+      if (mobile && shell && inScroller(e.currentTarget))
+        e.currentTarget.scrollIntoView({ block: "nearest" });
+      onFocus?.(e);
+    },
+    onBlur: (e: FocusEvent<E>) => {
+      focused.current = null;
+      onBlur?.(e);
+    },
+  };
+}
 
 export function Input({
   prefix,
@@ -18,6 +69,7 @@ export function Input({
   density?: Density;
 }) {
   const step = useDensity(density);
+  const scroll = useScrollIntoViewOnKeyboard<HTMLInputElement>(rest.onFocus, rest.onBlur);
   return (
     <div
       className="cb-input"
@@ -31,6 +83,7 @@ export function Input({
       {prefix ? <span className="cb-input-affix">{prefix}</span> : null}
       <input
         {...rest}
+        {...scroll}
         data-part="input-control"
         aria-invalid={invalid ? true : rest["aria-invalid"]}
       />
@@ -47,6 +100,7 @@ export function Textarea({
   code,
   ...rest
 }: TextareaHTMLAttributes<HTMLTextAreaElement> & { code?: boolean }) {
+  const scroll = useScrollIntoViewOnKeyboard<HTMLTextAreaElement>(rest.onFocus, rest.onBlur);
   return (
     <div
       className="cb-textarea"
@@ -54,7 +108,7 @@ export function Textarea({
       data-cap-part="input"
       data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
     >
-      <textarea {...rest} data-code={code ? "true" : undefined} />
+      <textarea {...rest} {...scroll} data-code={code ? "true" : undefined} />
     </div>
   );
 }

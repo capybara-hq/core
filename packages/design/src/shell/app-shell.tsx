@@ -27,6 +27,7 @@ import { popOverlaysThen } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
 import { backTarget, FloatingBar, type FloatingLead, routeCommitted } from "./floating-bar";
+import { INSET_SETTLE_MS, KEYBOARD_INSET_SETTLED_EVENT } from "./keyboard-settled";
 import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
@@ -484,6 +485,8 @@ export function AppShell({
     if (reference !== undefined) return;
     const vv = window.visualViewport;
     let frame = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastInset = 0;
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
@@ -496,6 +499,15 @@ export function AppShell({
           );
           if (shell) {
             shell.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            if (inset !== lastInset) {
+              lastInset = inset;
+              // The inset stopped changing (the keyboard's animation ended): fields scroll into view.
+              clearTimeout(settleTimer);
+              settleTimer = setTimeout(
+                () => window.dispatchEvent(new Event(KEYBOARD_INSET_SETTLED_EVENT)),
+                INSET_SETTLE_MS,
+              );
+            }
             if (inset > 0) shell.dataset.keyboard = "open";
             else delete shell.dataset.keyboard;
           }
@@ -516,6 +528,7 @@ export function AppShell({
     vv?.addEventListener("scroll", update);
     return () => {
       cancelAnimationFrame(frame);
+      clearTimeout(settleTimer);
       document.removeEventListener("focusout", update);
       vv?.removeEventListener("resize", update);
       vv?.removeEventListener("scroll", update);
