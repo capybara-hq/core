@@ -210,6 +210,8 @@ interface Granted {
   reconnectGraceSeconds: number;
   maxFrameBytes: number;
   outsideSandbox: "allowed" | "off";
+  deviceName: string | null;
+  orgName: string;
 }
 
 /** Authorize, confirm into a new device named `name`, take the credential. */
@@ -345,7 +347,15 @@ describe("device authorization", () => {
       reconnectGraceSeconds: 120,
       maxFrameBytes: 16 * 1024 * 1024,
       outsideSandbox: "allowed",
+      deviceName: "Laptop",
+      orgName: expect.any(String),
     });
+    const org = await db
+      .selectFrom("orgs")
+      .select("name")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    expect(g.orgName).toBe(org.name);
 
     // the credential authenticates the machine; it is never an /api credential
     const who = await machines.authenticate(g.credential);
