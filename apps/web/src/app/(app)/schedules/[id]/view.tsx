@@ -388,12 +388,14 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
   const columns: Column<TaskRun>[] = [
     {
       key: "at",
+      compact: "title",
       header: t("columns.scheduledFor"),
       fit: true,
       cell: (r) => <DateTime value={r.firedAt ?? r.scheduledFor} />,
     },
     {
       key: "kind",
+      compact: "meta",
       header: t("columns.kind"),
       tone: "muted",
       fit: true,
@@ -401,6 +403,7 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
     },
     {
       key: "status",
+      compact: "trailing",
       header: t("columns.status"),
       fit: true,
       cell: (r) => (
@@ -421,16 +424,26 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
       ),
     },
     {
+      // Plain text only (skip reason, refused tools, the error's first line): it is the compact
+      // rows' subtitle, where the interactive `ErrorDetail` below is not drawn
+      key: "reason",
+      header: t("columns.reason"),
+      compact: "subtitle",
+      wrap: true,
+      tone: "muted",
+      cell: (r) => {
+        if (r.skipReason !== null) return t(`skip.${r.skipReason}`);
+        if (r.missingGrants.length > 0) return t("missing", { tools: r.missingGrants.join(", ") });
+        return r.error?.split("\n")[0] ?? null;
+      },
+    },
+    {
+      // The full error, expandable: wide tables only
       key: "detail",
       header: t("columns.detail"),
-      wrap: true,
-      cell: (r) => {
-        if (r.skipReason !== null) return <Text tone="muted">{t(`skip.${r.skipReason}`)}</Text>;
-        if (r.missingGrants.length > 0) {
-          return <Text tone="warn">{t("missing", { tools: r.missingGrants.join(", ") })}</Text>;
-        }
-        return r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null;
-      },
+      compact: "hidden",
+      cell: (r) =>
+        r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null,
     },
   ];
   return (

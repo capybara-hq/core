@@ -50,6 +50,16 @@ describe("design-breakpoint", () => {
     expect(at("violation-touch")).toEqual([["touch.css", 1]]);
   });
 
+  it("a plain (max-width: 599px) block fails, also nested; the complement and the size query pass", () => {
+    expect(at("violation-compact")).toEqual([
+      ["compact.css", 1],
+      ["compact.css", 7],
+    ]);
+    expect(
+      run("violation-compact").every((f) => f.message.includes("not all and (min-width: 600px)")),
+    ).toBe(true);
+  });
+
   it("the class queries, 1279 / 1280, the short window, the segment queries and the dynamic units pass", () => {
     expect(run("ok")).toEqual([]);
   });

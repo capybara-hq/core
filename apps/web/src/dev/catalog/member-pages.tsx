@@ -1,0 +1,327 @@
+"use client";
+
+import { AppShell, AVATAR_PRESET_IDS } from "@capybara-hq/design";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
+import AccountProfileView from "../../app/(app)/account/profile/view";
+import AgentsView from "../../app/(app)/agents/view";
+import ConnectorsView from "../../app/(app)/connectors/view";
+import ConversationsView from "../../app/(app)/conversations/view";
+import InboxView from "../../app/(app)/inbox/view";
+import SchedulesView from "../../app/(app)/schedules/view";
+import SkillsView from "../../app/(app)/skills/view";
+import { type Session, SessionContext } from "../../components/shell/session";
+import type { Agent } from "../../lib/agents";
+import type { ConnectorSummary } from "../../lib/connectors";
+import type { Conversation, ConversationListRow } from "../../lib/conversations";
+import type { InboxItem } from "../../lib/inbox";
+import { agentsQuery, agentTemplatesQuery } from "../../lib/query/agents";
+import { authSourcesQuery } from "../../lib/query/auth";
+import { orgComponentsQuery } from "../../lib/query/components";
+import { connectorsQuery } from "../../lib/query/conversation";
+import { inboxQuery } from "../../lib/query/inbox";
+import { membersQuery } from "../../lib/query/members";
+import { schedulesQuery } from "../../lib/query/schedules";
+import { orgSettingsQuery } from "../../lib/query/settings";
+import {
+  conversationGroupsQuery,
+  conversationListQuery,
+  meQuery,
+  readinessQuery,
+} from "../../lib/query/shell";
+import { skillsQuery } from "../../lib/query/skills";
+import type { ScheduledTaskListItem } from "../../lib/schedules";
+import type { Me } from "../../lib/session";
+import type { SkillSummary } from "../../lib/skills";
+import { COMMANDS } from "./fixtures";
+import type { MemberPage } from "./routes";
+import { sidebarProps, statusFixture } from "./shell-fixture";
+
+/**
+ * `/dev/ui/pages/member-<page>`: the member pages (agents, skills, connectors, schedules'
+ * list, conversations, inbox, account profile) drawn from a seeded query cache in the workspace
+ * shell (no kernel), for the responsive matrix (`visual/responsive.spec.ts`). A member role, so
+ * the compact rows, the actions of each row and the page's own primary show as a person sees them.
+ */
+
+const ORG = "o1";
+const T = "2026-11-10T08:30:00.000Z";
+/** Within the day of the fixed "today" of the shots; the rows only show relative sections. */
+const RECENT = "2026-11-12T09:00:00.000Z";
+
+const ME: Me = {
+  account: {
+    id: "a1",
+    displayName: "Grant",
+    email: "grant@example.com",
+    isSuperAdmin: false,
+    avatarUrl: null,
+    avatarSource: null,
+  },
+  via: "session",
+  currentOrgId: ORG,
+  memberships: [{ orgId: ORG, slug: "acme", name: "Acme", role: "member" }],
+  canCreateOrg: false,
+};
+
+const AGENT_NAMES: [string, string, string][] = [
+  ["ag1", "研究助手", "Reads sources and writes a short brief with citations."],
+  ["ag2", "财务对账", "Matches invoices with the ledger and lists the differences."],
+  ["ag3", "客服助手", "Drafts replies to support tickets in the house style."],
+];
+
+const AGENTS: Agent[] = AGENT_NAMES.map(([id, name, description], i) => ({
+  id,
+  orgId: ORG,
+  ownerAccountId: "a1",
+  visibility: "org",
+  memberIds: null,
+  currentVersion: i + 1,
+  profile: {
+    avatar: { kind: "preset", id: AVATAR_PRESET_IDS[i % AVATAR_PRESET_IDS.length] ?? "" } as never,
+    description,
+    quickActions: [],
+    updatedAt: T,
+  },
+  definition: {
+    name,
+    description,
+    instructions: "",
+    model: { provider: "fake", model: "fake" },
+    fallback: null,
+  },
+  createdFrom: null,
+  updatedAt: T,
+}));
+
+const SKILLS: SkillSummary[] = [
+  ["sk1", "meeting-notes", "Turns a transcript into decisions and owners.", "org"],
+  ["sk2", "invoice-check", "Checks an invoice against the purchase order.", "org"],
+  ["sk3", "web-research", "Searches, reads and cites public pages.", "platform"],
+].map(([id, name, description, origin]) => ({
+  id: id as string,
+  scope: "org",
+  agentId: null,
+  name: name as string,
+  description: description as string,
+  currentVersion: 2,
+  createdBy: "a1",
+  createdAt: T,
+  updatedAt: T,
+  origin: origin as "org" | "platform",
+  shareable: false,
+}));
+
+const CONNECTORS: ConnectorSummary[] = [
+  ["c1", "wiki", "公司 Wiki", "active"],
+  ["c2", "tickets", "Ticket system", "active"],
+  ["c3", "crm", "CRM", "disabled"],
+].map(([id, slug, name, status]) => ({
+  id: id as string,
+  slug: slug as string,
+  name: name as string,
+  connector: "connector-mcp",
+  endpoint: { url: `https://${slug}.example.com/mcp` },
+  auth: { type: "bearer", ownership: "org" },
+  status: status as "active" | "disabled",
+  git: null,
+  gitPushPolicy: "ask",
+  createdAt: T,
+  updatedAt: T,
+})) as ConnectorSummary[];
+
+const TASKS: [string, string, string, string][] = [
+  ["s1", "每日简报", "ag1", "0 9 * * *"],
+  ["s2", "对账检查", "ag2", "0 14 * * 1-5"],
+  ["s3", "工单回顾", "ag3", "0 9 * * 2"],
+];
+
+const SCHEDULES: ScheduledTaskListItem[] = TASKS.map(([id, name, agentId, expr]) => ({
+  id,
+  name,
+  agentId,
+  accountId: "a1",
+  status: "active",
+  pauseReason: null,
+  trigger: { kind: "cron", expr, timeZone: "Asia/Shanghai" },
+  mode: "new",
+  jitterSeconds: 0,
+  nextRunAt: "2026-11-13T01:00:00.000Z",
+  orgId: ORG,
+  prompt: "",
+  conversationId: null,
+  chat: null,
+  model: null,
+  effort: null,
+  deviceId: null,
+  pausedBy: null,
+  expiresAt: null,
+  consecutiveFailures: 0,
+  lastRun: null,
+  createdAt: T,
+  updatedAt: T,
+}));
+
+const conversation = (id: string, agentId: string, title: string, at: string): Conversation => ({
+  id,
+  orgId: ORG,
+  agentId,
+  title,
+  titleSource: "generated",
+  lastSeq: 4,
+  activity: null,
+  createdAt: at,
+  updatedAt: at,
+  deviceId: null,
+});
+
+const TITLES: [string, string, string][] = [
+  ["cv1", "ag1", "Competitor pricing brief"],
+  ["cv2", "ag2", "October ledger differences"],
+  ["cv3", "ag3", "Refund wording for the new policy"],
+  ["cv4", "ag1", "Interview notes summary"],
+  ["cv5", "ag2", "Q3 invoice check"],
+];
+
+const CONVERSATIONS: ConversationListRow[] = TITLES.map(([id, agentId, title], i) => {
+  const a = AGENTS.find((x) => x.id === agentId) as Agent;
+  return {
+    ...conversation(
+      id,
+      agentId,
+      title,
+      new Date(Date.parse(RECENT) - i * 86_400_000).toISOString(),
+    ),
+    agent: { id: a.id, name: a.definition.name, profile: a.profile },
+  };
+});
+
+const INBOX_ITEMS: InboxItem[] = [
+  {
+    type: "skill_change",
+    id: "ic1",
+    createdAt: RECENT,
+    skillChange: {
+      id: "sc1",
+      orgId: ORG,
+      kind: "version",
+      agent: { id: "ag1", name: "研究助手" },
+      skillId: "sk1",
+      name: "meeting-notes",
+      description: "Turns a transcript into decisions and owners.",
+      version: 3,
+      files: [{ path: "SKILL.md", size: 1200 }],
+      status: "pending",
+      requestedBy: "a1",
+      requestedByName: "Grant",
+      requestedByAvatarUrl: null,
+      requestedInConversation: null,
+      conversationPath: null,
+      decidedBy: null,
+      decidedAt: null,
+      createdAt: RECENT,
+    },
+  },
+  {
+    type: "schedule_attention",
+    id: "s2:paused",
+    createdAt: T,
+    attention: {
+      taskId: "s2",
+      name: "对账检查",
+      reason: "failed",
+      pausedBy: null,
+      missing: [],
+      needsRole: [],
+      needsAdmin: [],
+      error: "The ledger export was empty.",
+    },
+  },
+];
+
+/** The layout's session (no kernel behind it: nothing reloads or switches). */
+const SESSION: Session = {
+  me: ME,
+  reload: async () => {},
+  switchOrg: async () => {},
+};
+
+function seeded(): QueryClient {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { staleTime: Number.POSITIVE_INFINITY, retry: false } },
+  });
+  qc.setQueryData(meQuery().queryKey, ME);
+  qc.setQueryData(readinessQuery(ORG).queryKey, {
+    modelProvider: "ready",
+    orgFixableProviders: [],
+    agents: AGENTS.length,
+  });
+  qc.setQueryData(authSourcesQuery().queryKey, []);
+  qc.setQueryData(agentsQuery(ORG).queryKey, { agents: AGENTS });
+  qc.setQueryData(agentTemplatesQuery(ORG).queryKey, { templates: [] });
+  qc.setQueryData(membersQuery(ORG).queryKey, {
+    members: [{ account: ME.account, role: "member", joinedAt: T }],
+  });
+  for (const kind of ["agent_template", "skill", "connector_template"] as const) {
+    qc.setQueryData(orgComponentsQuery(ORG, { kind }).queryKey, { components: [] });
+  }
+  qc.setQueryData(skillsQuery(ORG).queryKey, { skills: SKILLS });
+  qc.setQueryData(connectorsQuery(ORG).queryKey, { connectors: CONNECTORS });
+  qc.setQueryData(orgSettingsQuery(ORG).queryKey, {
+    settings: { scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+  });
+  qc.setQueryData(schedulesQuery(ORG).queryKey, { items: SCHEDULES });
+  qc.setQueryData(conversationListQuery(ORG).queryKey, {
+    conversations: CONVERSATIONS,
+    next: null,
+    total: 42,
+  });
+  qc.setQueryData(conversationGroupsQuery(ORG).queryKey, {
+    groups: AGENTS.map((a) => ({
+      agent: { id: a.id, name: a.definition.name, profile: a.profile },
+      latestAt: RECENT,
+      conversations: [],
+      more: false,
+    })),
+    next: null,
+  });
+  qc.setQueryData(inboxQuery(ORG).queryKey, { items: INBOX_ITEMS, truncated: false });
+  return qc;
+}
+
+function Page({ page }: { page: MemberPage }) {
+  switch (page) {
+    case "agents":
+      return <AgentsView />;
+    case "skills":
+      return <SkillsView />;
+    case "connectors":
+      return <ConnectorsView />;
+    case "schedules":
+      return <SchedulesView initial={{ view: "list", range: "week", date: null, scope: "mine" }} />;
+    case "conversations":
+      return <ConversationsView />;
+    case "inbox":
+      return <InboxView />;
+    case "profile":
+      return <AccountProfileView />;
+  }
+}
+
+/** A member page in the workspace shell. */
+export function MemberPageCatalog({ page }: { page: MemberPage }) {
+  const [client] = useState(seeded);
+  const { onOpenCommands: _, ...sidebar } = sidebarProps(
+    { active: page, level: "guest" },
+    () => "#",
+  );
+  return (
+    <QueryClientProvider client={client}>
+      <SessionContext.Provider value={SESSION}>
+        <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture(`/${page}`)}>
+          <Page page={page} />
+        </AppShell>
+      </SessionContext.Provider>
+    </QueryClientProvider>
+  );
+}

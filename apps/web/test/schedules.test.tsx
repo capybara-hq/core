@@ -11,6 +11,7 @@ import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
+import { stubWindowWidth } from "./support/width";
 
 // `/schedules` reads the remembered view's cookie (calendar spec §4.1): none here, the list.
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
@@ -892,5 +893,50 @@ describe("/settings/schedules (org admins)", () => {
     expect(screen.getByText(en.roles.noAccess.title)).toBeTruthy();
     await settle();
     expect(calls).toEqual([]);
+  });
+});
+
+describe("schedules at 390", () => {
+  beforeEach(() => void stubWindowWidth(390));
+
+  it("the list rows show the name, the next run and the state", async () => {
+    const routes = { ...common, [`GET ${BASE}`]: ok({ items: [task()] }) };
+    await renderRouteWithCache("/schedules?view=list", routes);
+    await screen.findByText("Daily report");
+    const rows = document.querySelector('[data-part="table-compact"]') as HTMLElement;
+    expect(rows).not.toBeNull();
+    const view = within(rows);
+    expect(view.getByText("Daily report")).toBeTruthy();
+    expect(view.getByText(E.state.active)).toBeTruthy();
+    expect(rows.querySelector('[data-part="compact-trailing"]')?.textContent).toContain(
+      E.state.active,
+    );
+    expect(rows.querySelector('[data-part="compact-subtitle"]')).not.toBeNull();
+    expect(view.queryByText("Weekdays at 09:00 (Asia/Shanghai)")).toBeNull();
+  });
+
+  it("the run table shows the time, the result and why a run failed or was skipped", async () => {
+    const routes = {
+      ...common,
+      [`GET ${BASE}/s1`]: ok({ task: task() }),
+      [`GET ${BASE}/s1/grants`]: ok({ items: [] }),
+      [`GET ${BASE}/s1/runs`]: ok({
+        items: [
+          run({ id: "r1", status: "failed", conversationId: null, error: "boom\nstack line" }),
+          run({ id: "r2", status: "skipped", conversationId: null, skipReason: "overlap" }),
+        ],
+      }),
+    };
+    resetNavigation("/schedules/s1");
+    await renderRouteWithCache("/schedules/s1", routes);
+    await screen.findByText(E.runs.status.failed);
+    const compact = document.querySelector('[data-part="table-compact"]') as HTMLElement;
+    expect(compact).not.toBeNull();
+    expect(compact.querySelector('[data-part="compact-trailing"]')?.textContent).toContain(
+      E.runs.status.failed,
+    );
+    expect(within(compact).getByText("boom")).toBeTruthy();
+    expect(within(compact).queryByText(/stack line/)).toBeNull();
+    expect(within(compact).getByText(E.runs.skip.overlap)).toBeTruthy();
   });
 });

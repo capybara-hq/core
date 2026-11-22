@@ -159,7 +159,7 @@
   flex: none;
   padding-inline-end: var(--cb-space-2);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-convlist-menu {
     display: none;
   }

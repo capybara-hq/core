@@ -12,12 +12,11 @@ import {
   Stack,
   Text,
   useTimeZone,
-  useToast,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useRef, useState } from "react";
-import { useCatalogErrorLines, useOwnerLabel } from "../../../components/CatalogParts";
+import { useState } from "react";
+import { useOwnerLabel } from "../../../components/CatalogParts";
 import { useComponentState, useComponentSwitch } from "../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
@@ -25,20 +24,16 @@ import { NoAccess } from "../../../components/NoAccess";
 import { rowActions } from "../../../components/PluginSwitch";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
-import { ApiClientError, issueLines } from "../../../lib/api";
 import { type OwnerSide, ownerSide } from "../../../lib/catalog";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { orgComponentsQuery } from "../../../lib/query/components";
-import { keys } from "../../../lib/query/keys";
-import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { skillsQuery } from "../../../lib/query/skills";
 import { useWorkspace } from "../../../lib/query/workspace";
-import { precheckSkillZip, uploadSkillZip } from "../../../lib/skills";
-import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
+import { type SkillUpload, useSkillUpload } from "./use-skill-upload";
 
 /**
  * `/skills` (spec §9): the skills the org can use and the platform skills offered to it (object
@@ -68,6 +63,7 @@ function Skills({ orgId }: { orgId: string }) {
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const [uploading, setUploading] = useState(false);
+  const up = useSkillUpload(orgId, () => setUploading(false));
   const [plugin, setPlugin] = useState("");
   const list = usePageQuery(skillsQuery(orgId));
   const cq = orgComponentsQuery(orgId, { kind: "skill" });
@@ -105,7 +101,10 @@ function Skills({ orgId }: { orgId: string }) {
   const upload = {
     label: t("upload.open"),
     icon: "upload" as const,
-    onSelect: () => setUploading(true),
+    onSelect: () => {
+      up.reset();
+      setUploading(true);
+    },
   };
   const empty =
     rows.length === 0 && all.length > 0
@@ -221,7 +220,7 @@ function Skills({ orgId }: { orgId: string }) {
           size={640}
           footer={<Button onClick={() => setUploading(false)}>{t("upload.close")}</Button>}
         >
-          <UploadCard orgId={orgId} onUploaded={() => setUploading(false)} />
+          <UploadCard up={up} />
         </Dialog>
       )}
     </>
@@ -229,70 +228,14 @@ function Skills({ orgId }: { orgId: string }) {
 }
 
 /**
- * 管理员的上传卡片：说明可接受的布局与上限；一次一个 .zip，上传中不能再选。上传中显示进度、可以取消；
- * 失败（不是前端预检拦下的）可以用同一个文件重试。
+ * The admin's upload card: the accepted layout and limits; one .zip at a time, no new pick while one
+ * uploads. An upload shows its progress and can be cancelled; a failure (not one the front-end check
+ * stopped) can be retried with the same file. The state is the page's `useSkillUpload`, so the card
+ * may remount when the window crosses a size class.
  */
-function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }) {
+function UploadCard({ up }: { up: SkillUpload }) {
   const t = useTranslations("skills.upload");
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
-  const catalogLines = useCatalogErrorLines();
-  const [busy, setBusy] = useState<{ name: string; progress: number }>();
-  const [error, setError] = useState<{ message: string; extra: string[] }>();
-  const [cancelled, setCancelled] = useState(false);
-  /** 可重试的文件（上一次上传失败或被取消）。 */
-  const [failed, setFailed] = useState<File>();
-  const ctrl = useRef<AbortController | null>(null);
-  // An upload adds a skill or a version: the list and that skill are read again.
-  const send = useAppMutation({
-    fn: (v: { file: File; signal: AbortSignal }) =>
-      uploadSkillZip(orgId, v.file, {
-        signal: v.signal,
-        onProgress: (progress) => setBusy({ name: v.file.name, progress }),
-      }),
-    invalidates: (_, r) => [
-      keys.org(orgId).skills(),
-      keys.org(orgId).skill(r.skill.id),
-      keys.org(orgId).componentsAll(),
-    ],
-  });
-
-  async function upload(files: File[]) {
-    const file = files[0];
-    if (!file || busy !== undefined) return;
-    const bad = precheckSkillZip(file);
-    setFailed(undefined);
-    setCancelled(false);
-    if (bad !== null) {
-      setError({ message: t(bad), extra: [] });
-      return;
-    }
-    setError(undefined);
-    setBusy({ name: file.name, progress: 0 });
-    const c = new AbortController();
-    ctrl.current = c;
-    try {
-      const r = await send.mutateAsync({ file, signal: c.signal });
-      toast.success(
-        r.created
-          ? t("created", { name: r.skill.name })
-          : t("versionCreated", { name: r.skill.name, version: r.version }),
-      );
-      onUploaded();
-    } catch (e) {
-      setFailed(file);
-      if (c.signal.aborted) setCancelled(true);
-      else if (e instanceof ApiClientError && e.code === "plugin.skill_conflict") {
-        // Rule 10: the name is a platform skill's offered to the org; rename and upload again
-        setFailed(undefined);
-        setError({ message: t("nameTaken"), extra: catalogLines(e) });
-      } else setError({ message: errorMessage(e), extra: issueLines(e) });
-    } finally {
-      ctrl.current = null;
-      setBusy(undefined);
-    }
-  }
-
+  const { busy, error, cancelled, failed } = up;
   const status =
     busy !== undefined
       ? t("uploading", { name: busy.name, percent: Math.round(busy.progress * 100) })
@@ -314,19 +257,19 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
         hint={t("chooseHint")}
         dropLabel={t("drop")}
         accept=".zip,application/zip"
-        onFiles={(f) => void upload(f)}
+        onFiles={(f) => void up.upload(f)}
         disabled={busy !== undefined}
       >
         {status !== null || failed !== undefined ? (
           <Stack direction="row" gap={8} align="center" wrap>
             {status !== null ? <Text variant="small">{status}</Text> : null}
             {busy !== undefined && (
-              <Button variant="ghost" onClick={() => ctrl.current?.abort()}>
+              <Button variant="ghost" onClick={() => up.cancel()}>
                 {t("cancel")}
               </Button>
             )}
             {busy === undefined && failed !== undefined && (
-              <Button onClick={() => void upload([failed])}>{t("retry")}</Button>
+              <Button onClick={() => void up.upload([failed])}>{t("retry")}</Button>
             )}
           </Stack>
         ) : null}

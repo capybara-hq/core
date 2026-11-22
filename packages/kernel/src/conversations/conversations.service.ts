@@ -157,13 +157,42 @@ function activitySql(ref: string) {
   )`;
 }
 
+/**
+ * An agent as the conversation lists carry it: its name and the avatar half of its profile, in the
+ * agents API's shape (the web draws it without reading the agents list).
+ */
+export interface ConversationAgent {
+  id: string;
+  name: string;
+  profile: { avatar: AgentAvatarView; updatedAt: string };
+}
+
+/** A {@link ConversationAgent} from an agent row and its current definition's name. */
+function toConversationAgent(r: {
+  id: string;
+  name: string | null;
+  profile_avatar: unknown;
+  profile_updated_at: Date;
+}): ConversationAgent {
+  return {
+    id: r.id,
+    name: r.name ?? "",
+    profile: {
+      avatar: avatarView(r.profile_avatar as AgentAvatar),
+      updatedAt: r.profile_updated_at.toISOString(),
+    },
+  };
+}
+
+/** One row of {@link ConversationsService.listMine}: the conversation and its agent. */
+export interface ConversationListRow extends ConversationView {
+  /** Null only when the agent stopped being visible between the page read and the agent read. */
+  agent: ConversationAgent | null;
+}
+
 /** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
 export interface ConversationGroup {
-  /**
-   * The agent's name and the avatar half of its profile, in the agents API's shape (the sidebar
-   * draws the group title from it without reading the agents list).
-   */
-  agent: { id: string; name: string; profile: { avatar: AgentAvatarView; updatedAt: string } };
+  agent: ConversationAgent;
   /** max(updated_at) of the group's conversations. */
   latestAt: Date;
   /** At most `perGroup`, updated_at DESC, id DESC. */
@@ -990,8 +1019,11 @@ export class ConversationsService {
   }
 
   /**
-   * 我的会话，最近更新的在前；只含 agent 仍可用的会话。`after` 为上一页最后一个会话的 id，
-   * 从它当前的 (updated_at, id) 之后继续；游标会话已不存在时返回空页。
+   * My conversations, most recently updated first; only those whose agent is in this org, not
+   * deleted and visible to me. `after` is the previous page's last conversation id, continued after
+   * its current (updated_at, id); a cursor that no longer exists gives an empty page. Each row
+   * carries its agent (one batch read for the page). With `total`, also counts every conversation
+   * matching the same filters (the cursor aside) in the same statement.
    */
   async listMine(
     orgId: string,
@@ -1003,12 +1035,17 @@ export class ConversationsService {
       archived?: boolean;
       q?: string;
       state?: "running" | "waiting";
+      total?: boolean;
     },
-  ): Promise<ConversationView[]> {
+  ): Promise<{ conversations: ConversationListRow[]; total?: number }> {
     let q = this.db
       .selectFrom("conversations")
       .select(COLUMNS)
       .select(activitySql("conversations").as("activity"))
+      // The total of every match, computed before LIMIT in this same statement. It costs
+      // O(matches) (the window reads every matching row instead of stopping at the page), which
+      // is why only the first page asks for it.
+      .$if(opts.total === true, (qb) => qb.select(sql<string>`count(*) OVER ()`.as("total_count")))
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
@@ -1021,6 +1058,7 @@ export class ConversationsService {
             .selectFrom("agents")
             .select(sql`1`.as("one"))
             .whereRef("agents.id", "=", "conversations.agent_id")
+            .where("agents.org_id", "=", orgId)
             .where("agents.deleted_at", "is", null)
             .where(visibleTo(accountId)),
         ),
@@ -1045,7 +1083,45 @@ export class ConversationsService {
           )`,
       );
     }
-    return (await q.execute()).map(toView);
+    const rows = await q.execute();
+    const agents = await this.listAgents(orgId, accountId, [
+      ...new Set(rows.map((r) => r.agent_id)),
+    ]);
+    const conversations = rows.map((r) => ({
+      ...toView(r),
+      agent: agents.get(r.agent_id) ?? null,
+    }));
+    if (opts.total !== true) return { conversations };
+    return { conversations, total: Number(rows[0]?.total_count ?? 0) };
+  }
+
+  /**
+   * The agents of `ids` that are in this org, not deleted and visible to the viewer, by id, in one
+   * statement (the same visibility as the agents read path).
+   */
+  private async listAgents(
+    orgId: string,
+    viewerAccountId: string,
+    ids: string[],
+  ): Promise<Map<string, ConversationAgent>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom("agents")
+      .innerJoin("agent_versions as v", (j) =>
+        j.onRef("v.agent_id", "=", "agents.id").onRef("v.version", "=", "agents.current_version"),
+      )
+      .select([
+        "agents.id",
+        "agents.profile_avatar",
+        "agents.profile_updated_at",
+        sql<string | null>`v.definition ->> 'name'`.as("name"),
+      ])
+      .where("agents.id", "in", ids)
+      .where("agents.org_id", "=", orgId)
+      .where("agents.deleted_at", "is", null)
+      .where(visibleTo(viewerAccountId))
+      .execute();
+    return new Map(rows.map((r) => [r.id, toConversationAgent(r)]));
   }
 
   /**
@@ -1151,14 +1227,12 @@ export class ConversationsService {
     for (const r of rows) {
       if (current?.agent.id !== r.agent_id) {
         current = {
-          agent: {
+          agent: toConversationAgent({
             id: r.agent_id,
-            name: r.agent_name ?? "",
-            profile: {
-              avatar: avatarView(r.profile_avatar),
-              updatedAt: r.profile_updated_at.toISOString(),
-            },
-          },
+            name: r.agent_name,
+            profile_avatar: r.profile_avatar,
+            profile_updated_at: r.profile_updated_at,
+          }),
           latestAt: r.latest_at,
           conversations: [],
           more: false,

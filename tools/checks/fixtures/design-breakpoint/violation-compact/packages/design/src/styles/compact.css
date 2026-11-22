@@ -1,0 +1,22 @@
+@media (max-width: 599px) {
+  .a {
+    gap: 4px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  @media (max-width: 599px) {
+    .a {
+      transition: none;
+    }
+  }
+}
+@media not all and (min-width: 600px) {
+  .a {
+    gap: 8px;
+  }
+}
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .a {
+    gap: 12px;
+  }
+}

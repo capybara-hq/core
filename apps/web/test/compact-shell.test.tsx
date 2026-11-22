@@ -135,10 +135,16 @@ describe("the drawer from the menu button", () => {
 
   it("最近会话 reads my newest conversations by time, each with its agent and state", async () => {
     const now = new Date().toISOString();
+    const names: Record<string, string> = { ag2: "运维助手", ag1: "写作助手" };
     const row = (id: string, agentId: string, title: string, activity: string | null) => ({
       id,
       orgId: "o1",
       agentId,
+      agent: {
+        id: agentId,
+        name: names[agentId],
+        profile: { avatar: null, updatedAt: now },
+      },
       title,
       titleSource: null,
       deviceId: null,
@@ -160,16 +166,10 @@ describe("the drawer from the menu button", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         ),
     });
-    const agent = (id: string, name: string) => ({
-      agent: { id, name, profile: { avatar: null, updatedAt: now } },
-      latestAt: now,
-      conversations: [],
-      more: false,
-    });
     renderFrame(
       shellOf(ME, {
         ...pending,
-        groups: { groups: [agent("ag2", "运维助手"), agent("ag1", "写作助手")], next: null },
+        groups: { groups: [], next: null },
       }),
     );
     await userEvent.click(menuButton() as HTMLElement);

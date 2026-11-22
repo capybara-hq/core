@@ -6829,6 +6829,7 @@
         "scheduledFor": "时间",
         "kind": "类型",
         "status": "状态",
+        "reason": "原因",
         "detail": "说明"
       },
       "kind": {

@@ -984,10 +984,29 @@ export const archiveConversation = (orgId: string, id: string, archived: boolean
 export const deleteConversation = (orgId: string, id: string) =>
   apiFetch<void>(one(orgId, id), { method: "DELETE" });
 
+/** The agent's name and the avatar half of its profile, as the agents API returns them. */
+export interface ConversationAgent {
+  id: string;
+  name: string;
+  profile: Pick<AgentProfile, "avatar" | "updatedAt">;
+}
+
+/**
+ * A row of the by-time list: the conversation and its agent (null only in a rare race, when the
+ * agent became invisible between the kernel's two reads).
+ */
+export type ConversationListRow = Conversation & { agent: ConversationAgent | null };
+
+/** A page of the by-time list; `total` (all my matching conversations) only on the first page. */
+export interface ConversationListPage {
+  conversations: ConversationListRow[];
+  next: string | null;
+  total?: number;
+}
+
 /** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
 export interface ConversationGroup {
-  /** The agent's name and the avatar half of its profile, as the agents API returns them. */
-  agent: { id: string; name: string; profile: Pick<AgentProfile, "avatar" | "updatedAt"> };
+  agent: ConversationAgent;
   /** The group's latest activity (ISO). */
   latestAt: string;
   /** At most `perGroup`, newest first. */
@@ -1058,7 +1077,7 @@ export const listConversations = (
   orgId: string,
   opts: { agentId?: string; after?: string; limit?: number } & ConversationSearch = {},
 ) =>
-  apiFetch<{ conversations: Conversation[]; next: string | null }>(
+  apiFetch<ConversationListPage>(
     `${base(orgId)}${query({
       agentId: opts.agentId,
       after: opts.after,

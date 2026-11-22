@@ -6,6 +6,7 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
+import { stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -625,6 +626,59 @@ describe("local devices (environments spec §6, §9)", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
       timeout: 6000,
     });
+  });
+
+  it("a machine that connects after the window crossed 600 is still detected as new", async () => {
+    const win = stubWindowWidth(390);
+    let connected = false;
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
+    await screen.findByText(E.create.waiting);
+    // the snapshot (no local device yet) is taken; the machine connects, then the window rotates
+    connected = true;
+    win.setWidth(1440);
+    await screen.findByText(E.create.waiting);
+    win.setWidth(390);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
+      timeout: 6000,
+    });
+  });
+
+  it("a machine that connected while the cloud choice was shown is not taken as new", async () => {
+    let connected = false;
+    const calls = stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
+    await screen.findByText(E.create.waiting);
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.cloud) }));
+    connected = true;
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
+    // the wait begins again: the device that is already there is not the new one
+    await screen.findByText(E.create.waiting);
+    // a poll after the switch back has read the list that holds d7
+    const reads = () => calls.filter((c) => c.method === "GET" && c.url === BASE).length;
+    const before = reads();
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before), { timeout: 4500 });
+    expect(router.push).not.toHaveBeenCalledWith("/devices/d7");
   });
 
   describe("连接本机 in the desktop shell (desktop client spec §5)", () => {

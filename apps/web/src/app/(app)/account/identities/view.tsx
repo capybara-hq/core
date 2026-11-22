@@ -94,6 +94,7 @@ function Identities({ accountId }: { accountId: string }) {
     {
       key: "name",
       header: t("columns.name"),
+      compact: "title",
       cell: (x) => (
         <Stack gap={0}>
           <Stack direction="row" gap={8} align="center">
@@ -108,16 +109,23 @@ function Identities({ accountId }: { accountId: string }) {
         </Stack>
       ),
     },
-    { key: "source", header: t("columns.source"), cell: (x) => splitSource(x.source).plugin },
+    {
+      key: "source",
+      header: t("columns.source"),
+      compact: "subtitle",
+      cell: (x) => splitSource(x.source).plugin,
+    },
     {
       key: "tenant",
       header: t("columns.tenant"),
+      compact: "hidden",
       tone: "muted",
       cell: (x) => splitSource(x.source).tenant || "—",
     },
     {
       key: "externalId",
       header: t("columns.externalId"),
+      compact: "hidden",
       tone: "muted",
       cell: (x) => x.externalId,
     },
@@ -126,6 +134,7 @@ function Identities({ accountId }: { accountId: string }) {
       header: t("columns.linkedAt"),
       tone: "muted",
       width: 160,
+      compact: "trailing",
       cell: (x) => <DateTime value={x.createdAt} />,
     },
   ];

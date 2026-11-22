@@ -154,6 +154,9 @@ export function DeleteScheduleDialog({
   );
 }
 
+/** The keys of the task table's columns (the compact layout maps are typed against them). */
+export type ScheduleColumnKey = "name" | "agent" | "schedule" | "status" | "next" | "last";
+
 type ScheduleT = ReturnType<typeof useTranslations<"schedules">>;
 
 /** A task table's columns (the loading table draws the same header). */
@@ -161,7 +164,7 @@ export function scheduleColumns(
   t: ScheduleT,
   when: ReturnType<typeof useScheduleWords>,
   agentName: (id: string) => string,
-): Column<ScheduledTaskListItem>[] {
+): (Column<ScheduledTaskListItem> & { key: ScheduleColumnKey })[] {
   return [
     { key: "name", header: t("columns.name"), cell: (s) => <CellTitle title={s.name} /> },
     { key: "agent", header: t("columns.agent"), cell: (s) => agentName(s.agentId) },

@@ -42,7 +42,7 @@ const compact = (selector: string) =>
     ...rules
       .filter(
         (r) =>
-          r.at === "(max-width: 599px)" &&
+          r.at === "not all and (min-width: 600px)" &&
           r.selector
             .split(",")
             .map((s) => s.trim())
@@ -131,7 +131,8 @@ describe("the floating row's round buttons are one size (maintainer decision 202
     // the touch.hit floor of the title bar's buttons on a phone (the mobile sizes) loses to the
     // row's own size: the overflow's rule is more specific than `.cb-title-bar .cb-icon-btn`
     const floor = rules.find(
-      (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-title-bar .cb-icon-btn",
+      (r) =>
+        r.at === "not all and (min-width: 600px)" && r.selector === ".cb-title-bar .cb-icon-btn",
     );
     expect(floor?.decls["min-width"]).toBe("var(--cb-touch-hit)");
     // the leading button and the page's overflow follow the same size property (shell.css)

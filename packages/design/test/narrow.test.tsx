@@ -7,7 +7,7 @@ import { parseCss } from "./css-rules";
 
 /**
  * Phone widths (spec §4.3 "Narrow windows"): jsdom cannot lay anything out, so these tests read
- * the stylesheets' rules (inside `@media (max-width: 599px)` where the behaviour is narrow-only)
+ * the stylesheets' rules (inside `@media not all and (min-width: 600px)` where the behaviour is narrow-only)
  * and the DOM the stacked table needs.
  */
 afterEach(cleanup);
@@ -19,7 +19,7 @@ const css = (file: string) => readFileSync(resolve(STYLES, file), "utf8");
 const COMPACT = "not all and (min-width: 600px)";
 
 /** The bodies of every `@media <query> {…}` block in `text`, joined. */
-function media(text: string, query = "(max-width: 599px)"): string {
+function media(text: string, query = "not all and (min-width: 600px)"): string {
   const open = `@media ${query} {`;
   let out = "";
   let at = text.indexOf(open);
