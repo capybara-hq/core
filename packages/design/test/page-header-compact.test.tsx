@@ -129,7 +129,7 @@ describe("PageHeader compact form", () => {
     expect(line?.decls.flex).toBe("1 1 100%");
   });
 
-  it("fab form draws no head primary at 390", () => {
+  it("fab form keeps the one head primary, marked for the FAB restyle, at 390", () => {
     // the primary stays the one head element the ListPage's `data-fab` CSS restyles (§6.62)
     const { container } = renderAtClass(390, head({ primaryForm: "fab" }));
     const buttons = screen.getAllByRole("button", { name: "新建" });
@@ -138,6 +138,41 @@ describe("PageHeader compact form", () => {
       "fab",
     );
     expect(container.querySelector('[data-form="block"]')).toBeNull();
+  });
+
+  it.each([
+    ["in a shell, head form: one slot for the primary", true, "head", 1],
+    ["in a shell, fab form: none (the FAB is out of flow)", true, "fab", 0],
+    ["outside a shell, head form: the ⋯ and the primary", false, "head", 2],
+    ["outside a shell, fab form: the ⋯ only", false, "fab", 1],
+  ] as const)("loading placeholders at 390 follow the loaded line: %s", (_n, inShell, form, n) => {
+    const shell = shellStub();
+    const ui = head({ actions: [], primaryForm: form, loading: { actions: 2 } });
+    const { container } = renderAtClass(
+      390,
+      inShell ? (
+        <ShellPageContext.Provider value={shell.register}>{ui}</ShellPageContext.Provider>
+      ) : (
+        ui
+      ),
+    );
+    const slots = container.querySelector('[data-part="page-header-action-slots"]');
+    expect(slots?.querySelectorAll('[data-part="skeleton-box"], .cb-skeleton-box')).toHaveLength(n);
+    // an empty slot line takes no room, as an empty loaded line (one compact rule)
+    const rule = parseCss(css("shell.css")).find(
+      (r) =>
+        r.at === COMPACT_QUERY && r.selector.includes('[data-part="page-header-action-slots"]'),
+    );
+    expect(rule?.decls.display).toBe("contents");
+  });
+
+  it("loading placeholders are unchanged at 1440", () => {
+    const { container } = renderAtClass(
+      1440,
+      head({ actions: [], primaryForm: "fab", loading: { actions: 2 } }),
+    );
+    const slots = container.querySelector('[data-part="page-header-action-slots"]');
+    expect(slots?.querySelectorAll(".cb-skeleton-box")).toHaveLength(2);
   });
 
   it("tabs are the segmented-compact look (2-3 tabs)", () => {

@@ -177,7 +177,7 @@ describe("the compact frame", () => {
       rules.find((r) => r.selector === ".cb-shell-float" && r.at === null)?.decls.display,
     ).toBe("none");
     const compact = (sel: string) =>
-      rules.find((r) => r.selector === sel && r.at === "(max-width: 599px)")?.decls;
+      rules.find((r) => r.selector === sel && r.at === "not all and (min-width: 600px)")?.decls;
     expect(compact(".cb-shell-float")?.display).toBe("block");
     expect(compact('.cb-shell[data-surface="pushed"] .cb-shell-main')?.["padding-top"]).toBe(
       "var(--cb-float-row)",
@@ -186,7 +186,7 @@ describe("the compact frame", () => {
 
   it("a solid bg strip lies under the row, so scrolled text never shows through it (no gradient, spec §1)", () => {
     const strip = parseCss(css("shell.css")).find(
-      (r) => r.selector === ".cb-shell-column::before" && r.at === "(max-width: 599px)",
+      (r) => r.selector === ".cb-shell-column::before" && r.at === "not all and (min-width: 600px)",
     )?.decls;
     expect(strip?.height).toBe("var(--cb-float-row)");
     expect(strip?.background).toBe("var(--cb-bg)");
@@ -748,8 +748,9 @@ describe("head actions and the scrolled title in the compact top row (responsive
       "true",
     );
     const compact = (sel: string) =>
-      parseCss(css("shell.css")).find((r) => r.selector === sel && r.at === "(max-width: 599px)")
-        ?.decls;
+      parseCss(css("shell.css")).find(
+        (r) => r.selector === sel && r.at === "not all and (min-width: 600px)",
+      )?.decls;
     expect(compact('.cb-shell-column[data-title-away="true"]::before')?.["border-bottom"]).toBe(
       "1px solid var(--cb-line-soft)",
     );

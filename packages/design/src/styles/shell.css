@@ -127,7 +127,9 @@
   -webkit-user-select: none;
   user-select: none;
 }
-@media (max-width: 599px) {
+/* The compact query is ClassForms' (the complement of min-width 600), so a zoomed width between
+   599 and 600 gets the floating row together with the compact head. */
+@media not all and (min-width: 600px) {
   .cb-shell {
     --cb-float-size: var(--cb-control-prominent);
     --cb-float-top: calc(var(--cb-inset-top) + var(--cb-space-2));
@@ -223,7 +225,7 @@
    (view-transition.ts): the top page leaves over the page underneath. A pop the browser animated
    itself (a back gesture) or a view transition animates carries no data-nav (app-shell.tsx), so
    it never slides again once the transition ends, and reduced motion has none. */
-@media (max-width: 599px) and (prefers-reduced-motion: no-preference) {
+@media (not (min-width: 600px)) and (prefers-reduced-motion: no-preference) {
   .cb-shell-main[data-nav="push-0"] {
     animation: cb-push-0 var(--cb-motion-push) var(--cb-ease-push);
   }
@@ -308,7 +310,7 @@
 .cb-class-swap[data-for="compact"] {
   display: none;
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-class-swap[data-for="compact"] {
     display: contents;
   }
@@ -384,7 +386,7 @@
 .cb-template {
   --cb-content-pad: var(--cb-layout-content-pad);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-template {
     --cb-content-pad: 16px;
   }
@@ -555,15 +557,6 @@ a.cb-pageheader-path-seg:hover {
    floating action button (`fab`, templates.css). The buttons are the mobile size controls (44,
    spec §2.5). The count beside the large title is mono. */
 @media not all and (min-width: 600px) {
-  /* A title-less head on a phone: the path takes a line of its own and the actions sit under it
-     (spec §4.2), rather than the path being squeezed to nothing beside them. */
-  .cb-pageheader-titleless {
-    flex-wrap: wrap;
-    row-gap: var(--cb-space-2);
-  }
-  .cb-pageheader-titleless .cb-pageheader-path {
-    flex: 1 1 100%;
-  }
   .cb-pageheader-row {
     flex-wrap: wrap;
   }
@@ -582,12 +575,18 @@ a.cb-pageheader-path-seg:hover {
     font-family: var(--cb-font-code);
   }
   /* The block primary fills the line (the room the head's ⋯ leaves when there is no shell). */
-  .cb-pageheader-primary[data-form="block"] > .cb-btn {
+  .cb-pageheader-primary[data-form="block"] > .cb-btn,
+  .cb-pageheader-actions[data-form="block"] > .cb-class-form > .cb-skeleton-box:last-child {
     flex: 1 1 0;
   }
   /* An actions line with nothing in flow (the secondaries in the shell's "…", the primary absent
-     or the out-of-flow FAB) takes no room in the row; a FAB inside it still draws. */
-  .cb-pageheader-actions[data-part="page-header-actions"]:not(
+     or the out-of-flow FAB) takes no room in the row; a FAB inside it still draws. The loading
+     placeholders follow the same rule (page-header.tsx draws the ones the loaded line will show),
+     so the head does not jump when the actions arrive. */
+  .cb-pageheader-actions:is(
+    [data-part="page-header-actions"],
+    [data-part="page-header-action-slots"]
+  ):not(
     :has(
       > [data-head-primary]:not([data-form="fab"]),
       > .cb-class-form[data-class-form="compact"] > *
@@ -603,7 +602,7 @@ a.cb-pageheader-path-seg:hover {
   gap: var(--cb-space-2);
 }
 /* Phones (below 600): two columns, so four metrics are 2 × 2 and their labels keep their words. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-stat-cards {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

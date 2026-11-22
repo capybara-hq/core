@@ -131,7 +131,7 @@ function useStableItems(items: MenuItem[]): MenuItem[] {
     items.map((it) =>
       it === "separator"
         ? it
-        : [it.label, it.href, it.disabled, it.danger, it.submenu !== undefined],
+        : [it.label, it.href, it.icon, it.disabled, it.danger, it.submenu !== undefined],
     ),
   );
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for what the items show
@@ -299,6 +299,24 @@ export function PageHeader(p: PageHeaderProps) {
   const loading = p.loading;
   const actionSlots = actions.length === 0 ? (loading?.actions ?? 0) : 0;
   const tabSlots = tabItems.length === 0 ? (loading?.tabs ?? 0) : 0;
+  // On compact the placeholders are what the loaded actions line will show (design spec §4.2), so
+  // the head keeps its height: in a shell the secondaries go to its "…" and one slot stands for
+  // the primary (none for a FAB, which is out of flow); outside a shell the ⋯ and the primary.
+  const compactSlots =
+    primaryForm === "fab"
+      ? hasShell || actionSlots < 2
+        ? 0
+        : 1
+      : hasShell
+        ? Math.min(actionSlots, 1)
+        : Math.min(actionSlots, 2);
+  const slotBoxes = (n: number) =>
+    n === 0
+      ? null
+      : Array.from({ length: n }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+          <SkeletonBox key={i} part="default" width={72} />
+        ));
   const navNode =
     segments.length > 0 ? (
       <nav className="cb-pageheader-path" data-part="path" aria-label={t("shell.path")}>
@@ -342,11 +360,12 @@ export function PageHeader(p: PageHeaderProps) {
         {drawn}
       </div>
     ) : actionSlots > 0 ? (
-      <div className="cb-pageheader-actions" data-part="page-header-action-slots">
-        {Array.from({ length: actionSlots }, (_, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-          <SkeletonBox key={i} part="default" width={72} />
-        ))}
+      <div
+        className="cb-pageheader-actions"
+        data-part="page-header-action-slots"
+        data-form={primaryForm}
+      >
+        <ClassForms compact={slotBoxes(compactSlots)} wide={slotBoxes(actionSlots)} />
       </div>
     ) : null;
   // The count beside the title: `count`; on compact, without one, the first tab's (D10).

@@ -716,7 +716,7 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     );
     // the strip under the row is the page ground, as high as the row (shell.css)
     const strip = parseCss(css("shell.css")).find(
-      (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-shell-column::before",
+      (r) => r.at === "not all and (min-width: 600px)" && r.selector === ".cb-shell-column::before",
     );
     expect(strip?.decls.background).toBe("var(--cb-bg)");
     expect(strip?.decls.height).toBe("var(--cb-float-row)");
@@ -781,7 +781,7 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     // exactly that, so it never lands under the band
     const padded = parseCss(css("shell.css")).find(
       (r) =>
-        r.at === "(max-width: 599px)" &&
+        r.at === "not all and (min-width: 600px)" &&
         r.selector === '.cb-shell[data-surface="pushed"] .cb-shell-main' &&
         r.decls["padding-top"],
     );

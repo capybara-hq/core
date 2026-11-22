@@ -127,11 +127,10 @@ describe("DetailPage, the band form", () => {
 });
 
 describe("the band form on a phone (spec §4.2)", () => {
-  it("puts the path on its own line and the actions under it", () => {
-    const narrow = shell.slice(shell.indexOf("@media (max-width: 599px)"));
-    expect(narrow).toMatch(/\.cb-pageheader-titleless\s*\{[^}]*flex-wrap:\s*wrap/);
-    expect(narrow).toMatch(
-      /\.cb-pageheader-titleless\s+\.cb-pageheader-path\s*\{[^}]*flex:\s*1 1 100%/,
-    );
+  it("draws no path row on compact; the row keeps only the actions (the compact head)", () => {
+    const compact = shell.slice(shell.indexOf("@media not all and (min-width: 600px)"));
+    expect(compact).toMatch(/\.cb-pageheader-path\s*\{\s*display:\s*none;/);
+    // no phone rule of its own for the band row any more: the path it laid out is gone
+    expect(shell).not.toMatch(/\.cb-pageheader-titleless\s*\{[^}]*flex-wrap/);
   });
 });

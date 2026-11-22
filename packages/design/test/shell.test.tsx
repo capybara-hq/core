@@ -234,7 +234,7 @@ describe("AppShell", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
     expect(css).toMatch(/\.cb-shell-float \{\s*display: none;/);
     expect(css).toMatch(
-      /@media \(max-width: 599px\) \{[\s\S]*?\.cb-shell-float \{\s*display: block;/,
+      /@media not all and \(min-width: 600px\) \{[\s\S]*?\.cb-shell-float \{\s*display: block;/,
     );
   });
 });

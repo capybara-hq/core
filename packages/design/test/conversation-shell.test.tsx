@@ -695,7 +695,9 @@ describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => 
       (q: string) =>
         ({
           matches: compact
-            ? q === "not all and (min-width: 600px)" || q === "(max-width: 1279px)"
+            ? q === "not all and (min-width: 600px)" ||
+              q === "(max-width: 599px)" ||
+              q === "(max-width: 1279px)"
             : false,
           media: q,
           addEventListener: () => {},

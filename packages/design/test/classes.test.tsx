@@ -47,9 +47,14 @@ describe("template forms per size class", () => {
   });
 
   it("OverviewPage: StatCards are 2 x 2 on compact, one row otherwise", () => {
-    expect(decl("shell.css", ".cb-stat-cards", "grid-template-columns", "(max-width: 599px)")).toBe(
-      "repeat(2, minmax(0, 1fr))",
-    );
+    expect(
+      decl(
+        "shell.css",
+        ".cb-stat-cards",
+        "grid-template-columns",
+        "not all and (min-width: 600px)",
+      ),
+    ).toBe("repeat(2, minmax(0, 1fr))");
   });
 
   it("ScheduleCalendar: the week grid needs a 580 frame (a container query), else the agenda", () => {

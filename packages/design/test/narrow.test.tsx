@@ -172,7 +172,7 @@ describe("size-class widths in the stylesheets", () => {
   it("the compact chrome (the floating row) is shown below 600 only", () => {
     const shell = css("shell.css");
     expect(decls(shell, ".cb-shell-float")).toContain("display: none;");
-    const compact = media(shell, "(max-width: 599px)");
+    const compact = media(shell, COMPACT);
     expect(decls(compact, ".cb-shell-float")).toContain("display: block;");
   });
 
@@ -208,9 +208,9 @@ describe("size-class widths in the stylesheets", () => {
   });
 });
 
-describe("StatCards below 640", () => {
+describe("StatCards below 600", () => {
   it("are two columns (2 × 2 for four metrics)", () => {
-    const cards = decls(media(css("shell.css")), ".cb-stat-cards");
+    const cards = decls(media(css("shell.css"), COMPACT), ".cb-stat-cards");
     expect(cards).toContain("display: grid;");
     expect(cards).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
   });
