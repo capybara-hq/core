@@ -59,7 +59,7 @@ non-zero, and the service restarts it: a crash, an invalid start (`Cannot start:
 deployment that needs a newer program (426: upgrade the package in place and the next restart runs
 the new one). A failing connection never ends the program: it reconnects with backoff, so a kernel
 restart needs no service restart. After logging in again, start the installed service with
-`capybara-device service restart`; `capybara-device service status` shows what is true now.
+`capybara-device service restart -c <connection>`; `capybara-device service status` shows what is true now.
 
 If the working directory (or its marker `.capybara-device`, or one of `workspace/`, `skills/`,
 `tmp/`) is removed, the program never recreates it: operations answer that the files are lost and
@@ -206,6 +206,16 @@ they left running survive the upgrade. Restart the machine, or kill such leftove
 upgrade yourself; this version never searches for them. In Docker mode the old container is
 recreated at the first operation, which ends whatever it still ran.
 
+### Upgrading to the connection layout
+
+Before upgrading, run `capybara-device service uninstall` with the **old** version. The old login
+service (launchd `top.capybara.device`, systemd `capybara-device.service`) is never touched by
+this version, and once you have logged in again it would run a plain `start` that picks your
+single connection: it would serve next to the new per-connection service or exit 1 with "already
+running" and be restarted in a loop. After upgrading, run `capybara-device login --url <url>`
+(choose the existing device to keep it) and then `capybara-device service install -c <deviceId>`.
+The old flat `credential.json` and `policy.json` stay where they are and can be deleted by hand.
+
 ## Control socket
 
 While `start` serves, it answers on `<machineDir>/run/<16 hex>.sock` (the first 16 hex digits of the
@@ -316,7 +326,8 @@ wait (up to 10 s) until the service manager runs the program and report a failur
 `service.log`, when it does not come back; `service start` refuses while a program started in a
 terminal runs ("stop it first"). On macOS a loaded agent whose program exited is started again with
 `launchctl kickstart`. `restart` reloads the program from the installed `bin`, so it is **the way to
-apply a package upgrade**: `npm i -g @capybara-hq/device@latest && capybara-device service restart`.
+apply a package upgrade**: `npm i -g @capybara-hq/device@latest && capybara-device service restart -c <connection>`
+(once for each connection that has a service).
 The top-level `stop` refuses only when the service manager runs the program it would signal (launchd
 has the agent loaded, or systemd the unit active, and its pid is the pid file's) and points at
 `service stop`; a program started in a terminal is signalled as before. `start` in a terminal says

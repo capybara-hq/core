@@ -596,6 +596,7 @@ describe("login", () => {
       expect(statSync(join(stateDir(id), "credential.json")).mode & 0o777).toBe(0o600);
       expect(readPolicy(stateDir(id)).ownerCeiling).toEqual(NEW_INSTALL);
     }
+    expect(statSync(join(machineDir(), "connections")).mode & 0o777).toBe(0o700);
     expect(JSON.parse(readFileSync(join(machineDir(), "machine.json"), "utf8"))).toEqual({
       version: 1,
     });

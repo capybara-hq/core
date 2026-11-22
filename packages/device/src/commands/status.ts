@@ -81,8 +81,7 @@ async function connectionStatus(
   c: ConnectionInfo,
   opts: StatusOptions & { home: string; platform: NodeJS.Platform },
 ): Promise<ConnectionStatusJson> {
-  const control = await controlState(c.stateDir, opts);
-  return {
+  const base = {
     deviceId: c.deviceId,
     orgId: c.orgId,
     orgName: c.orgName,
@@ -91,10 +90,26 @@ async function connectionStatus(
     host: c.host,
     mode: c.mode,
     dir: c.workDir,
-    serviceInstalled: hasLoginService(opts.home, opts.platform, c.deviceId),
-    controlSocket: controlSocketPath(c.stateDir),
-    ...control,
   };
+  try {
+    const control = await controlState(c.stateDir, opts);
+    return {
+      ...base,
+      serviceInstalled: hasLoginService(opts.home, opts.platform, c.deviceId),
+      controlSocket: controlSocketPath(c.stateDir),
+      ...control,
+    };
+  } catch (e) {
+    // one connection that cannot be examined never hides the others
+    return {
+      ...base,
+      serviceInstalled: false,
+      controlSocket: "",
+      control: "unavailable",
+      controlReason: `status failed: ${(e as Error).message}`,
+      live: null,
+    };
+  }
 }
 
 function stateWord(c: Control): string {

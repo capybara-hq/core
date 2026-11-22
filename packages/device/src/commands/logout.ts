@@ -1,8 +1,9 @@
+import { lstatSync, rmSync } from "node:fs";
 import { DEVICE_ID_PATTERN } from "../connections.js";
 import { isAlive, type ProcessLookup, readRunningPid } from "../pid.js";
 import { hasLoginService } from "../service/installed.js";
 import type { RunSystem } from "../service/manager.js";
-import { removeCredential } from "../state.js";
+import { credentialPath } from "../state.js";
 import { serviceCommand } from "./service.js";
 
 export interface LogoutDeps {
@@ -78,10 +79,29 @@ export async function logout(
       err(`capybara-device (pid ${pid}) is still running; it keeps its connection until it exits.`);
     }
   }
-  out(
-    removeCredential(stateDir)
-      ? "Logged out. The working directory was left in place."
-      : "Not logged in.",
-  );
+  const file = credentialPath(stateDir);
+  let kind: ReturnType<typeof lstatSync>;
+  try {
+    // lstat: a symlink (dangling or not) is removed itself, never followed
+    kind = lstatSync(file);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+      out("Not logged in.");
+      return 0;
+    }
+    err(`${file} cannot be examined (${(e as Error).message}); fix its permissions or remove it`);
+    return 1;
+  }
+  if (!kind.isFile() && !kind.isSymbolicLink()) {
+    err(`${file} is not a file; remove it by hand, then run logout again`);
+    return 1;
+  }
+  try {
+    rmSync(file);
+  } catch (e) {
+    err(`Could not remove ${file}: ${(e as Error).message}`);
+    return 1;
+  }
+  out("Logged out. The working directory was left in place.");
   return 0;
 }

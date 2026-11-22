@@ -194,6 +194,26 @@ describe("status: every connection of the machine", () => {
     ]);
   });
 
+  it("one connection that cannot be examined never hides the others", async () => {
+    const a = addConnection("dev-a");
+    addConnection("dev-b");
+    const running = (d: string) => {
+      if (d === a) throw new Error("boom");
+      return undefined;
+    };
+    const text = await run(m, false, { running });
+    expect(text.code).toBe(0);
+    expect(text.out[0]).toContain("dev-a");
+    expect(text.out[0]).toContain("boom");
+    expect(text.out[1]).toContain("dev-b");
+    expect(text.out[1]).toContain("stopped");
+    const json = await run(m, true, { running });
+    const shown = JSON.parse(json.out[0] ?? "").connections;
+    expect(shown[0]).toMatchObject({ deviceId: "dev-a", control: "unavailable", live: null });
+    expect(shown[0].controlReason).toContain("boom");
+    expect(shown[1]).toMatchObject({ deviceId: "dev-b", control: "absent" });
+  });
+
   it("--json lists every connection with its live state and never a credential", async () => {
     addConnection("dev-a");
     addConnection("dev-b");

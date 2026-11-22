@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -182,6 +190,29 @@ describe("logout -c", () => {
   });
 });
 
+describe("logout -c of every unreadable shape", () => {
+  it("removes a dangling symlinked credential.json itself", async () => {
+    connect("dev-b", "y.test");
+    const broken = connectionDir(machine(), "dev-c");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, "policy.json"), "{}");
+    symlinkSync(join(home, "nowhere.json"), credentialPath(broken));
+    expect(await run(["logout", "-c", "dev-c"])).toBe(0);
+    expect(out.join("\n")).toContain("Logged out");
+    expect(() => lstatSync(credentialPath(broken))).toThrow();
+    expect(existsSync(join(broken, "policy.json"))).toBe(true);
+    expect(listConnections(machine()).map((c) => c.deviceId)).toEqual(["dev-b"]);
+  });
+
+  it("a directory at credential.json is reported with exit 1, never a crash", async () => {
+    const broken = connectionDir(machine(), "dev-c");
+    mkdirSync(credentialPath(broken), { recursive: true });
+    expect(await run(["logout", "-c", "dev-c"])).toBe(1);
+    expect(err.join("\n")).toContain("is not a file");
+    expect(lstatSync(credentialPath(broken)).isDirectory()).toBe(true);
+  });
+});
+
 describe("keep-awake and ceiling per connection", () => {
   it("keep-awake is set per connection", async () => {
     connect("dev-a", "x.test");
@@ -195,5 +226,6 @@ describe("keep-awake and ceiling per connection", () => {
     connect("dev-a", "x.test");
     connect("dev-b", "y.test");
     expect(await run(["ceiling", "show", "--json", "-c", "dev-b"])).toBe(0);
+    expect(JSON.parse(out[0] ?? "")).toHaveProperty("revision");
   });
 });
