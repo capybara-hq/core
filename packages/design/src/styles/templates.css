@@ -2123,7 +2123,7 @@ li:first-child > .cb-setup-step {
     white-space: nowrap;
   }
   /* the list ends above the button (none under the Duo strip, which hides it: list-page.css) */
-  :root:not([data-native-nav=""]) .cb-template[data-fab="true"] .cb-body-content {
+  :root:not([data-native-nav]) .cb-template[data-fab="true"] .cb-body-content {
     padding-bottom: calc(var(--cb-touch-prominent) + 2 * var(--cb-space-4));
   }
 }

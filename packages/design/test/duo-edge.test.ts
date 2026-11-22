@@ -108,7 +108,10 @@ describe("Duo edge to edge", () => {
   });
 
   it("no rule pads the bottom by a native bar", () => {
-    for (const r of sheets.filter((x) => x.selector.includes("[data-native-nav]"))) {
+    // a rule for the strip: `[data-native-nav]` outside `:not(...)` (a `:not` one is the browser's)
+    const forStrip = (selector: string) =>
+      selector.replace(/:not\([^()]*\)/g, "").includes("[data-native-nav");
+    for (const r of sheets.filter((x) => forStrip(x.selector))) {
       for (const p of ["padding-bottom", "padding", "margin-bottom"]) {
         expect(r.decls[p], `${r.selector} ${p}`).toBeUndefined();
       }
