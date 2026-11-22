@@ -95,8 +95,15 @@ const SIZE_NAMES = new Set([
   "useSizeClass",
   "useMediaQuery",
   "useTouch",
+  "useMobileSizes",
+  "useClassForm",
+  "ClassForms",
   "SIZE_CLASS_QUERIES",
   "TOUCH_QUERY",
+  "COMPACT_QUERY",
+  "MOBILE_SIZE_QUERY",
+  "INLINE_RIGHT_AREA_QUERY",
+  "INLINE_RIGHT_AREA_BELOW",
 ]);
 const WINDOW_GLOBALS = new Set(["window", "globalThis", "self"]);
 /** Nodes whose `key` is a name, not a reference. */
@@ -113,7 +120,9 @@ const WINDOW_READS = new Set(["matchMedia", "innerWidth"]);
  * `web-ui-size-branch`: a page branching on the size class draws structure the design package
  * owns. A file under `apps/web/src` (tests and `dev/` apart) fails unless it is in
  * `SIZE_BRANCH_ALLOWED` when it
- * - imports `useSizeClass`, `useMediaQuery`, `useTouch`, `SIZE_CLASS_QUERIES` or `TOUCH_QUERY`, or
+ * - imports a size hook (`useSizeClass`, `useMediaQuery`, `useTouch`, `useMobileSizes`,
+ *   `useClassForm`), `ClassForms`, or a size query (`SIZE_CLASS_QUERIES`, `TOUCH_QUERY`,
+ *   `COMPACT_QUERY`, `MOBILE_SIZE_QUERY`, `INLINE_RIGHT_AREA_QUERY`, `INLINE_RIGHT_AREA_BELOW`), or
  *   reads one as a member of a namespace import (`design.useSizeClass`) or destructures it from
  *   one;
  * - reads `window.matchMedia` / `window.innerWidth` (also on `globalThis` / `self`), destructures
@@ -250,7 +259,7 @@ export const SIZE_BRANCH_ALLOWED: readonly SizeBranchAllowed[] = [
   {
     path: "components/shell/conversations.tsx",
     reason:
-      "the conversation list: prewarms a route on hover for a fine pointer (matchMedia coarse) and reads compact for its row form",
+      "the conversation list: prewarms a route on hover for a fine pointer (matchMedia coarse); pending: its per-class row form moves into a design component (follow-up), then the entry shrinks to the hover prewarm",
   },
   {
     path: "components/client-ext/host-api.ts",
@@ -263,7 +272,7 @@ export const SIZE_BRANCH_ALLOWED: readonly SizeBranchAllowed[] = [
   {
     path: "components/ScheduleCalendarView.tsx",
     reason:
-      "reads the compact class at click time to pick the phone gesture of the calendar (pending: a template-owned form)",
+      "pending: the calendar reads the compact class at click time to pick its phone gesture; that per-class form moves into a design component (follow-up), then the entry goes",
   },
 ];
 

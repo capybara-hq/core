@@ -466,6 +466,14 @@ describe("responsive guards (spec §5.3, §7)", () => {
         // destructuring the window and the namespace
         ["web-ui-size-branch", 41],
         ["web-ui-size-branch", 42],
+        // the class forms and the other size queries
+        ["web-ui-size-branch", 48],
+        ["web-ui-size-branch", 49],
+        ["web-ui-size-branch", 50],
+        ["web-ui-size-branch", 51],
+        ["web-ui-size-branch", 52],
+        ["web-ui-size-branch", 53],
+        ["web-ui-size-branch", 54],
       ]);
       expect(f[0]?.message).toContain("design package");
     });

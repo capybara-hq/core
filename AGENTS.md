@@ -106,8 +106,9 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Web UI:** page = template + design components; apps/web writes no styles; every read is a
   TanStack Query `defineQuery`, every write `useAppMutation`; thin server `page.tsx` + client
   `view.tsx`; pages never read the size class (`web-ui-size-branch`); a structure that differs per
-  class goes through `ClassForms`; one box is enough: never a box inside a box (`web-ui-box-in-box`
-  and the jsdom guard `findNestedBoxes`, both in [tools/checks/README.md](tools/checks/README.md))
+  class lives in a design template or component through `ClassForms`; one box is enough: never a
+  box inside a box (`web-ui-box-in-box` and the jsdom guard `findNestedBoxes`, both in
+  [tools/checks/README.md](tools/checks/README.md))
   (`pnpm check:web-ui`); the new conversation is the workspace home at `/` (the setup layout while
   the org is not ready; `/chat` redirects there permanently with its query, maintainer decision
   2026-11-07), a conversation is `/chat/<id>`. [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)

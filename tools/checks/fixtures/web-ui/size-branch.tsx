@@ -42,3 +42,14 @@ export function Destructure() {
   const { useSizeClass: u } = design;
   return [w, u];
 }
+
+// The class forms and the other size queries are size-class logic too.
+import {
+  COMPACT_QUERY,
+  ClassForms,
+  INLINE_RIGHT_AREA_BELOW,
+  INLINE_RIGHT_AREA_QUERY,
+  MOBILE_SIZE_QUERY,
+  useClassForm,
+  useMobileSizes,
+} from "@capybara-hq/design";
