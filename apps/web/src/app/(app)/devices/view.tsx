@@ -12,7 +12,7 @@ import { type Device, deviceCeilingMark, deviceState } from "../../../lib/device
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
-import { useThisMachineDeviceId } from "../../../lib/use-this-machine";
+import { useThisMachineDeviceIds } from "../../../lib/use-this-machine";
 import NotFound from "../not-found";
 
 /**
@@ -37,7 +37,7 @@ function Devices({ orgId }: { orgId: string }) {
   const t = useTranslations("devices");
   const [creating, setCreating] = useState(false);
   const list = usePageQuery(devicesQuery(orgId));
-  const thisMachine = useThisMachineDeviceId(orgId);
+  const thisMachine = useThisMachineDeviceIds(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   // 新建设备 is always there: without a cloud sandbox it still connects a device
@@ -71,7 +71,7 @@ function Devices({ orgId }: { orgId: string }) {
         {...(callout ? { callout } : {})}
       >
         {items.map((e) => (
-          <DeviceCard key={e.id} device={e} thisMachine={e.id === thisMachine} />
+          <DeviceCard key={e.id} device={e} thisMachine={thisMachine.has(e.id)} />
         ))}
       </ListPage>
       {creating && (

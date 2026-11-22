@@ -33,6 +33,10 @@ export interface Credential {
   reconnectGraceSeconds: number;
   /** The deployment's `devices.dialIn.maxFrameBytes`: no frame this program sends is larger. */
   maxFrameBytes: number;
+  /** The device's name at the deployment when it returned one with the credential. */
+  deviceName?: string;
+  /** The organization's name at the deployment when it returned one with the credential. */
+  orgName?: string;
 }
 
 /**
@@ -204,6 +208,11 @@ export function readCredential(dir: string): Credential | undefined {
       throw new Error(`${file} is invalid: missing ${key}; log in again`);
     }
   }
+  for (const key of ["deviceName", "orgName"] as const) {
+    if (raw[key] !== undefined && typeof raw[key] !== "string") {
+      throw new Error(`${file} is invalid: ${key} must be a string; log in again`);
+    }
+  }
   const grace = raw.reconnectGraceSeconds ?? DEFAULT_RECONNECT_GRACE_SECONDS;
   if (!Number.isInteger(grace) || grace <= 0) {
     throw new Error(`${file} is invalid: reconnectGraceSeconds must be a positive integer`);
@@ -213,13 +222,6 @@ export function readCredential(dir: string): Credential | undefined {
     throw new Error(`${file} is invalid: maxFrameBytes must be a positive integer`);
   }
   return { ...(raw as Credential), reconnectGraceSeconds: grace, maxFrameBytes };
-}
-
-export function removeCredential(dir: string): boolean {
-  const file = credentialPath(dir);
-  if (!existsSync(file)) return false;
-  rmSync(file);
-  return true;
 }
 
 const isStringList = (v: unknown): v is string[] =>

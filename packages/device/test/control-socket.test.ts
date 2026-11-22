@@ -5,9 +5,11 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createConnection, createServer, type Socket } from "node:net";
@@ -15,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunningOperation } from "../src/activity.js";
+import { connectionDir, controlSocketPathFor } from "../src/connections.js";
 import { queryControl } from "../src/control/client.js";
 import {
   CONTROL_PATH_MAX_BYTES,
@@ -23,15 +26,19 @@ import {
 } from "../src/control/protocol.js";
 import { startControlServer } from "../src/control/server.js";
 
+/** The machine directory, and `dir` the connection directory in it. */
+let m: string;
 let dir: string;
 const closers: (() => Promise<void>)[] = [];
 beforeEach(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), "device-ctl-")));
-  chmodSync(dir, 0o700);
+  m = realpathSync(mkdtempSync(join(tmpdir(), "device-ctl-")));
+  chmodSync(m, 0o700);
+  dir = connectionDir(m, "e1");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
 });
 afterEach(async () => {
   for (const close of closers.splice(0)) await close();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(m, { recursive: true, force: true });
 });
 
 const STATUS: LiveStatus = {
@@ -98,25 +105,47 @@ async function connect(stateDir = dir) {
 }
 
 describe("control socket: where and with which permissions", () => {
-  it("the socket is 0600 in an owner-only state dir", async () => {
+  it("the socket is 0600 in the machine's owner-only run/ directory, made 0700", async () => {
     const server = await serve();
     expect(server).not.toHaveProperty("unavailable");
     const st = lstatSync(controlSocketPath(dir));
-    expect(controlSocketPath(dir)).toBe(join(dir, "control.sock"));
+    expect(controlSocketPath(dir)).toBe(controlSocketPathFor(m, "e1"));
+    expect(controlSocketPath(dir).startsWith(join(m, "run", ""))).toBe(true);
     expect(st.isSocket()).toBe(true);
     expect(st.mode & 0o777).toBe(0o600);
     expect(st.uid).toBe(process.getuid?.());
+    expect(lstatSync(join(m, "run")).mode & 0o777).toBe(0o700);
   });
 
-  it("a state dir readable by others gets no socket", async () => {
-    chmodSync(dir, 0o755);
-    const server = await serve();
-    expect(server).toEqual({ unavailable: expect.stringContaining("0755") });
+  it("a machine dir or run/ dir readable by others gets no socket", async () => {
+    chmodSync(m, 0o755);
+    expect(await serve()).toEqual({ unavailable: expect.stringContaining("0755") });
+    expect(existsSync(join(m, "run"))).toBe(false);
+    chmodSync(m, 0o700);
+    mkdirSync(join(m, "run"), { mode: 0o700 });
+    chmodSync(join(m, "run"), 0o755);
+    expect(await serve()).toEqual({ unavailable: expect.stringContaining("0755") });
     expect(existsSync(controlSocketPath(dir))).toBe(false);
+  });
+
+  it("a symlink in place of run/ gets no socket", async () => {
+    const elsewhere = join(m, "elsewhere");
+    mkdirSync(elsewhere, { mode: 0o700 });
+    symlinkSync(elsewhere, join(m, "run"));
+    expect(await serve()).toEqual({ unavailable: expect.stringContaining("not a directory") });
+    expect(readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it("a directory that is not a connection's gets no socket", async () => {
+    expect(await serve(m)).toEqual({
+      unavailable: expect.stringContaining("not a connection directory"),
+    });
+    expect(await queryControl(m, "status")).toBeUndefined();
   });
 
   it("a stale socket file is replaced", async () => {
     // a socket file nothing listens on: a hard link to a bound socket outlives its server
+    mkdirSync(join(m, "run"), { mode: 0o700 });
     const other = join(dir, "other.sock");
     const old = createServer();
     await new Promise<void>((r) => old.listen(other, r));
@@ -138,6 +167,7 @@ describe("control socket: where and with which permissions", () => {
   });
 
   it("a file at the path that is not a socket is left alone", async () => {
+    mkdirSync(join(m, "run"), { mode: 0o700 });
     writeFileSync(controlSocketPath(dir), "keep me");
     const server = await serve();
     expect(server).toEqual({ unavailable: expect.stringContaining("not a socket") });
@@ -145,8 +175,9 @@ describe("control socket: where and with which permissions", () => {
   });
 
   it("a path over 103 bytes is unavailable", async () => {
-    const base = join(dir, "x".repeat(Math.max(1, CONTROL_PATH_MAX_BYTES - dir.length)));
-    mkdirSync(base, { mode: 0o700 });
+    const longMachine = join(m, "x".repeat(Math.max(1, CONTROL_PATH_MAX_BYTES - m.length)));
+    const base = connectionDir(longMachine, "e1");
+    mkdirSync(base, { recursive: true, mode: 0o700 });
     expect(Buffer.byteLength(controlSocketPath(base))).toBeGreaterThan(103);
     const server = await serve(base);
     expect(server).toEqual({ unavailable: expect.stringContaining("103 bytes") });

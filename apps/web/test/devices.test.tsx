@@ -682,20 +682,18 @@ describe("local devices (environments spec §6, §9)", () => {
   });
 
   describe("连接本机 in the desktop shell (desktop client spec §5)", () => {
-    const CONNECTED = {
-      state: "connected",
-      deviceId: "d7",
-      orgId: "o1",
-      mode: "os",
-      connection: "online",
-      serviceInstalled: true,
-      keepAwake: { mode: "while-busy", held: false },
-    };
     function installShell(device: Record<string, unknown>) {
       const listeners = new Set<() => void>();
       (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
         version: 1,
-        capabilities: { "device@1": device },
+        // no connections yet unless the test says otherwise (the list page reads the status too)
+        capabilities: {
+          "device@2": {
+            status: vi.fn().mockResolvedValue({ connections: [] }),
+            onStatus: () => () => {},
+            ...device,
+          },
+        },
         on: (_e: "change", l: () => void) => {
           listeners.add(l);
           return () => listeners.delete(l);
@@ -713,17 +711,9 @@ describe("local devices (environments spec §6, §9)", () => {
       return { user, dialog };
     };
 
-    it("not_connected: a primary 连接本机 above the steps; a click calls connect({ orgId })", async () => {
-      let onStatus: (s: unknown) => void = () => {};
+    it("a primary 连接本机 above the steps; a click calls connect({ orgId })", async () => {
       const connect = vi.fn().mockResolvedValue("connected");
-      installShell({
-        status: vi.fn().mockResolvedValue({ state: "not_connected" }),
-        onStatus: (l: (s: unknown) => void) => {
-          onStatus = l;
-          return () => {};
-        },
-        connect,
-      });
+      installShell({ connect });
       const { user, dialog } = await openLocal();
       const button = await within(dialog).findByRole("button", { name: E.create.connectMachine });
       expect(button.getAttribute("data-variant")).toBe("primary");
@@ -733,16 +723,34 @@ describe("local devices (environments spec §6, §9)", () => {
       expect(connect).toHaveBeenCalledWith({ orgId: "o1" });
       // connected resolves into the wait-for-new-device path: the dialog stays, waiting
       expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
-      expect(onStatus).toBeTypeOf("function");
+    });
+
+    it("an existing connection into this org still offers 连接本机 (device@2 adds one)", async () => {
+      installShell({
+        status: vi.fn().mockResolvedValue({
+          connections: [
+            {
+              deviceId: "d7",
+              orgId: "o1",
+              mode: "os",
+              connection: "online",
+              serviceInstalled: true,
+              keepAwake: { mode: "while-busy", held: false },
+            },
+          ],
+        }),
+        connect: vi.fn(),
+      });
+      const { dialog } = await openLocal();
+      expect(
+        await within(dialog).findByRole("button", { name: E.create.connectMachine }),
+      ).toBeTruthy();
+      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
     });
 
     it("cancelled leaves the dialog as it was", async () => {
       const connect = vi.fn().mockResolvedValue("cancelled");
-      installShell({
-        status: vi.fn().mockResolvedValue({ state: "not_connected" }),
-        onStatus: () => () => {},
-        connect,
-      });
+      installShell({ connect });
       const { user, dialog } = await openLocal();
       await user.click(
         await within(dialog).findByRole("button", { name: E.create.connectMachine }),
@@ -754,12 +762,11 @@ describe("local devices (environments spec §6, §9)", () => {
       expect(router.push).not.toHaveBeenCalled();
     });
 
-    it("a failed connect shows an error", async () => {
-      installShell({
-        status: vi.fn().mockResolvedValue({ state: "not_connected" }),
-        onStatus: () => () => {},
-        connect: vi.fn().mockRejectedValue({ code: "failed" }),
-      });
+    it.each([
+      ["a rejected connect", vi.fn().mockRejectedValue({ code: "failed" })],
+      ["a connect answering an error", vi.fn().mockResolvedValue({ error: "login failed" })],
+    ])("%s shows an error", async (_name, connect) => {
+      installShell({ connect });
       const { user, dialog } = await openLocal();
       await user.click(
         await within(dialog).findByRole("button", { name: E.create.connectMachine }),
@@ -767,68 +774,6 @@ describe("local devices (environments spec §6, §9)", () => {
       expect((await within(dialog).findByRole("alert")).textContent).toContain(
         E.create.connectFailed,
       );
-    });
-
-    it("connected here: shows the state and a link to the device's page", async () => {
-      installShell({
-        status: vi.fn().mockResolvedValue(CONNECTED),
-        onStatus: () => () => {},
-      });
-      const { user, dialog } = await openLocal();
-      expect(
-        await within(dialog).findByText(
-          E.create.thisMachineConnected.replace("{state}", E.create.connection.online),
-        ),
-      ).toBeTruthy();
-      expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      await user.click(within(dialog).getByRole("button", { name: E.create.openDevice }));
-      expect(router.push).toHaveBeenCalledWith("/devices/d7");
-    });
-
-    it("connected elsewhere: the message and only the terminal steps", async () => {
-      installShell({
-        status: vi.fn().mockResolvedValue({
-          state: "connected_elsewhere",
-          origin: "https://other.example",
-        }),
-        onStatus: () => () => {},
-      });
-      const { dialog } = await openLocal();
-      expect(
-        await within(dialog).findByText(
-          E.create.connectedElsewhere.replace("{origin}", "https://other.example"),
-        ),
-      ).toBeTruthy();
-      expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
-    });
-
-    it("connected to another org of this person: the note and the terminal steps", async () => {
-      installShell({
-        status: vi.fn().mockResolvedValue({ ...CONNECTED, orgId: "o2" }),
-        onStatus: () => () => {},
-      });
-      const { dialog } = await openLocal();
-      expect(await within(dialog).findByText(E.create.thisMachineOtherOrg)).toBeTruthy();
-      expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
-    });
-
-    it("onStatus refreshes the status", async () => {
-      let push: (s: unknown) => void = () => {};
-      const status = vi.fn().mockResolvedValue({ state: "not_connected" });
-      installShell({
-        status,
-        onStatus: (l: (s: unknown) => void) => {
-          push = l;
-          return () => {};
-        },
-      });
-      const { dialog } = await openLocal();
-      await within(dialog).findByRole("button", { name: E.create.connectMachine });
-      status.mockResolvedValue(CONNECTED);
-      act(() => push(CONNECTED));
-      expect(await within(dialog).findByRole("button", { name: E.create.openDevice })).toBeTruthy();
     });
 
     it("in a browser nothing is offered", async () => {

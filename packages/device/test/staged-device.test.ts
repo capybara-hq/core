@@ -22,6 +22,7 @@ import {
   outdatedMessage,
   REPLACED_MESSAGE,
 } from "../src/client.js";
+import { connectionDir, machineDirOfConnection } from "../src/connections.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
@@ -55,7 +56,8 @@ let root: string;
 let state: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "device-staged-")));
-  state = join(root, "state");
+  // the machine layout: this connection's state is <machine>/connections/<id>
+  state = connectionDir(join(root, "state"), "d");
   mkdirSync(join(root, "device"), { recursive: true });
   writePolicy(state, FULL_POLICY);
 });
@@ -156,7 +158,7 @@ function staged(
   const device = createStagedDevice({
     cred: o.cred ?? credential(),
     stateDir: state,
-    stateRoot: state,
+    stateRoot: machineDirOfConnection(state),
     policy: new PolicyStore(state),
     home: join(root, "home"),
     platform: o.platform ?? "darwin",

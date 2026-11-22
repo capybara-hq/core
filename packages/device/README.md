@@ -17,6 +17,14 @@ capybara-device status [--json]
 capybara-device logout
 ```
 
+A machine can hold several connections (one per deployment device). Every command except `login`
+takes `-c <connection>` / `--connection <connection>`: a device id, a device name or a host. With
+one connection it is implied; with several, a command that needs one refuses and lists them, and
+`status` lists all. `login` adds a connection (or replaces the credential of a device the machine
+already serves). `start -c <id>` with no such connection exits 0, so a logged-out connection's
+service stays stopped. `logout -c <id>` removes that connection's credential and login service only;
+its `policy.json`, logs and working directory stay.
+
 `login --json` is for programs that drive the CLI (the desktop app): it opens no browser and writes one
 JSON object per line to stdout, the human lines going to stderr: `{"event":"verification","url":…,
 "userCode":…,"expiresIn":…}`, then `{"event":"done","deviceId":…,"orgId":…,"dir":…}` or
@@ -51,7 +59,7 @@ non-zero, and the service restarts it: a crash, an invalid start (`Cannot start:
 deployment that needs a newer program (426: upgrade the package in place and the next restart runs
 the new one). A failing connection never ends the program: it reconnects with backoff, so a kernel
 restart needs no service restart. After logging in again, start the installed service with
-`capybara-device service restart`; `capybara-device service status` shows what is true now.
+`capybara-device service restart -c <connection>`; `capybara-device service status` shows what is true now.
 
 If the working directory (or its marker `.capybara-device`, or one of `workspace/`, `skills/`,
 `tmp/`) is removed, the program never recreates it: operations answer that the files are lost and
@@ -69,7 +77,11 @@ Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, 
 widening prints the risk text and asks for confirmation unless `--yes` is given. The old daily
 `mode auto|sandbox` command is gone.
 
-State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
+State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`), the
+machine directory: `machine.json` (format version), `run/` (the control sockets, 0700) and one
+directory per connection, `connections/<deviceId>/` (0700), holding that connection's files below.
+A `credential.json` or `policy.json` directly in the machine directory (the old single-connection
+layout) is never read, moved or deleted. A connection directory holds
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the
 deployment's reconnect grace and frame limit: a result larger than the frame limit is answered
 with an error instead) and `policy.json` (a file with wrong field types stops `start` with an
@@ -230,11 +242,26 @@ they left running survive the upgrade. Restart the machine, or kill such leftove
 upgrade yourself; this version never searches for them. In Docker mode the old container is
 recreated at the first operation, which ends whatever it still ran.
 
+### Upgrading to the connection layout
+
+Before upgrading, run `capybara-device service uninstall` with the **old** version. The old login
+service (launchd `top.capybara.device`, systemd `capybara-device.service`) is never touched by
+this version: when it runs its plain `start` (no `--connection`), this version says so in the
+service log, exits 0 and stays stopped, so the service manager does not restart it. Remove it by
+hand if you upgraded first (`launchctl bootout gui/$(id -u)/top.capybara.device` and delete
+`~/Library/LaunchAgents/top.capybara.device.plist`; or `systemctl --user disable --now
+capybara-device.service` and delete its unit file). After upgrading, run
+`capybara-device login --url <url>` (choose the existing device to keep it) and then
+`capybara-device service install -c <deviceId>`.
+The old flat `credential.json` and `policy.json` stay where they are and can be deleted by hand.
+
 ## Control socket
 
-While `start` serves, it answers on `<stateDir>/control.sock` (next to `credential.json`): a unix
-socket of mode 0600, made only when the state directory belongs to you and has no group or other
-permissions (mode 0700). A socket left by a program that crashed (nothing listens on it) is
+While `start` serves, it answers on `<machineDir>/run/<16 hex>.sock` (the first 16 hex digits of the
+SHA-256 of the device id; `capybara-device status` prints the path): a unix socket of mode 0600,
+made only when the machine directory and its `run/` directory belong to you and have no group or
+other permissions (mode 0700), and `run/` is not a symlink. A socket left by a program that crashed
+(nothing listens on it) is
 replaced; one another running program answers on is never touched. When the path is longer than
 103 bytes (a long `XDG_CONFIG_HOME`) or the directory is open to other users, the program keeps
 serving without the socket and says why once.
@@ -318,9 +345,10 @@ bridge; it stays running (idle) between starts.
 
 ## Running at login
 
-`capybara-device service install` makes the program start at login: on macOS a launchd agent
-(`~/Library/LaunchAgents/top.capybara.device.plist`, log `service.log` in the state directory), on
-Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`). Both restart the
+`capybara-device service install` makes the program start at login, one service per connection
+(`-c` picks it): on macOS a launchd agent (`~/Library/LaunchAgents/top.capybara.device.<deviceId>.plist`,
+log `service.log` in the connection directory), on Linux an instance of the systemd user unit
+template (`~/.config/systemd/user/capybara-device@.service`, instance `capybara-device@<deviceId>`). Both restart the
 program only when it exits non-zero: the macOS agent uses `KeepAlive { SuccessfulExit: false }`, at
 most every 30 s (`ThrottleInterval`); systemd `Restart=on-failure`, after 5 s. Exit 0 is a deliberate
 stop and stays stopped.
@@ -338,7 +366,8 @@ wait (up to 10 s) until the service manager runs the program and report a failur
 `service.log`, when it does not come back; `service start` refuses while a program started in a
 terminal runs ("stop it first"). On macOS a loaded agent whose program exited is started again with
 `launchctl kickstart`. `restart` reloads the program from the installed `bin`, so it is **the way to
-apply a package upgrade**: `npm i -g @capybara-hq/device@latest && capybara-device service restart`.
+apply a package upgrade**: `npm i -g @capybara-hq/device@latest && capybara-device service restart -c <connection>`
+(once for each connection that has a service).
 The top-level `stop` refuses only when the service manager runs the program it would signal (launchd
 has the agent loaded, or systemd the unit active, and its pid is the pid file's) and points at
 `service stop`; a program started in a terminal is signalled as before. `start` in a terminal says
@@ -359,7 +388,7 @@ not picked up yet. The pid file records the version (`{pid, version, startedAt}`
 older program reads as "version unknown". A user unit runs only
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
-starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so
+starts. The service runs `node <bin> start --connection <deviceId>` with the `PATH` of the shell that installed it (so
 `docker` is found). `service uninstall` reverses it. On macOS, installing again first boots the old
 agent out and waits (up to 10 s) until launchd has let it go, because `launchctl bootout` returns
 before that; a `bootstrap` that still fails with error 5 (Input/output error) is retried a few

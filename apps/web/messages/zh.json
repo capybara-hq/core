@@ -1777,18 +1777,7 @@
       "close": "关闭",
       "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）",
       "connectMachine": "连接本机",
-      "connectFailed": "无法连接本机，请重试。",
-      "thisMachineConnected": "这台电脑已连接到这个平台：{state}。",
-      "thisMachineOtherOrg": "这台电脑已连接到你的另一个组织。",
-      "connectedElsewhere": "这台电脑已连接到另一个平台（{origin}）。请用下面的命令连接到这里。",
-      "openDevice": "打开设备",
-      "connection": {
-        "starting": "正在启动",
-        "online": "在线",
-        "offline": "离线",
-        "draining": "正在结束任务",
-        "stopped": "已停止"
-      }
+      "connectFailed": "无法连接本机，请重试。"
     },
     "detail": {
       "providerOffNote": "此设备的提供方已在本组织关闭或未安装，文件仍保留。",

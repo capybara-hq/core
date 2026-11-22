@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ProcessChecks, type RunningProgram, readRunning } from "../pid.js";
@@ -15,12 +23,21 @@ import {
   serviceBinPath,
   serviceNodePath,
 } from "../service/manager.js";
-import { SYSTEMD_UNIT, unitContent, unitPath } from "../service/systemd.js";
+import {
+  systemdUnit,
+  unitContent,
+  unitPath,
+  unitWantsDir,
+  unitWantsLink,
+} from "../service/systemd.js";
 
 export type ServiceAction = "install" | "uninstall" | "start" | "stop" | "restart" | "status";
 
 export interface ServiceDeps {
+  /** The connection directory: the pid file, service.log. */
   stateDir: string;
+  /** The connection this service runs. */
+  deviceId: string;
   home: string;
   platform: NodeJS.Platform;
   env: Record<string, string | undefined>;
@@ -79,6 +96,7 @@ export async function serviceCommand(
     nodePath: deps.nodePath ?? process.execPath,
     binPath: deps.binPath ?? defaultBinPath(),
     stateDir: deps.stateDir,
+    deviceId: deps.deviceId,
     env: serviceEnv(deps.env),
   };
   try {
@@ -126,6 +144,7 @@ function where(deps: ServiceDeps): ServiceWhere {
   return {
     home: deps.home,
     platform: deps.platform,
+    deviceId: deps.deviceId,
     ...(deps.uid !== undefined && { uid: deps.uid }),
   };
 }
@@ -141,7 +160,7 @@ const NOT_INSTALLED =
  */
 function reportStatus(deps: ServiceDeps, run: RunSystem): number {
   const at = where(deps);
-  if (!hasLoginService(at.home, at.platform)) {
+  if (!hasLoginService(at.home, at.platform, at.deviceId)) {
     deps.out(NOT_INSTALLED);
     return 1;
   }
@@ -180,7 +199,7 @@ function reportStatus(deps: ServiceDeps, run: RunSystem): number {
  */
 function statusJson(deps: ServiceDeps, run: RunSystem): number {
   const at = where(deps);
-  const installed = hasLoginService(at.home, at.platform);
+  const installed = hasLoginService(at.home, at.platform, at.deviceId);
   const state = installed ? managerState(at, run) : { loaded: false as const };
   const pid = "pid" in state ? state.pid : undefined;
   const bin = installed ? serviceBinPath(at) : undefined;
@@ -247,8 +266,8 @@ async function launchd(
   deps: ServiceDeps,
   run: RunSystem,
 ): Promise<number> {
-  const file = plistPath(deps.home);
-  const { domain, service } = launchdTarget(deps.uid);
+  const file = plistPath(deps.home, deps.deviceId);
+  const { domain, service } = launchdTarget(deps.uid, deps.deviceId);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const tryRun = (args: string[]): void => {
     try {
@@ -290,7 +309,7 @@ async function launchd(
       }
     }
   };
-  const installed = (): boolean => hasLoginService(deps.home, "darwin");
+  const installed = (): boolean => hasLoginService(deps.home, "darwin", deps.deviceId);
   if (action === "status") return reportStatus(deps, run);
   if (action === "start" || action === "restart") {
     if (!installed()) {
@@ -358,6 +377,28 @@ async function launchd(
   return 0;
 }
 
+/** Makes sure the enable link of an instance exists (`systemctl enable` makes the same link). */
+function ensureWantsLink(home: string, deviceId: string, template: string): void {
+  const link = unitWantsLink(home, deviceId);
+  try {
+    lstatSync(link);
+    return;
+  } catch {
+    // Not there yet.
+  }
+  mkdirSync(unitWantsDir(home), { recursive: true });
+  symlinkSync(template, link);
+}
+
+/** Whether any `capybara-device@*.service` instance is still enabled. */
+function anyInstance(home: string): boolean {
+  try {
+    return readdirSync(unitWantsDir(home)).some((n) => /^capybara-device@.+\.service$/.test(n));
+  } catch {
+    return false;
+  }
+}
+
 async function systemd(
   action: ServiceAction,
   spec: ServiceSpec,
@@ -365,9 +406,10 @@ async function systemd(
   run: RunSystem,
 ): Promise<number> {
   const file = unitPath(deps.home);
+  const unit = systemdUnit(deps.deviceId);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const active = (): boolean => managerState(where(deps), run).loaded;
-  const installed = (): boolean => hasLoginService(deps.home, "linux");
+  const installed = (): boolean => hasLoginService(deps.home, "linux", deps.deviceId);
   if (action === "status") return reportStatus(deps, run);
   if (action === "start" || action === "stop" || action === "restart") {
     if (!installed()) {
@@ -384,11 +426,11 @@ async function systemd(
       return 0;
     }
     if (action !== "stop" && !state.loaded && foregroundRunning(deps, state)) return 1;
-    run("systemctl", ["--user", action, SYSTEMD_UNIT]);
+    run("systemctl", ["--user", action, unit]);
     if (action === "stop") {
       if (active()) {
         deps.err(
-          `capybara-device service stop failed: the unit is still active. Check with: systemctl --user status ${SYSTEMD_UNIT}`,
+          `capybara-device service stop failed: the unit is still active. Check with: systemctl --user status ${unit}`,
         );
         return 1;
       }
@@ -409,21 +451,24 @@ async function systemd(
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, unitContent(spec));
     run("systemctl", ["--user", "daemon-reload"]);
-    run("systemctl", ["--user", "enable", SYSTEMD_UNIT]);
+    run("systemctl", ["--user", "enable", unit]);
+    ensureWantsLink(deps.home, deps.deviceId, file);
     // restart, not start: a unit already running (an earlier install) picks up the new file.
     // systemctl waits for the stop and start jobs, so nothing is left in flight.
-    run("systemctl", ["--user", "restart", SYSTEMD_UNIT]);
+    run("systemctl", ["--user", "restart", unit]);
     deps.out(
       `Installed ${file}; capybara-device now starts at login. A user unit runs only while you have a session unless you run: loginctl enable-linger $USER`,
     );
     return 0;
   }
   try {
-    run("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]);
+    run("systemctl", ["--user", "disable", "--now", unit]);
   } catch {
     // Not installed.
   }
-  rmSync(file, { force: true });
+  rmSync(unitWantsLink(deps.home, deps.deviceId), { force: true });
+  // The template is shared: it goes with the last instance.
+  if (!anyInstance(deps.home)) rmSync(file, { force: true });
   try {
     run("systemctl", ["--user", "daemon-reload"]);
   } catch {

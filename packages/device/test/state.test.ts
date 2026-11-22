@@ -85,6 +85,15 @@ describe("state", () => {
     expect(readCredential(dir)).toEqual(cred);
   });
 
+  it("keeps the device and organization names when present and refuses names that are not strings", () => {
+    writeCredential(dir, { ...cred, deviceName: "Laptop", orgName: "Acme" });
+    expect(readCredential(dir)).toMatchObject({ deviceName: "Laptop", orgName: "Acme" });
+    writeCredential(dir, { ...cred, deviceName: 7 } as unknown as Credential);
+    expect(() => readCredential(dir)).toThrow(/deviceName must be a string/);
+    writeCredential(dir, { ...cred, orgName: null } as unknown as Credential);
+    expect(() => readCredential(dir)).toThrow(/orgName must be a string/);
+  });
+
   it("writes 0600 under umask 0 and replaces a stale tmp file", () => {
     const old = process.umask(0);
     try {

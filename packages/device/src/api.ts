@@ -22,6 +22,10 @@ export interface TokenResponse {
    * (`off`): `login` prints the matching line. Absent counts as allowed.
    */
   outsideSandbox?: "allowed" | "off";
+  /** The device's name at the deployment (null when it has none); stored only when a string. */
+  deviceName?: string | null;
+  /** The organization's name at the deployment; stored only when a string. */
+  orgName?: string;
 }
 
 /** An error response of the kernel: `{ error: { code, message } }`. */

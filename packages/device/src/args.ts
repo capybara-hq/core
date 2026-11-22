@@ -12,32 +12,36 @@ export type Command =
       url: string;
       browser: boolean;
       dir?: string;
-      mode: DeviceMode;
+      /** `--mode`; absent when not given (a new connection then runs in `os` mode). */
+      mode?: DeviceMode;
       /** `--json`: one JSON event per line on stdout (implies `--no-browser`). */
       json?: true;
     }
-  | { command: "logout" }
-  | { command: "status"; json: boolean }
-  | { command: "start" }
-  | { command: "stop" }
+  | { command: "logout"; connection?: string }
+  | { command: "status"; json: boolean; connection?: string }
+  | { command: "start"; connection?: string }
+  | { command: "stop"; connection?: string }
   | {
       command: "drain";
+      connection?: string;
       /** `--wait`: wait until the program has exited. */
       wait?: true;
       /** `--timeout <seconds>` with `--wait` (default 600). */
       timeoutSeconds?: number;
     }
-  | { command: "policy"; action: "show" }
+  | { command: "policy"; action: "show"; connection?: string }
   | {
       command: "policy";
+      connection?: string;
       action: "set" | "add" | "remove";
       key: string;
       value: string;
     }
-  | { command: "ceiling"; action: "show"; json?: true }
+  | { command: "ceiling"; action: "show"; json?: true; connection?: string }
   | {
       command: "ceiling";
       action: "set";
+      connection?: string;
       /** `--outside-sandbox on|off`; absent keeps the current value. */
       outsideSandbox?: boolean;
       /** `--network open|allowlist`; absent keeps the current value. */
@@ -47,10 +51,11 @@ export type Command =
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
     }
-  | { command: "keep-awake"; action: "show"; json?: true }
+  | { command: "keep-awake"; action: "show"; json?: true; connection?: string }
   | {
       command: "keep-awake";
       action: "set";
+      connection?: string;
       mode: KeepAwakeMode;
       /** `--yes`: confirms keeping the computer awake more often without asking. */
       yes?: true;
@@ -58,6 +63,7 @@ export type Command =
     }
   | {
       command: "service";
+      connection?: string;
       action: "install" | "uninstall" | "start" | "stop" | "restart" | "status";
       /** `service status --json`. */
       json?: true;
@@ -65,41 +71,48 @@ export type Command =
   | { command: "help" };
 
 export const USAGE = `Usage:
+  Every command but login takes [-c|--connection <connection>]; with several connections name
+  one: a device id, a device name or a host.
   capybara-device login --url <url> [--no-browser] [--dir <path>] [--mode os|docker] [--json]
                                   Connect this machine: approve the code in the browser;
                                   --json prints one JSON event per line (no browser)
-  capybara-device logout          Forget the credential on this machine
-  capybara-device status [--json] Show whether this machine is logged in
-  capybara-device start           Connect and serve the device
-  capybara-device stop            Stop the running program
-  capybara-device drain [--wait] [--timeout <seconds>]
+  capybara-device logout [-c <connection>]
+                                  Forget one connection's credential on this machine
+  capybara-device status [--json] [-c <connection>]
+                                  Show this machine's connections (all, or the one named)
+  capybara-device start [-c <connection>]
+                                  Connect and serve the device
+  capybara-device stop [-c <connection>]
+                                  Stop the running program
+  capybara-device drain [--wait] [--timeout <seconds>] [-c <connection>]
                                   Finish running commands, accept no new ones, then stop;
                                   --wait returns once it has stopped (default limit 600 s)
-  capybara-device ceiling show [--json]
+  capybara-device ceiling show [--json] [-c <connection>]
                                   Show this machine's owner ceiling (outside the sandbox, network,
                                   project reach)
   capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-                              [--project-reach machine|paths|workspace] [--yes]
+                              [--project-reach machine|paths|workspace] [--yes] [-c <connection>]
                                   Change the owner ceiling (at least one field; the others stay);
                                   widening needs --yes or a y at the prompt
-  capybara-device keep-awake [show | off | while-busy | connected] [--yes] [--json]
+  capybara-device keep-awake [show | off | while-busy | connected] [--yes] [--json] [-c <connection>]
                                   Show or set when this computer is kept awake; raising it
                                   needs --yes or a y at the prompt
-  capybara-device policy [show]   Show the local policy
-  capybara-device policy set <key> <value>
+  capybara-device policy [show] [-c <connection>]
+                                  Show the local policy
+  capybara-device policy set <key> <value> [-c <connection>]
                                   Replace one field (cpu, memoryMb, allowCredentials, projectPaths)
-  capybara-device policy add|remove allowedDomains <host>
+  capybara-device policy add|remove allowedDomains <host> [-c <connection>]
                                   Allow or stop allowing a domain on the sandbox allowlist
-  capybara-device policy add|remove allowCredentials <name>
+  capybara-device policy add|remove allowCredentials <name> [-c <connection>]
                                   Allow or stop allowing a credential for restricted work
-  capybara-device policy add|remove|set projectPaths <dir>[,<dir>...]
+  capybara-device policy add|remove|set projectPaths <dir>[,<dir>...] [-c <connection>]
                                   Add, remove or replace project paths the paths reach reads
                                   (comma-separated, so a path containing a comma cannot be added)
-  capybara-device service install|uninstall
+  capybara-device service install|uninstall [-c <connection>]
                                   Run at login as a user service, or remove it
-  capybara-device service start|stop|restart
+  capybara-device service start|stop|restart [-c <connection>]
                                   Start, stop or restart the login service
-  capybara-device service status [--json]
+  capybara-device service status [--json] [-c <connection>]
                                   Report whether the login service is loaded, what is running,
                                   and whether it is older than the installed program`;
 
@@ -114,6 +127,15 @@ function parse<const O extends ParseArgsOptionsConfig>(argv: string[], options: 
   }
 }
 
+const CONNECTION_OPTION = { connection: { type: "string", short: "c" } } as const;
+
+/** `--connection` / `-c`: absent, or a non-empty selector. */
+function connectionOf(value: string | undefined): { connection?: string } {
+  if (value === undefined) return {};
+  if (value === "") throw new UsageError("--connection needs a device id, device name or host");
+  return { connection: value };
+}
+
 /** Parses `argv` (without the node and script entries); throws {@link UsageError}. */
 export function parseCommandLine(argv: string[]): Command {
   const [name, ...rest] = argv;
@@ -121,9 +143,9 @@ export function parseCommandLine(argv: string[]): Command {
     return { command: "help" };
   }
   const noArgs = (command: "logout" | "start" | "stop"): Command => {
-    const { positionals } = parse(rest, {});
+    const { values, positionals } = parse(rest, { ...CONNECTION_OPTION });
     if (positionals.length > 0) throw new UsageError(`${command} takes no arguments`);
-    return { command };
+    return { command, ...connectionOf(values.connection) };
   };
   switch (name) {
     case "login": {
@@ -136,21 +158,26 @@ export function parseCommandLine(argv: string[]): Command {
       });
       if (positionals.length > 0) throw new UsageError("login takes no positional arguments");
       if (values.url === undefined || values.url === "") throw new UsageError("login needs --url");
-      const mode = values.mode ?? "os";
-      if (mode !== "os" && mode !== "docker") throw new UsageError("--mode must be os or docker");
+      const mode = values.mode;
+      if (mode !== undefined && mode !== "os" && mode !== "docker") {
+        throw new UsageError("--mode must be os or docker");
+      }
       return {
         command: "login",
         url: String(values.url),
         browser: values["no-browser"] !== true && values.json !== true,
         ...(values.dir !== undefined && { dir: String(values.dir) }),
-        mode,
+        ...(mode !== undefined && { mode }),
         ...(values.json === true && { json: true as const }),
       };
     }
     case "status": {
-      const { values, positionals } = parse(rest, { json: { type: "boolean" } });
+      const { values, positionals } = parse(rest, {
+        json: { type: "boolean" },
+        ...CONNECTION_OPTION,
+      });
       if (positionals.length > 0) throw new UsageError("status takes no arguments");
-      return { command: "status", json: values.json === true };
+      return { command: "status", json: values.json === true, ...connectionOf(values.connection) };
     }
     case "logout":
     case "start":
@@ -160,25 +187,28 @@ export function parseCommandLine(argv: string[]): Command {
       const { values, positionals } = parse(rest, {
         wait: { type: "boolean" },
         timeout: { type: "string" },
+        ...CONNECTION_OPTION,
       });
+      const connection = connectionOf(values.connection);
       if (positionals.length > 0) throw new UsageError("drain takes no positional arguments");
       if (values.timeout !== undefined && values.wait !== true) {
         throw new UsageError("--timeout needs --wait");
       }
-      if (values.wait !== true) return { command: "drain" };
-      if (values.timeout === undefined) return { command: "drain", wait: true };
+      if (values.wait !== true) return { command: "drain", ...connection };
+      if (values.timeout === undefined) return { command: "drain", wait: true, ...connection };
       const seconds = Number(values.timeout);
       if (!Number.isInteger(seconds) || seconds < 1) {
         throw new UsageError("--timeout must be a whole number of seconds, at least 1");
       }
-      return { command: "drain", wait: true, timeoutSeconds: seconds };
+      return { command: "drain", wait: true, timeoutSeconds: seconds, ...connection };
     }
     case "policy": {
-      const { positionals } = parse(rest, {});
+      const { values, positionals } = parse(rest, { ...CONNECTION_OPTION });
+      const connection = connectionOf(values.connection);
       const [action, key, value, ...extra] = positionals;
-      if (action === undefined) return { command: "policy", action: "show" };
+      if (action === undefined) return { command: "policy", action: "show", ...connection };
       if (action === "show" && key === undefined && extra.length === 0) {
-        return { command: "policy", action: "show" };
+        return { command: "policy", action: "show", ...connection };
       }
       if (
         (action === "set" || action === "add" || action === "remove") &&
@@ -186,7 +216,7 @@ export function parseCommandLine(argv: string[]): Command {
         value !== undefined &&
         extra.length === 0
       ) {
-        return { command: "policy", action, key, value };
+        return { command: "policy", action, key, value, ...connection };
       }
       throw new UsageError("usage: policy [show | set <key> <value> | add|remove <key> <value>]");
     }
@@ -198,7 +228,9 @@ export function parseCommandLine(argv: string[]): Command {
         "full-access": { type: "string" },
         yes: { type: "boolean", short: "y" },
         json: { type: "boolean" },
+        ...CONNECTION_OPTION,
       });
+      const connection = connectionOf(values.connection);
       const [action, ...extra] = positionals;
       const usage =
         "usage: ceiling show | ceiling set [--outside-sandbox on|off] [--network open|allowlist] " +
@@ -218,6 +250,7 @@ export function parseCommandLine(argv: string[]): Command {
           command: "ceiling",
           action: "show",
           ...(values.json === true && { json: true as const }),
+          ...connection,
         };
       }
       if (action !== "set") throw new UsageError(usage);
@@ -237,17 +270,20 @@ export function parseCommandLine(argv: string[]): Command {
         ...(network !== undefined && { network }),
         ...(reach !== undefined && { projectReach: reach }),
         ...(values.yes === true && { yes: true as const }),
+        ...connection,
       };
     }
     case "keep-awake": {
       const { values, positionals } = parse(rest, {
         yes: { type: "boolean", short: "y" },
         json: { type: "boolean" },
+        ...CONNECTION_OPTION,
       });
+      const connection = connectionOf(values.connection);
       const usage = "usage: keep-awake [show | off | while-busy | connected] [--yes] [--json]";
       const [action, ...extra] = positionals;
       if (extra.length > 0) throw new UsageError(usage);
-      const json = values.json === true && { json: true as const };
+      const json = { ...(values.json === true && { json: true as const }), ...connection };
       if (action === undefined || action === "show") {
         if (values.yes === true) throw new UsageError(usage);
         return { command: "keep-awake", action: "show", ...json };
@@ -262,7 +298,10 @@ export function parseCommandLine(argv: string[]): Command {
       };
     }
     case "service": {
-      const { values, positionals } = parse(rest, { json: { type: "boolean" } });
+      const { values, positionals } = parse(rest, {
+        json: { type: "boolean" },
+        ...CONNECTION_OPTION,
+      });
       const [action, ...extra] = positionals;
       if (values.json === true && action !== "status") {
         throw new UsageError("--json is only for service status");
@@ -280,6 +319,7 @@ export function parseCommandLine(argv: string[]): Command {
           command: "service",
           action,
           ...(values.json === true && { json: true as const }),
+          ...connectionOf(values.connection),
         };
       }
       throw new UsageError("usage: service install|uninstall|start|stop|restart|status");

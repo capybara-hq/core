@@ -21,17 +21,19 @@ import {
   CEILING_OTHER_CONNECTIONS_TEXT,
   CEILING_WIDENING_TEXT,
 } from "../src/commands/ceiling.js";
-import { connectionsDir } from "../src/connections.js";
+import { connectionDir, connectionsDir, machineDirOfConnection } from "../src/connections.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
-import { readStrictOwnerCeiling } from "../src/exec/operation-types.js";
+import { readStrictOwnerCeiling, within } from "../src/exec/operation-types.js";
 import { issueOwnerReport, ownerReportPath } from "../src/owner-report.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { serveOperationV3 } from "../src/server-ops.js";
 import {
   DEFAULT_POLICY,
+  defaultWorkDir,
   type OwnerCeilingPolicy,
   type Policy,
   policyPath,
+  readCredential,
   readPolicyFile,
   writeCredential,
   writePolicy,
@@ -52,10 +54,13 @@ const SANDBOX_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
 /** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY: Policy = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let root: string;
+/** The machine directory: the program state root holding every connection. */
+let machine: string;
 let state: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "device-owner-ceiling-"));
-  state = join(root, "capybara-device");
+  machine = join(root, "capybara-device");
+  state = connectionDir(machine, "dev");
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -72,7 +77,7 @@ const onDiskOf = (policy: Policy) => {
 const strict = () =>
   readStrictOwnerCeiling({
     stateDir: state,
-    stateRoot: state,
+    stateRoot: machine,
     deviceId: "dev",
     dir: join(root, "device"),
     home: join(root, "home"),
@@ -80,7 +85,7 @@ const strict = () =>
 const report = () =>
   issueOwnerReport({
     stateDir: state,
-    stateRoot: state,
+    stateRoot: machine,
     deviceId: "dev",
     dir: join(root, "device"),
     home: join(root, "home"),
@@ -89,9 +94,23 @@ const cli = async (
   argv: string[],
   opts: { tty?: boolean; answer?: string; beforeWrite?: () => void } = {},
 ) => {
+  if (readCredential(state) === undefined) {
+    writeCredential(state, {
+      url: "https://x.test",
+      connectUrl: "wss://x.test",
+      credential: "c",
+      orgId: "o",
+      deviceId: "dev",
+      dir: join(root, "device"),
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1048576,
+    });
+  }
   const out: string[] = [];
   const err: string[] = [];
-  const code = await runCli(argv, {
+  // other connections may exist: always name this one
+  const code = await runCli([...argv, "-c", "dev"], {
     env: { XDG_CONFIG_HOME: root },
     home: join(root, "home"),
     platform: "darwin",
@@ -284,7 +303,7 @@ describe("owner report sequence sidecar", () => {
   it("issues with another connection unreadable: only sandboxed work is refused", async () => {
     writePolicy(state, FULL_POLICY);
     const before = report();
-    const other = join(state, "connections", "b");
+    const other = connectionDir(machine, "b");
     mkdirSync(other, { recursive: true });
     writeFileSync(join(other, "credential.json"), "{ nope", { mode: 0o600 });
     const after = report();
@@ -546,7 +565,7 @@ describe("capybara-device ceiling", () => {
 
   it("outside the sandbox on names the other connections when there are some", async () => {
     const connect = (id: string) =>
-      writeCredential(join(connectionsDir(state), id), {
+      writeCredential(connectionDir(machine, id), {
         url: `https://${id}.test`,
         connectUrl: `wss://${id}.test/device/connect`,
         credential: "c",
@@ -557,8 +576,8 @@ describe("capybara-device ceiling", () => {
         reconnectGraceSeconds: 120,
         maxFrameBytes: 1048576,
       });
+    // this connection alone (the cli helper logs "dev" in): no other connection to name
     writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
-    connect("one");
     const single = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
     expect(single.code).toBe(0);
     expect(single.out).toContain(CEILING_WIDENING_TEXT);
@@ -573,9 +592,9 @@ describe("capybara-device ceiling", () => {
     );
     // an unreadable connection counts too
     writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
-    rmSync(join(connectionsDir(state), "two"), { recursive: true });
-    mkdirSync(join(connectionsDir(state), "broken"), { recursive: true });
-    writeFileSync(join(connectionsDir(state), "broken", "credential.json"), "{", { mode: 0o600 });
+    rmSync(join(connectionsDir(machine), "two"), { recursive: true });
+    mkdirSync(join(connectionsDir(machine), "broken"), { recursive: true });
+    writeFileSync(join(connectionsDir(machine), "broken", "credential.json"), "{", { mode: 0o600 });
     const broken = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
     expect(broken.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
     // the changed-meanwhile refusal names them again with the widening text
@@ -589,13 +608,8 @@ describe("capybara-device ceiling", () => {
       CEILING_WIDENING_TEXT,
       CEILING_OTHER_CONNECTIONS_TEXT,
     ]);
-    // a connections directory that cannot be listed counts as other connections (fail closed)
-    rmSync(connectionsDir(state), { recursive: true });
-    writeFileSync(connectionsDir(state), "not a directory");
-    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
-    const unlistable = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
-    expect(unlistable.code).toBe(0);
-    expect(unlistable.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
+    // (a connections directory that cannot be listed resolves no connection, so `ceiling set`
+    // never gets this far; otherConnectionsExist still counts it as others, fail closed)
     // a widening that leaves outside the sandbox off does not name them
     writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
     const net = await cli(["ceiling", "set", "--network", "open", "--yes"]);
@@ -669,5 +683,58 @@ describe("owner-denied paths in canonical form", () => {
       realpathSync(state),
     ])
       expect(denied).toContain(path);
+  });
+});
+
+describe("other connections under the machine layout", () => {
+  it("connection A is denied B's working directory and state, and a logged-out C's default work dir", async () => {
+    const home = join(root, "home");
+    const bWork = join(root, "work-b");
+    mkdirSync(bWork, { recursive: true });
+    writeCredential(connectionDir(machine, "b"), {
+      url: "https://b.test",
+      connectUrl: "wss://b.test/device/connect",
+      credential: "c",
+      orgId: "o",
+      deviceId: "b",
+      dir: bWork,
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1048576,
+    });
+    // C logged out: its directory (policy, logs) and its default working directory remain
+    writePolicy(connectionDir(machine, "c"), DEFAULT_POLICY);
+    const cWork = defaultWorkDir("c", home);
+    mkdirSync(cWork, { recursive: true });
+    writePolicy(state, FULL_POLICY);
+    // the CLI's program root: the machine directory of the selected connection
+    expect(machineDirOfConnection(state)).toBe(machine);
+    const ceiling = await strict();
+    expect(ceiling.unreadableConnections).toEqual([]);
+    const denied = ceiling.restrictedDeniedReadRoots;
+    const isDenied = (path: string) => denied.some((root) => within(path, root));
+    expect(denied).toContain(bWork);
+    expect(denied).toContain(cWork);
+    // the whole machine directory, this connection's own included
+    expect(denied).toContain(machine);
+    for (const path of [
+      bWork,
+      join(connectionDir(machine, "b"), "credential.json"),
+      join(connectionDir(machine, "c"), "policy.json"),
+      cWork,
+      join(state, "credential.json"),
+    ])
+      expect(isDenied(path), path).toBe(true);
+
+    // the CLI threads the machine directory: A cannot list B's or C's directories as project paths
+    for (const path of [bWork, cWork, connectionDir(machine, "b")]) {
+      const r = await cli(["policy", "add", "projectPaths", path]);
+      expect(r.code, path).toBe(2);
+    }
+    // and turning outside the sandbox on from A names the other connections
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...SANDBOX_OWNER_CEILING } });
+    const set = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
+    expect(set.code).toBe(0);
+    expect(set.out.split("\n")).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
   });
 });

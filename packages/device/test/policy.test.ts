@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { describeCeiling, policyCommand } from "../src/commands/policy.js";
+import { connectionDir } from "../src/connections.js";
 import { effectiveEgress, grantedHosts } from "../src/policy.js";
 import {
   DEFAULT_POLICY,
@@ -145,13 +146,16 @@ describe("grantedHosts", () => {
 
 describe("policy command", () => {
   let base: string;
+  let machine: string;
   let dir: string;
   let home: string;
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), "device-policy-"));
-    dir = join(base, "state");
+    // the machine layout: this connection's state is <machine>/connections/e
+    machine = join(base, "state");
+    dir = connectionDir(machine, "e");
     home = join(base, "home");
-    mkdirSync(dir);
+    mkdirSync(dir, { recursive: true });
     mkdirSync(home);
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
@@ -164,7 +168,7 @@ describe("policy command", () => {
       parse(argv),
       {
         stateDir: dir,
-        stateRoot: dir,
+        stateRoot: machine,
         home,
         cwd: base,
         out: (l) => out.push(l),
@@ -186,7 +190,7 @@ describe("policy command", () => {
       maxFrameBytes: 1_000_000,
     });
   const otherConnection = (id: string, workDir: string) => {
-    const connDir = join(dir, "connections", id);
+    const connDir = join(machine, "connections", id);
     mkdirSync(connDir, { recursive: true });
     writeCredential(connDir, {
       url: "https://y.test",
@@ -370,7 +374,7 @@ describe("policy command", () => {
   it("add refuses a logged-out connection's default working directory and the default state path", async () => {
     const outWork = join(home, "capybara-device", "out");
     mkdirSync(outWork, { recursive: true });
-    mkdirSync(join(dir, "connections", "out"), { recursive: true }); // no credential.json
+    mkdirSync(join(machine, "connections", "out"), { recursive: true }); // no credential.json
     const defaultState = join(home, ".config", "capybara-device");
     mkdirSync(defaultState, { recursive: true });
     for (const loggedIn of [false, true]) {

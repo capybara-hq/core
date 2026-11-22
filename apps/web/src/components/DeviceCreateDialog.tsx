@@ -27,7 +27,7 @@ import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useThisMachine } from "../lib/use-this-machine";
+import { useConnectThisMachine } from "../lib/use-this-machine";
 import { FormError } from "./form-error";
 
 /** How often the dialog reads the devices while it waits for a machine to connect. */
@@ -44,10 +44,11 @@ type Kind = "cloud" | "local";
  *   device is ready at once (its files and instance are made on first use): the dialog
  *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,
  *   no provider) keeps the dialog open with its copy.
- * - Local device: in the desktop shell (`device@1`) a primary "connect this machine" button first (the
- *   shell asks the person natively); the commands to run on the machine (install, `capybara-device login` with
- *   this deployment's address), each a CopyField (the code line with its copy button); the dialog then reads the devices
- *   until a local device it had not seen appears, and opens its page.
+ * - Local device: in the desktop shell (`device@2`) a primary "connect this machine" button first
+ *   (the shell asks the person natively and adds a connection into this org); the commands to run
+ *   on the machine (install, `capybara-device login` with this deployment's address), each a
+ *   CopyField (the code line with its copy button); the dialog then reads the devices until a
+ *   local device it had not seen appears, and opens its page.
  */
 export function DeviceCreateDialog({
   orgId,
@@ -170,13 +171,7 @@ export function DeviceCreateDialog({
             {error !== undefined && <FormError message={error} />}
           </Stack>
         ) : (
-          <LocalSteps
-            orgId={orgId}
-            onOpen={(id) => {
-              onClose();
-              router.push(`/devices/${encodeURIComponent(id)}`);
-            }}
-          />
+          <LocalSteps orgId={orgId} />
         )}
       </Stack>
     </Dialog>
@@ -227,72 +222,23 @@ function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Dev
 }
 
 /** The commands that connect a machine, shown while the dialog waits (`useWatchNewDevice`). */
-function LocalSteps({ orgId, onOpen }: { orgId: string; onOpen(deviceId: string): void }) {
+function LocalSteps({ orgId }: { orgId: string }) {
   const t = useTranslations("devices.create");
-  const { cap, status } = useThisMachine();
-  const [connectError, setConnectError] = useState<string>();
-  // `connect` runs inside the click-driven mutation, so the shell sees the person's activation
-  const connect = useAppMutation({
-    fn: () => {
-      if (cap === undefined) return Promise.resolve("cancelled" as const);
-      return cap.connect({ orgId });
-    },
-    invalidates: () => [keys.shell().deviceStatus()],
-  });
-  const onConnect = async () => {
-    if (connect.isPending) return;
-    setConnectError(undefined);
-    try {
-      await connect.mutateAsync(undefined);
-    } catch (e) {
-      const code = (e as { code?: unknown } | null)?.code;
-      if (code !== "cancelled") setConnectError(t("connectFailed"));
-    }
-  };
+  const { offered, pending, failed, connect } = useConnectThisMachine(orgId);
   // The deployment's address, read after mount (a server render has no window).
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
-  if (status?.state === "connected" && status.orgId === orgId) {
-    return (
-      <Stack gap={12}>
-        <Text variant="prose">
-          {t("thisMachineConnected", { state: t(`connection.${status.connection}`) })}
-        </Text>
-        <Stack direction="row">
-          <Button variant="primary" onClick={() => onOpen(status.deviceId)}>
-            {t("openDevice")}
-          </Button>
-        </Stack>
-      </Stack>
-    );
-  }
   return (
     <Stack gap={16}>
-      {cap !== undefined && status?.state === "not_connected" && (
+      {offered && (
         <Stack gap={8}>
           <Stack direction="row">
-            <Button
-              variant="primary"
-              loading={connect.isPending}
-              disabled={connect.isPending}
-              onClick={() => void onConnect()}
-            >
+            <Button variant="primary" loading={pending} disabled={pending} onClick={connect}>
               {t("connectMachine")}
             </Button>
           </Stack>
-          {connectError !== undefined && <FormError message={connectError} />}
+          {failed && <FormError message={t("connectFailed")} />}
         </Stack>
-      )}
-      {status?.state === "connected" && (
-        // connected to another org of this person: the terminal steps attach a second org
-        <Text variant="prose" tone="muted">
-          {t("thisMachineOtherOrg")}
-        </Text>
-      )}
-      {status?.state === "connected_elsewhere" && (
-        <Text variant="prose" tone="muted">
-          {t("connectedElsewhere", { origin: status.origin })}
-        </Text>
       )}
       <CopyField label={t("installStep")} value={DEVICE_INSTALL_COMMAND} />
       <CopyField label={t("loginStep")} value={origin === "" ? "" : deviceLoginCommand(origin)} />

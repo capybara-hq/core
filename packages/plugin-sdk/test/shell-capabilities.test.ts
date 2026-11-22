@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   type ChromeCapabilityV1,
-  type DeviceCapabilityV1,
+  type DeviceCapabilityV2,
   type DeviceCeilingRequest,
   MENU_ITEM_ID,
   type MenuCapabilityV1,
@@ -20,14 +20,14 @@ import {
   type ShellCallError,
   type ShellChromeTokens,
   type SignInCapabilityV1,
-  type ThisMachineStatus,
+  type ThisMachineConnection,
 } from "../src/index.js";
 
 describe("desktop shell capability types", () => {
   it("names the capability keys as name@major", () => {
     expect(SHELL_CAPABILITY_KEYS).toEqual({
       chrome: "chrome@1",
-      device: "device@1",
+      device: "device@2",
       notify: "notify@1",
       openExternal: "openExternal@1",
       signIn: "signIn@1",
@@ -47,13 +47,25 @@ describe("desktop shell capability types", () => {
     }
   });
 
-  it("types the device calls", () => {
-    expectTypeOf<ReturnType<DeviceCapabilityV1["connect"]>>().toEqualTypeOf<
-      Promise<"connected" | "cancelled">
+  it("device@2 acts per device and connects by org", () => {
+    expectTypeOf<DeviceCapabilityV2["pause"]>().parameters.toEqualTypeOf<[{ deviceId: string }]>();
+    expectTypeOf<Awaited<ReturnType<DeviceCapabilityV2["status"]>>>().toEqualTypeOf<{
+      connections: ThisMachineConnection[];
+    }>();
+    expectTypeOf<Awaited<ReturnType<DeviceCapabilityV2["connect"]>>>().toEqualTypeOf<
+      "connected" | "cancelled" | { error: string }
     >();
-    expectTypeOf<ReturnType<DeviceCapabilityV1["status"]>>().toEqualTypeOf<
-      Promise<ThisMachineStatus>
+    expectTypeOf<DeviceCapabilityV2["connect"]>().parameters.toEqualTypeOf<[{ orgId: string }]>();
+    expectTypeOf<DeviceCapabilityV2["running"]>().parameters.toEqualTypeOf<
+      [{ deviceId: string }]
     >();
+    expectTypeOf<DeviceCapabilityV2["setKeepAwake"]>().parameters.toEqualTypeOf<
+      [{ deviceId: string; mode: "off" | "while-busy" | "connected" }]
+    >();
+    expectTypeOf<DeviceCapabilityV2["onStatus"]>().toEqualTypeOf<(cb: () => void) => () => void>();
+  });
+
+  it("types the other desktop calls", () => {
     expectTypeOf<ReturnType<NotifyCapabilityV1["notify"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<OpenExternalCapabilityV1["open"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<SignInCapabilityV1["start"]>>().toEqualTypeOf<
@@ -65,17 +77,17 @@ describe("desktop shell capability types", () => {
   });
 
   it("takes a ceiling request as only the owner ceiling fields to change", () => {
-    expectTypeOf<
-      Parameters<DeviceCapabilityV1["requestCeiling"]>[0]
-    >().toEqualTypeOf<DeviceCeilingRequest>();
+    expectTypeOf<Parameters<DeviceCapabilityV2["requestCeiling"]>[0]>().toEqualTypeOf<
+      { deviceId: string } & DeviceCeilingRequest
+    >();
     expectTypeOf<DeviceCeilingRequest>().toEqualTypeOf<{
       outsideSandbox?: boolean;
       network?: "open" | "allowlist";
-      projectReach?: "workspace" | "os-user";
+      projectReach?: "machine" | "paths" | "workspace";
     }>();
     // a single field is a whole request: the others are never sent, so never touched
     expectTypeOf<{ network: "open" }>().toMatchTypeOf<DeviceCeilingRequest>();
-    expectTypeOf<ReturnType<DeviceCapabilityV1["requestCeiling"]>>().toEqualTypeOf<
+    expectTypeOf<ReturnType<DeviceCapabilityV2["requestCeiling"]>>().toEqualTypeOf<
       Promise<"applied" | "cancelled">
     >();
   });
