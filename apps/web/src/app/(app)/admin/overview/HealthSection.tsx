@@ -315,7 +315,7 @@ function ConnectionsGroup({ health, t }: { health: AdminHealth; t: T }) {
       v: joined(
         [
           part(t("deviceParts.online"), devices.online, t),
-          part(t("deviceParts.local"), devices.local, t),
+          part(t("deviceParts.dialIn"), devices.dialIn, t),
         ],
         " / ",
       ),

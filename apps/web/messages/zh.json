@@ -4177,7 +4177,7 @@
         },
         "deviceParts": {
           "online": "在线",
-          "local": "本地"
+          "dialIn": "本机"
         },
         "sandboxParts": {
           "running": "运行中",

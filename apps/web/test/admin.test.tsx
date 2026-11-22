@@ -167,7 +167,7 @@ const HEALTH = {
     failedLastDay: i === 0 ? 2 : 0,
   })),
   channels: { online: 5, offline: 1, webhook: 2, disabled: 1, error: 0 },
-  devices: { online: 3, local: 7 },
+  devices: { online: 3, dialIn: 7, byProvider: [{ provider: "device-local", devices: 7 }] },
   sandboxes: {
     running: 4,
     suspended: 2,
@@ -822,7 +822,7 @@ describe("/admin 概览（OverviewPage）", () => {
         `${c.online} 5 · ${c.offline} 1 · ${c.webhook} 2 · ${c.disabled} 1 · ${c.error} 0`,
       );
       expect(kvValue(box, h.connections.devices).textContent).toBe(
-        `${h.deviceParts.online} 3 / ${h.deviceParts.local} 7`,
+        `${h.deviceParts.online} 3 / ${h.deviceParts.dialIn} 7`,
       );
       expect(kvValue(box, h.connections.sandboxes).textContent).toBe(
         `${h.sandboxParts.running} 4 · ${h.sandboxParts.suspended} 2`,
@@ -893,7 +893,11 @@ describe("/admin 概览（OverviewPage）", () => {
             roles: null,
             queues: null,
             channels: { ...HEALTH.channels, online: null, offline: null },
-            devices: { online: null, local: 7 },
+            devices: {
+              online: null,
+              dialIn: 7,
+              byProvider: [{ provider: "device-local", devices: 7 }],
+            },
             unavailable: ["redis"],
           }),
       }),
@@ -926,7 +930,7 @@ describe("/admin 概览（OverviewPage）", () => {
           json(200, {
             ...HEALTH,
             channels: { online: 5, offline: null, webhook: null, disabled: null, error: null },
-            devices: { online: 3, local: null },
+            devices: { online: 3, dialIn: null, byProvider: null },
             sandboxes: null,
             unavailable: ["database"],
           }),
@@ -937,7 +941,7 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(kvValue(box, h.connections.sandboxes).textContent).toBe(h.unavailable);
     expect(within(box).queryByText(h.connections.byProvider)).toBeNull();
     expect(kvValue(box, h.connections.devices).textContent).toBe(
-      `${h.deviceParts.online} 3 / ${h.deviceParts.local} ${h.unavailable}`,
+      `${h.deviceParts.online} 3 / ${h.deviceParts.dialIn} ${h.unavailable}`,
     );
     expect(within(box).getByRole("table", { name: h.groups.queues })).toBeTruthy();
   });

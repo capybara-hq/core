@@ -4189,7 +4189,7 @@
         },
         "deviceParts": {
           "online": "Online",
-          "local": "Local"
+          "dialIn": "On machines"
         },
         "sandboxParts": {
           "running": "Running",

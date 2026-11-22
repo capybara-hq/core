@@ -324,7 +324,7 @@ const ROUTES: Routes = {
         },
       ],
       channels: { online: 0, offline: 0, webhook: 0, disabled: 0, error: 0 },
-      devices: { online: 0, local: 0 },
+      devices: { online: 0, dialIn: 0, byProvider: [] },
       sandboxes: { running: 0, suspended: 0, byProvider: [] },
       unavailable: [],
     }),

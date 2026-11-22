@@ -185,7 +185,7 @@ const HEALTH: AdminHealth = {
     QUEUE("cap-kernel-evals"),
   ],
   channels: { online: 5, offline: 1, webhook: 2, disabled: 1, error: 0 },
-  devices: { online: 3, local: 7 },
+  devices: { online: 3, dialIn: 7, byProvider: [{ provider: "device-local", devices: 7 }] },
   sandboxes: {
     running: 4,
     suspended: 2,
