@@ -179,7 +179,8 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
         // biome-ignore lint/suspicious/noArrayIndexKey: groups are positional
         <SheetGroup key={n} part="action-sheet-group">
           {g.map((i) =>
-            i.href !== undefined ? (
+            // a disabled link (a primary while it loads) is a disabled row: nothing to follow
+            i.href !== undefined && i.disabled !== true ? (
               // The wrapper hears the link's click: the sheet closes while the link navigates.
               // biome-ignore lint/a11y/noStaticElementInteractions: the link inside is the control
               // biome-ignore lint/a11y/useKeyWithClickEvents: the link's Enter fires the same click

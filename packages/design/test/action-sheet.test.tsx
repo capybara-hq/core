@@ -80,6 +80,16 @@ describe("ActionSheet", () => {
     await waitFor(() => expect(archive).toHaveBeenCalledOnce());
   });
 
+  it("a disabled link item is a disabled row: marked disabled, nothing to follow", async () => {
+    render(<Sheet items={[{ label: "开始会话", href: "/agents/a1", disabled: true }]} />);
+    expect(screen.queryByRole("link", { name: "开始会话" })).toBeNull();
+    const row = screen.getByRole("button", { name: "开始会话" });
+    expect((row as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(row);
+    // the sheet stays open: a disabled row is no pick
+    expect(document.querySelector('[data-part="action-sheet"]')).not.toBeNull();
+  });
+
   it("a link item is a link through the design link, and following it closes the sheet", async () => {
     const DesignLink = ({ href, children, ...rest }: ComponentProps<"a">) => (
       <a {...rest} href={href} data-design-link="true" onClick={(e) => e.preventDefault()}>
