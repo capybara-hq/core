@@ -18,7 +18,10 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | `message.user.bubble` | 1 | none | The bubble of a person's message (inside the full-width `message.user` row). |
 | `message.assistant` | 1 | `aria-busy` | An assistant turn; `aria-busy` while its text is still streaming (the live reply). |
 | `tool-row` | 1 | `aria-expanded` | A tool call line. |
-| `composer` | 1 | `aria-busy` | The composer box. |
+| `composer` | 1 | `aria-busy` | The whole composer: the token warning, the attachments, the text box and the control row. From 600 up with a fine pointer it is the box; in the mobile form (below 600, or a touch device at any width) it draws nothing and `composer.box` is the floating pill, the control row around it. |
+| `composer.box` | 1 | none | The composer's text box: the text with the attach and send buttons. In the mobile form it is the floating pill (round ends, `:focus-within` while the text or one of its buttons has focus, never for the control row); from 600 up with a fine pointer it draws no box of its own (`display: contents`). |
+| `composer.options` | 1 | `aria-expanded` | The composer's settings chip (model, effort, device, permission) opening the options sheet: in the mobile form only, above the pill. |
+| `composer.send` | 1 | `disabled`, `aria-busy` | The composer's send button, and the stop button in its place while a run is going (its `aria-label` tells them apart). In the mobile form a round button inside `composer.box`. |
 | `properties-panel` | 1 | none | The conversation properties panel. |
 | `section` | 1 | none | A property section or form section. |
 | `right-panel` | 1 | none | A full-height right pane. |
@@ -139,12 +142,39 @@ A tool call line.
 
 ## `composer`
 
-The composer box.
+The whole composer: the token warning, the attachments, the text box and the control row. From 600 up with a fine pointer it is the box; in the mobile form (below 600, or a touch device at any width) it draws nothing and `composer.box` is the floating pill, the control row around it.
 
 - Version: 1
 - States: `aria-busy`
 - Owner: `packages/design/src/conversation/composer.tsx`
 - Selector: `[data-cap-part~="composer"]`
+
+## `composer.box`
+
+The composer's text box: the text with the attach and send buttons. In the mobile form it is the floating pill (round ends, `:focus-within` while the text or one of its buttons has focus, never for the control row); from 600 up with a fine pointer it draws no box of its own (`display: contents`).
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/conversation/composer.tsx`
+- Selector: `[data-cap-part~="composer.box"]`
+
+## `composer.options`
+
+The composer's settings chip (model, effort, device, permission) opening the options sheet: in the mobile form only, above the pill.
+
+- Version: 1
+- States: `aria-expanded`
+- Owner: `packages/design/src/conversation/composer-options.tsx`
+- Selector: `[data-cap-part~="composer.options"]`
+
+## `composer.send`
+
+The composer's send button, and the stop button in its place while a run is going (its `aria-label` tells them apart). In the mobile form a round button inside `composer.box`.
+
+- Version: 1
+- States: `disabled`, `aria-busy`
+- Owner: `packages/design/src/conversation/composer.tsx`
+- Selector: `[data-cap-part~="composer.send"]`
 
 ## `properties-panel`
 
@@ -188,7 +218,7 @@ Every button.
 
 - Version: 1
 - States: `disabled`
-- Owner: `packages/design/src/controls/button.tsx`
+- Owner: `packages/design/src/controls/button.tsx`, `packages/design/src/conversation/composer.tsx`, `packages/design/src/conversation/composer-options.tsx`
 - Selector: `[data-cap-part~="button"]`
 
 ## `button.primary`

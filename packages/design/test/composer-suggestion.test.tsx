@@ -309,7 +309,7 @@ describe("ComposerBox suggestion: the touch button", () => {
     expect(document.querySelector('[data-part="composer-suggestion-use"]')).toBeNull();
   });
 
-  it("on a touch device stands before send and fills the draft without focusing it", async () => {
+  it("on a touch device sits in the control row, outside the pill, and fills the draft without focusing it", async () => {
     touchPointer();
     const user = userEvent.setup();
     const onDismiss = vi.fn();
@@ -320,8 +320,9 @@ describe("ComposerBox suggestion: the touch button", () => {
     expect(button.getAttribute("data-density")).toBe("dense");
     expect(button.textContent).toBe("Use suggestion");
     expect(button.querySelector("svg")).not.toBeNull();
-    const send = document.querySelector('[data-part="send"]');
-    expect(button.compareDocumentPosition(send as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // the chip row's end in the mobile form (above the pill), before send's line above 600
+    expect(button.closest('[data-part="composer-bar"]')).not.toBeNull();
+    expect(button.closest('[data-part="composer-box"]')).toBeNull();
     await user.click(button);
     expect(input().value).toBe(TEXT);
     expect(onDismiss).toHaveBeenCalledTimes(1);

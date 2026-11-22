@@ -509,6 +509,15 @@ describe("the new conversation on a phone (§5.4)", () => {
       /\.cb-conv-new\[data-quick="true"\] \.cb-composer-bar \[data-part="quick-actions"\] \{\s*display: none;/,
     );
     expect(phoneCss).toMatch(/\.cb-conv-new-composer \{\s*position: sticky;\s*bottom: 0;/);
+    // docked as the conversation's composer is: space.3 over the home indicator's inset (space.3
+    // alone while the keyboard covers it), the scroll adding no bottom padding of its own
+    expect(phoneCss).toMatch(
+      /\.cb-conv-new-composer \{[^}]*padding-bottom: calc\(var\(--cb-space-3\) \+ var\(--cb-inset-bottom\)\);/,
+    );
+    expect(phoneCss).toMatch(
+      /\.cb-shell\[data-keyboard="open"\] \.cb-conv-new-composer \{\s*padding-bottom: var\(--cb-space-3\);/,
+    );
+    expect(phoneCss).toMatch(/\.cb-conv-scroll\[data-center="true"\] \{[^}]*padding-bottom: 0;/);
     expect(phoneCss).toMatch(
       /\.cb-conv-new \.cb-agent-row \{\s*flex-wrap: nowrap;\s*overflow-x: auto;/,
     );

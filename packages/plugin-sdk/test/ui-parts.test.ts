@@ -4,7 +4,7 @@ import { UI_PART_NAMES, UI_PARTS, uiPart } from "../src/index.js";
 describe("ui part catalog", () => {
   it("part names are unique and dotted lower-case", () => {
     const names = UI_PARTS.map((p) => p.name);
-    expect(UI_PARTS).toHaveLength(30);
+    expect(UI_PARTS).toHaveLength(33);
     expect(new Set(names).size).toBe(names.length);
     expect([...UI_PART_NAMES]).toEqual(names);
     for (const n of names) expect(n).toMatch(/^[a-z]+(-[a-z]+)*(\.[a-z]+(-[a-z]+)*)*$/);
@@ -15,6 +15,10 @@ describe("ui part catalog", () => {
     expect(uiPart("switch")?.states).toEqual(["aria-checked", "disabled"]);
     expect(uiPart("agent-chip")?.states).toEqual(["aria-pressed"]);
     expect(uiPart("message.assistant")?.states).toEqual(["aria-busy"]);
+    // the composer's mobile form: the pill, the settings chip and send (core#626)
+    expect(uiPart("composer.box")?.states).toEqual([]);
+    expect(uiPart("composer.options")?.states).toEqual(["aria-expanded"]);
+    expect(uiPart("composer.send")?.states).toEqual(["disabled", "aria-busy"]);
   });
 
   it("owners are under packages/design/src or apps/web/src", () => {

@@ -1280,13 +1280,24 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
   );
 }
 
-function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }) {
+function TemplateBlock({
+  state,
+  live,
+  shut,
+}: {
+  state: TemplateState;
+  live?: boolean;
+  /** The right area shut at first (the live demo's `?state=thread`). */
+  shut?: boolean;
+}) {
   const [right, setRight] = useState<ConversationPageProps["right"]>(
-    state === "properties" || state === "properties-sheet"
-      ? "properties"
-      : state === "new"
-        ? "none"
-        : "panel",
+    shut
+      ? "none"
+      : state === "properties" || state === "properties-sheet"
+        ? "properties"
+        : state === "new"
+          ? "none"
+          : "panel",
   );
   const [panel, setPanel] = useState<string>(state === "subagent-panel" ? "subagent" : "files");
   // The live page keeps the right area in the URL hash, as the app does (`#properties`,
@@ -1481,7 +1492,20 @@ function templateConversationBlocks(): ReactNode {
  * a sheet below 1280), with the file panel open; the interaction spec drives it.
  */
 export function ConversationTemplateDemo() {
-  return <TemplateBlock state="file-panel" live />;
+  // `?state=new`: the new conversation page; `?state=thread`: the thread with the right area shut
+  // (the compact composer checks). Read after hydration, so the server render stays the file panel.
+  const [state, setState] = useState<"file-panel" | "new" | "thread">("file-panel");
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("state");
+    if (q !== "new" && q !== "thread") return;
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    setState(q);
+  }, []);
+  return state === "thread" ? (
+    <TemplateBlock key={state} state="file-panel" live shut />
+  ) : (
+    <TemplateBlock key={state} state={state} live />
+  );
 }
 
 export const CONVERSATION_PAGE_BLOCKS = {

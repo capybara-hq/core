@@ -54,26 +54,34 @@ function touch(selector: string): Record<string, string> {
 
 describe("touch rules (stylesheets)", () => {
   it("the composer pill is composer high; its radius is half that, so a grown box is no oval", () => {
-    const pill = touch(".cb-composer::before");
+    // the text box itself (part composer.box), never a pseudo-element a theme's ::before replaces
+    const pill = touch(".cb-composer-box");
+    expect(pill.display).toBe("grid");
     expect(pill["min-height"]).toBe("var(--cb-touch-composer)");
     expect(pill["border-radius"]).toBe("calc(var(--cb-touch-composer) / 2)");
+    expect(rules.filter((r) => r.selector.includes(".cb-composer::before"))).toEqual([]);
+    // its focus is the text's own, on the pill alone (the chip row outside stays neutral)
+    expect(touch(".cb-composer-box:has(.cb-composer-input:focus)")["border-color"]).toBe(
+      "var(--cb-accent)",
+    );
   });
 
   it("＋ and send sit at the bottom of a grown composer, centred on its last line (T27 review)", () => {
-    const attach = touch(".cb-composer-bar > .cb-icon-btn:first-child");
-    const send = touch(".cb-composer-bar > .cb-send.cb-btn");
+    // inside the pill's 1px border: 1px less than on a borderless pill
+    const attach = touch(".cb-composer-box > .cb-composer-attach");
+    const send = touch(".cb-composer-box > .cb-send.cb-btn");
     expect(attach["align-self"]).toBe("end");
     expect(attach["margin-block-end"]).toBe(
-      "calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2)",
+      "calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2 - 1px)",
     );
     expect(send["align-self"]).toBe("end");
     expect(send["margin-block-end"]).toBe(
-      "calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2)",
+      "calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px)",
     );
   });
 
   it("send is a float-sized round accent button", () => {
-    const send = touch(".cb-composer-bar > .cb-send.cb-btn");
+    const send = touch(".cb-composer-box > .cb-send.cb-btn");
     expect(send.width).toBe("var(--cb-touch-float)");
     expect(send.height).toBe("var(--cb-touch-float)");
     expect(send["border-radius"]).toBe("var(--cb-radius-pill)");
@@ -92,13 +100,31 @@ describe("touch rules (stylesheets)", () => {
     const composer = touch(".cb-conv-composer");
     expect(composer.position).toBe("absolute");
     expect(composer["padding-bottom"]).toContain("--cb-inset-bottom");
-    expect(touch(".cb-conv-scroll")["padding-bottom"]).toContain("--cb-touch-composer");
+    expect(touch('.cb-conv-scroll:not([data-center="true"])')["padding-bottom"]).toContain(
+      "--cb-touch-composer",
+    );
     // the page lifts its column by the keyboard's height, once
     const page = rules.find((r) => r.at === null && r.selector === ".cb-conv-page");
     expect(page?.decls["padding-bottom"]).toContain("--cb-keyboard-inset");
     expect(touch('.cb-shell[data-keyboard="open"] .cb-conv-composer')["padding-bottom"]).toBe(
       "var(--cb-space-3)",
     );
+  });
+
+  it("the new conversation's scroll keeps no floating composer reserve (its composer is in it)", () => {
+    // The new conversation draws its composer inside its scroll (sticky at the bottom on compact),
+    // never as the floating composer, and measures no `--cb-composer-h`: a reserve for the floating
+    // composer there leaves an empty band (~128 px) under the composer.
+    for (const r of rules) {
+      if (r.at !== MOBILE_SIZE_QUERY) continue;
+      for (const sel of r.selector.split(",").map((s) => s.trim())) {
+        if (!sel.startsWith(".cb-conv-scroll") || sel.includes(':not([data-center="true"])')) {
+          continue;
+        }
+        expect(r.decls["padding-bottom"] ?? "", sel).not.toContain("--cb-touch-composer");
+        expect(r.decls["padding-bottom"] ?? "", sel).not.toContain("--cb-composer-h");
+      }
+    }
   });
 
   it("the command is set in the code font", () => {
@@ -140,17 +166,17 @@ describe("the composer pill", () => {
   it("holds attach, the input and send; stop while running; no voice button", () => {
     touchDevice();
     wrap(box());
-    const bar = document.querySelector('[data-part="composer-bar"]') as HTMLElement;
-    expect(within(bar).getByRole("button", { name: "添加附件" })).toBeTruthy();
-    expect(bar.querySelector(".cb-send")).not.toBeNull();
-    expect(document.querySelectorAll("textarea")).toHaveLength(1);
-    const labels = [...bar.querySelectorAll("button")].map(
+    const pill = document.querySelector('[data-cap-part~="composer.box"]') as HTMLElement;
+    expect(within(pill).getByRole("button", { name: "添加附件" })).toBeTruthy();
+    expect(pill.querySelector(".cb-send")).not.toBeNull();
+    expect(pill.querySelectorAll("textarea")).toHaveLength(1);
+    const labels = [...pill.querySelectorAll("button")].map(
       (b) => b.getAttribute("aria-label") ?? "",
     );
     expect(labels.filter((l) => /voice|dictat|speech|语音|麦克风|听写/i.test(l))).toEqual([]);
-    // the pill's own buttons: attach first, send last
-    expect(labels[0]).toBe("添加附件");
-    expect(labels.at(-1)).toBe("发送");
+    // the pill's own buttons: attach, then send; the control row sits outside it
+    expect(labels).toEqual(["添加附件", "发送"]);
+    expect(pill.querySelector('[data-part="composer-bar"]')).toBeNull();
     cleanup();
     wrap(box({ send: { mode: "stop", onClick: noop } }));
     expect(document.querySelector(".cb-stop")).not.toBeNull();
@@ -168,15 +194,16 @@ describe("the composer pill", () => {
 
 describe("outside touch the composer and thread keep their base rules", () => {
   const base = (sel: string) => rules.find((r) => r.at === null && r.selector === sel)?.decls;
-  it("the frame is still a column box with its border, radius and shadow", () => {
+  it("the frame is still the box, with its border, radius and shadow", () => {
     expect(base(".cb-composer")).toMatchObject({
-      display: "flex",
-      "flex-direction": "column",
+      display: "grid",
       border: "1px solid var(--cb-line)",
       "border-radius": "var(--cb-radius-md)",
       "box-shadow": "var(--cb-shadow-float)",
     });
     expect(base(".cb-composer-bar")).toMatchObject({ display: "flex" });
+    // the text box draws nothing of its own outside the mobile form
+    expect(base(".cb-composer-box")).toMatchObject({ display: "contents" });
     expect(
       rules.some(
         (r) =>
@@ -185,19 +212,42 @@ describe("outside touch the composer and thread keep their base rules", () => {
     ).toBe(true);
     expect(base(".cb-hcard-actions")?.["flex-wrap"]).toBe("wrap");
   });
-  it("no touch rule sits outside the one touch block, and every ::before / grid rule is inside it", () => {
-    const grid = rules.filter(
-      (r) =>
-        r.at !== MOBILE_SIZE_QUERY && r.selector.startsWith(".cb-composer") && r.decls["grid-row"],
-    );
-    expect(grid).toEqual([]);
+  it("outside the touch block the grid keeps one line of ＋ · control row · send under the text", () => {
+    const rows = rules
+      .filter(
+        (r) =>
+          r.at !== MOBILE_SIZE_QUERY &&
+          r.selector.startsWith(".cb-composer") &&
+          r.decls["grid-row"],
+      )
+      .map((r) => [r.selector, r.decls["grid-row"], r.decls["grid-column"]]);
+    expect(rows).toEqual([
+      [
+        ".cb-composer-box > .cb-composer-input, .cb-composer-box > .cb-composer-line",
+        "3",
+        "1 / -1",
+      ],
+      [".cb-composer-box > .cb-composer-attach", "4", "1"],
+      [".cb-composer-bar", "4", "2"],
+      [".cb-composer-box > .cb-send, .cb-composer-box > .cb-stop", "4", "3"],
+    ]);
   });
-  it("the DOM order of the composer bar is the same", () => {
+  it("the DOM order is the text, ＋, send, then the control row (one order for both forms)", () => {
     wrap(box());
-    const bar = document.querySelector('[data-part="composer-bar"]') as HTMLElement;
-    const first = bar.firstElementChild as HTMLElement;
-    expect(first.getAttribute("aria-label")).toBe("添加附件");
-    expect(bar.lastElementChild?.className).toContain("cb-send");
+    const frame = document.querySelector('[data-part="composer"]') as HTMLElement;
+    expect(
+      [...frame.querySelectorAll("textarea, button")].map(
+        (el) => el.getAttribute("aria-label") ?? el.tagName,
+      ),
+    ).toEqual([
+      "TEXTAREA",
+      "添加附件",
+      "发送",
+      "设备: 个人设备",
+      "模型: DeepSeek",
+      "思考档位: 中",
+      "会话选项: DeepSeek · 中 · 个人设备",
+    ]);
   });
 });
 

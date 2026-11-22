@@ -13,6 +13,9 @@ export type UiPartName =
   | "message.assistant"
   | "tool-row"
   | "composer"
+  | "composer.box"
+  | "composer.options"
+  | "composer.send"
   | "properties-panel"
   | "section"
   | "right-panel"
@@ -46,6 +49,9 @@ export const UI_PART_NAMES: readonly UiPartName[] = [
   "message.assistant",
   "tool-row",
   "composer",
+  "composer.box",
+  "composer.options",
+  "composer.send",
   "properties-panel",
   "section",
   "right-panel",

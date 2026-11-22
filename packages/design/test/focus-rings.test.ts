@@ -83,7 +83,7 @@ const TEXT_ENTRY = new Set([
   ".cb-stepper:focus-within",
   ".cb-slider-input:focus",
   ".cb-composer:has(.cb-composer-input:focus)",
-  ".cb-composer:has(.cb-composer-input:focus)::before",
+  ".cb-composer-box:has(.cb-composer-input:focus)",
 ]);
 
 describe("focus rings", () => {

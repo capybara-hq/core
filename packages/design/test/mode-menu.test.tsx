@@ -275,7 +275,9 @@ describe("ComposerBox with a mode menu", () => {
       el.getAttribute("data-part"),
     );
     expect(parts.indexOf("composer-mode")).toBeGreaterThan(parts.indexOf("composer-pickers"));
-    expect(parts.indexOf("composer-mode")).toBeLessThan(parts.indexOf("send"));
+    // the row's end: send follows in the text box (part composer.box), on the same line above 600
+    expect(bar.lastElementChild?.getAttribute("data-part")).toBe("composer-mode");
+    expect(document.querySelector('[data-part="composer-box"] [data-part="send"]')).not.toBeNull();
     expect(
       within(bar).getByRole("button", { name: "Permissions: Approve for me: Effort High" }),
     ).toBeTruthy();
