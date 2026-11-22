@@ -59,6 +59,8 @@ listenForTraversals();
  * this very history entry: the same location and the same Navigation API entry, or without that
  * API the same history length (a later push to the same location changes it). A recorded
  * traversal for anything else is stale and dropped, so it never restores a later fresh visit.
+ * Limit of the fallback (no Navigation API): a later `replaceState` to the same location, or a
+ * push from mid-history that leaves the length unchanged, is not told apart from the traversal.
  */
 export function takeTraversal(): boolean {
   if (window.event?.type === "popstate") {
@@ -107,11 +109,12 @@ export function writeScroll(key: string, top: number): void {
  * animation frame). A traversal to a location (the list mounting, or the same list kept when only
  * the query changed) owes the stored position: on mount it is set in the scroller's ref, before
  * the frame's first read, so the scrolled title and the position come back together and nothing
- * paints at the top first; on an update in a layout effect. While the content is shorter than the
- * owed position (still loading, rows still arriving) the scroll is not stored, and the restore is
- * retried on every render and every size change of the body, up to {@link MAX_TRIES} times or
- * until a person scrolls, then settles for the furthest position there is. Returns the ref for
- * the template root.
+ * paints at the top first; on an update (only when this list's location changed within the same
+ * path) in a layout effect. While the content is shorter than the owed position (still loading,
+ * rows still arriving) the scroller goes as far as there is, the scroll is not stored, and the
+ * restore is retried on every render and every size change of the body, up to {@link MAX_TRIES}
+ * times. A person's gesture drops what is owed without moving the scroller: from then on the
+ * position is theirs. Returns the ref for the template root.
  */
 export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) => void {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -119,6 +122,12 @@ export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) =
   const tries = useRef(0);
   const ready = useRef(loaded);
   ready.current = loaded;
+  /** The location this list last rendered at (its own, not the next page's). */
+  const seen = useRef<string | null>(null);
+  const watched = useRef<{ ro: ResizeObserver | null; body: Element | null }>({
+    ro: null,
+    body: null,
+  });
   const take = useCallback(() => {
     if (!takeTraversal()) return;
     owed.current = readScroll(here());
@@ -128,8 +137,9 @@ export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) =
     const want = owed.current;
     if (want === null || !ready.current) return;
     const max = Math.max(el.scrollHeight - el.clientHeight, 0);
-    if (max < want && ++tries.current <= MAX_TRIES) return;
+    // as far as there is now; keep waiting while the content may still grow
     el.scrollTop = Math.min(want, max);
+    if (max < want && ++tries.current <= MAX_TRIES) return;
     owed.current = null;
   }, []);
   const ref = useCallback(
@@ -137,16 +147,31 @@ export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) =
       setScroller(el);
       if (el === null) return;
       listenForTraversals();
+      seen.current = here();
       take();
       settle(el);
     },
     [take, settle],
   );
   // Every render: a list that loaded or grew takes what it is owed, and a traversal that changed
-  // only the query (the same list kept mounted) owes the position stored for the new location.
+  // only the query (the same list kept mounted) owes the position stored for the new location. A
+  // list re-rendering after the location left its path (the next page's traversal) takes nothing.
+  // The body watched for growth is the one there now (a remounted body is followed).
   useLayoutEffect(() => {
     if (!scroller) return;
-    take();
+    const url = here();
+    if (url !== seen.current) {
+      const samePath = seen.current?.split("?")[0] === window.location.pathname;
+      seen.current = url;
+      if (samePath) take();
+    }
+    const body = scroller.querySelector(".cb-body");
+    const w = watched.current;
+    if (w.ro && body !== w.body) {
+      if (w.body) w.ro.unobserve(w.body);
+      if (body) w.ro.observe(body);
+      w.body = body;
+    }
     settle(scroller);
   });
   useLayoutEffect(() => {
@@ -165,20 +190,20 @@ export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) =
         save();
       });
     };
+    // a person scrolls: the owed position is dropped where the scroller is, never jumped to
     const onGesture = () => {
-      if (owed.current === null) return;
-      tries.current = MAX_TRIES;
-      settle(scroller);
       owed.current = null;
     };
-    const body = scroller.querySelector(".cb-body");
     const grown =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => settle(scroller));
+    const body = scroller.querySelector(".cb-body");
     if (body) grown?.observe(body);
+    watched.current = { ro: grown, body };
     scroller.addEventListener("scroll", onScroll, { passive: true });
     for (const g of GESTURES) scroller.addEventListener(g, onGesture, { passive: true });
     return () => {
       grown?.disconnect();
+      watched.current = { ro: null, body: null };
       scroller.removeEventListener("scroll", onScroll);
       for (const g of GESTURES) scroller.removeEventListener(g, onGesture);
       if (frame !== 0) {

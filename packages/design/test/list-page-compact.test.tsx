@@ -547,6 +547,76 @@ describe("scroll restoration", () => {
     expect(root(view.container)?.scrollTop).toBe(1200);
   });
 
+  it("a person's gesture drops an owed position the list never reaches, without a jump", () => {
+    scrolledAway(1200);
+    geo.g.content = 700;
+    popstate();
+    const view = renderAtClass(390, agents());
+    const el = root(view.container) as HTMLElement;
+    // as far as there is: the list may still grow
+    expect(el.scrollTop).toBe(100);
+    for (const g of ["touchstart", "wheel", "pointerdown"]) {
+      el.dispatchEvent(new Event(g));
+      expect(el.scrollTop).toBe(100);
+    }
+    // from then on the position is the person's: stored, and never pulled to the old one
+    geo.scroll(view.container, 50);
+    expect(sessionStorage.getItem("cb-list-scroll:/agents")).toBe("50");
+    geo.g.content = 2000;
+    rerender(view, agents());
+    expect(el.scrollTop).toBe(50);
+  });
+
+  it("the old list re-rendering after a traversal away leaves the position to the next list", () => {
+    sessionStorage.setItem("cb-list-scroll:/agents/a1", "300");
+    const old = renderAtClass(390, agents());
+    // back to a detail-side list at another path; the old list renders once more before it goes
+    window.history.replaceState(null, "", "/agents/a1");
+    popstate();
+    rerender(old, agents({ header: header({ title: "智能体 " }) }));
+    expect(root(old.container)?.scrollTop).toBe(0);
+    leave(old);
+    const next = renderAtClass(390, agents());
+    expect(root(next.container)?.scrollTop).toBe(300);
+  });
+
+  it("a body that grows without a render finishes the restore (the body is watched)", () => {
+    const observers: { cb: () => void; els: Element[] }[] = [];
+    const real = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      els: Element[] = [];
+      constructor(cb: () => void) {
+        observers.push({ cb, els: this.els });
+      }
+      observe(el: Element) {
+        this.els.push(el);
+      }
+      unobserve(el: Element) {
+        this.els.splice(this.els.indexOf(el), 1);
+      }
+      disconnect() {
+        this.els.length = 0;
+      }
+    } as unknown as typeof ResizeObserver;
+    try {
+      scrolledAway(1200);
+      geo.g.content = 700;
+      popstate();
+      const view = renderAtClass(390, agents());
+      const body = view.container.querySelector(".cb-body");
+      // other parts watch their own boxes; the restore watches the body
+      const live = observers.filter((o) => o.els.some((e) => e.classList.contains("cb-body")));
+      expect(live.map((o) => o.els)).toEqual([[body]]);
+      geo.g.content = 2000;
+      act(() => {
+        for (const o of live) o.cb();
+      });
+      expect(root(view.container)?.scrollTop).toBe(1200);
+    } finally {
+      globalThis.ResizeObserver = real;
+    }
+  });
+
   it("keeps at most 50 stored locations", () => {
     const view = renderAtClass(390, agents());
     for (let i = 0; i < 55; i++) {
