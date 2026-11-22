@@ -7,7 +7,9 @@ export {
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
+export { type ClassForm, ClassForms, type ClassFormsProps, useClassForm } from "./class-forms";
 export { ClassSwap } from "./class-swap";
+export { type CompactScroll, useCompactScroll } from "./compact-scroll";
 export {
   ConversationList,
   type ConversationListActions,
@@ -52,7 +54,12 @@ export {
   ShellReady,
   useShellEnvironment,
 } from "./shell-environment";
-export { type ShellPage, useRegisterShellPage } from "./shell-page";
+export {
+  type ShellPage,
+  type ShellPrimary,
+  useRegisterScrolledTitle,
+  useRegisterShellPage,
+} from "./shell-page";
 export {
   initialOf,
   type SetupStep,

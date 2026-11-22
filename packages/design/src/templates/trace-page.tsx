@@ -5,7 +5,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { Body, type PageHeaderProps } from "../shell/index";
 import { useRegisterShellPage } from "../shell/shell-page";
-import { LoadingCards, LoadingStats, loadingHeader, TemplateHead } from "./frame";
+import { LoadingCards, LoadingStats, loadingHeader, TemplateFrame, TemplateHead } from "./frame";
 
 /** Waterfall rows and stat slots a loading trace page draws when it is not told how many (§5.11). */
 const LOADING_SPANS = 6;
@@ -95,10 +95,10 @@ export function TracePage({
     </>
   );
   return (
-    <div className="cb-template" data-template="TracePage" data-width="content">
+    <TemplateFrame template="TracePage">
       <SkeletonGroup label={header.title || t("table.loading")} active={loading !== undefined}>
         {page}
       </SkeletonGroup>
-    </div>
+    </TemplateFrame>
   );
 }

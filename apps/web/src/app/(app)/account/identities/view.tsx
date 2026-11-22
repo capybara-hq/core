@@ -184,7 +184,7 @@ function Identities({ accountId }: { accountId: string }) {
         title={target ? t("unlinkTitle", { name: nameOf(target) }) : t("unlink")}
         danger
         footer={
-          <Stack direction="row" gap={8} justify="end">
+          <>
             <Button disabled={pending} onClick={() => setTarget(undefined)}>
               {tc("cancel")}
             </Button>
@@ -197,7 +197,7 @@ function Identities({ accountId }: { accountId: string }) {
             >
               {t("unlink")}
             </Button>
-          </Stack>
+          </>
         }
       >
         <Stack gap={8}>

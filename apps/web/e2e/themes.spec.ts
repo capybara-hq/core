@@ -441,6 +441,11 @@ test.describe("theme brand coverage", () => {
    * route reaches the root 404 (any other unknown path falls to the workspace's `[...rest]`).
    */
   const NO_PAGE = "/dev/ui/no-such-page";
+  /** The brand cookie's name on the page's origin: `__Host-cb-brand` over https, else `cb-brand`. */
+  const brandCookie = (page: Page) =>
+    new URL(page.url()).protocol === "https:" ? "__Host-cb-brand" : "cb-brand";
+  const hasBrandCookie = async (page: Page) =>
+    (await page.context().cookies()).some((c) => c.name === brandCookie(page));
   const themeLink = (page: Page) =>
     page.locator('head link[rel="stylesheet"][data-precedence="theme"]:not([disabled])');
 
@@ -475,18 +480,14 @@ test.describe("theme brand coverage", () => {
     try {
       await visitor.goto("/login");
       await hydrated(visitor);
-      await expect
-        .poll(async () => (await visitor.context().cookies()).some((c) => c.name === "cb-brand"))
-        .toBe(true);
+      await expect.poll(() => hasBrandCookie(visitor)).toBe(true);
       await setPlatformTheme(page, null);
       await visitor.goto(NO_PAGE);
       await expect(themeLink(visitor)).toHaveAttribute("href", brandKit.cssUrl);
       // a themed document under the built-in theme deletes it
       await visitor.goto("/login");
       await hydrated(visitor);
-      await expect
-        .poll(async () => (await visitor.context().cookies()).some((c) => c.name === "cb-brand"))
-        .toBe(false);
+      await expect.poll(() => hasBrandCookie(visitor)).toBe(false);
     } finally {
       await visitor.context().close();
       await setPlatformTheme(page, null);

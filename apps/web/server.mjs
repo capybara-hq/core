@@ -6,7 +6,8 @@
 // process knows. The /api proxy route forwards that address only when the marker matches.
 // Details: src/lib/peer.ts. Run the kernel with `http.trustProxy: 1` behind this tier.
 // Behind a TLS proxy / load balancer, set CAPYBARA_WEB_TRUST_PROXY (hop count or IPs / CIDRs) so the
-// client address is taken from that proxy's x-forwarded-for instead of the proxy's own address.
+// client address is taken from that proxy's x-forwarded-for instead of the proxy's own address,
+// and its x-forwarded-proto is kept (Next's request protocol: Secure and the __Host- cookie name).
 //
 // With CAPYBARA_WEB_OBJECT_STORE_URL set, it also proxies the object-store bucket path
 // (/<bucket>/**) so browsers upload and download attachments on the web origin; that path never

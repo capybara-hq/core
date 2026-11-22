@@ -1252,12 +1252,39 @@ function objectListBlocks(): ReactNode {
     />
   );
   return (
-    <RefBlock id="object-list-person" width={1080} pad>
-      <ObjectList label="待审批的插件">
-        {row("T", "todo", "待办清单：智能体记下要做的事，逐项完成并汇报。", "Mia", "11-20 14:03")}
-        {row("G", "github", "读取仓库、议题和拉取请求，按需评论。", "Lin", "11-19 09:12")}
-      </ObjectList>
-    </RefBlock>
+    <>
+      <RefBlock id="object-list-person" width={1080} pad>
+        <ObjectList label="待审批的插件">
+          {row("T", "todo", "待办清单：智能体记下要做的事，逐项完成并汇报。", "Mia", "11-20 14:03")}
+          {row("G", "github", "读取仓库、议题和拉取请求，按需评论。", "Lin", "11-19 09:12")}
+        </ObjectList>
+      </RefBlock>
+      {/* Phones (spec §6.17 "Grouped list"): one rounded card of rows, no buttons on a row that
+          opens something, a chevron at its end; measured in a 390 window. The first row is the
+          two-line row (name, description) the 64 is measured on; the second adds the meta line
+          that the state closes. */}
+      <RefBlock id="object-list-compact" width={390} pad>
+        <ObjectList label="技能">
+          <ObjectRow
+            mark={{ text: "T" }}
+            name="todo"
+            href="#todo"
+            description="待办清单：智能体记下要做的事，逐项完成并汇报。"
+            action={{ label: "查看", onSelect: noop }}
+            menu={[{ label: "停用", onSelect: noop, danger: true }]}
+          />
+          <ObjectRow
+            mark={{ text: "G" }}
+            name="github"
+            href="#github"
+            description="读取仓库、议题和拉取请求，按需评论。"
+            meta="平台 · 组织自选"
+            state={{ label: "已启用", tone: "ok" }}
+            action={{ label: "查看", onSelect: noop }}
+          />
+        </ObjectList>
+      </RefBlock>
+    </>
   );
 }
 

@@ -1,5 +1,37 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.87
+
+### Patch Changes
+
+- Updated dependencies [c6935ea]
+  - @capybara-hq/design@0.2.0-rc.35
+
+## 0.1.0-rc.86
+
+### Patch Changes
+
+- Updated dependencies [6d54a3a]
+  - @capybara-hq/design@0.2.0-rc.34
+
+## 0.1.0-rc.85
+
+### Patch Changes
+
+- Updated dependencies [6a0c32f]
+  - @capybara-hq/design@0.2.0-rc.33
+
+## 0.1.0-rc.84
+
+### Patch Changes
+
+- Updated dependencies [db8935e]
+- Updated dependencies [a0e48a2]
+- Updated dependencies [599ed63]
+- Updated dependencies [2c28141]
+- Updated dependencies [7a8e816]
+  - @capybara-hq/design@0.2.0-rc.32
+
 ## 0.1.0-rc.83
 
 ### Minor Changes

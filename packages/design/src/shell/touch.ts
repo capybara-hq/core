@@ -11,8 +11,18 @@ export const ANY_POINTER_FINE = "(any-pointer: fine)";
  */
 export const TOUCH_QUERY = `${POINTER_COARSE}, ${ANY_POINTER_COARSE} and (not ${ANY_POINTER_FINE})`;
 
-/** The compact size class (design spec §4: a window below 600 wide). */
-export const COMPACT_QUERY = "(max-width: 599px)";
+/**
+ * The compact size class (design spec §4: a window below 600 wide), spelled as the complement of
+ * `(min-width: 600px)` like `ClassForms`, so a zoomed width between 599 and 600 reads as compact
+ * everywhere (`SIZE_CLASS_QUERIES.compact` is the same text).
+ */
+export const COMPACT_QUERY = "not all and (min-width: 600px)";
+
+/**
+ * The compact part of `MOBILE_SIZE_QUERY`, the text the generated tokens.css and the mobile size
+ * rules of every stylesheet spell; `readMobileSizes` reads the same part so JS and CSS agree.
+ */
+const MOBILE_COMPACT_PART = "(max-width: 599px)";
 
 /**
  * Where controls take the mobile sizes (design spec §2.5, maintainer decision 2026-11-22): a compact
@@ -20,7 +30,7 @@ export const COMPACT_QUERY = "(max-width: 599px)";
  * condition of the size overrides in the generated tokens.css and of every control rule that goes
  * with them; the touch font stays under `TOUCH_QUERY` alone.
  */
-export const MOBILE_SIZE_QUERY = `${COMPACT_QUERY}, ${TOUCH_QUERY}`;
+export const MOBILE_SIZE_QUERY = `${MOBILE_COMPACT_PART}, ${TOUCH_QUERY}`;
 
 const QUERIES = [POINTER_COARSE, ANY_POINTER_COARSE, ANY_POINTER_FINE] as const;
 
@@ -54,13 +64,13 @@ export function useTouch(): boolean | null {
  */
 export function readMobileSizes(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-  return readTouch() || window.matchMedia(COMPACT_QUERY).matches;
+  return readTouch() || window.matchMedia(MOBILE_COMPACT_PART).matches;
 }
 
 function subscribeMobile(notify: () => void): () => void {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
   const unTouch = subscribe(notify);
-  const compact = window.matchMedia(COMPACT_QUERY);
+  const compact = window.matchMedia(MOBILE_COMPACT_PART);
   compact.addEventListener("change", notify);
   return () => {
     unTouch();

@@ -16,7 +16,9 @@ vi.mock("next/headers", () => ({ headers: async () => req.headers }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 const { default: RootNotFound } = await import("../src/app/not-found");
-const { BRAND_COOKIE, brandRefOf, encodeBrandCookie } = await import("../src/lib/brand-cookie");
+const { BRAND_COOKIE_HTTP, brandRefOf, encodeBrandCookie } = await import(
+  "../src/lib/brand-cookie"
+);
 
 const theme = (id: string, version: string): ThemeRef => ({
   id,
@@ -56,7 +58,7 @@ afterEach(cleanup);
 describe("the root 404", () => {
   it("the cookie's theme first (no kernel read)", async () => {
     req.headers = new Headers({
-      cookie: `${BRAND_COOKIE}=${encodeBrandCookie(brandRefOf(COOKIE_THEME))}`,
+      cookie: `${BRAND_COOKIE_HTTP}=${encodeBrandCookie(brandRefOf(COOKIE_THEME))}`,
     });
     const calls = serverRoutes({});
     renderServer(await RootNotFound());

@@ -1,5 +1,107 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.87
+
+### Patch Changes
+
+- c6935ea: Mobile interaction model (#606): on compact, dialogs and danger confirmations are bottom sheets
+  (close or 取消 focused first, a fixed footer, typed names kept) and a Select opens a picker sheet
+  (searchable over ten options); toasts sit at the bottom, one at a time, and a queued toast's timer
+  starts when it is shown; a focused field scrolls above the keyboard and bottom sheets rise with it;
+  compact lists load the next page as their end comes into view (`onLoadMore`, `hasMore`,
+  `loadingMore`), with a retry row on error; a long press that opens an action sheet plays a light
+  haptic; pull to refresh on the inbox, the conversations page and the drawer's recents in the mobile
+  app only. On the iPhone Duo the strip pill carries the page's primary (else 新会话), 对话 opens the
+  conversations page, the avatar opens the account sheet (with 技能、连接器、设备…), sheets stay
+  inside the strip's inset and the drawer drops the pill's entries. New checks keep overlays and sheet
+  rows design primitives, `useNative` out of pages, Dialog footers flat and Load more rows out of
+  pages.
+
+## 0.1.0-rc.86
+
+### Patch Changes
+
+- 6d54a3a: The templates take their compact forms (responsive system phase 0, second part). Below 600 every
+  `ObjectList` is one grouped list of rows: a row that opens something shows no buttons, ends in a
+  chevron and opens its actions in an action sheet on a long press or right click, and a row that
+  opens nothing keeps its one button and a labelled ⋯. The page head is the compact head (no path
+  row, a large title with its count, the primary as a block or head button, the secondaries in the
+  shell's "…", full-width search and a segmented first-level tab row). Every pushed template is one
+  scroller with a title that scrolls away and a quick-return search bar, and the compact ListPage
+  draws a scope chip row, a floating primary and restores its scroll position. The workspace
+  agents page uses the typed list scope instead of a segmented control in its filters.
+
+## 0.1.0-rc.85
+
+### Patch Changes
+
+- 1834986: An `oauth_code` auth preset may set `authorizationParams`, extra query parameters of the
+  authorize request (Google's `access_type: "offline"` and `prompt: "consent"`, Slack's `team`):
+  at most 10, lowercase names, plain printable values, never a secret. The kernel appends them after
+  its own parameters on every connect and reconnect, never on a token request. Names the kernel owns
+  or that would change the callback or the token exchange (`OAUTH_RESERVED_AUTHORIZATION_PARAMS`)
+  are refused there and in the query of a manual `authorizationUrl`. A template update that changes
+  only `authorizationParams` keeps members' connections. A member whose access token dies without a
+  refresh token is now asked to reconnect instead of told the authorization server is unavailable.
+  `startFakeOAuthServer` records the form parameter names of each token request (`paramNames`).
+- 794cc3c: The image pins device-docker rc.22 as its cloud device provider.
+- 6a0c32f: Responsive system, system pieces (#605): `ClassForms` / `useClassForm` render a structure per size
+  class (both on the server, CSS shows one, only the matching one stays mounted after hydration);
+  the `ActionSheet` uses the native `menu@1` sheet on compact when it holds no links; card grids are
+  one grouped list of rows below 600 (no buttons, long press or right click opens the card's actions);
+  DataTable columns may declare `compact` roles (title, subtitle, meta, trailing, hidden) and are
+  then drawn as grouped rows below 600; `Tabs look="segmented-compact"`; `ShellPage.actions` and
+  `titleAway` with the centred scrolled title, and `useCompactScroll` for one-scroller pages. New
+  checks keep size-class reads out of pages, view choices out of `ListPage.filters`, template-only
+  props in templates and dual renders in `ClassForms`.
+- Updated dependencies [1834986]
+  - @capybara-hq/kernel@0.1.0-rc.68
+
+## 0.1.0-rc.84
+
+### Patch Changes
+
+- db8935e: The compact drawer follows the approved mockup: a search field and a 新会话 button at the top, the
+  navigation as one grouped card (收件箱 with its count, 智能体, 定时任务, 更多), 最近会话 with 全部
+  over the newest conversations by time (not grouped by agent, each with its agent, state and time;
+  a long press or right click opens rename / archive / delete), and the account as one row at the
+  foot. The conversations page lists conversations by time in day sections (今天 / 昨天 / 本周 /
+  更早) with a search and a chip per agent, reads the next page as the end nears (no Load more rows)
+  and offers each row's actions in an action sheet; on compact the page's primary is a floating
+  action button (the head's primary restyled by CSS). New design pieces: `ConversationList`,
+  `ActionSheet` with `useLongPress`, `ScopeChips`, `ListPage.scope`, `formatListTime` / `dayBucket`.
+- 42e4ae0: `device-provider@1` providers now declare `networkAllowlist: true` and implement
+  `report(device, signal)`, which answers a `DeviceReport` (revision, description, home, limits,
+  reset; checked by `parseDeviceReport`). A provider can refuse a project directory with
+  `ProjectPathRefusedError`. The kernel refuses to load a provider that lacks any required member.
+  The kernel stores each device's report (`devices.report`, migration 0175), refreshed after its
+  instance is created or resumed; request paths read the stored copy.
+- 316af53: The web's brand cookie is named `__Host-cb-brand` over https (plain `cb-brand` only over http), so a
+  sibling subdomain cannot plant the wordmark of error pages; the web keeps a trusted proxy's
+  `X-Forwarded-Proto` (`CAPYBARA_WEB_TRUST_PROXY`).
+- a0e48a2: Pages outside the theme (#451): the kernel-starting frame, the root error pages and the root 404
+  draw the theme this browser last drew (the `cb-brand` cookie, else the platform default); app
+  icons and the manifest colours follow the platform default theme; the browser's theme colour
+  follows the scheme shown (design `useThemeColorMeta`).
+- 599ed63: One bottom sheet look (spec §6.59, maintainer decision 2026-11-22): a 52 high head with no
+  hairline, the title centred and a 30 px round close on a fixed ground at the body's 14 px inset,
+  its 44 px hit area an invisible ring, so nothing paints on open; shared body parts (`SheetGroup`,
+  `SheetRow`, `SheetFootnote`). The account sheet is regrouped: a profile row that opens Personal
+  settings, 组织 with the current org (a menu with several), 语言 and 外观, sign out alone, the
+  status line as a footnote. `AccountSheetData` takes `orgMenu`, `language: { value, label, items }`
+  and the theme switch's data instead of slots.
+- 2c28141: An org's default theme can now shape the agent avatar choices: it may hide built-in presets and add presets of its own. The kernel lists them in `GET /orgs/:orgId/themes` (`avatars`), accepts a theme preset key on create and update (stored pinned to the theme version, `agent.avatar_unavailable` when the org does not offer it), and draws the random default from the visible choices. `AvatarPicker` gains `hidden` and `extra`, and the web create form, template flow and basics section follow the org's choices.
+- 7a8e816: Theme brand graphics (#451): the empty state, the greeting and the working line draw the theme's
+  mark or illustration (the empty-state art as a mask in the faint colour), a theme can turn the
+  sign-in decoration off, and a theme mark that fails to load falls back to the pixel capybara.
+- Updated dependencies [718eb52]
+- Updated dependencies [c49d70e]
+- Updated dependencies [f4c2ae8]
+- Updated dependencies [42e4ae0]
+- Updated dependencies [78fe943]
+- Updated dependencies [2c28141]
+  - @capybara-hq/kernel@0.1.0-rc.67
+
 ## 0.1.0-rc.83
 
 ### Minor Changes

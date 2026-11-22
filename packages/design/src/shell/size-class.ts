@@ -8,10 +8,12 @@ export type SizeClass = "compact" | "medium" | "expanded";
 
 /**
  * The class queries, the one place JS reads them from. The stylesheets spell the same widths
- * (`design-breakpoint` allows nothing else).
+ * (`design-breakpoint` allows nothing else). Compact is the complement of `(min-width: 600px)`
+ * (as `ClassForms` and class-forms.css), so a zoomed width between 599 and 600 is compact here too
+ * rather than in no class.
  */
 export const SIZE_CLASS_QUERIES: Record<SizeClass, string> = {
-  compact: "(max-width: 599px)",
+  compact: "not all and (min-width: 600px)",
   medium: "(min-width: 600px) and (max-width: 840px)",
   expanded: "(min-width: 841px)",
 };

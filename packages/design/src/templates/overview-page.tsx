@@ -2,7 +2,14 @@ import type { ReactNode } from "react";
 import { SkeletonGroup } from "../display/index";
 import { useDesignT } from "../provider";
 import { Body, type PageHeaderProps } from "../shell/index";
-import { LoadingCards, LoadingStats, loadingHeader, TemplateHead, WithStats } from "./frame";
+import {
+  LoadingCards,
+  LoadingStats,
+  loadingHeader,
+  TemplateFrame,
+  TemplateHead,
+  WithStats,
+} from "./frame";
 
 /** What a loading overview draws when it is not told (spec §5). */
 const LOADING_STATS = 4;
@@ -33,9 +40,9 @@ export function OverviewPage({
   if (loading) {
     const known = (header.metrics?.length ?? 0) > 0;
     return (
-      <div className="cb-template" data-template="OverviewPage" data-width="content">
+      <TemplateFrame template="OverviewPage">
         <SkeletonGroup label={header.title || t("table.loading")}>
-          <TemplateHead header={loadingHeader(header)} />
+          <TemplateHead header={loadingHeader(header)} primaryForm="block" />
           <Body layout="single" width="content">
             {known ? null : <LoadingStats count={loading.stats ?? LOADING_STATS} />}
             <WithStats header={header}>
@@ -47,15 +54,15 @@ export function OverviewPage({
             </WithStats>
           </Body>
         </SkeletonGroup>
-      </div>
+      </TemplateFrame>
     );
   }
   return (
-    <div className="cb-template" data-template="OverviewPage" data-width="content">
-      <TemplateHead header={header} />
+    <TemplateFrame template="OverviewPage">
+      <TemplateHead header={header} primaryForm="block" />
       <Body layout="single" width="content">
         <WithStats header={header}>{children}</WithStats>
       </Body>
-    </div>
+    </TemplateFrame>
   );
 }

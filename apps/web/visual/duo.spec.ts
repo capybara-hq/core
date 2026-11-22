@@ -7,7 +7,10 @@ import { expect, type Page, test } from "@playwright/test";
  * with its sidebar, and an open side sheet), each plain and with `data-native-nav` on `<html>` (the
  * strip's sections are native then: the web's menu button is absent), plus one outer shot without
  * the inset. Drawn on the catalog's pages (no kernel): the inbox and the conversation template
- * stand in for the home and the chat. Baselines come from `visual-update`.
+ * stand in for the home and the chat. The strip's pill (interaction model §10.2–10.5): the outer
+ * list without its FAB (the pill carries the primary), an outer bottom sheet (the scrim under the
+ * strip, the panel in the content width), and the inner list whose sidebar drops the pill's
+ * entries. Baselines come from `visual-update`.
  */
 const STRIP = 84;
 const HEIGHT = 800;
@@ -103,4 +106,52 @@ test("duo-outer-chat-no-inset", async ({ page }) => {
   const over = await overrunning(page, ".cb-shell", OUTER.width);
   expect(over).toEqual([]);
   await expect(page).toHaveScreenshot("duo-outer-chat-no-inset.png");
+});
+
+/** Visible elements matching `selector` (Playwright's `:visible`). */
+const visible = (page: Page, selector: string) => page.locator(`${selector}:visible`);
+
+test("duo-outer-list-native-nav", async ({ page }) => {
+  const { width, inset } = OUTER;
+  await open(page, "/dev/ui/templates/list", OUTER, true);
+  const box = await page.locator(".cb-shell").first().boundingBox();
+  expect(box && Math.round(box.x + box.width)).toBe(width);
+  // the pill holds the primary: no FAB, no menu button (the list's own toolbar is not checked:
+  // it overruns at this width with or without a strip)
+  await expect(visible(page, '[data-head-primary="true"][data-form="fab"] a')).toHaveCount(0);
+  await expect(visible(page, ".cb-shell-menu-btn")).toHaveCount(0);
+  expect(await overrunning(page, ".cb-shell-float", width - inset)).toEqual([]);
+  expect(await overrunning(page, ".cb-template-head", width - inset)).toEqual([]);
+  await expect(page).toHaveScreenshot("duo-outer-list-native-nav.png");
+});
+
+test("duo-outer-sheet-native-nav", async ({ page }) => {
+  const { width, inset } = OUTER;
+  // the dialog is a bottom sheet on compact (interaction model D1), open on arrival
+  await open(page, "/dev/ui/overlays/dialog", OUTER, true);
+  // the scrim runs under the strip, the panel ends at it (D13)
+  const scrim = await page.locator(".cb-bsheet-scrim").boundingBox();
+  expect(scrim && [Math.round(scrim.x), Math.round(scrim.x + scrim.width)]).toEqual([0, width]);
+  const panel = await page.locator(".cb-bsheet").boundingBox();
+  expect(panel && [Math.round(panel.x), Math.round(panel.x + panel.width)]).toEqual([
+    0,
+    width - inset,
+  ]);
+  expect(await overrunning(page, ".cb-bsheet", width - inset)).toEqual([]);
+  await expect(page).toHaveScreenshot("duo-outer-sheet-native-nav.png");
+});
+
+test("duo-inner-list-native-nav", async ({ page }) => {
+  const { width, inset } = INNER;
+  await open(page, "/dev/ui/templates/list", INNER, true);
+  const box = await page.locator(".cb-shell").first().boundingBox();
+  expect(box && Math.round(box.x + box.width)).toBe(width);
+  // the sidebar drops what the pill holds: the sections, search, the recents, New conversation
+  await expect(visible(page, ".cb-sidebar [data-nav-section]")).toHaveCount(0);
+  await expect(visible(page, ".cb-sidebar [data-nav-pill]")).toHaveCount(0);
+  await expect(visible(page, '.cb-sidebar [data-part="account"]')).toHaveCount(1);
+  // the head keeps its primary button on the inner display (D14)
+  await expect(visible(page, '[data-head-primary="true"] a')).toHaveCount(1);
+  expect(await overrunning(page, ".cb-template-head", width - inset)).toEqual([]);
+  await expect(page).toHaveScreenshot("duo-inner-list-native-nav.png");
 });

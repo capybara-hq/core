@@ -105,8 +105,10 @@ Each line is the rule you must not miss; the skill has the rest.
   (`pnpm check:kernel-conventions`). [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
 - **Web UI:** page = template + design components; apps/web writes no styles; every read is a
   TanStack Query `defineQuery`, every write `useAppMutation`; thin server `page.tsx` + client
-  `view.tsx`; one box is enough: never a box inside a box (`web-ui-box-in-box` and the jsdom guard
-  `findNestedBoxes`, both in [tools/checks/README.md](tools/checks/README.md))
+  `view.tsx`; pages never read the size class (`web-ui-size-branch`); a structure that differs per
+  class lives in a design template or component through `ClassForms`; one box is enough: never a
+  box inside a box (`web-ui-box-in-box` and the jsdom guard `findNestedBoxes`, both in
+  [tools/checks/README.md](tools/checks/README.md))
   (`pnpm check:web-ui`); the new conversation is the workspace home at `/` (the setup layout while
   the org is not ready; `/chat` redirects there permanently with its query, maintainer decision
   2026-11-07), a conversation is `/chat/<id>`. [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
@@ -117,7 +119,8 @@ Each line is the rule you must not miss; the skill has the rest.
   components); a control with text pads wider than it is tall; native shells are detected only
   through `window.capybaraShell` capabilities, never the user agent (`web-shell-access`);
   dangerous shell capabilities are confirmed by the shell in UI the page cannot draw or click
-  (desktop: a shell-owned window).
+  (desktop: a shell-owned window); pages never call `useNative()`; overlays are design
+  primitives (`web-ui-overlay-primitive`).
   [mobile layout](docs/superpowers/specs/2026-11-19-mobile-layout-design.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible

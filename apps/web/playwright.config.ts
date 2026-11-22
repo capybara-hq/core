@@ -10,15 +10,21 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   timeout: 180_000,
   expect: { timeout: 30_000 },
-  // Shard by test, not by file (`--shard` cuts the test list into equal counts): the specs still
-  // run one at a time (one worker), since they share one stack, the `admin` account, the org Acme
-  // and platform state. A file whose tests depend on each other marks itself serial
-  // (`test.describe.serial` / `describe.configure({ mode: "serial" })`), which keeps it in one shard.
+  // The specs run one at a time (one worker), since they share one stack, the `admin` account, the
+  // org Acme and platform state; never raise `workers`. CI shards by file and measured duration
+  // (e2e/shard.mjs with e2e/durations.json), not with `--shard`, which cuts the test list
+  // into equal counts and so piles the slow specs into one shard. A file whose tests depend on each
+  // other still marks itself serial (`test.describe.serial` / `describe.configure({ mode:
+  // "serial" })`), so a local `--shard` run keeps it whole.
   fullyParallel: true,
   workers: 1,
   retries: 0,
   forbidOnly: !!process.env.CI,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // CI also writes e2e-report.json: the durations e2e/durations.json is refreshed from
+  // (`node e2e/shard.mjs --update <reports>`; the e2e jobs upload it).
+  reporter: process.env.CI
+    ? [["list"], ["html", { open: "never" }], ["json", { outputFile: "e2e-report.json" }]]
+    : "list",
   use: {
     ...(process.env.CAPYBARA_E2E_BASE_URL !== undefined && {
       baseURL: process.env.CAPYBARA_E2E_BASE_URL,

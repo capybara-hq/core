@@ -199,6 +199,14 @@ holds what this browser last drew (the person's org or personal theme, or the pl
 public pages), so an error page looks like the page it replaces. It is a hint, never an input to
 access or to a kernel call.
 
+**Its name over https** (maintainer decision 2026-11-22, #602): `__Host-cb-brand` (`Secure`,
+`Path=/`, no `Domain`), so a sibling subdomain cannot plant it; over plain http, where browsers
+refuse the prefix, `cb-brand`. The mode is the request's protocol (`location.protocol` in the
+browser, Next's request protocol on the server, the signal the web's own cookies take `Secure`
+from; a trusted proxy's `X-Forwarded-Proto` through `CAPYBARA_WEB_TRUST_PROXY`), and a request
+carrying `__Host-cb-brand` counts as https. Readers take only the name of the mode, never a plain
+`cb-brand` over https; over https `ThemeRoot` also deletes a stale plain `cb-brand`.
+
 **Reading it** (`lib/brand-cookie.ts`, one codec for server and client): every URL must match the
 kernel's theme delivery path (`^/api/v1/themes/<uuid>/<int>/(r<int>/theme\.css|assets/<segment>)$`,
 same origin, no query, no `..`), the wordmark the SDK's wordmark rules, colours the canonical

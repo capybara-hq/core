@@ -15,6 +15,9 @@ afterEach(cleanup);
 const STYLES = resolve(import.meta.dirname, "../src/styles");
 const css = (file: string) => readFileSync(resolve(STYLES, file), "utf8");
 
+/** ClassForms' compact query (the complement of min-width 600), which the PageHeader rules use. */
+const COMPACT = "not all and (min-width: 600px)";
+
 /** The bodies of every `@media <query> {…}` block in `text`, joined. */
 function media(text: string, query = "(max-width: 599px)"): string {
   const open = `@media ${query} {`;
@@ -71,8 +74,8 @@ describe("tabs", () => {
     expect(decls(css("shell.css"), ".cb-pageheader-tabs .cb-tabs")).toContain("min-width: 0;");
   });
 
-  it("below 640 the search takes its own line above the tabs", () => {
-    const narrow = media(css("shell.css"));
+  it("below 600 the search takes its own line above the tabs", () => {
+    const narrow = media(css("shell.css"), COMPACT);
     const row = decls(narrow, ".cb-pageheader-tabs");
     expect(row).toContain("flex-wrap: wrap;");
     expect(row).toContain("height: auto;");
@@ -82,24 +85,16 @@ describe("tabs", () => {
   });
 });
 
-describe("ObjectRow below 640", () => {
-  const narrow = media(css("templates.css"));
+describe("ObjectRow below 600", () => {
+  const narrow = media(css("templates.css"), "not all and (min-width: 600px)");
   const row = '.cb-object-row:not([data-skeleton="true"])';
 
-  it("dissolves the text column so its lines and the row's buttons wrap as one row", () => {
-    expect(decls(narrow, ".cb-object-row")).toContain("flex-wrap: wrap;");
-    expect(decls(narrow, `${row} .cb-object-text`)).toContain("display: contents;");
-    // the skeleton rows keep the mark and the text column side by side
-    expect(decls(narrow, '.cb-object-row[data-skeleton="true"] .cb-object-text')).toContain(
-      "flex-basis:",
+  it("lays the row out as a grid of the mark, the text column and the trailing parts", () => {
+    expect(decls(narrow, '.cb-object-list > .cb-object-row:not([data-skeleton="true"])')).toContain(
+      "display: grid;",
     );
-  });
-
-  it("puts the ⋯ menu on the name line and breaks the line after it", () => {
-    expect(decls(narrow, `${row} .cb-object-menu`)).toContain("order: 1;");
-    const brk = decls(narrow, `${row}::after`);
-    expect(brk).toContain("order: 1;");
-    expect(brk).toContain("flex-basis: 100%;");
+    expect(decls(narrow, `${row} > .cb-object-text`)).toContain("grid-column: 2;");
+    expect(decls(narrow, `${row} > .cb-object-mark`)).toContain("grid-column: 1;");
   });
 
   it("draws the state at the end of the meta line in its tone and hides the state label", () => {
@@ -114,22 +109,23 @@ describe("ObjectRow below 640", () => {
     expect(decls(narrow, `${row} > .cb-object-state`)).toContain("display: none;");
   });
 
-  it("aligns the action group right on the meta line (it wraps under it as a whole)", () => {
-    const actions = decls(narrow, `${row} .cb-object-actions`);
-    expect(actions).toContain("order: 2;");
-    expect(actions).toContain("margin-left: auto;");
-    expect(actions).toContain("display: flex;");
+  it("stretches the name's link over a row that opens, and draws its chevron", () => {
+    expect(decls(narrow, '.cb-object-row[data-open="true"] .cb-object-name::after')).toContain(
+      "inset: 0;",
+    );
+    expect(decls(narrow, ".cb-object-chevron")).toContain("display: block;");
   });
 
-  it("changes nothing above 640: the action group dissolves, a state-only meta line is hidden", () => {
+  it("changes nothing above 600: the action group dissolves, a state-only meta line and the chevron are hidden", () => {
     const wide = css("templates.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
     expect(decls(wide, ".cb-object-actions")).toContain("display: contents;");
     expect(decls(wide, '.cb-object-meta[data-empty="true"]')).toContain("display: none;");
+    expect(decls(wide, ".cb-object-chevron")).toContain("display: none;");
   });
 });
 
-describe("PageHeader below 640", () => {
-  const narrow = media(css("shell.css"));
+describe("PageHeader below 600", () => {
+  const narrow = media(css("shell.css"), COMPACT);
 
   it("gives the title and description the full width, the description wrapping", () => {
     expect(decls(narrow, ".cb-pageheader-row")).toContain("flex-wrap: wrap;");
@@ -143,7 +139,7 @@ describe("PageHeader below 640", () => {
 
 describe("SettingsPage sub-nav below 640", () => {
   it("is a sticky row on the page ground with its hairline, over the scrolling content", () => {
-    const nav = decls(media(css("templates.css")), ".cb-settings-nav");
+    const nav = decls(media(css("templates.css"), COMPACT), ".cb-settings-nav");
     expect(nav).toContain("position: sticky;");
     expect(nav).toContain("top: 0;");
     expect(nav).toMatch(/z-index: \d+;/);
@@ -176,7 +172,7 @@ describe("size-class widths in the stylesheets", () => {
   it("the compact chrome (the floating row) is shown below 600 only", () => {
     const shell = css("shell.css");
     expect(decls(shell, ".cb-shell-float")).toContain("display: none;");
-    const compact = media(shell, "(max-width: 599px)");
+    const compact = media(shell, COMPACT);
     expect(decls(compact, ".cb-shell-float")).toContain("display: block;");
   });
 
@@ -196,7 +192,7 @@ describe("size-class widths in the stylesheets", () => {
     const hiding = parseCss(shell).filter(
       (r) => r.selector === ".cb-pageheader-path" && r.decls.display === "none",
     );
-    expect(hiding.map((r) => r.at)).toEqual(["(max-width: 599px)"]);
+    expect(hiding.map((r) => r.at)).toEqual([COMPACT]);
     // no rule hides it from 600 (a desktop shell's top row included)
     const all = ["shell.css", "templates.css", "shell-environment.css"].flatMap((f) =>
       parseCss(css(f)),
@@ -206,22 +202,22 @@ describe("size-class widths in the stylesheets", () => {
         (r) =>
           /cb-pageheader-path(?![\w-])/.test(r.selector) &&
           r.decls.display === "none" &&
-          r.at !== "(max-width: 599px)",
+          r.at !== COMPACT,
       ),
     ).toEqual([]);
   });
 });
 
-describe("StatCards below 640", () => {
+describe("StatCards below 600", () => {
   it("are two columns (2 × 2 for four metrics)", () => {
-    const cards = decls(media(css("shell.css")), ".cb-stat-cards");
+    const cards = decls(media(css("shell.css"), COMPACT), ".cb-stat-cards");
     expect(cards).toContain("display: grid;");
     expect(cards).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
   });
 });
 
-describe("DataTable below 640: stacked rows", () => {
-  const narrow = media(css("table.css"));
+describe("DataTable below 600: stacked rows", () => {
+  const narrow = media(css("table.css"), COMPACT);
   /** The rules outside any media block. */
   const table = css("table.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
 

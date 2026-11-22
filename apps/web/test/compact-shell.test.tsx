@@ -36,6 +36,8 @@ function phone(coarse: boolean, windowWidth = 390) {
         width.every(([, k, n]) =>
           k === "min" ? windowWidth >= Number(n) : windowWidth <= Number(n),
         );
+      // the compact query is the complement of (min-width: 600px)
+      if (t.startsWith("not all and ")) matches = !matches;
     }
     return { matches, media: q, addEventListener() {}, removeEventListener() {} };
   });

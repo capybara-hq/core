@@ -360,7 +360,9 @@
   }
 }
 
-/* Below 600 the floating row is the top row: centred on the controls and clear of them. */
+/* Below 600 the floating row is the top row: centred on the controls and clear of them. The side
+   insets stay in both ends: a desktop shell may report them (`--cb-shell-inset-*`, 0 otherwise),
+   and the controls' reserve wins wherever the window controls sit. */
 :root[data-shell="desktop"] .cb-shell {
   --cb-float-top: max(
     var(--cb-space-2),
@@ -375,7 +377,7 @@
     calc(var(--cb-shell-reserve-end) + var(--cb-space-2))
   );
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   :root[data-shell="desktop"] .cb-shell-float {
     left: var(--cb-float-start);
     right: var(--cb-float-end);
@@ -397,7 +399,7 @@
    it), and the title menu's items move into the "…" (title-bar.tsx draws both forms, CSS shows
    one). Geometry from the reported rectangle alone: `--cb-shell-flat` is 0 without controls, in
    fullscreen, with a banner and from 600, and the floating form stays. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   :root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) {
     --cb-shell-flat: var(--cb-shell-row);
   }
@@ -520,7 +522,7 @@
 /* With controls it reaches from the window's top edge down the top row (above the floating row by
    `--cb-float-gap-top`), and its margins keep the row's own height, so the controls stay where
    they are. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   :root[data-shell="desktop"] .cb-floatbar > .cb-drag-fill {
     --cb-float-gap-top: min(var(--cb-float-top), calc(var(--cb-shell-row) * 100000));
     --cb-float-gap-height: max(var(--cb-float-size), var(--cb-shell-row));
@@ -537,7 +539,7 @@
     --cb-float-gap-height: var(--cb-shell-row);
   }
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   :root[data-shell="desktop"] .cb-shell-band {
     width: max(
       var(--cb-shell-reserve-start),

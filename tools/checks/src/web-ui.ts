@@ -3,6 +3,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { BOX_PENDING, type BoxPending, boxFindings } from "./box-in-box.js";
 import { breakpointFindings } from "./design-breakpoint.js";
 import {
+  DUAL_RENDER_PENDING,
+  type DualRenderPending,
+  dualRenderTreeFindings,
+} from "./design-dual-render.js";
+import { sheetPartsTreeFindings } from "./design-sheet-parts.js";
+import {
   collectImports,
   type Finding,
   isParseError,
@@ -13,8 +19,44 @@ import {
   walk,
 } from "./source.js";
 import { shellAccessFindings } from "./web-shell-access.js";
+import {
+  dialogFooterTreeFindings,
+  FOOTER_PENDING,
+  type FooterPending,
+  filtersScopeTreeFindings,
+  LOAD_MORE_PENDING,
+  type LoadMorePending,
+  loadMoreTreeFindings,
+  SCOPE_PENDING,
+  type ScopePending,
+  SIZE_BRANCH_ALLOWED,
+  type SizeBranchAllowed,
+  sizeBranchTreeFindings,
+  templateOnlyPropsTreeFindings,
+} from "./web-ui-responsive.js";
 
 export { BOX_PENDING, type BoxPending } from "./box-in-box.js";
+export { DUAL_RENDER_PENDING, type DualRenderPending } from "./design-dual-render.js";
+export {
+  FOOTER_PENDING,
+  type FooterPending,
+  LOAD_MORE_PENDING,
+  type LoadMorePending,
+  SCOPE_PENDING,
+  type ScopePending,
+  SIZE_BRANCH_ALLOWED,
+  type SizeBranchAllowed,
+} from "./web-ui-responsive.js";
+
+/** The allowlists and ratchets of the responsive rules (`web-ui-size-branch` & co.). */
+export interface ResponsiveLists {
+  sizeAllowed: readonly SizeBranchAllowed[];
+  scopePending: readonly ScopePending[];
+  footerPending?: readonly FooterPending[];
+  /** `web-ui-load-more`'s ratchet; left out: none (every Load more button is reported). */
+  loadMorePending?: readonly LoadMorePending[];
+  dualPending: readonly DualRenderPending[];
+}
 export type { Finding };
 
 /** The page templates of spec §5; must equal @capybara-hq/design PAGE_TEMPLATES (a test checks). */
@@ -54,6 +96,31 @@ const FORBIDDEN_PKG = new RegExp(
     "lucide-react",
     "react-icons",
   ].join("|")})(?:/|$))`,
+);
+/**
+ * Overlay primitives: dialogs, popovers, menus and sheets are design components (the compact
+ * forms, back-closes-overlay and focus rules live there), so a page imports no low-level overlay
+ * package; the Radix overlay primitives are reported here instead of as a general `web-ui-import`.
+ */
+const OVERLAY_PKG = new RegExp(
+  `^(?:@floating-ui/|@base-ui|@reach/|@headlessui/|(?:@radix-ui/react-(?:${[
+    "dialog",
+    "alert-dialog",
+    "popover",
+    "dropdown-menu",
+    "context-menu",
+    "hover-card",
+    "tooltip",
+    "select",
+    "menubar",
+    "navigation-menu",
+    "toast",
+    "portal",
+    "focus-scope",
+    "dismissable-layer",
+  ].join(
+    "|",
+  )})|@react-aria/overlays|react-aria-components|vaul|react-modal|react-popper|react-tooltip|react-remove-scroll|react-focus-lock)(?:/|$))`,
 );
 /**
  * Extension UI blocks that only `<ExtensionSlot>` (components/extension-ui) may draw: the view and
@@ -349,7 +416,14 @@ function checkWebFile(
 
   for (const imp of collectImports(p.program)) {
     const line = p.lineOf(imp.start);
-    if (FORBIDDEN_PKG.test(imp.spec)) {
+    if (OVERLAY_PKG.test(imp.spec)) {
+      out.push({
+        file,
+        line,
+        rule: "web-ui-overlay-primitive",
+        message: `Do not import the overlay primitive ${imp.spec}: dialogs, popovers, menus and sheets are @capybara-hq/design components (Dialog, Popover, Menu, ActionSheet, BottomSheet); add the missing one to the design package`,
+      });
+    } else if (FORBIDDEN_PKG.test(imp.spec)) {
       out.push({
         file,
         line,
@@ -1405,6 +1479,13 @@ export function checkWebUi(
   pending: readonly SsrPending[] = SSR_PENDING,
   queryPending: readonly QueryPending[] = QUERY_PENDING,
   boxPending: readonly BoxPending[] = BOX_PENDING,
+  responsive: ResponsiveLists = {
+    sizeAllowed: SIZE_BRANCH_ALLOWED,
+    scopePending: SCOPE_PENDING,
+    footerPending: FOOTER_PENDING,
+    loadMorePending: LOAD_MORE_PENDING,
+    dualPending: DUAL_RENDER_PENDING,
+  },
 ): Finding[] {
   const findings: Finding[] = [];
   const readers = kernelReaders(webSrcDir);
@@ -1423,6 +1504,13 @@ export function checkWebUi(
   }
   findings.push(...charIconMessageFindings(join(webSrcDir, "..", "messages")));
   findings.push(...checkDesign(designSrcDir));
+  findings.push(...dualRenderTreeFindings(designSrcDir, responsive.dualPending));
+  findings.push(...sheetPartsTreeFindings(designSrcDir));
+  findings.push(...sizeBranchTreeFindings(webSrcDir, responsive.sizeAllowed));
+  findings.push(...filtersScopeTreeFindings(webSrcDir, responsive.scopePending));
+  findings.push(...templateOnlyPropsTreeFindings(webSrcDir));
+  findings.push(...dialogFooterTreeFindings(webSrcDir, responsive.footerPending ?? FOOTER_PENDING));
+  findings.push(...loadMoreTreeFindings(webSrcDir, responsive.loadMorePending ?? []));
   findings.push(...boxFindings(webSrcDir, boxPending));
   return applyQueryPending(applySsrPending(findings, webSrcDir, pending), webSrcDir, queryPending);
 }

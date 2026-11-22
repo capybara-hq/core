@@ -221,7 +221,7 @@ describe("the narrow window's row and the side panel's strip", () => {
 
   it("the gap is as high as the top row where controls are reported, and 0 on a chat surface without", () => {
     const compact = parseCss(css("shell-environment.css")).filter(
-      (r) => r.at === "(max-width: 599px)",
+      (r) => r.at === "not all and (min-width: 600px)",
     );
     const height = (selector: string) =>
       compact.find((r) => r.selector === selector)?.decls["--cb-float-gap-height"];
@@ -693,7 +693,11 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     );
     const set = rules().filter((r) => r.decls["--cb-shell-flat"] !== undefined);
     expect(set.map((r) => [r.at, r.selector, r.decls["--cb-shell-flat"]])).toEqual([
-      ["(max-width: 599px)", `${D} .cb-shell:not([data-banner="true"])`, "var(--cb-shell-row)"],
+      [
+        "not all and (min-width: 600px)",
+        `${D} .cb-shell:not([data-banner="true"])`,
+        "var(--cb-shell-row)",
+      ],
     ]);
     // the browser, touch and mobile shells keep the floating row: nothing in the flat block
     // applies outside the desktop shell
@@ -716,7 +720,7 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     );
     // the strip under the row is the page ground, as high as the row (shell.css)
     const strip = parseCss(css("shell.css")).find(
-      (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-shell-column::before",
+      (r) => r.at === "not all and (min-width: 600px)" && r.selector === ".cb-shell-column::before",
     );
     expect(strip?.decls.background).toBe("var(--cb-bg)");
     expect(strip?.decls.height).toBe("var(--cb-float-row)");
@@ -781,7 +785,7 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     // exactly that, so it never lands under the band
     const padded = parseCss(css("shell.css")).find(
       (r) =>
-        r.at === "(max-width: 599px)" &&
+        r.at === "not all and (min-width: 600px)" &&
         r.selector === '.cb-shell[data-surface="pushed"] .cb-shell-main' &&
         r.decls["padding-top"],
     );

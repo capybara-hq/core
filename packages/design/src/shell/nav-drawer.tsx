@@ -22,6 +22,8 @@ export interface DrawerRecent {
   /** The open conversation (its row is current). */
   activeId?: string;
   onRetry(): void;
+  /** A pull down in a native shell reads the list again (interaction spec §3). */
+  onRefresh?: () => Promise<unknown>;
   /** A row's long press or right click: rename, archive, delete. */
   actions?: ConversationListActions;
 }
@@ -83,7 +85,9 @@ const under = (pathname: string, href: string) =>
  * Agents, Scheduled tasks, and More, which opens the "Skills, connectors, devices…" level, Decision 18), the recent
  * conversations by time under Recent with All (the conversations page), and at the foot the
  * account row, which opens the account sheet (§6.55). A pick closes the drawer; the system back
- * closes the account sheet first, then the drawer (Decision 25).
+ * closes the account sheet first, then the drawer (Decision 25). While a native strip shows
+ * (`[data-native-nav]`, interaction model §10.2) the entries its pill holds are hidden: the
+ * sections (`data-nav-section`), and search, New conversation and the recents (`data-nav-pill`).
  */
 export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: NavDrawerProps) {
   const t = useDesignT();
@@ -134,6 +138,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
                 type="button"
                 className="cb-navdrawer-search"
                 data-part="drawer-search"
+                data-nav-pill=""
                 onClick={search}
               >
                 <Icon name="search" size={16} />
@@ -144,6 +149,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
               href={data.newConversation.href}
               className="cb-navdrawer-new"
               data-part="drawer-new"
+              data-nav-pill=""
               data-drawer-pick="true"
               title={data.newConversation.label}
             >
@@ -177,7 +183,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
               />
             ) : null}
           </nav>
-          <div className="cb-navdrawer-recent" data-part="drawer-recent">
+          <div className="cb-navdrawer-recent" data-part="drawer-recent" data-nav-pill="">
             <div className="cb-navdrawer-recent-head">
               <h2 className="cb-navdrawer-recent-label" data-part="drawer-recent-label">
                 {t("drawer.recent")}
@@ -206,6 +212,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
               activeId={recent.activeId}
               empty={<EmptyState size="panel" text={t("sidebar.empty")} />}
               {...(recent.actions ? { actions: recent.actions } : {})}
+              {...(recent.onRefresh ? { onRefresh: recent.onRefresh } : {})}
             />
           </div>
           <div className="cb-navdrawer-foot" data-part="drawer-foot">

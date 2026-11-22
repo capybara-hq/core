@@ -440,6 +440,9 @@ function Inbox({
         {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
         open={hashItem.id !== null && rows.some((a) => a.id === hashItem.id)}
         onBack={hashItem.close}
+        onRefresh={() =>
+          Promise.all(inboxChangeKeys(orgId).map((queryKey) => qc.invalidateQueries({ queryKey })))
+        }
         list={
           <ListDetailList
             label={t("listLabel")}

@@ -7,12 +7,14 @@
  * `data-shell`, `data-shell-platform`, `--cb-shell-inset-*` and, when the shell reports window
  * controls, `--cb-shell-controls-x|y|width|height`; with the native strip (`nav@1` an own
  * object of `capabilities`), `data-native-nav`, so the web's section entries and menu button never
- * paint beside it (the AppShell clears it when the strip goes).
+ * paint beside it (the AppShell clears it when the strip goes), and `data-strip="left|right"`, the
+ * strip's side: the one `nav@1.side` reports, else the side whose reported inset (rounded to
+ * hundredths, as the reader does) is the larger, else right (interaction model §10.7, D16; CSS places the parts relative to the strip by it).
  *
  * A fixed string: nothing of the page, the request or the user is interpolated into it, so the
  * request's CSP nonce is the only thing that differs between documents. It does nothing outside
  * the top frame, without the global, for another envelope `version`, a global without an `on`
- * function or an unknown `kind`, and it writes only the three attributes and the eight properties
+ * function or an unknown `kind`, and it writes only the four attributes and the eight properties
  * above, each from a value it has checked (a finite, non-negative, bounded number; a known
  * platform; an own object), whatever the global holds. `readShellEnvironment` in
  * `shell-environment.tsx` applies the same rules after hydration (the tests run both over the
@@ -40,7 +42,9 @@ export const SHELL_ENVIRONMENT_SCRIPT =
   "if(rect)for(i=0;i<4;i++)st.setProperty('--cb-shell-controls-'+names[i],px(rect[i]));" +
   "var caps=s.capabilities,nav=caps&&typeof caps==='object'&&" +
   "Object.prototype.hasOwnProperty.call(caps,'nav@1')?caps['nav@1']:null;" +
-  "if(nav&&typeof nav==='object')d.setAttribute('data-native-nav','');" +
+  "if(nav&&typeof nav==='object'){d.setAttribute('data-native-nav','');" +
+  "var side=nav.side;if(side!=='left'&&side!=='right')side=Math.round(ins[3]*100)>Math.round(ins[1]*100)?'left':'right';" +
+  "d.setAttribute('data-strip',side);}" +
   "}catch(e){}})();";
 
 /**

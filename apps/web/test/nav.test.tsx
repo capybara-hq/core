@@ -14,7 +14,7 @@ import {
 } from "../src/components/shell/nav";
 import { SessionContext } from "../src/components/shell/session";
 import { json, stubApi } from "./support/api";
-import { resetNavigation } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderFrame as renderShell, shellOf } from "./support/shell";
 
@@ -145,6 +145,30 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ["评测与运行", "evals", "/evals"],
       ["组织设置", "settings", "/settings/organization"],
     ]);
+  });
+
+  it("⌘K go-to lists 全部会话 after 收件箱 for every role and opens /conversations", () => {
+    const picked: (() => void)[] = [];
+    function Goto({ level }: { level: NavLevel }) {
+      const { commands } = useNav(0, level, false, false);
+      const items = commands.find((g) => g.label === zh.nav.goto)?.items ?? [];
+      const all = items.find((i) => i.id === "goto-conversations");
+      if (all) picked.push(all.onSelect);
+      return <pre data-testid={level}>{JSON.stringify(items.map((i) => [i.id, i.label]))}</pre>;
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Goto level="guest" />
+        <Goto level="member" />
+      </NextIntlClientProvider>,
+    );
+    for (const level of ["guest", "member"]) {
+      const ids: [string, string][] = JSON.parse(screen.getByTestId(level).textContent ?? "[]");
+      const at = ids.findIndex(([id]) => id === "goto-inbox");
+      expect(ids[at + 1]).toEqual(["goto-conversations", "全部会话"]);
+    }
+    picked[0]?.();
+    expect(router.push).toHaveBeenCalledWith("/conversations");
   });
 
   it("⌘K actions follow the role: 新建 Agent from member, 添加连接器 for org admins only", () => {

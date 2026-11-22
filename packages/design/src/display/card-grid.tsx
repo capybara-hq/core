@@ -17,10 +17,14 @@ import {
 import { Button, IconButton, LinkButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { ActionSheet, actionSheetItems } from "../overlays/action-sheet";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
+import { useLongPress } from "../overlays/long-press";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { ClassForms, useClassForm } from "../shell/class-forms";
 import { Avatar, type AvatarValue } from "./avatar";
 import { EmptyState, type EmptyStateProps } from "./empty-state";
+import { ListEnd, ListMoreButton, type ListMoreProps } from "./list-end";
 import { MarkImage } from "./object-mark";
 import { type PersonLike, PersonName } from "./person-name";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
@@ -96,6 +100,29 @@ type Slot = {
   onLeaveWithFocus(): void;
 };
 const SlotContext = createContext<Slot | null>(null);
+
+/** What the grid's one action sheet shows for the chosen card. */
+type SheetContent = { title: string; items: MenuItem[] };
+/**
+ * The grid's one action sheet (spec §6.34 "Phones"): a card chooses it with its content and keeps
+ * it current while chosen; the grid draws one sheet for all its cards.
+ */
+type SheetHost = {
+  chosen: string | null;
+  choose(key: string, content: SheetContent): void;
+  /** The chosen card's content changed (a primary started or stopped running). */
+  update(key: string, content: SheetContent): void;
+  /** The card went away: a sheet it chose closes. */
+  release(key: string): void;
+};
+const SheetHostContext = createContext<SheetHost | null>(null);
+
+/** What a sheet's content draws, to tell a real change from a re-render. */
+const sheetSignature = ({ title, items }: SheetContent) =>
+  JSON.stringify([
+    title,
+    items.map((i) => (i === "separator" ? i : [i.label, i.href, i.disabled, i.danger])),
+  ]);
 /** The card's key in its grid, written on its `li` so the grid can find its link. */
 const CardKey = createContext<string | null>(null);
 
@@ -184,22 +211,28 @@ function moveTo(key: string, at: number, count: number, cols: number): number | 
  * that card goes away it moves to the neighbour, and so does focus if it was inside the card. The
  * children are a flat list of keyed cards (fragments are opened). `loading` (true: six cards, or a count)
  * draws skeleton cards in the card's anatomy and marks the list busy; `empty` draws the EmptyState
- * instead of the grid. Loading wins over empty.
+ * instead of the grid. Loading wins over empty. A grid with more pages (`onLoadMore`, `hasMore`,
+ * `loadingMore`, `loadMoreError`; {@link ListMoreProps}) reads the next one as its end comes into
+ * view on phones (a skeleton row, a failure with Retry, in the grouped card) and draws Load more
+ * under the grid from 600 up.
  */
 export function CardGrid({
   label,
   loading,
   empty,
   children,
+  ...more
 }: {
   label: string;
   loading?: boolean | number;
   empty?: EmptyStateProps;
   children?: ReactNode;
-}) {
+} & ListMoreProps) {
   const t = useDesignT();
   const announces = useSkeletonAnnounces();
   const [stop, setStop] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<({ key: string } & SheetContent) | null>(null);
+  const form = useClassForm();
   const listRef = useRef<HTMLUListElement>(null);
   /** The holder's position at the last render: where its neighbour will be if it goes. */
   const lastIndex = useRef(0);
@@ -249,44 +282,77 @@ export function CardGrid({
     e.preventDefault();
     items[to]?.querySelector<HTMLElement>(LINK)?.focus();
   };
+  const host: SheetHost = {
+    chosen: sheet?.key ?? null,
+    choose: (key, content) => setSheet({ key, ...content }),
+    update: (key, content) =>
+      setSheet((cur) =>
+        cur?.key === key && sheetSignature(cur) !== sheetSignature(content)
+          ? { key, ...content }
+          : cur,
+      ),
+    release: (key) => setSheet((cur) => (cur?.key === key ? null : cur)),
+  };
   return (
-    <ul
-      ref={listRef}
-      className="cb-card-grid"
-      data-part="card-grid"
-      aria-label={label}
-      onKeyDown={onKeyDown}
-    >
-      {entries.map((entry) => (
-        <SlotContext.Provider
-          // Keyed by the child's own key, so a card keeps its state (and the stop) when the list
-          // is filtered or reordered.
-          key={entry.key}
-          value={{
-            holder: entry.key === holder,
-            onFocusCard: () => {
-              if (entry.holdable) setStop(entry.key);
-            },
-            onLeaveWithFocus: () => {
-              lostFocus.current = true;
-            },
+    <SheetHostContext.Provider value={host}>
+      <ul
+        ref={listRef}
+        className="cb-card-grid"
+        data-part="card-grid"
+        aria-label={label}
+        aria-busy={more.loadingMore === true ? true : undefined}
+        onKeyDown={onKeyDown}
+      >
+        {entries.map((entry) => (
+          <SlotContext.Provider
+            // Keyed by the child's own key, so a card keeps its state (and the stop) when the list
+            // is filtered or reordered.
+            key={entry.key}
+            value={{
+              holder: entry.key === holder,
+              onFocusCard: () => {
+                if (entry.holdable) setStop(entry.key);
+              },
+              onLeaveWithFocus: () => {
+                lostFocus.current = true;
+              },
+            }}
+          >
+            <CardKey.Provider value={entry.key}>{entry.node}</CardKey.Provider>
+          </SlotContext.Provider>
+        ))}
+        <ListEnd more={more} skeleton={<SkeletonCard end />} />
+      </ul>
+      <ListMoreButton more={more} />
+      {form === "compact" || sheet !== null ? (
+        // One sheet for the grid, beside the list: mounted while a card is chosen, so leaving
+        // compact with the sheet up does not drop it.
+        <ActionSheet
+          open={sheet !== null}
+          onOpenChange={(o) => {
+            if (!o) setSheet(null);
           }}
-        >
-          <CardKey.Provider value={entry.key}>{entry.node}</CardKey.Provider>
-        </SlotContext.Provider>
-      ))}
-    </ul>
+          title={sheet?.title ?? t("overlay.actions")}
+          items={sheet?.items ?? []}
+        />
+      ) : null}
+    </SheetHostContext.Provider>
   );
 }
 
-/** The skeleton card: the loaded card's boxes, each text a bar slot (spec §6.29). */
-function SkeletonCard({ announce }: { announce?: string | undefined }) {
+/**
+ * The skeleton card: the loaded card's boxes, each text a bar slot (spec §6.29). `end`: the row a
+ * grid with more pages shows at its end while the next page loads (the end's status announces).
+ */
+function SkeletonCard({ announce, end }: { announce?: string | undefined; end?: boolean }) {
   return (
     <li
       className="cb-object-card"
       data-part="object-card"
       data-cap-part="card"
       data-skeleton="true"
+      data-end={end ? "skeleton" : undefined}
+      aria-hidden={end ? true : undefined}
     >
       <span className="cb-object-card-head" data-part="object-card-head">
         <span className="cb-object-card-avatar" data-part="object-card-avatar" aria-hidden="true">
@@ -350,6 +416,12 @@ function CardAvatar({ avatar, title }: { avatar: ObjectCardLoaded["avatar"]; tit
  * stretched over the card so the whole card opens `href`; the primary and the menu sit above it,
  * beside the link (never nested in it), so pressing them does not navigate. `{ loading: true }`
  * draws the skeleton card.
+ *
+ * Below 600 (spec §6.34 "Phones", responsive system spec §2.3) the card is a row of the grid's one
+ * grouped card, restyled from the same DOM: the name over one muted line and a chevron. A card with
+ * `href` mounts no buttons there (they live in `ClassForms`' wide copy); its primary and menu open
+ * as an ActionSheet on a long press or a context menu instead. A card without `href` keeps its
+ * buttons, and a card with nothing to offer leaves the browser's context menu alone.
  */
 export function ObjectCard(props: ObjectCardProps) {
   if (props.loading === true) return <SkeletonCard />;
@@ -430,6 +502,60 @@ function LoadedCard({
       ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
     });
   }
+  const form = useClassForm();
+  const host = useContext(SheetHostContext);
+  // Outside a grid the card keeps its own sheet; in a grid it uses the grid's one sheet.
+  const [ownSheetOpen, setOwnSheetOpen] = useState(false);
+  // Compact (spec §6.34 "Phones", responsive system spec §2.3): a linked card draws no button and
+  // offers its primary and menu in the sheet; a card without a link keeps its one button (the
+  // primary, else the lone item) and offers the rest of its menu there. A running primary makes
+  // every item wait, as the wide card's buttons do.
+  const listed: MenuItem[] =
+    href !== undefined
+      ? actionSheetItems({ ...(primary ? { primary } : {}), items: menu ?? [] })
+      : primary === undefined && lone !== undefined
+        ? []
+        : actionSheetItems({ items: menu ?? [] });
+  const sheetItems = waiting
+    ? listed.map((i) => (i === "separator" ? i : { ...i, disabled: true }))
+    : listed;
+  const pressable = form === "compact" && sheetItems.length > 0;
+  // The grid's sheet runs the card's latest actions, whatever render chose it.
+  const latestItems = useRef(sheetItems);
+  latestItems.current = sheetItems;
+  const hosted = (): SheetContent => ({
+    title,
+    items: sheetItems.map((i, n) =>
+      i === "separator" || !i.onSelect
+        ? i
+        : {
+            ...i,
+            onSelect: () => {
+              const now = latestItems.current[n];
+              if (now !== undefined && now !== "separator") now.onSelect?.();
+            },
+          },
+    ),
+  });
+  const chosen = host !== null && cardKey !== null && host.chosen === cardKey;
+  const signature = sheetSignature({ title, items: sheetItems });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the signature stands for the content
+  useLayoutEffect(() => {
+    if (chosen && cardKey !== null) host?.update(cardKey, hosted());
+  }, [chosen, signature]);
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  useLayoutEffect(
+    () => () => {
+      if (cardKey !== null) hostRef.current?.release(cardKey);
+    },
+    [cardKey],
+  );
+  const openSheet = () => {
+    if (host !== null && cardKey !== null) host.choose(cardKey, hosted());
+    else setOwnSheetOpen(true);
+  };
+  const press = useLongPress(openSheet, { enabled: pressable });
   /** The card's link, from an element inside the card. */
   const linkOf = (el: Element) => el.closest(CARD)?.querySelector<HTMLAnchorElement>(LINK) ?? null;
   // The description sits over the stretched link (so its tooltip shows) and passes a click on to
@@ -454,151 +580,180 @@ function LoadedCard({
     }
     if (e.button === 0) link.click();
   };
+  /** A button of the card, keyed by its slot: 0 the primary (else the lone item), 1 the lone item. */
+  const button = (a: ObjectCardAction, i: number) =>
+    a.href !== undefined ? (
+      <LinkButton
+        key={i}
+        href={a.href}
+        variant="default"
+        density="dense"
+        aria-describedby={nameId}
+        {...(tabIndex !== undefined ? { tabIndex } : {})}
+      >
+        {a.label}
+      </LinkButton>
+    ) : (
+      <Button
+        key={i}
+        variant="default"
+        density="dense"
+        loading={a.loading === true}
+        disabled={waiting}
+        tabIndex={tabIndex}
+        aria-describedby={nameId}
+        {...(a.onSelect ? { onClick: a.onSelect } : {})}
+      >
+        {a.label}
+      </Button>
+    );
+  const controls = (
+    <>
+      {buttons.map(button)}
+      {actions.length > 0 && lone === undefined ? (
+        <Menu
+          items={menu ?? []}
+          // A menu item that removed this card: the trigger is gone, so the grid moves focus to
+          // the neighbour card instead of the menu returning it to nowhere.
+          onCloseAutoFocus={(e) => {
+            if (liRef.current === null || !liRef.current.isConnected) e.preventDefault();
+          }}
+          trigger={
+            <IconButton
+              label={t("shell.moreActions")}
+              icon={<Icon name="more-horizontal" />}
+              density="dense"
+              variant="default"
+              disabled={waiting}
+              tabIndex={tabIndex}
+              aria-describedby={nameId}
+            />
+          }
+        />
+      ) : null}
+    </>
+  );
   return (
-    <li
-      ref={liRef}
-      id={id}
-      className="cb-object-card"
-      data-part="object-card"
-      data-cap-part="card"
-      data-card-key={cardKey ?? undefined}
-      onFocus={slot === null ? undefined : () => slot.onFocusCard()}
-    >
-      <span className="cb-object-card-head" data-part="object-card-head">
-        <CardAvatar avatar={avatar} title={title} />
-        {href === undefined ? (
-          <span
-            ref={nameRef}
-            id={nameId}
-            className="cb-object-card-name"
-            data-part="object-card-name"
-            data-static="true"
-            {...(nameClamped ? { title } : {})}
-          >
-            {title}
-          </span>
-        ) : (
-          <Link
-            href={href}
-            className="cb-object-card-link"
-            data-part="object-card-link"
-            {...(tabIndex !== undefined ? { tabIndex } : {})}
-          >
+    <>
+      <li
+        ref={liRef}
+        id={id}
+        className="cb-object-card"
+        data-part="object-card"
+        data-cap-part="card"
+        data-card-key={cardKey ?? undefined}
+        onFocus={slot === null ? undefined : () => slot.onFocusCard()}
+        {...press}
+      >
+        <span className="cb-object-card-head" data-part="object-card-head">
+          <CardAvatar avatar={avatar} title={title} />
+          {href === undefined ? (
             <span
               ref={nameRef}
               id={nameId}
               className="cb-object-card-name"
               data-part="object-card-name"
+              data-static="true"
               {...(nameClamped ? { title } : {})}
             >
               {title}
             </span>
-            <LinkPendingMark />
-          </Link>
-        )}
-        {state ? (
-          <span
-            className="cb-object-card-state"
-            data-part="object-card-state"
-            data-tone={state.tone}
-          >
-            {state.label}
-          </span>
-        ) : null}
-      </span>
-      {description ? (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: a pointer convenience; the card's link is the keyboard way in
-        <p
-          ref={descRef}
-          className="cb-object-card-desc"
-          data-part="object-card-description"
-          {...(descClamped ? { title: description } : {})}
-          onClick={openFromText}
-          onAuxClick={openFromText}
-        >
-          {description}
-        </p>
-      ) : null}
-      <span className="cb-object-card-foot" data-part="object-card-foot">
-        <span className="cb-object-card-meta" data-part="object-card-meta">
-          {meta === undefined
-            ? null
-            : typeof meta === "string"
-              ? meta
-              : meta.map((m, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: the parts are positional
-                  <Fragment key={i}>
-                    {i > 0 ? " · " : null}
-                    {typeof m === "string" ? (
-                      m
-                    ) : "person" in m ? (
-                      <span className="cb-object-card-meta-person" data-part="object-card-person">
-                        <PersonName
-                          name={m.person.name}
-                          avatarUrl={m.person.avatarUrl}
-                          initialFrom={m.person.initialFrom}
-                          size={16}
-                        />
-                      </span>
-                    ) : (
-                      <span className="cb-object-card-meta-part" data-tone={m.tone}>
-                        {m.label}
-                      </span>
-                    )}
-                  </Fragment>
-                ))}
-        </span>
-        {buttons.map((a, i) =>
-          a.href !== undefined ? (
-            <LinkButton
-              // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the primary, a lone menu item)
-              key={i}
-              href={a.href}
-              variant="default"
-              density="dense"
-              aria-describedby={nameId}
+          ) : (
+            <Link
+              href={href}
+              className="cb-object-card-link"
+              data-part="object-card-link"
               {...(tabIndex !== undefined ? { tabIndex } : {})}
             >
-              {a.label}
-            </LinkButton>
-          ) : (
-            <Button
-              // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the primary, a lone menu item)
-              key={i}
-              variant="default"
-              density="dense"
-              loading={a.loading === true}
-              disabled={waiting}
-              tabIndex={tabIndex}
-              aria-describedby={nameId}
-              {...(a.onSelect ? { onClick: a.onSelect } : {})}
+              <span
+                ref={nameRef}
+                id={nameId}
+                className="cb-object-card-name"
+                data-part="object-card-name"
+                {...(nameClamped ? { title } : {})}
+              >
+                {title}
+              </span>
+              <LinkPendingMark />
+            </Link>
+          )}
+          {state ? (
+            <span
+              className="cb-object-card-state"
+              data-part="object-card-state"
+              data-tone={state.tone}
             >
-              {a.label}
-            </Button>
-          ),
-        )}
-        {actions.length > 0 && lone === undefined ? (
-          <Menu
-            items={menu ?? []}
-            // A menu item that removed this card: the trigger is gone, so the grid moves focus to
-            // the neighbour card instead of the menu returning it to nowhere.
-            onCloseAutoFocus={(e) => {
-              if (liRef.current === null || !liRef.current.isConnected) e.preventDefault();
-            }}
-            trigger={
-              <IconButton
-                label={t("shell.moreActions")}
-                icon={<Icon name="more-horizontal" />}
-                density="dense"
-                variant="default"
-                disabled={waiting}
-                tabIndex={tabIndex}
-                aria-describedby={nameId}
-              />
-            }
-          />
+              {state.label}
+            </span>
+          ) : null}
+        </span>
+        {description ? (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: a pointer convenience; the card's link is the keyboard way in
+          <p
+            ref={descRef}
+            className="cb-object-card-desc"
+            data-part="object-card-description"
+            {...(descClamped ? { title: description } : {})}
+            onClick={openFromText}
+            onAuxClick={openFromText}
+          >
+            {description}
+          </p>
         ) : null}
-      </span>
-    </li>
+        <span className="cb-object-card-foot" data-part="object-card-foot">
+          <span className="cb-object-card-meta" data-part="object-card-meta">
+            {meta === undefined
+              ? null
+              : typeof meta === "string"
+                ? meta
+                : meta.map((m, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the parts are positional
+                    <Fragment key={i}>
+                      {i > 0 ? " · " : null}
+                      {typeof m === "string" ? (
+                        m
+                      ) : "person" in m ? (
+                        <span className="cb-object-card-meta-person" data-part="object-card-person">
+                          <PersonName
+                            name={m.person.name}
+                            avatarUrl={m.person.avatarUrl}
+                            initialFrom={m.person.initialFrom}
+                            size={16}
+                          />
+                        </span>
+                      ) : (
+                        <span className="cb-object-card-meta-part" data-tone={m.tone}>
+                          {m.label}
+                        </span>
+                      )}
+                    </Fragment>
+                  ))}
+          </span>
+          {/* Interaction differs per class (spec §6.64): buttons from 600, the action sheet below. */}
+          <ClassForms
+            compact={href === undefined && buttons[0] !== undefined ? button(buttons[0], 0) : null}
+            wide={controls}
+          />
+        </span>
+        {href === undefined ? null : (
+          <span
+            className="cb-object-card-chevron"
+            data-part="object-card-chevron"
+            aria-hidden="true"
+          >
+            <Icon name="chevron-right" size={16} />
+          </span>
+        )}
+      </li>
+      {host === null && (pressable || ownSheetOpen) ? (
+        // Beside the row, not inside it: the sheet's own presses never reach the row's long press.
+        <ActionSheet
+          open={ownSheetOpen}
+          onOpenChange={setOwnSheetOpen}
+          title={title}
+          items={sheetItems}
+        />
+      ) : null}
+    </>
   );
 }

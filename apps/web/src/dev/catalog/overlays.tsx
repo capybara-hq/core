@@ -13,7 +13,9 @@ import {
   Menu,
   Popover,
   Sheet,
+  SheetGroup,
   SheetOptionList,
+  SheetRow,
   Stack,
   StatusMark,
   Tabs,
@@ -207,8 +209,59 @@ function sheetBlocks(): ReactNode {
   );
 }
 
+/**
+ * The action sheet at rest over a list page at the phone size (spec §6.61): the same id and box as
+ * docs/design/reference/src/action-sheet.html. `ActionSheet` itself opens in a dialog portal, so
+ * the block draws its content (one `SheetGroup` of `SheetRow`s with the sheet's own parts) in the
+ * bottom sheet's static frame; the real sheet is covered by the design package's tests.
+ */
+function actionSheetBlocks(): ReactNode {
+  const F = SHEET_FIXTURE;
+  const page = (
+    <Stack gap={12}>
+      <Text variant="h2">智能体</Text>
+      <Text tone="muted">研究助手 · 仅自己</Text>
+      <Text tone="muted">周报助手 · 全组织</Text>
+      <Text tone="muted">客服助手 · 全组织</Text>
+    </Stack>
+  );
+  const items: { label: string; icon: "chats" | "settings" | "copy" | "trash-2"; danger?: true }[] =
+    [
+      { label: "开始会话", icon: "chats" },
+      { label: "设置", icon: "settings" },
+      { label: "复制链接", icon: "copy" },
+      { label: "删除", icon: "trash-2", danger: true },
+    ];
+  return (
+    <RefBlock id="action-sheet-open" width={390} height={844}>
+      <BottomSheetFrame
+        title="研究助手"
+        state="dragging"
+        share={0}
+        closeLabel={F.close}
+        handleLabel={F.handle}
+        page={page}
+      >
+        <SheetGroup part="action-sheet-group">
+          {items.map((i) => (
+            <SheetRow
+              key={i.label}
+              label={i.label}
+              icon={i.icon}
+              part="action-sheet-item"
+              onClick={noop}
+              {...(i.danger ? { danger: true } : {})}
+            />
+          ))}
+        </SheetGroup>
+      </BottomSheetFrame>
+    </RefBlock>
+  );
+}
+
 export const SHEET_BLOCKS = {
   sheet: sheetBlocks,
+  "action-sheet": actionSheetBlocks,
 } as const;
 
 function SheetProp({ k, v }: { k: string; v: string }) {

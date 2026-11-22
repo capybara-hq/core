@@ -1,4 +1,5 @@
 import { type MouseEvent, type PointerEvent, useCallback, useEffect, useRef } from "react";
+import { useHaptics } from "../native";
 
 /** How long a touch must rest before it counts as a long press (responsive system spec §2.4). */
 export const LONG_PRESS_MS = 500;
@@ -28,8 +29,8 @@ const NONE: LongPressHandlers = {
  * that rests `LONG_PRESS_MS` without moving more than `LONG_PRESS_SLOP` px, or a `contextmenu`
  * event (right click, two-finger tap, Android's long press), calls `onLongPress`. The browser's
  * own context menu is prevented, and after a touch long press the click its release sends is
- * eaten (on the window, in the capture phase), so a row link does not navigate. Disabled (`enabled: false`), it hands back no-op
- * handlers and leaves the browser's context menu alone.
+ * eaten (on the window, in the capture phase), so a row link does not navigate. Disabled
+ * (`enabled: false`), it hands back no-op handlers and leaves the browser's context menu alone.
  */
 export function useLongPress(
   onLongPress: () => void,
@@ -40,8 +41,13 @@ export function useLongPress(
   const start = useRef<{ x: number; y: number } | null>(null);
   const fired = useRef(false);
   const swallow = useRef<((e: Event) => void) | null>(null);
+  /** Disarms the click eater on the next press anywhere (the release sent no click). */
+  const disarm = useRef<(() => void) | null>(null);
   const latest = useRef(onLongPress);
   latest.current = onLongPress;
+  const haptics = useHaptics();
+  const hapticsRef = useRef(haptics);
+  hapticsRef.current = haptics;
   const clear = useCallback(() => {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
@@ -49,7 +55,9 @@ export function useLongPress(
   }, []);
   const unswallow = useCallback(() => {
     if (swallow.current !== null) window.removeEventListener("click", swallow.current, true);
+    if (disarm.current !== null) window.removeEventListener("pointerdown", disarm.current, true);
     swallow.current = null;
+    disarm.current = null;
   }, []);
   /**
    * The click a long press's release sends is eaten on the window in the capture phase, before
@@ -65,6 +73,13 @@ export function useLongPress(
     };
     swallow.current = eat;
     window.addEventListener("click", eat, true);
+    // A new press anywhere (a sheet row in a portal) means the release's click never came
+    // (Android sends contextmenu and usually no click): that press clicks normally.
+    disarm.current = unswallow;
+    window.addEventListener("pointerdown", unswallow, true);
+    // The touch path only (the timer, or a touch's contextmenu that beat it): a mouse right click
+    // is no touch and plays nothing. `fired` keeps a later contextmenu from repeating it.
+    hapticsRef.current("light");
     latest.current();
   }, [unswallow]);
   useEffect(

@@ -344,7 +344,7 @@
         : nTabs > 0
           ? `<div class="r-ph-tabs r-ph-tabs-loading"><div class="r-ph-tab-slots" data-part="page-header-tab-slots">${Array.from({ length: nTabs }, () => '<div class="r-skel-text" data-size="body" style="width:56px"><span class="r-skel-bar"></span></div>').join("")}</div></div>`
           : "";
-      return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div>${loadActions}</div>${loadTabs}</header>`;
+      return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${o.narrow ? "" : loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div>${loadActions}</div>${loadTabs}</header>`;
     }
     const segs = o.path ? F.FORM_PAGE_FIXTURE.path : F.FORM_PAGE_FIXTURE.path.slice(0, 1);
     const crumb = `<nav class="r-ph-crumb" aria-label="路径">${segs
@@ -364,7 +364,7 @@
     // Phones (spec §4.2): the search on its own line above the tabs, which scroll on theirs.
     const P = F.PAGE_HEADER_FIXTURE;
     const tabs = o.tabs
-      ? `<div class="r-ph-tabs"><label class="r-search">${icon("search", 14)}<span class="r-sr">${esc(P.search)}</span><input placeholder="${esc(P.search)}"></label><div class="r-ph-tablist" role="tablist">${P.tabs
+      ? `<div class="r-ph-tabs"${o.narrow ? " data-seg" : ""}><label class="r-search">${icon("search", 14)}<span class="r-sr">${esc(P.search)}</span><input placeholder="${esc(P.search)}"></label><div class="r-ph-tablist" role="tablist">${P.tabs
           .map(
             (t, i) =>
               `<span role="tab" aria-selected="${i === 0}">${esc(t.label)}${o.pending ? '<span class="r-ph-count" data-pending="true">–</span>' : `<span class="r-ph-count">${t.count}</span>`}</span>`,
@@ -376,7 +376,10 @@
     if (o.titleHidden) {
       return `<header class="r-ph"><div class="r-ph-titleless"><h1 class="r-sr">${esc(title)}</h1>${crumb}${actions}</div></header>`;
     }
-    return `<header class="r-ph"${o.narrow ? " data-narrow" : ""}>${crumb}<div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title" title="${esc(title)}">${esc(title)}</h1>${desc}</div>${actions}</div>${tabs}</header>`;
+    // Compact (spec §4.2 "Compact head"): no path row; the large title with its count (the first
+    // tab's) beside it in muted mono; the secondary actions are the head's ⋯ (outside a shell).
+    const count = o.narrow && o.tabs ? `<span class="r-ph-count-mono">${P.tabs[0].count}</span>` : "";
+    return `<header class="r-ph"${o.narrow ? " data-narrow" : ""}>${o.narrow ? "" : crumb}<div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title" title="${esc(title)}">${esc(title)}${count}</h1>${desc}</div>${actions}</div>${tabs}</header>`;
   }
 
   function stats(o) {

@@ -7,6 +7,8 @@ import {
   type MenuCapabilityV1,
   MOBILE_SHELL_LIMITS,
   NAV_SECTION_ORDER,
+  type NavAccountV1,
+  type NavActionV1,
   type NavCapabilityV1,
   type NavSectionId,
   type NavStateV1,
@@ -101,6 +103,8 @@ describe("desktop shell capability types", () => {
       // nav@1: a section or menu label 1..32, a badge count an integer 0..9999 (plan Decision 2)
       navLabel: 32,
       navCount: 9999,
+      // nav@1 minor version (interaction model §10.3): the account's name 1..64 characters
+      navAccountName: 64,
     });
     expect(MENU_ITEM_ID.test("a.b-c_1")).toBe(true);
     expect(MENU_ITEM_ID.test("")).toBe(false);
@@ -123,10 +127,26 @@ describe("desktop shell capability types", () => {
   });
 
   it("types the nav strip and the profile switcher", () => {
-    expectTypeOf<NavSectionId>().toEqualTypeOf<"chats" | "inbox" | "agents" | "schedules">();
-    expectTypeOf<keyof NavStateV1>().toEqualTypeOf<"items" | "current" | "menu">();
-    expectTypeOf<ReturnType<NavCapabilityV1["onMenu"]>>().toEqualTypeOf<() => void>();
+    expectTypeOf<NavSectionId>().toEqualTypeOf<
+      "chats" | "inbox" | "agents" | "schedules" | "search"
+    >();
+    expectTypeOf<keyof NavStateV1>().toEqualTypeOf<"items" | "current" | "action" | "account">();
+    // the shape the shell and the web ship in lockstep (interaction model §10.3, D12, D16): no
+    // menu button, the pill's action always sent, account and side
+    expectTypeOf<NavStateV1["action"]>().toEqualTypeOf<NavActionV1>();
+    expectTypeOf<NavActionV1["icon"]>().toEqualTypeOf<"plus" | "square-pen">();
+    expectTypeOf<keyof NavAccountV1>().toEqualTypeOf<"name" | "avatarUrl" | "initial" | "badge">();
+    expectTypeOf<NavCapabilityV1["side"]>().toEqualTypeOf<"left" | "right" | undefined>();
+    expectTypeOf<keyof NavCapabilityV1>().toEqualTypeOf<
+      "set" | "onSelect" | "onAction" | "onAccount" | "side"
+    >();
+    expectTypeOf<NavCapabilityV1["onAction"]>().toEqualTypeOf<
+      (listener: () => void) => () => void
+    >();
+    expectTypeOf<NavCapabilityV1["onAccount"]>().toEqualTypeOf<
+      (listener: () => void) => () => void
+    >();
     expectTypeOf<ReturnType<ProfilesCapabilityV1["show"]>>().toEqualTypeOf<Promise<void>>();
-    expect(NAV_SECTION_ORDER).toEqual(["chats", "inbox", "agents", "schedules"]);
+    expect(NAV_SECTION_ORDER).toEqual(["chats", "inbox", "agents", "schedules", "search"]);
   });
 });

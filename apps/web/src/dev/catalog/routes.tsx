@@ -179,6 +179,8 @@ export const REFERENCE_COMPONENTS = [
   "list-detail",
   // the follow-finger bottom sheet's drag states (spec §6.7; mobile layout spec §7.4)
   "sheet",
+  // an object's actions on compact: the action sheet at rest (spec §6.61)
+  "action-sheet",
   // the app icon on a light and a dark ground (spec §6.49; mobile layout spec §10.2.1)
   "icon-preview",
 ] as const;

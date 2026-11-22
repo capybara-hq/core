@@ -47,6 +47,63 @@ const TokenTypes = z
   .max(5);
 
 /**
+ * Authorization request parameters the kernel sets itself, or that would change what the callback
+ * or the token exchange relies on, or that never belong on a URL. `oauth_code`
+ * `authorizationParams` cannot use them, nor can the query of a manual `authorizationUrl`; the kernel
+ * checks the list again before it builds an authorize URL.
+ */
+export const OAUTH_RESERVED_AUTHORIZATION_PARAMS = [
+  // set by the kernel's authorize request
+  "response_type",
+  "client_id",
+  "redirect_uri",
+  "state",
+  "code_challenge",
+  "code_challenge_method",
+  "scope",
+  "resource",
+  // would change what the callback or the token exchange relies on
+  "response_mode",
+  "request",
+  "request_uri",
+  "nonce",
+  "dpop_jkt",
+  "authorization_details",
+  // credentials and token-endpoint names
+  "client_secret",
+  "client_assertion",
+  "client_assertion_type",
+  "code",
+  "code_verifier",
+  "grant_type",
+  "refresh_token",
+] as const;
+
+const RESERVED_PARAMS: ReadonlySet<string> = new Set(OAUTH_RESERVED_AUTHORIZATION_PARAMS);
+const reservedParamMessage = (name: string) =>
+  `"${name}" is set by the kernel and cannot be an authorization parameter`;
+const MAX_AUTHORIZATION_PARAMS = 10;
+
+/**
+ * Extra query parameters of the authorize request (e.g. Google's `access_type: "offline"`,
+ * `prompt: "consent"`): names `[a-z][a-z0-9_]` up to 40 characters, values 1-200 printable ASCII
+ * characters, at most 10, none of {@link OAUTH_RESERVED_AUTHORIZATION_PARAMS}. Not secrets: they
+ * are stored in plain JSON and shown in the browser's address bar.
+ */
+const AuthorizationParams = z
+  .record(
+    z.string().regex(/^[a-z][a-z0-9_]{0,39}$/, "Invalid authorization parameter name"),
+    z.string().regex(/^[\x20-\x7E]{1,200}$/, "Invalid authorization parameter value"),
+  )
+  .refine((p) => Object.keys(p).length <= MAX_AUTHORIZATION_PARAMS, {
+    message: `At most ${MAX_AUTHORIZATION_PARAMS} authorization parameters`,
+  })
+  .describe(
+    "Extra query parameters of the OAuth authorize request (e.g. access_type, prompt). " +
+      "Never put a secret here.",
+  );
+
+/**
  * Authentication method: only the type and non-secret fields; credential values go through the
  * kernel's `credential` / credentials API.
  */
@@ -84,9 +141,29 @@ export const ConnectorAuthSchema = z.discriminatedUnion("type", [
       client: z.enum(["dcr", "manual"]),
       tokenAuthMethod: TokenAuthMethod.optional(),
       tokenTypes: TokenTypes.optional(),
+      authorizationParams: AuthorizationParams.optional(),
     })
     .strict()
     .superRefine((a, ctx) => {
+      for (const name of Object.keys(a.authorizationParams ?? {})) {
+        if (RESERVED_PARAMS.has(name))
+          ctx.addIssue({
+            code: "custom",
+            path: ["authorizationParams", name],
+            message: reservedParamMessage(name),
+          });
+      }
+      // A query in a manual endpoint stays (RFC 6749 §3.1), but never with a name the kernel owns
+      if (a.authorizationUrl !== undefined && URL.canParse(a.authorizationUrl)) {
+        for (const name of new Set(new URL(a.authorizationUrl).searchParams.keys())) {
+          if (RESERVED_PARAMS.has(name.toLowerCase()))
+            ctx.addIssue({
+              code: "custom",
+              path: ["authorizationUrl"],
+              message: reservedParamMessage(name),
+            });
+        }
+      }
       if (a.discovery === "manual") {
         for (const k of ["authorizationUrl", "tokenUrl"] as const) {
           if (a[k] === undefined)

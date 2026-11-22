@@ -136,7 +136,9 @@
   min-height: var(--cb-control-dense);
   margin-top: auto;
 }
-.cb-object-card-foot > .cb-btn {
+/* The buttons sit in ClassForms' wide copy (a box-less wrapper) on a linked card, directly in
+   the foot on a card without a link. */
+.cb-object-card-foot .cb-btn {
   position: relative;
   z-index: 1;
   flex: none;
@@ -162,14 +164,111 @@
 .cb-object-card-meta-part[data-tone="fail"] {
   color: var(--cb-fail);
 }
-@media (max-width: 599px) {
+/* The row's chevron (spec §6.34 "Phones"): drawn below 600 only, on a card with a link. */
+.cb-object-card-chevron {
+  display: none;
+}
+/* Phones (spec §6.34 "Phones", responsive system spec §2.3): the grid is one rounded card of
+   grouped rows, each card a row from the same DOM: the avatar spanning both lines, the name over
+   one muted line (the description, else the meta), then the state and the chevron; head and foot
+   give up their boxes (display: contents) so their parts are the row's grid items. Hairlines are
+   inset to the text column. A long press opens the actions, never the system callout or a text
+   selection. The query is ClassForms' compact one (the complement of min-width 600), so a
+   fractional width between 599 and 600 is styled as the form ClassForms mounted. */
+@media not all and (min-width: 600px) {
   .cb-card-grid {
     grid-template-columns: 1fr;
+    gap: 0;
+    overflow: hidden;
+    border: var(--cb-grouped-line);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
   }
-  /* The skeleton of the foot's buttons takes the mobile control height the buttons have. */
+  .cb-object-card {
+    display: grid;
+    grid-template-columns: var(--cb-grouped-lead) minmax(0, 1fr);
+    grid-auto-columns: auto;
+    align-content: center;
+    align-items: center;
+    column-gap: var(--cb-space-3);
+    row-gap: 0;
+    min-height: var(--cb-grouped-row-lead);
+    padding: var(--cb-grouped-pad);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .cb-object-card + .cb-object-card {
+    background:
+      linear-gradient(var(--cb-line-soft), var(--cb-line-soft)) no-repeat right top /
+      calc(100% - var(--cb-grouped-inset-lead)) 1px;
+  }
+  /* The rows share one card: the focus ring is drawn inside the row. */
+  .cb-object-card:has(.cb-object-card-link:focus-visible) {
+    outline-offset: -2px;
+  }
+  .cb-object-card-head,
+  .cb-object-card-foot {
+    display: contents;
+  }
+  .cb-object-card-avatar {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+  .cb-object-card .cb-object-card-link,
+  .cb-object-card-head > .cb-object-card-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .cb-object-card .cb-object-card-link,
+  .cb-object-card-name[data-static="true"] {
+    font-weight: 500;
+  }
+  /* The text column fits the lead, so the row is exactly 64 (the 40 lead and space.3 twice, spec
+     §6.34 size table): the name and the muted line take half the lead each (20 + 20), whatever
+     the compact type scale's own line heights (body 24, prose-small 22) would add. */
+  .cb-object-card .cb-object-card-name {
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+  .cb-object-card-desc {
+    grid-column: 2;
+    grid-row: 2;
+    -webkit-line-clamp: 1;
+    font-size: var(--cb-type-small-size);
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+  .cb-object-card-meta {
+    grid-column: 2;
+    grid-row: 2;
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+  .cb-object-card-desc ~ .cb-object-card-foot .cb-object-card-meta {
+    display: none;
+  }
+  /* Nothing under the name: it is centred against the avatar. */
+  .cb-object-card:not(:has(.cb-object-card-desc, .cb-object-card-meta:not(:empty)))
+  :is(.cb-object-card-link, .cb-object-card-head > .cb-object-card-name) {
+    grid-row: 1 / span 2;
+  }
+  /* The trailing parts, in DOM order after the text column: the state, a card without a link's
+     one button, the chevron. */
+  .cb-object-card-state,
+  .cb-object-card-foot .cb-btn,
+  .cb-object-card-chevron {
+    grid-row: 1 / span 2;
+  }
+  .cb-object-card-chevron {
+    display: block;
+    color: var(--cb-faint);
+    line-height: 0;
+  }
+  /* A skeleton row: the avatar box, the name bar over one line bar, no button box. */
+  .cb-object-card[data-skeleton="true"] .cb-object-card-desc > :nth-child(2),
   .cb-object-card-foot > .cb-skeleton-box {
-    min-width: var(--cb-touch-hit);
-    min-height: var(--cb-touch-hit);
+    display: none;
   }
 }
 

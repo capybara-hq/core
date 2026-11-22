@@ -3818,8 +3818,60 @@ textarea {
 }
 .r-ph[data-narrow] .r-btn,
 .r-ph[data-narrow] .r-icon-btn {
-  min-width: 40px;
-  height: 40px;
+  min-width: var(--cb-touch-hit);
+  height: var(--cb-touch-hit);
+}
+/* The compact head (spec §4.2 "Compact head"): the title takes the width, the description wraps,
+   the actions line goes under them, the count is mono beside the title, the search is a filled
+   44 px field above the tabs, which are a segmented control with its own frame. */
+.r-ph[data-narrow] .r-ph-row {
+  flex-wrap: wrap;
+}
+.r-ph[data-narrow] .r-ph-title {
+  overflow: visible;
+}
+.r-ph[data-narrow] .r-ph-desc {
+  white-space: normal;
+}
+.r-ph[data-narrow] .r-ph-actions {
+  flex: 1 1 100%;
+}
+.r-ph-count-mono {
+  margin-left: var(--cb-space-2);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-small-size);
+  font-weight: 400;
+}
+.r-ph[data-narrow] .r-search {
+  order: -1;
+  box-sizing: border-box;
+  height: var(--cb-touch-hit);
+  border-color: transparent;
+  background: var(--cb-selected);
+  font-size: 16px;
+}
+.r-ph[data-narrow] .r-ph-tabs[data-seg] {
+  border-bottom: 0;
+}
+.r-ph[data-narrow] [data-seg] .r-ph-tablist {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-touch-hit);
+  margin-bottom: 0;
+  border-radius: var(--cb-radius-sm);
+  outline: 1px solid var(--cb-line);
+  outline-offset: -1px;
+}
+.r-ph[data-narrow] [data-seg] .r-ph-tablist > span {
+  flex: 1 1 0;
+  justify-content: center;
+  height: 100%;
+  padding: 0 var(--cb-space-4);
+  box-shadow: none;
+}
+.r-ph[data-narrow] [data-seg] .r-ph-tablist > span[aria-selected="true"] {
+  background: var(--cb-selected);
 }
 .r-ph-tabs {
   display: flex;
@@ -4312,11 +4364,11 @@ textarea {
   height: var(--cb-control-default);
 }
 .r-ph[data-narrow] .r-skel-box[data-box="default"] {
-  min-width: 40px;
-  height: 40px;
+  min-width: var(--cb-touch-hit);
+  height: var(--cb-touch-hit);
 }
 .r-ph[data-narrow] .r-ph-tab-slots {
-  height: 40px;
+  height: var(--cb-touch-hit);
 }
 .r-ph[data-narrow] .r-ph-tabs-loading {
   height: auto;
@@ -5505,14 +5557,47 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-/* A phone (the `narrow` block, 390): one column, 40 px tap targets. */
+/* A phone (the `narrow` block, 390; spec §6.34 "Phones"): one grouped card of rows, each card a
+   64 px row (the avatar, the name over one muted line, a chevron), no buttons, the hairlines
+   inset to the text column. */
 [data-narrow] .r-card-grid {
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--cb-line-soft);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
 }
-[data-narrow] .r-ocard-foot > .r-btn,
-[data-narrow] .r-ocard-foot > .r-icon-btn {
-  min-width: 40px;
-  height: 40px;
+[data-narrow] .r-ocard {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--cb-space-3);
+  box-sizing: border-box;
+  height: 64px;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+[data-narrow] .r-ocard + .r-ocard {
+  background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+  background-repeat: no-repeat;
+  background-position: right top;
+  background-size: calc(100% - var(--cb-space-4) - 40px - var(--cb-space-3)) 1px;
+}
+[data-narrow] .r-ocard-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+[data-narrow] .r-ocard-desc {
+  -webkit-line-clamp: 1;
+}
+.r-ocard-chevron {
+  color: var(--cb-faint);
+  line-height: 0;
 }
 /* The page empty state (spec §6.18): the line-art capybara over the words, centered. */
 .r-empty-page {
@@ -7277,6 +7362,50 @@ span.r-scal-daynum {
   color: var(--cb-muted);
 }
 
+/* ActionSheet (§6.61): the bottom sheet's SheetGroup on the hover ground, rows touch.row high. */
+.r-as-group {
+  display: flex;
+  flex-direction: column;
+  margin: var(--cb-space-2) var(--cb-touch-sheet-inset) var(--cb-touch-sheet-inset);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+  overflow: hidden;
+}
+.r-as-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  width: 100%;
+  height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-4);
+  border: 0;
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: start;
+}
+.r-as-item + .r-as-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--cb-space-4) + var(--cb-touch-icon) + var(--cb-space-3));
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-as-icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--cb-touch-icon);
+  color: var(--cb-muted);
+}
+.r-as-item[data-danger="true"] {
+  color: var(--cb-fail);
+}
+.r-as-item[data-danger="true"] .r-as-icon {
+  color: var(--cb-fail);
+}
+
 /* IconPreview (§6.49): one icon on a light and a dark ground, the same in both themes. */
 .r-ip {
   display: flex;
@@ -7435,6 +7564,49 @@ span.r-scal-daynum {
   line-height: var(--cb-type-small-line);
   white-space: nowrap;
   color: var(--cb-faint);
+}
+
+/* The compact object list (the `compact` block, 390; spec §6.17 "Grouped list"): one grouped card,
+   rows with the mark in the 40 lead, the text column, a chevron; the state closes the meta line. */
+[data-narrow] .r-olist {
+  overflow: hidden;
+  border-color: var(--cb-line-soft);
+}
+[data-narrow] .r-orow {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  column-gap: var(--cb-space-3);
+  box-sizing: border-box;
+  min-height: calc(40px + 2 * var(--cb-space-3));
+  border-top: 0;
+}
+[data-narrow] .r-orow + .r-orow {
+  background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+  background-repeat: no-repeat;
+  background-position: right top;
+  background-size: calc(100% - var(--cb-space-4) - 40px - var(--cb-space-3)) 1px;
+}
+[data-narrow] .r-orow-mark {
+  justify-self: center;
+}
+/* Each text line takes half the 40 lead, so a name and one more line is exactly 64. */
+[data-narrow] .r-orow-text {
+  gap: 0;
+}
+[data-narrow] .r-orow-line,
+[data-narrow] .r-orow-desc,
+[data-narrow] .r-orow-meta {
+  line-height: 20px;
+}
+[data-narrow] .r-orow-desc {
+  font-size: var(--cb-type-small-size);
+}
+.r-orow-chevron {
+  color: var(--cb-faint);
+  line-height: 0;
+}
+.r-orow-state-ok {
+  color: var(--cb-ok);
 }
 
 /* The loading object row's mark place (the loaded row's object-row-mark part). */

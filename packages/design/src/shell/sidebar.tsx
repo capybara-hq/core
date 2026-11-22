@@ -456,7 +456,14 @@ function SidebarPanel({
         <SidebarNav p={p} rail={rail} sessions={rail ? sessions : undefined} />
       )}
       {ctx.kind === "work" && !rail && p.conversations ? (
-        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
+        <>
+          {/* a native strip's pill holds the recents (interaction model §10.5): hidden with the
+              strip, the filler then keeps the account at the foot */}
+          <div className="cb-sidebar-recents" data-nav-pill="">
+            <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
+          </div>
+          <div className="cb-sidebar-fill" data-native-fill="" />
+        </>
       ) : (
         <div className="cb-sidebar-fill" />
       )}
@@ -580,6 +587,7 @@ function BrandTools({ p, rail }: { p: SidebarProps; rail: boolean }) {
           label={search}
           icon={<Icon name="search" />}
           part="search"
+          data-nav-pill=""
           onClick={p.onOpenCommands}
         />,
       )}
@@ -852,6 +860,7 @@ function SidebarNav({
         data-rove={key}
         data-desktop-only={n.desktopOnly ? "" : undefined}
         {...(work && part === "nav-item" ? navSectionAttrs(key) : {})}
+        {...(part === "new-conversation" ? { "data-nav-pill": "" } : {})}
         tabIndex={roving.tabIndexOf(key, keys)}
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
         {...(rail ? { "aria-label": name ?? n.label } : name ? { "aria-label": name } : {})}
@@ -933,6 +942,7 @@ function SidebarNav({
             type="button"
             className="cb-sidebar-item"
             data-part="conversations-button"
+            data-nav-pill=""
             data-rove="conversations"
             tabIndex={roving.tabIndexOf("conversations", keys)}
             aria-label={t("sidebar.conversations")}
@@ -1110,7 +1120,9 @@ function SetupNav({
 /**
  * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Scheduled tasks) carries
  * `data-nav-section`, every other navigation entry `data-nav-other`; both are hidden while the
- * strip shows (`[data-native-nav]`), when the sections come from the strip.
+ * strip shows (`[data-native-nav]`), when the sections come from the strip. Search, New
+ * conversation and the recents carry `data-nav-pill`: the strip's pill holds them too
+ * (interaction model §10.5), so they are hidden with it.
  */
 function navSectionAttrs(id: string): Record<string, string> {
   return (NATIVE_SECTION_ORDER as readonly string[]).includes(id)

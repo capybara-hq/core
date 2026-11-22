@@ -11,7 +11,7 @@ import { report, root } from "./report.js";
 // (`--marketplace-url` reads it from a mirror repository instead of `marketplace.url`);
 // CAPYBARA_PACKAGES__NPM_TOKEN is sent to a private registry's origin. The compose files' git build
 // contexts of the plugins repository are checked against marketplace.commit (offline), and with
-// --network their Dockerfiles, the sandbox-docker plugin's copy of the socket proxy config there and
+// --network their Dockerfiles, the device-docker plugin's copy of the socket proxy config there and
 // the image's SHA256SUMS against the SDK runtime sources (SANDBOX_RUNTIME_SOURCE).
 const { values } = parseArgs({
   options: {

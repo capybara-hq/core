@@ -273,6 +273,17 @@ describe("transition CSS", () => {
     }
   });
 
+  it("the slides run only on compact without reduced motion, in nested queries every engine reads", () => {
+    // `(not (min-width: 600px)) and (…)` is Media Queries 4 range syntax (Safari 16.4+): the
+    // compact query nests inside the motion query instead.
+    expect(source).not.toMatch(/@media \(not \(min-width: 600px\)\)/);
+    const at = source.indexOf("@media (prefers-reduced-motion: no-preference) {");
+    expect(at).toBeGreaterThan(-1);
+    const nested = source.slice(at).match(/^@media[^{]*\{\s*@media ([^{]*)\{/);
+    expect(nested?.[1]?.trim()).toBe("not all and (min-width: 600px)");
+    expect(source.indexOf('.cb-shell-main[data-nav="push-0"]', at)).toBeGreaterThan(at);
+  });
+
   it("reduced motion sets no animation on a sliding page", () => {
     const rule = rules.find(
       (r) =>

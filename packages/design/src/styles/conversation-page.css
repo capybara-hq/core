@@ -177,7 +177,8 @@ span.cb-title-btn {
     position: absolute;
     z-index: calc(var(--cb-z-sheet) - 10);
     top: var(--cb-float-top);
-    left: calc(var(--cb-space-4) + var(--cb-inset-left) + var(--cb-float-size) + var(--cb-space-2));
+    /* (from the column, which starts after the left inset: counted once, as the floating row) */
+    left: calc(var(--cb-space-4) + var(--cb-float-size) + var(--cb-space-2));
     right: calc(var(--cb-space-4) + var(--cb-inset-right));
     gap: var(--cb-space-2);
     height: var(--cb-float-size);
@@ -699,7 +700,12 @@ span.cb-title-btn {
     display: inline-flex;
   }
 }
-/* The options sheet (§6.16.2, phones): a bottom sheet over a scrim, the three picker groups. */
+/* The options sheet (§6.16.2, phones): a bottom sheet over a scrim, the three picker groups.
+   Beside a native strip (the iPhone Duo, interaction model §10.4, §10.7, D13) the scrim runs edge
+   to edge under it while the panel spans the content width only: inside the side insets, so its
+   rows, close and footer never sit under the strip's pill, on whichever side `data-strip` puts
+   it (the insets carry the strip; the other side's is 0 there). No rule keys the panel on the
+   side itself: a live split change moves it in the same frame, the open sheet kept. */
 .cb-bsheet-scrim {
   position: fixed;
   inset: 0;
@@ -709,7 +715,9 @@ span.cb-title-btn {
 }
 .cb-bsheet {
   position: fixed;
-  inset: auto 0 0 0;
+  inset: auto 0 var(--cb-keyboard-inset, 0px) 0;
+  right: var(--cb-inset-right);
+  left: var(--cb-inset-left);
   z-index: var(--cb-z-sheet);
   display: flex;
   flex-direction: column;
@@ -857,6 +865,16 @@ span.cb-title-btn {
   scrollbar-width: thin;
   scrollbar-color: var(--cb-scroll-thumb) transparent;
   /* the body's content (the groups, the option rows' grounds) `touch.sheet-inset` from the edges */
+  padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
+    calc(var(--cb-space-4) + var(--cb-inset-bottom));
+}
+/* A sheet's footer (a dialog's buttons, §6.7): under the body, outside its scroll, over the
+   bottom inset; the body above it then keeps only a small gap. */
+.cb-bsheet-body:has(+ .cb-bsheet-foot) {
+  padding-bottom: var(--cb-space-2);
+}
+.cb-bsheet-foot {
+  flex: none;
   padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
     calc(var(--cb-space-4) + var(--cb-inset-bottom));
 }

@@ -3,6 +3,7 @@ import "server-only";
 import "./register";
 import { headers } from "next/headers";
 import { ApiClientError } from "../api";
+import { type BrandRef, brandCookieOf } from "../brand-cookie";
 import { safeUiOf } from "../client-extensions";
 import { cookieOf } from "../cookies";
 import { NONCE_HEADER, PATH_HEADER, SIGN_IN_HEADER } from "../headers";
@@ -31,6 +32,25 @@ export async function currentCookieHeader(): Promise<string | null> {
 /** A cookie of the request (decoded), or undefined. */
 export async function currentCookie(name: string): Promise<string | undefined> {
   return cookieOf((await headers()).get("cookie"), name);
+}
+
+/**
+ * Whether the request came over https, as Next sees it (what `req.nextUrl.protocol` of the proxy
+ * says, the signal the web's own cookies take `Secure` from): `x-forwarded-proto`, which Next
+ * fills from the socket unless server.mjs kept the value of a trusted proxy (`lib/peer.ts`).
+ */
+export async function currentRequestHttps(): Promise<boolean> {
+  const proto = (await headers()).get("x-forwarded-proto");
+  return proto?.split(",").at(-1)?.trim().toLowerCase() === "https";
+}
+
+/**
+ * The brand cookie of the request (theme brand coverage spec §5) under the name of its mode:
+ * `__Host-cb-brand` over https, `cb-brand` over plain http (`brandCookieOf`); null when absent or
+ * invalid.
+ */
+export async function currentBrandCookie(): Promise<BrandRef | null> {
+  return brandCookieOf(await currentCookieHeader(), await currentRequestHttps());
 }
 
 /**

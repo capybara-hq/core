@@ -10,11 +10,11 @@ import { KernelStarting } from "../../components/shell/KernelStarting";
 import { StaticTheme } from "../../components/static-theme";
 import { ThemeRoot } from "../../components/theme-root";
 import { setupReady } from "../../lib/agents";
-import { BRAND_COOKIE, decodeBrandCookie } from "../../lib/brand-cookie";
 import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
 import { clientHost } from "../../lib/server/client-host";
 import {
+  currentBrandCookie,
   currentCookie,
   currentCookieHeader,
   currentNonce,
@@ -62,7 +62,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // under the theme this browser last drew (the brand cookie; theme brand coverage spec §5).
   if (shell.kind === "unavailable") {
     return (
-      <StaticTheme brand={decodeBrandCookie(await currentCookie(BRAND_COOKIE))}>
+      <StaticTheme brand={await currentBrandCookie()}>
         <KernelStarting />
       </StaticTheme>
     );

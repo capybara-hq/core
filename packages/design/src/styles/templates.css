@@ -39,7 +39,7 @@
   display: flex;
   gap: var(--cb-space-5);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-detail-band-skeleton {
     flex-direction: column;
     align-items: flex-start;
@@ -52,6 +52,54 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+/* One scroller on compact (responsive system spec §2.6, D7; design spec §6.65): the template root
+   (TemplateFrame, `data-scroll="one"`) is the page's only scroller, head included, so the head
+   scrolls away with the content instead of keeping its height on screen. It stays a flex column:
+   the head and the ActionRow keep their height, the body takes at least the room left between
+   them (`flex: 1 0 auto`), so a short form still has its sticky ActionRow at the bottom above the
+   inset (spec §4.4), and grows with its content past that. Inside the body the boxes stop filling
+   and scrolling on their own. The settings sub-nav and the ActionRow stay sticky inside it (their
+   own rules); the shell pulls the root up under its floating row (shell.css). Medium and expanded
+   keep the fixed head over the body's scroller. */
+@media not all and (min-width: 600px) {
+  .cb-template[data-scroll="one"] {
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  /* no scrollbar gutter on the head: it no longer lines up with a body scroller of its own */
+  .cb-template[data-scroll="one"] .cb-template-head {
+    scrollbar-gutter: auto;
+  }
+  .cb-template[data-scroll="one"] .cb-body-content,
+  .cb-template[data-scroll="one"] .cb-body[data-layout="centered"] {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+  .cb-template[data-scroll="one"] .cb-body {
+    flex: 1 0 auto;
+  }
+  .cb-template[data-scroll="one"] .cb-template-head,
+  .cb-template[data-scroll="one"] .cb-actionrow {
+    flex: none;
+  }
+  .cb-template[data-scroll="one"] .cb-body-row,
+  .cb-template[data-scroll="one"] .cb-body > .cb-body-content,
+  .cb-template[data-scroll="one"] .cb-body-main > .cb-body-content {
+    flex: none;
+  }
+  .cb-template[data-scroll="one"] .cb-body[data-layout="centered"] > .cb-body-content {
+    height: auto;
+  }
+  /* The settings sub-nav stays sticky (decision 2026-11-09), right under the floating row: the
+     scroller starts at the row's top (`--cb-float-row`; 0 outside a compact shell). */
+  .cb-settings-nav[data-sticky="true"] {
+    position: sticky;
+    top: var(--cb-float-row, 0px);
+  }
 }
 
 /*
@@ -204,8 +252,9 @@
 /* Phones: the sub-nav is one row of items that scrolls sideways (no group labels), above the
    content, so the content starts on the first screen. It sticks to the top of the scrolling body
    (right under the fixed head) on the page ground with its hairline, so the sections stay one tap
-   away and the row never slides out half clipped (maintainer decision 2026-11-09). */
-@media (max-width: 599px) {
+   away and the row never slides out half clipped (maintainer decision 2026-11-09). In the one
+   scroller of the compact page it sticks under the floating row (below). */
+@media not all and (min-width: 600px) {
   .cb-settings-nav {
     position: sticky;
     top: 0;
@@ -421,6 +470,36 @@
 }
 .cb-status-page-action {
   margin-top: 12px;
+}
+/* Actions stacked full width on compact (responsive system spec §3.5): a StatusPage's actions one
+   under another, an OnboardingPage step's action on its own line under the step's text. */
+@media not all and (min-width: 600px) {
+  .cb-status-page-action[data-stack="true"] {
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+    gap: var(--cb-space-2);
+  }
+  .cb-status-page-action[data-stack="true"] > :not(.cb-btn) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cb-space-2);
+  }
+  .cb-onboarding-steps[data-stack="true"] .cb-checklist-item[data-state="todo"] {
+    flex-wrap: wrap;
+  }
+  .cb-onboarding-steps[data-stack="true"]
+    .cb-checklist-item[data-state="todo"]
+    > .cb-checklist-end {
+    flex-basis: 100%;
+  }
+  .cb-onboarding-steps[data-stack="true"] .cb-checklist-end > * {
+    flex: 1;
+  }
+  .cb-status-page-action[data-stack="true"] .cb-btn,
+  .cb-onboarding-steps[data-stack="true"] .cb-btn {
+    width: 100%;
+  }
 }
 
 /* 「请在电脑上管理」: the notice of a desktop-only page, shown on touch in the page's place */
@@ -690,6 +769,54 @@ a.cb-item-list-title:hover {
 .cb-object-row:first-child {
   border-top: 0;
 }
+/* The end of a list with more pages (ObjectList, CardGrid, DataTable; mobile interaction model
+   spec §3 "Infinite scroll", D6): below 600, inside the list's grouped card, the sentinel and the
+   loading status take no room (the skeleton row before them shows the load) and a failure is one
+   row with its message and Retry; from 600 up a Load more button under the list. */
+.cb-list-end {
+  display: block;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-list-end[data-state="idle"],
+.cb-list-end[data-state="loading"] {
+  height: 0;
+  overflow: hidden;
+}
+.cb-list-end[data-state="error"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-4);
+  box-shadow: inset 0 1px var(--cb-line-soft);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-list-end-cell {
+  display: contents;
+}
+.cb-list-end-error {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-fail);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-list-more {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  margin-top: var(--cb-space-3);
+}
+.cb-list-more-error {
+  color: var(--cb-fail);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .cb-object-mark {
   display: grid;
   flex: none;
@@ -799,80 +926,134 @@ a.cb-object-name:hover {
 .cb-object-meta[data-empty="true"] {
   display: none;
 }
-/* Phones (below 600, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
-   the right; the description and the meta line sit under the name, and the state closes the meta
-   line in its tone (read from the meta's data-state, so the label is one node); the row action,
-   dense, sits at the right of the meta line, or under it as a whole when both do not fit. The text
-   column dissolves into the row (display: contents), so its lines and the row's buttons wrap as
-   one flex row; DOM (and tab) order stays name, action, menu. The skeleton rows keep the mark and
-   the text column side by side. */
-@media (max-width: 599px) {
-  .cb-object-row {
-    flex-wrap: wrap;
+/* The row's chevron (spec §6.17 "Grouped list"): drawn below 600 only, on a row with a link. */
+.cb-object-chevron {
+  display: none;
+}
+/* Phones (below 600, spec §6.17 "Grouped list", responsive system spec §2.3): the list is one
+   rounded card of grouped rows from the shared --cb-grouped-* values (as CardGrid and DataTable):
+   the mark in the 40 px lead, the text column (name and chips, the description, the meta line),
+   then the trailing text, a row without a link's one button, and the chevron of a row with one.
+   The state closes the meta line in its tone (read from the meta's data-state, so the label
+   stays one node). A row with a link is one tap target (the name's link stretched over it) and
+   opens its actions as a sheet on a long press, never the system callout or a text selection.
+   The query is ClassForms' compact one (the complement of min-width 600), so a fractional width
+   between 599 and 600 is styled as the form ClassForms mounted. The selectors are specific
+   enough to win over the touch row sizes (touch.css), which stay for the wide touch classes. */
+@media not all and (min-width: 600px) {
+  ul.cb-object-list {
+    overflow: hidden;
+    border: var(--cb-grouped-line);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
   }
-  .cb-object-row[data-skeleton="true"] .cb-object-text {
-    flex-basis: calc(100% - 36px - var(--cb-space-3));
+  ul.cb-object-list > .cb-object-row {
+    padding: var(--cb-grouped-pad);
+    border-top: 0;
+    min-height: var(--cb-grouped-row-lead);
   }
-  .cb-object-row:not([data-skeleton="true"]) {
-    align-content: flex-start;
+  .cb-object-list > .cb-object-row + .cb-object-row {
+    background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+    background-repeat: no-repeat;
+    background-position: right top;
+    background-size: calc(100% - var(--cb-grouped-inset-lead)) 1px;
+  }
+  .cb-object-list > .cb-object-row:not([data-skeleton="true"]) {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--cb-grouped-lead) minmax(0, 1fr);
+    grid-auto-columns: auto;
+    align-items: center;
+    column-gap: var(--cb-space-3);
     row-gap: 0;
+    min-height: var(--cb-grouped-row-lead);
+    -webkit-tap-highlight-color: transparent;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-text {
-    display: contents;
+  /* Only a row that opens or has a sheet is pressable: the others keep their text selectable. */
+  .cb-object-row[data-press="true"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
-  /* The mark overhangs line 1 (a dense control high) into the indent of the lines below, as the
-     text column sits beside it from 600. */
+  .cb-object-row[data-open="true"]:active {
+    background-color: var(--cb-hover);
+  }
+  .cb-object-row:has(.cb-object-name:focus-visible) {
+    outline: 1px solid var(--cb-accent);
+    outline-offset: -1px;
+  }
   .cb-object-row:not([data-skeleton="true"]) > .cb-object-mark {
-    align-self: flex-start;
-    margin-bottom: calc(var(--cb-control-dense) - 36px);
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: center;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-line {
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: var(--cb-control-dense);
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-text {
+    grid-column: 2;
+    grid-row: 1;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-menu {
-    order: 1;
-  }
-  /* The line break after line 1. */
-  .cb-object-row:not([data-skeleton="true"])::after {
-    content: "";
-    order: 1;
-    flex-basis: 100%;
-    height: 0;
-  }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc,
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-meta,
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-trailing,
   .cb-object-row:not([data-skeleton="true"]) .cb-object-actions {
-    order: 2;
-    margin-top: 2px;
+    display: flex;
+    flex: none;
+    gap: var(--cb-space-2);
+  }
+  .cb-object-chevron {
+    display: block;
+    color: var(--cb-faint);
+    line-height: 0;
+  }
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-trailing,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-actions,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-menu,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-class-form > .cb-object-actions,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-class-form > .cb-object-menu,
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-chevron {
+    grid-row: 1;
+  }
+  .cb-object-row[data-open="true"] .cb-object-name::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .cb-object-row[data-open="true"] {
+    cursor: pointer;
+  }
+  /* The text column fits the lead, so a row of a name and one more line is exactly 64 (the 40
+     lead and space.3 twice, as the card rows): each line takes half the lead, whatever the
+     compact type scale's own line heights would add. */
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-text {
+    gap: 0;
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-line,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-meta {
+    min-height: 0;
+    line-height: calc(var(--cb-grouped-lead) / 2);
   }
   .cb-object-row:not([data-skeleton="true"]) .cb-object-desc {
-    flex: 1 1 100%;
-    min-width: 0;
-    margin-left: calc(36px + var(--cb-space-3));
+    font-size: var(--cb-type-small-size);
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cb-object-row:not([data-skeleton="true"]) .cb-object-meta {
     display: flex;
-    flex: 0 1 auto;
     min-width: 0;
-    margin-left: calc(36px + var(--cb-space-3));
   }
   .cb-object-meta-text {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cb-object-meta[data-state]:not([data-empty="true"])::before {
     content: " · ";
-    order: 1;
     flex: none;
     white-space: pre;
   }
   .cb-object-meta[data-state]::after {
     content: attr(data-state);
-    order: 2;
     flex: none;
   }
   .cb-object-meta[data-state-tone="ok"]::after {
@@ -887,14 +1068,6 @@ a.cb-object-name:hover {
   .cb-object-row:not([data-skeleton="true"]) > .cb-object-state {
     display: none;
   }
-  .cb-object-row:not([data-skeleton="true"]) .cb-object-actions {
-    display: flex;
-    flex: none;
-    gap: var(--cb-space-2);
-    margin-left: auto;
-  }
-  /* The row action and the ⋯ menu are dense buttons at the mobile control height (44, spec
-     §2.5), so they are their own tap targets. */
 }
 
 /* EmptyState (spec §6.18) */
@@ -1354,7 +1527,7 @@ a.cb-object-name:hover {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-steps-count {
     display: block;
   }
@@ -1364,9 +1537,10 @@ a.cb-object-name:hover {
 }
 
 /* ActionRow, compact form (spec §4.4, maintainer decision 2026-11-20): sticky above the bottom inset
-   and the keyboard; the primary fills the bottom line, the other actions share the line above it in
-   equal widths, every button 40 high, the row growing to fit. */
-@media (max-width: 599px) {
+   and the keyboard (at the bottom of the template's one scroller, D7); the primary fills the bottom
+   line, the other actions share the line above it in equal widths, every button 40 high, the row
+   growing to fit. */
+@media not all and (min-width: 600px) {
   .cb-actionrow {
     position: sticky;
     bottom: 0;
@@ -1418,7 +1592,7 @@ a.cb-object-name:hover {
 .cb-actionrow-primary {
   display: contents;
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-actionrow .cb-actionrow-primary {
     display: flex;
   }
@@ -1621,7 +1795,7 @@ a.cb-object-name:hover {
 }
 /* Inside the shell on compact the floating row is the one back (the open item is a pushed page); the
    reference set's compact frame stands in for the shell. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar,
   .cb-ref-screen .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
     display: none;
@@ -1803,12 +1977,43 @@ li:first-child > .cb-ld-row {
   max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
+/* InboxPage list rows on compact (responsive system spec §3.6, §2.3; design spec §6.47): the rows
+   of the inbox's list are one grouped card from the shared --cb-grouped-* values (as ObjectList,
+   CardGrid and DataTable): the panel ground, a 1px line-soft frame, radius md, rows padded
+   grouped-pad, exactly 64 high (the title over its meta line, half the lead each, as the card and
+   object rows), hairlines inset space.4. No long press and no context menu (D6): the rows only
+   open the item. */
+@media not all and (min-width: 600px) {
+  .cb-inbox-rail .cb-ld-list {
+    overflow: hidden;
+    border: var(--cb-grouped-line);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
+  }
+  .cb-inbox-rail .cb-ld-list > li > .cb-ld-row {
+    height: auto;
+    min-height: var(--cb-grouped-row-lead);
+    padding: var(--cb-grouped-pad);
+    border-top: 0;
+  }
+  .cb-inbox-rail .cb-ld-list > li + li > .cb-ld-row {
+    background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+    background-repeat: no-repeat;
+    background-position: right top;
+    background-size: calc(100% - var(--cb-grouped-inset)) 1px;
+  }
+  .cb-inbox-rail .cb-ld-head,
+  .cb-inbox-rail .cb-ld-head > *,
+  .cb-inbox-rail .cb-ld-meta {
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+}
 /* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */
 .cb-trace-back {
   display: none;
   margin-bottom: var(--cb-space-2);
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-trace[data-open="true"] > .cb-trace-waterfall,
   .cb-trace[data-open="false"] > .cb-trace-detail {
     display: none;
@@ -1881,7 +2086,7 @@ li:first-child > .cb-setup-step {
    hydrated page and a live resize across 600 always agree and the action exists once in the
    accessibility tree): a touch.prominent square fixed at the bottom end, radius md, accent, the
    icon (default plus) 24, the label visually hidden but still its accessible name. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-template[data-fab="true"] [data-head-primary="true"] > .cb-btn {
     position: fixed;
     right: calc(var(--cb-space-4) + var(--cb-inset-right, 0px));
@@ -1917,8 +2122,8 @@ li:first-child > .cb-setup-step {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  /* the list ends above the button */
-  .cb-template[data-fab="true"] .cb-body-content {
+  /* the list ends above the button (none under the Duo strip, which hides it: list-page.css) */
+  :root:not([data-native-nav]) .cb-template[data-fab="true"] .cb-body-content {
     padding-bottom: calc(var(--cb-touch-prominent) + 2 * var(--cb-space-4));
   }
 }

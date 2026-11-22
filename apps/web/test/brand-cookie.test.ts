@@ -4,13 +4,16 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  BRAND_COOKIE,
+  BRAND_COOKIE_HTTP,
+  BRAND_COOKIE_HTTPS,
   BRAND_COOKIE_MAX_AGE,
   type BrandRef,
   brandCookieHeader,
+  brandCookieOf,
   brandRefOf,
   decodeBrandCookie,
   encodeBrandCookie,
+  STALE_BRAND_COOKIE_CLEAR,
 } from "../src/lib/brand-cookie";
 import type { ThemeRef } from "../src/lib/themes";
 import { themeCssUrl } from "./support/themes";
@@ -162,7 +165,7 @@ describe("the brand cookie codec", () => {
 describe("brandCookieHeader", () => {
   it("the header has Path=/, SameSite=Lax, max-age, Secure only when asked", () => {
     const plain = brandCookieHeader(FULL, false);
-    expect(plain.startsWith(`${BRAND_COOKIE}=${encodeBrandCookie(FULL)};`)).toBe(true);
+    expect(plain.startsWith(`${BRAND_COOKIE_HTTP}=${encodeBrandCookie(FULL)};`)).toBe(true);
     expect(plain).toContain("Path=/");
     expect(plain).toContain("SameSite=Lax");
     expect(plain).toContain(`Max-Age=${BRAND_COOKIE_MAX_AGE}`);
@@ -173,12 +176,56 @@ describe("brandCookieHeader", () => {
 
   it("null deletes the cookie (as does a ref the encoder refuses)", () => {
     const del = brandCookieHeader(null, false);
-    expect(del.startsWith(`${BRAND_COOKIE}=;`)).toBe(true);
+    expect(del.startsWith(`${BRAND_COOKIE_HTTP}=;`)).toBe(true);
     expect(del).toContain("Max-Age=0");
     expect(del).toContain("Path=/");
     expect(brandCookieHeader({ ...FULL, markUrl: "//evil" }, true)).toBe(
       brandCookieHeader(null, true),
     );
+  });
+});
+
+describe("the cookie name by mode (__Host- over https)", () => {
+  const raw = encodeBrandCookie(FULL) ?? "";
+  const OTHER: BrandRef = { ...FULL, wordmark: "Planted" };
+  const planted = encodeBrandCookie(OTHER) ?? "";
+
+  it("over https the header names __Host-cb-brand: Secure, Path=/, no Domain", () => {
+    const set = brandCookieHeader(FULL, true);
+    expect(BRAND_COOKIE_HTTPS).toBe("__Host-cb-brand");
+    expect(set.startsWith(`__Host-cb-brand=${raw};`)).toBe(true);
+    expect(set).toContain("; Path=/;");
+    expect(set).toMatch(/; Secure$/);
+    expect(set).not.toMatch(/domain=/i);
+    expect(brandCookieHeader(null, true).startsWith("__Host-cb-brand=; Max-Age=0;")).toBe(true);
+  });
+
+  it("over plain http the header names cb-brand without Secure", () => {
+    expect(BRAND_COOKIE_HTTP).toBe("cb-brand");
+    expect(brandCookieHeader(FULL, false).startsWith(`cb-brand=${raw};`)).toBe(true);
+    expect(brandCookieHeader(FULL, false)).not.toMatch(/Secure|domain=/i);
+  });
+
+  it("the stale plain cookie's clear deletes cb-brand at Path=/", () => {
+    expect(STALE_BRAND_COOKIE_CLEAR).toMatch(/^cb-brand=; Max-Age=0; Path=\//);
+  });
+
+  it("over http only cb-brand is read", () => {
+    expect(brandCookieOf(`a=1; cb-brand=${raw}`, false)).toEqual(FULL);
+    expect(brandCookieOf(null, false)).toBeNull();
+  });
+
+  it("over https only __Host-cb-brand is read: a plain cb-brand is rejected", () => {
+    expect(brandCookieOf(`__Host-cb-brand=${raw}`, true)).toEqual(FULL);
+    expect(brandCookieOf(`cb-brand=${planted}`, true)).toBeNull();
+    expect(brandCookieOf(`cb-brand=${planted}; __Host-cb-brand=${raw}`, true)).toEqual(FULL);
+  });
+
+  it("a request carrying __Host-cb-brand came over https: the plain one is ignored", () => {
+    // a TLS proxy the web tier cannot see: the browser sends a Secure cookie only over https
+    expect(brandCookieOf(`cb-brand=${planted}; __Host-cb-brand=${raw}`, false)).toEqual(FULL);
+    // an invalid __Host- cookie still means https: no fallback to the plain one
+    expect(brandCookieOf(`cb-brand=${planted}; __Host-cb-brand=nope`, false)).toBeNull();
   });
 });
 

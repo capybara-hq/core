@@ -12,20 +12,16 @@ import {
 import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { ConvMenu } from "../conversation/menu";
-import type { NavBadge } from "../display/nav-badge";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
-import {
-  NATIVE_NAV_LIMITS,
-  type NativeNavHandle,
-  type NativeSectionId,
-  useHaptics,
-} from "../native";
+import type { NativeNavHandle } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
-import { popOverlaysThen } from "../overlays/use-overlay-history";
+import type { MenuItem } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
 import { backTarget, FloatingBar, type FloatingLead, routeCommitted } from "./floating-bar";
+import { INSET_SETTLE_MS, KEYBOARD_INSET_SETTLED_EVENT } from "./keyboard-settled";
+import { useNativeStrip } from "./native-strip";
 import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
@@ -210,11 +206,23 @@ export function AppShell({
   const page = useMemo(() => {
     const merged: ShellPage = {};
     // later registrations win within a layer, a higher layer over a lower one (a stable sort)
-    for (const { page: p } of [...pages.values()].sort((a, b) => a.layer - b.layer)) {
-      if (p.title !== undefined) merged.title = p.title;
+    const sorted = [...pages.values()].sort((a, b) => a.layer - b.layer);
+    let titleLayer: number | undefined;
+    for (const { page: p, layer } of sorted) {
+      if (p.title !== undefined) {
+        merged.title = p.title;
+        titleLayer = layer;
+      }
       if (p.path !== undefined) merged.path = p.path;
       if (p.menu !== undefined) merged.menu = p.menu;
       if (p.onBack !== undefined) merged.onBack = p.onBack;
+      if (p.actions !== undefined) merged.actions = p.actions;
+      if (p.primary !== undefined) merged.primary = p.primary;
+    }
+    // The scrolled title belongs to the title drawn: only the layer that gave the title reports it
+    // (a pushed part's own title is not "away" because the page under it scrolled).
+    for (const { page: p, layer } of sorted) {
+      if (layer === titleLayer && p.titleAway !== undefined) merged.titleAway = p.titleAway;
     }
     return merged;
   }, [pages]);
@@ -314,105 +322,24 @@ export function AppShell({
     );
   }, [pathname, root]);
 
-  // The native strip (mobile app spec §6.1): its state comes from the drawer's data and the route.
-  const haptics = useHaptics();
-  const hasNav = nativeNav !== undefined;
-  const navState = drawer
-    ? {
-        items: [
-          { id: "chats" as const, label: navLabel(t("shell.chats")) },
-          ...drawer.sections.map((s) => ({
-            id: s.id,
-            label: navLabel(s.label),
-            ...navBadge(s.badge),
-          })),
-        ],
-        current: currentSection(pathname, surface, drawer),
-        menu:
-          hydrated && sizeClass === "compact"
-            ? { label: navLabel(t("shell.menu")), ...navBadge(drawer.menuBadge) }
-            : null,
-      }
-    : null;
-  const navKey = navState === null ? null : JSON.stringify(navState);
-  const navSent = useRef<string | null>(null);
-  const navLatest = useRef({ nav: nativeNav, drawer, onNavigate, haptics, navState, pathname });
-  navLatest.current = { nav: nativeNav, drawer, onNavigate, haptics, navState, pathname };
-  // `nav.set` is the one capability call made from an effect: a state push, not confirming. Only
-  // the handle's presence and the state key it: an equivalent new handle sends nothing.
-  useEffect(() => {
-    const { nav, navState: state } = navLatest.current;
-    if (!hasNav) {
-      navSent.current = null;
-      return;
-    }
-    if (nav === undefined || state === null || navSent.current === navKey) return;
-    navSent.current = navKey;
-    try {
-      nav.set(state);
-    } catch {
-      // the strip keeps its last state
-    }
-  }, [hasNav, navKey]);
-  // `<html data-native-nav>` (set before the first paint by the environment script) also reaches
-  // the drawer and the menus, which portal out of the shell element: set while the handle is
-  // there, cleared once it goes (the strip went away), never touched before a handle was seen.
-  const hadNav = useRef(false);
-  useEffect(() => {
-    if (reference !== undefined) return;
-    const root = document.documentElement;
-    if (hasNav) {
-      hadNav.current = true;
-      root.setAttribute("data-native-nav", "");
-    } else if (hadNav.current) {
-      hadNav.current = false;
-      root.removeAttribute("data-native-nav");
-    }
-  }, [hasNav, reference]);
-  // The strip's taps and its menu button: subscribed per handle (resubscribing sends no state).
-  useEffect(() => {
-    if (nativeNav === undefined) return;
-    const offs: (() => void)[] = [];
-    const listen = (subscribe: () => unknown) => {
-      try {
-        const off = subscribe();
-        if (typeof off === "function") offs.push(off as () => void);
-      } catch {
-        // a shell that cannot subscribe: its taps do nothing
-      }
-    };
-    listen(() =>
-      nativeNav.onSelect((id) => {
-        const { drawer: d, onNavigate: go, haptics: buzz, pathname: now } = navLatest.current;
-        const href = d === undefined ? undefined : sectionHref(id, d);
-        if (href === undefined) return;
-        buzz("selection");
-        // An open drawer or sheet closes first: on a touch window its history entries are popped
-        // and the move runs once that landed (Task 28's pick rule), else it closes at once. A tap
-        // on the section whose root is already shown moves nowhere.
-        const move = () => {
-          if (href === now) return;
-          // a tab switch swaps at once (no slide)
-          instantRoute.current = href;
-          if (go) go(href, { transition: "none" });
-          else window.location.assign(href);
-        };
-        const popped = popOverlaysThen(move);
-        setDrawerOpen(false);
-        if (!popped) move();
-      }),
-    );
-    listen(() => nativeNav.onMenu(() => setDrawerOpen((open) => !open)));
-    return () => {
-      for (const off of offs) {
-        try {
-          off();
-        } catch {
-          // already gone
-        }
-      }
-    };
-  }, [nativeNav]);
+  // The native strip (mobile app spec §6.1, interaction model §10.2–10.4): native-strip.tsx.
+  const stripAccountSheet = useNativeStrip({
+    nativeNav,
+    drawer,
+    pathname,
+    surface,
+    primary: page.primary,
+    compact: hydrated && sizeClass === "compact",
+    searchable: commands !== undefined,
+    reference: reference !== undefined,
+    onNavigate,
+    instantRoute,
+    openPalette: () => setPaletteOpen(true),
+    closeOverlays: () => {
+      setDrawerOpen(false);
+      setPaletteOpen(false);
+    },
+  });
 
   const openSteps = useCallback(() => {
     stepsPushed.current = true;
@@ -472,6 +399,8 @@ export function AppShell({
     if (reference !== undefined) return;
     const vv = window.visualViewport;
     let frame = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastInset = 0;
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
@@ -484,6 +413,20 @@ export function AppShell({
           );
           if (shell) {
             shell.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            // The root carries the state too: sheets portal to the body, outside the shell.
+            const root = document.documentElement;
+            root.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            if (inset > 0) root.dataset.keyboard = "open";
+            else delete root.dataset.keyboard;
+            if (inset !== lastInset) {
+              lastInset = inset;
+              // The inset stopped changing (the keyboard's animation ended): fields scroll into view.
+              clearTimeout(settleTimer);
+              settleTimer = setTimeout(
+                () => window.dispatchEvent(new Event(KEYBOARD_INSET_SETTLED_EVENT)),
+                INSET_SETTLE_MS,
+              );
+            }
             if (inset > 0) shell.dataset.keyboard = "open";
             else delete shell.dataset.keyboard;
           }
@@ -504,6 +447,9 @@ export function AppShell({
     vv?.addEventListener("scroll", update);
     return () => {
       cancelAnimationFrame(frame);
+      clearTimeout(settleTimer);
+      document.documentElement.style.removeProperty("--cb-keyboard-inset");
+      delete document.documentElement.dataset.keyboard;
       document.removeEventListener("focusout", update);
       vv?.removeEventListener("resize", update);
       vv?.removeEventListener("scroll", update);
@@ -525,7 +471,16 @@ export function AppShell({
         : drawer
           ? { kind: "menu", onOpen: () => setDrawerOpen(true), badge: drawer.menuBadge }
           : undefined;
-  const overflow = page.menu ?? menu ?? [];
+  // The trailing "…" (responsive system spec §2.5): the page's menu, then the head's actions.
+  const overflow = joinOverflow(
+    page.menu ?? menu ?? [],
+    headActionEntries(
+      page.actions ?? [],
+      (href) => (onNavigate ? onNavigate(href) : window.location.assign(href)),
+      touch === true,
+    ),
+  );
+  const titleAway = page.titleAway === true && page.title !== undefined;
   // The collapsed sidebar's expand button in the desktop's top row (desktop client spec §7.3):
   // drawn inside a desktop shell while the person has collapsed the sidebar on the expanded class
   // (the medium rail cannot expand); CSS shows it only where the window controls reach past the
@@ -598,11 +553,16 @@ export function AppShell({
             onOpenCommands={() => setPaletteOpen(true)}
             {...(railRef ? { mode: "rail" as const } : {})}
           />
-          <div className="cb-shell-column" data-part="shell-content">
+          <div
+            className="cb-shell-column"
+            data-part="shell-content"
+            data-title-away={titleAway ? "true" : undefined}
+          >
             {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
             <div className="cb-shell-float" data-part="floating-bar-slot">
               <FloatingBar
                 lead={lead}
+                title={titleAway ? page.title : undefined}
                 trailing={
                   overflow.length > 0 ? (
                     <ConvMenu
@@ -673,6 +633,8 @@ export function AppShell({
             data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
           />
         ) : null}
+        {/* The strip's account avatar opens the account sheet on its own (no drawer on the Duo). */}
+        {stripAccountSheet}
         {commands ? (
           <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
         ) : null}
@@ -693,44 +655,6 @@ function navigationApi(): NavigationApi | null {
   return nav?.currentEntry ? nav : null;
 }
 
-const under = (pathname: string, href: string) =>
-  pathname === href || pathname.startsWith(`${href}/`);
-
-/** A label within the strip's bound (`navLabel`), cut by code point. */
-function navLabel(label: string): string {
-  const chars = Array.from(label);
-  return chars.length > NATIVE_NAV_LIMITS.label
-    ? chars.slice(0, NATIVE_NAV_LIMITS.label).join("")
-    : label;
-}
-
-/** A badge in the strip's shape: a count within `navCount`, `countMore` past it; none at 0. */
-function navBadge(badge: NavBadge | undefined): { count?: number; countMore?: boolean } {
-  const n = badge?.count ?? 0;
-  if (!(n > 0)) return {};
-  const count = Math.min(Math.floor(n), NATIVE_NAV_LIMITS.count);
-  const more = badge?.more === true || n > NATIVE_NAV_LIMITS.count;
-  return { count, ...(more ? { countMore: true } : {}) };
-}
-
-/** The section a route belongs to: chats for a chat surface and the conversations list. */
-function currentSection(
-  pathname: string | undefined,
-  surface: boolean,
-  drawer: DrawerNavData,
-): NativeSectionId | null {
-  if (surface) return "chats";
-  if (pathname === undefined) return null;
-  if (under(pathname, drawer.allConversations.href)) return "chats";
-  return drawer.sections.find((s) => under(pathname, s.href))?.id ?? null;
-}
-
-/** A section's root: the new conversation for chats, else the drawer's entry. */
-function sectionHref(id: NativeSectionId, drawer: DrawerNavData): string | undefined {
-  if (id === "chats") return drawer.newConversation.href;
-  return drawer.sections.find((s) => s.id === id)?.href;
-}
-
 /**
  * Subscribes to the Navigation API's entry changes, telling React in a microtask: the event fires
  * synchronously inside `history.pushState`, which Next's router calls from an insertion effect,
@@ -742,4 +666,71 @@ function subscribeNavigation(onChange: () => void): () => void {
   const notify = () => queueMicrotask(onChange);
   nav.addEventListener("currententrychange", notify);
   return () => nav.removeEventListener("currententrychange", notify);
+}
+
+/** Two runs of overflow entries, a separator between them when both have any. */
+function joinOverflow(menu: ConvMenuEntry[], actions: ConvMenuEntry[]): ConvMenuEntry[] {
+  if (menu.length === 0) return actions;
+  if (actions.length === 0) return menu;
+  return [...menu, { kind: "separator" }, ...actions];
+}
+
+/**
+ * The head's secondary actions as the floating row's overflow entries (responsive system spec
+ * §2.5): a link calls `go(href)` after its own `onSelect`; a submenu becomes a labelled run of its
+ * items between separators; a desktop-only entry is left out on touch (as a menu hides it there),
+ * and a submenu left with no item draws no label.
+ * Separators at either end or doubled are dropped.
+ */
+function headActionEntries(
+  items: readonly MenuItem[],
+  go: (href: string) => void,
+  touch: boolean,
+): ConvMenuEntry[] {
+  const out: ConvMenuEntry[] = [];
+  const separate = () => {
+    if (out.length > 0 && out[out.length - 1]?.kind !== "separator")
+      out.push({ kind: "separator" });
+  };
+  const walk = (list: readonly MenuItem[], prefix: string) => {
+    list.forEach((item, i) => {
+      if (item === "separator") {
+        separate();
+        return;
+      }
+      if (item.desktopOnly && touch) return;
+      if (item.submenu) {
+        const before = out.length;
+        separate();
+        const labelAt = out.length;
+        out.push({ kind: "label", label: item.label });
+        walk(item.submenu, `${prefix}${i}-`);
+        // nothing left in the run (every item desktop-only on touch): no bare label
+        if (!out.slice(labelAt + 1).some((e) => e.kind === "item")) {
+          out.length = before;
+          return;
+        }
+        separate();
+        return;
+      }
+      const { href, onSelect } = item;
+      out.push({
+        kind: "item",
+        id: `head-action-${prefix}${i}`,
+        label: item.label,
+        ...(item.icon ? { icon: item.icon } : {}),
+        ...(item.description ? { description: item.description } : {}),
+        ...(item.checked !== undefined ? { checked: item.checked } : {}),
+        ...(item.danger ? { tone: "fail" as const } : {}),
+        ...(item.disabled ? { disabled: true } : {}),
+        onSelect: () => {
+          onSelect?.();
+          if (href !== undefined) go(href);
+        },
+      });
+    });
+  };
+  walk(items, "");
+  while (out[out.length - 1]?.kind === "separator") out.pop();
+  return out;
 }

@@ -161,7 +161,7 @@ Selects on compact open this sheet instead of a dropdown.
 | **Infinite scroll** | decided (D6): lists with cursors load the next page when the last rows come into view (an `IntersectionObserver` sentinel in the list component), with a skeleton row while loading and an inline retry row on error; no 「加载更多」 button rows on compact. Desktop keeps its pagination / load-more. |
 | Long press actions | decided (responsive doc §2.4) |
 | **Swipe actions** | decided (D3): **none for now**. Reasons: they compete with the iOS edge swipe and horizontal scrolling chips; they hide actions (principle 3 needs a visible equivalent anyway); the only strong candidate (archive a conversation) is one long press away. Revisit with real use (Q3). |
-| **Pull to refresh** | decided (D4) per surface: **yes** on the inbox, the conversations page and the drawer's recents in a native shell only (the browser's own pull-to-reload already exists in mobile Safari / Chrome and must not be doubled); **no** elsewhere: lists stay fresh through the query cache and SSE. |
+| **Pull to refresh** | decided (D4) per surface: **yes** on the inbox, the conversations page and the drawer's recents in the native mobile shell only (the browser's own pull-to-reload already exists in mobile Safari / Chrome and must not be doubled); **no** elsewhere: lists stay fresh through the query cache and SSE. |
 | Empty | the page EmptyState, centred in the remaining height, its action full width (one primary per screen: no FAB then) |
 | Loading | skeleton rows in the list's own card (never a spinner page); the head and compact bar real |
 | Error | the list's place says so with 重试 (full width); the head stays; a toast only for an action's failure |
@@ -286,15 +286,16 @@ edge, on both displays. Ours follows it:
 |---|---|---|
 | under the status | **account avatar** (the person's `Avatar`, circle) | opens the account sheet (§10.4) |
 | pill, first item | **primary action**, accent-filled: the page's FAB action when the page has one (新建智能体, 新建定时任务…), else **新会话** | runs the action; the web draws no FAB while the pill carries it |
-| pill | 对话 | `/` (the home; `/chat/…` and `/conversations` mark it current) |
+| pill | 对话 | `/conversations`, the time-grouped list (maintainer decision 2026-11-22, D17; `/conversations` and `/chat/…` mark it current); the new-conversation home `/` is the pill's first item |
 | pill | 收件箱 (badge) | `/inbox` |
 | pill | 智能体 | `/agents` |
 | pill | 定时任务 (not for a guest) | `/schedules` |
 | pill, last item | 搜索 | opens the command palette |
 
 - **No hamburger on Duo.** The pill is the navigation on both displays; the drawer's remaining
-  content (recent conversations, 全部会话, 「技能、连接器、设备…」) is reached from 对话 (the
-  conversations page holds the recents) and from the account sheet (技能、连接器、设备… joins it as
+  content (recent conversations, 全部会话, 「技能、连接器、设备…」) is reached from 对话, which
+  opens the conversations page `/conversations` (it holds the recents; maintainer decision
+  2026-11-22, D17), and from the account sheet (技能、连接器、设备… joins it as
   a row, as the inner display's account popover already does). This retires the outer display's
   native menu button of mobile app spec §6.1 (D12).
 - **Pushed pages** keep their floating back button at the top start; the floating row's "…" stays
@@ -313,9 +314,12 @@ icon = `plus` or the action's own). A page without a primary leaves 新会话 th
 their full-width primary under the title (responsive D2): the pill's top item then stays 新会话.
 
 Contract change (`nav@1`, minor version, mobile app spec §5.2):
-`set({ items, current, action?: { id: string; label: string; icon: "plus" | "square-pen" }, account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number } })`,
-plus `onAction(cb)` and `onAccount(cb)`; `menu` becomes optional and is no longer sent by the web
-(kept in the contract for an older web). The web calls `set` on route and primary changes.
+`set({ items, current, action: { id: string; label: string; icon: "plus" | "square-pen" }, account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number } })`,
+plus `onAction(cb)` and `onAccount(cb)`; `menu` and `onMenu` leave the contract (no menu button,
+D12). **Lockstep** (amended 2026-11-22, final review of phase 0b): the shell's minor version ships
+with or before the web that sends this shape; before 0.1.0 there is no older-shell path (no
+compatibility layer, AGENTS.md "Before 0.1.0"), so the web sends this shape to every `nav@1`. The
+web calls `set` on route and primary changes.
 
 ### 10.4 Sheets, drawer, scrim, menus and the keyboard with the strip
 
@@ -418,7 +422,7 @@ Design spec section numbers after these merges: §6.59 bottom sheet, §6.60 Conv
 | T0b.7 | Guards `web-ui-overlay-primitive`, `design-sheet-parts`, `useNative` in `web-ui-size-branch` (§9) | T0.4 |
 | T0b.8 | Haptic additions (long press opens a sheet, refresh) (§7) | — (`useLongPress` exists, #596) |
 | T0b.9 | Duo: the head's primary (the §6.62 FAB form) goes to the strip pill while `nav@1` is present: `ShellPage.primary`, the FAB form hidden (§10.3; D10, D14) | T0.6 |
-| T0b.10 | Duo: `nav@1` minor version (`action`, `account`, `side`, `onAction`, `onAccount`, `menu` optional), web adapter, overlays close before a strip selection (§10.2–10.4, §10.7; D11, D12, D16) | mobile app line (clients repo for the native side) |
+| T0b.10 | Duo: `nav@1` minor version (`action`, `account`, `side`, `onAction`, `onAccount`; `menu` and `onMenu` removed in the final review, lockstep), web adapter, overlays close before a strip selection (§10.2–10.4, §10.7; D11, D12, D16) | mobile app line (clients repo for the native side) |
 | T0b.11 | Duo: drawer / rail / sidebar drop the pill's entries; 技能、连接器、设备… in the account sheet; sheet panel inside the strip side's inset, scrim full bleed; `data-strip`; `duo.spec.ts` shots (§10.4–10.7; D13, D15) | T0b.10 |
 
 Phase 0b's Duo tasks need the native side in the clients repo (the mobile app line) (decisions D10–D16).
@@ -433,8 +437,8 @@ All sixteen open questions of the review draft were answered as recommended:
 - **D1** Every desktop Dialog is a bottom sheet on compact (one modal form on phones).
 - **D2** Toasts sit at the bottom on phones, above the composer / FAB / ActionRow.
 - **D3** No swipe actions on rows for now; long press covers them.
-- **D4** Pull to refresh only in a native shell, on the inbox, the conversations page and the
-  drawer's recents; the browser keeps its own pull-to-reload.
+- **D4** Pull to refresh only in the native mobile shell, on the inbox, the conversations page and
+  the drawer's recents; the browser keeps its own pull-to-reload.
 - **D5** Return in the composer on touch inserts a newline; the button sends; a hardware keyboard
   keeps Enter to send.
 - **D6** Infinite scroll replaces load-more rows on compact; the desktop is unchanged.
@@ -456,6 +460,8 @@ All sixteen open questions of the review draft were answered as recommended:
 - **D16** `nav@1` reports the strip's `side`; the insets are the fallback; right when nothing is
   reported (one app in the foreground is always right; only the left app of an inner-display split
   is left).
+- **D17** (maintainer decision 2026-11-22) The strip pill's 对话 opens `/conversations`; the "+"
+  top item goes to the new conversation `/`, where no section is current.
 
 ## AGENTS.md rules touched
 

@@ -55,7 +55,7 @@ vi.mock("../src/lib/query/routes", async (original) => {
 
 const { default: AppLayout } = await import("../src/app/(app)/layout");
 const { StaticTheme } = await import("../src/components/static-theme");
-const { BRAND_COOKIE, encodeBrandCookie } = await import("../src/lib/brand-cookie");
+const { BRAND_COOKIE_HTTP, encodeBrandCookie } = await import("../src/lib/brand-cookie");
 type StartingElement = ReactElement<{ brand: unknown; children: ReactElement }>;
 
 const O = "/api/v1/orgs/o1";
@@ -258,7 +258,7 @@ describe("the (app) layout's first-load prefetch", () => {
     req.headers = new Headers({
       "x-cap-path": "/agents",
       "x-cap-session": "unavailable",
-      cookie: `${BRAND_COOKIE}=${encodeBrandCookie(ref)}`,
+      cookie: `${BRAND_COOKIE_HTTP}=${encodeBrandCookie(ref)}`,
     });
     const element = (await AppLayout({ children: <p>page body</p> })) as StartingElement;
     expect(element.type).toBe(StaticTheme);

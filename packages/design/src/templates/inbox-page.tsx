@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateProps, SkeletonGroup, SkeletonText } from "../display/index";
+import { PullToRefresh } from "../display/pull-refresh";
 import { ListDetail, type ListDetailFact, ListDetailItem } from "../layout/list-detail";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
@@ -77,6 +78,11 @@ type InboxPageProps = {
   open?: boolean;
   /** The stack's back: the page closes the open item (sets `open` false). */
   onBack?: () => void;
+  /**
+   * Reads the list again: a pull down from the top in a native shell calls it (interaction spec
+   * §3, D4); absent or in a browser: no pull.
+   */
+  onRefresh?: () => Promise<unknown>;
   empty?: EmptyStateProps;
   /** The open item's content, after its facts. */
   children?: ReactNode;
@@ -90,7 +96,9 @@ type InboxPageProps = {
  * EmptyState instead of the split. `loading` draws the frame while the data is on the way: the
  * filters stay real (they are static), the list is `rows` 64 px row placeholders, the content a
  * card-shaped block, `loading.facts` the facts as placeholders, and a decision `actionRow` the
- * page passes (its labels are static) stays with its buttons disabled.
+ * page passes (its labels are static) stays with its buttons disabled. The list rows have no long
+ * press and no context menu on compact (responsive system spec §3.6, D6): decisions are deliberate
+ * and made on the opened item.
  */
 export function InboxPage({
   header,
@@ -104,6 +112,7 @@ export function InboxPage({
   actionRow,
   open = false,
   onBack,
+  onRefresh,
   empty,
   loading,
   children,
@@ -181,6 +190,8 @@ export function InboxPage({
     <div className="cb-template" data-template="InboxPage" data-width="content">
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
+      ) : onRefresh ? (
+        <PullToRefresh onRefresh={onRefresh}>{page}</PullToRefresh>
       ) : (
         page
       )}

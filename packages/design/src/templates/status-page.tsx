@@ -4,7 +4,7 @@ import { Icon } from "../icons/icon";
 import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { Body, type PageHeaderProps } from "../shell/index";
-import { TemplateHead } from "./frame";
+import { TemplateFrame, TemplateHead } from "./frame";
 
 const CODE = { "404": "404", "403": "403", maintenance: "503", disabled: "—" } as const;
 /** The kinds that draw an icon in the code's place. */
@@ -36,7 +36,7 @@ export function StatusPage({
 }) {
   const t = useDesignT();
   return (
-    <div className="cb-template" data-template="StatusPage" data-kind={kind} data-width="content">
+    <TemplateFrame template="StatusPage" data-kind={kind}>
       <TemplateHead header={header} statsInHead />
       <Body layout="single" width="content">
         <div className="cb-status-page">
@@ -58,9 +58,14 @@ export function StatusPage({
             </span>
           ) : null}
           {ask !== undefined ? <Text tone="muted">{ask}</Text> : null}
-          {action ? <div className="cb-status-page-action">{action}</div> : null}
+          {action ? (
+            // Stacked full width on compact (responsive system spec §3.5)
+            <div className="cb-status-page-action" data-stack="true">
+              {action}
+            </div>
+          ) : null}
         </div>
       </Body>
-    </div>
+    </TemplateFrame>
   );
 }

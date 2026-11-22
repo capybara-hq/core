@@ -35,7 +35,8 @@ describe("template forms per size class", () => {
         "cb-body (max-width: 751px)",
       ),
     ).toBe("minmax(0, 1fr)");
-    const compact = "(max-width: 599px)";
+    // the compact query is ClassForms' (the complement of min-width 600)
+    const compact = "not all and (min-width: 600px)";
     expect(decl("templates.css", ".cb-settings-nav", "position", compact)).toBe("sticky");
     expect(decl("templates.css", ".cb-settings-nav", "flex-direction", compact)).toBe("row");
     expect(decl("templates.css", ".cb-settings-nav", "overflow-x", compact)).toBe("auto");
@@ -47,9 +48,14 @@ describe("template forms per size class", () => {
   });
 
   it("OverviewPage: StatCards are 2 x 2 on compact, one row otherwise", () => {
-    expect(decl("shell.css", ".cb-stat-cards", "grid-template-columns", "(max-width: 599px)")).toBe(
-      "repeat(2, minmax(0, 1fr))",
-    );
+    expect(
+      decl(
+        "shell.css",
+        ".cb-stat-cards",
+        "grid-template-columns",
+        "not all and (min-width: 600px)",
+      ),
+    ).toBe("repeat(2, minmax(0, 1fr))");
   });
 
   it("ScheduleCalendar: the week grid needs a 580 frame (a container query), else the agenda", () => {
@@ -62,7 +68,7 @@ describe("template forms per size class", () => {
   });
 
   it("TracePage: on compact the waterfall is the page and an open span is its own screen", () => {
-    const at = "(max-width: 599px)";
+    const at = "not all and (min-width: 600px)";
     expect(
       decl(
         "templates.css",
@@ -71,6 +77,13 @@ describe("template forms per size class", () => {
         at,
       ),
     ).toBe("none");
+  });
+
+  // Compact is the complement of min-width 600 (the zoom band between 599 and 600 included).
+  it("the wizard's step count and the band skeleton's column read compact as not min-width 600", () => {
+    const at = "not all and (min-width: 600px)";
+    expect(decl("templates.css", ".cb-steps-count", "display", at)).toBe("block");
+    expect(decl("templates.css", ".cb-detail-band-skeleton", "flex-direction", at)).toBe("column");
   });
 });
 

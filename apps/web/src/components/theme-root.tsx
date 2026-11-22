@@ -16,6 +16,7 @@ import {
   brandRefOf,
   decodeBrandCookie,
   encodeBrandCookie,
+  STALE_BRAND_COOKIE_CLEAR,
 } from "../lib/brand-cookie";
 import { useProductName } from "../lib/product-name";
 import { retryOnMountOf } from "../lib/query/client";
@@ -118,8 +119,12 @@ function useBrandCookieWrite(theme: ThemeRef | null, answered: boolean): void {
     if (!answered) return;
     // a theme the cookie cannot hold (over 1 KB) deletes it, as the built-in theme does
     const ref = value === null ? null : decodeBrandCookie(value);
+    const https = location.protocol === "https:";
     // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is async and not everywhere
-    document.cookie = brandCookieHeader(ref, location.protocol === "https:");
+    document.cookie = brandCookieHeader(ref, https);
+    // over https the name is `__Host-cb-brand`: a plain `cb-brand` from an http visit goes
+    // biome-ignore lint/suspicious/noDocumentCookie: as above
+    if (https) document.cookie = STALE_BRAND_COOKIE_CLEAR;
   }, [answered, value]);
 }
 

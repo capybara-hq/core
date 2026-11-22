@@ -147,7 +147,7 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       // the compact class has no sidebar: no token
       expect(stateAt(500)).toBe("size=compact");
       // the shell reads the class queries from one place
-      expect(SIZE_CLASS_QUERIES.compact).toBe("(max-width: 599px)");
+      expect(SIZE_CLASS_QUERIES.compact).toBe("not all and (min-width: 600px)");
       const shellSrc = readFileSync(
         resolve(import.meta.dirname, "../src/shell/app-shell.tsx"),
         "utf8",

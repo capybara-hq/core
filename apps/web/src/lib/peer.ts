@@ -221,9 +221,26 @@ export function sanitizeIncoming(
   trust: TrustProxy = { kind: "none" },
 ): void {
   const client = clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], trust);
+  const proto = trustedProto(req, trust);
   for (const h of FORWARDING_HEADERS) delete req.headers[h];
   if (client !== undefined) req.headers["x-forwarded-for"] = client;
+  if (proto !== undefined) req.headers["x-forwarded-proto"] = proto;
   req.headers[PEER_TOKEN_HEADER] = token;
+}
+
+/**
+ * The scheme the browser used, as a trusted proxy reports it: the last `x-forwarded-proto` value
+ * when the socket peer is a trusted hop and the value is `http` or `https`, else undefined (Next
+ * then takes the socket's: plain http behind a TLS proxy). Next derives the request's protocol
+ * from it (`req.nextUrl.protocol`), which decides `Secure` and the `__Host-` brand cookie name.
+ */
+function trustedProto(req: IncomingLike, trust: TrustProxy): "http" | "https" | undefined {
+  const peer = req.socket.remoteAddress;
+  if (peer === undefined || !trusts(trust, normalizeIp(peer) ?? peer, 0)) return undefined;
+  const raw = req.headers["x-forwarded-proto"];
+  const last = (Array.isArray(raw) ? raw.join(",") : (raw ?? "")).split(",").at(-1);
+  const proto = last?.trim().toLowerCase();
+  return proto === "http" || proto === "https" ? proto : undefined;
 }
 
 /**

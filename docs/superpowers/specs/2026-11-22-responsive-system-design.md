@@ -38,7 +38,8 @@ Approved mockup (the reference for §2), 智能体 at 390:
    square), name (500), one muted line (description, else owner · visibility), chevron; rows ≥ 64;
    hairlines inset to the text column; **no buttons in rows**: a tap opens the item; the card's
    actions (开始会话, ⋯ items) move to a **long-press / context-menu action sheet** (bottom sheet,
-   44 rows, destructive in fail) and stay reachable on the detail page.
+   44 rows, destructive in fail) and stay reachable on the detail page. (Note 2026-11-22: the
+   sheet's rows are `touch.row` 52, the correction in §2.4.)
 5. **Scrolled**: when the large title scrolls away, the title appears centred in the top row with a
    hairline under it; search and filters scroll away with the content and come back on scrolling up.
 
@@ -130,9 +131,11 @@ type ObjectActions = {
   DataTable's row menu.
 - **compact**: the object's row shows no buttons; long press (500 ms, < 10 px movement) or a
   context-menu event (right click, two-finger tap, Android long press) opens the **ActionSheet**
-  (new design overlay: bottom sheet titled with the object's name, `touch.hit` rows, `danger` in
-  fail, links navigate, a pick closes then runs, system back closes it). In a native shell with
-  `menu@1` a sheet of plain actions may use the platform sheet.
+  (new design overlay: bottom sheet titled with the object's name, `touch.hit` rows (corrected
+  2026-11-22, coordinator ruling: the rows follow the sheet standard's `touch.row` 52, §6.59 of
+  the design spec, #591; the 44 hit target holds), `danger` in fail, links navigate, a pick
+  closes then runs, system back closes it). In a native shell with `menu@1` a sheet of plain
+  actions may use the platform sheet.
 - Every action stays reachable on the object's detail page (a page requirement, §4.4).
 - Discoverability: nothing hints at the long press; that is accepted, since every action is also on
   the detail page (decision D3).
@@ -274,6 +277,8 @@ No page writes styles and no page learns about size classes; every change above 
 - `trailing`: the right end before the chevron: a state label, a count, a time (at most one).
 - `hidden`: not drawn on compact (bulk checkboxes, wide numbers that the detail shows).
 - Row height ≥ 64 with a lead (avatar or mark), ≥ 52 without; chevron when the row opens.
+  (Note 2026-11-22, coordinator ruling: a row with a lead is exactly 64 with up to two text lines;
+  a third line grows it by 20.)
 - Interactive cells (`interactive: true`, a switch) render in the trailing slot only when declared
   `trailing`; otherwise the action must be in `rowMenu`.
 - Selection and bulk actions: hidden on compact (decision D5); bulk work is desktop work.
@@ -425,16 +430,18 @@ the detail page.
 
 | | M | O | S | total |
 |---|---|---|---|---|
-| Templated routes (excl. auth, shared file, not found, redirect, dev) | 26 | 25 | 28 | 79 |
-| auto (no declaration) | 19 | 17 | 13 | 49 |
+| Templated routes (excl. auth, shared file, not found, redirect, dev) | 24 | 25 | 28 | 77 |
+| auto (no declaration) | 17 | 17 | 13 | 47 |
 | needs **scope** | 1 | 0 | 3 | 4 |
 | needs **rows** (required for M / O; optional for S) | 6 | 8 | 13 | 27 |
 
 (`/admin/connectors/templates` needs both, so the S row adds up to 28 with one overlap.)
 
-\* Overview states inside other routes and the shared components are counted with their routes;
-the counts are approximate where one route draws two templates (an off state), and the plan's
-first task re-derives them with a script (`tools/checks` can list template use per route).
+\* Re-derived with `pnpm --filter @capybara-hq/checks inventory:templates` (2026-11-22): the O and S
+counts and every per-template count of §6 held; the member count was 24, not 26, because the first
+count added the template-off state of `/agents/templates/<id>` and the setup home, which are no
+routes of their own (they are states of routes already counted). Overview states inside other
+routes and the shared components are counted with their routes.
 
 ## 7. Guards
 

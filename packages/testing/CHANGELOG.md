@@ -1,5 +1,52 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.34
+
+### Patch Changes
+
+- 1834986: An `oauth_code` auth preset may set `authorizationParams`, extra query parameters of the
+  authorize request (Google's `access_type: "offline"` and `prompt: "consent"`, Slack's `team`):
+  at most 10, lowercase names, plain printable values, never a secret. The kernel appends them after
+  its own parameters on every connect and reconnect, never on a token request. Names the kernel owns
+  or that would change the callback or the token exchange (`OAUTH_RESERVED_AUTHORIZATION_PARAMS`)
+  are refused there and in the query of a manual `authorizationUrl`. A template update that changes
+  only `authorizationParams` keeps members' connections. A member whose access token dies without a
+  refresh token is now asked to reconnect instead of told the authorization server is unavailable.
+  `startFakeOAuthServer` records the form parameter names of each token request (`paramNames`).
+- Updated dependencies [1834986]
+  - @capybara-hq/kernel@0.1.0-rc.68
+  - @capybara-hq/plugin-sdk@0.1.0-rc.52
+  - @capybara-hq/plugin-tools@0.1.0-rc.20
+
+## 0.1.0-rc.33
+
+### Minor Changes
+
+- f4c2ae8: Rename the `sandbox@2` extension point to `device-provider@1`, a multi-provider point: several
+  device providers can be loaded side by side. `SANDBOX_EXTENSION_POINT` becomes
+  `DEVICE_PROVIDER_EXTENSION_POINT` and `SandboxProvider` becomes `DeviceProvider`. The
+  `sandbox-docker` bootstrap pin is removed.
+- 78fe943: An operation scope's filesystem is now `{ kind: "scoped", projectRoot, writeRoots }`: the scope
+  names the project root (null in free mode) and the roots the operation may write, and no longer
+  carries read roots; what a sandboxed operation may read is the device provider's rule. The scope
+  parser refuses a `readRoots` key. Device protocol goes to 5 (`DEVICE_PROTOCOL_VERSION`), and a
+  protocol 4 program is refused with 426 ("Update capybara-device"). `capybara-device` derives its
+  read roots from the write roots, the project root (the workspace in free mode) and its skills root;
+  an approved read outside the project is not conveyed to a local device for now. The permission
+  conformance suite sends the fixture root as the project root.
+
+### Patch Changes
+
+- Updated dependencies [718eb52]
+- Updated dependencies [c49d70e]
+- Updated dependencies [f4c2ae8]
+- Updated dependencies [42e4ae0]
+- Updated dependencies [78fe943]
+- Updated dependencies [2c28141]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.51
+  - @capybara-hq/kernel@0.1.0-rc.67
+  - @capybara-hq/plugin-tools@0.1.0-rc.20
+
 ## 0.1.0-rc.32
 
 ### Patch Changes
