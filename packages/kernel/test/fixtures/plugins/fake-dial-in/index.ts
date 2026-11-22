@@ -46,7 +46,9 @@ import {
  * `{ ref, offset, maxBytes }`, `backgroundStop` `{ ref, graceMs }`; output bytes as `data` in
  * base64) and `revokeOperation` `{ ref }`; raw `list` / `scan` likewise. Every event body is
  * kept as `frame:<deviceId>` and the reason of the last close as `closed:<deviceId>` (one hour),
- * for the tests to read; an event `{ hang: true }` is never finished.
+ * for the tests to read; the connection info (`{ machineId, connectionId }`) of the last
+ * `onHello`, `onFrame` and `onClose` as `hello-connection:`, `frame-connection:` and
+ * `closed-connection:<deviceId>`; an event `{ hang: true }` is never finished.
  *
  * The public route `POST /plugins/fake-dial-in/request` (body `{ deviceId, body, timeoutMs? }`)
  * is a test seam: it calls `ctx.dialIn.request` on the replica that serves it, with the HTTP
@@ -138,6 +140,11 @@ export default defineExtension({
     const writeHello = (deviceId: string, hello: StoredHello) =>
       ctx.kv.set(helloKey(deviceId), JSON.stringify(hello), { ttlSeconds: HELLO_TTL_SECONDS });
     const reportChanged = (deviceId: string): Promise<void> => ctx.devices.reportChanged(deviceId);
+    /** Keeps the connection info of the last `kind` callback as `<kind>-connection:<deviceId>`. */
+    const keepConnection = (kind: string, deviceId: string, connection: unknown) =>
+      ctx.kv.set(`${kind}-connection:${deviceId}`, JSON.stringify(connection), {
+        ttlSeconds: HELLO_TTL_SECONDS,
+      });
 
     const relay = async (
       deviceId: string,
@@ -305,7 +312,8 @@ export default defineExtension({
       },
       background,
       dialIn: {
-        async onHello(deviceId, hello) {
+        async onHello(deviceId, hello, _signal, connection) {
+          await keepConnection("hello", deviceId, connection);
           const body = isRecord(hello) ? hello : {};
           if (typeof body.refuse === "string")
             return { ok: false, code: "fake.refused", message: body.refuse };
@@ -317,7 +325,8 @@ export default defineExtension({
           await reportChanged(deviceId);
           return { ok: true };
         },
-        async onFrame(deviceId, frame) {
+        async onFrame(deviceId, frame, connection) {
+          await keepConnection("frame", deviceId, connection);
           await ctx.kv.set(`frame:${deviceId}`, JSON.stringify(frame), {
             ttlSeconds: HELLO_TTL_SECONDS,
           });
@@ -335,8 +344,11 @@ export default defineExtension({
           });
           await reportChanged(deviceId);
         },
-        onClose(deviceId, reason) {
-          void ctx.kv.set(`closed:${deviceId}`, reason, { ttlSeconds: HELLO_TTL_SECONDS });
+        onClose(deviceId, reason, connection) {
+          // the connection first: a test that sees `closed:` finds its connection kept too
+          void keepConnection("closed", deviceId, connection).then(() =>
+            ctx.kv.set(`closed:${deviceId}`, reason, { ttlSeconds: HELLO_TTL_SECONDS }),
+          );
         },
       },
       async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {

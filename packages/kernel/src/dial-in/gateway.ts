@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   DIAL_IN_PROTOCOL_RE,
+  type DialInConnectionInfo,
   type DialInKernelFrame,
   type DialInMachineFrame,
   type ExtensionContext,
@@ -374,7 +375,7 @@ class DeviceConnection {
     const signal = AbortSignal.any([this.ended.signal, AbortSignal.timeout(HELLO_TIMEOUT_MS)]);
     let timer: NodeJS.Timeout | undefined;
     try {
-      const answer = serving.handler.onHello(this.deviceId, body, signal);
+      const answer = serving.handler.onHello(this.deviceId, body, signal, this.info());
       const r = await Promise.race([
         answer,
         new Promise<never>((_, reject) => {
@@ -407,7 +408,7 @@ class DeviceConnection {
       // read again: a provider switched off (or replaced) since the hello gets no more frames
       const serving = await this.gw.handlers.forDevice(this.deviceId);
       if ("unavailable" in serving || serving.plugin !== this.accepted.plugin) return;
-      await serving.handler.onFrame?.(this.deviceId, body);
+      await serving.handler.onFrame?.(this.deviceId, body, this.info());
     } catch (e) {
       this.gw.log.warn("device provider failed a frame", {
         deviceId: this.deviceId,
@@ -759,13 +760,18 @@ class DeviceConnection {
     return this.released;
   }
 
+  /** The machine and connection a provider callback is about (a fresh object per call). */
+  private info(): DialInConnectionInfo {
+    return { machineId: this.identity.machineId, connectionId: this.connectionId };
+  }
+
   /** The provider's `onClose`, after the lease is handed back; its failure is only logged. */
   private tellClosed(): void {
     const accepted = this.accepted;
     if (accepted === undefined) return;
     this.accepted = undefined;
     try {
-      const r = accepted.handler.onClose?.(this.deviceId, this.closeReason) as unknown;
+      const r = accepted.handler.onClose?.(this.deviceId, this.closeReason, this.info()) as unknown;
       if (r instanceof Promise)
         r.catch((e: unknown) =>
           this.gw.log.warn("device provider failed onClose", {

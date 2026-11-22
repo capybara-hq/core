@@ -404,7 +404,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 
 A provider whose machines connect to the deployment (device provider spec §5) declares
 `permissions.dialIn: { protocol }` and implements `DeviceProvider.dialIn` (`onHello`, optional
-`onFrame` / `onClose`); providing the point is refused when one is declared without the other. The
+`onFrame` / `onClose`, each called with the connection's `{ machineId, connectionId }`: the
+authenticated machine and the id `ready` carries, so a `replaced` close names the old machine);
+providing the point is refused when one is declared without the other. The
 kernel knows no device location: local devices are the `device-local` plugin's, and the kernel
 treats a dial-in device like any other (its provider, report and permission support).
 

@@ -341,6 +341,55 @@ describe("GET /device/connect routes by the device's provider", () => {
   });
 });
 
+describe("DialInHandler callbacks name the machine and the connection", () => {
+  const connectionOf = async (key: string) =>
+    JSON.parse((await kv(key)) ?? "null") as { machineId: string; connectionId: string } | null;
+
+  it("a second machine of the device gets another machineId; the old onClose(replaced) names the old one", async () => {
+    const d = await device();
+    const first = await FakeDialInMachine.connect({
+      url,
+      credential: d.credential,
+      hello: { revision: "r1" },
+    });
+    const firstConn = { machineId: d.machineId, connectionId: first.connectionId };
+    expect(await connectionOf(`hello-connection:${d.deviceId}`)).toEqual(firstConn);
+    await first.send({ revision: "r2" });
+    await waitFor(async () => connectionOf(`frame-connection:${d.deviceId}`));
+    expect(await connectionOf(`frame-connection:${d.deviceId}`)).toEqual(firstConn);
+
+    // the device signs in from another machine: the old credential is replaced
+    const second = await k.app.get(TransactionHost).run(() =>
+      k.app.get(DialInMachines).issue({
+        orgId,
+        deviceId: d.deviceId,
+        accountId: ownerId,
+        name: "fake-2",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.0.0",
+      }),
+    );
+    expect(second.machineId).not.toBe(d.machineId);
+    expect((await first.closed).code).toBe(DEVICE_CLOSE.replaced);
+    await waitFor(async () => ((await kv(`closed:${d.deviceId}`)) === "replaced" ? true : null));
+    expect(await connectionOf(`closed-connection:${d.deviceId}`)).toEqual(firstConn);
+
+    await waitFor(async () => ((await k.app.get(DialInRelay).online(d.deviceId)) ? null : true));
+    const next = await FakeDialInMachine.connect({
+      url,
+      credential: second.credential,
+      hello: { revision: "r3" },
+    });
+    expect(next.connectionId).not.toBe(first.connectionId);
+    expect(await connectionOf(`hello-connection:${d.deviceId}`)).toEqual({
+      machineId: second.machineId,
+      connectionId: next.connectionId,
+    });
+    await next.close();
+  });
+});
+
 describe("ctx.dialIn", () => {
   it("ctx.dialIn.request relays a body and resolves the machine's res body", async () => {
     const d = await device();

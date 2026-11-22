@@ -1102,10 +1102,16 @@ export interface DialInChannel {
 }
 
 // @public
+export interface DialInConnectionInfo {
+    connectionId: string;
+    machineId: string;
+}
+
+// @public
 export interface DialInHandler {
-    onClose?(deviceId: string, reason: "offline" | "replaced" | "revoked" | "deleted"): void;
-    onFrame?(deviceId: string, frame: unknown): Promise<void>;
-    onHello(deviceId: string, hello: unknown, signal: AbortSignal): Promise<{
+    onClose?(deviceId: string, reason: "offline" | "replaced" | "revoked" | "deleted", connection: DialInConnectionInfo): void;
+    onFrame?(deviceId: string, frame: unknown, connection: DialInConnectionInfo): Promise<void>;
+    onHello(deviceId: string, hello: unknown, signal: AbortSignal, connection: DialInConnectionInfo): Promise<{
         ok: true;
     } | {
         ok: false;

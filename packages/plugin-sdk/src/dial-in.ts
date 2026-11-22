@@ -147,15 +147,38 @@ export function parseDialInKernelFrame(text: string, maxBytes: number): DialInKe
  * declares `permissions.dialIn = { protocol: "<name>/<major>" }`.
  */
 export interface DialInHandler {
-  /** Called on the gateway replica holding the socket, after the kernel authenticated it. */
+  /**
+   * Called on the gateway replica holding the socket, after the kernel authenticated it.
+   * `connection` names the machine and the connection the hello arrived on.
+   */
   onHello(
     deviceId: string,
     hello: unknown,
     signal: AbortSignal,
+    connection: DialInConnectionInfo,
   ): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
-  /** Unsolicited frames from the machine (not responses to requests). */
-  onFrame?(deviceId: string, frame: unknown): Promise<void>;
-  onClose?(deviceId: string, reason: "offline" | "replaced" | "revoked" | "deleted"): void;
+  /** Unsolicited frames from the machine (not responses to requests), with their connection. */
+  onFrame?(deviceId: string, frame: unknown, connection: DialInConnectionInfo): Promise<void>;
+  /**
+   * The connection whose hello this provider accepted closed. `connection` is that connection's,
+   * so a `replaced` close names the old machine, never the one that replaced it.
+   */
+  onClose?(
+    deviceId: string,
+    reason: "offline" | "replaced" | "revoked" | "deleted",
+    connection: DialInConnectionInfo,
+  ): void;
+}
+
+/** Which machine and which of its connections a {@link DialInHandler} call is about. */
+export interface DialInConnectionInfo {
+  /**
+   * The kernel's id of the signed-in machine (its credential): a machine signing in again to the
+   * same device, or another machine replacing it, gets another id.
+   */
+  machineId: string;
+  /** The connection id, the same the kernel sends to the machine in `ready`. */
+  connectionId: string;
 }
 
 /**
