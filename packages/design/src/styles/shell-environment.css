@@ -360,7 +360,9 @@
   }
 }
 
-/* Below 600 the floating row is the top row: centred on the controls and clear of them. */
+/* Below 600 the floating row is the top row: centred on the controls and clear of them. The side
+   insets stay in both ends: a desktop shell may report them (`--cb-shell-inset-*`, 0 otherwise),
+   and the controls' reserve wins wherever the window controls sit. */
 :root[data-shell="desktop"] .cb-shell {
   --cb-float-top: max(
     var(--cb-space-2),
