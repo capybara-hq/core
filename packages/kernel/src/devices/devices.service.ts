@@ -449,9 +449,6 @@ export class DevicesService {
           owner_kind: "personal",
           owner_account_id: accountId,
           name,
-          // the stored column (dropped later) still marks a dial-in provider's device for the
-          // dial-in credential check; nothing else reads it
-          source: this.isDialIn(provider) ? "local" : "cloud",
           provider,
         })
         .execute();
@@ -982,7 +979,6 @@ export class DevicesService {
         owner_account_id: accountId,
         name: null,
         is_default: true,
-        source: this.isDialIn(provider) ? "local" : "cloud",
         provider,
       })
       .onConflict((oc) =>

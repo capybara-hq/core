@@ -204,7 +204,6 @@ async function seed() {
       org_id: s.orgId,
       owner_kind: "personal",
       owner_account_id: s.accountId,
-      source: "cloud",
       provider: CLOUD,
       name: "Cloud",
     })

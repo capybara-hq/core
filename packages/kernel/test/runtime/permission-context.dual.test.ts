@@ -17,6 +17,7 @@ import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { gate, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import {
+  CONTEXT_PROVIDER,
   type ContextFixture,
   contexts,
   inputOf,
@@ -68,7 +69,7 @@ beforeEach(async () => {
   for (const p of providers) p.calls.length = 0;
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_instance_bindings, capybara.device_permission_reports, capybara.device_generation_high_water",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_permission_reports, capybara.device_generation_high_water",
   );
 });
 
@@ -223,7 +224,7 @@ describe("permission context across replicas", () => {
     // the evidence both entries hold for the same installed instance
     const held = {
       deviceId: f.deviceId,
-      provider: "@local",
+      provider: CONTEXT_PROVIDER,
       instanceId: f.deviceId,
       instanceGeneration: f.generation,
       revision:

@@ -1,7 +1,4 @@
-/**
- * `DeviceRequestNotSentError` lives in the SDK (a provider's dial-in relay throws it too); the
- * relay (`local-devices/relay.ts`) re-exports it.
- */
+/** `DeviceRequestNotSentError` lives in the SDK (the dial-in relay throws it to providers). */
 export { DeviceRequestNotSentError, isDeviceRequestNotSent } from "@capybara-hq/plugin-sdk";
 
 /**

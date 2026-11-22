@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -38,8 +37,6 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine } from "../local-devices/fake-machine-v3.js";
-import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Network asks (network ask-to-allow spec §5.2, §6.1–§6.8, P1.6): approvals of kind `network`
@@ -50,8 +47,6 @@ import type { Answer } from "../local-devices/test-holder.js";
  * device writers.
  */
 
-const POLICY: DeviceLocalPolicySummary = { allowedDomains: ["pypi.org"] };
-
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -60,8 +55,6 @@ let redis: Redis;
 let k: TestKernel;
 let ownerId: string;
 let orgId: string;
-let wsUrl: string;
-const open: FakeMachine[] = [];
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -81,11 +74,6 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrgWithProviders(k, await session(k, "owner"));
-  wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-});
-
-afterEach(() => {
-  for (const m of open.splice(0)) m.close();
 });
 
 afterAll(async () => {
@@ -97,13 +85,11 @@ afterAll(async () => {
 
 const approvals = () => k.app.get(ApprovalsService);
 
-/** A member with a session, a local device (machine signed in, not connected) and a conversation. */
+/** A member with a session, a device of their own and a conversation. */
 interface Setup {
   accountId: string;
   req: Req;
   deviceId: string;
-  machineId: string;
-  credential: string;
   conversationId: string;
   runId: string;
 }
@@ -117,21 +103,19 @@ beforeEach(async () => {
   ).id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   const req = await session(k, login);
-  const device = await k.app.get(TransactionHost).run(async () => {
-    const { id: deviceId } = await k.app
-      .get(DevicesService)
-      .createDialIn(orgId, accountId, "@local", "Box");
-    const issued = await k.app.get(DialInMachines).issue({
-      orgId,
-      deviceId,
-      accountId,
-      name: "box",
-      os: "linux",
-      arch: "x64",
-      programVersion: "0.1.0",
-    });
-    return { deviceId, ...issued };
-  });
+  const deviceId = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id: deviceId,
+      org_id: orgId,
+      owner_kind: "personal",
+      owner_account_id: accountId,
+      name: "Box",
+      provider: "device-fake",
+    })
+    .execute();
+  const device = { deviceId };
   const agentId = await createAgent(req, orgId);
   const conversationId = await createConv(req, orgId, agentId);
   const runId = await run(conversationId, accountId);
@@ -183,16 +167,6 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 const row = (id: string) =>
   db.selectFrom("approvals").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
 
-/** The machine's pending policy ops (the platform's sent intents). */
-async function entries() {
-  const r = await db
-    .selectFrom("device_machines")
-    .select("pending_policy_ops")
-    .where("id", "=", s.machineId)
-    .executeTakeFirstOrThrow();
-  return r.pending_policy_ops as Record<string, unknown>[];
-}
-
 const runStatus = async (runId: string) =>
   (await db.selectFrom("runs").select("status").where("id", "=", runId).executeTakeFirstOrThrow())
     .status;
@@ -209,32 +183,6 @@ const networkAudits = (deviceId: string) =>
     ])
     .orderBy("id")
     .execute();
-
-/** Connects the device's machine with the policy op and waits until its hello is recorded. */
-async function connect(answer: (req: KernelReq) => Answer) {
-  const machine = new FakeMachine(wsUrl, s.credential, answer, { hello: false });
-  open.push(machine);
-  await machine.opened;
-  machine.hello({ features: ["networkReport", "policyOp", "policyOpId"], policy: POLICY });
-  await waitFor(
-    async () => (await redis.get(deviceLeaseKey(s.deviceId))) !== null,
-    10_000,
-    "lease held",
-  );
-  await waitFor(
-    async () =>
-      (
-        await db
-          .selectFrom("device_machines")
-          .select("roots")
-          .where("id", "=", s.machineId)
-          .executeTakeFirst()
-      )?.roots != null,
-    10_000,
-    "hello recorded",
-  );
-  return machine;
-}
 
 describe("requestNetwork", () => {
   it("records a pending network ask for the device owner and logs approval_requested with the hosts", async () => {
@@ -340,10 +288,9 @@ describe("decide", () => {
     await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
   });
 
-  // Device protocol 4: the platform never widens a local device's sandbox, so an ask offers a run
-  // grant only; "Always allow" is refused and nothing reaches the machine
-  it("an ask offers once only; always → 409 approval.scope_not_allowed, nothing sent", async () => {
-    const machine = await connect(() => ({ ok: true, result: null }));
+  // the platform never widens a device's own network list, so an ask offers a run grant only;
+  // "Always allow" is refused
+  it("an ask offers once only; always → 409 approval.scope_not_allowed", async () => {
     const a = await ask();
     expect(a.scopes).toEqual(["once"]);
     const res = await decide(a.id, { decision: "approve", scope: "always" });
@@ -352,8 +299,6 @@ describe("decide", () => {
       "approval.scope_not_allowed",
     );
     expect((await row(a.id)).status).toBe("pending");
-    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
-    expect(await entries()).toEqual([]);
   });
 
   it("deny: a reason, device.network_denied, nothing granted, the hosts refused in the run", async () => {

@@ -1,11 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { NetworkBlockLayer } from "@capybara-hq/plugin-sdk";
-import type {
-  DeviceExecArgs,
-  DeviceLocalPolicySummary,
-  DeviceOwnerCeiling,
-  KernelReq,
-} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -31,6 +25,7 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
@@ -45,12 +40,15 @@ import {
 } from "../../src/tools/network-asks.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { EnvelopeMachine as FakeMachine, type KernelReq } from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createConv,
   createOrgWithProviders,
+  enableExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -63,16 +61,14 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
- * a foreground `Bash` on a connected device whose exec reports refused hosts. The run waits for
+ * a foreground `Bash` on a dial-in device whose exec reports refused hosts. The run waits for
  * the device owner; each outcome writes the kept output plus its note and never runs the command
- * again. Model-fake drives the runs; a fake machine answers the exec with `network.blocked`.
+ * again. Model-fake drives the runs; a `fake-dial-in` machine answers the exec with
+ * `network.blocked`, passing the hosts its operation scope's sandbox allowlist names.
  */
-
-const POLICY: DeviceLocalPolicySummary = { allowedDomains: [] };
 const CURL_ERR = "curl: (56) CONNECT tunnel failed, response 403";
 
 let pgc: TestContainer;
@@ -84,6 +80,7 @@ let k: TestKernel;
 let ownerId: string;
 let orgId: string;
 let wsUrl: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const open: FakeMachine[] = [];
 
 beforeAll(async () => {
@@ -91,6 +88,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -101,10 +99,13 @@ beforeAll(async () => {
         devices: { local: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrgWithProviders(k, await session(k, "owner"));
+  await enableExtensions(raw, orgId, "fake-dial-in");
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 
@@ -116,18 +117,17 @@ afterAll(async () => {
   await k?.close();
   redis?.disconnect();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
 /** What the fake device refuses: host → layer it reports (hosts it was granted pass). */
 interface Device {
   blocking: Map<string, NetworkBlockLayer>;
-  /** The device's local allowlist (only its owner adds to it, on the machine). */
+  /** Hosts the machine's own sandbox allows (its owner adds them, on the machine). */
   allowed: Set<string>;
-  features: string[];
-  policy: DeviceLocalPolicySummary;
-  /** The owner report the machine says hello with (absent: the fake's default, open network). */
-  ownerCeiling?: DeviceOwnerCeiling;
+  /** The provider's support allows running outside the sandbox (the hello says so). */
+  outsideSandbox?: boolean;
 }
 
 interface Setup {
@@ -147,13 +147,12 @@ let s: Setup;
 /** `curl <host>…`: the exec answer of the fake device. */
 function answer(dev: Device) {
   return (req: KernelReq) => {
-    const a = req.args as Record<string, unknown>;
     switch (req.op) {
-      case "create":
-        return { ok: true, result: { roots: { ...HELLO.roots } } } as const;
+      case "resume":
+        return "resumed";
       case "exec": {
-        const args = a as unknown as DeviceExecArgs;
-        const granted = new Set(args.grants?.hosts ?? []);
+        const args = req.args as ExecBody;
+        const granted = new Set(grantedHosts(args));
         const hosts = args.command.startsWith("curl ") ? args.command.split(" ").slice(1) : [];
         const blocked = hosts.flatMap((host) => {
           const layer = dev.blocking.get(host);
@@ -162,49 +161,53 @@ function answer(dev: Device) {
             : [{ host, port: 443, layer }];
         });
         return {
-          ok: true,
-          result: {
-            exitCode: blocked.length > 0 ? 56 : 0,
-            stdout: blocked.length > 0 ? "" : "fetched\n",
-            stderr: blocked.length > 0 ? `${CURL_ERR}\n` : "",
-            truncated: false,
-            timedOut: false,
-            ...(blocked.length > 0 && { network: { blocked } }),
-          },
-        } as const;
+          exitCode: blocked.length > 0 ? 56 : 0,
+          stdout: blocked.length > 0 ? "" : "fetched\n",
+          stderr: blocked.length > 0 ? `${CURL_ERR}\n` : "",
+          truncated: false,
+          timedOut: false,
+          ...(blocked.length > 0 && { network: { blocked } }),
+        };
       }
       default:
-        return { ok: true, result: null } as const;
+        return null;
     }
   };
 }
 
-async function connect(deviceId: string, credential: string, machineId: string, dev: Device) {
-  // biome-ignore lint/suspicious/noExplicitAny: the answers are the device protocol's
-  const machine = new FakeMachine(wsUrl, credential, answer(dev) as any, { hello: false });
+/** An exec request body as the `fake-dial-in` provider relays it: its input and admitted scope. */
+interface ExecBody {
+  command: string;
+  scope?: { network?: { kind: string; hosts?: string[] } };
+}
+
+/** The exact hosts the exec's admitted scope names in its sandbox allowlist (run grants too). */
+const grantedHosts = (args: ExecBody): string[] =>
+  args.scope?.network?.kind === "allowlist" ? [...(args.scope.network.hosts ?? [])] : [];
+
+async function connect(deviceId: string, credential: string, dev: Device) {
+  const machine = new FakeMachine(wsUrl, credential, answer(dev), { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({
-    features: dev.features,
-    policy: dev.policy,
-    ...(dev.ownerCeiling !== undefined && { ownerCeiling: dev.ownerCeiling }),
-  });
+  machine.hello({ outsideSandbox: dev.outsideSandbox === true });
+  await machine.ready;
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
     10_000,
     "lease held",
   );
+  // the provider stored the hello's report: the device's support is known
   await waitFor(
     async () =>
       (
         await db
-          .selectFrom("device_machines")
-          .select("roots")
-          .where("id", "=", machineId)
+          .selectFrom("devices")
+          .select("report")
+          .where("id", "=", deviceId)
           .executeTakeFirst()
-      )?.roots != null,
+      )?.report != null,
     10_000,
-    "hello recorded",
+    "report stored",
   );
   return machine;
 }
@@ -219,7 +222,7 @@ async function setup(over: Partial<Device> = {}, tools = ["Bash"]): Promise<Setu
   const device = await k.app.get(TransactionHost).run(async () => {
     const { id: deviceId } = await k.app
       .get(DevicesService)
-      .createDialIn(orgId, accountId, "@local", "Box");
+      .createDialIn(orgId, accountId, "fake-dial-in", "Box");
     const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,
@@ -231,14 +234,8 @@ async function setup(over: Partial<Device> = {}, tools = ["Bash"]): Promise<Setu
     });
     return { deviceId, ...issued };
   });
-  const dev: Device = {
-    blocking: new Map(),
-    allowed: new Set(),
-    features: ["networkReport", "policyOp", "policyOpId"],
-    policy: POLICY,
-    ...over,
-  };
-  const machine = await connect(device.deviceId, device.credential, device.machineId, dev);
+  const dev: Device = { blocking: new Map(), allowed: new Set(), ...over };
+  const machine = await connect(device.deviceId, device.credential, dev);
   const res = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -305,8 +302,7 @@ const decide = (id: string, payload: Record<string, unknown>) =>
 /** The exec frames of the fake machine that ran a `curl`. */
 const curlExecs = (m = s.machine) =>
   m.frames.filter(
-    (f) =>
-      f.type === "req" && f.op === "exec" && (f.args as DeviceExecArgs).command.startsWith("curl"),
+    (f) => f.type === "req" && f.op === "exec" && (f.args as ExecBody).command.startsWith("curl"),
   ) as KernelReq[];
 
 const results = async (conversationId = s.conversationId) =>
@@ -361,9 +357,8 @@ describe("the ask and its outcomes", () => {
     // the first command never ran again; the second ran with the run grant and passed
     const execs = curlExecs();
     expect(execs).toHaveLength(2);
-    expect((execs[1]?.args as DeviceExecArgs | undefined)?.grants?.hosts).toEqual([
-      "files.example.com",
-    ]);
+    expect(grantedHosts(execs[0]?.args as ExecBody)).not.toContain("files.example.com");
+    expect(grantedHosts(execs[1]?.args as ExecBody)).toContain("files.example.com");
     expect(second?.content).toContain("fetched");
     expect(second?.content).not.toContain("[network]");
     // display-only: no model request carries network_blocked or the ask's hosts
@@ -395,11 +390,11 @@ describe("the ask and its outcomes", () => {
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     // whatever the second call became, no exec carried the host past the new ceiling
     for (const exec of curlExecs())
-      expect((exec.args as DeviceExecArgs).grants?.hosts ?? []).not.toContain("files.example.com");
+      expect(grantedHosts(exec.args as ExecBody)).not.toContain("files.example.com");
   });
 
-  // Device protocol 4: the deployment never adds a host to a local device, so an ask offers a run
-  // grant only and "Always allow" is refused, nothing sent to the device
+  // the deployment never adds a host to a device's own list, so an ask offers a run grant only
+  // and "Always allow" is refused, nothing sent to the device
   it("Always allow is not offered: refused, nothing is sent to the device", async () => {
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
@@ -473,7 +468,7 @@ describe("the ask and its outcomes", () => {
 
 describe("not asked", () => {
   it("org and address layers: immediate notes and network_blocked, no ask (the org layer is the kernel's)", async () => {
-    s = await setup();
+    s = await setup({ outsideSandbox: true });
     // the org's allowlist network ceiling is hard: a host beyond its list is the org's layer
     // (under an open ceiling the kernel's bounds alone would let the person grant it)
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
@@ -482,8 +477,8 @@ describe("not asked", () => {
     onTestFinished(async () => {
       await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
     });
-    // the device calls api.foo.com `device`: the org does not allow it, so it is `org`
-    s.dev.blocking.set("api.foo.com", "device");
+    // the provider reports api.foo.com at the org's layer (the org's list does not name it)
+    s.dev.blocking.set("api.foo.com", "org");
     s.dev.blocking.set("10.0.0.5", "address");
     await post([curl(["api.foo.com", "10.0.0.5"])]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
@@ -505,17 +500,6 @@ describe("not asked", () => {
     const evs = await eventsOf(db, s.conversationId);
     const at = (t: string) => evs.findIndex((e) => e.type === t);
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
-  });
-
-  it("a machine's program features no longer gate the ask: its provider's allowlist support does", async () => {
-    // the program announces neither networkReport nor policyOpId; its provider's support
-    // enforces an allowlist, so a device-layer host is asked about
-    s = await setup({ features: ["policyOp"] });
-    s.dev.blocking.set("files.example.com", "device");
-    await post([curl(["files.example.com"])]);
-    const ask = await waitFor(async () => (await asks())[0], 20_000, "the network ask");
-    expect(ask).toBeDefined();
-    expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toHaveLength(1);
   });
 
   it("background Bash is not asked", async () => {
@@ -587,7 +571,8 @@ describe("sub-agents and unattended runs", () => {
       await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
     });
     s.dev.blocking.set("files.example.com", "device");
-    s.dev.blocking.set("api.foo.com", "device");
+    // the provider reports api.foo.com at the org's layer (the org's list does not name it)
+    s.dev.blocking.set("api.foo.com", "org");
     const store = new ScheduledTaskStore();
     const taskId = randomUUID();
     const taskRunId = randomUUID();

@@ -74,8 +74,6 @@
   "infra/process-guards.test.ts",
   "infra/queue-names.test.ts",
   "infra/queue-shutdown.test.ts",
-  "local-devices/owner-report.test.ts",
-  "local-devices/policy-summary.test.ts",
   "log-config.test.ts",
   "log.test.ts",
   "media/image-header.unit.test.ts",

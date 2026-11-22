@@ -585,7 +585,13 @@ describe("device providers (device-provider spec §6.1)", () => {
     const service = k.app.get(DevicesService);
     await setEnabled("device-fake-b", false);
     try {
-      for (const provider of ["device-fake-b", "@local", "nope", "Device-Fake", "a".repeat(60)]) {
+      for (const provider of [
+        "device-fake-b",
+        "@in-process",
+        "nope",
+        "Device-Fake",
+        "a".repeat(60),
+      ]) {
         const res = await m.req({ method: "POST", url: base(), payload: { name: "x", provider } });
         expect(res.statusCode, provider).toBe(400);
         const error = (res.json() as { error: { code: string; details?: { path: string }[] } })
@@ -941,21 +947,6 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-
-    const local = await k.app
-      .get(TransactionHost)
-      .run(() => k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "Laptop"));
-    // the device network route accepts a dial-in device: its own setting, as for any device
-    const res = await patch(me.req, local.id, { network: { mode: "allowlist" } });
-    expect(res.statusCode, res.body).toBe(200);
-    expect(viewOf(res).sandbox).toMatchObject({ ownNetwork: "allowlist", allowedDomains: [] });
-    expect(viewOf(res).dialIn).toBe(true);
-    const stored = await db
-      .selectFrom("devices")
-      .select(["network_mode"])
-      .where("id", "=", local.id)
-      .executeTakeFirstOrThrow();
-    expect(stored.network_mode).toBe("allowlist");
   });
 
   it("another member or the org's owner changing my device gets not_found", async () => {

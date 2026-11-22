@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { connect as tcpConnect } from "node:net";
-import type { KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  FAKE_DIAL_IN_PROTOCOL,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,13 +23,16 @@ import {
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { localCall } from "../../src/local-devices/local-codec.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { DeviceProgramRestartedError } from "../../src/sandbox/request-not-sent.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { EnvelopeMachine, type KernelReq, refusal } from "../helpers/dial-in-machine.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createOrg,
+  enableExtensions,
   PW,
   runConfig,
   session,
@@ -34,18 +41,12 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import {
-  DEVICE_PROTOCOL_HEADER_VALUE,
-  FakeMachine,
-  FakeMachineV3,
-  ownerReportFor,
-  refusal,
-} from "../local-devices/fake-machine-v3.js";
 
 /**
- * The gateway holds the WebSocket connections of connected machines (environments spec §13.4):
- * the credential and protocol are checked before the upgrade, the connection claims the
- * device's lease after `hello`, and relayed requests reach the socket and come back.
+ * The gateway holds the WebSocket connections of dial-in machines (device provider spec §5): the
+ * credential and protocol are checked before the upgrade, the connection claims the device's
+ * lease after `hello`, and relayed requests reach the socket and come back. Driven with the
+ * `fake-dial-in` fixture provider: request and response bodies are opaque to the kernel.
  */
 
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -56,7 +57,8 @@ const LIMITS = {
   diskMb: 1024,
   network: { kind: "allowlist" as const, hosts: [] },
 };
-/** A protocol 3 exec request: the command under an admitted scope on `deviceId`. */
+/** An exec request body: the command under an admitted scope on `deviceId`. */
+const execBody = (deviceId: string) => ({ op: "exec", args: execArgs(deviceId) });
 const execArgs = (deviceId: string) => ({
   scope: {
     operationId: "op-1",
@@ -90,12 +92,14 @@ let txHost: TransactionHost;
 let ownerId: string;
 let orgId: string;
 let url: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -106,6 +110,7 @@ beforeAll(async () => {
         },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
@@ -114,6 +119,8 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrg(await session(k, "owner"));
+  await enableExtensions(raw, orgId, "fake-dial-in");
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
   url = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 
@@ -121,17 +128,18 @@ afterAll(async () => {
   await k?.close();
   redis?.disconnect();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-/** A member's local device with a machine: the ids and the credential. */
+/** A member's `fake-dial-in` device with a signed-in machine: the ids and the credential. */
 async function connected() {
   const login = `m-${randomUUID().slice(0, 8)}`;
   const accountId = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
     .id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   const m = await txHost.run(async () => {
-    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "@local", "Box");
+    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "fake-dial-in", "Box");
     const issued = await machines.issue({
       orgId,
       deviceId,
@@ -186,103 +194,15 @@ const held = async (deviceId: string) => {
 };
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
 
-describe("the hello's policy summary", () => {
-  const SUMMARY = { allowedDomains: [] };
-
-  /** Connects a machine of a new device that says `hello`; resolves once it is recorded. */
-  async function helloWith(hello: Record<string, unknown>) {
-    const m = await connected();
-    const machine = new FakeMachine(url, m.credential, undefined, { hello: false });
-    await machine.opened;
-    machine.hello({ ...hello });
-    await held(m.deviceId);
-    await waitFor(
-      async () =>
-        (
-          await db
-            .selectFrom("device_machines")
-            .select("program_version")
-            .where("id", "=", m.machineId)
-            .executeTakeFirst()
-        )?.program_version === "0.9.0",
-      10_000,
-      "hello recorded",
-    );
-    return { m, machine };
-  }
-
-  it("an unreadable summary is stored as none", async () => {
-    const { m, machine } = await helloWith({
-      programVersion: "0.9.0",
-      features: ["networkReport", "policyOp"],
-      policy: { ...SUMMARY, allowedDomains: "not-a-list" },
-    });
-    expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
-    machine.close();
-  });
-
-  it("a policy frame after the hello replaces the stored summary and owner report, in order", async () => {
-    const { m, machine } = await helloWith({
-      programVersion: "0.9.0",
-      features: ["networkReport", "policyOp"],
-      policy: SUMMARY,
-      ownerCeiling: ownerReportFor(SUMMARY, { outsideSandbox: true }),
-    });
-    // the owner turns Full off on the machine (`capybara-device ceiling set`)
-    // (protocol 4: the summary carries the allowlist only; Full is the owner report's)
-    const narrowed = { allowedDomains: [] };
-    machine.event({
-      type: "policy",
-      policy: narrowed,
-      ownerCeiling: ownerReportFor(narrowed, { outsideSandbox: false }),
-    });
-    await waitFor(
-      async () =>
-        (await db
-          .selectFrom("audit_events")
-          .select("id")
-          .where("target", "=", m.deviceId)
-          .where("action", "=", "device.owner_ceiling_changed")
-          .executeTakeFirst()) !== undefined,
-      10_000,
-      "policy recorded",
-    );
-    expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual(narrowed);
-    // the frame's change is listed as made on the machine, once, as the owner report's
-    expect(
-      await db
-        .selectFrom("audit_events")
-        .select(["action", "detail"])
-        .where("target", "=", m.deviceId)
-        .where("action", "in", ["device.policy_changed", "device.owner_ceiling_changed"])
-        .orderBy("at")
-        .orderBy("id")
-        .execute(),
-    ).toEqual([
-      {
-        action: "device.owner_ceiling_changed",
-        detail: expect.objectContaining({
-          from: expect.objectContaining({ outsideSandbox: true }),
-          to: expect.objectContaining({ outsideSandbox: false }),
-          via: "device",
-        }),
-      },
-    ]);
-    // the connection stays up
-    expect(machine.ws.readyState).toBe(machine.ws.OPEN);
-    machine.close();
-  });
-});
-
 describe("GET /device/connect", () => {
   it("unknown credential is 401 before upgrade", async () => {
     const r = await refusal(url, {
       Authorization: `Bearer cap_dev_${"A".repeat(43)}`,
-      "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
+      "X-Capybara-Device-Protocol": FAKE_DIAL_IN_PROTOCOL,
     });
     expect(r?.status).toBe(401);
     expect(codeOf(r?.body ?? "")).toBe("device.credential_invalid");
-    const none = await refusal(url, { "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE });
+    const none = await refusal(url, { "X-Capybara-Device-Protocol": FAKE_DIAL_IN_PROTOCOL });
     expect(none?.status).toBe(401);
   });
 
@@ -300,15 +220,15 @@ describe("GET /device/connect", () => {
 
   it("hello then a relayed exec round-trip", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential, (req) =>
-      req.op === "exec" ? { ok: true, result: EXEC_RESULT } : undefined,
+    const machine = new EnvelopeMachine(url, m.credential, (req) =>
+      req.op === "exec" ? EXEC_RESULT : undefined,
     );
     await machine.opened;
     expect(await held(m.deviceId)).toBeTruthy();
     // the machine announced 69632 bytes: ready carries the kernel's smaller limit
-    expect((await (machine as FakeMachineV3).ready).maxFrameBytes).toBe(MAX_FRAME_BYTES);
-    const r = await localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
-      deadlineMs: 6000,
+    expect((await machine.ready).maxFrameBytes).toBe(MAX_FRAME_BYTES);
+    const r = await relay.request(m.deviceId, execBody(m.deviceId), {
+      timeoutMs: 6000,
       signal: AbortSignal.timeout(20_000),
     });
     expect(r).toEqual(EXEC_RESULT);
@@ -316,20 +236,13 @@ describe("GET /device/connect", () => {
       type: "req",
       args: { command: "echo hi", scope: { deviceId: m.deviceId, tag: "t1" } },
     });
-    // the hello was recorded: the claim (and so `held`) comes before the record, so wait for
-    // what only the record writes (roots) instead of reading at once
-    const row = await waitFor(
-      async () =>
-        db
-          .selectFrom("device_machines")
-          .select(["mode", "last_seen_at"])
-          .where("id", "=", m.machineId)
-          .where("roots", "is not", null)
-          .executeTakeFirst(),
-      10_000,
-      "hello recorded",
-    );
-    expect(row.mode).toBe("os");
+    // the hello's program facts were recorded with the connection
+    const row = await db
+      .selectFrom("device_machines")
+      .select(["program_version", "last_seen_at"])
+      .where("id", "=", m.machineId)
+      .executeTakeFirstOrThrow();
+    expect(row.program_version).toBe("0.1.0");
     expect(row.last_seen_at).not.toBeNull();
     machine.close();
     await machine.closed;
@@ -343,21 +256,23 @@ describe("GET /device/connect", () => {
 
   it("a result is stored with the grace + deadline TTL and a cancel is forwarded", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     await held(m.deviceId);
     const ac = new AbortController();
-    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
-      deadlineMs: 8000,
-      signal: ac.signal,
-    }).catch((e: unknown) => e);
+    const call = relay
+      .request(m.deviceId, execBody(m.deviceId), {
+        timeoutMs: 8000,
+        signal: ac.signal,
+      })
+      .catch((e: unknown) => e);
     const req = (await machine.next((f) => f.type === "req")) as KernelReq;
     ac.abort(new Error("stop"));
     await call;
     // taken by the machine: the give-up is a cancel, forwarded to the socket
     expect(await machine.next((f) => f.type === "cancel" && f.id === req.id)).toBeTruthy();
     // a late result is still stored (TTL grace 5 s + deadline 8 s + margin), nobody reads it
-    machine.respond(req.id, { ok: true, result: EXEC_RESULT });
+    machine.respond(req.id, EXEC_RESULT);
     const ttl = await waitFor(async () => {
       const t = await redis.pttl(deviceResKey(req.id));
       return t > 0 ? t : null;
@@ -368,21 +283,21 @@ describe("GET /device/connect", () => {
 
   it("a frame before hello closes 4400; a frame over maxFrameBytes closes 1009", async () => {
     const m = await connected();
-    const early = new FakeMachine(url, m.credential, undefined, { hello: false });
+    const early = new EnvelopeMachine(url, m.credential, undefined, { hello: false });
     await early.opened;
-    early.respond(randomUUID(), { ok: true, result: null });
+    early.respond(randomUUID(), null);
     expect((await early.closed).code).toBe(4400);
 
-    const big = new FakeMachine(url, m.credential);
+    const big = new EnvelopeMachine(url, m.credential);
     await big.opened;
     await held(m.deviceId);
-    big.respond(randomUUID(), { ok: true, result: "x".repeat(MAX_FRAME_BYTES + 1) });
+    big.respond(randomUUID(), "x".repeat(MAX_FRAME_BYTES + 1));
     expect((await big.closed).code).toBe(1009);
   });
 
   it("revoking closes the socket with 4003 and refuses reconnects", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     await held(m.deviceId);
     // another machine's revocation (a replacement sign-in) leaves this connection alone (R16)
@@ -400,7 +315,7 @@ describe("GET /device/connect", () => {
     expect(closed.reason).toBe("the machine was disconnected");
     const again = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
-      "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
+      "X-Capybara-Device-Protocol": FAKE_DIAL_IN_PROTOCOL,
     });
     expect(again?.status).toBe(401);
   });
@@ -412,7 +327,7 @@ describe("GET /device/connect", () => {
     gw.reauthEveryMs = 0;
     try {
       const m = await connected();
-      const machine = new FakeMachine(url, m.credential);
+      const machine = new EnvelopeMachine(url, m.credential);
       await machine.opened;
       await held(m.deviceId);
       await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${m.deviceId}`.execute(
@@ -434,7 +349,7 @@ describe("GET /device/connect", () => {
     gw.reauthEveryMs = 0;
     try {
       const m = await connected();
-      const machine = new FakeMachine(url, m.credential);
+      const machine = new EnvelopeMachine(url, m.credential);
       await machine.opened;
       await held(m.deviceId);
       await sql`UPDATE capybara.device_machines SET revoked_at = now() WHERE id = ${m.machineId}`.execute(
@@ -451,11 +366,11 @@ describe("GET /device/connect", () => {
 
   it("a newer connection of the same device replaces the older one (4002)", async () => {
     const m = await connected();
-    const first = new FakeMachine(url, m.credential);
+    const first = new EnvelopeMachine(url, m.credential);
     await first.opened;
     const firstToken = await held(m.deviceId);
-    const second = new FakeMachine(url, m.credential, (req) =>
-      req.op === "exec" ? { ok: true, result: EXEC_RESULT } : undefined,
+    const second = new EnvelopeMachine(url, m.credential, (req) =>
+      req.op === "exec" ? EXEC_RESULT : undefined,
     );
     await second.opened;
     expect((await first.closed).code).toBe(4002);
@@ -465,8 +380,8 @@ describe("GET /device/connect", () => {
     });
     await waitFor(() => relay.connection(m.deviceId).catch(() => null));
     expect(
-      await localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
-        deadlineMs: 6000,
+      await relay.request(m.deviceId, execBody(m.deviceId), {
+        timeoutMs: 6000,
         signal: AbortSignal.timeout(20_000),
       }),
     ).toEqual(EXEC_RESULT);
@@ -475,7 +390,7 @@ describe("GET /device/connect", () => {
 
   it("a result for an unknown request writes no key and publishes nothing", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     await held(m.deviceId);
     const id = randomUUID();
@@ -483,7 +398,7 @@ describe("GET /device/connect", () => {
     const heard: string[] = [];
     sub.on("message", (_ch, msg: string) => heard.push(msg));
     await sub.subscribe(`cap:kernel:${deviceResTopic(id)}`);
-    machine.respond(id, { ok: true, result: EXEC_RESULT });
+    machine.respond(id, EXEC_RESULT);
     await sleep(500);
     expect(await redis.exists(deviceResKey(id))).toBe(0);
     expect(heard).toEqual([]);
@@ -494,13 +409,13 @@ describe("GET /device/connect", () => {
 
   it("a result for a request taken for another device is dropped", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     await held(m.deviceId);
     const id = randomUUID();
     const other = randomUUID();
     await redis.set(deviceTakenKey(id), other, "PX", 60_000);
-    machine.respond(id, { ok: true, result: EXEC_RESULT });
+    machine.respond(id, EXEC_RESULT);
     await sleep(500);
     expect(await redis.exists(deviceResKey(id))).toBe(0);
     expect(await redis.get(deviceTakenKey(id))).toBe(other);
@@ -509,11 +424,11 @@ describe("GET /device/connect", () => {
 
   it("a result flushed after a reconnect on a new socket is accepted", async () => {
     const m = await connected();
-    const first = new FakeMachine(url, m.credential);
+    const first = new EnvelopeMachine(url, m.credential);
     await first.opened;
     await held(m.deviceId);
-    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
-      deadlineMs: 20_000,
+    const call = relay.request(m.deviceId, execBody(m.deviceId), {
+      timeoutMs: 20_000,
       signal: AbortSignal.timeout(30_000),
     });
     const req = (await first.next((f) => f.type === "req")) as KernelReq;
@@ -523,56 +438,58 @@ describe("GET /device/connect", () => {
     await waitFor(async () => (await redis.get(deviceLeaseKey(m.deviceId))) === null);
     // the program flushes what finished while it was away once the kernel is ready (protocol 3:
     // a result before `ready` is a protocol error)
-    const second = new FakeMachineV3(url, m.credential);
+    const second = new EnvelopeMachine(url, m.credential);
     await second.ready;
-    second.respond(req.id, { ok: true, result: EXEC_RESULT });
+    second.respond(req.id, EXEC_RESULT);
     expect(await call).toEqual(EXEC_RESULT);
     second.close();
   });
 
   it("a result flushed by the same program run after a reconnect is still accepted", async () => {
     const m = await connected();
-    const first = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    const first = new EnvelopeMachine(url, m.credential, undefined, { hello: false });
     await first.opened;
     first.hello({ programRunId: "run-1" });
     await first.ready;
-    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
-      deadlineMs: 20_000,
+    const call = relay.request(m.deviceId, execBody(m.deviceId), {
+      timeoutMs: 20_000,
       signal: AbortSignal.timeout(30_000),
     });
     const req = (await first.next((f) => f.type === "req")) as KernelReq;
     first.close();
     await first.closed;
     // a socket blip: the same process connects again and flushes the result it kept
-    const second = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    const second = new EnvelopeMachine(url, m.credential, undefined, { hello: false });
     await second.opened;
     second.hello({ programRunId: "run-1" });
     await second.ready;
-    second.respond(req.id, { ok: true, result: EXEC_RESULT });
+    second.respond(req.id, EXEC_RESULT);
     expect(await call).toEqual(EXEC_RESULT);
     second.close();
   });
 
   it("a request sent to an earlier program run ends once the machine reconnects as a new run", async () => {
     const m = await connected();
-    const first = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    const first = new EnvelopeMachine(url, m.credential, undefined, { hello: false });
     await first.opened;
     first.hello({ programRunId: "run-1" });
     await first.ready;
     const started = Date.now();
     // a long command: without the evidence the call would wait for its whole deadline
-    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
-      deadlineMs: 600_000,
-      signal: AbortSignal.timeout(900_000),
-    }).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
+    const call = relay
+      .request(m.deviceId, execBody(m.deviceId), {
+        timeoutMs: 600_000,
+        signal: AbortSignal.timeout(900_000),
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
     const req = (await first.next((f) => f.type === "req")) as KernelReq;
     // the program crashes and its service manager starts a new process
     first.close();
     await first.closed;
-    const second = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    const second = new EnvelopeMachine(url, m.credential, undefined, { hello: false });
     await second.opened;
     second.hello({ programRunId: "run-2" });
     await second.ready;
@@ -605,11 +522,11 @@ describe("GET /device/connect", () => {
 
   it("two near-simultaneous newcomers end with exactly one holder", async () => {
     const m = await connected();
-    const holder = new FakeMachine(url, m.credential);
+    const holder = new EnvelopeMachine(url, m.credential);
     await holder.opened;
     await held(m.deviceId);
-    const a = new FakeMachine(url, m.credential);
-    const b = new FakeMachine(url, m.credential);
+    const a = new EnvelopeMachine(url, m.credential);
+    const b = new EnvelopeMachine(url, m.credential);
     expect((await holder.closed).code).toBe(4002);
     const loser = await Promise.race([
       a.closed.then((c) => ({ c, other: b })),
@@ -626,7 +543,7 @@ describe("GET /device/connect", () => {
   it("a lease held elsewhere that is never handed back closes the claim with 4409", async () => {
     const m = await connected();
     await redis.set(deviceLeaseKey(m.deviceId), "stuck", "PX", 60_000);
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     expect((await machine.closed).code).toBe(4409);
     await redis.del(deviceLeaseKey(m.deviceId));
@@ -634,7 +551,7 @@ describe("GET /device/connect", () => {
 
   it("a lost lease closes the socket with 4001", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     await held(m.deviceId);
     // the key taken by someone else: the next renewal (every TTL/3) fails
@@ -649,7 +566,7 @@ describe("GET /device/connect", () => {
     gw.pingIntervalMs = 200;
     try {
       const m = await connected();
-      const machine = new FakeMachine(url, m.credential, undefined, { autoPong: false });
+      const machine = new EnvelopeMachine(url, m.credential, undefined, { autoPong: false });
       await machine.opened;
       // terminated without a close frame
       expect((await machine.closed).code).toBe(1006);
@@ -661,7 +578,7 @@ describe("GET /device/connect", () => {
 
   it("stopping the kernel closes the socket with 1001 and releases the lease", async () => {
     const m = await connected();
-    const machine = new FakeMachine(url, m.credential);
+    const machine = new EnvelopeMachine(url, m.credential);
     await machine.opened;
     await held(m.deviceId);
     await k.close();

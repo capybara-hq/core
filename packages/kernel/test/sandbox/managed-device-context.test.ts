@@ -70,7 +70,6 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { identityFor, REPORTS, startRun } from "../runtime/permission-context-fixture.js";
@@ -144,7 +143,7 @@ beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
 });
 
-/** One org, its owner, a root conversation bound to a local device with an installed binding. */
+/** One org, its owner, a root conversation bound to a dial-in style device with its evidence. */
 async function seed(opts: { project?: string } = {}) {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const s = await seedConversation(raw as any);
@@ -155,7 +154,6 @@ async function seed(opts: { project?: string } = {}) {
     .execute();
   const deviceId = randomUUID();
   const generation = String(1_700_000_000_000 + Math.floor(Math.random() * 1_000_000_000));
-  const bindingId = randomUUID();
   await db
     .insertInto("devices")
     .values({
@@ -163,32 +161,23 @@ async function seed(opts: { project?: string } = {}) {
       org_id: s.orgId,
       owner_kind: "personal",
       owner_account_id: s.accountId,
-      source: "local",
       provider: PROVIDER,
       name: "Laptop",
     })
     .execute();
-  const machineId = (
-    await db
-      .insertInto("device_machines")
-      .values({
-        org_id: s.orgId,
-        device_id: deviceId,
-        account_id: s.accountId,
-        credential_hash: randomUUID(),
-        name: "Laptop",
-        os: "darwin",
-        arch: "arm64",
-        program_version: "0.1.0",
-        features: ["projects"],
-        roots: JSON.stringify(ROOTS),
-        home: "/home/owner",
-        local_policy: JSON.stringify({ allowedDomains: [] }),
-        owner_report: storedOwnerReport(),
-      })
-      .returning("id")
-      .executeTakeFirstOrThrow()
-  ).id;
+  await db
+    .insertInto("device_machines")
+    .values({
+      org_id: s.orgId,
+      device_id: deviceId,
+      account_id: s.accountId,
+      credential_hash: randomUUID(),
+      name: "Laptop",
+      os: "darwin",
+      arch: "arm64",
+      program_version: "0.1.0",
+    })
+    .execute();
   await db
     .insertInto("device_instances")
     .values({
@@ -207,7 +196,6 @@ async function seed(opts: { project?: string } = {}) {
       }),
     })
     .execute();
-  const identity = identityFor(generation);
   await k.app.get(TransactionHost).run(async () => {
     await k.app
       .get(PermissionAuthorityLock)
@@ -216,18 +204,6 @@ async function seed(opts: { project?: string } = {}) {
       .get(PermissionRuntimeReports)
       .recordSupport(deviceId, PROVIDER, "test-1", REPORTS.both);
   });
-  await db
-    .insertInto("device_instance_bindings")
-    .values({
-      device_id: deviceId,
-      instance_generation: generation,
-      binding_id: bindingId,
-      provider: PROVIDER,
-      status: "installed",
-      machine_id: machineId,
-      runtime_identity: JSON.stringify(identity),
-    })
-    .execute();
   await db
     .updateTable("conversations")
     .set({ device_id: deviceId, permission_profile: "request-approval" })
@@ -251,7 +227,7 @@ async function seed(opts: { project?: string } = {}) {
     ]);
   }
   const run = await startRun(k, raw, s.conversationId, s.accountId);
-  return { ...s, db, deviceId, generation, bindingId, ...run };
+  return { ...s, db, deviceId, generation, ...run };
 }
 type Fixture = Awaited<ReturnType<typeof seed>>;
 
@@ -439,11 +415,6 @@ describe("managed device context writer in the real common.ts route", () => {
         if (replace === "revision") await newReportRevision(f);
         else {
           const next = String(Number(f.generation) + 1);
-          await db
-            .updateTable("device_instance_bindings")
-            .set({ instance_generation: next })
-            .where("device_id", "=", f.deviceId)
-            .execute();
           await db
             .updateTable("device_instances")
             .set({ created_at: new Date(Number(next)) })
@@ -772,7 +743,6 @@ describe("cloud installed evidence in the real lifecycle", () => {
         org_id: s.orgId,
         owner_kind: "personal",
         owner_account_id: s.accountId,
-        source: "cloud",
         provider: CLOUD,
         name: "Cloud",
       })
@@ -784,7 +754,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       .execute();
     const run = await startRun(k, raw, s.conversationId, s.accountId);
     // no instance and no binding yet: the first managed call provisions it
-    return { ...s, db, deviceId, generation: "", bindingId: randomUUID(), ...run };
+    return { ...s, db, deviceId, generation: "", ...run };
   }
   const use = (f: Fixture) => ({
     orgId: f.orgId,

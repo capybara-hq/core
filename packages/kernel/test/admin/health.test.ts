@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { DiscoveryService } from "@nestjs/core";
 import { Queue, Worker } from "bullmq";
@@ -14,6 +15,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { PRESENCE_INTERVAL_MS } from "../../src/infra/presence/replica-presence.js";
 import { bullConnectionOptions } from "../../src/infra/queue/redis-connection.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
@@ -33,6 +35,8 @@ let k: TestKernel;
 const queues: Queue[] = [];
 
 const SECRET = "conversation-secret-payload";
+/** An in-process provider serving its devices over the dial-in channel (it implements `dialIn`). */
+const DIAL_IN_STUB = "@dial-in-stub";
 const FAILURE = "failure text quoting user input";
 
 beforeAll(async () => {
@@ -110,8 +114,13 @@ describe("AdminHealthService.read", () => {
     await seedChannel(orgId, agentId, accountId, "error", "webhook");
     await seedChannel(orgId, agentId, accountId, "active", "long_connection", true);
     // devices: 2 of a dial-in provider (1 connected), 1 of another provider
-    await seedDevice(db(), orgId, undefined, "local");
-    await seedDevice(db(), orgId, undefined, "local");
+    k.app.get(DeviceProviders).register({
+      plugin: DIAL_IN_STUB,
+      version: "0.0.0",
+      impl: { dialIn: { onHello: async () => ({ ok: true }) } } as unknown as DeviceProvider,
+    });
+    await seedDevice(db(), orgId, undefined, DIAL_IN_STUB);
+    await seedDevice(db(), orgId, undefined, DIAL_IN_STUB);
     await seedDevice(db(), orgId);
     // sandboxes: docker 2 running + 1 suspended, e2b 1 running, 1 destroyed (not counted)
     await seedInstance(orgId, "sandbox-docker", "running");
@@ -193,8 +202,11 @@ describe("AdminHealthService.read", () => {
     expect(h.channels).toEqual({ online: 2, offline: 1, webhook: 1, disabled: 1, error: 2 });
     // the other conversations' default devices are on device-fake too
     expect(h.devices).toMatchObject({ online: 1, dialIn: 2 });
-    expect(h.devices.byProvider).toContainEqual({ provider: "@local", devices: 2 });
-    expect(h.devices.byProvider?.map((p) => p.provider).sort()).toEqual(["@local", "device-fake"]);
+    expect(h.devices.byProvider).toContainEqual({ provider: DIAL_IN_STUB, devices: 2 });
+    expect(h.devices.byProvider?.map((p) => p.provider).sort()).toEqual([
+      DIAL_IN_STUB,
+      "device-fake",
+    ]);
     expect(h.sandboxes).toEqual({
       running: 3,
       suspended: 1,

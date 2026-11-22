@@ -122,18 +122,34 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+/** A device row of `provider` owned by the owner (for a provider that takes no machines). */
+async function insertDevice(provider: string): Promise<string> {
+  const id = randomUUID();
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, name, provider)
+    VALUES (${id}, ${orgId}, 'personal', ${ownerId}, ${`Box ${id.slice(0, 8)}`}, ${provider})`.execute(
+    raw,
+  );
+  return id;
+}
+
 /**
  * A device of `provider` with a signed-in machine (the machine row issued directly: signing in by
  * provider is the sign-in's own task, `auth.test.ts`).
  */
-async function device(provider = "fake-dial-in") {
-  const { id: deviceId } = await k.app
-    .get(TransactionHost)
-    .run(() =>
-      k.app
-        .get(DevicesService)
-        .createDialIn(orgId, ownerId, provider, `Box ${randomUUID().slice(0, 8)}`),
-    );
+async function device(provider = "fake-dial-in", stored?: string) {
+  // `stored`: a device row of that provider, written directly (no dial-in provider of that name)
+  const deviceId =
+    stored === undefined
+      ? (
+          await k.app
+            .get(TransactionHost)
+            .run(() =>
+              k.app
+                .get(DevicesService)
+                .createDialIn(orgId, ownerId, provider, `Box ${randomUUID().slice(0, 8)}`),
+            )
+        ).id
+      : await insertDevice(stored);
   const issued = await k.app.get(TransactionHost).run(() =>
     k.app.get(DialInMachines).issue({
       orgId,
@@ -381,7 +397,7 @@ describe("ctx.dialIn", () => {
   });
 
   it("ctx.dialIn.request for a device of another provider throws ExtensionPermissionError", async () => {
-    const other = await device("@local");
+    const other = await device(undefined, "device-fake");
     const e = await rejection(
       provider().stat({ id: other.deviceId }, "/w/a", AbortSignal.timeout(10_000)),
     );

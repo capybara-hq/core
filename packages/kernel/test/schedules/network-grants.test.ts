@@ -1,10 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { NetworkBlockLayer } from "@capybara-hq/plugin-sdk";
-import type {
-  DeviceExecArgs,
-  DeviceLocalPolicySummary,
-  KernelReq,
-} from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -22,6 +17,7 @@ import { PlatformOperations } from "../../src/platform/registry.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { NetworkGrants, type NetworkRunState } from "../../src/sandbox/network-grants.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -33,12 +29,15 @@ import {
 } from "../../src/tools/network-asks.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { EnvelopeMachine as FakeMachine, type KernelReq } from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createConv,
   createOrgWithProviders,
+  enableExtensions,
   eventsOf,
   PW,
   type Req,
@@ -49,7 +48,6 @@ import {
   waitFor,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Scheduled task network grants (network ask-to-allow spec §8.1, §8.3; plan P2.4, P-D7): the
@@ -58,9 +56,6 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
  * trial run's 「这次允许」 kept as a task grant.
  */
 
-const POLICY: DeviceLocalPolicySummary = {
-  allowedDomains: [],
-};
 const OPEN = { network: { kind: "allowlist" as const, hosts: ["*.example.com"] } };
 
 describe("networkGrantRefusal", () => {
@@ -131,14 +126,24 @@ let k: TestKernel;
 let ownerId: string;
 let orgId: string;
 let wsUrl: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const open: FakeMachine[] = [];
 
 /** The fake device: what it refuses (granted or allowed hosts pass). */
 interface Device {
   blocking: Map<string, NetworkBlockLayer>;
   allowed: Set<string>;
-  policy: DeviceLocalPolicySummary;
 }
+
+/** An exec request body as the `fake-dial-in` provider relays it: its input and admitted scope. */
+interface ExecBody {
+  command: string;
+  scope?: { network?: { kind: string; hosts?: string[] } };
+}
+
+/** The exact hosts the exec's admitted scope names in its sandbox allowlist (grants too). */
+const grantedHosts = (args: ExecBody): string[] =>
+  args.scope?.network?.kind === "allowlist" ? [...(args.scope.network.hosts ?? [])] : [];
 
 interface Setup {
   accountId: string;
@@ -153,11 +158,11 @@ interface Setup {
 function answer(dev: Device) {
   return (req: KernelReq) => {
     switch (req.op) {
-      case "create":
-        return { ok: true, result: { roots: { ...HELLO.roots } } } as const;
+      case "resume":
+        return "resumed";
       case "exec": {
-        const args = req.args as unknown as DeviceExecArgs;
-        const granted = new Set(args.grants?.hosts ?? []);
+        const args = req.args as ExecBody;
+        const granted = new Set(grantedHosts(args));
         const hosts = args.command.startsWith("curl ") ? args.command.split(" ").slice(1) : [];
         const blocked = hosts.flatMap((host) => {
           const layer = dev.blocking.get(host);
@@ -166,19 +171,16 @@ function answer(dev: Device) {
             : [{ host, port: 443, layer }];
         });
         return {
-          ok: true,
-          result: {
-            exitCode: blocked.length > 0 ? 56 : 0,
-            stdout: blocked.length > 0 ? "" : "fetched\n",
-            stderr: blocked.length > 0 ? "curl: (56) blocked\n" : "",
-            truncated: false,
-            timedOut: false,
-            ...(blocked.length > 0 && { network: { blocked } }),
-          },
-        } as const;
+          exitCode: blocked.length > 0 ? 56 : 0,
+          stdout: blocked.length > 0 ? "" : "fetched\n",
+          stderr: blocked.length > 0 ? "curl: (56) blocked\n" : "",
+          truncated: false,
+          timedOut: false,
+          ...(blocked.length > 0 && { network: { blocked } }),
+        };
       }
       default:
-        return { ok: true, result: null } as const;
+        return null;
     }
   };
 }
@@ -188,6 +190,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -197,10 +200,13 @@ beforeAll(async () => {
         devices: { local: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrgWithProviders(k, await session(k, "owner"));
+  await enableExtensions(raw, orgId, "fake-dial-in");
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 
@@ -212,10 +218,11 @@ afterAll(async () => {
   await k?.close();
   redis?.disconnect();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Setup> {
+async function setup(): Promise<Setup> {
   const login = `m-${randomUUID().slice(0, 8)}`;
   const accountId = (
     await accountsFor(db).createLocal({ login, password: PW, displayName: `Dev ${login}` })
@@ -225,7 +232,7 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
   const device = await k.app.get(TransactionHost).run(async () => {
     const { id: deviceId } = await k.app
       .get(DevicesService)
-      .createDialIn(orgId, accountId, "@local", "Box");
+      .createDialIn(orgId, accountId, "fake-dial-in", "Box");
     const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,
@@ -237,28 +244,28 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
     });
     return { deviceId, ...issued };
   });
-  const dev: Device = { blocking: new Map(), allowed: new Set(), policy: { ...POLICY, ...policy } };
-  // biome-ignore lint/suspicious/noExplicitAny: the answers are the device protocol's
-  const machine = new FakeMachine(wsUrl, device.credential, answer(dev) as any, { hello: false });
+  const dev: Device = { blocking: new Map(), allowed: new Set() };
+  const machine = new FakeMachine(wsUrl, device.credential, answer(dev));
   open.push(machine);
   await machine.opened;
-  machine.hello({ features: ["networkReport", "policyOp", "policyOpId"], policy: dev.policy });
+  await machine.ready;
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(device.deviceId))) !== null,
     10_000,
     "lease held",
   );
+  // the provider stored the hello's report: the device's support is known
   await waitFor(
     async () =>
       (
         await db
-          .selectFrom("device_machines")
-          .select("roots")
-          .where("id", "=", device.machineId)
+          .selectFrom("devices")
+          .select("report")
+          .where("id", "=", device.deviceId)
           .executeTakeFirst()
-      )?.roots != null,
+      )?.report != null,
     10_000,
-    "hello recorded",
+    "report stored",
   );
   const res = await req({
     method: "POST",
@@ -382,8 +389,7 @@ async function curlStep(
 
 const curlExecs = (m: FakeMachine) =>
   m.frames.filter(
-    (f) =>
-      f.type === "req" && f.op === "exec" && (f.args as DeviceExecArgs).command.startsWith("curl"),
+    (f) => f.type === "req" && f.op === "exec" && (f.args as ExecBody).command.startsWith("curl"),
   ) as KernelReq[];
 
 const results = async (conversationId: string) =>
@@ -534,10 +540,8 @@ describe("unattended runs", () => {
     const run = await taskRun(s, taskId, false);
     expect(await curlStep(s, run, taskId, ["files.example.com"], false)).toEqual({ kind: "done" });
     const [exec] = curlExecs(s.machine);
-    expect((exec?.args as DeviceExecArgs | undefined)?.grants).toEqual({
-      hosts: ["files.example.com"],
-      source: { kind: "task", id: taskId, accountId: s.accountId },
-    });
+    // the task's grant is part of the exec's admitted sandbox network
+    expect(grantedHosts(exec?.args as ExecBody)).toContain("files.example.com");
     const [r] = await results(s.conversationId);
     expect(r?.content).toContain("fetched");
     expect(await networkAsks(s.conversationId)).toEqual([]);
@@ -558,7 +562,7 @@ describe("unattended runs", () => {
     await curlStep(s, run, taskId, ["files.example.com", "api.foo.com"], false);
     const [exec] = curlExecs(s.machine);
     expect(exec).toBeDefined();
-    expect((exec?.args as DeviceExecArgs | undefined)?.grants).toBeUndefined();
+    expect(grantedHosts(exec?.args as ExecBody)).not.toContain("files.example.com");
     expect(await networkAsks(s.conversationId)).toEqual([]);
     await sql`UPDATE capybara.scheduled_task_runs SET status = 'completed', fired_at = now()
       WHERE id = ${run.taskRunId}`.execute(raw);

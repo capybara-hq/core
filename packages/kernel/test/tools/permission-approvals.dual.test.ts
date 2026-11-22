@@ -596,12 +596,6 @@ it.each(["instance", "selective-publication", "general-publication"] as const)(
       })
       .where("id", "=", f.conversationId)
       .execute();
-    if (writer === "selective-publication")
-      await f.db
-        .updateTable("devices")
-        .set({ source: "cloud" })
-        .where("id", "=", f.deviceId)
-        .execute();
     const entered = barrier(),
       release = barrier(),
       readerEntered = barrier();

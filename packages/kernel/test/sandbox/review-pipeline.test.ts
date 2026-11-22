@@ -1299,7 +1299,6 @@ describe("the first managed call of a device", () => {
         org_id: orgId,
         owner_kind: "personal",
         owner_account_id: ownerId,
-        source: "cloud",
         provider: "device-fake",
         name: `Fresh ${deviceId.slice(0, 8)}`,
       })

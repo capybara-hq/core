@@ -20,7 +20,6 @@ import type { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permissio
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import { appliedOf } from "../../src/sandbox/modes.js";
 import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
-import { LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { RetirementPendingError, type SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -89,6 +88,8 @@ function spied(name: string, impl: DeviceProvider): DeviceProvider {
 
 let cloud: DeviceProvider;
 let local: DeviceProvider;
+/** An in-process provider (a test stub registered beside the extensions). */
+const IN_PROCESS = "@in-process";
 
 const service = (snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">): SandboxService =>
   sandboxServiceFor({
@@ -99,7 +100,7 @@ const service = (snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">): S
       { plugin: "device-fake", version: "1.0.0", impl: cloud },
       { plugin: "old-fake", version: "1.0.0", impl: cloud },
     ],
-    internal: [{ plugin: LOCAL_PROVIDER, version: "1.0.0", impl: local }],
+    internal: [{ plugin: IN_PROCESS, version: "1.0.0", impl: local }],
     config: () => config,
     log: {},
     lockPollMs: 20,
@@ -612,7 +613,7 @@ describe("cloud incarnations the kernel cannot name, current row not live (R2-I1
 describe("obligations of deleted devices", () => {
   it("are abandoned, never resolved, and kept out of `retired` but not out of `cleanRetirement`", async () => {
     const s = service();
-    const dev = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId, IN_PROCESS);
     await use(s, dev);
     const task = await legacyRow(dev, {
       status: "lost",
@@ -637,7 +638,7 @@ describe("obligations of deleted devices", () => {
       abandonedMembers: 1,
       retired: true,
       cleanRetirement: false,
-      abandonedList: [{ deviceId: dev, provider: LOCAL_PROVIDER }],
+      abandonedList: [{ deviceId: dev, provider: IN_PROCESS }],
     });
     // a later tick changes nothing
     expect((await jobFor(s).runOnce()).abandoned).toBe(0);
@@ -713,7 +714,7 @@ describe("obligations of deleted devices whose destroy is still owed (R2-I2)", (
 
   it("a device of a soft-deleted org is abandoned like a deleted device (m5)", async () => {
     const s = service();
-    const dev = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId, IN_PROCESS);
     await use(s, dev);
     await legacyRow(dev, {
       status: "lost",
@@ -729,8 +730,8 @@ describe("obligations of deleted devices whose destroy is still owed (R2-I2)", (
 
   it("abandons at most `limit` obligations per call (m4)", async () => {
     const s = service();
-    const a = await seedDevice(raw, seed.orgId, seed.accountId, "local");
-    const b = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    const a = await seedDevice(raw, seed.orgId, seed.accountId, IN_PROCESS);
+    const b = await seedDevice(raw, seed.orgId, seed.accountId, IN_PROCESS);
     for (const dev of [a, b]) {
       await use(s, dev);
       await legacyRow(dev, {

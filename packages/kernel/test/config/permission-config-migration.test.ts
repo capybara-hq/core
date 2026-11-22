@@ -392,7 +392,6 @@ it("orgHosts within: cloud devices on the old allowlist keep it (M4)", async () 
         org_id: o.id,
         owner_kind: "personal",
         owner_account_id: o.accountId,
-        source: "cloud",
         mode,
       })
       .execute();
@@ -408,7 +407,6 @@ it("orgHosts within: cloud devices on the old allowlist keep it (M4)", async () 
       org_id: o.id,
       owner_kind: "personal",
       owner_account_id: o.accountId,
-      source: "local",
     })
     .execute();
   expect((await publisher(within).initialize()).outcome).toBe("migrated");

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -29,7 +29,6 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
@@ -137,20 +136,48 @@ async function createConv(req: Req, orgId: string, agentId: string): Promise<Con
   return (res.json() as { conversation: ConvJson }).conversation;
 }
 
-async function localDevice(orgId: string, name = "Laptop") {
-  const providers = k.app.get(DeviceProviders),
-    local = providers.forDevice("@local");
-  if (!local) throw new Error("Local provider was not registered");
-  const impl = Object.create(local.impl);
+/**
+ * A provider every operation of which throws: a read-only permission API that reaches it fails.
+ * `contract: false` leaves out the scoped operation factory (an outdated provider plugin).
+ */
+function neverProbingProvider(contract = true): DeviceProvider {
   const neverProbe = async () => {
     throw new Error("Read-only permission API attempted a provider operation");
   };
-  Object.assign(impl, {
-    operation: neverProbe,
-    revokeOperation: neverProbe,
-    permissionSupport: neverProbe,
+  const methods = [
+    "createFileSystem",
+    "destroyFileSystem",
+    "destroyFileSystemByName",
+    "create",
+    "resume",
+    "suspend",
+    "destroy",
+    "destroyByName",
+    "killAll",
+    "killTagged",
+    "exec",
+    "readFile",
+    "writeFile",
+    "stat",
+    "list",
+    "scan",
+    "permissionSupport",
+    ...(contract ? ["operation", "revokeOperation"] : []),
+  ];
+  return {
+    ...Object.fromEntries(methods.map((m) => [m, neverProbe])),
+    concurrentExec: true,
+    networkAllowlist: true,
+  } as unknown as DeviceProvider;
+}
+
+/** A device of the in-process `@permission-test` provider with a signed-in machine. */
+async function localDevice(orgId: string, name = "Laptop") {
+  k.app.get(DeviceProviders).register({
+    plugin: "@permission-test",
+    version: KERNEL_VERSION,
+    impl: neverProbingProvider(),
   });
-  providers.register({ plugin: "@permission-test", version: KERNEL_VERSION, impl });
   const db = kernelDb(raw);
   const id = randomUUID();
   await db
@@ -160,7 +187,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: owner.id,
-      source: "local",
       provider: "@permission-test",
       name,
     })
@@ -175,11 +201,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   return id;
@@ -288,13 +309,11 @@ describe("Conversation permission profiles", () => {
       agentId = await createAgent(req, orgId),
       deviceId = await localDevice(orgId);
     // a provider without the operation factory (an outdated device provider plugin)
-    const local = k.app.get(DeviceProviders).forDevice("@local");
-    if (!local) throw new Error("Local provider was not registered");
-    const impl = Object.create(local.impl);
-    Object.assign(impl, { operation: undefined, revokeOperation: undefined });
-    k.app
-      .get(DeviceProviders)
-      .register({ plugin: "@no-factory-test", version: "0.1.0-rc.16", impl });
+    k.app.get(DeviceProviders).register({
+      plugin: "@no-factory-test",
+      version: "0.1.0-rc.16",
+      impl: neverProbingProvider(false),
+    });
     await kernelDb(raw)
       .updateTable("devices")
       .set({ provider: "@no-factory-test" })

@@ -222,7 +222,7 @@ export class NetworkGrants {
   }
 }
 
-export const normalizeHost = (host: string): string => {
+const normalizeHost = (host: string): string => {
   const h = host.toLowerCase();
   return h.endsWith(".") ? h.slice(0, -1) : h;
 };
@@ -232,18 +232,4 @@ export function orgAllows(host: string, limits: Pick<SandboxLimits, "network">):
   if (limits.network.kind === "open-public") return true;
   const h = normalizeHost(host);
   return limits.network.hosts.some((p) => coversHost(p.toLowerCase(), h));
-}
-
-/**
- * `grants` cut to the hosts the org's sandbox network (`limits`, read for this exec) admits, or
- * undefined when none is left. The device intersects them with the limits too; the kernel does it
- * first so a grant never reaches a device beyond what the org allows.
- */
-export function grantsWithin(
-  grants: DeviceExecGrants | undefined,
-  limits: Pick<SandboxLimits, "network">,
-): DeviceExecGrants | undefined {
-  if (grants === undefined) return undefined;
-  const hosts = grants.hosts.filter((h) => orgAllows(h, limits));
-  return hosts.length === 0 ? undefined : { ...grants, hosts };
 }

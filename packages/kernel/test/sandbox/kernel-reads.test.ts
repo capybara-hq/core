@@ -40,7 +40,6 @@ import {
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import {
   createOrg,
   PW,
@@ -286,7 +285,6 @@ async function seed(opts: { accountId?: string; orgId?: string } = {}) {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: accountId,
-      source: "cloud",
       provider: CLOUD,
       name: "Cloud",
     })
@@ -628,35 +626,12 @@ async function fullAccess(f: Fixture): Promise<void> {
 }
 
 /**
- * A local device whose machine is connected in `mode` (`os`: the host backend; `docker`: its
- * Docker mode), its running instance with an installed binding and the runtime report `report`.
+ * A device whose running instance's recorded runtime report is `report` (an operation boundary:
+ * a machine's own runtime), with the evidence the lifecycle records.
  */
-async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fixture> {
+async function seedOperationBoundary(report: ReportKind): Promise<Fixture> {
   const f = await seed();
-  await f.db.updateTable("devices").set({ source: "local" }).where("id", "=", f.deviceId).execute();
   const generation = String(1_700_000_000_000 + Math.floor(Math.random() * 1_000_000_000));
-  const machineId = (
-    await f.db
-      .insertInto("device_machines")
-      .values({
-        org_id: f.orgId,
-        device_id: f.deviceId,
-        account_id: f.accountId,
-        credential_hash: randomUUID(),
-        name: "Laptop",
-        os: "linux",
-        arch: "x64",
-        program_version: "0.1.0",
-        mode,
-        features: ["projects"],
-        roots: JSON.stringify(DEFAULT_SANDBOX_ROOTS),
-        home: "/home/owner",
-        local_policy: JSON.stringify({ allowedDomains: [] }),
-        owner_report: storedOwnerReport(),
-      })
-      .returning("id")
-      .executeTakeFirstOrThrow()
-  ).id;
   await f.db
     .insertInto("device_instances")
     .values({
@@ -675,7 +650,6 @@ async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fix
       }),
     })
     .execute();
-  const identity = identityFor(generation);
   await k.app.get(TransactionHost).run(async () => {
     await k.app
       .get(PermissionAuthorityLock)
@@ -684,18 +658,6 @@ async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fix
       .get(PermissionRuntimeReports)
       .recordSupport(f.deviceId, CLOUD, "v1", REPORTS[report]);
   });
-  await f.db
-    .insertInto("device_instance_bindings")
-    .values({
-      device_id: f.deviceId,
-      instance_generation: generation,
-      binding_id: randomUUID(),
-      provider: CLOUD,
-      status: "installed",
-      machine_id: machineId,
-      runtime_identity: JSON.stringify(identity),
-    })
-    .execute();
   return f;
 }
 
@@ -750,20 +712,8 @@ describe("the kernel read's route follows the device's recorded runtime support"
     expect(latest?.agentsMd).toBeUndefined();
   });
 
-  it("an operation-boundary runtime that can only run outside the sandbox gets no read, whatever the machine runs (the isolated route is an instance boundary only)", async () => {
-    const f = await seedLocal("docker", "full-only");
-    await bindProject(f);
-    await fullAccess(f);
-    const run = await claimRun(f);
-    expect(await recordKnowledge(f, run)).toBe(true);
-    expect(await latestProjectRoot(f.conversationId)).toMatchObject({
-      unavailable: { reason: "unreadable" },
-    });
-    expect(seen.filter((x) => x.route === "operation")).toEqual([]);
-  });
-
-  it("a host machine without restricted enforcement gets no read: unreadable with the reason, the run goes on", async () => {
-    const f = await seedLocal("os", "full-only");
+  it("an operation-boundary runtime without restricted enforcement gets no read: unreadable with the reason, the run goes on (the isolated route is an instance boundary only)", async () => {
+    const f = await seedOperationBoundary("full-only");
     await bindProject(f);
     await fullAccess(f);
     const run = await claimRun(f);
@@ -780,8 +730,8 @@ describe("the kernel read's route follows the device's recorded runtime support"
     expect(await intentsOf(f)).toEqual([]);
   });
 
-  it("a host machine with restricted enforcement reads under the restricted scope, even under Full access", async () => {
-    const f = await seedLocal("os", "both");
+  it("an operation-boundary runtime with restricted enforcement reads under the restricted scope, even under Full access", async () => {
+    const f = await seedOperationBoundary("both");
     await bindProject(f);
     await fullAccess(f);
     const run = await claimRun(f);

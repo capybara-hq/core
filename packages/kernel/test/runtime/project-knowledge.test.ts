@@ -41,7 +41,6 @@ import { accountsFor } from "../helpers/identity.js";
 import { startClaimedRun } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import {
   createConv,
   createOrgWithProviders,
@@ -213,45 +212,6 @@ async function newMember(): Promise<{ id: string; req: Req; deviceId: string }> 
   const req = await session(k, login);
   const deviceId = await deviceOf(await createConv(req, orgId, agentId));
   return { id, req, deviceId };
-}
-
-/** A local device of the owner whose machine signed in (never connected), as `features` says. */
-async function localDevice(
-  machine: { features?: string[]; localPolicy?: unknown; ownerReport?: string } = {},
-) {
-  const deviceId = await k.app.get(TransactionHost).run(async () => {
-    const { id } = await k.app
-      .get(DevicesService)
-      .createDialIn(orgId, ownerId, "@local", `Box ${randomUUID().slice(0, 8)}`);
-    await k.app.get(DialInMachines).issue({
-      orgId,
-      deviceId: id,
-      accountId: ownerId,
-      name: "box",
-      os: "linux",
-      arch: "x64",
-      programVersion: "0.1.0",
-    });
-    return id;
-  });
-  if (
-    machine.features !== undefined ||
-    machine.localPolicy !== undefined ||
-    machine.ownerReport !== undefined
-  ) {
-    await db
-      .updateTable("device_machines")
-      .set({
-        ...(machine.features !== undefined && { features: machine.features }),
-        ...(machine.localPolicy !== undefined && {
-          local_policy: JSON.stringify(machine.localPolicy),
-        }),
-        ...(machine.ownerReport !== undefined && { owner_report: machine.ownerReport }),
-      })
-      .where("device_id", "=", deviceId)
-      .execute();
-  }
-  return deviceId;
 }
 
 /** Writes files into the device's file system (paths relative to `/workspace`). */
@@ -443,7 +403,7 @@ describe("project knowledge at run start", () => {
   it("records a root above the owner's home as outside_mode, as the working root would refuse it", async () => {
     const projects = k.app.get(DeviceProjectsService);
     let read = 0;
-    // a machine in auto mode with a reported home: its scope reads anything the owner can
+    // a device in auto mode with a reported home: its scope reads anything the owner can
     const service = new ProjectKnowledgeService(
       k.app.get(KernelDb),
       k.app.get(EventLog),
@@ -451,9 +411,7 @@ describe("project knowledge at run start", () => {
       k.app.get(ConversationDevices),
       {
         scopeFor: async () => ({
-          source: "local" as const,
           mode: "auto" as const,
-          reach: "os-user" as const,
           workspace: "/Users/u/capybara-device/d/workspace",
           home: "/Users/u",
           supported: true,
@@ -627,39 +585,6 @@ describe("project knowledge at run start", () => {
     expect(copies).toHaveLength(1);
     expect(copies[0]?.payload.agentsMd).toBe("A");
     expect(copies[0]?.runId).toBe(input.runId);
-  });
-
-  it("a machine whose owner allows more than the organization is not refused unasked: the org's ceiling narrows its operations", async () => {
-    const deviceId = await localDevice({
-      features: ["projects"],
-      localPolicy: { allowedDomains: [] },
-      ownerReport: storedOwnerReport(),
-    });
-    const convId = await insertBound({ deviceId, path: "/home/me/app" });
-    // the organization turns work outside the sandbox off, the machine's owner report allows it
-    const { settings } = await db
-      .selectFrom("orgs")
-      .select("settings")
-      .where("id", "=", orgId)
-      .executeTakeFirstOrThrow();
-    await db
-      .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...(settings as object), outsideSandbox: "off" }) })
-      .where("id", "=", orgId)
-      .execute();
-    let roots: ProjectRootEvent[];
-    try {
-      roots = projectRoots(await run(convId, 1));
-    } finally {
-      await db
-        .updateTable("orgs")
-        .set({ settings: JSON.stringify(settings) })
-        .where("id", "=", orgId)
-        .execute();
-    }
-    // protocol 4: the owner's ceiling is intersected per operation, so the read is attempted;
-    // this machine is offline, so nothing is recorded (and never outside_mode)
-    expect(roots).toEqual([]);
   });
 
   it("records a cloud device whose provider cannot list as unsupported, asking it nothing", async () => {

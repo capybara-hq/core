@@ -2,9 +2,9 @@ import { Module } from "@nestjs/common";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelSupervisor } from "../channels/supervisor.js";
 import { ChannelWebhooks } from "../channels/webhook.js";
+import { DialInModule } from "../dial-in/dial-in.module.js";
 import { DialInGateway } from "../dial-in/gateway.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { GatewayRole } from "./gateway-role.js";
 
 /**
@@ -15,7 +15,7 @@ import { GatewayRole } from "./gateway-role.js";
  * no cron and no queue consumer (those are the worker role's).
  */
 @Module({
-  imports: [ChannelsModule, ExtensionsModule, LocalDevicesModule],
+  imports: [ChannelsModule, ExtensionsModule, DialInModule],
   providers: [ChannelSupervisor, ChannelWebhooks, DialInGateway, GatewayRole],
   exports: [GatewayRole],
 })

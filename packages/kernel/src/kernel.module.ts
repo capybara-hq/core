@@ -34,7 +34,6 @@ import { KERNEL_POOL, REDIS } from "./infra/tokens.js";
 import { ValidationModule } from "./infra/validation/validation.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_APP_OPTIONS } from "./lifecycle/tokens.js";
-import { LocalDevicesModule } from "./local-devices/local-devices.module.js";
 import { createConfiguredLogger } from "./log-config.js";
 import { KERNEL_OVERRIDE_TOKENS } from "./overrides.js";
 import { PlatformModule } from "./platform/platform.module.js";
@@ -128,8 +127,6 @@ export class KernelModule {
         PluginRouteAccessModule,
         // client extensions: the client builds stored with extension packages
         ClientModule,
-        // the @local sandbox provider, registered on every role (any replica may relay to a machine)
-        LocalDevicesModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role

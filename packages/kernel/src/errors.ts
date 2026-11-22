@@ -474,18 +474,10 @@ export const ERROR_CODES = {
    */
   "device.provider_unavailable": 403,
   /**
-   * The device's machine refused a network policy change (it runs in Docker mode or an older
-   * program, or a host is invalid); the message says how to allow it on the machine.
-   */
-  "device.policy_refused": 409,
-  /** The device cannot change its network policy from the platform (cloud, or an older program). */
-  "device.policy_unsupported": 409,
-  /**
    * B1: a cloud device's snapshot found applied limits it could not establish exactly; no operation
    * is admitted until a lifecycle action (a file reset) establishes them.
    */
   "device.permission_reconcile_required": 409,
-  "device.owner_report_stale": 409,
   /** A cloud device's earlier instance may run legacy work no evidence can cover (8.5). */
   "device.recreate_required": 503,
   /**

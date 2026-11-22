@@ -1,10 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
-import {
-  type DeviceFeature,
-  type DeviceLocalPolicySummary,
-  isDeviceBootId,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import { isDeviceBootId } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { audit } from "../identity/audit.js";
@@ -14,9 +10,9 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
-import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
 import { DialInRelay } from "./relay.js";
@@ -59,15 +55,11 @@ export interface ActiveMachine {
   programVersion: string | null;
   lastSeenAt: Date | null;
   createdAt: Date;
-  /** The features its program reported in its last hello (known ones only). */
-  features: DeviceFeature[];
-  /** Its local network policy as last reported (hello or `policy` op); null when unknown. */
-  localPolicy: DeviceLocalPolicySummary | null;
 }
 
 /**
  * Connected machines and their credentials (environments spec §13.2). One active machine per
- * local device: issuing a credential revokes the device's previous machine. A
+ * dial-in device: issuing a credential revokes the device's previous machine. A
  * credential is `cap_dev_` plus 32 random bytes; only its sha256 is stored. It is accepted only
  * by the device connection route ({@link authenticate}), never by `/api`: it is no `Principal`.
  *
@@ -85,12 +77,13 @@ export class DialInMachines {
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
   ) {}
 
   /**
    * A new machine for the device and its credential (returned once). Revokes the
    * device's active machine first. Joins the caller's transaction (the device confirmation),
-   * which has already checked the device is the person's own live local device.
+   * which has already checked the device is the person's own live dial-in device.
    */
   @Transactional()
   async issue(input: {
@@ -144,7 +137,7 @@ export class DialInMachines {
    * ones, so conversations that used the old files are told their files were reset, not that they
    * were kept: lost files come back as an empty directory, and another machine (`moved`: name, OS
    * or arch differ from the device's previous machine) has other files. Another directory on
-   * the same machine is known only from the new machine's first hello (`LocalMachineReports`).
+   * the same machine is known only to the provider (from the new machine's first hello).
    */
   private async resetInstance(deviceId: string, moved: boolean): Promise<void> {
     await this.db
@@ -168,7 +161,9 @@ export class DialInMachines {
   /**
    * Who a machine credential stands for, or null: the machine is not revoked, its device is
    * live, the org is not deleted (ruling R12), and the person is an active account still a member
-   * of the org. Read live on every call (a connection re-checks it as it sees fit).
+   * of the org. Read live on every call (a connection re-checks it as it sees fit). Whether the
+   * device's provider takes its machines now (it declares the dial-in channel and is on in the
+   * org) is the connection's next check (`DialInHandlers.forDevice`).
    */
   async authenticate(credential: string): Promise<MachineIdentity | null> {
     if (!CREDENTIAL_RE.test(credential)) return null;
@@ -185,7 +180,6 @@ export class DialInMachines {
       .where("m.revoked_at", "is", null)
       .whereRef("e.org_id", "=", "m.org_id")
       .where("e.deleted_at", "is", null)
-      .where("e.source", "=", "local")
       .where("o.deleted_at", "is", null)
       .where("a.status", "=", "active")
       .executeTakeFirst();
@@ -266,16 +260,20 @@ export class DialInMachines {
   ): Promise<void> {
     const env = await this.db
       .selectFrom("devices")
-      .select("id")
+      .select(["id", "provider"])
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
       .where("owner_kind", "=", "personal")
       .where("owner_account_id", "=", accountId)
-      .where("source", "=", "local")
       .where("deleted_at", "is", null)
       .forNoKeyUpdate()
       .executeTakeFirst();
     if (!env) throw deviceNotFound();
+    // a dial-in device: its provider serves the dial-in channel, or a machine signed in to it
+    // (its provider may be unloaded here, and the person disconnects anyway)
+    const p = this.providers.forDevice(env.provider);
+    if (!(p !== undefined && servesDialIn(p)) && !(await this.everSignedIn(deviceId)))
+      throw deviceNotFound();
     const machineId = await this.revokeActive(deviceId, "revoked");
     if (machineId === null) return;
     await audit(this.db.db, {
@@ -348,6 +346,17 @@ export class DialInMachines {
     return true;
   }
 
+  /** Whether a machine ever signed in to the device (revoked or not). */
+  private async everSignedIn(deviceId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", deviceId)
+      .limit(1)
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
   /** The device's active machine, or null. */
   async activeFor(deviceId: string): Promise<ActiveMachine | null> {
     const r = await this.db
@@ -362,8 +371,6 @@ export class DialInMachines {
         "program_version",
         "last_seen_at",
         "created_at",
-        "features",
-        "local_policy",
       ])
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
@@ -379,8 +386,6 @@ export class DialInMachines {
           programVersion: r.program_version,
           lastSeenAt: r.last_seen_at,
           createdAt: r.created_at,
-          features: deviceFeaturesOf(r.features),
-          localPolicy: localPolicyOf(r.local_policy),
         }
       : null;
   }

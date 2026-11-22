@@ -369,8 +369,6 @@
       "offline": "This computer is not connected. Start capybara-device on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
-      "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
-      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
       "project_name_taken": "This device already has a project with this name. Choose another name.",
       "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
@@ -384,10 +382,10 @@
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
       "not_running": "The device stopped before it could be read. Try again; it will be started first.",
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
-      "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
       "network_not_allowed": "This network is wider than your organization, the platform or the provider allows for this device, or a host is outside the organization's list.",
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
+      "provider_unavailable": "This device's provider is off in this organization, not installed, or takes no machines. Ask an org admin to switch it on.",
       "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on."
     },
     "app_auth": {

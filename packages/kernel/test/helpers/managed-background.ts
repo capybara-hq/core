@@ -28,7 +28,6 @@ import { taskStopTool } from "../../src/tools/builtins/sandbox/task-stop.js";
 import type { BuiltinCallContext, BuiltinResult } from "../../src/tools/registry.js";
 import { asUser, cookieJar } from "./http.js";
 import { seedInstalledEvidence } from "./installed-evidence.js";
-import { storedOwnerReport } from "./owner-report.js";
 import { enableModelProviders, type Req, type TestKernel } from "./runs.js";
 
 /**
@@ -337,7 +336,6 @@ export async function managedTaskFixture(opts: {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: opts.accountId,
-      source: "local",
       provider: MANAGED_PROVIDER,
       name: "Laptop",
     })
@@ -352,12 +350,6 @@ export async function managedTaskFixture(opts: {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      // the machine reports every root the instance mounts (its handle's below)
-      roots: JSON.stringify({ ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   await db

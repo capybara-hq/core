@@ -1272,8 +1272,8 @@ type InstanceHandle = ColumnType<
 >;
 
 /**
- * 0088_environments.sql, renamed in 0105: a device. A cloud device is one instance plus a kept file
- * system; a local device is a person's machine (device_machines).
+ * 0088_environments.sql, renamed in 0105: a device, served by its provider (`provider`): one
+ * instance plus a kept file system; a dial-in device's machine signs in (device_machines).
  */
 export interface DevicesTable {
   id: string;
@@ -1282,8 +1282,6 @@ export interface DevicesTable {
   owner_account_id: string;
   name: ColumnType<string | null, string | null | undefined, string | null>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0093, renamed in 0105: `local` is a person's machine (device_machines). */
-  source: "cloud" | "local";
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
@@ -1368,12 +1366,13 @@ export interface DeviceInstancesTable {
 }
 
 /**
- * 0093_connected_environments.sql, renamed in 0105: the machine of a local device. At most one
- * unrevoked row per device; revoking sets `revoked_at` and keeps the row.
+ * 0093_connected_environments.sql, renamed in 0105: the signed-in machine of a dial-in device. At
+ * most one unrevoked row per device; revoking sets `revoked_at` and keeps the row. 0177 dropped
+ * what the kernel's former local provider kept here (a provider keeps its own machine facts).
  */
 export interface DeviceMachinesTable {
   id: Generated<string>;
-  /** 0157: the machine's current OS boot identity (the latest first seen); null: none reported. */
+  /** 0157: the OS boot identity its last connection reported; null: none reported. */
   boot_id: ColumnType<string | null, string | null | undefined, string | null>;
   org_id: string;
   device_id: string;
@@ -1384,27 +1383,9 @@ export interface DeviceMachinesTable {
   os: string;
   arch: string;
   program_version: ColumnType<string | null, string | null | undefined, string | null>;
-  mode: ColumnType<
-    "os" | "docker" | null,
-    "os" | "docker" | null | undefined,
-    "os" | "docker" | null
-  >;
-  /** The roots the program exposes, as it reported them (a JSON array). */
-  roots: ColumnType<unknown, string | null | undefined, string | null>;
-  session_isolation: ColumnType<boolean, boolean | undefined, boolean>;
   last_seen_at: TsNullable;
   created_at: Ts;
   revoked_at: TsNullable;
-  /** 0114: the features the program reported in its hello (`networkReport`, `policyOp`). */
-  features: ColumnType<string[], string[] | undefined, string[]>;
-  /** 0114: the program's local network policy summary (hello, refreshed by each `policy` op). */
-  local_policy: ColumnType<unknown | null, string | null | undefined, string | null>;
-  /** 0118: the `policy` ops sent whose answer is not recorded yet (`PendingPolicyOp[]`). */
-  pending_policy_ops: ColumnType<unknown, string | undefined, string>;
-  /** 0133: the owner's home directory the program reported in its hello; null when not reported. */
-  home: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0156: the authenticated owner report (`StoredOwnerReport`, B2); null before any. */
-  owner_report: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0133: a device's projects (project root design §4.1), written only by the kernel. */
@@ -1838,25 +1819,6 @@ export interface DeviceGenerationHighWaterTable {
   updated_at: Ts;
 }
 
-export interface DeviceInstanceBindingsTable {
-  device_id: string;
-  instance_generation: string;
-  binding_id: string;
-  provider: string;
-  previous_generation: string | null;
-  status: "awaiting-device" | "installed";
-  machine_id: string | null;
-  runtime_identity: ColumnType<
-    PermissionRuntimeIdentity | null,
-    string | null | undefined,
-    string | null
-  >;
-  created_at: Ts;
-  installed_at: TsNullable;
-  /** Migration 0168: the device connection whose bind answer installed it. */
-  installed_connection_id: string | null;
-}
-
 export interface LegacyLaunchFreezeTable {
   id: "platform";
   frozen_at: Generated<Date>;
@@ -1903,14 +1865,6 @@ export interface DeviceRetirementMembersTable {
   created_at: Generated<Date>;
 }
 
-export interface DeviceMachineBootsTable {
-  machine_id: string;
-  boot_id: string;
-  /** bigserial: read as a decimal string. */
-  seq: ColumnType<string, string | number | undefined, never>;
-  first_seen_at: Generated<Date>;
-}
-
 export interface DeviceInstanceDestructionsTable {
   device_id: string;
   provider: string;
@@ -1939,16 +1893,12 @@ export interface KernelDatabase {
   device_permission_reports: DevicePermissionReportsTable;
   /** Migration 0155: per-device generation high-water mark; outlives instance rows. */
   device_generation_high_water: DeviceGenerationHighWaterTable;
-  /** Migration 0155: post-commit binding of a local instance generation. */
-  device_instance_bindings: DeviceInstanceBindingsTable;
   /** Migration 0157: the durable legacy-launch freeze (one row, never removed). */
   legacy_launch_freeze: LegacyLaunchFreezeTable;
   /** Migration 0157: the physical no-reuse obligation of one old instance incarnation. */
   device_retirement_obligations: DeviceRetirementObligationsTable;
   /** Migration 0157: what put a retirement obligation there. */
   device_retirement_members: DeviceRetirementMembersTable;
-  /** Migration 0157: the OS boot identities a machine reported, in the order first seen. */
-  device_machine_boots: DeviceMachineBootsTable;
   /** Migration 0157: provider-confirmed destruction of a cloud instance incarnation. */
   device_instance_destructions: DeviceInstanceDestructionsTable;
   sandbox_operation_intents: SandboxOperationIntentsTable;

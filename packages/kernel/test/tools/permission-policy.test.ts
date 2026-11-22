@@ -366,59 +366,6 @@ it("legacy production route cannot skip review", async () => {
   expect(f.effects()).toBe(0);
 });
 
-import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
-
-it.each(["full-access", "request-approval"] as const)(
-  "native read/write retain canonical %s scope without an exec grant",
-  async (profile) => {
-    const f = await fixture("Write", { file_path: "/work/a" }, true);
-    const view = await k.app
-      .get(PermissionProfilesService)
-      .get(f.orgId, f.conversationId, f.accountId);
-    await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, f.accountId, {
-      profile,
-      expectedRevision: 0,
-      ...(profile === "full-access" ? { consentScopeRevision: view.scopeRevision! } : {}),
-    });
-    await k.app.get(RunExecution).withClaim(
-      f.claim,
-      () => true,
-      () => k.app.get(ToolPipeline).runStep(f.ctx),
-    );
-    const scope = f.scopes[0]!;
-    // every profile is sandboxed (approval-only profiles): Full access gets the same scoped
-    // filesystem and sandbox network (an allowlist with no hosts here), never the device pair
-    expect(scope.network).toEqual({ kind: "none" });
-    expect(scope.filesystem.kind).toBe("scoped");
-    const forExecution = vi.spyOn(k.app.get(PermissionCallGrants), "forExecution");
-    const sent: Record<string, unknown>[] = [];
-    const adapter = k.app.get(LocalDeviceProvider).stagedOperations({
-      call: async (_id, op, args) => {
-        sent.push(args);
-        return op === "readFile" ? { dataB64: "YQ==", truncated: false } : null;
-      },
-      permissionSupport: async () => ({
-        version: 2,
-        restricted: null,
-        boundary: "operation",
-        network: { openPublic: false, allowlist: false, perOperationHosts: false },
-        outsideSandbox: false,
-        background: false,
-      }),
-    });
-    const operation = await adapter.operation({ id: f.deviceId }, scope, f.ctx.signal);
-    await operation.readFile("/work/a", { maxBytes: 1, signal: f.ctx.signal });
-    await operation.writeFile("/work/a", new Uint8Array([1]), f.ctx.signal);
-    expect(forExecution).not.toHaveBeenCalled();
-    expect(sent).toHaveLength(2);
-    for (const envelope of sent) {
-      expect(envelope.scope).toEqual(scope);
-      expect(envelope.grants).toBeUndefined();
-      expect(envelope.limits).toBeUndefined();
-    }
-  },
-);
-
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 
 it.each(["allow", "ask", "deny"] as const)(
@@ -577,31 +524,15 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
     rule: null,
     reason: "Exact host approved",
   });
-  const sent: Record<string, unknown>[] = [];
-  const adapter = k.app.get(LocalDeviceProvider).stagedOperations({
-    call: async (_id, _op, args) => {
-      sent.push(args);
-      return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
-    },
-    permissionSupport: async () => ({
-      version: 2,
-      restricted: null,
-      boundary: "operation",
-      network: { openPublic: false, allowlist: false, perOperationHosts: false },
-      outsideSandbox: false,
-      background: false,
-    }),
-  });
-  f.setEffectHook(async (scope, method) => {
+  // what a provider resolves before it runs the exec: the admitted execution's explicit hosts
+  const sent: unknown[] = [];
+  const callGrants = k.app.get(PermissionCallGrants);
+  f.setEffectHook(async (scope, method, input) => {
     expect(method).toBe("exec");
     const exec = async (actual: SandboxOperationScope) =>
-      (await adapter.operation({ id: f.deviceId }, actual, f.ctx.signal)).exec({
-        command: "curl https://api.example.org/data",
-        cwd: "/work",
-        timeoutMs: 1000,
-        maxOutputBytes: 100,
-        signal: f.ctx.signal,
-      });
+      sent.push(
+        await callGrants.forExecution(actual.operationId, f.deviceId, "exec", actual, input),
+      );
     await exec(scope);
     await expect(
       exec({
@@ -622,7 +553,7 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
   expect(f.failures).toEqual([]);
   expect(f.effects()).toBe(1);
   expect(sent).toHaveLength(1);
-  expect(sent[0]?.grants).toEqual({
+  expect(sent[0]).toEqual({
     hosts: ["api.example.org"],
     source: { kind: "run", id: f.runId, accountId: f.accountId },
   });

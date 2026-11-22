@@ -25,30 +25,32 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import {
-  type DeviceProviderEntry,
-  DeviceProviders,
-  LOCAL_PROVIDER,
-} from "../../src/sandbox/providers.js";
-import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createOrgWithProviders,
+  enableExtensions,
   PW,
   type Req,
   runConfig,
   session,
   startKernel,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 /**
  * Who may use a device ({@link DeviceAccess}: the owner, while the device's own provider is on in
  * its org) and the default device ({@link DevicesService.ensureDefault}: never demoted), on a
- * kernel with the fake device provider on in the org as its default provider.
+ * kernel with the fake device provider on in the org as its default provider, and the
+ * `fake-dial-in` fixture provider on beside it for dial-in devices.
  */
+
+/** The dial-in fixture provider (`permissions.dialIn`), loaded as a bootstrap plugin. */
+const DIAL_IN = "fake-dial-in";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
@@ -59,6 +61,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
 let root: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 let ownerId: string;
 let owner: Req;
 let orgId: string;
@@ -68,6 +71,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   root = await mkdtemp(join(tmpdir(), "cap-device-access-"));
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -77,16 +81,24 @@ beforeAll(async () => {
         extensionConfig: { "device-fake": { root } },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
+  await enableExtensions(raw, orgId, DIAL_IN);
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice(DIAL_IN) ?? null);
+  // two providers are loaded: device-fake stays the org's default
+  await sql`UPDATE capybara.orgs SET settings = COALESCE(settings, '{}'::jsonb)
+      || jsonb_build_object('deviceDefaultProvider', 'device-fake')
+    WHERE id = ${orgId}`.execute(raw);
 });
 
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
 });
@@ -110,7 +122,7 @@ const selectionOf = (
 ): Pick<DeviceProviderSelection, "onInOrg" | "isOnInOrg" | "defaultFor"> => {
   const entry = (plugin: string) => ({ plugin, version: "1.0.0", impl: {} as never });
   return {
-    onInOrg: async () => on.filter((p) => p !== LOCAL_PROVIDER).map(entry),
+    onInOrg: async () => on.map(entry),
     isOnInOrg: async (_org, plugin) => on.includes(plugin),
     defaultFor: async () =>
       defaultProvider !== undefined && on.includes(defaultProvider)
@@ -268,7 +280,7 @@ describe("device access", () => {
       expect(res.json()).toMatchObject({
         items: [],
         defaultId: null,
-        providers: [{ plugin: "device-fake" }],
+        providers: [{ plugin: "device-fake" }, { plugin: DIAL_IN }],
         defaultProvider: null,
       });
       expect(await k.app.get(ConversationDevices).forNew(orgId, me.id)).toBeNull();
@@ -280,38 +292,21 @@ describe("device access", () => {
   });
 });
 
-describe("local devices", () => {
+describe("dial-in devices", () => {
   /** A member of the org with a fresh login (their own devices only). */
   const member = () => newMember("dv");
-  // keeps the kernel's own dial-in handler: a device sign-in needs @local to take machines
-  const deviceEntry = (): DeviceProviderEntry => ({
-    plugin: LOCAL_PROVIDER,
-    version: "1.0.0",
-    impl: Object.assign(createFakeSandbox(join(root, "device")), {
-      dialIn: k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER)?.impl.dialIn,
-    }),
-  });
-  // the kernel serves @local for every test here (LocalDevicesModule does this on init, Task 4)
-  beforeAll(() => {
-    k.app.get(DeviceProviders).register(deviceEntry());
-  });
 
-  it("createDialIn on @local records a local source device, counted against maxPersonal", async () => {
+  it("createDialIn on a dial-in provider records a device of it, counted against maxPersonal", async () => {
     const service = k.app.get(DevicesService);
     const me = await member();
-    const { id } = await service.createDialIn(orgId, me.id, "@local", "laptop");
+    const { id } = await service.createDialIn(orgId, me.id, DIAL_IN, "laptop");
     const row = await db
       .selectFrom("devices")
-      .select(["source", "provider", "is_default", "name"])
+      .select(["provider", "is_default", "name"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
-    expect(row).toEqual({
-      source: "local",
-      provider: "@local",
-      is_default: false,
-      name: "laptop",
-    });
-    expect(await codeOf(service.createDialIn(orgId, me.id, "@local", "LAPTOP"))).toBe(
+    expect(row).toEqual({ provider: DIAL_IN, is_default: false, name: "laptop" });
+    expect(await codeOf(service.createDialIn(orgId, me.id, DIAL_IN, "LAPTOP"))).toBe(
       "device.name_taken",
     );
     // device-fake is on in the org but takes no machines (no permissions.dialIn); unknown is none
@@ -321,37 +316,37 @@ describe("local devices", () => {
       );
     }
     const max = k.app.get(KernelConfigService).get().devices.maxPersonal;
-    for (let i = 1; i < max; i++) await service.createDialIn(orgId, me.id, "@local", `m${i}`);
-    expect(await codeOf(service.createDialIn(orgId, me.id, "@local", "one-too-many"))).toBe(
+    for (let i = 1; i < max; i++) await service.createDialIn(orgId, me.id, DIAL_IN, `m${i}`);
+    expect(await codeOf(service.createDialIn(orgId, me.id, DIAL_IN, "one-too-many"))).toBe(
       "device.limit_reached",
     );
   });
 
-  it("usable while @local is registered, whatever extension providers are on; never someone else's", async () => {
+  it("usable while its own provider is on, whatever other providers are on; never someone else's", async () => {
     const service = k.app.get(DevicesService);
     const access = k.app.get(DeviceAccess);
     const me = await member();
-    const { id } = await service.createDialIn(orgId, me.id, "@local", "box");
-    // a kernel that does not serve @local (device-fake is still on)
+    const { id } = await service.createDialIn(orgId, me.id, DIAL_IN, "box");
+    // an org where only device-fake is on
     const unserved = new DeviceAccess(k.app.get(KernelDb), selectionOf(["device-fake"]));
     const err = await unserved.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
     expect(err).toMatchObject({ code: "device.unavailable" });
-    expect((err as ApiError).message).toContain("@local");
+    expect((err as ApiError).message).toContain(DIAL_IN);
     // device-fake switched off in the org changes nothing for it
     await setEnabled("device-fake", false);
     try {
-      expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "@local" });
+      expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: DIAL_IN });
     } finally {
       await setEnabled("device-fake", true);
     }
-    expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "@local" });
+    expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: DIAL_IN });
     expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("device.not_found");
   });
 
   it("list shows dialIn, online null for a provider without dial-in; a dial-in device's online and machine", async () => {
     const service = k.app.get(DevicesService);
     const me = await member();
-    const { id } = await service.createDialIn(orgId, me.id, "@local", "workstation");
+    const { id } = await service.createDialIn(orgId, me.id, DIAL_IN, "workstation");
     const list = async () => {
       const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
       expect(res.statusCode, res.body).toBe(200);
@@ -367,7 +362,7 @@ describe("local devices", () => {
     });
     expect(body.items.find((e) => e.id === id)).toMatchObject({
       dialIn: true,
-      provider: "@local",
+      provider: DIAL_IN,
       available: true,
       online: false,
       machine: null,
@@ -382,9 +377,9 @@ describe("local devices", () => {
     const machineId = randomUUID();
     await sql`INSERT INTO capybara.device_machines
         (id, org_id, device_id, account_id, credential_hash, name, os, arch, program_version,
-         mode, last_seen_at, session_isolation)
+         last_seen_at)
       VALUES (${machineId}, ${orgId}, ${id}, ${me.id}, 'h', 'grant-mbp', 'darwin', 'arm64', '0.1.0',
-        'os', ${seen}, true)`.execute(raw);
+        ${seen})`.execute(raw);
     // a revoked machine of the same device is not shown
     await sql`INSERT INTO capybara.device_machines
         (org_id, device_id, account_id, credential_hash, name, os, arch, revoked_at)
@@ -406,17 +401,17 @@ describe("local devices", () => {
     expect((await list()).items.find((e) => e.id === id)?.online).toBe(false);
   });
 
-  it("a conversation bound to a local device needs no extension provider on", async () => {
+  it("a conversation bound to a dial-in device needs only its own provider on", async () => {
     const me = await member();
-    const { id } = await k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "rig");
+    const { id } = await k.app.get(DevicesService).createDialIn(orgId, me.id, DIAL_IN, "rig");
     const kdb = k.app.get(KernelDb);
-    const localOnly = selectionOf([LOCAL_PROVIDER]);
-    const access = new DeviceAccess(kdb, localOnly);
+    const ownOnly = selectionOf([DIAL_IN]);
+    const access = new DeviceAccess(kdb, ownOnly);
     const real = k.app.get(DevicesService);
     const conversations = new ConversationDevices(
       kdb,
       k.app.get(TransactionHost),
-      localOnly,
+      ownOnly,
       access,
       // no default provider: no default device can be made
       {
@@ -438,7 +433,7 @@ describe("local devices", () => {
     expect(await codeOf(conversations.forTool(orgId, unbound))).toBe("sandbox.unavailable");
     expect(await conversations.forNew(orgId, me.id, { deviceId: id })).toBe(id);
     expect(await conversations.forNew(orgId, me.id)).toBeNull();
-    // an IM default on the local device still applies without any extension provider
+    // an IM default on the dial-in device still applies without the default provider
     await sql`INSERT INTO capybara.device_defaults (org_id, account_id, device_id)
       VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
     expect(await conversations.forNew(orgId, me.id, { im: true })).toBe(id);
@@ -446,7 +441,7 @@ describe("local devices", () => {
 
   it("usableNow: the listing gate follows the conversation's device (ruling R8)", async () => {
     const me = await member();
-    const { id } = await k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "rig-2");
+    const { id } = await k.app.get(DevicesService).createDialIn(orgId, me.id, DIAL_IN, "rig-2");
     const kdb = k.app.get(KernelDb);
     const make = (selection: ReturnType<typeof selectionOf>) =>
       new ConversationDevices(
@@ -458,9 +453,9 @@ describe("local devices", () => {
         k.app.get(PermissionFacts),
         k.app.get(PermissionCeilingWrites),
       );
-    const registered = make(selectionOf([LOCAL_PROVIDER]));
+    const registered = make(selectionOf([DIAL_IN]));
     const unregistered = make(selectionOf([]));
-    const cloud = make(selectionOf([LOCAL_PROVIDER, "device-fake"], "device-fake"));
+    const cloud = make(selectionOf([DIAL_IN, "device-fake"], "device-fake"));
     const agentId = randomUUID();
     await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
       VALUES (${agentId}, ${orgId}, ${me.id}, 'org', 1)`.execute(raw);
@@ -494,16 +489,13 @@ describe("local devices", () => {
     // its existing default device counts, by its own provider
     const def = randomUUID();
     await sql`INSERT INTO capybara.devices
-        (id, org_id, owner_kind, owner_account_id, name, is_default, source, provider)
-      VALUES (${def}, ${orgId}, 'personal', ${me.id}, NULL, true, 'cloud', 'device-fake')`.execute(
-      raw,
-    );
+        (id, org_id, owner_kind, owner_account_id, name, is_default, provider)
+      VALUES (${def}, ${orgId}, 'personal', ${me.id}, NULL, true, 'device-fake')`.execute(raw);
     expect(await cloud.usableNow(orgId, unbound)).toBe(true);
-    expect(await make(selectionOf([LOCAL_PROVIDER], "device-fake")).usableNow(orgId, unbound)).toBe(
-      false,
-    );
-    // without a conversation: any extension provider on in the org
-    expect(await registered.usableNow(orgId)).toBe(false);
+    expect(await make(selectionOf([DIAL_IN], "device-fake")).usableNow(orgId, unbound)).toBe(false);
+    // without a conversation: any device provider on in the org
+    expect(await unregistered.usableNow(orgId)).toBe(false);
+    expect(await registered.usableNow(orgId)).toBe(true);
     expect(await cloud.usableNow(orgId)).toBe(true);
   });
 });

@@ -12,7 +12,6 @@ import { type AppliedLimits, readInstanceLimits } from "../../src/sandbox/modes.
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
-import { LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import type { TestKernel } from "./runs.js";
 
 /** A runtime report supporting both the restricted profiles and Full access. */
@@ -29,10 +28,8 @@ export const SUPPORTS_BOTH: SandboxPermissionSupport = {
  * Seeds what admission and the recorded permission context need to prove a device's installed
  * environment (B-16), the same for every provider: the instance's committed roots, recorded
  * applied limits (what the device's effective policy wants now, when none are recorded) and the
- * provider's runtime report with the kernel-built identity, as the lifecycle records it. A device
- * whose provider entry binds its instances (the interim `@local`) also gets an installed binding of
- * that generation on its active machine, so shared use proceeds. Without it both refuse with the
- * same unprobed reason. The device and its instance row already exist.
+ * provider's runtime report with the kernel-built identity, as the lifecycle records it. Without
+ * it both refuse with the same unprobed reason. The device and its instance row already exist.
  */
 export async function seedInstalledEvidence(
   k: TestKernel,
@@ -44,7 +41,7 @@ export async function seedInstalledEvidence(
     version: string;
     report?: SandboxPermissionSupport;
   },
-): Promise<{ generation: string; bindingId: string | null }> {
+): Promise<{ generation: string }> {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const db = kernelDb(raw as Kysely<any>);
   const instance = await db
@@ -71,33 +68,7 @@ export async function seedInstalledEvidence(
       .execute();
   }
   await seedCloudEvidence(k, input);
-  const machine = await db
-    .selectFrom("device_machines")
-    .select("id")
-    .where("device_id", "=", input.deviceId)
-    .where("revoked_at", "is", null)
-    .executeTakeFirst();
-  if (input.provider !== LOCAL_PROVIDER || !machine) return { generation, bindingId: null };
-  const identity = {
-    runtimeHash: "a".repeat(64),
-    helperHash: "b".repeat(64),
-    imageFingerprint: "c".repeat(64),
-    instanceGeneration: generation,
-  };
-  const bindingId = crypto.randomUUID();
-  const binding = {
-    binding_id: bindingId,
-    provider: input.provider,
-    status: "installed" as const,
-    machine_id: machine.id,
-    runtime_identity: JSON.stringify(identity),
-  };
-  await db
-    .insertInto("device_instance_bindings")
-    .values({ device_id: input.deviceId, instance_generation: generation, ...binding })
-    .onConflict((oc) => oc.columns(["device_id", "instance_generation"]).doUpdateSet(binding))
-    .execute();
-  return { generation, bindingId };
+  return { generation };
 }
 
 /**

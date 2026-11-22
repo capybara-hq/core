@@ -17,12 +17,7 @@ import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.
 import type { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import {
-  type DeviceProviderEntry,
-  type DeviceProviders,
-  isInternalProvider,
-  LOCAL_PROVIDER,
-} from "../../src/sandbox/providers.js";
+import type { DeviceProviderEntry, DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ceilingWritesOver, handlesFor, instanceWritesFor, retirementFor } from "./identity.js";
 
@@ -146,8 +141,8 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
   };
   const selection: Pick<DeviceProviderSelection, "isOnInOrg"> = {
     isOnInOrg: async (orgId, plugin) =>
-      isInternalProvider(plugin)
-        ? providers.forDevice(plugin) !== undefined
+      d.internal?.some((e) => e.plugin === plugin)
+        ? true
         : loaded().some((e) => e.plugin === plugin) &&
           (d.onInOrg === undefined || d.onInOrg(orgId).includes(plugin)),
   };
@@ -184,26 +179,23 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
 }
 
 /**
- * Inserts a personal device in `orgId`, owned by `accountId` (default: the org's creator);
- * returns its id. A cloud one records `device-fake` (switched on in the org); a `device` one
- * records `@local`.
+ * Inserts a personal device of `provider` (default `device-fake`) in `orgId`, owned by
+ * `accountId` (default: the org's creator); returns its id. An extension provider is switched on
+ * in the org; an in-process one (an `@…` name) needs no switch.
  */
 export async function seedDevice(
   // biome-ignore lint/suspicious/noExplicitAny: test databases have no schema types
   raw: Kysely<any>,
   orgId: string,
   accountId?: string,
-  source: "cloud" | "local" = "cloud",
+  provider = "device-fake",
 ): Promise<string> {
   const id = randomUUID();
-  const provider = source === "local" ? LOCAL_PROVIDER : "device-fake";
-  await sql`INSERT INTO capybara.devices
-      (id, org_id, owner_kind, owner_account_id, source, provider)
-    SELECT ${id}, o.id, 'personal', COALESCE(${accountId ?? null}::text, o.created_by), ${source},
-      ${provider}
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, provider)
+    SELECT ${id}, o.id, 'personal', COALESCE(${accountId ?? null}::text, o.created_by), ${provider}
     FROM capybara.orgs o WHERE o.id = ${orgId}`.execute(raw);
-  // a device is used only while its provider is on in its org: switch the fake on there
-  if (source === "cloud") await enableFakeProvider(raw, orgId);
+  // a device is used only while its provider is on in its org: switch it on there
+  if (!provider.startsWith("@")) await enableFakeProvider(raw, orgId, provider);
   return id;
 }
 

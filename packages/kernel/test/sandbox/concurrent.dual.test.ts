@@ -101,8 +101,8 @@ beforeEach(async () => {
         VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
     }
     envId = randomUUID();
-    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
-      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud', 'device-fake')`.execute(raw);
+    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, provider)
+      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'device-fake')`.execute(raw);
   } finally {
     await raw.destroy();
   }

@@ -431,7 +431,7 @@ it.each(["exec", "backgroundStart"] as const)(
         input: JSON.stringify(input),
         scope: JSON.stringify(scope),
         epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
-        provider: "@local",
+        provider: "@in-process",
         provider_version: "test",
         instance_generation: "g",
         deadline: new Date(Date.now() + 30000),

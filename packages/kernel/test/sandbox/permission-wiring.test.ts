@@ -153,20 +153,42 @@ async function createConv(req: Req, orgId: string, agentId: string): Promise<Con
   return (res.json() as { conversation: ConvJson }).conversation;
 }
 
+/**
+ * A device of the in-process `@permission-test` provider with a signed-in machine: every provider
+ * operation throws, so a read-only permission API that reaches the provider fails the test.
+ */
 async function localDevice(orgId: string, name = "Laptop") {
-  const providers = k.app.get(DeviceProviders),
-    local = providers.forDevice("@local");
-  if (!local) throw new Error("Local provider was not registered");
-  const impl = Object.create(local.impl);
   const neverProbe = async () => {
     throw new Error("Read-only permission API attempted a provider operation");
   };
-  Object.assign(impl, {
-    operation: neverProbe,
-    revokeOperation: neverProbe,
-    permissionSupport: neverProbe,
+  const impl = Object.fromEntries(
+    [
+      "createFileSystem",
+      "destroyFileSystem",
+      "destroyFileSystemByName",
+      "create",
+      "resume",
+      "suspend",
+      "destroy",
+      "destroyByName",
+      "killAll",
+      "killTagged",
+      "exec",
+      "readFile",
+      "writeFile",
+      "stat",
+      "list",
+      "scan",
+      "operation",
+      "revokeOperation",
+      "permissionSupport",
+    ].map((method) => [method, neverProbe]),
+  );
+  k.app.get(DeviceProviders).register({
+    plugin: "@permission-test",
+    version: KERNEL_VERSION,
+    impl: { ...impl, concurrentExec: true, networkAllowlist: true } as unknown as DeviceProvider,
   });
-  providers.register({ plugin: "@permission-test", version: KERNEL_VERSION, impl });
   const db = kernelDb(raw);
   const id = randomUUID();
   await db
@@ -176,7 +198,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: owner.id,
-      source: "local",
       provider: "@permission-test",
       name,
     })
@@ -191,11 +212,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   return id;
@@ -228,7 +244,6 @@ describe("permission reader behavior", () => {
       for (const child of Reflect.getMetadata(MODULE_METADATA.IMPORTS, module) ?? []) walk(child);
     };
     walk(OperationAuthorityModule);
-    expect(k.app.get(DeviceProviders).forDevice("@local")).toBeDefined();
   });
   it("keeps profile views, authority roots and hashes aligned without lifecycle calls", async () => {
     const req = await session("owner");
@@ -494,7 +509,6 @@ import {
 } from "../../src/sandbox/permission-runtime-reports.js";
 import { homeOf } from "../../src/sandbox/review/rules.js";
 import { KERNEL_VERSION } from "../../src/version.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 
 function barrier() {
   let resolve!: () => void;
@@ -1208,12 +1222,7 @@ it("instance recreation preserves consent for the same roots and resets it befor
 it("the egress kill switch closes every device's sandbox network and moves Full consent", async () => {
   const local = await operationFixture(),
     cloud = await operationFixture();
-  await cloud.db
-    .updateTable("devices")
-    .set({ source: "cloud" })
-    .where("id", "=", cloud.deviceId)
-    .execute();
-  // the cloud instance's kernel-recorded evidence (B-15) in place of the local binding
+  // the cloud instance's kernel-recorded evidence (B-15)
   await seedCloudEvidence(k, {
     orgId: cloud.orgId,
     deviceId: cloud.deviceId,
@@ -1309,7 +1318,7 @@ it("first-use forTool binding orders authority before the real run fence against
     .execute();
   await f.db
     .updateTable("devices")
-    .set({ source: "cloud", is_default: true })
+    .set({ is_default: true })
     .where("id", "=", f.deviceId)
     .execute();
   const ready = barrier(),
@@ -1367,7 +1376,7 @@ it.each(["replaced", "cancelled"] as const)(
       .execute();
     await f.db
       .updateTable("devices")
-      .set({ source: "cloud", is_default: true })
+      .set({ is_default: true })
       .where("id", "=", f.deviceId)
       .execute();
     const { runOutsideTransaction } = await import("../../src/infra/database/transaction-host.js");
@@ -1842,7 +1851,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
     });
     await f.db
       .updateTable("devices")
-      .set({ source: "cloud", network_mode: "allowlist", network_hosts: "[]" })
+      .set({ network_mode: "allowlist", network_hosts: "[]" })
       .where("id", "=", f.deviceId)
       .execute();
     await orgHosts(f.orgId);
@@ -1896,7 +1905,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
     });
     await f.db
       .updateTable("devices")
-      .set({ source: "cloud", network_mode: "allowlist", network_hosts: "[]" })
+      .set({ network_mode: "allowlist", network_hosts: "[]" })
       .where("id", "=", f.deviceId)
       .execute();
     await orgHosts(f.orgId);

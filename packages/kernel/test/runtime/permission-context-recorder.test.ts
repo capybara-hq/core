@@ -12,7 +12,6 @@ import {
   runOutsideTransaction,
   TransactionHost,
 } from "../../src/infra/database/transaction-host.js";
-import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { createLogger } from "../../src/log.js";
 import {
   permissionContextIdemKey,
@@ -104,7 +103,6 @@ beforeEach(async () => {
       ["issueLocked", "findForAdmission", "forExecution", "assertCurrent"],
     ],
     [k.app.get(PermissionRuntimeReports), ["recordSupport", "clearSupport"]],
-    [k.app.get(LocalInstanceBindings), ["bind", "install", "retarget"]],
     [
       k.app.get(ApprovalsService),
       ["request", "requestNetwork", "requestGit", "requestCommand", "decide"],
@@ -152,7 +150,7 @@ beforeEach(async () => {
   });
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_instance_bindings, capybara.device_permission_reports, capybara.device_generation_high_water",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_permission_reports, capybara.device_generation_high_water",
   );
 });
 /** Every cloud provider spy of a case: a context read or admission never reaches it. */
@@ -723,11 +721,9 @@ describe("permission context projection", () => {
   const unprobed = { state: "unprobed", reason: expect.any(String) };
   it.each<[string, Parameters<typeof seedContext>[2], (f: ContextFixture) => Promise<void>]>([
     ["no runtime report", { report: null }, async () => {}],
-    ["a binding still awaiting the device", { binding: "awaiting" }, async () => {}],
-    ["no binding of this generation", { binding: "none" }, async () => {}],
     [
-      "a suspended instance without its binding",
-      { status: "suspended", binding: "none" },
+      "a suspended instance without a runtime report",
+      { status: "suspended", report: null },
       async () => {},
     ],
     [
@@ -923,14 +919,6 @@ describe("permission context projection", () => {
       "unsupported",
     ],
     // the unproved environment precedes the capability report in both readers
-    [
-      "local restricted on a Full-only runtime without a binding",
-      { report: "full-only", binding: "none" },
-      null,
-      "unprobed",
-    ],
-    ["local desired but unapplied: binding awaiting", { binding: "awaiting" }, null, "unprobed"],
-    ["local desired but unapplied: no binding", { binding: "none" }, null, "unprobed"],
     [
       "local stale: runtime identity replaced",
       {},

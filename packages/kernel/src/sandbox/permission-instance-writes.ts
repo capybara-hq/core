@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type {
   SandboxHandle,
   SandboxPermissionSupport,
@@ -55,10 +54,8 @@ export class PermissionInstanceWrites {
   /**
    * `evidence`: the permission support the lifecycle holder read from the new instance before this
    * commit, recorded with the kernel-built identity in this same transaction, so the committed
-   * handle and its evidence appear together (B-15); or `binding` for a provider whose entry has an
-   * instance binder (`DeviceProviderEntry.binder`, interim until it leaves the kernel), which gets
-   * a fresh `awaiting-device` binding the lifecycle holder sends after commit and which records
-   * the support itself. Absent: none recorded (a failed read leaves the instance unprobed).
+   * handle and its evidence appear together (B-15). Absent: none recorded (a failed read leaves
+   * the instance unprobed).
    */
   @Transactional({ propagation: "requires_new" })
   async commitHandle(
@@ -68,14 +65,14 @@ export class PermissionInstanceWrites {
     roots: SandboxRoots,
     set: UpdateObject<KernelDatabase, "device_instances">,
     signal: AbortSignal,
-    evidence?: SupportReport | "binding",
+    evidence?: SupportReport,
   ): Promise<Date> {
     signal.throwIfAborted();
     await this.lockDevice(orgId, deviceId);
     await this.ceilings.lock({ orgId, deviceId }, "device");
     const row = await this.db
       .selectFrom("device_instances")
-      .select(["generation", "permission_roots", "provider"])
+      .select(["generation", "permission_roots"])
       .where("device_id", "=", deviceId)
       .forUpdate()
       .executeTakeFirst();
@@ -98,18 +95,12 @@ export class PermissionInstanceWrites {
       })
       .where("device_id", "=", deviceId)
       .where("generation", "=", generation)
-      .returning(["created_at", "provider"])
+      .returning("created_at")
       .executeTakeFirst();
     if (!updated) throw new SandboxLockLostError(deviceId, "generation");
     if (updated.created_at.getTime() !== createdAt.getTime())
       throw new Error("Instance generation was not stored exactly; check the database clock type");
-    if (evidence === "binding")
-      await this.awaitDevice(
-        deviceId,
-        String(createdAt.getTime()),
-        updated.provider ?? row.provider,
-      );
-    else if (evidence)
+    if (evidence)
       await this.reports.recordSupport(
         deviceId,
         evidence.provider,
@@ -209,7 +200,7 @@ export class PermissionInstanceWrites {
   /**
    * `max(database now, highWater + 1)` under the device authority lock, committed with the
    * instance row. The mark is initialized once from every recorded generation of the device
-   * (instance, bindings, operation intents, managed tasks, runtime reports), so a deleted row, a
+   * (instance, operation intents, managed tasks, runtime reports), so a deleted row, a
    * rolled-back clock or two creates in one millisecond never reuse a generation.
    */
   private async allocateGenerationLocked(deviceId: string): Promise<number> {
@@ -234,15 +225,10 @@ export class PermissionInstanceWrites {
   }
 
   private async initialHighWater(deviceId: string): Promise<number> {
-    const [instance, bindings, intents, tasks, reports] = await Promise.all([
+    const [instance, intents, tasks, reports] = await Promise.all([
       this.db
         .selectFrom("device_instances")
         .select(["created_at", "had_instance"])
-        .where("device_id", "=", deviceId)
-        .execute(),
-      this.db
-        .selectFrom("device_instance_bindings")
-        .select("instance_generation as g")
         .where("device_id", "=", deviceId)
         .execute(),
       this.db
@@ -264,7 +250,7 @@ export class PermissionInstanceWrites {
     ]);
     let high = 0;
     for (const r of instance) if (r.had_instance) high = Math.max(high, r.created_at.getTime());
-    for (const { g } of [...bindings, ...intents, ...tasks, ...reports]) {
+    for (const { g } of [...intents, ...tasks, ...reports]) {
       if (g === null) continue;
       if (!GENERATION.test(g) || Number(g) > MAX_GENERATION_MS)
         throw new InconsistentGenerationError(
@@ -273,78 +259,5 @@ export class PermissionInstanceWrites {
       high = Math.max(high, Number(g));
     }
     return high;
-  }
-
-  /**
-   * The committed binding the coordinator sends. Its previous is the last binding committed for
-   * this machine credential, delivered or not: a device may have persisted a binding whose answer
-   * was lost, so the chain names what was sent (the device accepts a stored binding of its own
-   * credential up to that one). Another machine's bindings never chain, so a re-login starts
-   * fresh. Old rows are pruned, keeping the chain, each machine's latest installed binding and any
-   * generation a retirement still needs.
-   */
-  private async awaitDevice(
-    deviceId: string,
-    instanceGeneration: string,
-    provider: string | null,
-  ): Promise<void> {
-    if (provider === null) throw new Error("A bound instance needs its provider");
-    const machine = await this.db
-      .selectFrom("device_machines")
-      .select("id")
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    const previous = machine
-      ? await this.db
-          .selectFrom("device_instance_bindings")
-          .select("instance_generation")
-          .where("device_id", "=", deviceId)
-          .where("machine_id", "=", machine.id)
-          .orderBy(sql`instance_generation::bigint`, "desc")
-          .limit(1)
-          .executeTakeFirst()
-      : undefined;
-    await this.db
-      .insertInto("device_instance_bindings")
-      .values({
-        device_id: deviceId,
-        instance_generation: instanceGeneration,
-        binding_id: randomUUID(),
-        provider,
-        previous_generation: previous?.instance_generation ?? null,
-        status: "awaiting-device",
-        machine_id: machine?.id ?? null,
-      })
-      .execute();
-    await this.pruneBindings(deviceId, [
-      instanceGeneration,
-      ...(previous ? [previous.instance_generation] : []),
-    ]);
-  }
-
-  /** Bounded retention of a device's binding records (one per instance generation otherwise). */
-  private async pruneBindings(deviceId: string, keep: readonly string[]): Promise<void> {
-    await sql`
-      DELETE FROM capybara.device_instance_bindings b
-      WHERE b.device_id = ${deviceId}::uuid
-        AND b.instance_generation <> ALL(${[...keep]}::text[])
-        -- each machine's latest installed binding stays
-        AND b.instance_generation IS DISTINCT FROM (
-          SELECT max(l.instance_generation::bigint)::text FROM capybara.device_instance_bindings l
-          WHERE l.device_id = b.device_id AND l.machine_id IS NOT DISTINCT FROM b.machine_id
-            AND l.status = 'installed')
-        -- a generation a retirement still owes stays
-        AND NOT EXISTS (
-          SELECT 1 FROM capybara.sandbox_operation_intents i
-          WHERE i.device_id::text = b.device_id::text
-            AND i.instance_generation = b.instance_generation
-            AND (i.state NOT IN ('completed', 'revoked')
-              OR (i.state = 'revoked' AND NOT i.revoke_acknowledged)))
-        AND NOT EXISTS (
-          SELECT 1 FROM capybara.background_tasks t
-          WHERE t.device_id::text = b.device_id::text
-            AND t.instance_generation = b.instance_generation
-            AND t.launch_state <> 'terminal')`.execute(this.db.db);
   }
 }

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
 import {
   FAKE_DIAL_IN_PROTOCOL,
   FakeDialInMachine,
@@ -37,7 +36,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { TestHolder } from "../local-devices/test-holder.js";
+import { TestHolder } from "../helpers/test-holder.js";
 
 /**
  * Device authorization (environments spec §6.2, §13.2-13.3; device provider spec §5): the
@@ -142,7 +141,7 @@ const MACHINE = {
   os: "darwin",
   arch: "arm64",
   programVersion: "0.1.0",
-  protocol: DEVICE_DIAL_IN_PROTOCOL,
+  protocol: FAKE_DIAL_IN_PROTOCOL,
 };
 
 interface Authorized {
@@ -187,7 +186,7 @@ async function confirm(
   return req({
     method: "POST",
     url: "/api/v1/device/confirm",
-    payload: { orgId, provider: "@local", ...body },
+    payload: { orgId, provider: "fake-dial-in", ...body },
   });
 }
 
@@ -202,9 +201,17 @@ interface Granted {
 }
 
 /** Authorize, confirm into a new device named `name`, take the credential. */
-async function login(req: Req, name: string): Promise<Granted> {
-  const a = await authorize();
-  const c = await confirm(req, { userCode: a.userCode, name });
+/**
+ * Signs a machine in to a new device named `name` of `fake-dial-in`, or of {@link OTHER_DIAL_IN}
+ * (`other`: its protocol).
+ */
+async function login(req: Req, name: string, other = false): Promise<Granted> {
+  const a = await authorize(other ? { ...MACHINE, protocol: OTHER_PROTOCOL } : MACHINE);
+  const c = await confirm(req, {
+    userCode: a.userCode,
+    name,
+    ...(other && { provider: OTHER_DIAL_IN }),
+  });
   expect(c.statusCode, c.body).toBe(200);
   const t = await token(a.deviceCode);
   expect(t.statusCode, t.body).toBe(200);
@@ -369,7 +376,7 @@ describe("device authorization", () => {
     expect(v).toMatchObject({
       name: "Laptop",
       dialIn: true,
-      provider: "@local",
+      provider: "fake-dial-in",
       online: false,
       machine: { name: "grant-mbp", os: "darwin", programVersion: "0.1.0" },
     });
@@ -494,7 +501,6 @@ describe("device authorization", () => {
         owner_kind: "personal",
         owner_account_id: bob.id,
         name: "Cloud",
-        source: "cloud",
         provider: "device-fake",
       })
       .returning("id")
@@ -655,7 +661,7 @@ describe("device authorization", () => {
     expect((await envView(m.req, g.deviceId)).dialIn).toBe(true);
   });
 
-  it("deleting a local device revokes its machine", async () => {
+  it("deleting a dial-in device revokes its machine", async () => {
     const m = await member();
     const g = await login(m.req, "Doomed");
     const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), g.deviceId);
@@ -728,12 +734,11 @@ describe("the sign-in chooses a dial-in provider", () => {
     // confirm creates the device bound to the chosen provider
     const row = await db
       .selectFrom("devices")
-      .select(["provider", "source", "owner_account_id", "org_id", "name"])
+      .select(["provider", "owner_account_id", "org_id", "name"])
       .where("id", "=", signed.deviceId)
       .executeTakeFirstOrThrow();
     expect(row).toEqual({
       provider: "fake-dial-in",
-      source: "local",
       owner_account_id: m.id,
       org_id: orgId,
       name: "Fake box",
@@ -798,7 +803,7 @@ describe("the sign-in chooses a dial-in provider", () => {
       protocol: FAKE_DIAL_IN_PROTOCOL,
       name: "Theirs",
     });
-    const local = await login(m.req, "Local box");
+    const otherBox = await login(m.req, "Other box", true);
     const again = (
       (await providers(m.req, { orgId, userCode: fake.userCode })).json() as {
         providers: Choice[];
@@ -812,26 +817,18 @@ describe("the sign-in chooses a dial-in provider", () => {
       },
     ]);
 
-    // capybara-device's protocol: the interim local provider only, with the local devices
-    const dev = await authorize();
-    const forDevice = (
-      (await providers(m.req, { orgId, userCode: dev.userCode })).json() as {
-        providers: Choice[];
-      }
-    ).providers;
-    expect(forDevice).toEqual([
-      {
-        plugin: "@local",
-        displayName: { en: "Local device", zh: "本地设备" },
-        devices: [{ id: local.deviceId, name: "Local box" }],
-      },
-    ]);
-    // the other protocol: only the provider speaking it
+    // the other protocol: only the provider speaking it, with the person's devices of it
     const b = await authorize({ ...MACHINE, protocol: OTHER_PROTOCOL });
     const forB = (
       (await providers(m.req, { orgId, userCode: b.userCode })).json() as { providers: Choice[] }
     ).providers;
-    expect(forB.map((c) => c.plugin)).toEqual([OTHER_DIAL_IN]);
+    expect(forB).toEqual([
+      {
+        plugin: OTHER_DIAL_IN,
+        displayName: expect.any(Object),
+        devices: [{ id: otherBox.deviceId, name: "Other box" }],
+      },
+    ]);
     // a protocol nobody speaks: none
     const none = await authorize({ ...MACHINE, protocol: "nobody/1" });
     expect(
@@ -868,8 +865,8 @@ describe("the sign-in chooses a dial-in provider", () => {
     });
     expect(off.statusCode, off.body).toBe(403);
     expect(errCode(off)).toBe("device.provider_unavailable");
-    // a provider speaking another protocol, an unknown one, and @local for a fake machine
-    for (const provider of [OTHER_DIAL_IN, "no-such-provider", "@local"]) {
+    // a provider speaking another protocol, an unknown one and an in-process name
+    for (const provider of [OTHER_DIAL_IN, "no-such-provider", "@in-process"]) {
       const c = await confirm(m.req, { userCode: a.userCode, provider, name: "Wrong" });
       expect(c.statusCode, provider).toBe(403);
       expect(errCode(c), provider).toBe("device.provider_unavailable");
@@ -883,7 +880,7 @@ describe("the sign-in chooses a dial-in provider", () => {
 
   it("an existing device must be the person's own of the chosen provider", async () => {
     const m = await member();
-    const local = await login(m.req, "Local only");
+    const local = await login(m.req, "Other only", true);
     const a = await authorize({ ...MACHINE, protocol: FAKE_DIAL_IN_PROTOCOL });
     // the person's own device, but of another provider
     const c = await confirm(m.req, {

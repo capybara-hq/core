@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type {
-  DeviceLocalPolicySummary,
-  LegacyDeviceHello,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -25,12 +20,11 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
-import { ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
- * The mode and network the model is told (`DevicesService.modeLevel`, auto mode spec §4.2): a
- * local device's mode cut to the org's switch, the device's own network choice, and a cloud device
- * whose new limits wait for a file reset.
+ * The mode and network the model is told (`DevicesService.modeLevel`, auto mode spec §4.2): an
+ * operation-boundary device's mode cut to the org's switch, the device's own network choice, and a
+ * cloud device whose new limits wait for a file reset.
  */
 
 let pgc: TestContainer;
@@ -76,55 +70,29 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-const HELLO: LegacyDeviceHello = {
-  type: "hello",
-  protocol: 2,
-  programVersion: "0.3.0",
-  os: "darwin",
-  arch: "arm64",
-  mode: "os",
-  roots: { workspace: "/w", skills: "/s", tmp: "/t" },
-  sessionIsolation: false,
-  features: ["networkReport", "policyOp"],
-};
-
-const SUMMARY = (p: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
-  allowedDomains: [],
-  ...p,
-});
+/** An in-process provider whose devices run each operation on their machine. */
+const MACHINE_PROVIDER = "@mode-test";
 
 /**
- * A local device of the owner whose machine said hello with `policy` and an owner report allowing
- * running outside the sandbox (Full, the auto mode).
+ * A device of the owner whose provider runs each operation on its machine (an operation boundary
+ * allowing work outside the sandbox), as its stored report and support say.
  */
-async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<string> {
-  const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
-    const { id } = await devices.createDialIn(
-      orgId,
-      ownerId,
-      "@local",
-      `Box ${randomUUID().slice(0, 6)}`,
-    );
-    const issued = await k.app.get(DialInMachines).issue({
-      orgId,
-      deviceId: id,
-      accountId: ownerId,
-      name: "box",
-      os: "darwin",
-      arch: "arm64",
-      programVersion: "0.3.0",
-    });
-    return { deviceId: id, machineId: issued.machineId };
-  });
-  await k.app
-    .get(LocalMachineReports)
-    .recordHello(
-      machineId,
-      { ...HELLO, policy: SUMMARY(policy) },
-      { report: ownerReportFor(SUMMARY(policy), { outsideSandbox: true }), connectionId: null },
-    );
-  // its provider runs each operation on the machine (an operation boundary), as its stored
-  // support says (a dial-in provider stores it at hello)
+async function localDevice(): Promise<string> {
+  k.app
+    .get(DeviceProviders)
+    .register({ plugin: MACHINE_PROVIDER, version: "0.0.0", impl: {} as DeviceProvider });
+  const deviceId = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id: deviceId,
+      org_id: orgId,
+      owner_kind: "personal",
+      owner_account_id: ownerId,
+      name: `Box ${deviceId.slice(0, 6)}`,
+      provider: MACHINE_PROVIDER,
+    })
+    .execute();
   await sql`UPDATE capybara.devices SET report = ${JSON.stringify({
     revision: "r1",
     description: { en: "Runs commands on this machine" },
@@ -171,7 +139,7 @@ describe("DevicesService.modeLevel", () => {
     });
   });
 
-  it("a reported Full owner ceiling is cut where auto mode is not allowed (one derivation)", async () => {
+  it("a provider allowing work outside the sandbox is cut where auto mode is not allowed (one derivation)", async () => {
     const deviceId = await localDevice();
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ outsideSandbox: "off" })}::jsonb
       WHERE id = ${orgId}`.execute(raw);
@@ -203,7 +171,6 @@ describe("DevicesService.modeLevel", () => {
         owner_kind: "personal",
         owner_account_id: ownerId,
         name: `Cloud ${id.slice(0, 6)}`,
-        source: "cloud",
         provider: "device-fake",
       })
       .execute();

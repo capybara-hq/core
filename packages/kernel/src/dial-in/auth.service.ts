@@ -17,7 +17,6 @@ import type { KernelLogger } from "../log.js";
 import { authorizeOrgAction } from "../orgs/org.guard.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { allowedDeviceMode, readDeploymentDevicePolicy } from "../sandbox/modes.js";
-import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { DialInHandlers } from "./handlers.js";
 import { DialInMachines } from "./machines.js";
@@ -92,9 +91,6 @@ export interface DeviceMachineInfo {
   /** The dial-in protocol the program speaks: only providers declaring it may take the machine. */
   protocol: string;
 }
-
-/** The interim kernel-internal `@local` provider's name on the sign-in page (no catalog item). */
-const LOCAL_DISPLAY_NAME: LocalizedName = { en: "Local device", zh: "本地设备" };
 
 /** A dial-in provider a pending code may choose, with the person's devices of it. */
 export interface DialInProviderChoice {
@@ -323,14 +319,13 @@ export class DialInAuthService {
     if (served.length === 0) return { providers: [] };
     const plugins = served.map((p) => p.plugin);
     const [names, rows] = await Promise.all([
-      this.displayNames.many(plugins.filter((p) => p !== LOCAL_PROVIDER)),
+      this.displayNames.many(plugins),
       this.db
         .selectFrom("devices")
         .select(["id", "name", "provider"])
         .where("org_id", "=", input.orgId)
         .where("owner_kind", "=", "personal")
         .where("owner_account_id", "=", principal.account.id)
-        .where("source", "=", "local")
         .where("provider", "in", plugins)
         .where("deleted_at", "is", null)
         .orderBy("created_at")
@@ -340,10 +335,7 @@ export class DialInAuthService {
     return {
       providers: plugins.map((plugin) => ({
         plugin,
-        displayName:
-          plugin === LOCAL_PROVIDER
-            ? LOCAL_DISPLAY_NAME
-            : (names.get(plugin) ?? { en: plugin, zh: plugin }),
+        displayName: names.get(plugin) ?? { en: plugin, zh: plugin },
         devices: rows
           .filter((r) => r.provider === plugin)
           .map((r) => ({ id: r.id, name: r.name ?? "" })),
@@ -478,7 +470,6 @@ export class DialInAuthService {
         .where("org_id", "=", orgId)
         .where("owner_kind", "=", "personal")
         .where("owner_account_id", "=", accountId)
-        .where("source", "=", "local")
         .where("provider", "=", provider)
         .where("deleted_at", "is", null)
         .forNoKeyUpdate()

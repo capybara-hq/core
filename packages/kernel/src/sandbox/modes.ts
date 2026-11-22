@@ -12,8 +12,7 @@ import {
  * Device modes (auto mode spec §4.1–§4.3): who may choose auto mode, and the network each mode
  * gets. One pure function, {@link effectiveDevicePolicy}, combines the platform's switch
  * (`devices.outsideSandbox`), the org's (`outsideSandbox`, `deviceNetwork`) and the device's owner
- * ceiling (a local machine's owner report, a cloud device's B1 snapshot; null follows the platform
- * and the org).
+ * ceiling (its B1 snapshot; null follows the platform and the org).
  * It is a ceiling only: no device-chosen default mode selects how an operation runs (permission
  * runtime cutover 8.6); the conversation's permission profile does, within this ceiling.
  */

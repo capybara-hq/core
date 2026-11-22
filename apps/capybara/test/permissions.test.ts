@@ -81,20 +81,13 @@ beforeAll(async () => {
       current_version: 1,
     })
     .execute();
-  for (const [id, source] of [
-    [cloudDevice, "cloud"],
-    [localDevice, "local"],
+  for (const [id, provider] of [
+    [cloudDevice, "device-fake"],
+    [localDevice, null],
   ] as const)
     await db
       .insertInto("devices")
-      .values({
-        id,
-        org_id: orgId,
-        owner_kind: "personal",
-        owner_account_id: accountId,
-        source,
-        provider: source === "cloud" ? "device-fake" : null,
-      })
+      .values({ id, org_id: orgId, owner_kind: "personal", owner_account_id: accountId, provider })
       .execute();
   await db
     .insertInto("conversations")

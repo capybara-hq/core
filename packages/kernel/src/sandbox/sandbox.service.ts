@@ -1039,9 +1039,6 @@ export class SandboxService {
       // admission there; only exact-ref managed drains go on (I1)
       if (!instance.exactRef && (await this.retirement.hasUnresolved(env)))
         throw retirementPending();
-      // staged owner browse never reaches an instance whose binding is not installed (B-8): the
-      // device admits nothing there, and only a use's exclusive holder binds it
-      if (use && !(await this.bound(p, env))) return { kind: "not_running", status: row.status };
       // the instance this check saw: its handle plus `created_at` (never `generation`, which
       // every lease bumps)
       const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
@@ -1264,7 +1261,7 @@ export class SandboxService {
    * owner browse ({@link withBrowse}) of a device that may be stopped: the owner, membership and
    * browsing ceiling checks of the browse first (`resolveBrowse`), then the lifecycle `enter` a
    * use takes (the exclusive lease creates or resumes the instance through the retirement gate,
-   * the B-11 reconcile marker, the B-8 binding, `maxRunningSandboxes` and fencing), and the lease
+   * the B-11 reconcile marker, `maxRunningSandboxes` and fencing), and the lease
    * is left at once. No conversation holds it and nothing runs in it; what the start caused is
    * not marked seen, so each conversation's next use still learns of it.
    */
@@ -1606,8 +1603,8 @@ export class SandboxService {
         sig,
       );
     let ordinal = 0;
-    // a cloud provider's background starts are told the held instance's kernel generation
-    const held = p.binder ? p.impl : withKernelGeneration(p.impl, String(e.createdAt));
+    // a provider's background starts are told the held instance's kernel generation
+    const held = withKernelGeneration(p.impl, String(e.createdAt));
     const impl = invocation
       ? createHeldOperations(held, e.handle, sig, async (method, input, invoke, preflight) => {
           const identity = { ...invocation, ordinal: ordinal++ };
@@ -1972,13 +1969,8 @@ export class SandboxService {
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
           this.usable(r, p, gone) && !this.mustApply(r, p, want);
         // a device with an unresolved retirement obligation is only entered through the
-        // exclusive lease, whose gate retires the old incarnation or refuses (8.5); on the
-        // staged path, so is an instance whose committed binding is not installed yet (B-8)
-        if (
-          !(await this.retirement.hasUnresolved(env)) &&
-          ready(row) &&
-          (await this.bound(p, env))
-        ) {
+        // exclusive lease, whose gate retires the old incarnation or refuses (8.5)
+        if (!(await this.retirement.hasUnresolved(env)) && ready(row)) {
           const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
             if (intent) await this.clearIntent(env, token);
@@ -2023,11 +2015,10 @@ export class SandboxService {
 
   /**
    * Whether the lifecycle records this provider's instances' evidence (B-15): a provider (with a
-   * known version) that reads its own permission support, the same for every device. A provider
-   * entry with an instance binder records it when the binding is installed instead.
+   * known version) that reads its own permission support, the same for every device.
    */
   private recordsSupport(p: DeviceProviderEntry): boolean {
-    return !p.binder && p.version !== undefined && typeof p.impl.permissionSupport === "function";
+    return p.version !== undefined && typeof p.impl.permissionSupport === "function";
   }
 
   /**
@@ -2127,11 +2118,6 @@ export class SandboxService {
     }
   }
 
-  /** No binder (protocol 2), or the current generation's binding is installed (B-8). */
-  private async bound(p: DeviceProviderEntry, env: string): Promise<boolean> {
-    return !p.binder || (await p.binder.status(env)) === "installed";
-  }
-
   private async clearIntent(env: string, token: string): Promise<void> {
     await this.leases
       .clearIntent(env, token)
@@ -2192,9 +2178,7 @@ export class SandboxService {
     /**
      * Checked under the lease (which the B1 snapshot writer's exclusive lease excludes) before
      * anything is revoked or bumped: `reconciled` and `use` refuse a device carrying the
-     * reconcile marker (B-11); `use` (entering a holder) also returns null on the staged path
-     * while the instance's binding is not installed, so the caller binds it exclusively (B-8).
-     * `none` for background polls, stops and drains.
+     * reconcile marker (B-11). `none` for background polls, stops and drains.
      */
     check: "use" | "reconciled" | "none" = "none",
   ): Promise<Entered | null> {
@@ -2206,10 +2190,6 @@ export class SandboxService {
         return null;
       }
       if (check !== "none") await this.facts.assertCloudReconciled(ctx.orgId, env);
-      if (check === "use" && !(await this.bound(p, env))) {
-        await lease.release();
-        return null;
-      }
       // Bump the fence as every acquisition did before phase C: an exclusive holder whose lease
       // expired unnoticed (a stalled sweep) then fails its next write instead of suspending or
       // destroying the instance under this holder. Shared holders never compare it.
@@ -2279,18 +2259,6 @@ export class SandboxService {
       // recorded evidence is stale (a limits change, a provider version change, a new report
       // revision) too
       await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
-      // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
-      // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
-      // finds the instance running and would not owe it again. The binder sends the committed
-      // binding id again on every retry, refuses while a legacy obligation is open and runs
-      // outside any transaction; a failure releases the lease.
-      const binder = p.binder;
-      if (binder)
-        await runOutsideTransaction(() => binder.bind(env, sig)).catch((err: unknown) => {
-          // the caller's answer may be generic: the device's own refusal is kept for ops here
-          this.log.warn("cannot bind the device's instance", { deviceId: env, err });
-          throw err;
-        });
       const shared = await lease.downgrade();
       await this.register(env, shared.token);
       return {
@@ -2882,7 +2850,6 @@ export class SandboxService {
         .selectFrom("devices as d")
         .innerJoin("device_instances as i", "i.device_id", "d.id")
         .select("d.id")
-        .where("d.source", "=", "cloud")
         .where("d.deleted_at", "is", null)
         .where("d.permission_reconcile_required", "=", true)
         .where("d.provider", "=", p.plugin)
@@ -3465,21 +3432,6 @@ export class SandboxService {
         const created = await this.create(ctx, p, held, row, fence, signal, want);
         return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
-      // the staged path's activation (B-8): an instance committed before the binder existed has no
-      // binding for its generation and never can get one; past the retirement gate above, a new
-      // generation is created (and committed with its binding) in its place
-      if (
-        handle &&
-        p.binder &&
-        (row.status === "running" || row.status === "suspended") &&
-        (await p.binder.status(id)) === null
-      ) {
-        this.log.info("instance without a committed binding; creating a bound generation", {
-          deviceId: id,
-        });
-        const created = await this.create(ctx, p, held, row, fence, signal, want);
-        return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-      }
       if (handle && row.status === "running") {
         if (this.mustApply(row, p, want)) {
           const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
@@ -3702,7 +3654,7 @@ export class SandboxService {
             ...(!atFileSystem && { instance_limits: record }),
           },
           held.signal,
-          p.binder ? "binding" : support,
+          support,
         ),
       );
       fence.gen++;

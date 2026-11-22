@@ -3,12 +3,7 @@ import {
   type ExtensionContext,
   isDeviceOfflineError,
   isDeviceRequestNotSent,
-  isFileSystemGoneError,
-  isSandboxGoneError,
-  isSandboxWorkUnsettledError,
-  ToolError,
 } from "@capybara-hq/plugin-sdk";
-import { DeviceProtocolError, type KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -32,13 +27,13 @@ import { type DeviceTargetState, DeviceTargets } from "../../src/dial-in/targets
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { localCall } from "../../src/local-devices/local-codec.js";
 import { createLogger } from "../../src/log.js";
 import {
+  type KernelReq,
   TEST_HOLDER_CONNECTION,
   TEST_HOLDER_TOKEN,
   TestHolder,
-} from "../local-devices/test-holder.js";
+} from "../helpers/test-holder.js";
 
 /**
  * The caller side of the device relay (environments spec §13.4): requests go through a Redis list
@@ -77,25 +72,11 @@ const execArgs = {
   actor: { accountId: "a", conversationId: "c" },
   limits: LIMITS,
 };
-/** The `capybara-device` request bodies the tests send (opaque to the relay). */
+/** The request bodies the tests send (opaque to the relay). */
 const execBody = { op: "exec", args: execArgs };
 const statBody = { op: "stat", args: { path: "/w", limits: { mode: "sandbox" } } };
 const EXEC_ANSWER = { ok: true, result: EXEC_RESULT };
 const signal = () => AbortSignal.timeout(30_000);
-/** An admitted operation scope on `deviceId` (the local codec validates request bodies). */
-const execScope = (deviceId: string) => ({
-  operationId: "op-1",
-  admitBeforeMs: Date.now() + 60_000,
-  deviceId,
-  rootConversationId: "c",
-  profileRevision: 1,
-  ceilingRevision: "r",
-  profile: "approve-for-me",
-  actor: { accountId: "a", conversationId: "c" },
-  tag: "t1",
-  filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
-  network: { kind: "none" },
-});
 const isOffline = (e: unknown) => isDeviceOfflineError(e);
 const rejection = (p: Promise<unknown>) =>
   p.then(
@@ -437,73 +418,6 @@ describe("DialInRelay", () => {
     expect(await redis.exists(deviceReqKey(h.deviceId))).toBe(0);
     expect(h.frames).toEqual([]);
     await h.disconnect();
-  });
-
-  it("the local codec maps fs_gone, gone, unsettled, policy and error to the SDK's errors", async () => {
-    const kinds = {
-      create: "fs_gone",
-      stat: "gone",
-      list: "unsettled",
-      writeFile: "policy",
-      readFile: "error",
-    } as const;
-    const h = holder((req) => ({
-      ok: false,
-      error: { kind: kinds[req.op as keyof typeof kinds], message: `${req.op} failed` },
-    }));
-    await h.connect();
-    const call = localCall(relay);
-    const opts = () => ({ deadlineMs: 5000, signal: signal() });
-    const env = h.deviceId;
-    const scope = execScope(env);
-    const fsGone = await rejection(call(env, "create", { limits: LIMITS }, opts()));
-    expect(isFileSystemGoneError(fsGone)).toBe(true);
-    const gone = await rejection(call(env, "stat", { scope, path: "/work" }, opts()));
-    expect(isSandboxGoneError(gone)).toBe(true);
-    const unsettled = await rejection(
-      call(env, "list", { scope, path: "/work", limit: 10 }, opts()),
-    );
-    expect(isSandboxWorkUnsettledError(unsettled)).toBe(true);
-    expect((unsettled as Error).message).toBe("list failed");
-    const policy = await rejection(
-      call(env, "writeFile", { scope, path: "/work/a", dataB64: "" }, opts()),
-    );
-    expect(policy).toBeInstanceOf(ToolError);
-    expect((policy as Error).message).toBe(
-      "Refused by the machine's local policy: writeFile failed",
-    );
-    // ruling R28: the machine's own failure reaches the model as it said it
-    const plain = await rejection(
-      call(env, "readFile", { scope, path: "/work/a", maxBytes: 1 }, opts()),
-    );
-    expect(plain).toBeInstanceOf(ToolError);
-    expect((plain as Error).message).toBe("On the connected machine: readFile failed");
-    await h.disconnect();
-  });
-
-  it("the local codec refuses an invalid result (parseOperationResult) and maps offline", async () => {
-    const h = holder(() => ({ ok: true, result: { exitCode: "zero" } }));
-    await h.connect();
-    const e = await rejection(
-      localCall(relay)(
-        h.deviceId,
-        "create",
-        { limits: LIMITS },
-        { deadlineMs: 5000, signal: signal() },
-      ),
-    );
-    expect(e).toBeInstanceOf(DeviceProtocolError);
-    await h.disconnect();
-    // no holder: the kernel's own device.offline, as the local provider's callers know it
-    const offline = await rejection(
-      localCall(relay)(
-        randomUUID(),
-        "create",
-        { limits: LIMITS },
-        { deadlineMs: 5000, signal: signal() },
-      ),
-    );
-    expect(offline instanceof ApiError && offline.code === "device.offline").toBe(true);
   });
 
   it("a request fenced to a replaced connection is refused as not sent before anything is queued", async () => {

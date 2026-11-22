@@ -374,9 +374,7 @@ class DeviceConnection {
     const signal = AbortSignal.any([this.ended.signal, AbortSignal.timeout(HELLO_TIMEOUT_MS)]);
     let timer: NodeJS.Timeout | undefined;
     try {
-      const answer = serving.internal
-        ? serving.handler.onHello(this.deviceId, body, signal, this.facts())
-        : serving.handler.onHello(this.deviceId, body, signal);
+      const answer = serving.handler.onHello(this.deviceId, body, signal);
       const r = await Promise.race([
         answer,
         new Promise<never>((_, reject) => {
@@ -409,19 +407,13 @@ class DeviceConnection {
       // read again: a provider switched off (or replaced) since the hello gets no more frames
       const serving = await this.gw.handlers.forDevice(this.deviceId);
       if ("unavailable" in serving || serving.plugin !== this.accepted.plugin) return;
-      if (serving.internal) await serving.handler.onFrame?.(this.deviceId, body, this.facts());
-      else await serving.handler.onFrame?.(this.deviceId, body);
+      await serving.handler.onFrame?.(this.deviceId, body);
     } catch (e) {
       this.gw.log.warn("device provider failed a frame", {
         deviceId: this.deviceId,
         error: errMsg(e),
       });
     }
-  }
-
-  /** The authenticated connection, for a kernel-internal handler only. */
-  private facts(): { machineId: string; connectionId: string } {
-    return { machineId: this.identity.machineId, connectionId: this.connectionId };
   }
 
   /**

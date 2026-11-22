@@ -3,12 +3,18 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DeviceExecArgs, KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  FAKE_DIAL_IN_PROTOCOL,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { reviewRules } from "../../src/sandbox/review/index.js";
 import {
   FAKE_PERMISSION_SUPPORT,
@@ -16,9 +22,15 @@ import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/device-fake/index.js";
+import {
+  type Answer,
+  EnvelopeMachine as FakeMachine,
+  type KernelReq,
+} from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createConv,
   createOrgWithProviders,
@@ -33,14 +45,12 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
-import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Acceptance end to end for auto mode (spec §10, plan T15): the six scenarios that failed on real
  * devices during acceptance 2026-11-12/13, run through a real kernel. The device is the fake sandbox
  * (a real `/bin/sh` in a temporary directory; `gh` and `git` are small fake programs on its PATH) or
- * a `FakeMachine` over the local-device protocol. The model is `model-fake`
+ * a `fake-dial-in` machine over the generic dial-in channel. The model is `model-fake`
  * (`tool:<key>:<json>` calls the tool).
  *
  * 1. clone `capybara-hq/core` (a repository carrying today's sandbox-protected files);
@@ -128,6 +138,7 @@ let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 let binDir: string;
 let owner: Req;
 let ownerId: string;
@@ -149,6 +160,7 @@ beforeAll(async () => {
     ...FAKE_PERMISSION_SUPPORT,
     network: { ...FAKE_PERMISSION_SUPPORT.network, openPublic: true },
   });
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -162,7 +174,9 @@ beforeAll(async () => {
         sandbox: { limits: { egress: "allowlist", allowHosts: ["example.com"] } },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
   // the provider wrote its shims in `setup`; the fake programs go beside them on the same PATH
   binDir = join(await realpath(root), "bin");
   await writeFile(join(binDir, "git"), FAKE_GIT);
@@ -183,6 +197,11 @@ beforeAll(async () => {
   orgAuto = await createOrgWithProviders(k, owner, "Auto");
   agentAuto = await createAgent(orgAuto);
   orgSandbox = await createOrgWithProviders(k, owner, "Sandbox");
+  // two device providers are loaded: device-fake stays each org's default
+  for (const org of [orgAuto, orgSandbox])
+    await sql`UPDATE capybara.orgs SET settings = COALESCE(settings, '{}'::jsonb)
+        || jsonb_build_object('deviceDefaultProvider', 'device-fake')
+      WHERE id = ${org}`.execute(raw);
   const off = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgSandbox}/settings`,
@@ -211,6 +230,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => versionServer?.close(() => resolve()));
   await k?.close();
   await destroyDb?.();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
 });
@@ -436,7 +456,7 @@ describe("acceptance: auto mode on a real kernel", () => {
     expect(output.payload.content).toContain("Cloning into 'cloned'");
   });
 
-  it("scenario 4: gh pr create on a local device is allowed and runs on the owner's machine", async () => {
+  it("scenario 4: gh pr create on a dial-in device is allowed and runs on the owner's machine", async () => {
     const device = await localDevice();
     const conv = await createConv(owner, orgAuto, agentAuto);
     await db
@@ -456,8 +476,8 @@ describe("acceptance: auto mode on a real kernel", () => {
 
     // the reviewed command reached the device the owner signed in on (it runs as the owner)
     const exec = device.machine.frames.find(
-      (f): f is Extract<KernelReq, { op: "exec" }> =>
-        f.type === "req" && f.op === "exec" && (f.args as DeviceExecArgs).command === command,
+      (f): f is KernelReq =>
+        f.type === "req" && f.op === "exec" && (f.args as { command: string }).command === command,
     );
     expect(exec, "the exec reached the owner's device").toBeDefined();
     const row = await db
@@ -505,7 +525,7 @@ describe("acceptance: auto mode on a real kernel", () => {
   });
 });
 
-/** The owner's local device: a machine connected over the device protocol, signing in on the host. */
+/** The owner's dial-in device: a `fake-dial-in` machine that signed in for the owner. */
 async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }> {
   const authorized = await owner({
     method: "POST",
@@ -515,7 +535,7 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
       os: "linux",
       arch: "x64",
       programVersion: "0.1.0",
-      protocol: "capybara-device/5",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
     },
   });
   expect(authorized.statusCode, authorized.body).toBe(200);
@@ -523,7 +543,7 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
   const confirmed = await owner({
     method: "POST",
     url: "/api/v1/device/confirm",
-    payload: { userCode, orgId: orgAuto, provider: "@local", name: "Accept box" },
+    payload: { userCode, orgId: orgAuto, provider: "fake-dial-in", name: "Accept box" },
   });
   expect(confirmed.statusCode, confirmed.body).toBe(200);
   const issued = await owner({
@@ -538,49 +558,33 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
     `ws://127.0.0.1:${k.port}/device/connect`,
     credential,
     (req: KernelReq): Answer => {
-      if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
-      if (req.op !== "exec") return { ok: true, result: null };
+      if (req.op === "resume") return "resumed";
+      if (req.op !== "exec") return null;
       return {
-        ok: true,
-        result: {
-          exitCode: 0,
-          stdout: "https://github.com/capybara-hq/core/pull/4242\n",
-          stderr: "",
-          truncated: false,
-          timedOut: false,
-        },
+        exitCode: 0,
+        stdout: "https://github.com/capybara-hq/core/pull/4242\n",
+        stderr: "",
+        truncated: false,
+        timedOut: false,
       };
     },
     { hello: false },
   );
   await machine.opened;
-  // the owner allows work outside the sandbox (what the `auto` mode reported before protocol 4)
-  machine.hello({
-    features: [],
-    policy: { allowedDomains: [] },
-    ownerCeiling: {
-      version: 3,
-      sequence: 1,
-      revision: "test-owner-outside",
-      outsideSandbox: true,
-      network: "open",
-      allowedDomains: [],
-      restrictedProjectReach: "os-user",
-    },
-  });
-  // the policy frame is recorded before the conversation can use the device
+  // its provider allows work outside the sandbox
+  machine.hello({ outsideSandbox: true });
+  // the provider stored the hello's report before the conversation can use the device
   await waitFor(
     async () =>
       (
         await db
-          .selectFrom("device_machines")
-          .select("local_policy")
-          .where("device_id", "=", deviceId)
-          .where("revoked_at", "is", null)
+          .selectFrom("devices")
+          .select("report")
+          .where("id", "=", deviceId)
           .executeTakeFirst()
-      )?.local_policy != null,
+      )?.report != null,
     15_000,
-    "the device's policy recorded",
+    "the device's report stored",
   );
   return { deviceId, machine };
 }

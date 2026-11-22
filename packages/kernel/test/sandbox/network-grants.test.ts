@@ -6,9 +6,8 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { relayer } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
-import { grantsWithin, NetworkGrants } from "../../src/sandbox/network-grants.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { databaseHandles } from "../helpers/database.js";
 
 /**
@@ -226,73 +225,5 @@ describe("NetworkGrants.runState", () => {
       asks: 0,
       pending: false,
     });
-  });
-});
-
-describe("relayer", () => {
-  const blocked = (host: string, layer: NetworkBlockedHost["layer"]): NetworkBlockedHost => ({
-    host,
-    port: 443,
-    layer,
-  });
-  const allowlist: Pick<SandboxLimits, "network"> = {
-    network: { kind: "allowlist", hosts: ["example.com", "*.github.com"] },
-  };
-
-  it.each([
-    ["device, the org allows it", "example.com", "device", allowlist, "device"],
-    ["device, a wildcard of the org covers it", "api.github.com", "device", allowlist, "device"],
-    ["device, uppercase and a trailing dot", "API.GitHub.com.", "device", allowlist, "device"],
-    ["device, the apex of a wildcard", "github.com", "device", allowlist, "org"],
-    ["device, not in the org's list", "evil.example.net", "device", allowlist, "org"],
-    [
-      "device, egress none",
-      "example.com",
-      "device",
-      { network: { kind: "allowlist", hosts: [] } },
-      "org",
-    ],
-    [
-      "device, egress open",
-      "evil.example.net",
-      "device",
-      { network: { kind: "open-public", hosts: [] } },
-      "device",
-    ],
-    ["device, not a host name", "localhost", "device", allowlist, "address"],
-    ["org stays org", "example.com", "org", allowlist, "org"],
-    ["address stays address", "10.0.0.1", "address", allowlist, "address"],
-    ["unknown stays unknown", "evil.example.net", "unknown", allowlist, "unknown"],
-  ] as const)("%s", (_name, host, layer, limits, want) => {
-    expect(relayer([blocked(host, layer)], limits as typeof allowlist)).toEqual([
-      { ...blocked(host, layer), layer: want },
-    ]);
-  });
-});
-
-describe("grantsWithin", () => {
-  const g = (hosts: string[]) => ({
-    hosts,
-    source: { kind: "run" as const, id: "r", accountId: "a" },
-  });
-  it("keeps only the hosts the org's limits admit", () => {
-    const hosts = ["example.com", "api.github.com", "github.com", "evil.example.net"];
-    expect(
-      grantsWithin(g(hosts), {
-        network: { kind: "allowlist", hosts: ["example.com", "*.github.com"] },
-      }),
-    ).toEqual(g(["example.com", "api.github.com"]));
-    expect(grantsWithin(g(hosts), { network: { kind: "open-public", hosts: [] } })).toEqual(
-      g(hosts),
-    );
-    expect(grantsWithin(g(hosts), { network: { kind: "allowlist", hosts: [] } })).toBeUndefined();
-    expect(
-      grantsWithin(g(["evil.example.net"]), {
-        network: { kind: "allowlist", hosts: ["example.com"] },
-      }),
-    ).toBeUndefined();
-    expect(
-      grantsWithin(undefined, { network: { kind: "open-public", hosts: [] } }),
-    ).toBeUndefined();
   });
 });

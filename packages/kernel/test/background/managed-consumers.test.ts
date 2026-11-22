@@ -898,7 +898,6 @@ describe("fix round 2: owed stops are applied fairly", () => {
         org_id: f.orgId,
         owner_kind: "personal",
         owner_account_id: owner.id,
-        source: "local",
         provider: "@managed-consumer-test",
         name: "Parked",
       })

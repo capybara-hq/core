@@ -6,7 +6,7 @@ import { REDIS } from "../infra/tokens.js";
 import { deviceLeaseKey, deviceTransportKey } from "./keys.js";
 
 /**
- * Whether a local device can still be served: `active` (live and an unrevoked machine),
+ * Whether a dial-in device can still be served: `active` (live and an unrevoked machine),
  * `revoked` (live, no active machine: disconnected or signed out) or `deleted` (missing or
  * deleted, or its org deleted).
  */
@@ -68,7 +68,7 @@ export class DeviceTargets {
       (cap as { maxFrameBytes: number }).maxFrameBytes >= 1024;
     if (!ok || (await this.locks.holderOf(deviceLeaseKey(deviceId))) !== lease)
       throw new Error(
-        "The machine's connection is not ready yet; retry once capybara-device has reconnected",
+        "The machine's connection is not ready yet; retry once the machine has reconnected",
       );
     const { connectionId, maxFrameBytes, programRunId } = cap as {
       connectionId: string;
@@ -107,27 +107,5 @@ export class DeviceTargets {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     return row?.org_id ?? null;
-  }
-
-  /** The owner's home directory the active machine reported in its hello, or null. */
-  /** The device's active machine (its id and reported home), or null when none is active. */
-  async activeMachine(deviceId: string): Promise<{ id: string; home: string | null } | null> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select(["id", "home"])
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    return row === undefined ? null : { id: row.id, home: row.home ?? null };
-  }
-
-  async machineHome(deviceId: string): Promise<string | null> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select("home")
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    return row?.home ?? null;
   }
 }

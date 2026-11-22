@@ -780,10 +780,8 @@ describe("offboarding and the leaver's devices", () => {
   const env = async (orgId: string, accountId: string, name: string | null) => {
     const id = randomUUID();
     await sql`INSERT INTO capybara.devices
-      (id, org_id, owner_kind, owner_account_id, name, is_default, source)
-      VALUES (${id}, ${orgId}, 'personal', ${accountId}, ${name}, ${name === null}, 'cloud')`.execute(
-      raw,
-    );
+      (id, org_id, owner_kind, owner_account_id, name, is_default)
+      VALUES (${id}, ${orgId}, 'personal', ${accountId}, ${name}, ${name === null})`.execute(raw);
     return id;
   };
   const toolDeps = () => ({

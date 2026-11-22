@@ -14,7 +14,7 @@ import { DEVICES_DEFAULT_PROVIDER_SETTING } from "../../src/devices/default-prov
 import { DeviceProviderSelection } from "../../src/devices/device-provider-selection.js";
 import { ApiError } from "../../src/errors.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
-import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   ENV_UNAVAILABLE_TEXT,
@@ -34,6 +34,9 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
+
+/** An in-process provider: a test stub registered beside the extensions. */
+const IN_PROCESS = "@in-process";
 
 /**
  * `DeviceProviders` (device-provider spec): which providers serve an org (loaded and switched on in
@@ -113,8 +116,8 @@ const setOrgDefault = (orgId: string, provider: string | null) =>
   settings.update(orgId, { deviceDefaultProvider: provider }, ownerId);
 
 describe("DeviceProviders and DeviceProviderSelection", () => {
-  it("onInOrg lists the providers enabled in the org, in name order, never @local", async () => {
-    providers.register({ plugin: LOCAL_PROVIDER, version: "local-test", impl: {} as never });
+  it("onInOrg lists the providers enabled in the org, in name order, never an in-process one", async () => {
+    providers.register({ plugin: IN_PROCESS, version: "in-process-test", impl: {} as never });
     expect(await names(orgA)).toEqual([]);
     await enableExtensions(raw, orgA, "device-fake-b", "device-fake");
     expect(await names(orgA)).toEqual(["device-fake", "device-fake-b"]);
@@ -133,13 +136,13 @@ describe("DeviceProviders and DeviceProviderSelection", () => {
     expect(await names(orgA)).toEqual(["device-fake"]);
   });
 
-  it("forDevice finds @local in the internal map and an extension by plugin name; unknown → undefined", () => {
-    providers.register({ plugin: LOCAL_PROVIDER, version: "local-test", impl: {} as never });
-    expect(providers.forDevice(LOCAL_PROVIDER)?.plugin).toBe(LOCAL_PROVIDER);
+  it("forDevice finds an in-process provider as registered and an extension by plugin name; unknown → undefined", () => {
+    providers.register({ plugin: IN_PROCESS, version: "in-process-test", impl: {} as never });
+    expect(providers.forDevice(IN_PROCESS)?.plugin).toBe(IN_PROCESS);
     const b = providers.forDevice("device-fake-b");
     expect(b?.plugin).toBe("device-fake-b");
     expect(b?.version).toBe("0.1.0");
-    expect(providers.forDevice(LOCAL_PROVIDER)?.version).toBe("local-test");
+    expect(providers.forDevice(IN_PROCESS)?.version).toBe("in-process-test");
     expect(providers.forDevice("nope")).toBeUndefined();
     expect(providers.forDevice("@nope")).toBeUndefined();
     expect(
@@ -276,11 +279,11 @@ describe("a device's use follows its own provider's org switch", () => {
     expect(await devices.forTool(orgA, conv).catch((e: ApiError) => e.details)).toBeUndefined();
   });
 
-  it("isOnInOrg: @local is on in every org while registered (no catalog item, no org switch)", async () => {
+  it("isOnInOrg: an in-process provider is on in every org while registered (no catalog item, no org switch)", async () => {
+    providers.register({ plugin: IN_PROCESS, version: "in-process-test", impl: {} as never });
     expect(await names(orgA)).toEqual([]);
-    expect(providers.forDevice(LOCAL_PROVIDER)).toBeDefined();
-    expect(await selection.isOnInOrg(orgA, LOCAL_PROVIDER)).toBe(true);
-    expect(await selection.isOnInOrg(orgB, LOCAL_PROVIDER)).toBe(true);
+    expect(await selection.isOnInOrg(orgA, IN_PROCESS)).toBe(true);
+    expect(await selection.isOnInOrg(orgB, IN_PROCESS)).toBe(true);
     expect(await selection.isOnInOrg(orgA, "@not-registered")).toBe(false);
     // and still never listed among the org's providers
     expect(await names(orgA)).toEqual([]);

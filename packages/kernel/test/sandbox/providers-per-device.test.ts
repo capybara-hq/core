@@ -14,11 +14,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import type { ExtensionRegistry } from "../../src/extensions/registry.js";
-import {
-  type DeviceProviderEntry,
-  DeviceProviders,
-  LOCAL_PROVIDER,
-} from "../../src/sandbox/providers.js";
+import { type DeviceProviderEntry, DeviceProviders } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -27,7 +23,7 @@ import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 /**
  * A device is bound to its own provider for life (device-provider spec §6.1): each device runs on
  * the provider named by its `devices.provider` (two fake extensions, `device-fake` and
- * `device-fake-b`, side by side, and the kernel-internal `@local`), only while that provider is on
+ * `device-fake-b`, side by side, and an in-process provider (`@in-process`, a registered stub)), only while that provider is on
  * in the device's org; a device whose provider is off or not loaded is unavailable, its files and
  * instance kept, and nothing is created at another provider. The sweeps run per loaded provider
  * over its own rows only.
@@ -43,7 +39,9 @@ let config: KernelConfig;
 let rootA: string;
 /** `device-fake-b`'s directory. */
 let rootB: string;
-/** The `@local` fake's directory. */
+/** The in-process fake's directory. */
+/** An in-process provider: a test stub registered beside the extensions. */
+const IN_PROCESS = "@in-process";
 let localRoot: string;
 let fakeA: DeviceProviderEntry;
 let fakeB: DeviceProviderEntry;
@@ -114,7 +112,7 @@ beforeEach(async () => {
   localRoot = await mkdtemp(join(tmpdir(), "cap-device-local-"));
   fakeA = { plugin: "device-fake", version: "1.0.0", impl: createFakeSandbox(rootA) };
   fakeB = { plugin: "device-fake-b", version: "1.0.0", impl: createFakeSandbox(rootB) };
-  local = { plugin: LOCAL_PROVIDER, version: "1.0.0", impl: createFakeSandbox(localRoot) };
+  local = { plugin: IN_PROCESS, version: "1.0.0", impl: createFakeSandbox(localRoot) };
   off = new Map();
   config = KernelConfigSchema.parse({
     db: { url: pgc.url },
@@ -152,7 +150,7 @@ async function seedOrg(): Promise<{ orgId: string; accountId: string; conversati
   return { orgId: org, accountId: account, conversationId: conv };
 }
 
-const seedLocal = () => seedDevice(raw, orgId, accountId, "local");
+const seedLocal = () => seedDevice(raw, orgId, accountId, IN_PROCESS);
 /** A cloud device bound to `provider` in `org` (default: this test's org). */
 const seedCloud = async (provider = "device-fake", org = orgId, account = accountId) => {
   const id = await seedDevice(raw, org, account);
@@ -228,10 +226,10 @@ describe("DeviceProviders", () => {
     expect(p.forDevice("device-fake-b")?.plugin).toBe("device-fake-b");
     expect(p.forDevice("device-e2b")).toBeUndefined();
     expect(p.forDevice(null)).toBeUndefined();
-    expect(p.forDevice(LOCAL_PROVIDER)).toBeUndefined();
-    p.register({ plugin: LOCAL_PROVIDER, version: "1.0.0", impl: internal });
+    expect(p.forDevice(IN_PROCESS)).toBeUndefined();
+    p.register({ plugin: IN_PROCESS, version: "1.0.0", impl: internal });
     // an internal provider is handed out as registered (not guarded) and is never in loaded()
-    expect(p.forDevice(LOCAL_PROVIDER)?.impl).toBe(internal);
+    expect(p.forDevice(IN_PROCESS)?.impl).toBe(internal);
     expect(p.loaded().map((e) => e.plugin)).toEqual(["device-fake", "device-fake-b"]);
   });
 });
@@ -421,15 +419,15 @@ describe("per-provider sweeps", () => {
   });
 });
 
-describe("@local beside the extension providers", () => {
-  it("a device on @local resolves @local; a cloud device in the same org its own provider", async () => {
+describe("@in-process beside the extension providers", () => {
+  it("a device on @in-process resolves @in-process; a cloud device in the same org its own provider", async () => {
     const s = service();
     const dev = await seedLocal();
     const cl = await seedCloud();
     await run(s, dev);
     expect(await opsOf(localRoot, "create")).toHaveLength(1);
     expect(await opsOf(rootA)).toEqual([]);
-    expect(await instanceRow(dev)).toMatchObject({ provider: LOCAL_PROVIDER, status: "running" });
+    expect(await instanceRow(dev)).toMatchObject({ provider: IN_PROCESS, status: "running" });
     await run(s, cl);
     expect(await opsOf(rootA, "create")).toHaveLength(1);
     expect(await opsOf(localRoot, "create")).toHaveLength(1);
@@ -467,11 +465,11 @@ describe("@local beside the extension providers", () => {
     expect(await opsOf(rootA)).toEqual([]);
   });
 
-  it("a deleted org's local device instance is cleaned by the gone-sweep", async () => {
+  it("a deleted org's in-process device instance is cleaned by the gone-sweep", async () => {
     const dev = await seedLocal();
     await run(service(), dev);
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${orgId}`.execute(raw);
-    // without any extension provider too: @local alone serves the sweep
+    // without any extension provider too: @in-process alone serves the sweep
     expect(await service(() => []).destroyInactive(new Date())).toBe(1);
     expect(await instanceRow(dev)).toBeUndefined();
     expect(await opsOf(localRoot, "destroy")).toHaveLength(1);
@@ -479,7 +477,7 @@ describe("@local beside the extension providers", () => {
     expect(await opsOf(rootA)).toEqual([]);
   });
 
-  it("a deleted local device is cleaned by the gone-sweep; not while @local is missing", async () => {
+  it("a deleted in-process device is cleaned by the gone-sweep; not while @in-process is missing", async () => {
     const dev = await seedLocal();
     await run(service(), dev);
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
@@ -493,7 +491,9 @@ describe("@local beside the extension providers", () => {
     const dev = await seedLocal();
     await run(service(), dev);
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
-    await expect(service(undefined, []).destroyDevice(dev)).rejects.toThrow(/@local is not loaded/);
+    await expect(service(undefined, []).destroyDevice(dev)).rejects.toThrow(
+      /@in-process is not loaded/,
+    );
     expect((await instanceRow(dev))?.sweep_failed_at).toBeInstanceOf(Date);
     expect(await opsOf(localRoot, "destroy")).toEqual([]);
     // the provider is back: the sweep finishes it
@@ -501,7 +501,7 @@ describe("@local beside the extension providers", () => {
     expect(await instanceRow(dev)).toBeUndefined();
   });
 
-  it("a local device stays available when no extension provider is loaded", async () => {
+  it("an in-process device stays available when no extension provider is loaded", async () => {
     const s = service(() => []);
     const dev = await seedLocal();
     const cl = await seedCloud();
@@ -513,7 +513,7 @@ describe("@local beside the extension providers", () => {
     expect((err as ApiError).code).toBe("device.unavailable");
   });
 
-  it("a local device is unavailable while @local is not registered, whatever the org has on", async () => {
+  it("an in-process device is unavailable while @in-process is not registered, whatever the org has on", async () => {
     const s = service(undefined, []);
     const dev = await seedLocal();
     expect(await s.availableFor(dev, orgId)).toBe(false);
