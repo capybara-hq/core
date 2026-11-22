@@ -11,11 +11,13 @@ import {
 import { IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import { useClassForm } from "../shell/class-forms";
 
 type ToastAction = { label: string; run(): void } | undefined;
 
 type ToastItem =
-  | { id: number; kind: "success"; msg: string; action?: ToastAction }
+  /** `ms`: how long it stays once shown (its timer starts only then). */
+  | { id: number; kind: "success"; msg: string; action?: ToastAction; ms: number }
   | { id: number; kind: "error"; msg: string; action?: ToastAction }
   | { id: number; kind: "progress"; msg: string; done: number; total: number };
 
@@ -51,17 +53,47 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const t = useDesignT();
   const [items, setItems] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  // one auto-dismiss timer per shown success toast, keyed by its id
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const form = useClassForm();
 
   useEffect(() => {
-    const set = timers.current;
+    const map = timers.current;
     return () => {
-      for (const h of set) clearTimeout(h);
-      set.clear();
+      for (const h of map.values()) clearTimeout(h);
+      map.clear();
     };
   }, []);
 
   const close = useCallback((id: number) => setItems((l) => l.filter((x) => x.id !== id)), []);
+
+  // On compact one toast shows at a time (interaction spec §7, D2): the oldest error, else the
+  // oldest other toast, first in first shown; the rest wait (`data-queued`, hidden by CSS there).
+  const shownOnCompact = (items.find((x) => x.kind === "error") ?? items[0])?.id;
+  const visible = useCallback(
+    (id: number) => form !== "compact" || id === shownOnCompact,
+    [form, shownOnCompact],
+  );
+  // A timer runs only while its toast is visible, so a queued toast never expires unseen: from
+  // 600 every toast is visible as it arrives, below 600 only the shown one. A toast pushed back
+  // into the queue (an error arrived) drops its timer and gets its full duration when shown again.
+  useEffect(() => {
+    const map = timers.current;
+    for (const [id, h] of map) {
+      if (!items.some((x) => x.id === id) || !visible(id)) {
+        clearTimeout(h);
+        map.delete(id);
+      }
+    }
+    for (const it of items) {
+      if (it.kind !== "success" || map.has(it.id) || !visible(it.id)) continue;
+      const h = setTimeout(() => {
+        map.delete(it.id);
+        close(it.id);
+      }, it.ms);
+      map.set(it.id, h);
+    }
+  }, [items, visible, close]);
 
   const api = useMemo<ToastApi>(
     () => ({
@@ -74,16 +106,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             kind: "success",
             msg,
             action: opts ? { label: opts.actionLabel, run: opts.onAction } : undefined,
+            ms: opts ? UNDO_MS : SUCCESS_MS,
           },
         ]);
-        const h = setTimeout(
-          () => {
-            timers.current.delete(h);
-            close(id);
-          },
-          opts ? UNDO_MS : SUCCESS_MS,
-        );
-        timers.current.add(h);
       },
       error(msg, opts) {
         const id = nextId.current++;
@@ -139,6 +164,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         e.currentTarget.style.transform = "";
       }}
       data-kind={it.kind}
+      data-queued={visible(it.id) ? undefined : "true"}
       role={it.kind === "error" ? "alert" : undefined}
     >
       {/* Three-column grid: the status icon, then the head row and the progress bar (so the bar is

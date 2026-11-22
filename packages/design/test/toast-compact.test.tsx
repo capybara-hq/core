@@ -1,11 +1,17 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesignProvider, ToastProvider, useToast } from "../src/index";
 import { css, parseCss } from "./css-rules";
+import { matchMediaFor } from "./width";
 
 // Toasts on phones (interaction spec §7, D2): at the bottom, above the composer and the keyboard.
 
-afterEach(cleanup);
+const realMatchMedia = window.matchMedia;
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  window.matchMedia = realMatchMedia;
+});
 
 const COMPACT = "not all and (min-width: 600px)";
 const rules = parseCss(css("overlays.css"));
@@ -29,9 +35,8 @@ describe("the toast region on compact", () => {
     expect(d?.translate).toBe("none");
   });
 
-  it("shows one toast at a time", () => {
-    expect(decls(COMPACT, ".cb-toast-group:not(:empty) ~ .cb-toast-group")?.display).toBe("none");
-    expect(decls(COMPACT, ".cb-toast-group > .cb-toast:not(:first-child)")?.display).toBe("none");
+  it("shows one toast at a time: the queued ones are hidden", () => {
+    expect(decls(COMPACT, '.cb-toast[data-queued="true"]')?.display).toBe("none");
   });
 
   it("leaves vertical drags to the swipe, not the page pan", () => {
@@ -106,5 +111,80 @@ describe("swipe down to dismiss", () => {
     fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
     fireEvent.pointerUp(toast, { clientY: 110, pointerType: "touch" });
     expect(screen.queryByText("Saved")).not.toBeNull();
+  });
+});
+
+function Two() {
+  const toast = useToast();
+  return (
+    <>
+      <button type="button" onClick={() => toast.success("First")}>
+        first
+      </button>
+      <button type="button" onClick={() => toast.success("Second")}>
+        second
+      </button>
+      <button type="button" onClick={() => toast.error("Broken")}>
+        error
+      </button>
+    </>
+  );
+}
+const toasts = () =>
+  render(
+    <DesignProvider locale="en">
+      <ToastProvider>
+        <Two />
+      </ToastProvider>
+    </DesignProvider>,
+  );
+const queued = (msg: string) =>
+  screen.getByText(msg).closest(".cb-toast")?.getAttribute("data-queued") ?? null;
+
+describe("the toast queue's timers", () => {
+  it("on compact a queued toast waits unseen, then gets its full duration once shown", () => {
+    vi.useFakeTimers();
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    toasts();
+    fireEvent.click(screen.getByText("first"));
+    act(() => vi.advanceTimersByTime(1000));
+    fireEvent.click(screen.getByText("second"));
+    // first in, first shown: the second waits behind it
+    expect(queued("First")).toBeNull();
+    expect(queued("Second")).toBe("true");
+    act(() => vi.advanceTimersByTime(3000));
+    expect(screen.queryByText("First")).toBeNull();
+    expect(queued("Second")).toBeNull();
+    act(() => vi.advanceTimersByTime(3999));
+    expect(screen.queryByText("Second")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByText("Second")).toBeNull();
+  });
+
+  it("on compact an error goes first; the shown success waits behind it", () => {
+    vi.useFakeTimers();
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    toasts();
+    fireEvent.click(screen.getByText("first"));
+    fireEvent.click(screen.getByText("error"));
+    expect(queued("Broken")).toBeNull();
+    expect(queued("First")).toBe("true");
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.queryByText("First")).not.toBeNull();
+  });
+
+  it("from 600 every toast is shown and each starts its timer when it appears", () => {
+    vi.useFakeTimers();
+    window.matchMedia = matchMediaFor(1280).matchMedia;
+    toasts();
+    fireEvent.click(screen.getByText("first"));
+    act(() => vi.advanceTimersByTime(2000));
+    fireEvent.click(screen.getByText("second"));
+    expect(queued("Second")).toBeNull();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.queryByText("First")).toBeNull();
+    expect(screen.queryByText("Second")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.queryByText("Second")).toBeNull();
   });
 });
