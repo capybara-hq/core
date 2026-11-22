@@ -17,8 +17,9 @@ import {
  * machine answers with the operation's result (bytes as base64). The kernel tests drive it with
  * `FakeDialInMachine` from `@capybara-hq/testing`, never with the real device-local plugin.
  *
- * The machine's hello body is `{ revision: string; outsideSandbox: boolean; refuse?: string }`: a
- * `refuse` makes `onHello` refuse with code `fake.refused`. The accepted hello is kept in `ctx.kv`
+ * The machine's hello body is `{ revision: string; outsideSandbox: boolean; perOperationHosts?:
+ * boolean; refuse?: string }`: a `refuse` makes `onHello` refuse with code `fake.refused`;
+ * `perOperationHosts` (default true) is what its permission support reports. The accepted hello is kept in `ctx.kv`
  * (`hello:<deviceId>`, one hour) and `report()` is built from it; an `event` frame
  * `{ revision, outsideSandbox? }` replaces the revision (and the outside-sandbox answer, when
  * given). Both tell the kernel through `ctx.devices.reportChanged`. `permissionSupport` is an
@@ -47,6 +48,7 @@ const DEFAULT_TIMEOUT_MS = 30000;
 interface StoredHello {
   revision: string;
   outsideSandbox: boolean;
+  perOperationHosts?: boolean;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -110,7 +112,11 @@ export default defineExtension({
           version: 2,
           boundary: "operation",
           restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-          network: { openPublic: false, allowlist: true, perOperationHosts: true },
+          network: {
+            openPublic: false,
+            allowlist: true,
+            perOperationHosts: hello?.perOperationHosts ?? true,
+          },
           outsideSandbox: hello?.outsideSandbox ?? false,
           background: false,
         };
@@ -152,6 +158,7 @@ export default defineExtension({
           await writeHello(deviceId, {
             revision: typeof body.revision === "string" ? body.revision : "0",
             outsideSandbox: body.outsideSandbox === true,
+            ...(body.perOperationHosts === false && { perOperationHosts: false }),
           });
           await reportChanged(deviceId);
           return { ok: true };
@@ -165,6 +172,7 @@ export default defineExtension({
           if (!isRecord(frame) || typeof frame.revision !== "string") return;
           const hello = await readHello(deviceId);
           await writeHello(deviceId, {
+            ...(hello?.perOperationHosts === false && { perOperationHosts: false }),
             outsideSandbox:
               typeof frame.outsideSandbox === "boolean"
                 ? frame.outsideSandbox

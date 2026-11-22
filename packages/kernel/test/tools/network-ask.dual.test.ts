@@ -1,13 +1,22 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { DeviceExecArgs, KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
-import { createDualReplicaHarness, type Harness } from "@capybara-hq/testing";
+import {
+  createDualReplicaHarness,
+  FAKE_DIAL_IN_PROTOCOL,
+  FakeDialInMachine,
+  type Harness,
+} from "@capybara-hq/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { allowedOnceNote } from "../../src/tools/network-asks.js";
+import { allowedOnceNote, unavailableHostNote } from "../../src/tools/network-asks.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
@@ -243,4 +252,151 @@ describe("network ask (dual replica)", () => {
     },
     180_000,
   );
+
+  it("a network ask on a provider without perOperationHosts offers only add-to-device", async () => {
+    // a dial-in provider (the generic channel) whose support reports no per-operation hosts
+    const bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
+    cleanups.push(() => bootstrap.cleanup());
+    const extensionsDir = await mkdtemp(join(tmpdir(), "cap-network-ask-dual-"));
+    cleanups.push(() => rm(extensionsDir, { recursive: true, force: true }));
+    h = await createDualReplicaHarness({
+      extensions: [MODEL_FAKE],
+      bootstrap: { dir: bootstrap.dir, manifest: bootstrap.manifest },
+      roles: [
+        ["api", "worker", "gateway"],
+        ["api", "worker"],
+      ],
+      config: {
+        auth: { cookieSecure: false },
+        extensionHost: { dir: extensionsDir },
+        http: { publicUrl: "https://cap.example" },
+        sandbox: { limits: { egress: "allowlist", allowHosts: ["*.example.com"] } },
+        devices: { local: { reconnectGraceSeconds: 5, leaseTtlMs: 6000 } },
+      },
+    });
+    const harness = h;
+    const raw = createDb(harness.dbUrl, 2);
+    cleanups.push(() => raw.destroy());
+    const db = kernelDb(raw);
+    let cookie = "";
+    const call = async (index: number, method: string, path: string, body?: unknown) => {
+      const res = await harness.requestTo(index, path, {
+        method,
+        headers: {
+          "x-capybara-csrf": "1",
+          ...(cookie !== "" && { cookie }),
+          ...(body !== undefined && { "content-type": "application/json" }),
+        },
+        ...(body !== undefined && { body: JSON.stringify(body) }),
+      });
+      const text = await res.text();
+      if (path === "/api/v1/auth/login") {
+        cookie = res.headers
+          .getSetCookie()
+          .map((c) => c.split(";")[0])
+          .join("; ");
+      }
+      return { status: res.status, json: (text === "" ? {} : JSON.parse(text)) as Json };
+    };
+
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    expect(
+      (await call(0, "POST", "/api/v1/auth/login", { login: "owner", password: PW })).status,
+    ).toBe(200);
+    const org = await call(0, "POST", "/api/v1/orgs", { name: "Acme" });
+    const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake", "fake-dial-in");
+    const a = await call(0, "POST", "/api/v1/device/authorize", {
+      name: "box",
+      os: "linux",
+      arch: "x64",
+      programVersion: "0.1.0",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+    });
+    const confirmed = await call(0, "POST", "/api/v1/device/confirm", {
+      userCode: a.json.userCode,
+      orgId,
+      name: "Box",
+      provider: "fake-dial-in",
+    });
+    expect(confirmed.status, JSON.stringify(confirmed.json)).toBeLessThan(300);
+    const t = await call(0, "POST", "/api/v1/device/token", { deviceCode: a.json.deviceCode });
+    expect(t.status, JSON.stringify(t.json)).toBe(200);
+    const { credential, deviceId } = t.json as { credential: string; deviceId: string };
+
+    const machine = await FakeDialInMachine.connect({
+      url: `ws://127.0.0.1:${harness.replicas[0].port}/device/connect`,
+      credential,
+      hello: { revision: "r1", outsideSandbox: false, perOperationHosts: false },
+    });
+    cleanups.push(() => machine.close());
+    const execs: unknown[] = [];
+    machine.onRequest((body) => {
+      const { op, args } = body as { op: string; args: { command?: string } };
+      if (op !== "exec") return op === "resume" ? "resumed" : null;
+      execs.push(args);
+      return {
+        exitCode: 56,
+        stdout: "",
+        stderr: "curl: (56) CONNECT tunnel failed, response 403\n",
+        truncated: false,
+        network: { blocked: [{ host: "files.example.com", port: 443, layer: "device" }] },
+      };
+    });
+
+    const agent = await call(0, "POST", `/api/v1/orgs/${orgId}/agents`, {
+      definition: {
+        name: "Coder",
+        instructions: "Use the device.",
+        model: { provider: "model-fake", model: "fake-1" },
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
+      },
+      visibility: "org",
+    });
+    expect(agent.status, JSON.stringify(agent.json)).toBe(201);
+    const agentId = (agent.json.agent as { id: string }).id;
+    const conv = await call(0, "POST", `/api/v1/orgs/${orgId}/conversations`, { agentId });
+    const conversationId = (conv.json.conversation as { id: string }).id;
+    await db
+      .updateTable("conversations")
+      .set({ device_id: deviceId })
+      .where("id", "=", conversationId)
+      .execute();
+    const bash = { command: "curl files.example.com", description: "Fetch" };
+    const posted = await call(
+      1,
+      "POST",
+      `/api/v1/orgs/${orgId}/conversations/${conversationId}/messages`,
+      { text: `tool:Bash:${JSON.stringify(bash)}` },
+    );
+    expect(posted.status).toBe(202);
+
+    const evs = await waitFor(
+      async () => {
+        const e = await eventsOf(db, conversationId);
+        return e.some((x) => x.type === "run_finished" || x.type === "run_failed") ? e : null;
+      },
+      60_000,
+      "run finished",
+    );
+    // the host is not asked about: a per-call grant cannot reach it on this device, so the model
+    // is told to have it added to the device's network list
+    expect(
+      await db
+        .selectFrom("approvals")
+        .select("id")
+        .where("conversation_id", "=", conversationId)
+        .where("kind", "=", "network")
+        .execute(),
+    ).toEqual([]);
+    const result = evs.find((e) => e.type === "tool_result");
+    expect(result?.type === "tool_result" && result.payload.content).toContain(
+      unavailableHostNote(
+        "files.example.com",
+        "a host cannot be granted per call on this device; add files.example.com to the device's network list",
+      ),
+    );
+    expect(evs.filter((e) => e.type === "network_blocked")).toHaveLength(1);
+    expect(execs).toHaveLength(1);
+  });
 });
