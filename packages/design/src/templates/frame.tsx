@@ -1,9 +1,98 @@
-import type { ReactNode } from "react";
+import {
+  createContext,
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import { SkeletonBox, SkeletonText, StatCards, Tabs, type TabsProps } from "../display/index";
 import { Grid, Stack, Text } from "../layout/index";
-import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
+import {
+  type ActionRowProps,
+  PageHeader,
+  type PageHeaderProps,
+  useCompactScroll,
+  useRegisterScrolledTitle,
+} from "../shell/index";
 import { hasTabRow } from "../shell/page-header";
 import { type Column, DataTable } from "../table/index";
+
+/** What a template's root gives the head inside it: where to report the title element. */
+type TemplateScroll = { setTitle(el: HTMLElement | null): void; barHidden: boolean };
+const TemplateScrollContext = createContext<TemplateScroll | null>(null);
+
+/** The element whose bottom is "the large title": the title line (or a title-less head's row). */
+const TITLE = ".cb-pageheader-titleline, .cb-pageheader-titleless";
+
+/**
+ * The root of a pushed template (`.cb-template`) and its compact one scroller (responsive system
+ * spec §2.6, D7; design spec §6.65). Below 600 the root itself is the page's one scroller, head
+ * included (`data-scroll="one"`; templates.css), starting under the shell's floating row
+ * (shell.css pulls it up by `--cb-float-row` and pads it back down, so the head's title sits below
+ * the row and slides under it). Medium and expanded keep the fixed head over the body's scroller.
+ *
+ * The frame watches its scroll with {@link useCompactScroll}: the title element is the one the
+ * {@link TemplateHead} inside it reports (the title line), and the frame registers `titleAway`
+ * with the shell (`useRegisterScrolledTitle`), so the floating row draws the title once it has
+ * scrolled under the row. `bar` is the quick-return bar (ListPage: the search and scopes block, a
+ * direct child of the scroller), kept by the template in state through a callback ref; while it
+ * is scrolled away the root carries `data-bar-hidden="true"` (for the bar's CSS) and
+ * {@link useTemplateScroll} reports `barHidden` to the frame's children. `rootRef` reaches the
+ * root element too (FormPage focuses its first field through it). Other `data-*` attributes go on
+ * the root as they are.
+ */
+export function TemplateFrame({
+  template,
+  bar,
+  rootRef,
+  children,
+  ...data
+}: {
+  template: string;
+  bar?: HTMLElement | null;
+  rootRef?: Ref<HTMLDivElement>;
+  children?: ReactNode;
+} & { [attr: `data-${string}`]: string | undefined }) {
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [title, setTitle] = useState<HTMLElement | null>(null);
+  const { titleAway, barHidden } = useCompactScroll(scroller, title, bar);
+  useRegisterScrolledTitle(titleAway);
+  const ref = useCallback(
+    (el: HTMLDivElement | null) => {
+      setScroller(el);
+      if (typeof rootRef === "function") rootRef(el);
+      else if (rootRef) rootRef.current = el;
+    },
+    [rootRef],
+  );
+  const scroll = useMemo(() => ({ setTitle, barHidden }), [barHidden]);
+  return (
+    <TemplateScrollContext.Provider value={scroll}>
+      <div
+        ref={ref}
+        className="cb-template"
+        data-template={template}
+        data-width="content"
+        data-scroll="one"
+        data-bar-hidden={barHidden ? "true" : undefined}
+        {...data}
+      >
+        {children}
+      </div>
+    </TemplateScrollContext.Provider>
+  );
+}
+
+/**
+ * Inside a {@link TemplateFrame}: whether its quick-return bar is scrolled away (always false
+ * outside compact, without a bar, or outside a frame).
+ */
+export function useTemplateScroll(): { barHidden: boolean } {
+  return { barHidden: useContext(TemplateScrollContext)?.barHidden ?? false };
+}
 
 /**
  * The fixed header area of a template (spec §4.2): the PageHeader in a frame of the one content
@@ -14,6 +103,11 @@ import { type Column, DataTable } from "../table/index";
  * box, `layout.head-tabs` below what is above it). Every template draws its head here, so one rule
  * sets the head rhythm (spec §4.2): the body starts `layout.head-content` below the head, or
  * `layout.head-tabs-content` below a tab row (the header's `tabs` / `search`, or `tabs`).
+ *
+ * Inside a {@link TemplateFrame} the head reports its title line as the frame's title element, so
+ * on compact it scrolls with the content and the frame knows when the title is away (D7). The
+ * in-page `tabs` take the segmented look (2–3 tabs below 600, §6.4); `primaryForm` is where the
+ * template puts the header's primary on compact (D2; never a page's choice).
  */
 export function TemplateHead({
   header,
@@ -21,9 +115,12 @@ export function TemplateHead({
   tabs,
   band = false,
   loadingStats = 0,
+  primaryForm,
   children,
 }: {
   header: PageHeaderProps;
+  /** The compact form of the header's primary (`PageHeader.primaryForm`), set by the template. */
+  primaryForm?: PageHeaderProps["primaryForm"];
   statsInHead?: boolean;
   /** A detail page's in-page tabs (DetailPage `tabs`): the head's tab row. */
   tabs?: TabsProps;
@@ -43,8 +140,18 @@ export function TemplateHead({
   const metrics = statsInHead ? (header.metrics ?? []) : [];
   const slots = statsInHead && metrics.length === 0 ? loadingStats : 0;
   const withTabs = tabs !== undefined || hasTabRow(header);
+  const scroll = useContext(TemplateScrollContext);
+  const [head, setHead] = useState<HTMLDivElement | null>(null);
+  // Every render: a loading head that turns loaded (or title-less) may swap the title's row; the
+  // frame's state ignores a report of the same element.
+  const setTitle = scroll?.setTitle;
+  useLayoutEffect(() => {
+    setTitle?.(head?.querySelector<HTMLElement>(TITLE) ?? head);
+  });
+  useLayoutEffect(() => () => setTitle?.(null), [setTitle]);
   return (
     <div
+      ref={setHead}
       className="cb-template-head"
       data-part="template-head"
       data-tabs={withTabs ? "true" : undefined}
@@ -55,12 +162,12 @@ export function TemplateHead({
         data-width="content"
         data-stats={statsInHead ? "head" : undefined}
       >
-        <PageHeader {...header} />
+        <PageHeader {...header} {...(primaryForm ? { primaryForm } : {})} />
         {metrics.length > 0 ? <StatCards metrics={metrics} /> : <LoadingStats count={slots} />}
         {children}
         {tabs !== undefined ? (
           <div className="cb-pageheader-tabs" data-part="page-tabs">
-            <Tabs {...tabs} />
+            <Tabs {...tabs} look="segmented-compact" />
           </div>
         ) : null}
       </div>

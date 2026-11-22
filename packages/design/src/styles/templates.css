@@ -53,6 +53,43 @@
   flex-direction: column;
   min-height: 0;
 }
+/* One scroller on compact (responsive system spec §2.6, D7; design spec §6.65): the template root
+   (TemplateFrame, `data-scroll="one"`) is the page's only scroller, head included, so the head
+   scrolls away with the content instead of keeping its height on screen. The body's boxes stop
+   filling and scrolling on their own: each is as high as its content. The settings sub-nav and the
+   ActionRow stay sticky inside it (their own rules); the shell pulls the root up under its floating
+   row (shell.css). Medium and expanded keep the fixed head over the body's scroller. */
+@media not all and (min-width: 600px) {
+  .cb-template[data-scroll="one"] {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  /* no scrollbar gutter on the head: it no longer lines up with a body scroller of its own */
+  .cb-template[data-scroll="one"] .cb-template-head {
+    scrollbar-gutter: auto;
+  }
+  .cb-template[data-scroll="one"] .cb-body-content,
+  .cb-template[data-scroll="one"] .cb-body[data-layout="centered"] {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+  .cb-template[data-scroll="one"] .cb-body-row,
+  .cb-template[data-scroll="one"] .cb-body > .cb-body-content,
+  .cb-template[data-scroll="one"] .cb-body-main > .cb-body-content {
+    flex: none;
+  }
+  .cb-template[data-scroll="one"] .cb-body[data-layout="centered"] > .cb-body-content {
+    height: auto;
+  }
+  /* The settings sub-nav stays sticky (decision 2026-11-09), right under the floating row: the
+     scroller starts at the row's top (`--cb-float-row`; 0 outside a compact shell). */
+  .cb-settings-nav[data-sticky="true"] {
+    position: sticky;
+    top: var(--cb-float-row, 0px);
+  }
+}
 
 /*
  * FormSection (spec §5.3): the title column (240) and the field card (panel, radius md, space.4
@@ -204,7 +241,8 @@
 /* Phones: the sub-nav is one row of items that scrolls sideways (no group labels), above the
    content, so the content starts on the first screen. It sticks to the top of the scrolling body
    (right under the fixed head) on the page ground with its hairline, so the sections stay one tap
-   away and the row never slides out half clipped (maintainer decision 2026-11-09). */
+   away and the row never slides out half clipped (maintainer decision 2026-11-09). In the one
+   scroller of the compact page it sticks under the floating row (below). */
 @media (max-width: 599px) {
   .cb-settings-nav {
     position: sticky;
@@ -421,6 +459,33 @@
 }
 .cb-status-page-action {
   margin-top: 12px;
+}
+/* Actions stacked full width on compact (responsive system spec §3.5): a StatusPage's actions one
+   under another, an OnboardingPage step's action on its own line under the step's text. */
+@media not all and (min-width: 600px) {
+  .cb-status-page-action[data-stack="true"] {
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+    gap: var(--cb-space-2);
+  }
+  .cb-status-page-action[data-stack="true"] > :not(.cb-btn) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cb-space-2);
+  }
+  [data-stack="true"] .cb-checklist-item[data-state="todo"] {
+    flex-wrap: wrap;
+  }
+  [data-stack="true"] .cb-checklist-item[data-state="todo"] > .cb-checklist-end {
+    flex-basis: 100%;
+  }
+  [data-stack="true"] .cb-checklist-end > * {
+    flex: 1;
+  }
+  [data-stack="true"] .cb-btn {
+    width: 100%;
+  }
 }
 
 /* 「请在电脑上管理」: the notice of a desktop-only page, shown on touch in the page's place */
@@ -1395,8 +1460,9 @@ a.cb-object-name:hover {
 }
 
 /* ActionRow, compact form (spec §4.4, maintainer decision 2026-11-20): sticky above the bottom inset
-   and the keyboard; the primary fills the bottom line, the other actions share the line above it in
-   equal widths, every button 40 high, the row growing to fit. */
+   and the keyboard (at the bottom of the template's one scroller, D7); the primary fills the bottom
+   line, the other actions share the line above it in equal widths, every button 40 high, the row
+   growing to fit. */
 @media (max-width: 599px) {
   .cb-actionrow {
     position: sticky;

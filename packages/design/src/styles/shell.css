@@ -193,6 +193,18 @@
   .cb-shell[data-surface="pushed"] .cb-shell-main {
     padding-top: var(--cb-float-row);
   }
+  /* A template's one scroller (responsive system spec §2.6, D7; design spec §6.65) starts under the
+     floating row, at the row's top, and leaves the row's height above its first block: the head
+     scrolls under the row's strip and `useCompactScroll` measures the title against the row. A
+     template nested in another one scrolls with it. */
+  .cb-shell[data-surface="pushed"] .cb-template[data-scroll="one"] {
+    margin-top: calc(-1 * var(--cb-float-row));
+    padding-top: var(--cb-float-row);
+  }
+  .cb-shell[data-surface="pushed"] .cb-template .cb-template[data-scroll="one"] {
+    margin-top: 0;
+    padding-top: 0;
+  }
   /* The compact class has no StatusBar: the account sheet carries the system status (spec §4). */
   .cb-shell-column > .cb-statusbar {
     display: none;
@@ -225,33 +237,37 @@
    (view-transition.ts): the top page leaves over the page underneath. A pop the browser animated
    itself (a back gesture) or a view transition animates carries no data-nav (app-shell.tsx), so
    it never slides again once the transition ends, and reduced motion has none. */
-@media (not (min-width: 600px)) and (prefers-reduced-motion: no-preference) {
-  .cb-shell-main[data-nav="push-0"] {
-    animation: cb-push-0 var(--cb-motion-push) var(--cb-ease-push);
-  }
-  .cb-shell-main[data-nav="push-1"] {
-    animation: cb-push-1 var(--cb-motion-push) var(--cb-ease-push);
-  }
-  .cb-shell-main[data-nav="pop-0"] {
-    animation: cb-pop-0 var(--cb-motion-push) var(--cb-ease-push);
-  }
-  .cb-shell-main[data-nav="pop-1"] {
-    animation: cb-pop-1 var(--cb-motion-push) var(--cb-ease-push);
-  }
-  :root[data-cb-transition] .cb-shell-main[data-nav] {
-    animation: none;
-  }
-  /* No plus-lighter blend: it would add the opaque top page to the one under it (a washed-out
-     flash). Current Chromium sets it only through its own animation, which ours replaces; an
-     engine that sets it as a static style would still blend. */
-  :root[data-cb-transition="pop"]::view-transition-old(root) {
-    z-index: 1;
-    mix-blend-mode: normal;
-    animation: cb-pop-out var(--cb-motion-push) var(--cb-ease-push) both;
-  }
-  :root[data-cb-transition="pop"]::view-transition-new(root) {
-    mix-blend-mode: normal;
-    animation: cb-pop-under var(--cb-motion-push) var(--cb-ease-push) both;
+/* Nested rather than `(not (min-width: 600px)) and (…)`: that range syntax is Media Queries 4
+   (Safari 16.4+); a nested compact query works in every engine we support. */
+@media (prefers-reduced-motion: no-preference) {
+  @media not all and (min-width: 600px) {
+    .cb-shell-main[data-nav="push-0"] {
+      animation: cb-push-0 var(--cb-motion-push) var(--cb-ease-push);
+    }
+    .cb-shell-main[data-nav="push-1"] {
+      animation: cb-push-1 var(--cb-motion-push) var(--cb-ease-push);
+    }
+    .cb-shell-main[data-nav="pop-0"] {
+      animation: cb-pop-0 var(--cb-motion-push) var(--cb-ease-push);
+    }
+    .cb-shell-main[data-nav="pop-1"] {
+      animation: cb-pop-1 var(--cb-motion-push) var(--cb-ease-push);
+    }
+    :root[data-cb-transition] .cb-shell-main[data-nav] {
+      animation: none;
+    }
+    /* No plus-lighter blend: it would add the opaque top page to the one under it (a washed-out
+       flash). Current Chromium sets it only through its own animation, which ours replaces; an
+       engine that sets it as a static style would still blend. */
+    :root[data-cb-transition="pop"]::view-transition-old(root) {
+      z-index: 1;
+      mix-blend-mode: normal;
+      animation: cb-pop-out var(--cb-motion-push) var(--cb-ease-push) both;
+    }
+    :root[data-cb-transition="pop"]::view-transition-new(root) {
+      mix-blend-mode: normal;
+      animation: cb-pop-under var(--cb-motion-push) var(--cb-ease-push) both;
+    }
   }
 }
 @media (prefers-reduced-motion: reduce) {

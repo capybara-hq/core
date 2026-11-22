@@ -12,6 +12,7 @@ import {
   LoadingShapedCards,
   loadingActionRow,
   loadingHeader,
+  TemplateFrame,
   TemplateHead,
 } from "./frame";
 
@@ -95,6 +96,7 @@ export function SettingsPage({
       ref={navRef}
       className="cb-settings-nav"
       data-part="settings-nav"
+      data-sticky="true"
       {...edgeAttrs(edges)}
       aria-label={t("settings.nav")}
     >
@@ -122,7 +124,7 @@ export function SettingsPage({
   );
   const page = (
     <>
-      <TemplateHead header={loading ? loadingHeader(head) : head} />
+      <TemplateHead header={loading ? loadingHeader(head) : head} primaryForm="block" />
       <Body layout="single" width="content">
         <div className="cb-settings-grid">
           {rail}
@@ -130,6 +132,7 @@ export function SettingsPage({
             {tabs !== undefined && tabs.length > 0 ? (
               <div className="cb-settings-tabs" data-part="settings-tabs">
                 <Tabs
+                  look="segmented-compact"
                   label={t("shell.pageViews")}
                   items={tabs.map(({ onSelect: _o, ...it }) => it)}
                   value={activeTab ?? tabs[0]?.id ?? ""}
@@ -170,12 +173,12 @@ export function SettingsPage({
     </>
   );
   return (
-    <div className="cb-template" data-template="SettingsPage" data-width="content">
+    <TemplateFrame template="SettingsPage">
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
       ) : (
         page
       )}
-    </div>
+    </TemplateFrame>
   );
 }

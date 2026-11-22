@@ -8,6 +8,7 @@ import {
   LoadingCards,
   LoadingFacts,
   loadingHeader,
+  TemplateFrame,
   TemplateHead,
 } from "./frame";
 
@@ -101,6 +102,7 @@ export function DetailPage({
         <TemplateHead
           header={loading ? loadingHeader(header) : header}
           statsInHead
+          primaryForm="block"
           loadingStats={loading?.stats ?? 0}
           {...(band ? { band: true } : tabs !== undefined ? { tabs } : {})}
         />
@@ -115,7 +117,7 @@ export function DetailPage({
           ) : null}
           {tabs !== undefined ? (
             <div className="cb-pageheader-tabs cb-detail-band-tabs" data-part="page-tabs">
-              <Tabs {...tabs} />
+              <Tabs {...tabs} look="segmented-compact" />
             </div>
           ) : null}
           <div className="cb-detail-band-content">{content}</div>
@@ -131,12 +133,12 @@ export function DetailPage({
     </Body>
   );
   return (
-    <div className="cb-template" data-template="DetailPage" data-width="content">
+    <TemplateFrame template="DetailPage">
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{body}</SkeletonGroup>
       ) : (
         body
       )}
-    </div>
+    </TemplateFrame>
   );
 }
