@@ -210,18 +210,22 @@ recreated at the first operation, which ends whatever it still ran.
 
 Before upgrading, run `capybara-device service uninstall` with the **old** version. The old login
 service (launchd `top.capybara.device`, systemd `capybara-device.service`) is never touched by
-this version, and once you have logged in again it would run a plain `start` that picks your
-single connection: it would serve next to the new per-connection service or exit 1 with "already
-running" and be restarted in a loop. After upgrading, run `capybara-device login --url <url>`
-(choose the existing device to keep it) and then `capybara-device service install -c <deviceId>`.
+this version: when it runs its plain `start` (no `--connection`), this version says so in the
+service log, exits 0 and stays stopped, so the service manager does not restart it. Remove it by
+hand if you upgraded first (`launchctl bootout gui/$(id -u)/top.capybara.device` and delete
+`~/Library/LaunchAgents/top.capybara.device.plist`; or `systemctl --user disable --now
+capybara-device.service` and delete its unit file). After upgrading, run
+`capybara-device login --url <url>` (choose the existing device to keep it) and then
+`capybara-device service install -c <deviceId>`.
 The old flat `credential.json` and `policy.json` stay where they are and can be deleted by hand.
 
 ## Control socket
 
 While `start` serves, it answers on `<machineDir>/run/<16 hex>.sock` (the first 16 hex digits of the
 SHA-256 of the device id; `capybara-device status` prints the path): a unix socket of mode 0600,
-made only when the connection directory belongs to you and has no group or other permissions
-(mode 0700). A socket left by a program that crashed (nothing listens on it) is
+made only when the machine directory and its `run/` directory belong to you and have no group or
+other permissions (mode 0700), and `run/` is not a symlink. A socket left by a program that crashed
+(nothing listens on it) is
 replaced; one another running program answers on is never touched. When the path is longer than
 103 bytes (a long `XDG_CONFIG_HOME`) or the directory is open to other users, the program keeps
 serving without the socket and says why once.

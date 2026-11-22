@@ -28,10 +28,12 @@ import {
 import { logout } from "../src/commands/logout.js";
 import { connectionDir, listConnections } from "../src/connections.js";
 
+import { ownerReportPath } from "../src/owner-report.js";
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
 import {
   type Credential,
+  credentialPath,
   MISSING_POLICY_OWNER_CEILING,
   policyLockPath,
   policyPath,
@@ -246,6 +248,49 @@ describe("login --json", () => {
       replaced: true,
     });
     expect(readdirSync(join(machineDir(), "connections"))).toEqual(["dev-a"]);
+  });
+
+  it.each([
+    ["another deployment", { url: "localhost" }],
+    ["another organization", { orgId: "org-2" }],
+  ])("the same device id from %s is refused and nothing is written", async (_, change) => {
+    const dir = join(home, "x");
+    tokenAnswers = [grantedAs({ deviceId: "dev-a" })];
+    expect(await run(["login", "--url", base, "--dir", dir])).toBe(0);
+    const conn = stateDir("dev-a");
+    writePolicy(conn, { ...readPolicy(conn), keepAwake: "connected" });
+    writeFileSync(ownerReportPath(conn), '{"seq":7}\n', { mode: 0o600 });
+    const before = [credentialPath(conn), policyPath(conn), ownerReportPath(conn)].map((f) =>
+      readFileSync(f, "utf8"),
+    );
+    out.length = 0;
+    const url = "url" in change ? base.replace("127.0.0.1", "localhost") : base;
+    tokenAnswers = [
+      grantedAs({
+        deviceId: "dev-a",
+        credential: "cap_dev_other",
+        ...("orgId" in change && change),
+      }),
+    ];
+    expect(await run(["login", "--url", url, "--json", "--dir", join(home, "y")])).toBe(1);
+    const last = events().at(-1);
+    expect(last).toMatchObject({ event: "error", code: "device_id_in_use" });
+    expect(String(last?.message)).toContain("capybara-device logout -c dev-a");
+    expect(
+      [credentialPath(conn), policyPath(conn), ownerReportPath(conn)].map((f) =>
+        readFileSync(f, "utf8"),
+      ),
+    ).toEqual(before);
+    expect(existsSync(join(home, "y"))).toBe(false);
+  });
+
+  it("an empty device or org name is not stored", async () => {
+    tokenAnswers = [grantedAs({ deviceName: "", orgName: "" })];
+    expect(await run(["login", "--url", base])).toBe(0);
+    const cred = readCredential(stateDir());
+    expect(cred).toBeDefined();
+    expect(cred).not.toHaveProperty("deviceName");
+    expect(cred).not.toHaveProperty("orgName");
   });
 
   it.each(["../evil", "a/b", "x".repeat(129)])(

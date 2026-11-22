@@ -229,3 +229,85 @@ describe("keep-awake and ceiling per connection", () => {
     expect(JSON.parse(out[0] ?? "")).toHaveProperty("revision");
   });
 });
+
+describe("the old login service's plain start", () => {
+  const started: string[] = [];
+  const createStaged = (() => {
+    started.push("staged");
+    throw new Error("must not start");
+  }) as never;
+
+  it("launchd top.capybara.device: exits 0, names the upgrade step, starts nothing", async () => {
+    started.length = 0;
+    connect("dev-a");
+    const env = { XDG_CONFIG_HOME: join(home, "cfg"), XPC_SERVICE_NAME: "top.capybara.device" };
+    expect(await run(["start"], { env, platform: "darwin", createStaged })).toBe(0);
+    const text = err.join("\n");
+    expect(text).toContain("service uninstall");
+    expect(text).toContain("service install -c <deviceId>");
+    expect(started).toEqual([]);
+  });
+
+  it("systemd capybara-device.service (INVOCATION_ID, no -c): exits 0 and starts nothing", async () => {
+    started.length = 0;
+    connect("dev-a");
+    const env = { XDG_CONFIG_HOME: join(home, "cfg"), INVOCATION_ID: "abc" };
+    expect(await run(["start"], { env, createStaged })).toBe(0);
+    expect(err.join("\n")).toContain("capybara-device.service");
+    expect(started).toEqual([]);
+  });
+
+  it("a per-connection service (-c) and a person's plain start are not affected", async () => {
+    connect("dev-a", "x.test");
+    connect("dev-b", "y.test");
+    const env = { XDG_CONFIG_HOME: join(home, "cfg"), INVOCATION_ID: "abc" };
+    expect(await run(["start", "-c", "dev-zzz"], { env })).toBe(0);
+    expect(err.join("\n")).toContain("No connection dev-zzz on this machine");
+    expect(err.join("\n")).not.toContain("old layout");
+    err.length = 0;
+    // a person, two connections: still the ambiguous choice, exit 1
+    expect(await run(["start"])).toBe(1);
+    expect(err.join("\n")).not.toContain("old layout");
+  });
+});
+
+describe("service uninstall|status of a connection whose credential is gone", () => {
+  const installUnit = (deviceId: string) => {
+    const unitDir = join(home, ".config", "systemd", "user");
+    mkdirSync(join(unitDir, "default.target.wants"), { recursive: true });
+    writeFileSync(join(unitDir, "capybara-device@.service"), "unit");
+    writeFileSync(join(unitDir, "default.target.wants", `capybara-device@${deviceId}.service`), "");
+  };
+  const ran: string[] = [];
+  const runSystem = ((cmd: string, args: string[]) => {
+    ran.push([cmd, ...args].join(" "));
+    if (args.includes("is-active")) throw new Error("inactive");
+    return "";
+  }) as never;
+
+  it("accepts the exact id of an installed service and removes it", async () => {
+    ran.length = 0;
+    connect("dev-b", "y.test");
+    const gone = connect("dev-c", "z.test");
+    rmSync(credentialPath(gone));
+    installUnit("dev-c");
+    // installed, not loaded: status reports it (exit 1 only because it is not running)
+    await run(["service", "status", "-c", "dev-c"], { runSystem });
+    expect(out.join("\n")).toContain("installed but not loaded");
+    expect(err.join("\n")).not.toContain("No connection matches");
+    expect(
+      await run(["service", "uninstall", "-c", "dev-c"], { runSystem, sleep: async () => {} }),
+    ).toBe(0);
+    expect(ran.some((c) => c.includes("disable") && c.includes("capybara-device@dev-c"))).toBe(
+      true,
+    );
+  });
+
+  it("still refuses install, and an id without an installed service", async () => {
+    connect("dev-b", "y.test");
+    installUnit("dev-c");
+    expect(await run(["service", "install", "-c", "dev-c"], { runSystem })).toBe(1);
+    expect(await run(["service", "uninstall", "-c", "dev-d"], { runSystem })).toBe(1);
+    expect(err.join("\n")).toContain("No connection matches");
+  });
+});

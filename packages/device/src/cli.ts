@@ -21,7 +21,8 @@ import {
 import { stamped } from "./log-timestamp.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
-import type { RunSystem } from "./service/manager.js";
+import { hasLoginService } from "./service/installed.js";
+import { type RunSystem, startedByOldLoginService } from "./service/manager.js";
 import type { StagedDevice } from "./staged-device.js";
 import { type Credential, stateDir } from "./state.js";
 
@@ -104,8 +105,36 @@ function logoutTarget(
 }
 
 /**
+ * The connection `service uninstall|status` act on: a readable one, or an exact device id whose
+ * service is installed although its connection no longer resolves (its credential is gone), so
+ * that service can always be removed.
+ */
+function serviceTarget(
+  selector: string | undefined,
+  action: string,
+  machineDir: string,
+  home: string,
+  platform: NodeJS.Platform,
+): { stateDir: string; deviceId: string } {
+  try {
+    return resolveConnection(selector, machineDir);
+  } catch (e) {
+    if (
+      (action === "uninstall" || action === "status") &&
+      selector !== undefined &&
+      DEVICE_ID_PATTERN.test(selector) &&
+      hasLoginService(home, platform, selector)
+    ) {
+      return { stateDir: connectionDir(machineDir, selector), deviceId: selector };
+    }
+    throw e;
+  }
+}
+
+/**
  * Whether `start` failing to resolve means there is no connection to serve (it exits 0), not a
- * connection that is broken or an ambiguous choice (those exit 1 with their message).
+ * connection that is broken or an ambiguous choice (those exit 1 with their message). Throws when
+ * the connections cannot be scanned.
  */
 function isNothingToStart(e: unknown, selector: string | undefined, machineDir: string): boolean {
   if (!(e instanceof ConnectionSelectError) || e.code === "ambiguous") return false;
@@ -114,6 +143,13 @@ function isNothingToStart(e: unknown, selector: string | undefined, machineDir: 
     ? broken.length === 0
     : !broken.some((u) => u.deviceId === selector);
 }
+
+/** What the old login service's plain `start` prints before it exits 0 and stays stopped. */
+export const OLD_LOGIN_SERVICE_MESSAGE =
+  "Started by the login service of the old layout (launchd top.capybara.device, systemd " +
+  "capybara-device.service); not starting. Remove it with capybara-device service uninstall " +
+  "from the old version (or delete its file by hand), then run capybara-device service install " +
+  "-c <deviceId>.";
 
 /** Runs one command line and returns the exit code. */
 export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
@@ -188,11 +224,25 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.ps && { ps: io.ps }),
       });
     case "start": {
+      // Every per-connection service passes --connection: a plain start by a service manager is
+      // the old login service. Exit 0 keeps it stopped (launchd SuccessfulExit false, systemd
+      // Restart=on-failure); it would otherwise serve or loop on "already running".
+      if (cmd.connection === undefined && startedByOldLoginService(io.env ?? process.env)) {
+        stamped(err)(OLD_LOGIN_SERVICE_MESSAGE);
+        return 0;
+      }
       let conn: ConnectionInfo;
       try {
         conn = resolveConnection(cmd.connection, machineDir);
       } catch (e) {
-        if (!isNothingToStart(e, cmd.connection, machineDir)) {
+        let nothing: boolean;
+        try {
+          nothing = isNothingToStart(e, cmd.connection, machineDir);
+        } catch (scan) {
+          err((scan as Error).message);
+          return 1;
+        }
+        if (!nothing) {
           err((e as Error).message);
           return 1;
         }
@@ -272,8 +322,13 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       });
     }
     case "service": {
-      const conn = connected();
-      if (conn === undefined) return 1;
+      let conn: { stateDir: string; deviceId: string };
+      try {
+        conn = serviceTarget(cmd.connection, cmd.action, machineDir, home, platform);
+      } catch (e) {
+        err((e as Error).message);
+        return 1;
+      }
       return serviceCommand(
         cmd.action,
         {

@@ -136,6 +136,27 @@ export function startedByServiceManager(
   pid: number = process.pid,
 ): boolean {
   if (env.XPC_SERVICE_NAME === launchdLabel(deviceId)) return true;
+  return startedBySystemd(env, pid);
+}
+
+/** The launchd label of the login service before the connection layout (one per machine). */
+export const OLD_LAUNCHD_LABEL = "top.capybara.device";
+
+/**
+ * Whether this process was started by the login service of the layout before connections: the
+ * launchd agent `top.capybara.device` or the systemd unit `capybara-device.service`. Both run a
+ * plain `start`; every per-connection service passes `--connection`, so a plain `start` started
+ * by systemd is the old unit. Never reads or changes the old agent or unit.
+ */
+export function startedByOldLoginService(
+  env: Record<string, string | undefined>,
+  pid: number = process.pid,
+): boolean {
+  return env.XPC_SERVICE_NAME === OLD_LAUNCHD_LABEL || startedBySystemd(env, pid);
+}
+
+/** Whether systemd started this process (see startedByServiceManager). */
+function startedBySystemd(env: Record<string, string | undefined>, pid: number): boolean {
   if ((env.INVOCATION_ID ?? "") === "") return false;
   return env.SYSTEMD_EXEC_PID === undefined || env.SYSTEMD_EXEC_PID === String(pid);
 }

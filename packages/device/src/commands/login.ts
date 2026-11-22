@@ -220,6 +220,11 @@ function ensurePrivateDir(d: string): string | undefined {
   return undefined;
 }
 
+/** A string with at least one character. */
+function nonEmpty(v: unknown): v is string {
+  return typeof v === "string" && v !== "";
+}
+
 /** "host · org · device (id)" of a served connection, or its id when it cannot be listed. */
 function servedLine(machineDir: string, deviceId: string): string {
   try {
@@ -341,6 +346,19 @@ export async function login(
         // A device this machine already serves: the kernel has just replaced its credential, so
         // the new one goes into the same connection, keeping its directory, mode and policy.
         const served = servedCredential(connDir, deviceId, err);
+        // Only the same device of the same deployment and org is replaced in place: another
+        // deployment (a restored dump, a moved or hostile one) handing out this id never takes
+        // over the connection, its directory, mode or owner ceiling.
+        if (served !== undefined && (served.url !== baseUrl || served.orgId !== granted.orgId)) {
+          return fail(
+            "device_id_in_use",
+            `This machine already has a connection with device id ${deviceId} to another ` +
+              `deployment or organization (${servedLine(deps.machineDir, deviceId)}); nothing ` +
+              "was stored. To replace it, log it out first: " +
+              `\`capybara-device logout -c ${deviceId}\`, then log in again.`,
+            1,
+          );
+        }
         const asked = cmd.dir === undefined ? undefined : resolve(cmd.dir);
         let dir: string;
         let mode: DeviceMode;
@@ -405,8 +423,9 @@ export async function login(
           mode,
           reconnectGraceSeconds: granted.reconnectGraceSeconds,
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
-          ...(typeof granted.deviceName === "string" && { deviceName: granted.deviceName }),
-          ...(typeof granted.orgName === "string" && { orgName: granted.orgName }),
+          // names only when they say something: an empty one shows as the id instead
+          ...(nonEmpty(granted.deviceName) && { deviceName: granted.deviceName }),
+          ...(nonEmpty(granted.orgName) && { orgName: granted.orgName }),
         });
         const replaced = served !== undefined;
         emit({ event: "done", deviceId, orgId: granted.orgId, dir, replaced });
