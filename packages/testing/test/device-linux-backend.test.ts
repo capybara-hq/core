@@ -71,7 +71,9 @@ function fixture(
   const net = device.networks as FixtureNetworks;
   const id = randomUUID().slice(0, 8);
   const root = `/workspace/project-${id}`;
-  const sibling = `/workspace/sibling-${id}`;
+  // outside the workspace reach (workspace, skills, tmp): restricted reads follow the reach, so
+  // a sibling inside it would be readable by design
+  const sibling = `/home/sandbox/sibling-${id}`;
   device.run(`mkdir ${root} ${sibling} && printf rc > /home/sandbox/.profile-${id}`);
   const inDevice = (key: string) => async () => {
     const value = (await inspect(device, {

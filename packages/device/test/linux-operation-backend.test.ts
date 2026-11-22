@@ -332,7 +332,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     await until(async () => (await alive([child])).length === 0);
   });
 
-  it("a restricted command reads the version manager files of its home, read only, never mise's config", async () => {
+  it("a restricted command reads the version manager files of a home outside the reach, read only, never mise's config there", async () => {
     const root = project("tool-homes");
     // the device process's own home, outside the workspace reach (the image's home is the
     // workspace itself, so a stand-in home keeps the tool homes the only grant there)
@@ -485,7 +485,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(text(near?.data ?? null)).toBe("beside");
     await expect(
       backend.operation(scope()).readFile(outside, { maxBytes: 10, signal }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ name: "SandboxScopeDeniedError" });
   });
 
   it("machine reach reads beside a denied path, never inside it", async () => {
