@@ -10,12 +10,20 @@ import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
+import {
+  type ConnectionInfo,
+  ConnectionSelectError,
+  connectionDir,
+  DEVICE_ID_PATTERN,
+  resolveConnection,
+  unreadableConnections,
+} from "./connections.js";
 import { stamped } from "./log-timestamp.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { RunSystem } from "./service/manager.js";
 import type { StagedDevice } from "./staged-device.js";
-import { type Credential, readCredential, stateDir } from "./state.js";
+import { type Credential, stateDir } from "./state.js";
 
 export interface CliEnv {
   env?: Record<string, string | undefined>;
@@ -75,6 +83,38 @@ function defaultCreateStaged(stateDir: string, home: string) {
   };
 }
 
+/** The connection `logout` removes: a readable one, or an unreadable one named by its device id. */
+function logoutTarget(
+  selector: string | undefined,
+  machineDir: string,
+): { stateDir: string; deviceId: string } {
+  try {
+    const c = resolveConnection(selector, machineDir);
+    return { stateDir: c.stateDir, deviceId: c.deviceId };
+  } catch (e) {
+    if (
+      selector !== undefined &&
+      DEVICE_ID_PATTERN.test(selector) &&
+      unreadableConnections(machineDir).some((u) => u.deviceId === selector)
+    ) {
+      return { stateDir: connectionDir(machineDir, selector), deviceId: selector };
+    }
+    throw e;
+  }
+}
+
+/**
+ * Whether `start` failing to resolve means there is no connection to serve (it exits 0), not a
+ * connection that is broken or an ambiguous choice (those exit 1 with their message).
+ */
+function isNothingToStart(e: unknown, selector: string | undefined, machineDir: string): boolean {
+  if (!(e instanceof ConnectionSelectError) || e.code === "ambiguous") return false;
+  const broken = unreadableConnections(machineDir);
+  return selector === undefined
+    ? broken.length === 0
+    : !broken.some((u) => u.deviceId === selector);
+}
+
 /** Runs one command line and returns the exit code. */
 export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
   const out = io.out ?? ((l: string) => console.log(l));
@@ -93,14 +133,24 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
     return 2;
   }
   const home = io.home ?? homedir();
-  const dir = stateDir(io.env ?? process.env, home);
+  const machineDir = stateDir(io.env ?? process.env, home);
+  /** The one connection the command runs against; prints why and gives none when it is not one. */
+  const connected = (): ConnectionInfo | undefined => {
+    if (cmd.command === "help" || cmd.command === "login") return undefined;
+    try {
+      return resolveConnection(cmd.connection, machineDir);
+    } catch (e) {
+      err((e as Error).message);
+      return undefined;
+    }
+  };
   switch (cmd.command) {
     case "help":
       out(USAGE);
       return 0;
     case "login":
       return login(cmd, {
-        machineDir: dir,
+        machineDir,
         home,
         platform,
         out,
@@ -110,21 +160,52 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.openBrowser && { openBrowser: io.openBrowser }),
         ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
       });
-    case "logout":
-      return logout(dir, {
+    case "logout": {
+      let conn: { stateDir: string; deviceId: string };
+      try {
+        conn = logoutTarget(cmd.connection, machineDir);
+      } catch (e) {
+        err((e as Error).message);
+        return 1;
+      }
+      return logout(conn, {
         out,
         err,
+        home,
+        platform,
+        ...(io.env && { env: io.env }),
+        ...(io.runSystem && { run: io.runSystem }),
+        ...(io.sleep && { sleep: io.sleep }),
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
       });
+    }
     case "status":
-      return status(dir, undefined, cmd.json, out, err, {
+      return status(machineDir, cmd.connection, cmd.json, out, err, {
         home,
         platform,
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
       });
-    case "start":
+    case "start": {
+      let conn: ConnectionInfo;
+      try {
+        conn = resolveConnection(cmd.connection, machineDir);
+      } catch (e) {
+        if (!isNothingToStart(e, cmd.connection, machineDir)) {
+          err((e as Error).message);
+          return 1;
+        }
+        // A logged-out connection's service stays stopped: exit 0 is not restarted by the
+        // service manager (launchd SuccessfulExit false, systemd Restart=on-failure).
+        stamped(err)(
+          cmd.connection === undefined
+            ? "Not logged in. Run capybara-device login --url <url> first."
+            : `No connection ${cmd.connection} on this machine; nothing to start.`,
+        );
+        return 0;
+      }
+      const dir = conn.stateDir;
       // The service log has no other clock: every line `start` writes carries a timestamp.
       return start({
         service: { home, platform },
@@ -136,14 +217,20 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
       });
-    case "stop":
+    }
+    case "stop": {
+      const dir = connected()?.stateDir;
+      if (dir === undefined) return 1;
       return stop(dir, out, err, {
         service: { home, platform },
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
         ...(io.runSystem && { run: io.runSystem }),
       });
-    case "drain":
+    }
+    case "drain": {
+      const dir = connected()?.stateDir;
+      if (dir === undefined) return 1;
       if (cmd.wait !== true) {
         return drain(dir, out, err, {
           ...(io.kill && { kill: io.kill }),
@@ -156,9 +243,15 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.sleep && { sleep: io.sleep }),
         ...(cmd.timeoutSeconds !== undefined && { timeoutMs: cmd.timeoutSeconds * 1000 }),
       });
-    case "policy":
+    }
+    case "policy": {
+      const dir = connected()?.stateDir;
+      if (dir === undefined) return 1;
       return policyCommand(cmd, { stateDir: dir, out, err });
-    case "ceiling":
+    }
+    case "ceiling": {
+      const dir = connected()?.stateDir;
+      if (dir === undefined) return 1;
       return ceilingCommand(cmd, {
         stateDir: dir,
         home,
@@ -167,31 +260,25 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
         ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
       });
-    case "keep-awake":
+    }
+    case "keep-awake": {
+      const dir = connected()?.stateDir;
+      if (dir === undefined) return 1;
       return keepAwakeCommand(cmd, {
         stateDir: dir,
         out,
         err,
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
       });
+    }
     case "service": {
-      // Interim (Task 9 resolves the connection): the current credential's device.
-      let deviceId: string | undefined;
-      try {
-        deviceId = readCredential(dir)?.deviceId;
-      } catch (e) {
-        err((e as Error).message);
-        return 1;
-      }
-      if (deviceId === undefined) {
-        err("Not logged in. Run capybara-device login --url <url> first.");
-        return 1;
-      }
+      const conn = connected();
+      if (conn === undefined) return 1;
       return serviceCommand(
         cmd.action,
         {
-          stateDir: dir,
-          deviceId,
+          stateDir: conn.stateDir,
+          deviceId: conn.deviceId,
           home,
           platform,
           env: io.env ?? process.env,

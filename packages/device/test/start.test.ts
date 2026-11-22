@@ -678,3 +678,68 @@ describe("start: keep-awake in the live status", () => {
     expect(await p).toBe(0);
   });
 });
+
+describe("start: two connections on one machine", () => {
+  it("two runners each hold their own keep-awake assertion, pid file and control socket", async () => {
+    const dirs = { a: connectionDir(m, "dev-a"), b: connectionDir(m, "dev-b") };
+    const runners = Object.entries(dirs).map(([key, d], i) => {
+      mkdirSync(d, { recursive: true, mode: 0o700 });
+      writeCredential(d, { ...cred, deviceId: `dev-${key}` });
+      writePolicy(d, DEFAULT_POLICY);
+      const running = new RunningOperations();
+      const spawned: string[][] = [];
+      const spawn = ((_c: string, args: string[]) => {
+        spawned.push(args);
+        return Object.assign(new EventEmitter(), { kill() {} });
+      }) as never;
+      const calls: string[] = [];
+      let finish!: (code: number) => void;
+      const conn: Connection = {
+        done: new Promise<number>((r) => {
+          finish = r;
+        }),
+        drain: () => {},
+        stop: () => finish(0),
+      };
+      const pid = 4300 + i;
+      const p = start({
+        stateDir: d,
+        out: () => {},
+        err: () => {},
+        proc: Object.assign(new EventEmitter(), { pid }) as never,
+        service: { home: m, platform: "darwin" },
+        createStaged: () =>
+          ({
+            ...stagedParts(calls),
+            owner: { running, store: undefined, log: new CommandLog(d) },
+          }) as unknown as StagedDevice,
+        connectStaged: () => {
+          calls.push("connectStaged");
+          return conn;
+        },
+        keepAwakeSpawn: spawn,
+        tickMs: 5,
+      });
+      return { d, running, spawned, calls, p, pid };
+    });
+    for (const r of runners) await vi.waitFor(() => expect(r.calls).toContain("connectStaged"));
+    for (const r of runners) {
+      expect(existsSync(pidPath(r.d))).toBe(true);
+      expect(await queryControl(r.d, "status")).toMatchObject({ pid: r.pid });
+    }
+    expect(controlSocketPath(dirs.a)).not.toBe(controlSocketPath(dirs.b));
+    // only the busy runner holds an assertion
+    runners[0]?.running.begin(
+      { tag: "t", conversationId: "c", accountId: "a", isolation: "full", startedAt: "x" },
+      "op1",
+    );
+    expect(await queryControl(dirs.a, "status")).toMatchObject({ keepAwake: { held: true } });
+    expect(await queryControl(dirs.b, "status")).toMatchObject({ keepAwake: { held: false } });
+    expect(runners[0]?.spawned).toEqual([["-i", "-w", "4300"]]);
+    expect(runners[1]?.spawned).toEqual([]);
+    for (const r of runners) {
+      expect(await queryControl(r.d, "stop")).toBeNull();
+      expect(await r.p).toBe(0);
+    }
+  });
+});

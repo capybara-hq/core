@@ -5,8 +5,10 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -19,7 +21,7 @@ import {
   networkLoginLine,
   OUTSIDE_SANDBOX_LOGIN_LINE,
   OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE,
-  OUTSIDE_SANDBOX_RISK_TEXT,
+  outsideSandboxRiskText,
   restrictedUnavailableLoginLine,
   SANDBOX_ONLY_LOGIN_LINE,
 } from "../src/commands/login.js";
@@ -246,15 +248,52 @@ describe("login --json", () => {
     expect(readdirSync(join(machineDir(), "connections"))).toEqual(["dev-a"]);
   });
 
-  it("a device id that is not a safe path segment is refused and nothing is written", async () => {
-    tokenAnswers = [grantedAs({ deviceId: "../evil" })];
+  it.each(["../evil", "a/b", "x".repeat(129)])(
+    "the device id %j is not a safe path segment: refused and nothing is written",
+    async (deviceId) => {
+      tokenAnswers = [grantedAs({ deviceId })];
+      expect(await run(["login", "--url", base, "--json"])).toBe(1);
+      expect(events().at(-1)).toMatchObject({ event: "error", code: "invalid_device_id" });
+      expect(existsSync(join(machineDir(), "evil"))).toBe(false);
+      expect(existsSync(join(home, "cfg", "evil"))).toBe(false);
+      expect(existsSync(join(machineDir(), "connections"))).toBe(false);
+      expect(existsSync(join(home, "capybara-device"))).toBe(false);
+      expect(out.join("\n")).not.toContain("cap_dev_secret");
+    },
+  );
+
+  it("a symlinked connections/ is refused before anything is created at its target", async () => {
+    const target = join(home, "elsewhere");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(machineDir(), { recursive: true, mode: 0o700 });
+    symlinkSync(target, join(machineDir(), "connections"));
+    tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--json"])).toBe(1);
-    expect(events().at(-1)).toMatchObject({ event: "error", code: "invalid_device_id" });
-    expect(existsSync(join(machineDir(), "evil"))).toBe(false);
-    expect(existsSync(join(home, "cfg", "evil"))).toBe(false);
-    expect(existsSync(join(machineDir(), "connections"))).toBe(false);
-    expect(existsSync(join(home, "capybara-device"))).toBe(false);
-    expect(out.join("\n")).not.toContain("cap_dev_secret");
+    expect(events().at(-1)).toMatchObject({ event: "error", code: "machine_dir_unusable" });
+    expect(readdirSync(target)).toEqual([]);
+  });
+
+  it("a symlinked credential.json is replaced, not followed", async () => {
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    const real = join(home, "real-credential.json");
+    writeCredential(home, { ...flatCredential(), credential: "cap_dev_old", dir: join(home, "w") });
+    renameSync(join(home, "credential.json"), real);
+    symlinkSync(real, credFile());
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(err.join("\n")).toContain("is a symlink");
+    // a new connection: the default directory, not the symlink target's
+    expect(readCredential(stateDir())?.dir).toBe(join(home, "capybara-device", "env-1"));
+  });
+
+  it("a relative and a normalised absolute --dir of the served connection say nothing", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    const dir = join(home, "capybara-device", "env-1");
+    out.length = 0;
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--dir", `${dir}/../env-1/`])).toBe(0);
+    expect(out.some((l) => l.includes("already serves"))).toBe(false);
   });
 
   it("an expired code ends with an error event", async () => {
@@ -337,7 +376,7 @@ describe("login", () => {
     expect(out).toContain(networkLoginLine("open"));
     expect(networkLoginLine("open")).toContain("--network allowlist");
     expect(out).not.toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
-    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
+    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
   it("an organization without outside-sandbox runs gets the same default", async () => {
@@ -346,7 +385,7 @@ describe("login", () => {
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(out).not.toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
-    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
+    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
   it("keeps an existing old auto policy (converted never wider) and says the org does not allow it", async () => {
@@ -363,7 +402,7 @@ describe("login", () => {
     });
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
     expect(out).toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
-    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
+    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
   it("keeps an existing old sandbox policy (converted never wider: the allowlist kept)", async () => {
@@ -378,7 +417,7 @@ describe("login", () => {
     expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(out).toContain(networkLoginLine("allowlist"));
     expect(networkLoginLine("allowlist")).toContain("capybara-device ceiling set --network open");
-    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
+    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
   it("prints the outside-sandbox line and the risk text once when the owner allows it", async () => {
@@ -386,7 +425,7 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
-    expect(out.filter((l) => l === OUTSIDE_SANDBOX_RISK_TEXT)).toHaveLength(1);
+    expect(out.filter((l) => l === outsideSandboxRiskText("env-1"))).toHaveLength(1);
     expect(out).not.toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(readPolicy(stateDir()).ownerCeiling.outsideSandbox).toBe(true);
     expect(helloOutside()).toBe(true);
@@ -448,7 +487,7 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
-    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
+    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
   it("points at the installed login service instead of start", async () => {
@@ -554,6 +593,7 @@ describe("login", () => {
     expect(readCredential(stateDir("dev-a"))?.credential).toBe("cap_dev_secret");
     for (const id of ["dev-a", "dev-b"]) {
       expect(statSync(stateDir(id)).mode & 0o777).toBe(0o700);
+      expect(statSync(join(stateDir(id), "credential.json")).mode & 0o777).toBe(0o600);
       expect(readPolicy(stateDir(id)).ownerCeiling).toEqual(NEW_INSTALL);
     }
     expect(JSON.parse(readFileSync(join(machineDir(), "machine.json"), "utf8"))).toEqual({
@@ -640,25 +680,26 @@ describe("status and logout", () => {
     expect(JSON.parse(out[0] ?? "")).toEqual({ connections: [], unreadable: [] });
   });
 
-  // logout still reads the flat layout until it takes --connection (Task 9)
-  it("status shows the login without the credential; logout removes it", async () => {
-    const connDir = connectionDir(machineDir(), "env-1");
+  const loggedIn = (deviceId = "env-1") => {
+    const connDir = connectionDir(machineDir(), deviceId);
     mkdirSync(connDir, { recursive: true, mode: 0o700 });
-    writeCredential(connDir, flatCredential());
+    writeCredential(connDir, { ...flatCredential(), deviceId });
+    return connDir;
+  };
+
+  it("status shows the login without the credential; logout removes it", async () => {
+    const connDir = loggedIn();
     expect(await run(["status", "--json"])).toBe(0);
     const shown = JSON.parse(out[0] ?? "");
     expect(shown.connections[0]).toMatchObject({ deviceId: "env-1" });
     expect(JSON.stringify(shown)).not.toContain("cap_dev_secret");
-    writeCredential(machineDir(), flatCredential());
-    const credFile = () => join(machineDir(), "credential.json");
     expect(await run(["logout"])).toBe(0);
-    expect(existsSync(credFile())).toBe(false);
+    expect(existsSync(join(connDir, "credential.json"))).toBe(false);
   });
 
   it("logout stops the running program before forgetting the credential", async () => {
-    writeCredential(machineDir(), flatCredential());
-    const credFile = () => join(machineDir(), "credential.json");
-    const state = join(home, "cfg", "capybara-device");
+    const state = loggedIn();
+    const credFile = () => join(state, "credential.json");
     writePid(state, 999_001);
     const alive = new Set([999_001]);
     const sent: Array<[number, string | number | undefined]> = [];
@@ -682,21 +723,25 @@ describe("status and logout", () => {
   });
 
   it("logout warns when the program does not exit in time, and still logs out", async () => {
-    writeCredential(machineDir(), flatCredential());
-    const credFile = () => join(machineDir(), "credential.json");
-    const state = join(home, "cfg", "capybara-device");
+    const state = loggedIn();
+    const credFile = () => join(state, "credential.json");
     writePid(state, 999_002);
     const kill = (() => true) as unknown as typeof process.kill;
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await logout(state, {
-      out: (l) => lines.push(l),
-      err: (l) => errs.push(l),
-      kill,
-      ps: ourPs,
-      sleep: async () => {},
-      waitMs: 300,
-    });
+    const code = await logout(
+      { stateDir: state, deviceId: "env-1" },
+      {
+        out: (l) => lines.push(l),
+        err: (l) => errs.push(l),
+        home,
+        platform: "linux",
+        kill,
+        ps: ourPs,
+        sleep: async () => {},
+        waitMs: 300,
+      },
+    );
     expect(code).toBe(0);
     expect(errs[0]).toContain("still running");
     expect(existsSync(credFile())).toBe(false);
@@ -712,7 +757,9 @@ describe("platform", () => {
     }
   });
 
-  it("policy set and show go through the state directory", async () => {
+  it("policy set and show go through the connection's directory", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
     expect(await run(["policy", "set", "allowedDomains", "a.com"])).toBe(0);
     out.length = 0;
     expect(await run(["policy"])).toBe(0);

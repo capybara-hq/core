@@ -18,6 +18,7 @@ import {
   SERVICE_POLL_MS,
   serviceCommand,
 } from "../src/commands/service.js";
+import { connectionDir } from "../src/connections.js";
 import { writePid } from "../src/pid.js";
 import { hasLoginService } from "../src/service/installed.js";
 import {
@@ -650,7 +651,7 @@ describe("service command", () => {
   it("is wired into the CLI", async () => {
     const out: string[] = [];
     const env = { PATH: "/bin", XDG_CONFIG_HOME: join(home, "xdg") };
-    writeCredential(join(home, "xdg", "capybara-device"), {
+    writeCredential(connectionDir(join(home, "xdg", "capybara-device"), id), {
       url: "http://x.test",
       connectUrl: "ws://x.test/device/connect",
       credential: "cap_dev_a",

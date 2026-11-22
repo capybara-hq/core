@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, statSync } from "node:fs";
 import { hostname } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   DEVICE_DIAL_IN_PROTOCOL,
   type DeviceNetworkMode,
@@ -22,6 +22,7 @@ import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
   type Credential,
+  credentialPath,
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_POLICY,
   defaultWorkDir,
@@ -39,14 +40,17 @@ import {
  * that allows it: an escalated call's trust model is its approval and the command review, not the
  * OS sandbox.
  */
-export const OUTSIDE_SANDBOX_RISK_TEXT =
-  "A call approved to run outside the sandbox runs on this computer as you: it can read and " +
-  "write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and " +
-  "any network. The person, the review model or a Full access auto-grant approves each such " +
-  "call, and the deployment reviews every command before it runs. Prompt injection can make an " +
-  "agent try to delete files or send your credentials away; the review blocks or asks about the " +
-  "dangerous ones. Such commands can also read this program's own credential: if you suspect " +
-  "misuse, log this connection out (capybara-device logout -c <deviceId>) and log in again.";
+export function outsideSandboxRiskText(deviceId: string): string {
+  return (
+    "A call approved to run outside the sandbox runs on this computer as you: it can read and " +
+    "write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and " +
+    "any network. The person, the review model or a Full access auto-grant approves each such " +
+    "call, and the deployment reviews every command before it runs. Prompt injection can make an " +
+    "agent try to delete files or send your credentials away; the review blocks or asks about the " +
+    "dangerous ones. Such commands can also read this program's own credential: if you suspect " +
+    `misuse, log this connection out (capybara-device logout -c ${deviceId}) and log in again.`
+  );
+}
 
 /** The OS sandbox check `login` uses (default: the runtime's, loaded on demand). */
 export type SandboxCheck = () => { ok: true } | { ok: false; reason: string };
@@ -177,6 +181,15 @@ function servedCredential(
 ): Credential | undefined {
   let cred: Credential | undefined;
   try {
+    // lstat like the listing: a symlinked credential.json is unusable, never followed
+    if (lstatSync(credentialPath(connDir)).isSymbolicLink()) {
+      err(`Replacing the unusable credential file: ${credentialPath(connDir)} is a symlink`);
+      return undefined;
+    }
+  } catch {
+    // missing (or not examinable): readCredential below reports what it finds
+  }
+  try {
     cred = readCredential(connDir);
   } catch (e) {
     err(`Replacing the unusable credential file: ${(e as Error).message}`);
@@ -188,6 +201,23 @@ function servedCredential(
     return undefined;
   }
   return cred;
+}
+
+/**
+ * Creates `d` (0700) unless it exists; returns why it cannot be used: not a directory, a symlink
+ * included. The check comes before the mkdir, so nothing is created through a symlink.
+ */
+function ensurePrivateDir(d: string): string | undefined {
+  try {
+    if (!lstatSync(d).isDirectory()) return `${d} is not a directory (a symlink?)`;
+    return undefined;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+      return `${d} cannot be examined (${(e as Error).message})`;
+    }
+  }
+  mkdirSync(d, { mode: 0o700 });
+  return undefined;
 }
 
 /** "host · org · device (id)" of a served connection, or its id when it cannot be listed. */
@@ -301,20 +331,17 @@ export async function login(
         }
         const deviceId = granted.deviceId;
         const connDir = connectionDir(deps.machineDir, deviceId);
-        mkdirSync(connectionsDir(deps.machineDir), { recursive: true, mode: 0o700 });
-        mkdirSync(connDir, { recursive: true, mode: 0o700 });
-        // the listing never follows a symlinked connections/ or connection: neither does login
+        // lstat before any mkdir: a symlinked connections/ or connection directory is refused
+        // (the listing never follows one) and nothing is created at its target
         for (const d of [connectionsDir(deps.machineDir), connDir]) {
-          if (!lstatSync(d).isDirectory()) {
-            return fail("machine_dir_unusable", `${d} is not a directory (a symlink?)`, 1);
-          }
+          const problem = ensurePrivateDir(d);
+          if (problem !== undefined) return fail("machine_dir_unusable", problem, 1);
         }
         chmodSync(connDir, 0o700);
         // A device this machine already serves: the kernel has just replaced its credential, so
         // the new one goes into the same connection, keeping its directory, mode and policy.
         const served = servedCredential(connDir, deviceId, err);
-        const asked =
-          cmd.dir === undefined ? undefined : isAbsolute(cmd.dir) ? cmd.dir : resolve(cmd.dir);
+        const asked = cmd.dir === undefined ? undefined : resolve(cmd.dir);
         let dir: string;
         let mode: DeviceMode;
         if (served !== undefined) {
@@ -394,7 +421,7 @@ export async function login(
           if (granted.outsideSandbox === "off") out(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
           // the risk text is shown once at login, and only when an escalated call runs as the
           // owner on this machine (outside Docker)
-          else if (mode !== "docker") out(OUTSIDE_SANDBOX_RISK_TEXT);
+          else if (mode !== "docker") out(outsideSandboxRiskText(deviceId));
         } else {
           out(SANDBOX_ONLY_LOGIN_LINE);
         }

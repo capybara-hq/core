@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
+import { connectionDir } from "../src/connections.js";
 import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
 
 let root: string;
 let state: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "device-ceiling-json-"));
-  state = join(root, "capybara-device");
+  state = connectionDir(join(root, "capybara-device"), "dev");
   writePolicy(state, {
     ...DEFAULT_POLICY,
     ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
@@ -30,17 +31,9 @@ const show = async () => {
 };
 
 describe("ceiling show --json", () => {
-  it("prints one object with the ceiling; revision is null while logged out", async () => {
-    const { code, out } = await show();
-    expect(code).toBe(0);
-    expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0] ?? "")).toEqual({
-      outsideSandbox: true,
-      network: "open",
-      allowedDomains: [],
-      projectReach: "os-user",
-      revision: null,
-    });
+  it("needs a connection: with none it exits 1", async () => {
+    const { code } = await show();
+    expect(code).toBe(1);
   });
 
   it("carries the strict revision when logged in", async () => {

@@ -15,10 +15,11 @@ import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk/
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.js";
 import { CommandLog } from "../src/command-log.js";
+import { connectionDir } from "../src/connections.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "../src/server-ops.js";
-import { DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, FULL_OWNER_CEILING, writeCredential, writePolicy } from "../src/state.js";
 
 // The local command log under protocol 3: one line per executed operation (its isolation and
 // actor) and an audit line per policy change, cloud or CLI. Best effort; never a secret.
@@ -291,9 +292,20 @@ describe("policy changes in the command log", () => {
   });
 
   it("audits a policy change and a ceiling change made with the CLI on the machine", async () => {
-    // the state directory is <XDG_CONFIG_HOME>/capybara-device
-    const state = join(dir, "capybara-device");
-    mkdirSync(state, { recursive: true });
+    // the state directory is <XDG_CONFIG_HOME>/capybara-device/connections/<deviceId>
+    const state = connectionDir(join(dir, "capybara-device"), "dev");
+    mkdirSync(state, { recursive: true, mode: 0o700 });
+    writeCredential(state, {
+      url: "https://x.test",
+      connectUrl: "wss://x.test",
+      credential: "c",
+      orgId: "o",
+      deviceId: "dev",
+      dir: join(dir, "work"),
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1048576,
+    });
     writePolicy(state, { ...DEFAULT_POLICY });
     const cli = (argv: string[]) =>
       runCli(argv, {

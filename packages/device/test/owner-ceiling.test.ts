@@ -17,6 +17,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { CEILING_WIDENING_TEXT } from "../src/commands/ceiling.js";
+import { connectionDir } from "../src/connections.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { readStrictOwnerCeiling } from "../src/exec/operation-types.js";
 import { issueOwnerReport, ownerReportPath } from "../src/owner-report.js";
@@ -27,6 +28,7 @@ import {
   DEFAULT_POLICY,
   FULL_OWNER_CEILING,
   policyPath,
+  readCredential,
   readPolicyFile,
   SANDBOX_OWNER_CEILING,
   writeCredential,
@@ -39,7 +41,7 @@ let root: string;
 let state: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "device-owner-ceiling-"));
-  state = join(root, "capybara-device");
+  state = connectionDir(join(root, "capybara-device"), "dev");
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -66,6 +68,19 @@ const cli = async (
   argv: string[],
   opts: { tty?: boolean; answer?: string; beforeWrite?: () => void } = {},
 ) => {
+  if (readCredential(state) === undefined) {
+    writeCredential(state, {
+      url: "https://x.test",
+      connectUrl: "wss://x.test",
+      credential: "c",
+      orgId: "o",
+      deviceId: "dev",
+      dir: join(root, "device"),
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1048576,
+    });
+  }
   const out: string[] = [];
   const err: string[] = [];
   const code = await runCli(argv, {
