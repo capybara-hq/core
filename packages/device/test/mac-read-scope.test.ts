@@ -6,9 +6,16 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { withCanonicalForms } from "../src/exec/operation-types.js";
+import { CONNECTIONS_DIR } from "../src/connections.js";
+import {
+  intersectOperation,
+  readStrictOwnerCeilingSync,
+  withCanonicalForms,
+} from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
 import { otherConnectionDenies } from "../src/exec/read-model.js";
+import { osRoots } from "../src/exec/shared.js";
+import { DEFAULT_POLICY, defaultWorkDir, stateDir, writePolicy } from "../src/state.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 const workspace = { runtimeHash: "", cleanup: async () => {} };
@@ -476,6 +483,106 @@ it.runIf(process.platform === "darwin")(
       expect(got, "the positive control").toContain("plain");
       expect(got).not.toContain("other-temp");
       expect(got).not.toContain("other-temp-listing");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  },
+);
+
+// End to end from the files on disk: the owner ceiling read from a temporary HOME and
+// XDG_CONFIG_HOME (readStrictOwnerCeilingSync), intersected into a grant (intersectOperation) and
+// run by the worker. A logged-out connection (its directory has no credential.json) keeps its
+// default working directory unreadable, and so does the default state path while
+// XDG_CONFIG_HOME puts the state root elsewhere.
+it.runIf(process.platform === "darwin")(
+  "machine reach cannot read a logged-out connection's working directory or the default state path",
+  async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-loggedout-")));
+    try {
+      const home = join(base, "home");
+      const env = { XDG_CONFIG_HOME: join(base, "xdg") };
+      const stateRoot = stateDir(env, home);
+      const own = join(stateRoot, CONNECTIONS_DIR, DEVICE_ID);
+      const outId = `out-${randomUUID()}`;
+      const device = join(base, "device");
+      const roots = osRoots(device);
+      for (const dir of [roots.workspace, roots.skills, roots.tmp])
+        await mkdir(dir, { recursive: true });
+      await mkdir(own, { recursive: true, mode: 0o700 });
+      await mkdir(join(stateRoot, CONNECTIONS_DIR, outId), { recursive: true, mode: 0o700 });
+      writePolicy(own, DEFAULT_POLICY);
+      const outWork = defaultWorkDir(outId, home);
+      await mkdir(outWork, { recursive: true });
+      await writeFile(join(outWork, "secret"), "logged-out connection");
+      const defaultState = join(home, ".config", "capybara-device");
+      await mkdir(defaultState, { recursive: true });
+      await writeFile(join(defaultState, "secret"), "default state");
+      await writeFile(join(base, "plain"), "plain");
+      parents.add(join(userTemp(), `capybara-op-${outId}`));
+
+      const ceiling = readStrictOwnerCeilingSync({
+        stateDir: own,
+        stateRoot,
+        deviceId: DEVICE_ID,
+        dir: device,
+        home,
+      });
+      expect(ceiling.projectReach).toBe("machine");
+      const grant = intersectOperation(
+        {
+          operationId: "read-scope",
+          admitBeforeMs: Date.now() + 60_000,
+          deviceId: DEVICE_ID,
+          rootConversationId: "root",
+          profileRevision: 0,
+          ceilingRevision: ceiling.revision,
+          profile: "approve-for-me",
+          actor: { accountId: "a", conversationId: "root" },
+          tag: "read-scope",
+          filesystem: {
+            kind: "scoped",
+            projectRoot: roots.workspace,
+            writeRoots: [roots.workspace],
+          },
+          network: { kind: "allowlist", hosts: [] },
+        },
+        ceiling,
+        { operationId: "read-scope", orgNetwork: { kind: "open-public", hosts: [] } },
+      );
+      expect(grant.full).toBe(false);
+      expect(grant.readRoots).toEqual(["/"]);
+      expect(grant.deniedReadRoots).toContain(outWork);
+      expect(grant.deniedReadRoots).toContain(defaultState);
+
+      const q = (s: string) => JSON.stringify(s);
+      const probe = (name: string, cmd: string) =>
+        `if ${cmd} >/dev/null 2>&1; then echo ${name} >> got; fi`;
+      const result = await restrictedExec(
+        [
+          probe("plain", `cat ${q(join(base, "plain"))}`),
+          probe("logged-out", `cat ${q(join(outWork, "secret"))}`),
+          probe("logged-out-listing", `ls ${q(outWork)}`),
+          probe("default-state", `cat ${q(join(defaultState, "secret"))}`),
+          "true",
+        ].join("; "),
+        undefined,
+        roots.workspace,
+        own,
+        {
+          grant: {
+            readRoots: [...grant.readRoots],
+            writeRoots: [...grant.writeRoots],
+            deniedReadRoots: [...grant.deniedReadRoots],
+          },
+        },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      const gotFile = join(roots.workspace, "got");
+      const got = existsSync(gotFile) ? readFileSync(gotFile, "utf8").trim().split("\n") : [];
+      expect(got, "the positive control").toContain("plain");
+      expect(got).not.toContain("logged-out");
+      expect(got).not.toContain("logged-out-listing");
+      expect(got).not.toContain("default-state");
     } finally {
       await rm(base, { recursive: true, force: true });
     }

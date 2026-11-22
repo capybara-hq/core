@@ -367,6 +367,26 @@ describe("policy command", () => {
     expect(existsSync(policyPath(dir))).toBe(false);
   });
 
+  it("add refuses a logged-out connection's default working directory and the default state path", async () => {
+    const outWork = join(home, "capybara-device", "out");
+    mkdirSync(outWork, { recursive: true });
+    mkdirSync(join(dir, "connections", "out"), { recursive: true }); // no credential.json
+    const defaultState = join(home, ".config", "capybara-device");
+    mkdirSync(defaultState, { recursive: true });
+    for (const loggedIn of [false, true]) {
+      if (loggedIn) {
+        login();
+        writePolicy(dir, DEFAULT_POLICY);
+      }
+      const other = await run(["add", "projectPaths", outWork]);
+      expect(other.code, `logged in: ${loggedIn}`).toBe(2);
+      expect(other.err).toMatch(/belongs to another connection/);
+      const state = await run(["add", "projectPaths", defaultState]);
+      expect(state.code, `logged in: ${loggedIn}`).toBe(2);
+      expect(state.err).toMatch(/holds secrets/);
+    }
+  });
+
   it("says project paths do not apply in Docker mode", async () => {
     login(join(base, "device"), "docker");
     writePolicy(dir, {

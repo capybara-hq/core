@@ -5,6 +5,7 @@ import type {
   DeviceProjectReach,
   DeviceProjectRefusal,
 } from "@capybara-hq/plugin-sdk/device-protocol";
+import { defaultWorkDir } from "../state.js";
 import { withCanonicalForms, within } from "./operation-types.js";
 
 /**
@@ -59,13 +60,19 @@ export function unreadableConnectionMessage(u: { deviceId: string; reason: strin
 
 /**
  * Every other connection's working directory (and, with `macTempBases`, its private temporary
- * parent), resolved. Connections this program cannot read are not here: the owner ceiling carries
- * them and refuses every sandboxed grant while one exists ({@link unreadableConnectionMessage}).
- * The program state root (every connection's state) is denied separately.
+ * parent), resolved; for each other connection directory without a credential (logged out), its
+ * default working directory under `home` and its private temporary parents. Connections this
+ * program cannot read are not here: the owner ceiling carries them and refuses every sandboxed
+ * grant while one exists ({@link unreadableConnectionMessage}). The program state root (every
+ * connection's state) is denied separately.
  */
 export function otherConnectionDenies(input: {
   ownDeviceId: string;
   connections: readonly { deviceId: string; workDir: string }[];
+  /** Ids of connection directories without a credential; needs {@link home}. */
+  credentialless?: readonly string[];
+  /** The home the default working directories of {@link credentialless} lie under. */
+  home?: string;
   /**
    * The bases of the macOS private temporary parents (the user temp dir and the process temp
    * dir the worker falls back to); adds join(base, privateTempParentName(id)) per other connection
@@ -83,6 +90,16 @@ export function otherConnectionDenies(input: {
           `with capybara-device logout -c ${id}`,
       );
     out.add(resolve(c.workDir));
+    for (const base of input.macTempBases ?? []) out.add(join(resolve(base), tempParentName(id)));
+  }
+  const credentialless = (input.credentialless ?? []).filter((id) => id !== input.ownDeviceId);
+  if (credentialless.length > 0 && (input.home === undefined || !isAbsolute(input.home)))
+    throw new SandboxScopeDeniedError(
+      "No absolute home to deny the working directories of logged-out connections under",
+    );
+  for (const raw of credentialless) {
+    const id = checkedDeviceId(raw);
+    out.add(resolve(defaultWorkDir(id, input.home as string)));
     for (const base of input.macTempBases ?? []) out.add(join(resolve(base), tempParentName(id)));
   }
   return [...out];

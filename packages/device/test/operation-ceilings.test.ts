@@ -40,6 +40,7 @@ afterEach(async () => {
 type Connections = {
   readable: { deviceId: string; workDir: string }[];
   unreadable: { deviceId: string; reason: string }[];
+  credentialless?: string[];
 };
 /**
  * A machine state root `<dir>/machine` holding this connection `a` (its state in
@@ -159,6 +160,35 @@ describe("project reach and other connections' directories", () => {
     const three = await f.read();
     expect(three.revision).not.toBe(two.revision);
     expect(three.revision).toBe(one.revision);
+  });
+  it("denies a logged-out connection's default working directory; the revision follows it", async () => {
+    const f = await fixture();
+    const s = scoped(f.roots, f.roots.workspace);
+    const one = await f.read();
+    const before = intersectOperation(s, one, open);
+    const outWork = join(f.dir, "home", "capybara-device", "out");
+    expect(before.deniedReadRoots).not.toContain(outWork);
+    f.connections.credentialless = ["out", "a"];
+    const two = await f.read();
+    expect(two.revision).not.toBe(one.revision);
+    const after = intersectOperation(s, two, open);
+    expect(grantStillHolds(before, after)).toBe(false);
+    expect(two.otherConnectionDenies).toContain(outWork);
+    expect(after.deniedReadRoots).toContain(outWork);
+    expect(after.deniedReadRoots).toContain(join(f.dir, "usertemp", privateTempParentName("out")));
+    // never this connection's own default working directory
+    expect(after.deniedReadRoots).not.toContain(join(f.dir, "home", "capybara-device", "a"));
+    expect(two.unreadableConnections).toEqual([]);
+  });
+  it("denies the default state path even when the state root lies elsewhere (XDG_CONFIG_HOME)", async () => {
+    const f = await fixture();
+    const c = await f.read();
+    const defaultState = join(f.dir, "home", ".config", "capybara-device");
+    expect(f.stateRoot).not.toBe(defaultState);
+    expect(c.secretAndStateDenies).toContain(defaultState);
+    expect(c.secretAndStateDenies).toContain(f.stateRoot);
+    const g = intersectOperation(scoped(f.roots, f.roots.workspace), c, open);
+    expect(g.deniedReadRoots).toContain(defaultState);
   });
   it("an unreadable other connection refuses every sandboxed grant, nothing else", async () => {
     const f = await fixture();

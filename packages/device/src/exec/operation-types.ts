@@ -3,6 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
+  DEVICE_DEFAULT_STATE_PATH,
   type SandboxLimits,
   type SandboxOperationScope,
   type SandboxRoots,
@@ -44,7 +45,10 @@ export interface DeviceOwnerCeiling {
   readonly projectReach: ProjectReach;
   /** Canonical (real path) forms of the policy's project paths that exist as directories. */
   readonly projectPaths: readonly string[];
-  /** Secret paths, this connection's state and the program state root, canonical forms included. */
+  /**
+   * Secret paths, this connection's state, the program state root and the default state path
+   * (`~/.config/capybara-device`), canonical forms included.
+   */
   readonly secretAndStateDenies: readonly string[];
   /**
    * Every other connection's working directory (and on macOS its private temporary parent),
@@ -108,6 +112,8 @@ export interface OwnerCeilingInput {
   connections?: () => {
     readable: readonly { deviceId: string; workDir: string }[];
     unreadable: readonly { deviceId: string; reason: string }[];
+    /** Ids of connection directories without a credential (logged out); default none. */
+    credentialless?: readonly string[];
   };
   /**
    * The macOS temp dirs that may hold a connection's private temporary parent; default on macOS
@@ -188,15 +194,20 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
       ),
   ].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
   const macTempBases = input.macTempBases ?? defaultMacTempBases();
+  const home = resolve(input.home ?? homedir());
   const otherDirs = otherConnectionDenies({
     ownDeviceId: input.deviceId,
     connections: others.filter((c) => isAbsolute(c.workDir)),
+    credentialless: connections.credentialless ?? [],
+    home,
     macTempBases,
   });
   const secretAndStateDenies = withCanonicalForms([
-    ...deniedSecretPaths(input.home ?? homedir()),
+    ...deniedSecretPaths(home),
     resolve(input.stateDir),
     stateRoot,
+    // the default state path too, whatever XDG_CONFIG_HOME this process resolved the root from
+    join(home, DEVICE_DEFAULT_STATE_PATH.slice(2)),
   ]);
   const otherDenies = withCanonicalForms(otherDirs);
   const projectPaths = canonicalProjectPaths(policy.projectPaths);

@@ -8,6 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
+import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
 import { resetOwnerReport } from "../owner-report.js";
@@ -62,6 +63,28 @@ export function networkLoginLine(network: DeviceNetworkMode): string {
         "closed); `capybara-device ceiling set --network allowlist` limits them to allowedDomains."
     : "Sandboxed commands reach only allowedDomains; open the network with " +
         "`capybara-device ceiling set --network open`.";
+}
+
+/**
+ * The project reach line `login` prints: the reach as `capybara-device ceiling show` names it,
+ * with what sandboxed work reads under it and how to change it.
+ */
+export function projectReachLoginLine(reach: ProjectReach, listed: number): string {
+  if (reach === "machine")
+    return (
+      "Project reach: machine (sandboxed work may read the whole machine except secrets, this " +
+      "program's state and other connections; `capybara-device ceiling set --project-reach " +
+      "workspace` narrows it)."
+    );
+  if (reach === "paths")
+    return (
+      `Project reach: paths (${listed} listed; sandboxed work reads them and the device's ` +
+      "workspace; `capybara-device policy add projectPaths <dir>` lists more)."
+    );
+  return (
+    "Project reach: workspace (sandboxed work reads only the device's workspace; " +
+    "`capybara-device ceiling set --project-reach paths|machine` widens it)."
+  );
 }
 
 /**
@@ -238,13 +261,16 @@ export async function login(
         // A new setup gets the default written before the credential makes the login final; the
         // printed lines follow the policy this machine actually has.
         let ceiling: OwnerCeilingPolicy = { ...DEFAULT_POLICY.ownerCeiling };
+        let listedProjectPaths = 0;
         try {
           persistDefaultPolicy(deps.stateDir);
         } catch (e) {
           err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
         }
         try {
-          ceiling = readPolicy(deps.stateDir).ownerCeiling;
+          const policy = readPolicy(deps.stateDir);
+          ceiling = policy.ownerCeiling;
+          listedProjectPaths = policy.projectPaths.length;
         } catch (e) {
           err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
         }
@@ -292,6 +318,7 @@ export async function login(
           out(SANDBOX_ONLY_LOGIN_LINE);
         }
         out(networkLoginLine(ceiling.network));
+        out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths));
         if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox));
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.

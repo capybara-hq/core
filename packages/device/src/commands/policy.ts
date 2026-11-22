@@ -1,6 +1,10 @@
 import { realpathSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
-import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { isAbsolute, join, resolve } from "node:path";
+import {
+  DEVICE_DEFAULT_STATE_PATH,
+  type SandboxRoots,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
 import { scanConnections } from "../connections.js";
@@ -108,6 +112,10 @@ function projectPaths(
   // other connections' directories. Either way an unreadable connection refuses (fail closed: its
   // directory cannot be kept out).
   let denies: { secretAndStateDenies: readonly string[]; otherConnectionDenies: readonly string[] };
+  // The device roots matter only under the paths and workspace reaches, never under the machine
+  // reach checked here. Logged in: the connection's own (its device directory). Logged out there is
+  // no device directory: roots inside the denied state directory, which could never widen.
+  let roots: Readonly<SandboxRoots>;
   const cred = readCredential(stateDir);
   if (cred !== undefined) {
     let ceiling: ReturnType<typeof readStrictOwnerCeilingSync>;
@@ -127,6 +135,7 @@ function projectPaths(
     const unreadable = ceiling.unreadableConnections[0];
     if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
     denies = ceiling;
+    roots = ceiling.roots;
   } else {
     let others: string[];
     try {
@@ -139,16 +148,27 @@ function projectPaths(
       ][0];
       if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
       // logged out, so every connection is another one
-      others = otherConnectionDenies({ ownDeviceId: "", connections: scan.readable });
+      others = otherConnectionDenies({
+        ownDeviceId: "",
+        connections: scan.readable,
+        credentialless: scan.credentialless,
+        home: resolve(home),
+      });
     } catch (e) {
       throw new Error(
         `Cannot check project paths against the connections: ${(e as Error).message}`,
       );
     }
     denies = {
-      secretAndStateDenies: [...deniedSecretPaths(home), stateDir, stateRoot],
+      secretAndStateDenies: [
+        ...deniedSecretPaths(home),
+        stateDir,
+        stateRoot,
+        join(home, DEVICE_DEFAULT_STATE_PATH.slice(2)),
+      ],
       otherConnectionDenies: others,
     };
+    roots = osRoots(resolve(stateDir));
   }
   const allDenies = withCanonicalForms(
     [...denies.secretAndStateDenies, ...denies.otherConnectionDenies].map((d) => resolve(d)),
@@ -170,11 +190,10 @@ function projectPaths(
         '"/" is not a project path: use capybara-device ceiling set --project-reach machine',
       );
     }
-    // the roots matter only under the paths and workspace reaches, never under machine
     const refusal = projectPathRefusal(real, {
       reach: "machine",
       projectPaths: [],
-      roots: osRoots(resolve(stateDir)),
+      roots,
       ...denies,
     });
     if (refusal === "denied") {

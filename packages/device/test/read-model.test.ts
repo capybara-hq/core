@@ -98,6 +98,45 @@ describe("otherConnectionDenies", () => {
     expect(privateTempParentName("b")).toBe("capybara-op-b");
   });
 
+  it("denies a logged-out connection's default working directory and temp parents, never its own", () => {
+    expect(
+      sorted(
+        otherConnectionDenies({
+          ownDeviceId: "a",
+          connections,
+          credentialless: ["a", "out"],
+          home: "/home/u",
+          macTempBases: ["/T"],
+        }),
+      ),
+    ).toEqual(
+      sorted([
+        "/home/u/capybara-device/b",
+        "/T/capybara-op-b",
+        "/home/u/capybara-device/out",
+        "/T/capybara-op-out",
+      ]),
+    );
+    // without an absolute home the default directory cannot be denied: fail closed
+    for (const home of [undefined, "rel/home"])
+      expect(() =>
+        otherConnectionDenies({
+          ownDeviceId: "a",
+          connections,
+          credentialless: ["out"],
+          ...(home === undefined ? {} : { home }),
+        }),
+      ).toThrow(/home/);
+    expect(() =>
+      otherConnectionDenies({
+        ownDeviceId: "a",
+        connections: [],
+        credentialless: [".."],
+        home: "/h",
+      }),
+    ).toThrow(/device id/i);
+  });
+
   it("names an unreadable connection, its reason and how to remove it", () => {
     const message = unreadableConnectionMessage({
       deviceId: "b",

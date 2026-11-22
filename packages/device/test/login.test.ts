@@ -19,6 +19,7 @@ import {
   OUTSIDE_SANDBOX_LOGIN_LINE,
   OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE,
   OUTSIDE_SANDBOX_RISK_TEXT,
+  projectReachLoginLine,
   restrictedUnavailableLoginLine,
   SANDBOX_ONLY_LOGIN_LINE,
 } from "../src/commands/login.js";
@@ -290,6 +291,11 @@ describe("login", () => {
     expect(SANDBOX_ONLY_LOGIN_LINE).toContain("capybara-device ceiling set --outside-sandbox on");
     expect(out).toContain(networkLoginLine("open"));
     expect(networkLoginLine("open")).toContain("--network allowlist");
+    // the new setup's machine reach, as `ceiling show` names it
+    expect(out.filter((l) => l.startsWith("Project reach: "))).toEqual([
+      projectReachLoginLine("machine", 0),
+    ]);
+    expect(projectReachLoginLine("machine", 0)).toMatch(/^Project reach: machine \(/);
     expect(out).not.toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
     expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
@@ -332,6 +338,26 @@ describe("login", () => {
     expect(out).toContain(networkLoginLine("allowlist"));
     expect(networkLoginLine("allowlist")).toContain("capybara-device ceiling set --network open");
     expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
+  });
+
+  it("prints the project reach of an existing policy", async () => {
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    const listed = mkdtempSync(join(tmpdir(), "login-project-"));
+    try {
+      const existing = {
+        version: 4,
+        ownerCeiling: { ...SANDBOX_ONLY, projectReach: "paths" },
+        projectPaths: [listed],
+      };
+      writeFileSync(policyPath(stateDir()), `${JSON.stringify(existing)}\n`, { mode: 0o600 });
+      tokenAnswers = [granted];
+      expect(await run(["login", "--url", base])).toBe(0);
+      expect(out).toContain(projectReachLoginLine("paths", 1));
+      expect(projectReachLoginLine("paths", 1)).toMatch(/^Project reach: paths \(1 listed;/);
+      expect(projectReachLoginLine("workspace", 0)).toMatch(/^Project reach: workspace \(/);
+    } finally {
+      rmSync(listed, { recursive: true, force: true });
+    }
   });
 
   it("prints the outside-sandbox line and the risk text once when the owner allows it", async () => {

@@ -88,6 +88,22 @@ describe("listConnections", () => {
     const scan = scanConnections(m);
     expect(scan.readable.map((c) => c.deviceId)).toEqual(["a"]);
     expect(scan.unreadable.map((u) => u.deviceId)).toEqual(["b"]);
+    expect(scan.credentialless).toEqual(["empty"]);
+  });
+
+  it("lists logged-out connection directories (no credential.json) by id, never links or bad names", () => {
+    writeCredential(conn("a"), cred("a"));
+    mkdirSync(conn("z-out"), { recursive: true });
+    mkdirSync(conn("b-out"), { recursive: true });
+    writeFileSync(join(conn("b-out"), "policy.json"), "{}");
+    mkdirSync(join(m, "elsewhere"));
+    symlinkSync(join(m, "elsewhere"), conn("link-out"));
+    mkdirSync(conn("bad name"), { recursive: true });
+    writeFileSync(conn("file-out"), "not a directory");
+    const scan = scanConnections(m);
+    expect(scan.credentialless).toEqual(["b-out", "z-out"]);
+    expect(listConnections(m).map((c) => c.deviceId)).toEqual(["a"]);
+    expect(unreadableConnections(m)).toEqual([]);
   });
 
   // root may search any directory: the locked directory is then readable
@@ -108,7 +124,7 @@ describe("listConnections", () => {
   );
 
   it("only a missing connections directory means no connections; other errors throw", () => {
-    expect(scanConnections(m)).toEqual({ readable: [], unreadable: [] });
+    expect(scanConnections(m)).toEqual({ readable: [], unreadable: [], credentialless: [] });
     writeFileSync(join(m, CONNECTIONS_DIR), "not a directory");
     expect(() => scanConnections(m)).toThrow(/ENOTDIR/);
     expect(() => listConnections(m)).toThrow(/ENOTDIR/);

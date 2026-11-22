@@ -65,15 +65,18 @@ export interface UnreadableConnection {
 /**
  * Every connection of this machine, each credential read once: readable ones sorted by host, then
  * deviceName, then deviceId; unreadable ones (credential.json present but not readable or
- * invalid) sorted by deviceId. Skips non-directories, symlinks, names failing
- * {@link DEVICE_ID_PATTERN} and directories without credential.json.
+ * invalid) sorted by deviceId. Skips non-directories, symlinks and names failing
+ * {@link DEVICE_ID_PATTERN}; directories without credential.json (logged out: their policy, logs
+ * and default working directory may remain) are listed by id in `credentialless`, sorted.
  */
 export function scanConnections(machineDir: string = stateDir()): {
   readable: ConnectionInfo[];
   unreadable: UnreadableConnection[];
+  credentialless: string[];
 } {
   const readable: ConnectionInfo[] = [];
   const unreadable: UnreadableConnection[] = [];
+  const credentialless: string[] = [];
   for (const id of connectionIds(machineDir)) {
     const dir = join(connectionsDir(machineDir), id);
     try {
@@ -82,11 +85,17 @@ export function scanConnections(machineDir: string = stateDir()): {
       try {
         statSync(credentialPath(dir));
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          credentialless.push(id);
+          continue;
+        }
         throw e;
       }
       const c = readCredential(dir);
-      if (c === undefined) continue; // removed in between
+      if (c === undefined) {
+        credentialless.push(id); // removed in between
+        continue;
+      }
       readable.push({
         deviceId: id,
         orgId: c.orgId,
@@ -107,7 +116,8 @@ export function scanConnections(machineDir: string = stateDir()): {
     (a, b) => cmp(a.host, b.host) || cmp(a.deviceName, b.deviceName) || cmp(a.deviceId, b.deviceId),
   );
   unreadable.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
-  return { readable, unreadable };
+  credentialless.sort((a, b) => a.localeCompare(b));
+  return { readable, unreadable, credentialless };
 }
 
 /** The readable connections of {@link scanConnections}. */

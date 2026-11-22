@@ -10,3 +10,7 @@ Upgrading: a version 3 `policy.json` is refused when the program starts. Run
 `capybara-device ceiling set ...` once: it rewrites the file from the closed policy (workspace
 reach, allowlist network, nothing outside the sandbox, keep-awake off) and prints what it reset.
 Allowed domains, credentials, resource limits and keep-awake must be set again.
+
+Sandboxed work also never reads the default state path `~/.config/capybara-device` (when
+`XDG_CONFIG_HOME` moves the state elsewhere) or the default working directory of a logged-out
+connection; `login` prints the project reach.
