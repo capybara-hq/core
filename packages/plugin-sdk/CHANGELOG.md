@@ -1,5 +1,18 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.56
+
+### Minor Changes
+
+- 9318195: `ctx.dialIn.capacity(deviceId)`: the negotiated `maxFrameBytes` of the machine's current
+  connection (the value the kernel sent in `ready`: the smaller of the machine's announced cap and
+  `devices.dialIn.maxFrameBytes`), or null when no machine holds the device. Read from the holder's
+  Redis record under its lease, so any replica answers; only for the calling provider's own devices.
+- d5d295f: `DialInHandler` callbacks name the machine and the connection: `onHello`, `onFrame` and `onClose`
+  get a last argument `DialInConnectionInfo` (`{ machineId, connectionId }`): the authenticated
+  machine's id and the connection id the kernel sends in `ready`. A `replaced` close carries the old
+  machine's id, so a provider can tell a replaced machine from its successor.
+
 ## 0.1.0-rc.55
 
 ### Patch Changes
