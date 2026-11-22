@@ -17,7 +17,7 @@ Playwright (`apps/web/visual`), oxc-based checks in `tools/checks`.
 
 **Spec:** `docs/superpowers/specs/2026-11-22-responsive-system-design.md` (decisions D1–D10, §9).
 Phase 0b implements the companion `docs/superpowers/specs/2026-11-22-mobile-interaction-model-design.md`
-(its §12; open until its questions Q1–Q16 are answered).
+(its §12; decisions D1–D16 there, §13).
 Read it before any task; section numbers below (§2.1 …) are that spec's.
 
 ## Decisions (maintainer 2026-11-22)
@@ -29,6 +29,30 @@ Read it before any task; section numbers below (§2.1 …) are that spec's.
 - **P3** An action sheet that holds a link stays the web sheet (links stay links: open in a new
   window, copy the address); a native shell's `menu@1` is used only for sheets without links.
 - **P4** The responsive baselines are three widths (390 touch, 768, 1440) × two themes.
+
+## Status after the merges of 2026-11-22 (read first)
+
+Merged since this plan was written: #570, #572 (compact title bar, no path row), #575 (mobile sizes
+under compact or touch), #579, #587 and #593 (back animation), #591 (bottom sheet look, design spec
+§6.59), #596 (compact drawer, `ConversationList` §6.60, minimal `ActionSheet` / `actionSheetItems`
+/ `useLongPress` §6.61, the list FAB as a CSS variant of the head's primary §6.62, `ScopeChips` +
+`ListPage.scope` §6.63). Consequences:
+
+- The **[sizes]** and **[title-bar]** dependencies are satisfied; those markers no longer block.
+- **T0.3** becomes *absorb and verify*: `ActionSheet`, `actionSheetItems`, `useLongPress` exist;
+  the task adds what is missing (the `ObjectActions` export, the native `menu@1` form for sheets
+  without links per P3, the listed tests that do not exist yet) and changes nothing that works.
+- **T0.12 is dropped**: the FAB is the head's primary restyled by CSS (§6.62, one DOM; `ListFab`
+  was dropped in #596). T0.11's `primaryForm="fab"` means "the template's `data-fab` CSS form".
+- **T0.7** keeps only the segmented look of the head tabs; the chips half is done by `ScopeChips`,
+  so `chipsCompact` is dropped (and with it from P2's template-only props).
+- **T0.13** absorbs `ListPage.scope` (exists) and builds the rest: the compact bar, quick return,
+  the one scroller, field filters in the Filter sheet. It no longer depends on T0.12.
+- **T0.5** writes the remaining spec text; new design spec sections start at §6.64 (§6.59–§6.63
+  are taken by the merged work).
+- **T0b.3** generalises `ConversationList`'s infinite end (§6.60) instead of starting fresh;
+  **T0b.6** and **T0b.8** no longer wait on branches. Phase 1's conversations page task (T1.6) is
+  done by #596 and dropped.
 
 ## Global Constraints
 
@@ -82,17 +106,17 @@ Read it before any task; section numbers below (§2.1 …) are that spec's.
 |---|---|---|---|---|---|
 | T0.1 inventory script | — | `tools/checks/src/template-inventory.ts`, test | normal | 1 | batch |
 | T0.2 `ClassForms` | — | `design/src/shell/class-forms.tsx`, `styles/class-forms.css`, `test/width.ts` | **judgment** | 1 | most capable, alone |
-| T0.3 `ActionSheet` + `useLongPress` | — | `design/src/overlays/action-sheet.tsx`, `long-press.ts`, `overlays.css` (new block at end) | **judgment** | 1 | most capable, alone |
+| T0.3 `ActionSheet` + `useLongPress` (absorb/verify #596) | — | `design/src/overlays/action-sheet.tsx`, `long-press.ts`, `overlays.css` (new block at end) | **judgment** | 1 | most capable, alone |
 | T0.4 guards | — | `tools/checks/src/web-ui.ts`, `design-dual-render.ts`, fixtures, README | normal | 1 | batch |
 | T0.5 spec text | — | `docs/design/spec.md`, mobile layout spec, `AGENTS.md` | normal | 1 | batch |
 | T0.6 shell: actions, scrolled title, scroller hook | T0.2 [title-bar] | `shell-page.tsx`, `app-shell.tsx`, `floating-bar.tsx`, `shell/compact-scroll.ts`, `shell.css` | **judgment** | 2 | most capable, alone |
 | T0.7 Tabs segmented + chips looks | — [sizes] | `display/tabs.tsx`, `display.css` | normal | 2 | batch |
 | T0.8 CardGrid compact rows | T0.2, T0.3 [sizes] | `display/card-grid.tsx`, `card-grid.css` | **judgment** | 2 | most capable, alone |
 | T0.10 DataTable row mapping | T0.2, T0.3 [sizes] | `table/*`, `table.css` | normal | 2 | batch |
-| T0.12 `ListFab` | T0.2 [sizes] | `shell/list-fab.tsx`, `list-fab.css` | normal | 2 | batch |
+| ~~T0.12 `ListFab`~~ | dropped (#596: FAB is a CSS form of the head primary, §6.62) | — | — | — | — |
 | T0.9 ObjectRow compact rows | T0.2, T0.3 [sizes] | `display/object-list.tsx`, `templates.css` (object-row block), `touch.css` | normal | 3 | batch |
 | T0.11 PageHeader compact form | T0.2, T0.6, T0.7 [title-bar] | `shell/page-header.tsx`, `shell.css` (head block) | normal | 3 | batch |
-| T0.13 ListPage compact form | T0.6, T0.7, T0.8, T0.10, T0.11, T0.12 | `templates/list-page.tsx`, `list-page.css`, `shell/body.tsx` | **judgment** | 4 | most capable, alone |
+| T0.13 ListPage compact form | T0.6, T0.7, T0.8, T0.10, T0.11 | `templates/list-page.tsx`, `list-page.css`, `shell/body.tsx` | **judgment** | 4 | most capable, alone |
 | T0.14 other templates | T0.6, T0.11 | `templates/frame.tsx`, detail / settings / overview / trace / form / wizard / status / inbox templates, `templates.css` | normal | 4 | batch |
 | T0.15 catalog, fidelity, i18n, changesets | all above | `apps/web/src/dev/catalog/*`, `apps/web/visual/*`, `docs/design/reference/src/*`, `design/src/i18n.ts` | normal | 5 | batch |
 
@@ -156,7 +180,7 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 - [ ] **Step 4: Run** → PASS. Then `pnpm exec vitest run packages/design` → PASS.
 - [ ] **Step 5: Commit** `feat(design): ClassForms, one way to render a structure per size class (#568)`.
 
-### Task T0.3: `ActionSheet` and `useLongPress`
+### Task T0.3: `ActionSheet` and `useLongPress` (absorb and verify #596)
 
 **Files:**
 - Create: `packages/design/src/overlays/action-sheet.tsx`, `packages/design/src/overlays/long-press.ts`
@@ -208,8 +232,7 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
   `app/(app)/admin/connectors/templates/view.tsx`, `app/(app)/admin/plugins/market/view.tsx`
   (ratchet: a clean entry fails as stale).
 - `web-ui-template-only-props` (P2): in `apps/web/src`, passing `primaryForm` to `PageHeader`
-  (or inside a `header` object given to a template), `look` to `Tabs`, or `chipsCompact` to
-  `Segmented` / `Tabs` fails; only `packages/design` templates set them. Red fixture
+  (or inside a `header` object given to a template), or `look` to `Tabs` fails (`chipsCompact` was dropped: `ScopeChips`, §6.63); only `packages/design` templates set them. Red fixture
   `tools/checks/fixtures/web-ui/template-only-props.tsx`.
 - `design-dual-render`: in `packages/design/src`, a function calling `useHydrated` and one of
   `useSizeClass` / `useMediaQuery(SIZE_CLASS_QUERIES.*)` / `useTouch` outside
@@ -228,7 +251,7 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 **Files:**
 - Modify: `docs/design/spec.md` (§4.2 compact head, §5.1–5.12 "Classes" rows per spec §3, §6.4
   segmented look and chips, §6.6 row mapping, §6.17 compact rows, §6.34 compact rows and action
-  sheet, §6.56 scrolled title and `ShellPage.actions`, new §6.59 ListFab and §6.60 ActionSheet),
+  sheet, §6.56 scrolled title and `ShellPage.actions`, remaining new sections from §6.64; §6.59–§6.63 exist after #591 / #596),
   `docs/superpowers/specs/2026-11-19-mobile-layout-design.md` (§4.5 "Large list row" amended: the
   grouped list of a list page has one card and inset hairlines, maintainer decision 2026-11-22;
   §5.1 table rows), `AGENTS.md` (Web UI line: "pages never read the size class
@@ -372,7 +395,7 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
   pages; default `"head"`). Below 600, hydrated: no path nav; the title row carries the count
   (`count` ?? first tab's `count`, D10); secondary actions registered as `ShellPage.actions` when
   `useHasShell()` (else a head `more-horizontal` menu); `primaryForm="block"` draws the primary as
-  a full-width button under the title; `"fab"` draws none (ListPage draws `ListFab`); tabs get
+  a full-width button under the title; `"fab"` draws none (the head primary's `data-fab` CSS form, §6.62); tabs get
   `look="segmented-compact"`. Medium / expanded unchanged (D9).
 
 - [ ] **Step 1: Failing tests**: `no path at 390`; `count falls back to the first tab's count at
@@ -382,7 +405,10 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `feat(design): the compact page head (#568)`.
 
-### Task T0.12: ListFab [sizes]
+### Task T0.12: ListFab — DROPPED (#596 made the FAB a CSS form of the head primary, §6.62)
+
+Kept for the record; do not implement.
+
 
 **Files:**
 - Create: `packages/design/src/shell/list-fab.tsx`, `packages/design/src/styles/list-fab.css` (imported from `index.css`)
@@ -410,7 +436,7 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 
 **Interfaces:**
 - Consumes: T0.6 `useCompactScroll`, `useRegisterScrolledTitle`; T0.7; T0.8; T0.10; T0.11
-  `primaryForm`; T0.12 `ListFab`.
+  `primaryForm` (the `data-fab` CSS form, §6.62).
 - Produces: `ListPage` prop `scope?: { label: string; value: string; options: { value: string; label: string; count?: number }[]; onChange(v: string): void }` drawn as `Segmented` (wide, in the filters row) and `Segmented chipsCompact` (compact bar). Below 600: the template is the scroller; the compact bar (`data-part="list-compact-bar"`: search 44 filled, tabs, scope chips) is a direct child of the scroller, sticky with quick return from `barHidden`; `filters` (fields) move into the Filter bottom sheet; `ListFab` from the head's primary (none while the empty state carries it).
 
 - [ ] **Step 1: Failing tests** (`renderAtClass`): `at 390 no path, FAB with 新建智能体, segmented
@@ -464,19 +490,17 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 
 ## Phase 0b: interaction model (one PR, after phase 0's second PR)
 
-Spec: the interaction model doc §§ 2–9. Depends on the sheet standard
-(`fix/sheet-close-focus-ground`) and the drawer (`feat/compact-drawer-conversations`) being merged
-where noted. Waves: T0b.1, T0b.4, T0b.5, T0b.8, T0b.10 (wave 1, disjoint files); T0b.2, T0b.3, T0b.6, T0b.9
+Spec: the interaction model doc §§ 2–9. The sheet standard (#591) and the drawer (#596) are merged. Waves: T0b.1, T0b.4, T0b.5, T0b.8, T0b.10 (wave 1, disjoint files); T0b.2, T0b.3, T0b.6, T0b.9
 (wave 2); T0b.7, T0b.11 (wave 3). All `normal`; T0b.1 reviewed alone on
 the most capable model (focus, history and the typed-name confirmation in a sheet).
 
-### Task T0b.1: Dialog and DangerConfirm as sheets on compact [sheet standard]
+### Task T0b.1: Dialog and DangerConfirm as sheets on compact (on the §6.59 sheet)
 **Files:** `packages/design/src/overlays/dialog.tsx`, `overlays.css`; test `packages/design/test/dialog-compact.test.tsx`.
 - [ ] Tests at 390: `Dialog renders as a bottom sheet with the sheet head`; `DangerConfirm puts the
   fail button full width above 取消`; `typed name still required`; `back closes it`; at 1440 the
   centred dialog unchanged. Implement through `ClassForms`; commit `feat(design): dialogs are sheets on compact (#588)`.
 
-### Task T0b.2: Select as a picker sheet on compact [sheet standard]
+### Task T0b.2: Select as a picker sheet on compact (on the §6.59 sheet)
 **Files:** `packages/design/src/controls/select.tsx`, test `select-compact.test.tsx`.
 - [ ] Tests at 390: `opens a sheet with radio rows`; `over 10 options shows a search field`;
   `pick closes and calls onChange with selection haptic`. Implement; commit.
@@ -490,10 +514,10 @@ the most capable model (focus, history and the typed-name confirmation in a shee
 **Files:** `packages/design/src/overlays/toast.tsx`, `overlays.css`; test (CSS rule): the 599 block
 puts `.cb-toast-region` at `bottom: calc(var(--cb-inset-bottom) + …)` above `--cb-keyboard-inset`. Commit.
 
-### Task T0b.5: Scroll to input under the mobile query [#575]
+### Task T0b.5: Scroll to input under the mobile query
 **Files:** `packages/design/src/controls/inputs.tsx`, `shell/app-shell.tsx` (an inset-settled event); test `scroll-to-input.test.tsx`: `focus inside a scroller scrolls the field into view after the inset changes`; `no call on a fine pointer at 1440`. Commit.
 
-### Task T0b.6: Pull to refresh in a native shell [drawer branch; Q4]
+### Task T0b.6: Pull to refresh in a native shell (interaction D4)
 **Files:** `packages/design/src/display/pull-refresh.tsx` (`PullToRefresh({ onRefresh, children })`, active only with a native shell and touch), used by `InboxPage`, the conversations list, `NavDrawer` recents; test `pull-refresh.test.tsx`: `inactive in a browser`; `pull past threshold calls onRefresh with selection haptic`. Commit.
 
 ### Task T0b.7: Interaction guards
@@ -504,7 +528,7 @@ puts `.cb-toast-region` at `bottom: calc(var(--cb-inset-bottom) + …)` above `-
 **Files:** `packages/design/src/overlays/long-press.ts` (light on open), `pull-refresh.tsx` hook point; test in `haptics.test.tsx`. Commit.
 
 ### Task T0b.9: Duo: the primary goes to the strip pill
-**Files:** `packages/design/src/shell/shell-page.tsx` (`ShellPage.primary?: { label: string; icon?: IconName; href?: string; onSelect?(): void }`), `templates/list-page.tsx` (register instead of `ListFab` while `data-native-nav`), `shell/list-fab.tsx`; test `duo-primary.test.tsx`: `with nav@1 present ListFab is not mounted and the shell holds the primary`; `without nav@1 the FAB is back`.
+**Files:** `packages/design/src/shell/shell-page.tsx` (`ShellPage.primary?: { label: string; icon?: IconName; href?: string; onSelect?(): void }`), `templates/list-page.tsx` (register the primary with the shell and hide the `data-fab` form while `data-native-nav`); test `duo-primary.test.tsx`: `with nav@1 present the FAB form is hidden and the shell holds the primary`; `without nav@1 the FAB form is back`.
 - [ ] Implement; commit `feat(design): the list primary joins the Duo strip (#588)`.
 
 ### Task T0b.10: Duo: `nav@1` action and account
@@ -544,10 +568,7 @@ Waves: T1.1–T1.4 disjoint (wave 1), T1.5 after them (wave 2). All `normal`, on
   (`apps/web/test/actions-reachable.test.tsx`: render card + detail with fixtures, compare labels).
 - [ ] Add missing detail actions and the skills tables' `compact` roles; run, commit `feat(web): row actions are on the detail pages (#568)`.
 
-### Task T1.6: Conversations page: time groups and infinite scroll [drawer branch, T0b.3]
-**Files:** `apps/web/src/app/(app)/conversations/view.tsx`.
-- [ ] Test at 390: groups 今天 / 昨天 / 本周 / 更早; the next page loads from the sentinel; no
-  「加载更多」 row. Implement with `onLoadMore`; commit.
+### Task T1.6: Conversations page — DONE by #596 (time groups, infinite end); dropped.
 
 ### Task T1.5: Member visual pages
 **Files:** `apps/web/visual/responsive.spec.ts` (add agents, skills, connectors, schedules, conversations, inbox, account profile at 390 / 768 / 1440), `.changeset/responsive-system-phase1.md` (`@capybara-hq/capybara` patch).

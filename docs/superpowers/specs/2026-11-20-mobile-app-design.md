@@ -216,6 +216,11 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
 
 ### 6.1 Navigation: the strip on the iPhone Duo (decided 2026-11-21)
 
+> Amended 2026-11-22 (mobile interaction model `2026-11-22-mobile-interaction-model-design.md`
+> §10, decisions D10–D16): no native menu button at the top of the strip (D12); the strip holds the
+> account avatar under the status and a pill with the page's primary, 对话, 收件箱, 智能体, 定时任务
+> and 搜索; `nav@1` gains `action`, `account` and `side`.
+
 - **Where native navigation exists.** Only where the window has a strip: the iPhone Duo in the
   app, on the outer and the inner display. There the shell hosts the profile WebView in a
   `UITabBarController` whose vertical system tab bar the OS places in the strip (one shared
