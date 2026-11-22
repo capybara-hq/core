@@ -167,6 +167,23 @@ export interface ConversationAgent {
   profile: { avatar: AgentAvatarView; updatedAt: string };
 }
 
+/** A {@link ConversationAgent} from an agent row and its current definition's name. */
+function toConversationAgent(r: {
+  id: string;
+  name: string | null;
+  profile_avatar: unknown;
+  profile_updated_at: Date;
+}): ConversationAgent {
+  return {
+    id: r.id,
+    name: r.name ?? "",
+    profile: {
+      avatar: avatarView(r.profile_avatar as AgentAvatar),
+      updatedAt: r.profile_updated_at.toISOString(),
+    },
+  };
+}
+
 /** One row of {@link ConversationsService.listMine}: the conversation and its agent. */
 export interface ConversationListRow extends ConversationView {
   /** Null only when the agent stopped being visible between the page read and the agent read. */
@@ -1025,10 +1042,10 @@ export class ConversationsService {
       .selectFrom("conversations")
       .select(COLUMNS)
       .select(activitySql("conversations").as("activity"))
-      // counted before LIMIT applies (0 when the page is empty and no total was asked)
-      .select(
-        (opts.total === true ? sql<string>`count(*) OVER ()` : sql<string>`0`).as("total_count"),
-      )
+      // The total of every match, computed before LIMIT in this same statement. It costs
+      // O(matches) (the window reads every matching row instead of stopping at the page), which
+      // is why only the first page asks for it.
+      .$if(opts.total === true, (qb) => qb.select(sql<string>`count(*) OVER ()`.as("total_count")))
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
@@ -1104,19 +1121,7 @@ export class ConversationsService {
       .where("agents.deleted_at", "is", null)
       .where(visibleTo(viewerAccountId))
       .execute();
-    return new Map(
-      rows.map((r) => [
-        r.id,
-        {
-          id: r.id,
-          name: r.name ?? "",
-          profile: {
-            avatar: avatarView(r.profile_avatar as AgentAvatar),
-            updatedAt: r.profile_updated_at.toISOString(),
-          },
-        },
-      ]),
-    );
+    return new Map(rows.map((r) => [r.id, toConversationAgent(r)]));
   }
 
   /**
@@ -1222,14 +1227,12 @@ export class ConversationsService {
     for (const r of rows) {
       if (current?.agent.id !== r.agent_id) {
         current = {
-          agent: {
+          agent: toConversationAgent({
             id: r.agent_id,
-            name: r.agent_name ?? "",
-            profile: {
-              avatar: avatarView(r.profile_avatar),
-              updatedAt: r.profile_updated_at.toISOString(),
-            },
-          },
+            name: r.agent_name,
+            profile_avatar: r.profile_avatar,
+            profile_updated_at: r.profile_updated_at,
+          }),
           latestAt: r.latest_at,
           conversations: [],
           more: false,

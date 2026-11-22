@@ -151,7 +151,7 @@ describe("reads", () => {
       agentId: agent,
     });
     expect(out.conversations[0]?.agent?.id).toBe(agent);
-    expect(typeof out.conversations[0]?.agent?.name).toBe("string");
+    expect(out.conversations[0]?.agent?.name).toBe("Helper");
     expect(out.next).toBeNull();
     expect(out.total).toBe(1);
     const got = (await run("conversations.get", { conversationId: mine.id }, c)) as {
