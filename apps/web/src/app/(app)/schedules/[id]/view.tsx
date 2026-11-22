@@ -440,14 +440,17 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
       cell: (r) => skipOrMissing(r) ?? r.error?.split("\n")[0] ?? null,
     },
     {
-      // The wide table's one reason: the skip or refused-tools text, else the full error,
-      // expandable
+      // The wide table's one reason: the skip or refused-tools text, then the full error,
+      // expandable (a failed run can carry both)
       key: "detail",
       header: t("columns.detail"),
       compact: "hidden",
-      cell: (r) =>
-        skipOrMissing(r) ??
-        (r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null),
+      cell: (r) => (
+        <>
+          {skipOrMissing(r)}
+          {r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null}
+        </>
+      ),
     },
   ];
   return (

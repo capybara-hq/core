@@ -509,6 +509,7 @@ describe("/schedules/[id]", () => {
     expect(missing.getAllByRole("button", { name: E.form.addMissing })).toHaveLength(1);
     expect(missing.getByText(E.form.refusal.needs_role)).toBeTruthy();
     expect(missing.getByRole("link", { name: "Connect github" })).toBeTruthy();
+    // the compact DOM is also labelled as a table (both forms render): pick the real <table>
     const runs = within(document.querySelector("table") as HTMLElement);
     expect(runs.getByText(E.runs.skip.overlap)).toBeTruthy();
     expect(runs.getByText("Refused: Bash, mcp__crm__delete, connection:github")).toBeTruthy();
@@ -899,6 +900,25 @@ describe("/settings/schedules (org admins)", () => {
   });
 });
 
+describe("/schedules/[id] run reasons on a wide window", () => {
+  it("a failed run's detail cell holds the ErrorDetail, and the first error line is not drawn", async () => {
+    resetNavigation("/schedules/s1");
+    await renderRouteWithCache("/schedules/s1", {
+      ...common,
+      [`GET ${BASE}/s1`]: ok({ task: task() }),
+      [`GET ${BASE}/s1/grants`]: ok({ items: [] }),
+      [`GET ${BASE}/s1/runs`]: ok({
+        items: [run({ id: "r1", status: "failed", error: "boom\nstack line" })],
+      }),
+    });
+    await screen.findByText(E.runs.status.failed);
+    const wide = within(document.querySelector("table") as HTMLElement);
+    expect(wide.queryByRole("columnheader", { name: E.runs.columns.reason })).toBeNull();
+    expect(document.querySelectorAll("table [data-part=error-detail]")).toHaveLength(1);
+    expect(wide.queryByText("boom")).toBeNull();
+  });
+});
+
 describe("schedules at 390", () => {
   beforeEach(() => void stubWindowWidth(390));
 
@@ -940,6 +960,8 @@ describe("schedules at 390", () => {
     );
     expect(within(compact).getByText("boom")).toBeTruthy();
     expect(within(compact).queryByText(/stack line/)).toBeNull();
+    expect(compact.querySelector('[data-part="error-detail-summary"]')).toBeNull();
+    expect(compact.querySelector('[data-part="compact-subtitle"]')?.textContent).toBe("boom");
     expect(within(compact).getByText(E.runs.skip.overlap)).toBeTruthy();
   });
 });

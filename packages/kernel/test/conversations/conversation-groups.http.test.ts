@@ -476,7 +476,7 @@ describe("GET /conversations: each row's agent and the total", () => {
     for (const c of res.conversations) expect(c.agentId).toBe(c.agent?.id);
   });
 
-  it("no total unless asked: withTotal absent or false selects no count", async () => {
+  it("returns no total unless asked (withTotal absent or false)", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     await threeAgents(req, orgId);
