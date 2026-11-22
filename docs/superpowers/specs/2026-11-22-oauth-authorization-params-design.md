@@ -144,6 +144,8 @@ unchanged. Existing connectors whose manual `authorizationUrl` carries a reserve
 
 ## 6. Decisions for the reviewer
 
+**Accepted 2026-11-22 by the maintainer:** every recommendation below (D1–D6).
+
 - **D1 Where it lives.** Recommended: on the `oauth_code` auth preset (template author, or org
   admin through the custom install API), fixed per connector. Alternative: an org-editable connector
   setting, rejected: the parameters decide the grant the import reviewer approved.
