@@ -40,6 +40,8 @@ export const CEILING_PROMPT = "Widen this machine's owner ceiling? [y/N] ";
 
 export interface CeilingDeps {
   stateDir: string;
+  /** The program state root (every connection's state), as the CLI computes it. */
+  stateRoot: string;
   home: string;
   out: (line: string) => void;
   err: (line: string) => void;
@@ -49,12 +51,17 @@ export interface CeilingDeps {
 }
 
 /** The strict reader's revision for the logged-in device, or null (logged out, unreadable). */
-function strictRevision(stateDir: string, home: string): string | null {
+function strictRevision(stateDir: string, stateRoot: string, home: string): string | null {
   try {
     const cred = readCredential(stateDir);
     if (cred === undefined) return null;
-    return readStrictOwnerCeilingSync({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home })
-      .revision;
+    return readStrictOwnerCeilingSync({
+      stateDir,
+      stateRoot,
+      deviceId: cred.deviceId,
+      dir: cred.dir,
+      home,
+    }).revision;
   } catch {
     return null;
   }
@@ -123,7 +130,7 @@ export async function ceilingCommand(
         allowedDomains: cur.allowedDomains,
         projectReach: cur.ownerCeiling.projectReach,
         // the strict reader's digest of the policy generation; null while logged out
-        revision: strictRevision(stateDir, deps.home),
+        revision: strictRevision(stateDir, deps.stateRoot, deps.home),
       }),
     );
     return 0;
@@ -145,6 +152,7 @@ export async function ceilingCommand(
       try {
         const strict = readStrictOwnerCeilingSync({
           stateDir,
+          stateRoot: deps.stateRoot,
           deviceId: cred.deviceId,
           dir: cred.dir,
           home: deps.home,

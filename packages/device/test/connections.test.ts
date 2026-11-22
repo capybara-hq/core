@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import {
   CONNECTIONS_DIR,
   connectionsDir,
   listConnections,
+  scanConnections,
   unreadableConnections,
 } from "../src/connections.js";
 import { type Credential, credentialPath, writeCredential } from "../src/state.js";
@@ -77,6 +78,40 @@ describe("listConnections", () => {
     writeCredential(conn("bad name"), cred("bad name"));
     expect(listConnections(m).map((c) => c.deviceId)).toEqual(["real"]);
     expect(unreadableConnections(m)).toEqual([]);
+  });
+
+  it("scans once: every credential lands in exactly one list", () => {
+    writeCredential(conn("a"), cred("a"));
+    writeCredential(conn("b"), cred("b"));
+    chmodSync(credentialPath(conn("b")), 0o644);
+    mkdirSync(conn("empty"), { recursive: true });
+    const scan = scanConnections(m);
+    expect(scan.readable.map((c) => c.deviceId)).toEqual(["a"]);
+    expect(scan.unreadable.map((u) => u.deviceId)).toEqual(["b"]);
+  });
+
+  // root may search any directory: the locked directory is then readable
+  it.skipIf(process.getuid?.() === 0)(
+    "a connection whose credential cannot even be looked at is unreadable, never skipped",
+    () => {
+      writeCredential(conn("a"), cred("a"));
+      writeCredential(conn("locked"), cred("locked"));
+      chmodSync(conn("locked"), 0o000);
+      try {
+        const scan = scanConnections(m);
+        expect(scan.readable.map((c) => c.deviceId)).toEqual(["a"]);
+        expect(scan.unreadable.map((u) => u.deviceId)).toEqual(["locked"]);
+      } finally {
+        chmodSync(conn("locked"), 0o700);
+      }
+    },
+  );
+
+  it("only a missing connections directory means no connections; other errors throw", () => {
+    expect(scanConnections(m)).toEqual({ readable: [], unreadable: [] });
+    writeFileSync(join(m, CONNECTIONS_DIR), "not a directory");
+    expect(() => scanConnections(m)).toThrow(/ENOTDIR/);
+    expect(() => listConnections(m)).toThrow(/ENOTDIR/);
   });
 
   it("defaults the machine directory to stateDir()", () => {

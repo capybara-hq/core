@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isSandboxScopeDeniedError, type SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withCanonicalForms } from "../src/exec/operation-types.js";
 import {
@@ -19,6 +19,7 @@ import {
   projectPathRefusal,
   reachWidens,
   readRootsFor,
+  unreadableConnectionMessage,
 } from "../src/exec/read-model.js";
 
 /** Whether the temporary volume ignores case (APFS default on macOS). */
@@ -88,43 +89,23 @@ describe("otherConnectionDenies", () => {
   ];
 
   it("denies every other connection's working directory, never its own", () => {
-    expect(otherConnectionDenies({ ownDeviceId: "a", connections, unreadable: [] })).toEqual([
+    expect(otherConnectionDenies({ ownDeviceId: "a", connections })).toEqual([
       "/home/u/capybara-device/b",
     ]);
     expect(
-      sorted(
-        otherConnectionDenies({ ownDeviceId: "a", connections, unreadable: [], macTempBase: "/T" }),
-      ),
+      sorted(otherConnectionDenies({ ownDeviceId: "a", connections, macTempBase: "/T" })),
     ).toEqual(sorted(["/home/u/capybara-device/b", "/T/capybara-op-b"]));
     expect(privateTempParentName("b")).toBe("capybara-op-b");
   });
 
-  it("fails closed on a connection whose credential cannot be read", () => {
-    let caught: unknown;
-    try {
-      otherConnectionDenies({
-        ownDeviceId: "a",
-        connections: connections.slice(0, 1),
-        unreadable: [{ deviceId: "b", reason: "credential.json is not valid JSON" }],
-      });
-    } catch (error) {
-      caught = error;
-    }
-    expect(isSandboxScopeDeniedError(caught)).toBe(true);
-    const message = (caught as Error).message;
+  it("names an unreadable connection, its reason and how to remove it", () => {
+    const message = unreadableConnectionMessage({
+      deviceId: "b",
+      reason: "credential.json is not valid JSON",
+    });
     expect(message).toContain("connections/b");
     expect(message).toContain("credential.json is not valid JSON");
     expect(message).toContain("capybara-device logout -c b");
-  });
-
-  it("ignores its own unreadable entry", () => {
-    expect(
-      otherConnectionDenies({
-        ownDeviceId: "a",
-        connections,
-        unreadable: [{ deviceId: "a", reason: "x" }],
-      }),
-    ).toEqual(["/home/u/capybara-device/b"]);
   });
 
   it("refuses a device id that would leave its parent directory", () => {
@@ -133,7 +114,6 @@ describe("otherConnectionDenies", () => {
         otherConnectionDenies({
           ownDeviceId: "a",
           connections: [{ deviceId: id, workDir: "/w" }],
-          unreadable: [],
           macTempBase: "/T",
         }),
       ).toThrow(/device id/i);

@@ -6,6 +6,7 @@ import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { CONNECTIONS_DIR } from "../src/connections.js";
 import {
+  checkRoots,
   grantStillHolds,
   intersectOperation,
   OUTSIDE_SANDBOX_REFUSAL,
@@ -159,7 +160,7 @@ describe("project reach and other connections' directories", () => {
     expect(three.revision).not.toBe(two.revision);
     expect(three.revision).toBe(one.revision);
   });
-  it("fails closed when another connection's credential cannot be read", async () => {
+  it("an unreadable other connection refuses every sandboxed grant, nothing else", async () => {
     const f = await fixture();
     const cred = (id: string, dir: string | null) =>
       ({
@@ -176,17 +177,65 @@ describe("project reach and other connections' directories", () => {
     // the default connection reader: the state root's connections/<id>/credential.json
     writeCredential(f.stateDir, cred("a", join(f.dir, "device")));
     const { connections: _injected, ...input } = f.input;
-    expect(() => readStrictOwnerCeilingSync(input)).not.toThrow();
+    const s = scoped(f.roots, f.roots.workspace);
+    const fine = readStrictOwnerCeilingSync(input);
+    expect(fine.unreadableConnections).toEqual([]);
+    const before = intersectOperation(s, fine, open);
     writeCredential(join(f.stateRoot, CONNECTIONS_DIR, "b"), cred("b", null));
-    const e = refusal(() => readStrictOwnerCeilingSync(input));
-    expect(e.message).toMatch(/connections\/b/);
-    expect(e.message).toMatch(/capybara-device logout -c b/);
-    // an injected reader reporting an unreadable connection fails the same way
+    // the read itself succeeds (the owner report and escalated calls go on)
+    const broken = readStrictOwnerCeilingSync(input);
+    expect(broken.unreadableConnections.map((u) => u.deviceId)).toEqual(["b"]);
+    expect(broken.revision).not.toBe(fine.revision);
+    const escalated = {
+      ...scope(f.roots),
+      filesystem: { kind: "device" as const },
+      network: { kind: "environment" as const },
+    };
+    expect(intersectOperation(escalated, broken).full).toBe(true);
+    // a sandboxed operation, native call, browse or preparation is refused, actionably
+    for (const attempt of [
+      () => intersectOperation(s, broken, open),
+      () => intersectOperation(s, broken, undefined, true),
+      () => checkRoots([f.roots.workspace], [], broken),
+      () => checkRoots([], [f.roots.skills], broken, true),
+    ]) {
+      const e = refusal(attempt);
+      expect(e.message).toMatch(/connections\/b/);
+      expect(e.message).toMatch(/missing dir/);
+      expect(e.message).toMatch(/capybara-device logout -c b/);
+    }
+    // reconcile: the next grant cannot be computed, so a live sandboxed grant is revoked (the
+    // backend's reconcile treats a throwing intersection as revoked)
+    expect(before.full).toBe(false);
+    // an injected reader: unreadable entries and relative working directories alike
     f.connections.unreadable.push({ deviceId: "c", reason: "mode 0644" });
-    expect(refusal(() => readStrictOwnerCeilingSync(f.input)).message).toMatch(/connections\/c/);
-    // the own connection being unreadable is not another connection's directory
+    expect(
+      refusal(() => intersectOperation(s, readStrictOwnerCeilingSync(f.input), open)).message,
+    ).toMatch(/connections\/c \(mode 0644\)/);
     f.connections.unreadable.splice(0, 1, { deviceId: "a", reason: "x" });
-    expect(() => readStrictOwnerCeilingSync(f.input)).not.toThrow();
+    // the own connection being unreadable is not another connection's directory
+    expect(readStrictOwnerCeilingSync(f.input).unreadableConnections).toEqual([]);
+    f.connections.readable.push({ deviceId: "d", workDir: "relative/d" });
+    const relative = readStrictOwnerCeilingSync(f.input);
+    expect(relative.unreadableConnections).toEqual([
+      { deviceId: "d", reason: "its working directory is not absolute" },
+    ]);
+    expect(refusal(() => intersectOperation(s, relative, open)).message).toMatch(/connections\/d/);
+  });
+  it("paths reach with no listed paths reads the device roots and the write roots only", async () => {
+    const f = await fixture({
+      ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "paths" },
+      projectPaths: [],
+    });
+    const c = await f.read();
+    expect(c.projectPaths).toEqual([]);
+    const out = join(f.roots.workspace, "out");
+    expect(
+      intersectOperation(scoped(f.roots, f.roots.workspace, [out]), c, open).readRoots,
+    ).toEqual([f.roots.skills, f.roots.tmp, f.roots.workspace].sort());
+    expect(
+      refusal(() => intersectOperation(scoped(f.roots, join(f.dir, "project")), c, open)).message,
+    ).toBe(PROJECT_REFUSAL_MESSAGES["outside-reach"]);
   });
   it("paths reach reads only the listed paths, refusing a project root outside them", async () => {
     const f = await fixture();

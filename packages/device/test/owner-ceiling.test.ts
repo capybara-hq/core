@@ -67,6 +67,7 @@ const onDiskOf = (policy: Policy) => {
 const strict = () =>
   readStrictOwnerCeiling({
     stateDir: state,
+    stateRoot: state,
     deviceId: "dev",
     dir: join(root, "device"),
     home: join(root, "home"),
@@ -74,6 +75,7 @@ const strict = () =>
 const report = () =>
   issueOwnerReport({
     stateDir: state,
+    stateRoot: state,
     deviceId: "dev",
     dir: join(root, "device"),
     home: join(root, "home"),
@@ -274,6 +276,19 @@ describe("local owner policy format", () => {
 });
 
 describe("owner report sequence sidecar", () => {
+  it("issues with another connection unreadable: only sandboxed work is refused", async () => {
+    writePolicy(state, FULL_POLICY);
+    const before = report();
+    const other = join(state, "connections", "b");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "credential.json"), "{ nope", { mode: 0o600 });
+    const after = report();
+    expect(parseOwnerCeilingReport(after)).toEqual(after);
+    // a new revision (the deployment learns the ceiling changed), the report itself still goes out
+    expect(after.revision).not.toBe(before.revision);
+    expect((await strict()).unreadableConnections.map((u) => u.deviceId)).toEqual(["b"]);
+  });
+
   it("advances the sequence once per newly observed policy revision", async () => {
     writePolicy(state, FULL_POLICY);
     const first = report();

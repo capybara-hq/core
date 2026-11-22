@@ -129,6 +129,7 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
           projectPaths: [],
           secretAndStateDenies: [],
           otherConnectionDenies: [],
+          unreadableConnections: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,

@@ -65,6 +65,7 @@ async function fixture(
         projectPaths: [],
         secretAndStateDenies: [],
         otherConnectionDenies: [],
+        unreadableConnections: [],
         restrictedDeniedReadRoots: [],
         preparation: {
           skillsRoot: roots.skills,

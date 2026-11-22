@@ -88,6 +88,8 @@ const IDLE_LIFECYCLE: MacOperationBackend["lifecycle"] = {
 export interface StagedDeviceOptions {
   cred: Credential;
   stateDir: string;
+  /** The program state root (every connection's state), as the CLI computes it from its env. */
+  stateRoot: string;
   policy: PolicyStore;
   /** The owner's home (default: the user's), for the denied secret paths and the hello. */
   home?: string;
@@ -167,7 +169,7 @@ export const unconfirmedStops = (stops: readonly OwnedStop[]) =>
  * runtime hash; the per-credential session states; and the owner policy controls.
  */
 export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
-  const { cred, stateDir, policy } = o;
+  const { cred, stateDir, stateRoot, policy } = o;
   const platform = o.platform ?? process.platform;
   const pythonPath = o.pythonPath ?? HOST_PYTHON;
   const home = o.home ?? homedir();
@@ -179,7 +181,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   const handle: SandboxHandle = { id: cred.deviceId };
   const guard = new RootGuard(resolve(cred.dir), hostRoots);
   const readOwnerCeiling = () =>
-    readStrictOwnerCeiling({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home });
+    readStrictOwnerCeiling({ stateDir, stateRoot, deviceId: cred.deviceId, dir: cred.dir, home });
 
   const containerImage = async (): Promise<string> => {
     const signal = AbortSignal.timeout(60_000);
@@ -292,7 +294,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     // operations and policy changes are recorded in the owner's local command log
     log: new CommandLog(stateDir),
     running,
-    report: () => issueOwnerReport({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home }),
+    report: () =>
+      issueOwnerReport({ stateDir, stateRoot, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);
     },

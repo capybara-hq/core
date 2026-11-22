@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { lstatSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { DeviceMode } from "./args.js";
 import { credentialPath, readCredential, stateDir } from "./state.js";
@@ -27,21 +27,27 @@ export function connectionsDir(machineDir: string): string {
   return join(machineDir, CONNECTIONS_DIR);
 }
 
-/** Connection directory names: real directories (never symlinks) with a valid device id. */
+/**
+ * Connection directory names: real directories (never symlinks) with a valid device id. No
+ * connections directory means no connections; any other failure to list it throws (fail closed: a
+ * connection that cannot be listed cannot be kept out of the sandbox).
+ */
 function connectionIds(machineDir: string): string[] {
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(connectionsDir(machineDir), { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
   }
   const ids: string[] = [];
   for (const e of entries) {
     if (!DEVICE_ID_PATTERN.test(e.name)) continue;
     try {
       if (!lstatSync(join(connectionsDir(machineDir), e.name)).isDirectory()) continue;
-    } catch {
-      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; // removed meanwhile
+      throw error;
     }
     ids.push(e.name);
   }
@@ -50,19 +56,38 @@ function connectionIds(machineDir: string): string[] {
 
 const optionalString = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
+/** The connection directories whose credential.json exists but cannot be read. */
+export interface UnreadableConnection {
+  deviceId: string;
+  reason: string;
+}
+
 /**
- * Readable connections, sorted by host, then deviceName, then deviceId. Skips non-directories,
- * symlinks, names failing {@link DEVICE_ID_PATTERN}, directories without credential.json and
- * unreadable ones (see {@link unreadableConnections}).
+ * Every connection of this machine, each credential read once: readable ones sorted by host, then
+ * deviceName, then deviceId; unreadable ones (credential.json present but not readable or
+ * invalid) sorted by deviceId. Skips non-directories, symlinks, names failing
+ * {@link DEVICE_ID_PATTERN} and directories without credential.json.
  */
-export function listConnections(machineDir: string = stateDir()): ConnectionInfo[] {
-  const out: ConnectionInfo[] = [];
+export function scanConnections(machineDir: string = stateDir()): {
+  readable: ConnectionInfo[];
+  unreadable: UnreadableConnection[];
+} {
+  const readable: ConnectionInfo[] = [];
+  const unreadable: UnreadableConnection[] = [];
   for (const id of connectionIds(machineDir)) {
     const dir = join(connectionsDir(machineDir), id);
     try {
+      // only a missing credential.json means "no connection here"; one this program cannot even
+      // stat (a directory it may not search) is unreadable, never skipped
+      try {
+        statSync(credentialPath(dir));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw e;
+      }
       const c = readCredential(dir);
-      if (c === undefined) continue;
-      out.push({
+      if (c === undefined) continue; // removed in between
+      readable.push({
         deviceId: id,
         orgId: c.orgId,
         url: c.url,
@@ -73,30 +98,24 @@ export function listConnections(machineDir: string = stateDir()): ConnectionInfo
         workDir: c.dir,
         mode: c.mode,
       });
-    } catch {
-      // Reported by unreadableConnections.
+    } catch (e) {
+      unreadable.push({ deviceId: id, reason: (e as Error).message });
     }
   }
   const cmp = (a: string | null, b: string | null): number => (a ?? "").localeCompare(b ?? "");
-  return out.sort(
+  readable.sort(
     (a, b) => cmp(a.host, b.host) || cmp(a.deviceName, b.deviceName) || cmp(a.deviceId, b.deviceId),
   );
+  unreadable.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+  return { readable, unreadable };
 }
 
-/** The connection directories whose credential.json exists but cannot be read (fail closed). */
-export function unreadableConnections(
-  machineDir: string = stateDir(),
-): Array<{ deviceId: string; reason: string }> {
-  const out: Array<{ deviceId: string; reason: string }> = [];
-  for (const id of connectionIds(machineDir)) {
-    const dir = join(connectionsDir(machineDir), id);
-    if (!existsSync(credentialPath(dir))) continue;
-    try {
-      const c = readCredential(dir);
-      if (c !== undefined) new URL(c.url);
-    } catch (e) {
-      out.push({ deviceId: id, reason: (e as Error).message });
-    }
-  }
-  return out.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+/** The readable connections of {@link scanConnections}. */
+export function listConnections(machineDir: string = stateDir()): ConnectionInfo[] {
+  return scanConnections(machineDir).readable;
+}
+
+/** The unreadable connections of {@link scanConnections} (fail closed). */
+export function unreadableConnections(machineDir: string = stateDir()): UnreadableConnection[] {
+  return scanConnections(machineDir).unreadable;
 }

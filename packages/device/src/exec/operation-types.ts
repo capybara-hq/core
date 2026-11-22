@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   type SandboxLimits,
   type SandboxOperationScope,
@@ -15,14 +15,15 @@ import type {
   DeviceNetworkMode,
   DeviceProjectRefusal,
 } from "@capybara-hq/plugin-sdk/device-protocol";
-import { listConnections, unreadableConnections } from "../connections.js";
+import { scanConnections } from "../connections.js";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
-import { policyPath, readPolicyFile, stateDir } from "../state.js";
+import { policyPath, readPolicyFile } from "../state.js";
 import {
   otherConnectionDenies,
   type ProjectReach,
   projectPathRefusal,
   readRootsFor,
+  unreadableConnectionMessage,
 } from "./read-model.js";
 import { macUserTempDir, osRoots } from "./shared.js";
 
@@ -50,6 +51,12 @@ export interface DeviceOwnerCeiling {
    * canonical forms included.
    */
   readonly otherConnectionDenies: readonly string[];
+  /**
+   * Other connections of this machine this program cannot read (their working directory is
+   * unknown, so it cannot be denied): while any is here every sandboxed grant is refused
+   * ({@link assertConnectionsReadable}); an escalated call and the owner report proceed.
+   */
+  readonly unreadableConnections: readonly Readonly<{ deviceId: string; reason: string }>[];
   /** {@link secretAndStateDenies} ∪ {@link otherConnectionDenies}: what every sandboxed grant denies. */
   readonly restrictedDeniedReadRoots: readonly string[];
   readonly preparation: Readonly<{ skillsRoot: string; attachmentsBase: string }>;
@@ -88,11 +95,15 @@ export interface OwnerCeilingInput {
   /** This connection's device directory. */
   dir: string;
   home?: string;
-  /** The program state root holding every connection's state; default {@link stateDir}(). */
-  stateRoot?: string;
   /**
-   * The connections of this machine, called on every read; default the readable and unreadable
-   * connections under {@link stateRoot}.
+   * The program state root holding every connection's state (the CLI's `stateDir(env, home)`).
+   * Required: a default from this process's environment could read another user's or the real
+   * machine's state in tests and embedders.
+   */
+  stateRoot: string;
+  /**
+   * The connections of this machine, called on every read; default {@link scanConnections} of
+   * {@link stateRoot}.
    */
   connections?: () => {
     readable: readonly { deviceId: string; workDir: string }[];
@@ -132,8 +143,8 @@ function canonicalProjectPaths(paths: readonly string[]): string[] {
 /**
  * {@link readStrictOwnerCeiling}, synchronously (the owner report issues it under the policy lock).
  * Only a policy file in the current format is authority: another version is refused. The
- * connections of this machine are read every time, and a connection that cannot be read fails the
- * read closed (its working directory could not be denied).
+ * connections of this machine are read every time; one that cannot be read (or names a relative
+ * working directory) is carried in `unreadableConnections`, which refuses every sandboxed grant.
  */
 export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwnerCeiling {
   const file = policyPath(input.stateDir);
@@ -150,15 +161,23 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
   if (policy.allowedDomains.some((h) => validateAllowHost(h).length > 0))
     throw new SandboxScopeDeniedError("Owner policy contains invalid allowed domains");
   const roots = Object.freeze(osRoots(resolve(input.dir)));
-  const stateRoot = resolve(input.stateRoot ?? stateDir());
-  const connections = input.connections
-    ? input.connections()
-    : { readable: listConnections(stateRoot), unreadable: unreadableConnections(stateRoot) };
+  const stateRoot = resolve(input.stateRoot);
+  const connections = input.connections ? input.connections() : scanConnections(stateRoot);
+  const others = connections.readable.filter((c) => c.deviceId !== input.deviceId);
+  const unreadable = [
+    ...connections.unreadable
+      .filter((u) => u.deviceId !== input.deviceId)
+      .map((u) => Object.freeze({ deviceId: u.deviceId, reason: u.reason })),
+    ...others
+      .filter((c) => !isAbsolute(c.workDir))
+      .map((c) =>
+        Object.freeze({ deviceId: c.deviceId, reason: "its working directory is not absolute" }),
+      ),
+  ].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
   const macTempBase = input.macTempBase ?? defaultMacTempBase();
-  const others = otherConnectionDenies({
+  const otherDirs = otherConnectionDenies({
     ownDeviceId: input.deviceId,
-    connections: connections.readable,
-    unreadable: connections.unreadable,
+    connections: others.filter((c) => isAbsolute(c.workDir)),
     ...(macTempBase !== undefined && { macTempBase }),
   });
   const secretAndStateDenies = withCanonicalForms([
@@ -166,7 +185,7 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
     resolve(input.stateDir),
     stateRoot,
   ]);
-  const otherDenies = withCanonicalForms(others);
+  const otherDenies = withCanonicalForms(otherDirs);
   const projectPaths = canonicalProjectPaths(policy.projectPaths);
   return Object.freeze({
     revision: digest({
@@ -178,6 +197,7 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
       projectPaths,
       secretAndStateDenies,
       otherConnectionDenies: otherDenies,
+      unreadableConnections: unreadable,
     }),
     outsideSandbox: policy.ownerCeiling.outsideSandbox,
     network: policy.ownerCeiling.network,
@@ -187,6 +207,7 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
     projectPaths: Object.freeze(projectPaths),
     secretAndStateDenies: Object.freeze(secretAndStateDenies),
     otherConnectionDenies: Object.freeze(otherDenies),
+    unreadableConnections: Object.freeze(unreadable),
     restrictedDeniedReadRoots: Object.freeze([
       ...new Set([...secretAndStateDenies, ...otherDenies]),
     ]),
@@ -246,7 +267,16 @@ export function ceilingPathRefusal(
   });
 }
 /**
- * Refuses roots the owner ceiling does not allow: not normalized and absolute, in or through a
+ * Refuses every sandboxed grant while another connection of this machine cannot be read: its
+ * working directory could not be kept out of the sandbox. The message says how to fix it.
+ */
+export function assertConnectionsReadable(ceiling: DeviceOwnerCeiling): void {
+  const first = ceiling.unreadableConnections[0];
+  if (first !== undefined) throw new SandboxScopeDeniedError(unreadableConnectionMessage(first));
+}
+/**
+ * Refuses roots the owner ceiling does not allow (and every root while another connection cannot
+ * be read, {@link assertConnectionsReadable}): not normalized and absolute, in or through a
  * link into another connection's directory or a denied path, or outside the project reach (paths:
  * a listed path or a device root; workspace: a device root; machine: anywhere not denied); write
  * roots in a system runtime or socket directory or on the read-only skills. Preparation roots
@@ -258,6 +288,7 @@ export function checkRoots(
   ceiling: DeviceOwnerCeiling,
   preparation = false,
 ): void {
+  assertConnectionsReadable(ceiling);
   for (const root of [...read, ...write]) {
     if (root !== resolve(root))
       throw new SandboxScopeDeniedError("Supply normalized absolute roots");

@@ -565,6 +565,7 @@ describe("local-Docker skill preparation", () => {
           projectPaths: [],
           secretAndStateDenies: [],
           otherConnectionDenies: [],
+          unreadableConnections: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,

@@ -44,6 +44,7 @@ it.runIf(process.platform === "darwin")(
       projectPaths: [],
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };

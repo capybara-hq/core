@@ -156,6 +156,7 @@ function staged(
   const device = createStagedDevice({
     cred: o.cred ?? credential(),
     stateDir: state,
+    stateRoot: state,
     policy: new PolicyStore(state),
     home: join(root, "home"),
     platform: o.platform ?? "darwin",

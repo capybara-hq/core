@@ -45,26 +45,30 @@ export function privateTempParentName(deviceId: string): string {
 }
 
 /**
+ * Why sandboxed work cannot start while another connection of this machine cannot be read: without
+ * its working directory the sandbox could not deny it. Actionable: names the connection, the
+ * reason and how to remove it.
+ */
+export function unreadableConnectionMessage(u: { deviceId: string; reason: string }): string {
+  return (
+    `Cannot read connections/${u.deviceId} (${u.reason}), so its working directory cannot be ` +
+    `kept out of the sandbox; fix that connection or remove it with ` +
+    `capybara-device logout -c ${u.deviceId}`
+  );
+}
+
+/**
  * Every other connection's working directory (and, with `macTempBase`, its private temporary
- * parent), resolved. A connection this program cannot read fails closed: without its working
- * directory the sandbox could not deny it, so no sandboxed operation starts until it is fixed or
- * removed. The program state root (every connection's state) is denied separately.
+ * parent), resolved. Connections this program cannot read are not here: the owner ceiling carries
+ * them and refuses every sandboxed grant while one exists ({@link unreadableConnectionMessage}).
+ * The program state root (every connection's state) is denied separately.
  */
 export function otherConnectionDenies(input: {
   ownDeviceId: string;
   connections: readonly { deviceId: string; workDir: string }[];
-  unreadable: readonly { deviceId: string; reason: string }[];
   /** macOS user temp dir; adds join(base, privateTempParentName(id)) per other connection. */
   macTempBase?: string;
 }): string[] {
-  for (const u of input.unreadable) {
-    if (u.deviceId === input.ownDeviceId) continue;
-    throw new SandboxScopeDeniedError(
-      `Cannot read connections/${u.deviceId} (${u.reason}), so its working directory cannot be ` +
-        `kept out of the sandbox; fix that connection or remove it with ` +
-        `capybara-device logout -c ${u.deviceId}`,
-    );
-  }
   const out = new Set<string>();
   for (const c of input.connections) {
     if (c.deviceId === input.ownDeviceId) continue;

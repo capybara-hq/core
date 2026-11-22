@@ -516,6 +516,7 @@ it.runIf(darwin)(
       projectPaths: [],
       secretAndStateDenies: [join(home, ".ssh")],
       otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [join(home, ".ssh")],
       preparation: { skillsRoot: join(root, "skills"), attachmentsBase: join(home, "attachments") },
     };

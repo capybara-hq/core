@@ -41,6 +41,7 @@ async function fixture() {
     projectPaths: [],
     secretAndStateDenies: [],
     otherConnectionDenies: [],
+    unreadableConnections: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
@@ -388,6 +389,35 @@ it("owner reconcile revokes a running open-network grant once the owner narrows 
     outcome: "stopped",
   });
   await f.backend.background.stop({ id: "d" }, listed, { graceMs: 0, signal });
+});
+it("owner reconcile revokes sandboxed work once another connection becomes unreadable, not Full", async () => {
+  const f = await fixture();
+  f.hold();
+  const start = (id: string, scope: typeof f.scope | Record<string, unknown>) =>
+    f.backend
+      .forExecution({ operationId: id, orgNetwork: { kind: "open-public", hosts: [] } })
+      .background.start({ id: "d" }, { ...f.scope, ...scope, operationId: id } as typeof f.scope, {
+        command: "fixture command",
+        timeoutMs: 10000,
+        maxOutputBytes: 1000,
+        taskId: id,
+        outputPath: join(f.roots.tmp, id),
+        retainUntilMs: Date.now() + 60000,
+        signal,
+      });
+  const sandboxed = await start("sandboxed", {});
+  const full = await start("full", {
+    filesystem: { kind: "device" as const },
+    network: { kind: "environment" as const },
+  });
+  f.setCeiling({
+    revision: "two",
+    unreadableConnections: [{ deviceId: "b", reason: "credential.json is not valid JSON" }],
+  });
+  await f.backend.reconcileOwnerCeiling(signal);
+  expect(f.cancellations).toEqual(["sandboxed"]);
+  for (const ref of [sandboxed, full])
+    await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
 });
 it("Full owner narrowing cancels Full without a websocket or another tool call", async () => {
   const f = await fixture();
@@ -756,6 +786,7 @@ it.runIf(process.platform === "darwin")(
       projectPaths: [],
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
     };
@@ -887,6 +918,7 @@ it.runIf(process.platform === "darwin")(
       projectPaths: [],
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
@@ -1088,6 +1120,7 @@ it.runIf(process.platform === "darwin")(
       projectPaths: [project, linked],
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };

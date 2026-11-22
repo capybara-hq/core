@@ -60,6 +60,8 @@ async function askOnTerminal(question: string): Promise<string> {
  * on demand: only start needs them.
  */
 function defaultCreateStaged(stateDir: string, home: string) {
+  // the flat layout: this connection's state is the program state root
+  const stateRoot = stateDir;
   return async (cred: Credential, store: PolicyStore): Promise<StagedDevice> => {
     const { createStagedDevice } = await import("./staged-device.js");
     if (cred.mode === "docker") {
@@ -69,9 +71,9 @@ function defaultCreateStaged(stateDir: string, home: string) {
         deviceId: cred.deviceId,
         policy: () => store.current(),
       });
-      return createStagedDevice({ cred, stateDir, policy: store, home, container });
+      return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home, container });
     }
-    return createStagedDevice({ cred, stateDir, policy: store, home });
+    return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home });
   };
 }
 
@@ -159,6 +161,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
     case "ceiling":
       return ceilingCommand(cmd, {
         stateDir: dir,
+        stateRoot: dir,
         home,
         out,
         err,
