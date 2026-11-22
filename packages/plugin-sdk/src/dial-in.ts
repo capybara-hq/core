@@ -11,7 +11,7 @@ import { z } from "zod";
 
 /**
  * A dial-in protocol: `<name>/<major>`, a lower-case name of 1 to 41 characters and a major
- * version from 1 to 9999 (for example `capybara-device/5`). A machine's hello must name exactly
+ * version from 1 to 9999 (for example `capybara-device/6`). A machine's hello must name exactly
  * the protocol of the provider serving its device.
  */
 export const DIAL_IN_PROTOCOL_RE = /^[a-z][a-z0-9-]{0,40}\/[1-9][0-9]{0,3}$/;

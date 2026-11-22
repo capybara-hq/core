@@ -92,6 +92,8 @@ function writeState(stateDir: string, state: OwnerReportState): void {
  */
 export function issueOwnerReport(input: {
   stateDir: string;
+  /** The program state root (every connection's state), as the CLI computes it. */
+  stateRoot: string;
   deviceId: string;
   dir: string;
   home?: string;
@@ -112,7 +114,7 @@ export function issueOwnerReport(input: {
       outsideSandbox: ceiling.outsideSandbox,
       network: ceiling.network,
       allowedDomains: [...ceiling.allowedDomains],
-      restrictedProjectReach: ceiling.restrictedProjectReach,
+      projectReach: ceiling.projectReach,
     });
   });
 }

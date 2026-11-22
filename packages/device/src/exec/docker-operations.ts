@@ -185,13 +185,23 @@ export function dockerLinuxTransport(host: OperationContainerHost): LinuxAgentTr
 
 /**
  * The owner's ceiling as the container sees it: the same authority over the container's mounted
- * roots. Nothing the owner denies on the host (secrets, the device's state) is mounted there.
+ * roots. The container mounts only the device roots, so its reach is the workspace whatever the
+ * host reach, and nothing the owner denies on the host (secrets, the program's state, other
+ * connections' directories) is mounted there. Its scoped roots are still checked with the host's
+ * path resolution (`projectPathRefusal` canonicalizes against this machine): acceptable, as a host
+ * link or alias at a container path can only make a check refuse (fail closed), never widen one.
  */
 export function containerCeiling(ceiling: DeviceOwnerCeiling): DeviceOwnerCeiling {
   const roots = DEFAULT_SANDBOX_ROOTS;
   return Object.freeze({
     ...ceiling,
     roots: Object.freeze({ ...roots }),
+    projectReach: "workspace",
+    projectPaths: Object.freeze([]),
+    secretAndStateDenies: Object.freeze([]),
+    otherConnectionDenies: Object.freeze([]),
+    // no other connection's directory is mounted, so an unreadable one hides nothing here
+    unreadableConnections: Object.freeze([]),
     restrictedDeniedReadRoots: Object.freeze([]),
     preparation: Object.freeze({
       skillsRoot: roots.skills,

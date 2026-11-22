@@ -22,6 +22,7 @@ import {
   outdatedMessage,
   REPLACED_MESSAGE,
 } from "../src/client.js";
+import { connectionDir, machineDirOfConnection } from "../src/connections.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
@@ -35,8 +36,19 @@ import {
 } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
 import { PROGRAM_RUN_ID } from "../src/staged-session.js";
-import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
+import {
+  type Credential,
+  DEFAULT_POLICY,
+  type OwnerCeilingPolicy,
+  writePolicy,
+} from "../src/state.js";
 import { FakeKernel } from "./fake-kernel.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 /** The policy these tests were written against: the owner allows Full access (old auto). */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
@@ -44,7 +56,8 @@ let root: string;
 let state: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "device-staged-")));
-  state = join(root, "state");
+  // the machine layout: this connection's state is <machine>/connections/<id>
+  state = connectionDir(join(root, "state"), "d");
   mkdirSync(join(root, "device"), { recursive: true });
   writePolicy(state, FULL_POLICY);
 });
@@ -145,6 +158,7 @@ function staged(
   const device = createStagedDevice({
     cred: o.cred ?? credential(),
     stateDir: state,
+    stateRoot: machineDirOfConnection(state),
     policy: new PolicyStore(state),
     home: join(root, "home"),
     platform: o.platform ?? "darwin",
@@ -443,7 +457,7 @@ describe("staged connection (W3-M)", () => {
   const send = (k: FakeKernel, conn: number, id: string, op: string, args: object) =>
     k.request(conn, id, op, args);
 
-  it("sends x-capybara-device-protocol capybara-device/5", async () => {
+  it("sends x-capybara-device-protocol capybara-device/6", async () => {
     const k = await kernel();
     const s = staged({ cred: credential({ connectUrl: k.url }) });
     const conn = connectStaged(s.device, { err: () => {}, bootId: null });
@@ -452,7 +466,7 @@ describe("staged connection (W3-M)", () => {
       return conn.done;
     });
     await k.waitFor("hello", () => k.of("hello")[0]);
-    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("capybara-device/5");
+    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("capybara-device/6");
     expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe(DEVICE_DIAL_IN_PROTOCOL);
     expect(k.headers[0]?.authorization).toBe("Bearer cap_dev_a");
   });
@@ -475,7 +489,7 @@ describe("staged connection (W3-M)", () => {
     if (hello.type !== "hello") throw new Error("expected a hello");
     expect(hello).toEqual({
       type: "hello",
-      protocol: "capybara-device/5",
+      protocol: "capybara-device/6",
       // this process's run: every connection it makes names the same one
       programRunId: PROGRAM_RUN_ID,
       program: {
@@ -794,7 +808,7 @@ describe("staged connection (W3-M)", () => {
           : {
               error: {
                 code: "device.program_outdated",
-                message: `This device is served with ${kernelProtocol}, not capybara-device/5.`,
+                message: `This device is served with ${kernelProtocol}, not capybara-device/6.`,
               },
             };
       const s = staged({ cred: credential({ connectUrl: k.url }) });
@@ -810,7 +824,7 @@ describe("staged connection (W3-M)", () => {
       JSON.stringify({
         error: {
           code: "device.program_outdated",
-          message: `This device is served by device-local2, which speaks ${expected}; this program speaks capybara-device/5. Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.`,
+          message: `This device is served by device-local2, which speaks ${expected}; this program speaks capybara-device/6. Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.`,
         },
       });
     expect(outdatedMessage(body("capybara-device/4"))).toBe(

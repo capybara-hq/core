@@ -40,7 +40,11 @@ it.runIf(process.platform === "darwin")(
       network: "open",
       allowedDomains: [],
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
+      projectPaths: [],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };

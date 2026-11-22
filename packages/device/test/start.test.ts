@@ -16,7 +16,7 @@ import { RunningOperations } from "../src/activity.js";
 import type { Connection } from "../src/client.js";
 import { CommandLog } from "../src/command-log.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
-import { legacyPolicyNotice, MISSING_POLICY_NOTICE, start } from "../src/commands/start.js";
+import { MISSING_POLICY_NOTICE, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { connectionDir } from "../src/connections.js";
 import { queryControl } from "../src/control/client.js";
@@ -26,10 +26,8 @@ import type { PolicyStore } from "../src/policy-store.js";
 import type { StagedDevice } from "../src/staged-device.js";
 import {
   DEFAULT_POLICY,
-  FULL_OWNER_CEILING,
   MISSING_POLICY_OWNER_CEILING,
   readPolicy,
-  SANDBOX_OWNER_CEILING,
   writeCredential,
   writePolicy,
 } from "../src/state.js";
@@ -77,7 +75,7 @@ const stagedParts = (calls: string[] = []) =>
     },
   }) as unknown as StagedDevice;
 
-describe("start: legacy policy notice", () => {
+describe("start: the policy file", () => {
   const run = async () => {
     const proc = Object.assign(new EventEmitter(), { pid: 4250 });
     const out: string[] = [];
@@ -95,32 +93,29 @@ describe("start: legacy policy notice", () => {
     return out;
   };
 
-  it("says once that policy.json was converted to version 3, and how to open the network", async () => {
+  it("refuses a policy.json in another version, naming the file and how to rewrite it", async () => {
     writeCredential(dir, cred);
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ isolation: "none", tier: "open" }));
-    const out = await run();
-    const open = legacyPolicyNotice(FULL_OWNER_CEILING);
-    expect(out.filter((l) => l === open)).toHaveLength(1);
-    expect(open).toBe(
-      "policy.json now uses the version 3 owner ceiling: commands run in the sandbox under every " +
-        "profile; outside the sandbox on, network open; see `capybara-device ceiling show`.",
-    );
-    // a version 2 file that denied Full access keeps the allowlist and learns how to open it
-    writeFileSync(
-      join(dir, "policy.json"),
-      JSON.stringify({
-        version: 2,
-        allowedDomains: ["a.test"],
-        ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
-      }),
-    );
-    const allowlist = legacyPolicyNotice(SANDBOX_OWNER_CEILING);
-    expect(await run()).toContain(allowlist);
-    expect(allowlist).toContain("capybara-device ceiling set --network open");
-    expect(readPolicy(dir)).toMatchObject({
-      allowedDomains: ["a.test"],
-      ownerCeiling: SANDBOX_OWNER_CEILING,
+    // an intentionally old-format fixture (version 3, the removed restrictedProjectReach key)
+    const old = JSON.stringify({
+      version: 3,
+      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
     });
+    writeFileSync(join(dir, "policy.json"), old);
+    const err: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => err.push(l),
+      proc: Object.assign(new EventEmitter(), { pid: 4251 }) as never,
+      createStaged: () => stagedParts(),
+      connectStaged: () => {
+        throw new Error("must not connect");
+      },
+    });
+    expect(code).toBe(1);
+    expect(err[0]).toContain(join(dir, "policy.json"));
+    expect(err[0]).toContain("capybara-device ceiling set");
+    expect(readFileSync(join(dir, "policy.json"), "utf8")).toBe(old);
   });
 
   it("a device without policy.json (set up before rc.58) gets the closed allowlist, never open", async () => {
@@ -130,7 +125,7 @@ describe("start: legacy policy notice", () => {
     expect(MISSING_POLICY_NOTICE).toContain("capybara-device ceiling set --network open");
     // written once: no host, no running outside the sandbox, the workspace reach
     expect(JSON.parse(readFileSync(join(dir, "policy.json"), "utf8"))).toMatchObject({
-      version: 3,
+      version: 4,
       allowedDomains: [],
       ownerCeiling: { outsideSandbox: false, network: "allowlist" },
     });
@@ -143,7 +138,7 @@ describe("start: legacy policy notice", () => {
     writeCredential(dir, cred);
     writePolicy(dir, DEFAULT_POLICY);
     const out = await run();
-    expect(out.some((l) => l.startsWith("policy.json now uses"))).toBe(false);
+    expect(out).not.toContain(MISSING_POLICY_NOTICE);
   });
 });
 
@@ -229,7 +224,14 @@ describe("start, stop, drain", () => {
 
   it("an invalid policy.json stops start with a non-zero exit naming the file", async () => {
     writeCredential(dir, cred);
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ cpu: "lots" }));
+    writeFileSync(
+      join(dir, "policy.json"),
+      JSON.stringify({
+        version: 4,
+        ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "machine" },
+        cpu: "lots",
+      }),
+    );
     const err: string[] = [];
     const code = await start({
       stateDir: dir,

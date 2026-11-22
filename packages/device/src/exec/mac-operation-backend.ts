@@ -25,6 +25,8 @@ import {
   type SupervisorOwnership,
 } from "./operation-supervisor.js";
 import {
+  assertConnectionsReadable,
+  ceilingPathRefusal,
   checkRoots,
   type DeviceOwnerCeiling,
   digest,
@@ -33,10 +35,12 @@ import {
   intersectOperation,
   type LocalExecAuthority,
   type LocalOperationGrant,
+  PROJECT_REFUSAL_MESSAGES,
   within,
 } from "./operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "./operation-worker.js";
 import { timed } from "./transfer-timing.js";
+import { DeviceProjectRefusedError } from "./types.js";
 export interface MacOperationBackendOptions {
   deviceId: string;
   instanceGeneration: string;
@@ -320,6 +324,13 @@ export async function createLocalOperationBackend(
       checkRoots([], writeRoots, c, true);
     } else {
       readRoots = scope.readRoots;
+      // a refused project path answers with its code; an unreadable connection stays a denial
+      assertConnectionsReadable(c);
+      for (const root of readRoots) {
+        const refusal = root === resolve(root) ? ceilingPathRefusal(root, c) : null;
+        if (refusal !== null)
+          throw new DeviceProjectRefusedError(refusal, PROJECT_REFUSAL_MESSAGES[refusal]);
+      }
       checkRoots(readRoots, [], c);
     }
     return {

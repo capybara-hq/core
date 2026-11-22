@@ -13,10 +13,24 @@ beforeEach(() => {
   state = connectionDir(join(root, "capybara-device"), "dev");
   writePolicy(state, {
     ...DEFAULT_POLICY,
-    ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
+    ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "machine" },
+    projectPaths: ["/srv/a", "/srv/b"],
   });
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+const login = () =>
+  writeCredential(state, {
+    url: "https://x.test",
+    connectUrl: "wss://x.test/device/connect",
+    credential: "cap_dev_secret",
+    orgId: "org-1",
+    deviceId: "dev",
+    dir: join(root, "device"),
+    mode: "os",
+    reconnectGraceSeconds: 90,
+    maxFrameBytes: 16_777_216,
+  });
 
 const show = async () => {
   const out: string[] = [];
@@ -36,24 +50,31 @@ describe("ceiling show --json", () => {
     expect(code).toBe(1);
   });
 
+  it("prints each project reach and the project paths", async () => {
+    login();
+    for (const projectReach of ["machine", "paths", "workspace"] as const) {
+      writePolicy(state, {
+        ...DEFAULT_POLICY,
+        ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach },
+        projectPaths: ["/srv/a"],
+      });
+      const { code, out } = await show();
+      expect(code).toBe(0);
+      expect(out).toHaveLength(1);
+      expect(JSON.parse(out[0] ?? "")).toMatchObject({ projectReach, projectPaths: ["/srv/a"] });
+    }
+  });
+
   it("carries the strict revision when logged in", async () => {
-    writeCredential(state, {
-      url: "https://x.test",
-      connectUrl: "wss://x.test/device/connect",
-      credential: "cap_dev_secret",
-      orgId: "org-1",
-      deviceId: "dev",
-      dir: join(root, "device"),
-      mode: "os",
-      reconnectGraceSeconds: 90,
-      maxFrameBytes: 16_777_216,
-    });
+    login();
     const { out } = await show();
     const parsed = JSON.parse(out[0] ?? "");
     expect(parsed).toMatchObject({
       outsideSandbox: true,
       network: "open",
-      projectReach: "os-user",
+      allowedDomains: [],
+      projectReach: "machine",
+      projectPaths: ["/srv/a", "/srv/b"],
     });
     expect(parsed.revision).toMatch(/^[0-9a-f]{64}$/);
     expect(out.join("")).not.toContain("cap_dev_secret");

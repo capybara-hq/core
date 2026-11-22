@@ -24,7 +24,7 @@ const scope = {
 };
 /** A request body (the envelope's `req` carries it with its id and deadline). */
 const frame = (op: string, args: unknown) => ({ op, args });
-describe("protocol 5 operations", () => {
+describe("protocol 6 operations", () => {
   it("carries every typed operation failure, an invalid scope included", () => {
     for (const kind of [
       "denied",
@@ -47,9 +47,9 @@ describe("protocol 5 operations", () => {
     ])
       expect(() => parseDeviceFrame(bad, "res"), JSON.stringify(bad)).toThrow(DeviceProtocolError);
   });
-  it("speaks protocol 5 and requires fresh user scopes", () => {
-    expect(DEVICE_PROTOCOL_VERSION).toBe(5);
-    expect(DEVICE_DIAL_IN_PROTOCOL).toBe("capybara-device/5");
+  it("speaks protocol 6 and requires fresh user scopes", () => {
+    expect(DEVICE_PROTOCOL_VERSION).toBe(6);
+    expect(DEVICE_DIAL_IN_PROTOCOL).toBe("capybara-device/6");
     expect(DIAL_IN_PROTOCOL_RE.test(DEVICE_DIAL_IN_PROTOCOL)).toBe(true);
     for (const op of ["readFile", "writeFile", "stat", "list", "scan"]) {
       const args = {
@@ -158,7 +158,7 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
       outsideSandbox: false,
       network: "allowlist",
       allowedDomains: [],
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
     },
     instanceGeneration: "g",
   };
@@ -274,7 +274,7 @@ it("canonical unbound hello remains unprobed and owner reports require independe
       outsideSandbox: false,
       network: "open",
       allowedDomains: [],
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
     },
   };
   expect(parseDeviceFrame(hello, "hello")).toMatchObject({
@@ -328,7 +328,7 @@ it("canonical unbound hello remains unprobed and owner reports require independe
     { sequence: 0.1 },
     { version: 2 },
     { fullAccess: false },
-    { restrictedProjectReach: "all" },
+    { projectReach: "all" },
     { unknown: true },
   ])
     expect(() =>
@@ -369,7 +369,7 @@ describe("bindInstance (B4 post-commit binding)", () => {
       outsideSandbox: true,
       network: "open",
       allowedDomains: [],
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
     },
   };
   it("accepts exactly the committed identifiers and refuses paths, manifests and policies", () => {
@@ -431,13 +431,13 @@ describe("owner reports (B2)", () => {
     outsideSandbox: false,
     network: "allowlist",
     allowedDomains: ["*.example.com"],
-    restrictedProjectReach: "os-user",
+    projectReach: "machine",
   };
   it("parses one strict report and refuses extra fields, bad reach or sequence", () => {
     expect(parseOwnerCeilingReport(report)).toEqual(report);
     for (const bad of [
       { ...report, mode: "auto" },
-      { ...report, restrictedProjectReach: "home" },
+      { ...report, projectReach: "home" },
       { ...report, sequence: -1 },
       { ...report, sequence: 1.5 },
       { ...report, version: 2 },

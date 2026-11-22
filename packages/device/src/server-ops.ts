@@ -11,6 +11,7 @@ import type { RunningOperations } from "./activity.js";
 import type { CommandLog, CommandLogEntry } from "./command-log.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
+import { DeviceProjectRefusedError } from "./exec/types.js";
 import { grantedHosts } from "./policy.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { Policy } from "./state.js";
@@ -287,7 +288,11 @@ export async function serveOperationV3(
       type: "res",
       id: request.id,
       ok: false,
-      error: { kind, message: error instanceof Error ? error.message : String(error) },
+      error: {
+        kind,
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof DeviceProjectRefusedError && { refusal: error.refusal }),
+      },
     };
   }
 }
@@ -319,7 +324,17 @@ async function keepIfStillRunning(
 function errorKind(
   sdk: typeof import("@capybara-hq/plugin-sdk"),
   error: unknown,
-): "denied" | "unsupported" | "unsettled" | "unknown" | "invalid" | "gone" | "fs_gone" | "error" {
+):
+  | "project_refused"
+  | "denied"
+  | "unsupported"
+  | "unsettled"
+  | "unknown"
+  | "invalid"
+  | "gone"
+  | "fs_gone"
+  | "error" {
+  if (error instanceof DeviceProjectRefusedError) return "project_refused";
   return sdk.isSandboxScopeDeniedError(error)
     ? "denied"
     : sdk.isSandboxScopeValidationError(error)

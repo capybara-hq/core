@@ -204,19 +204,15 @@ no longer takes `mode` or `ownerCeiling` (the codes `device.mode_on_device`,
 takes `network` (`{ mode: open | allowlist | none | null, hosts? }`), which an API token or the
 Platform tool (`devices.set-network`) may only narrow.
 
-**Local devices.** `capybara-device` converts its `policy.json` once on start, never wider:
-Full access allowed becomes outside-the-sandbox allowed with the open network; denied keeps the
-allowlist with its old `allowedDomains`, and `start` prints `capybara-device ceiling set --network
-open` to open it. A device set up before rc.58 may have no `policy.json` at all (its `login` wrote
-none), and such a device ran with no reachable host: on its first start with a credential the
-program writes `{ outsideSandbox: false, network: "allowlist", allowedDomains: [] }` and prints how
-to open it (`capybara-device ceiling set --network open`); a missing file never reads as the open
-network. New installs (`login`) get outside-the-sandbox off and the open network. The CLI is now
-`capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-[--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrowed a
-local device then: `POST …/devices/:id/policy` took only `remove` and `ownerCeiling` narrowings
-(`add` and `mode` were gone); that route and `device.ceiling_on_machine` were removed later (see
-"Local devices move to the device-local plugin" above).
+**Local devices.** `capybara-device` converts nothing: it reads only the current `policy.json`
+format and refuses an older file when it starts (see "Device protocol 6" below: `capybara-device
+ceiling set ...` rewrites it from the closed policy). A missing file never reads as the open
+network. New installs (`login`) get outside-the-sandbox off, the open network and `machine`
+reach. The CLI is `capybara-device ceiling set [--outside-sandbox on|off] [--network
+open|allowlist] [--project-reach machine|paths|workspace]`; `--full-access` is gone. The
+deployment cannot change a local device's ceiling (`POST …/devices/:id/policy` and
+`device.ceiling_on_machine` were removed; see "Local devices move to the device-local plugin"
+above).
 
 **Upgrade order.** This is device protocol 4, a paired release with no fallback:
 
@@ -315,3 +311,29 @@ there, changing the list needs a restart, and installing an extension with the s
 3. Install the package (admin console, or `capybara extensions install …`) and enable it. The extension
    schema, secrets, org config and approval record carry over. If the new package asks for no
    permissions beyond the approved ones, it loads right away.
+
+## Device protocol 6: local read model and per-connection project reach
+
+`capybara-device` now speaks device protocol 6 (`capybara-device/6`), a paired release with the
+kernel and no fallback: upgrade the kernel first, then the programs.
+
+- **Reads.** Sandboxed work reads the whole machine minus a deny list (secret paths, the program's
+  state directory, every other connection's state and working directory) under the `machine`
+  project reach, only the listed project paths under `paths`, and the device's roots under
+  `workspace`. `os-user` is gone; `--project-reach` takes `machine|paths|workspace`, and project
+  paths are managed with `capybara-device policy add|remove projectPaths <dir>`.
+- **Wire.** The owner report carries `projectReach`; a browse of a path the reach does not cover
+  answers `project_refused` with a `refusal` code; the deployment's narrowing of the owner ceiling
+  is deleted.
+- **Policy file.** `policy.json` is now format 4. A format 3 file is refused when the program
+  starts. Run `capybara-device ceiling set ...` once: it rewrites the file from the closed policy
+  (workspace reach, allowlist network, nothing outside the sandbox, keep-awake off) and prints what
+  it reset. Set the allowed domains, credentials, resource limits and keep-awake again, and widen
+  the reach if you want it.
+- **Linux.** Files directly inside a directory on the path to a denied one (`~/.bashrc` when
+  `~/.ssh` is denied; `~/.cargo/config.toml` and other files directly in `~/.cargo`, `~/.claude`,
+  `~/.codex`, `~/.terraform.d`, `~/.local` and `~/.config/mise`) are unreadable under `machine` reach, and a bind mount of a denied directory
+  stays readable. See the device README.
+- **Old temporary directories.** Earlier versions left flat temporary directories
+  `capybara-op-<pid>-*` in the user temp dir (`getconf DARWIN_USER_TEMP_DIR` on macOS); this version
+  no longer sweeps them. Remove them by hand once no older `capybara-device` runs.

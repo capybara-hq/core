@@ -38,8 +38,12 @@ async function setup(
     outsideSandbox: true,
     network: "allowlist",
     roots,
-    restrictedProjectReach: "workspace",
+    projectReach: "workspace",
     allowedDomains: [],
+    projectPaths: [],
+    secretAndStateDenies: [],
+    otherConnectionDenies: [],
+    unreadableConnections: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
@@ -167,24 +171,31 @@ describe("local operation backend selection", () => {
 describe("Linux restricted grant checks", () => {
   const grant = {
     full: false,
-    readRoots: ["/home/u"],
+    readRoots: ["/"],
     writeRoots: ["/home/u/project"],
     hosts: [],
     deniedReadRoots: ["/home/u/.ssh"],
     revision: "r",
   };
-  it("refuses an exec grant whose root contains an owner-denied path", () => {
-    expect(() => checkLinuxRestrictedGrant(grant, "exec")).toThrow(/owner denies/);
+  it("refuses an exec write root that contains an owner-denied path, not a read root", () => {
+    // reads are carved around the denied paths; a write root is granted whole (brokered writes
+    // still read it), so one around a denied path is refused
+    expect(() => checkLinuxRestrictedGrant(grant, "exec")).not.toThrow();
+    const around = { ...grant, writeRoots: ["/home/u"] };
+    expect(() => checkLinuxRestrictedGrant(around, "exec")).toThrow(/owner denies/);
     // the refusal names the root and the denied path and says what to do instead
-    expect(() => checkLinuxRestrictedGrant(grant, "exec")).toThrow(
+    expect(() => checkLinuxRestrictedGrant(around, "exec")).toThrow(
       /\/home\/u .*\/home\/u\/\.ssh.*narrower directory.*Full access/,
     );
+    // a write root equal to the denied path is refused too
     expect(() =>
-      checkLinuxRestrictedGrant({ ...grant, readRoots: ["/home/u/project"] }, "exec"),
-    ).not.toThrow();
+      checkLinuxRestrictedGrant({ ...grant, writeRoots: ["/home/u/.ssh"] }, "exec"),
+    ).toThrow(/owner denies/);
   });
   it("leaves native grants to the agent's per-path check", () => {
-    expect(() => checkLinuxRestrictedGrant(grant, "native")).not.toThrow();
+    expect(() =>
+      checkLinuxRestrictedGrant({ ...grant, writeRoots: ["/home/u"] }, "native"),
+    ).not.toThrow();
   });
 });
 
@@ -218,17 +229,27 @@ describe("local-Docker operation backend paths", () => {
       outsideSandbox: false,
       network: "allowlist",
       roots: hostRoots,
-      restrictedProjectReach: "workspace",
+      projectReach: "machine",
+      projectPaths: ["/src"],
       allowedDomains: ["a.example"],
-      restrictedDeniedReadRoots: ["/home/u/.ssh"],
+      secretAndStateDenies: ["/home/u/.ssh"],
+      otherConnectionDenies: ["/home/u/other"],
+      unreadableConnections: [],
+      restrictedDeniedReadRoots: ["/home/u/.ssh", "/home/u/other"],
       preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
     });
+    // the container sees only its mounts: the workspace reach, nothing of the host to deny
     expect(mapped).toMatchObject({
       revision: "one",
       outsideSandbox: false,
       network: "allowlist",
       roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
+      projectReach: "workspace",
+      projectPaths: [],
       allowedDomains: ["a.example"],
+      secretAndStateDenies: [],
+      otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [],
       preparation: { skillsRoot: "/skills", attachmentsBase: "/workspace/attachments" },
     });
@@ -256,8 +277,12 @@ describe("local-Docker operation backend paths", () => {
           outsideSandbox: true,
           network: "allowlist",
           roots: hostRoots,
-          restrictedProjectReach: "workspace",
+          projectReach: "workspace",
           allowedDomains: [],
+          projectPaths: [],
+          secretAndStateDenies: [],
+          otherConnectionDenies: [],
+          unreadableConnections: [],
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
         }),

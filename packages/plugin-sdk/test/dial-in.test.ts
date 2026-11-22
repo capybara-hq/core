@@ -14,7 +14,7 @@ import {
 
 const hello = (over: Record<string, unknown> = {}) => ({
   type: "hello",
-  protocol: "capybara-device/5",
+  protocol: "capybara-device/6",
   programRunId: "run-1",
   program: { version: "1.2.3", os: "darwin", arch: "arm64", bootId: "boot-1" },
   transport: { maxFrameBytes: 4096 },
@@ -91,8 +91,8 @@ describe("parseDialInMachineFrame", () => {
   it("rejects a hello whose protocol does not match DIAL_IN_PROTOCOL_RE", () => {
     for (const protocol of ["5", "Capybara/5", "capybara-device/0", "capybara-device/", 5])
       expect(() => parse(hello({ protocol })), String(protocol)).toThrow(DialInProtocolError);
-    expect(parse(hello({ protocol: "capybara-device/5" })).type).toBe("hello");
-    expect(DIAL_IN_PROTOCOL_RE.test("capybara-device/5")).toBe(true);
+    expect(parse(hello({ protocol: "capybara-device/6" })).type).toBe("hello");
+    expect(DIAL_IN_PROTOCOL_RE.test("capybara-device/6")).toBe(true);
     expect(DIAL_IN_PROTOCOL_RE.test("a/9999")).toBe(true);
     expect(DIAL_IN_PROTOCOL_RE.test("a/10000")).toBe(false);
     expect(DIAL_IN_PROTOCOL_RE.test(`a${"b".repeat(41)}/1`)).toBe(false);
@@ -120,7 +120,7 @@ describe("parseDialInKernelFrame", () => {
   });
   it("rejects machine frames, extra keys, bad ids, deadlines and stop reasons", () => {
     for (const bad of [
-      { type: "hello", protocol: "capybara-device/5" },
+      { type: "hello", protocol: "capybara-device/6" },
       { type: "res", id: "r", body: null },
       { type: "ready", connectionId: "c" },
       { type: "ready", connectionId: "c", maxFrameBytes: 1023 },

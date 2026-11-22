@@ -25,7 +25,13 @@ import {
 } from "../src/exec/docker.js";
 import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
 import { osRoots, prepareDeviceDir } from "../src/exec/shared.js";
-import { DEFAULT_POLICY, FULL_OWNER_CEILING } from "../src/state.js";
+import { DEFAULT_POLICY, type OwnerCeilingPolicy } from "../src/state.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 /** The policy these tests were written against: the owner allows Full access. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
@@ -118,8 +124,12 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
           outsideSandbox: true,
           network: "allowlist",
           roots: hostRoots,
-          restrictedProjectReach: "workspace",
+          projectReach: "workspace",
           allowedDomains: [],
+          projectPaths: [],
+          secretAndStateDenies: [],
+          otherConnectionDenies: [],
+          unreadableConnections: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,

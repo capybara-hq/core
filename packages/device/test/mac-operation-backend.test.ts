@@ -1,11 +1,16 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
-import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
+import { type DeviceOwnerCeiling, PROJECT_REFUSAL_MESSAGES } from "../src/exec/operation-types.js";
 import type { MacWorkerHandle } from "../src/exec/operation-worker.js";
+import { DeviceProjectRefusedError } from "../src/exec/types.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+const DEVICE_ID = testDeviceId("mac-operation-backend");
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
 const workspace = { runtimeHash: "", cleanup: async () => {} };
@@ -13,6 +18,7 @@ beforeAll(async () => {
   Object.assign(workspace, await sealWorkspaceRuntime());
 });
 afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
   await workspace.cleanup();
 });
 
@@ -36,8 +42,12 @@ async function fixture() {
     outsideSandbox: true,
     network: "allowlist",
     roots,
-    restrictedProjectReach: "os-user",
+    projectReach: "machine",
     allowedDomains: ["a.example.com"],
+    projectPaths: [],
+    secretAndStateDenies: [],
+    otherConnectionDenies: [],
+    unreadableConnections: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
@@ -53,7 +63,7 @@ async function fixture() {
   const finishes = new Map<string, () => void>();
   const backend = await createMacOperationBackend(
     {
-      deviceId: "d",
+      deviceId: DEVICE_ID,
       instanceGeneration: "g",
       stateDir: dir,
       roots,
@@ -109,7 +119,7 @@ async function fixture() {
   const scope = {
     operationId: "op",
     admitBeforeMs: Date.now() + 60000,
-    deviceId: "d",
+    deviceId: DEVICE_ID,
     rootConversationId: "r",
     profileRevision: 0,
     ceilingRevision: "opaque",
@@ -147,7 +157,7 @@ async function fixture() {
 }
 it("first native read uses its explicit outside project without an earlier exec", async () => {
   const f = await fixture();
-  const op = await f.backend.operation({ id: "d", roots: f.roots }, f.scope, signal);
+  const op = await f.backend.operation({ id: DEVICE_ID, roots: f.roots }, f.scope, signal);
   expect(f.launched).toHaveLength(0);
   expect(await op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).toEqual({
     size: 3,
@@ -157,7 +167,7 @@ it("first native read uses its explicit outside project without an earlier exec"
 });
 it("binds a native write's operation id to its exact bytes through the payload digest", async () => {
   const f = await fixture();
-  const op = await f.backend.operation({ id: "d" }, f.scope, signal);
+  const op = await f.backend.operation({ id: DEVICE_ID }, f.scope, signal);
   const path = join(f.roots.tmp, "file");
   const bytes = Buffer.from("first payload");
   await op.writeFile(path, bytes, signal);
@@ -174,11 +184,11 @@ it("binds a native write's operation id to its exact bytes through the payload d
 });
 it("re-reads ceilings at invocation and rejects restricted exec without private provenance", async () => {
   const f = await fixture();
-  const op = await f.backend.operation({ id: "d" }, f.scope, signal);
+  const op = await f.backend.operation({ id: DEVICE_ID }, f.scope, signal);
   await expect(
     op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal }),
   ).rejects.toThrow(/authority/);
-  f.setCeiling({ revision: "two", restrictedProjectReach: "workspace" });
+  f.setCeiling({ revision: "two", projectReach: "workspace" });
   await expect(op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).rejects.toThrow(
     /ceiling/,
   );
@@ -189,10 +199,10 @@ it("preparation cannot select the entire attachments base or arbitrary roots", a
   await expect(
     f.backend
       .prepare(
-        { id: "d" },
+        { id: DEVICE_ID },
         {
           operationId: "prep",
-          deviceId: "d",
+          deviceId: DEVICE_ID,
           purpose: "attachments",
           writeRoots: [join(f.roots.workspace, "attachments")],
           tag: "prep",
@@ -210,10 +220,69 @@ it("reports runtime support for running outside the sandbox, not the owner's con
   // --outside-sandbox on` until the program restarted (R3 Mac dogfood, 2026-11-20).
   const f = await fixture();
   f.setCeiling({ revision: "off", outsideSandbox: false });
-  const off = await f.backend.permissionSupport({ id: "d" }, signal);
+  const off = await f.backend.permissionSupport({ id: DEVICE_ID }, signal);
   expect(off.outsideSandbox).toBe(true);
   f.setCeiling({ revision: "on", outsideSandbox: true });
-  expect((await f.backend.permissionSupport({ id: "d" }, signal)).outsideSandbox).toBe(true);
+  expect((await f.backend.permissionSupport({ id: DEVICE_ID }, signal)).outsideSandbox).toBe(true);
+});
+
+it("browsing another connection's directory is refused with its code", async () => {
+  const { mkdir, realpath, symlink } = await import("node:fs/promises");
+  const f = await fixture();
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cap-browse-refusal-")));
+  dirs.push(base);
+  const other = join(base, "b");
+  const listed = join(base, "listed");
+  const unlisted = join(base, "unlisted");
+  await Promise.all([mkdir(other), mkdir(listed), mkdir(unlisted)]);
+  await symlink(other, join(base, "into-b"));
+  f.setCeiling({ otherConnectionDenies: [other] });
+  let id = 0;
+  const browse = (root: string) =>
+    f.backend
+      .browse(
+        { id: DEVICE_ID },
+        {
+          operationId: `browse-${++id}`,
+          admitBeforeMs: Date.now() + 60000,
+          deviceId: DEVICE_ID,
+          accountId: "a",
+          ceilingRevision: "opaque",
+          readRoots: [root],
+          tag: "browse",
+        },
+        signal,
+      )
+      .then((b) => b.stat(root, signal));
+  const refusal = (root: string) =>
+    browse(root).then(
+      () => null,
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(DeviceProjectRefusedError);
+        const e = error as DeviceProjectRefusedError;
+        expect(e.message).toBe(PROJECT_REFUSAL_MESSAGES[e.refusal]);
+        return e.refusal;
+      },
+    );
+  expect(await refusal(other)).toBe("other-connection");
+  expect(await refusal(join(other, "sub"))).toBe("other-connection");
+  expect(await refusal(join(base, "into-b"))).toBe("other-connection");
+  f.setCeiling({ revision: "paths", projectReach: "paths", projectPaths: [listed] });
+  expect(await refusal(unlisted)).toBe("outside-reach");
+  expect(f.launched).toHaveLength(0);
+  f.setCeiling({ revision: "machine", projectReach: "machine", projectPaths: [] });
+  await expect(browse("/opt/x")).resolves.toEqual({ size: 3, isDir: false });
+  // an unreadable other connection stays a plain denial with its actionable message
+  f.setCeiling({
+    revision: "unreadable",
+    unreadableConnections: [{ deviceId: "c", reason: "permission denied" }],
+  });
+  await expect(browse(other)).rejects.toSatisfy(
+    (e) =>
+      e instanceof SandboxScopeDeniedError &&
+      !(e instanceof DeviceProjectRefusedError) &&
+      /Cannot read connections\/c/.test(e.message),
+  );
 });
 
 it("rejects wrong device handles before creating a worker", async () => {
@@ -241,7 +310,7 @@ it.runIf(process.platform === "darwin")(
         const scope = {
           operationId: full ? "full" : "scoped",
           admitBeforeMs: Date.now() + 30000,
-          deviceId: "fixture",
+          deviceId: DEVICE_ID,
           rootConversationId: "r",
           profileRevision: 0,
           ceilingRevision: "fixture",
@@ -295,7 +364,7 @@ it("rejects a revision change during trusted startup before effects", async () =
   f.beforeStart(async () => {
     f.setCeiling({ revision: "changed-during-start" });
   });
-  const op = await f.backend.operation({ id: "d" }, f.scope, signal);
+  const op = await f.backend.operation({ id: DEVICE_ID }, f.scope, signal);
   await expect(op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).rejects.toThrow(
     /changed before launch/,
   );
@@ -322,7 +391,7 @@ it("owned idle watcher revokes a removed owner host, a granted sibling with it (
           }
         : {}),
     };
-    return f.backend.forExecution(authority).background.start({ id: "d" }, s, {
+    return f.backend.forExecution(authority).background.start({ id: DEVICE_ID }, s, {
       command: "fixture command",
       timeoutMs: 10000,
       maxOutputBytes: 1000,
@@ -338,10 +407,12 @@ it("owned idle watcher revokes a removed owner host, a granted sibling with it (
   f.setCeiling({ revision: "two", allowedDomains: [] });
   await f.tick();
   expect(f.cancellations.sort()).toEqual(["baseline", "granted"]);
-  expect(await f.backend.background.stop({ id: "d" }, removed, { graceMs: 0, signal })).toEqual({
+  expect(
+    await f.backend.background.stop({ id: DEVICE_ID }, removed, { graceMs: 0, signal }),
+  ).toEqual({
     outcome: "stopped",
   });
-  await f.backend.background.stop({ id: "d" }, granted, { graceMs: 0, signal });
+  await f.backend.background.stop({ id: DEVICE_ID }, granted, { graceMs: 0, signal });
   expect(f.stoppedWatcher()).toBe(1);
 });
 it("owner reconcile revokes a running open-network grant once the owner narrows to an allowlist", async () => {
@@ -361,7 +432,7 @@ it("owner reconcile revokes a running open-network grant once the owner narrows 
     f.backend
       .forExecution({ operationId: id, orgNetwork: { kind: "open-public", hosts: [] } })
       .background.start(
-        { id: "d" },
+        { id: DEVICE_ID },
         { ...f.scope, operationId: id, network },
         {
           command: "fixture command",
@@ -381,10 +452,43 @@ it("owner reconcile revokes a running open-network grant once the owner narrows 
   // grantStillHolds through the backend: the open-network work is revoked, its allowlisted
   // sibling keeps running
   expect(f.cancellations).toEqual(["open"]);
-  expect(await f.backend.background.stop({ id: "d" }, open, { graceMs: 0, signal })).toEqual({
+  expect(await f.backend.background.stop({ id: DEVICE_ID }, open, { graceMs: 0, signal })).toEqual({
     outcome: "stopped",
   });
-  await f.backend.background.stop({ id: "d" }, listed, { graceMs: 0, signal });
+  await f.backend.background.stop({ id: DEVICE_ID }, listed, { graceMs: 0, signal });
+});
+it("owner reconcile revokes sandboxed work once another connection becomes unreadable, not Full", async () => {
+  const f = await fixture();
+  f.hold();
+  const start = (id: string, scope: typeof f.scope | Record<string, unknown>) =>
+    f.backend
+      .forExecution({ operationId: id, orgNetwork: { kind: "open-public", hosts: [] } })
+      .background.start(
+        { id: DEVICE_ID },
+        { ...f.scope, ...scope, operationId: id } as typeof f.scope,
+        {
+          command: "fixture command",
+          timeoutMs: 10000,
+          maxOutputBytes: 1000,
+          taskId: id,
+          outputPath: join(f.roots.tmp, id),
+          retainUntilMs: Date.now() + 60000,
+          signal,
+        },
+      );
+  const sandboxed = await start("sandboxed", {});
+  const full = await start("full", {
+    filesystem: { kind: "device" as const },
+    network: { kind: "environment" as const },
+  });
+  f.setCeiling({
+    revision: "two",
+    unreadableConnections: [{ deviceId: "b", reason: "credential.json is not valid JSON" }],
+  });
+  await f.backend.reconcileOwnerCeiling(signal);
+  expect(f.cancellations).toEqual(["sandboxed"]);
+  for (const ref of [sandboxed, full])
+    await f.backend.background.stop({ id: DEVICE_ID }, ref, { graceMs: 0, signal });
 });
 it("Full owner narrowing cancels Full without a websocket or another tool call", async () => {
   const f = await fixture();
@@ -394,7 +498,7 @@ it("Full owner narrowing cancels Full without a websocket or another tool call",
     filesystem: { kind: "device" as const },
     network: { kind: "environment" as const },
   };
-  const ref = await f.backend.background.start({ id: "d" }, full, {
+  const ref = await f.backend.background.start({ id: DEVICE_ID }, full, {
     command: "owned full fixture",
     timeoutMs: 10000,
     maxOutputBytes: 1000,
@@ -406,7 +510,7 @@ it("Full owner narrowing cancels Full without a websocket or another tool call",
   f.setCeiling({ revision: "two", outsideSandbox: false });
   await f.tick();
   expect(f.cancellations).toEqual(["op"]);
-  expect(await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal })).toEqual({
+  expect(await f.backend.background.stop({ id: DEVICE_ID }, ref, { graceMs: 0, signal })).toEqual({
     outcome: "stopped",
   });
 });
@@ -446,7 +550,7 @@ it.runIf(process.platform === "darwin")(
     const scope = {
       operationId: "network-fixture",
       admitBeforeMs: Date.now() + 30000,
-      deviceId: "owned-fixture",
+      deviceId: DEVICE_ID,
       rootConversationId: "r",
       profileRevision: 0,
       ceilingRevision: "fixture",
@@ -566,7 +670,7 @@ it.runIf(process.platform === "darwin")(
           const scope = {
             operationId: token,
             admitBeforeMs: Date.now() + 30000,
-            deviceId: "fixture",
+            deviceId: DEVICE_ID,
             rootConversationId: "r",
             profileRevision: 0,
             ceilingRevision: "fixture",
@@ -709,7 +813,7 @@ it("snapshots background environment before consumption and keeps retry hashing 
     retainUntilMs: Date.now() + 60000,
     signal,
   };
-  const pending = f.backend.background.start({ id: "d" }, scope, args);
+  const pending = f.backend.background.start({ id: DEVICE_ID }, scope, args);
   await consumed;
   env.FIXTURE_VALUE = "mutated-after-consumption";
   release();
@@ -717,12 +821,12 @@ it("snapshots background environment before consumption and keeps retry hashing 
   const launched = f.launched[0] as import("../src/exec/operation-worker.js").MacWorkerRequest;
   expect(launched.kind === "exec" && launched.args.env).toEqual({ FIXTURE_VALUE: "original" });
   expect(
-    await f.backend.background.start({ id: "d" }, scope, {
+    await f.backend.background.start({ id: DEVICE_ID }, scope, {
       ...args,
       env: { FIXTURE_VALUE: "original" },
     }),
   ).toEqual(ref);
-  await expect(f.backend.background.start({ id: "d" }, scope, args)).rejects.toThrow(/hash/);
+  await expect(f.backend.background.start({ id: DEVICE_ID }, scope, args)).rejects.toThrow(/hash/);
 });
 
 it.runIf(process.platform === "darwin")(
@@ -748,14 +852,18 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: true,
       network: "allowlist",
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: [],
+      projectPaths: [],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
     };
     const backend = await createMacOperationBackend(
       {
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         instanceGeneration: "first",
         stateDir,
         roots,
@@ -768,10 +876,10 @@ it.runIf(process.platform === "darwin")(
     let id = 0;
     const prepare = () =>
       backend.prepare(
-        { id: "d" },
+        { id: DEVICE_ID },
         {
           operationId: `first-${++id}`,
-          deviceId: "d",
+          deviceId: DEVICE_ID,
           purpose: "attachments",
           writeRoots: [conversation],
           tag: "first",
@@ -813,10 +921,10 @@ it.runIf(process.platform === "darwin")(
     ).rejects.toThrow(/scope|Native/);
     const gitConversation = join(base, "abcdef123456");
     const gitPrep = await backend.prepare(
-      { id: "d" },
+      { id: DEVICE_ID },
       {
         operationId: `git-${++id}`,
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         purpose: "attachments",
         writeRoots: [gitConversation],
         tag: "first",
@@ -830,10 +938,10 @@ it.runIf(process.platform === "darwin")(
       code: "ENOENT",
     });
     const operation = await backend.operation(
-      { id: "d" },
+      { id: DEVICE_ID },
       {
         operationId: `optional-${++id}`,
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         rootConversationId: "r",
         profileRevision: 0,
         ceilingRevision: "fixture",
@@ -876,14 +984,18 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: true,
       network: "allowlist",
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: [],
+      projectPaths: [],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
     const backend = await createMacOperationBackend(
       {
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         instanceGeneration: "first",
         stateDir,
         roots,
@@ -900,10 +1012,10 @@ it.runIf(process.platform === "darwin")(
     );
     const marker = join(roots.skills, ".capybara", "skill@digest.json");
     const prep = await backend.prepare(
-      { id: "d" },
+      { id: DEVICE_ID },
       {
         operationId: "marker-write",
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         purpose: "skills",
         writeRoots: [marker],
         tag: "s",
@@ -932,7 +1044,7 @@ it("retained output controls use the exact reference without a fresh profile gra
     filesystem: { kind: "device" as const },
     network: { kind: "environment" as const },
   };
-  const ref = await f.backend.background.start({ id: "d" }, scope, {
+  const ref = await f.backend.background.start({ id: DEVICE_ID }, scope, {
     command: "fixture",
     timeoutMs: 1000,
     maxOutputBytes: 4,
@@ -943,9 +1055,17 @@ it("retained output controls use the exact reference without a fresh profile gra
   });
   const reads = f.ceilingReads(),
     launches = f.launched.length;
-  f.setCeiling({ outsideSandbox: false, restrictedDeniedReadRoots: [f.roots.tmp] });
+  f.setCeiling({
+    outsideSandbox: false,
+    secretAndStateDenies: [f.roots.tmp],
+    restrictedDeniedReadRoots: [f.roots.tmp],
+  });
   expect(
-    await f.backend.background.readOutput({ id: "d" }, ref, { offset: 0, maxBytes: 0, signal }),
+    await f.backend.background.readOutput({ id: DEVICE_ID }, ref, {
+      offset: 0,
+      maxBytes: 0,
+      signal,
+    }),
   ).toMatchObject({ totalBytes: 0, nextOffset: 0 });
   expect(f.ceilingReads()).toBe(reads);
   expect(f.launched).toHaveLength(launches);
@@ -954,12 +1074,12 @@ it("retained output controls use the exact reference without a fresh profile gra
   ).rejects.toThrow(/handle/);
   await expect(
     f.backend.background.readOutput(
-      { id: "d" },
+      { id: DEVICE_ID },
       { ...ref, executionId: "wrong" },
       { offset: 0, maxBytes: 0, signal },
     ),
   ).rejects.toThrow(/reference/);
-  await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
+  await f.backend.background.stop({ id: DEVICE_ID }, ref, { graceMs: 0, signal });
 });
 
 it("restricted artifact creation preserves implicit write denies before any owned helper launch", async () => {
@@ -986,12 +1106,12 @@ it("restricted artifact creation preserves implicit write denies before any owne
           operationId: f.scope.operationId,
           orgNetwork: { kind: "open-public", hosts: [] },
         })
-        .background.start({ id: "d" }, f.scope, args),
+        .background.start({ id: DEVICE_ID }, f.scope, args),
     ).rejects.toThrow(/protected|denied/);
     expect(f.launched).toHaveLength(0);
     await expect(access(args.outputPath)).rejects.toThrow();
     const ref = await f.backend.background.start(
-      { id: "d" },
+      { id: DEVICE_ID },
       {
         ...f.scope,
         operationId: "full-artifact",
@@ -1001,7 +1121,7 @@ it("restricted artifact creation preserves implicit write denies before any owne
       },
       args,
     );
-    await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
+    await f.backend.background.stop({ id: DEVICE_ID }, ref, { graceMs: 0, signal });
     await access(args.outputPath);
     expect(f.launched).toHaveLength(1);
   } finally {
@@ -1017,10 +1137,10 @@ it("a restricted exec and a background task both carry the device's sandbox home
   });
   const op = await f.backend
     .forExecution(authority("exec"))
-    .operation({ id: "d" }, { ...f.scope, operationId: "exec" }, signal);
+    .operation({ id: DEVICE_ID }, { ...f.scope, operationId: "exec" }, signal);
   await op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal });
   const ref = await f.backend.forExecution(authority("bg")).background.start(
-    { id: "d" },
+    { id: DEVICE_ID },
     { ...f.scope, operationId: "bg" },
     {
       command: "true",
@@ -1035,7 +1155,7 @@ it("a restricted exec and a background task both carry the device's sandbox home
   const home = join(dirname(f.roots.workspace), "home");
   const requests = f.launched as import("../src/exec/operation-worker.js").MacWorkerRequest[];
   expect(requests.map((r) => r.kind === "exec" && r.sandboxHome)).toEqual([home, home]);
-  await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
+  await f.backend.background.stop({ id: DEVICE_ID }, ref, { graceMs: 0, signal });
 });
 
 // A kernel read names its covering path as the project root (protocol 5): the program derives
@@ -1068,14 +1188,20 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: false,
       network: "allowlist",
       roots,
-      restrictedProjectReach: "os-user",
+      // listed paths: under machine reach the whole machine minus the denies is readable, so a
+      // link to an undenied file is no escape there
+      projectReach: "paths",
       allowedDomains: [],
+      projectPaths: [project, linked],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
     const backend = await createMacOperationBackend(
       {
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         instanceGeneration: "kernel-read",
         stateDir,
         roots,
@@ -1089,10 +1215,10 @@ it.runIf(process.platform === "darwin")(
     const read = async (agents: string) =>
       (
         await backend.operation(
-          { id: "d" },
+          { id: DEVICE_ID },
           {
             operationId: `kernel-read-${++id}`,
-            deviceId: "d",
+            deviceId: DEVICE_ID,
             rootConversationId: "r",
             profileRevision: 0,
             ceilingRevision: "fixture",
@@ -1100,7 +1226,7 @@ it.runIf(process.platform === "darwin")(
             profile: "request-approval",
             actor: { accountId: "a", conversationId: "r" },
             tag: "kernel-read",
-            filesystem: { kind: "scoped", projectRoot: agents, writeRoots: [] },
+            filesystem: { kind: "scoped", projectRoot: dirname(agents), writeRoots: [] },
             network: { kind: "none" },
           },
           signal,

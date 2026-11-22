@@ -112,10 +112,15 @@ export function ensureMachineFile(machineDir: string): void {
   }
 }
 
-/** One snapshot of the connections directory: what can be used, and what cannot and why. */
+/**
+ * One snapshot of the connections directory: what can be used, what cannot and why, and the
+ * connection directories without a credential (logged out: their policy, logs and default working
+ * directory may remain), by device id.
+ */
 export interface ConnectionScan {
   readable: ConnectionInfo[];
   unreadable: Array<{ deviceId: string; reason: string }>;
+  credentialless: string[];
 }
 
 /** The connection a directory holds; throws why it cannot be used. */
@@ -151,8 +156,9 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const isMissing = (e: unknown): boolean => (e as NodeJS.ErrnoException).code === "ENOENT";
 
 /**
- * {@link listConnections} and {@link unreadableConnections} from one read of the directory, for a
- * caller that needs both to agree. Only a missing file means "absent": a connection directory or
+ * {@link listConnections}, {@link unreadableConnections} and the credential-less connection
+ * directories from one read of the directory (each credential read once), for a caller that needs
+ * them to agree. Only a missing file means "absent": a connection directory or
  * credential that cannot be examined (EACCES, ELOOP, …) is unreadable, never skipped, and a
  * `connections/` directory that cannot be read, or is not a directory (a symlink included), throws.
  * Fails closed: a caller that denies other connections' files never misses one silently.
@@ -168,11 +174,11 @@ export function scanConnections(machineDir: string = stateDir()): ConnectionScan
     isDir = lstatSync(root).isDirectory();
     names = isDir ? readdirSync(root) : [];
   } catch (e) {
-    if (isMissing(e)) return { readable: [], unreadable: [] };
+    if (isMissing(e)) return { readable: [], unreadable: [], credentialless: [] };
     throw unusable((e as Error).message);
   }
   if (!isDir) throw unusable("not a directory");
-  const out: ConnectionScan = { readable: [], unreadable: [] };
+  const out: ConnectionScan = { readable: [], unreadable: [], credentialless: [] };
   for (const name of names.sort(compare)) {
     if (!DEVICE_ID_PATTERN.test(name)) continue;
     const dir = join(root, name);
@@ -190,9 +196,8 @@ export function scanConnections(machineDir: string = stateDir()): ConnectionScan
     try {
       cred = lstatSync(credentialPath(dir));
     } catch (e) {
-      if (!isMissing(e)) {
-        unreadable(`${credentialPath(dir)} cannot be examined (${(e as Error).message})`);
-      }
+      if (isMissing(e)) out.credentialless.push(name);
+      else unreadable(`${credentialPath(dir)} cannot be examined (${(e as Error).message})`);
       continue;
     }
     if (!cred.isFile()) {

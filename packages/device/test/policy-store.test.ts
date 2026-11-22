@@ -15,7 +15,6 @@ import { PolicyStore } from "../src/policy-store.js";
 import {
   DEFAULT_POLICY,
   MISSING_POLICY_OWNER_CEILING,
-  ownerCeilingOfMode,
   type Policy,
   policyLockPath,
   policyPath,
@@ -39,16 +38,15 @@ describe("PolicyStore", () => {
     expect(new PolicyStore(dir).current().allowedDomains).toEqual(["a.com"]);
   });
 
-  it("reports a legacy policy file and hands out a new object per version only", () => {
+  it("refuses a policy file in another version and hands out a new object per version only", () => {
     writeFileSync(policyPath(dir), JSON.stringify({ tier: "open" }));
+    expect(() => new PolicyStore(dir)).toThrow(/capybara-device ceiling set/);
+    writePolicy(dir, withDomains(["a.com"]));
     const store = new PolicyStore(dir);
-    expect(store.legacy).toBe(true);
-    expect(store.current().ownerCeiling.outsideSandbox).toBe(true);
     const first = store.current();
     expect(store.current()).toBe(first);
-    writePolicy(dir, withDomains(["a.com"]));
+    writePolicy(dir, withDomains(["b.com"]));
     expect(store.current()).not.toBe(first);
-    expect(new PolicyStore(dir).legacy).toBe(false);
   });
 
   it("re-reads policy.json when it changes, without a restart", () => {
@@ -60,10 +58,10 @@ describe("PolicyStore", () => {
   });
 
   it("an in-place edit with the same size is seen through its mtime", () => {
-    writeFileSync(policyPath(dir), JSON.stringify(withDomains(["a.com"])));
+    writeFileSync(policyPath(dir), JSON.stringify({ version: 4, ...withDomains(["a.com"]) }));
     const store = new PolicyStore(dir);
     expect(store.current().allowedDomains).toEqual(["a.com"]);
-    writeFileSync(policyPath(dir), JSON.stringify(withDomains(["b.com"])));
+    writeFileSync(policyPath(dir), JSON.stringify({ version: 4, ...withDomains(["b.com"]) }));
     const later = new Date(statSync(policyPath(dir)).mtimeMs + 5_000);
     utimesSync(policyPath(dir), later, later);
     expect(store.current().allowedDomains).toEqual(["b.com"]);
@@ -84,17 +82,31 @@ describe("PolicyStore", () => {
   });
 
   it("a broken file never keeps a wider ceiling than the file now says", () => {
-    writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("auto") });
+    writePolicy(dir, {
+      ...withDomains(["a.com"]),
+      ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "machine" },
+    });
     const store = new PolicyStore(dir);
-    expect(store.current().ownerCeiling).toEqual(ownerCeilingOfMode("auto"));
+    expect(store.current().ownerCeiling).toEqual({
+      outsideSandbox: true,
+      network: "open",
+      projectReach: "machine",
+    });
     writeFileSync(
       policyPath(dir),
       JSON.stringify({ version: 2, ownerCeiling: { fullAccess: "yes" } }),
     );
     expect(() => store.current()).toThrow();
     // a fixed file applies as written
-    writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("sandbox") });
-    expect(store.current().ownerCeiling).toEqual(ownerCeilingOfMode("sandbox"));
+    writePolicy(dir, {
+      ...withDomains(["a.com"]),
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
+    });
+    expect(store.current().ownerCeiling).toEqual({
+      outsideSandbox: false,
+      network: "allowlist",
+      projectReach: "workspace",
+    });
   });
 
   it("a deleted file means the closed missing-file policy, never the open default", () => {
@@ -117,7 +129,7 @@ describe("PolicyStore", () => {
   it("update reads the file, writes the change, swaps the policy and keeps unknown keys", () => {
     writeFileSync(
       policyPath(dir),
-      JSON.stringify({ ...withDomains(["a.com"]), futureKey: { x: 1 } }),
+      JSON.stringify({ version: 4, ...withDomains(["a.com"]), futureKey: { x: 1 } }),
     );
     const store = new PolicyStore(dir);
     const next = store.update((p) => ({ ...p, allowedDomains: [...p.allowedDomains, "b.com"] }));

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runNativeHelper } from "../src/exec/native-helper-client.js";
 import { stageRuntimeSource } from "../src/exec/runtime-source.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+const DEVICE_ID = testDeviceId("native-helper-client");
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
 const workspace = { runtimeHash: "", cleanup: async () => {} };
@@ -13,6 +16,7 @@ beforeAll(async () => {
   Object.assign(workspace, await sealWorkspaceRuntime());
 });
 afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
   await workspace.cleanup();
 });
 
@@ -84,7 +88,7 @@ it.runIf(process.platform === "darwin")(
     const scope = {
       operationId: "native-owned",
       admitBeforeMs: Date.now() + 30000,
-      deviceId: "owned-fixture",
+      deviceId: DEVICE_ID,
       rootConversationId: "r",
       profileRevision: 0,
       ceilingRevision: "fixture",
@@ -153,7 +157,7 @@ it.runIf(process.platform === "darwin")(
           scope: {
             operationId: `native-file-${String(native.method)}`,
             admitBeforeMs: Date.now() + 30000,
-            deviceId: "owned-fixture",
+            deviceId: DEVICE_ID,
             rootConversationId: "r",
             profileRevision: 0,
             ceilingRevision: "fixture",
@@ -228,7 +232,7 @@ it
       const scope = {
         operationId: `native-${workers.length}`,
         admitBeforeMs: Date.now() + 30000,
-        deviceId: "fixture",
+        deviceId: DEVICE_ID,
         rootConversationId: "r",
         profileRevision: 0,
         ceilingRevision: "fixture",
@@ -308,7 +312,7 @@ it.runIf(process.platform === "darwin")(
           scope: {
             operationId: "alias",
             admitBeforeMs: Date.now() + 30000,
-            deviceId: "d",
+            deviceId: DEVICE_ID,
             accountId: "a",
             ceilingRevision: "r",
             readRoots: [project],
@@ -441,7 +445,7 @@ it.runIf(process.platform === "darwin")(
           purpose: "preparation",
           scope: {
             operationId: `establish-${workers.length}`,
-            deviceId: "d",
+            deviceId: DEVICE_ID,
             purpose: "attachments",
             writeRoots: [conversation],
             tag: "fixture",

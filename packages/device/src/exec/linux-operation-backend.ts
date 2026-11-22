@@ -86,10 +86,11 @@ export function hostFilesLock(stateDir: string): string {
 }
 
 /**
- * Landlock only grants: it cannot hide an owner-denied path (a secret directory, the device's
- * state) inside a granted root, so such an exec grant is refused rather than widened. Native work
- * checks every resolved path against the denied roots itself (in the agent), so it needs no such
- * refusal.
+ * Landlock only grants. Read roots are carved around the owner-denied paths (a secret directory,
+ * the device's state) before launch (`carveReadRoots`), but a write root is granted whole (the
+ * broker performs its writes; the command reads it), so an exec whose write root contains or is
+ * a denied path is refused rather than widened. Native work checks every resolved path against
+ * the denied roots itself (in the agent), so it needs no such refusal.
  */
 export function checkLinuxRestrictedGrant(
   grant: LocalOperationGrant,
@@ -97,10 +98,10 @@ export function checkLinuxRestrictedGrant(
 ): void {
   if (kind === "native") return;
   for (const denied of grant.deniedReadRoots)
-    for (const root of [...grant.readRoots, ...grant.writeRoots])
+    for (const root of grant.writeRoots)
       if (within(denied, root))
         throw new SandboxScopeDeniedError(
-          `The granted root ${root} contains ${denied}, a path the owner denies; restricted Linux execution (Landlock) cannot exclude a path inside a granted root. Run the command from a narrower directory (a project directory, not the home directory) or, if the owner allows it, with Full access`,
+          `The write root ${root} contains ${denied}, a path the owner denies; restricted Linux execution (Landlock) cannot exclude a path inside a write root. Run the command from a narrower directory (a project directory, not the home directory) or, if the owner allows it, with Full access`,
         );
 }
 

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+const DEVICE_ID = testDeviceId("mac-tool-homes");
 
 const workspace = { runtimeHash: "", cleanup: async () => {} };
 let root = "";
@@ -15,6 +18,7 @@ beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-toolhome-")));
 });
 afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
   await workspace.cleanup();
   if (root) await rm(root, { recursive: true, force: true });
 });
@@ -41,7 +45,11 @@ it.runIf(process.platform === "darwin")(
     const worker = await startMacOperationWorker(
       {
         kind: "exec",
-        scope: { operationId: "tool-homes", tag: "tool-homes" } as never,
+        scope: {
+          operationId: "tool-homes",
+          tag: "tool-homes",
+          deviceId: DEVICE_ID,
+        } as never,
         grant: {
           full: false,
           readRoots: [project],
@@ -112,7 +120,11 @@ it.runIf(process.platform === "darwin")(
       const worker = await startMacOperationWorker(
         {
           kind: "exec",
-          scope: { operationId: "sandbox-home", tag: "sandbox-home" } as never,
+          scope: {
+            operationId: "sandbox-home",
+            tag: "sandbox-home",
+            deviceId: DEVICE_ID,
+          } as never,
           grant: {
             full: false,
             readRoots: [project],

@@ -1,21 +1,35 @@
+import { mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
+import { CONNECTIONS_DIR } from "../src/connections.js";
 import {
+  checkRoots,
   grantStillHolds,
   intersectOperation,
-  normalizedReadRoots,
   OUTSIDE_SANDBOX_REFUSAL,
+  PROJECT_REFUSAL_MESSAGES,
   readStrictOwnerCeiling,
+  readStrictOwnerCeilingSync,
 } from "../src/exec/operation-types.js";
-import { osRoots } from "../src/exec/shared.js";
+import { privateTempParentName } from "../src/exec/read-model.js";
+import { macUserTempDir, osRoots } from "../src/exec/shared.js";
 import {
+  type Credential,
   DEFAULT_POLICY,
-  FULL_OWNER_CEILING,
-  ownerCeilingOfMode,
+  type OwnerCeilingPolicy,
+  type Policy,
+  writeCredential,
   writePolicy,
 } from "../src/state.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 /** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
@@ -23,19 +37,44 @@ const dirs: string[] = [];
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
-async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), "cap-ceiling-"));
+type Connections = {
+  readable: { deviceId: string; workDir: string }[];
+  unreadable: { deviceId: string; reason: string }[];
+  credentialless?: string[];
+};
+/**
+ * A machine state root `<dir>/machine` holding this connection `a` (its state in
+ * `connections/a`, its device directory `<dir>/device`) and whatever other connections a test
+ * puts in `connections` (read on every ceiling read).
+ */
+async function fixture(policy: Partial<Policy> = {}) {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "cap-ceiling-")));
   dirs.push(dir);
-  writePolicy(join(dir, "state"), { ...FULL_POLICY, allowedDomains: ["*.example.com"] });
+  const stateRoot = join(dir, "machine");
+  const stateDir = join(stateRoot, CONNECTIONS_DIR, "a");
+  const own = { deviceId: "a", workDir: join(dir, "device") };
+  const connections: Connections = { readable: [own], unreadable: [] };
+  const setPolicy = (p: Partial<Policy>) =>
+    writePolicy(stateDir, { ...FULL_POLICY, allowedDomains: ["*.example.com"], ...p });
+  setPolicy(policy);
   const roots = osRoots(join(dir, "device"));
-  const read = () =>
-    readStrictOwnerCeiling({
-      stateDir: join(dir, "state"),
-      deviceId: "d",
-      dir: join(dir, "device"),
-      home: join(dir, "home"),
-    });
-  return { dir, roots, read };
+  const input = {
+    stateDir,
+    deviceId: "a",
+    dir: join(dir, "device"),
+    home: join(dir, "home"),
+    stateRoot,
+    connections: () => connections,
+    macTempBases: [join(dir, "usertemp")],
+  };
+  const read = () => readStrictOwnerCeiling(input);
+  const addOther = (deviceId: string) => {
+    const workDir = join(dir, deviceId);
+    mkdirSync(workDir, { recursive: true });
+    connections.readable.push({ deviceId, workDir });
+    return workDir;
+  };
+  return { dir, stateRoot, stateDir, roots, read, input, connections, addOther, setPolicy };
 }
 const scope = (roots: ReturnType<typeof osRoots>) => ({
   operationId: "op",
@@ -57,53 +96,321 @@ const scope = (roots: ReturnType<typeof osRoots>) => ({
     hosts: ["a.example.com", "approved.test", "unknown.test"],
   },
 });
-describe("the read roots this program derives (the scope names none)", () => {
-  const roots = {
-    workspace: "/u/.capybara/workspace",
-    skills: "/u/.capybara/skills",
-    tmp: "/u/.capybara/tmp",
-  };
-  it("derives read roots from the project root, the write roots and the skills root", () => {
-    expect(
-      normalizedReadRoots(
-        { kind: "scoped", projectRoot: "/u/repo", writeRoots: ["/u/repo"] },
-        roots,
-      ),
-    ).toEqual(["/u/.capybara/skills", "/u/repo"]);
-    expect(
-      normalizedReadRoots(
-        { kind: "scoped", projectRoot: "/u/repo", writeRoots: ["/tmp/out", "/u/repo/build"] },
-        roots,
-      ),
-    ).toEqual(["/tmp/out", "/u/.capybara/skills", "/u/repo"]);
-  });
-  it("free mode reads the workspace; nested and duplicate entries collapse", () => {
-    expect(
-      normalizedReadRoots(
-        { kind: "scoped", projectRoot: null, writeRoots: [roots.workspace, roots.workspace] },
-        roots,
-      ),
-    ).toEqual([roots.skills, roots.workspace]);
-    // a project root above the skills root covers it
-    expect(
-      normalizedReadRoots({ kind: "scoped", projectRoot: "/u", writeRoots: [] }, roots),
-    ).toEqual(["/u"]);
-    expect(normalizedReadRoots({ kind: "device" }, roots)).toEqual(["/"]);
-  });
-  it("an operation grant carries the derived read roots, checked against the owner ceiling", async () => {
+const open = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
+const scoped = (
+  roots: ReturnType<typeof osRoots>,
+  projectRoot: string | null,
+  writeRoots: string[] = projectRoot === null ? [] : [projectRoot],
+) => {
+  const s = scope(roots);
+  s.filesystem.projectRoot = projectRoot;
+  s.filesystem.writeRoots = writeRoots;
+  return s;
+};
+/** Calls `fn` and returns the SandboxScopeDeniedError it throws (fails the test otherwise). */
+function refusal(fn: () => unknown): SandboxScopeDeniedError {
+  try {
+    fn();
+  } catch (error) {
+    expect(error).toBeInstanceOf(SandboxScopeDeniedError);
+    return error as SandboxScopeDeniedError;
+  }
+  throw new Error("expected a SandboxScopeDeniedError");
+}
+
+describe("project reach and other connections' directories", () => {
+  it("machine reach grants / and denies secrets, the state root and other connections", async () => {
     const f = await fixture();
-    const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
-    const s = scope(f.roots);
-    s.filesystem.projectRoot = null;
-    s.filesystem.writeRoots = [f.roots.workspace];
-    expect(intersectOperation(s, await f.read(), a).readRoots).toEqual(
-      [f.roots.skills, f.roots.workspace].sort(),
-    );
-    // a project root that is an owner-denied path is refused like a write root
-    s.filesystem.projectRoot = join(f.dir, "home", ".ssh");
+    const b = f.addOther("b");
+    const project = join(f.dir, "project");
+    mkdirSync(project);
     const c = await f.read();
-    expect(() => intersectOperation(s, c, a)).toThrow(/denied by the owner/);
+    expect(c.projectReach).toBe("machine");
+    const g = intersectOperation(scoped(f.roots, project), c, open);
+    expect(g.readRoots).toEqual(["/"]);
+    expect(g.writeRoots).toEqual([project]);
+    expect(g.deniedReadRoots).toContain(join(f.dir, "home", ".ssh"));
+    expect(g.deniedReadRoots).toContain(f.stateRoot);
+    expect(g.deniedReadRoots).toContain(f.stateDir);
+    expect(g.deniedReadRoots).toContain(b);
+    // the other connection's private temporary parent in the macOS user temp dir
+    expect(g.deniedReadRoots).toContain(join(f.dir, "usertemp", privateTempParentName("b")));
+    expect(g.deniedReadRoots).not.toContain(join(f.dir, "device"));
+    expect(g.deniedReadRoots).not.toContain(join(f.dir, "usertemp", privateTempParentName("a")));
+    // the split lists, and their union
+    expect(c.otherConnectionDenies).toContain(b);
+    expect(c.otherConnectionDenies).not.toContain(f.stateRoot);
+    expect(c.secretAndStateDenies).toContain(f.stateRoot);
+    expect(c.secretAndStateDenies).not.toContain(b);
+    expect([...c.restrictedDeniedReadRoots].sort()).toEqual(
+      [...new Set([...c.secretAndStateDenies, ...c.otherConnectionDenies])].sort(),
+    );
   });
+  it("the revision changes when a connection is added or removed", async () => {
+    const f = await fixture();
+    const s = scoped(f.roots, f.roots.workspace);
+    const one = await f.read();
+    const before = intersectOperation(s, one, open);
+    f.addOther("b");
+    const two = await f.read();
+    expect(two.revision).not.toBe(one.revision);
+    const after = intersectOperation(s, two, open);
+    expect(grantStillHolds(before, after)).toBe(false);
+    f.connections.readable.pop();
+    const three = await f.read();
+    expect(three.revision).not.toBe(two.revision);
+    expect(three.revision).toBe(one.revision);
+  });
+  it("denies a logged-out connection's default working directory; the revision follows it", async () => {
+    const f = await fixture();
+    const s = scoped(f.roots, f.roots.workspace);
+    const one = await f.read();
+    const before = intersectOperation(s, one, open);
+    const outWork = join(f.dir, "home", "capybara-device", "out");
+    expect(before.deniedReadRoots).not.toContain(outWork);
+    f.connections.credentialless = ["out", "a"];
+    const two = await f.read();
+    expect(two.revision).not.toBe(one.revision);
+    const after = intersectOperation(s, two, open);
+    expect(grantStillHolds(before, after)).toBe(false);
+    expect(two.otherConnectionDenies).toContain(outWork);
+    expect(after.deniedReadRoots).toContain(outWork);
+    expect(after.deniedReadRoots).toContain(join(f.dir, "usertemp", privateTempParentName("out")));
+    // never this connection's own default working directory
+    expect(after.deniedReadRoots).not.toContain(join(f.dir, "home", "capybara-device", "a"));
+    expect(two.unreadableConnections).toEqual([]);
+  });
+  it("denies the default state path even when the state root lies elsewhere (XDG_CONFIG_HOME)", async () => {
+    const f = await fixture();
+    const c = await f.read();
+    const defaultState = join(f.dir, "home", ".config", "capybara-device");
+    expect(f.stateRoot).not.toBe(defaultState);
+    expect(c.secretAndStateDenies).toContain(defaultState);
+    expect(c.secretAndStateDenies).toContain(f.stateRoot);
+    const g = intersectOperation(scoped(f.roots, f.roots.workspace), c, open);
+    expect(g.deniedReadRoots).toContain(defaultState);
+  });
+  it("an unreadable other connection refuses every sandboxed grant, nothing else", async () => {
+    const f = await fixture();
+    const cred = (id: string, dir: string | null) =>
+      ({
+        url: `https://${id}.example.com/x`,
+        connectUrl: "wss://example.com/ws",
+        credential: "secret",
+        orgId: `org-${id}`,
+        deviceId: id,
+        dir,
+        mode: "os",
+        reconnectGraceSeconds: 120,
+        maxFrameBytes: 1024,
+      }) as unknown as Credential;
+    // the default connection reader: the state root's connections/<id>/credential.json
+    writeCredential(f.stateDir, cred("a", join(f.dir, "device")));
+    const { connections: _injected, ...input } = f.input;
+    const s = scoped(f.roots, f.roots.workspace);
+    const fine = readStrictOwnerCeilingSync(input);
+    expect(fine.unreadableConnections).toEqual([]);
+    const before = intersectOperation(s, fine, open);
+    writeCredential(join(f.stateRoot, CONNECTIONS_DIR, "b"), cred("b", null));
+    // the read itself succeeds (the owner report and escalated calls go on)
+    const broken = readStrictOwnerCeilingSync(input);
+    expect(broken.unreadableConnections.map((u) => u.deviceId)).toEqual(["b"]);
+    expect(broken.revision).not.toBe(fine.revision);
+    const escalated = {
+      ...scope(f.roots),
+      filesystem: { kind: "device" as const },
+      network: { kind: "environment" as const },
+    };
+    expect(intersectOperation(escalated, broken).full).toBe(true);
+    // a sandboxed operation, native call, browse or preparation is refused, actionably
+    for (const attempt of [
+      () => intersectOperation(s, broken, open),
+      () => intersectOperation(s, broken, undefined, true),
+      () => checkRoots([f.roots.workspace], [], broken),
+      () => checkRoots([], [f.roots.skills], broken, true),
+    ]) {
+      const e = refusal(attempt);
+      expect(e.message).toMatch(/connections\/b/);
+      expect(e.message).toMatch(/missing dir/);
+      expect(e.message).toMatch(/capybara-device logout -c b/);
+    }
+    // reconcile: the next grant cannot be computed, so a live sandboxed grant is revoked (the
+    // backend's reconcile treats a throwing intersection as revoked)
+    expect(before.full).toBe(false);
+    // an injected reader: unreadable entries and relative working directories alike
+    f.connections.unreadable.push({ deviceId: "c", reason: "mode 0644" });
+    expect(
+      refusal(() => intersectOperation(s, readStrictOwnerCeilingSync(f.input), open)).message,
+    ).toMatch(/connections\/c \(mode 0644\)/);
+    f.connections.unreadable.splice(0, 1, { deviceId: "a", reason: "x" });
+    // the own connection being unreadable is not another connection's directory
+    expect(readStrictOwnerCeilingSync(f.input).unreadableConnections).toEqual([]);
+    f.connections.readable.push({ deviceId: "d", workDir: "relative/d" });
+    const relative = readStrictOwnerCeilingSync(f.input);
+    expect(relative.unreadableConnections).toEqual([
+      { deviceId: "d", reason: "its working directory is not absolute" },
+    ]);
+    expect(refusal(() => intersectOperation(s, relative, open)).message).toMatch(/connections\/d/);
+  });
+  it("paths reach with no listed paths reads the device roots and the write roots only", async () => {
+    const f = await fixture({
+      ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "paths" },
+      projectPaths: [],
+    });
+    const c = await f.read();
+    expect(c.projectPaths).toEqual([]);
+    const out = join(f.roots.workspace, "out");
+    expect(
+      intersectOperation(scoped(f.roots, f.roots.workspace, [out]), c, open).readRoots,
+    ).toEqual([f.roots.skills, f.roots.tmp, f.roots.workspace].sort());
+    expect(
+      refusal(() => intersectOperation(scoped(f.roots, join(f.dir, "project")), c, open)).message,
+    ).toBe(PROJECT_REFUSAL_MESSAGES["outside-reach"]);
+  });
+  it("paths reach reads only the listed paths, refusing a project root outside them", async () => {
+    const f = await fixture();
+    const listed = join(f.dir, "listed");
+    const repo = join(listed, "repo");
+    mkdirSync(repo, { recursive: true });
+    const missing = join(f.dir, "missing");
+    f.setPolicy({
+      ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "paths" },
+      projectPaths: [listed, missing],
+    });
+    const c = await f.read();
+    expect(c.projectReach).toBe("paths");
+    // only listed paths that exist, in canonical form
+    expect(c.projectPaths).toEqual([listed]);
+    const g = intersectOperation(scoped(f.roots, repo), c, open);
+    expect(g.readRoots).toContain(listed);
+    expect(g.readRoots).not.toContain("/");
+    expect(g.readRoots).toEqual([listed, f.roots.skills, f.roots.tmp, f.roots.workspace].sort());
+    for (const root of ["/elsewhere", join(missing, "x")]) {
+      const e = refusal(() => intersectOperation(scoped(f.roots, root), c, open));
+      expect(e.message).toBe(PROJECT_REFUSAL_MESSAGES["outside-reach"]);
+      expect(e.message).toMatch(/outside this connection's project reach/);
+      expect(e.message).toMatch(/capybara-device policy add projectPaths/);
+    }
+    // a write root outside the listed paths and the device roots is refused the same way
+    const e = refusal(() =>
+      intersectOperation(scoped(f.roots, repo, [repo, join(f.dir, "out")]), c, open),
+    );
+    expect(e.message).toBe(PROJECT_REFUSAL_MESSAGES["outside-reach"]);
+    // a link inside the listed path that leads out of it is outside the reach
+    symlinkSync(join(f.dir, "home"), join(listed, "out"));
+    expect(
+      refusal(() => intersectOperation(scoped(f.roots, join(listed, "out")), c, open)).message,
+    ).toBe(PROJECT_REFUSAL_MESSAGES["outside-reach"]);
+  });
+  it("a listed project path reached through a link is granted in its canonical form", async () => {
+    const f = await fixture();
+    const real = join(f.dir, "real");
+    mkdirSync(real);
+    symlinkSync(real, join(f.dir, "linked"));
+    f.setPolicy({
+      ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "paths" },
+      projectPaths: [join(f.dir, "linked")],
+    });
+    const c = await f.read();
+    expect(c.projectPaths).toEqual([real]);
+    expect(intersectOperation(scoped(f.roots, real), c, open).readRoots).toContain(real);
+  });
+  it("refuses a project root or write root in another connection's directory", async () => {
+    for (const reach of ["machine", "paths", "workspace"] as const) {
+      const f = await fixture();
+      const b = f.addOther("b");
+      mkdirSync(join(b, "x"));
+      symlinkSync(b, join(f.dir, "to-b"));
+      f.setPolicy({
+        ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: reach },
+        projectPaths: [f.dir],
+      });
+      const c = await f.read();
+      const message = PROJECT_REFUSAL_MESSAGES["other-connection"];
+      for (const root of [b, join(b, "x"), join(f.dir, "to-b"), join(f.dir, "to-b", "x")]) {
+        expect(refusal(() => intersectOperation(scoped(f.roots, root), c, open)).message).toBe(
+          message,
+        );
+        expect(
+          refusal(() => intersectOperation(scoped(f.roots, f.roots.workspace, [root]), c, open))
+            .message,
+          `${reach} write root ${root}`,
+        ).toBe(message);
+      }
+    }
+  });
+  it("refuses a project root that holds secrets or this program's state", async () => {
+    const f = await fixture();
+    const c = await f.read();
+    for (const root of [join(f.dir, "home", ".ssh"), f.stateRoot, join(f.stateDir, "x")]) {
+      expect(refusal(() => intersectOperation(scoped(f.roots, root), c, open)).message).toBe(
+        PROJECT_REFUSAL_MESSAGES.denied,
+      );
+      expect(
+        refusal(() => intersectOperation(scoped(f.roots, null, [root]), c, open)).message,
+      ).toBe(PROJECT_REFUSAL_MESSAGES.denied);
+    }
+  });
+  it("workspace reach keeps today's workspace refusal", async () => {
+    const f = await fixture();
+    const project = join(f.dir, "project");
+    mkdirSync(project);
+    const s = scoped(f.roots, project);
+    expect(intersectOperation(s, await f.read(), open).readRoots).toEqual(["/"]);
+    f.setPolicy({
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
+    });
+    const narrowed = await f.read();
+    expect(refusal(() => intersectOperation(s, narrowed, open)).message).toBe(
+      PROJECT_REFUSAL_MESSAGES["outside-reach"],
+    );
+    const inside = intersectOperation(scoped(f.roots, f.roots.workspace), narrowed, open);
+    expect(inside.readRoots).toEqual([f.roots.skills, f.roots.tmp, f.roots.workspace].sort());
+  });
+  it("reconcile: narrowed reach or a removed project path revokes the grant", async () => {
+    const f = await fixture();
+    const l1 = join(f.dir, "l1");
+    const l2 = join(f.dir, "l2");
+    mkdirSync(l1);
+    mkdirSync(l2);
+    const s = scoped(f.roots, l1);
+    const machine = intersectOperation(s, await f.read(), open);
+    const usePaths = (projectPaths: string[]) =>
+      f.setPolicy({ ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "paths" }, projectPaths });
+    usePaths([l1, l2]);
+    const both = intersectOperation(s, await f.read(), open);
+    // machine -> paths: "/" is no longer covered
+    expect(both.deniedReadRoots).toEqual(machine.deniedReadRoots);
+    expect(grantStillHolds(machine, both)).toBe(false);
+    expect(grantStillHolds(both, both)).toBe(true);
+    usePaths([l1]);
+    const one = intersectOperation(s, await f.read(), open);
+    expect(grantStillHolds(both, one)).toBe(false);
+    // widening keeps it
+    expect(grantStillHolds(one, both)).toBe(true);
+    // paths -> workspace: the listed path is gone
+    const ws = scoped(f.roots, f.roots.workspace);
+    const listedGrant = intersectOperation(ws, await f.read(), open);
+    f.setPolicy({ ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "workspace" } });
+    const narrowed = intersectOperation(ws, await f.read(), open);
+    expect(narrowed.deniedReadRoots).toEqual(listedGrant.deniedReadRoots);
+    expect(grantStillHolds(listedGrant, narrowed)).toBe(false);
+  });
+  it.runIf(process.platform === "darwin")(
+    "on macOS the default temp bases are the user temp dir and the process temp dir the worker may use",
+    async () => {
+      const f = await fixture();
+      f.addOther("b");
+      const { macTempBases: _bases, ...input } = f.input;
+      const c = readStrictOwnerCeilingSync(input);
+      // the user temp dir and this process's temp dir: the worker's fallback base
+      const user = macUserTempDir();
+      if (user) expect(c.otherConnectionDenies).toContain(join(user, privateTempParentName("b")));
+      expect(c.otherConnectionDenies).toContain(
+        join(realpathSync(tmpdir()), privateTempParentName("b")),
+      );
+    },
+  );
 });
 
 describe("independent owner ceiling", () => {
@@ -113,15 +420,15 @@ describe("independent owner ceiling", () => {
     expect(Object.isFrozen(c.roots)).toBe(true);
     expect(c.outsideSandbox).toBe(true);
     expect(c.network).toBe("open");
-    await unlink(join(f.dir, "state", "policy.json"));
+    await unlink(join(f.stateDir, "policy.json"));
     await expect(f.read()).rejects.toThrow();
-    await writeFile(join(f.dir, "state", "policy.json"), "{} nope");
+    await writeFile(join(f.stateDir, "policy.json"), "{} nope");
     await expect(f.read()).rejects.toThrow();
   });
   it("an owner allowlist is a ceiling: grants count only where the owner's list covers them", async () => {
     const f = await fixture();
     const allowlist = (allowedDomains: string[]) =>
-      writePolicy(join(f.dir, "state"), {
+      writePolicy(f.stateDir, {
         ...FULL_POLICY,
         allowedDomains,
         ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
@@ -186,19 +493,6 @@ describe("independent owner ceiling", () => {
       }).hosts,
     ).toEqual([]);
   });
-  it("allows outside projects only under independent OS-user reach", async () => {
-    const f = await fixture();
-    const s = scope(f.roots);
-    s.filesystem.projectRoot = join(f.dir, "project");
-    const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
-    expect(intersectOperation(s, await f.read(), a).readRoots).toContain(join(f.dir, "project"));
-    writePolicy(join(f.dir, "state"), {
-      ...FULL_POLICY,
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
-    });
-    const narrowed = await f.read();
-    expect(() => intersectOperation(s, narrowed, a)).toThrow();
-  });
   // R3 final review M1: another process's socket in a write root reaches outside the sandbox
   it("refuses a write root that is a system runtime or socket directory, as the kernel does", async () => {
     const f = await fixture();
@@ -228,7 +522,7 @@ describe("independent owner ceiling", () => {
     // reading one is no write
     const read = scope(f.roots);
     read.filesystem.projectRoot = "/run/user/1000";
-    expect(intersectOperation(read, c, a).readRoots).toContain("/run/user/1000");
+    expect(intersectOperation(read, c, a).readRoots).toEqual(["/"]);
   });
   it("an escalated Full access call ignores the host baseline; the owner ceiling denies it", async () => {
     const f = await fixture();
@@ -238,10 +532,14 @@ describe("independent owner ceiling", () => {
       filesystem: { kind: "device" as const },
       network: { kind: "environment" as const },
     };
-    expect(intersectOperation(s, await f.read()).full).toBe(true);
-    writePolicy(join(f.dir, "state"), {
+    const full = intersectOperation(s, await f.read());
+    expect(full.full).toBe(true);
+    // an escalated call gets no deny list: it runs outside the sandbox
+    expect(full.readRoots).toEqual(["/"]);
+    expect(full.deniedReadRoots).toEqual([]);
+    writePolicy(f.stateDir, {
       ...FULL_POLICY,
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
     });
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed)).toThrow();
@@ -257,9 +555,9 @@ describe("independent owner ceiling", () => {
     expect(intersectOperation(escalated, await f.read()).full).toBe(true);
     expect(intersectOperation(scope(f.roots), await f.read(), a).full).toBe(false);
     // the owner's outside-sandbox ceiling bounds it under every profile
-    writePolicy(join(f.dir, "state"), {
+    writePolicy(f.stateDir, {
       ...FULL_POLICY,
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
     });
     const narrowed = await f.read();
     expect(() => intersectOperation(escalated, narrowed)).toThrow();
@@ -272,7 +570,7 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     orgNetwork,
   });
   it("a non-escalated Full access scope gets scoped roots and the denied read roots", async () => {
-    const f = await fixture();
+    const f = await fixture({ ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "workspace" } });
     const s = {
       ...scope(f.roots),
       profile: "full-access" as const,
@@ -284,13 +582,13 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     expect(g.writeRoots).toEqual([f.roots.tmp]);
     expect(g.readRoots).not.toContain("/");
     expect(g.deniedReadRoots).toContain(join(f.dir, "home", ".ssh"));
-    expect(g.deniedReadRoots).toContain(join(f.dir, "state"));
+    expect(g.deniedReadRoots).toContain(f.stateDir);
     expect(g.openNetwork).toBe(true);
     expect(g.hosts).toEqual([]);
   });
   it("open-public against an allowlist owner ceiling narrows to the allowlist", async () => {
     const f = await fixture();
-    writePolicy(join(f.dir, "state"), {
+    writePolicy(f.stateDir, {
       ...FULL_POLICY,
       allowedDomains: ["*.example.com", "b.test"],
       ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
@@ -300,7 +598,7 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     expect(g.openNetwork).toBeUndefined();
     expect([...g.hosts].sort()).toEqual(["*.example.com", "b.test"]);
     // and against a kernel allowlist under the open owner ceiling: the kernel's hosts
-    writePolicy(join(f.dir, "state"), FULL_POLICY);
+    writePolicy(f.stateDir, FULL_POLICY);
     const k = intersectOperation(
       s,
       await f.read(),
@@ -321,7 +619,7 @@ describe("approval-only profiles: the sandbox under every profile", () => {
   });
   it("device + environment without outsideSandbox is refused under every profile", async () => {
     const f = await fixture();
-    writePolicy(join(f.dir, "state"), {
+    writePolicy(f.stateDir, {
       ...FULL_POLICY,
       ownerCeiling: { ...FULL_OWNER_CEILING, outsideSandbox: false },
     });
@@ -349,7 +647,7 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     const before = intersectOperation(open, await f.read(), a);
     expect(before.openNetwork).toBe(true);
     expect(grantStillHolds(before, intersectOperation(open, await f.read(), a))).toBe(true);
-    writePolicy(join(f.dir, "state"), {
+    writePolicy(f.stateDir, {
       ...FULL_POLICY,
       allowedDomains: ["a.example.com"],
       ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },

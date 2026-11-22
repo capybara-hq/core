@@ -1,5 +1,14 @@
 import { statSync } from "node:fs";
-import { type Policy, policyPath, readPolicyFile, withPolicyLock, writePolicy } from "./state.js";
+import {
+  type Policy,
+  type PolicyFile,
+  PolicyVersionError,
+  policyPath,
+  readPolicyFile,
+  replacementPolicy,
+  withPolicyLock,
+  writePolicy,
+} from "./state.js";
 
 /** What identifies one version of policy.json: absent, or its inode, size and mtime. */
 function versionOf(file: string): string {
@@ -23,11 +32,6 @@ export class PolicyStore {
   private policy: Policy;
   private version: string;
   private readonly file: string;
-  /**
-   * policy.json was written before auto mode (no `mode`) when the store was made: `start` prints
-   * one notice, and the key is dropped at the next write.
-   */
-  readonly legacy: boolean;
 
   constructor(
     private readonly dir: string,
@@ -36,14 +40,7 @@ export class PolicyStore {
     this.file = policyPath(dir);
     this.version = versionOf(this.file);
     // Without an initial policy, an unreadable file throws here: the program does not start.
-    if (opts.initial !== undefined) {
-      this.policy = opts.initial;
-      this.legacy = false;
-    } else {
-      const read = readPolicyFile(dir);
-      this.policy = read.policy;
-      this.legacy = read.legacy;
-    }
+    this.policy = opts.initial ?? readPolicyFile(dir).policy;
   }
 
   /**
@@ -63,13 +60,29 @@ export class PolicyStore {
   /**
    * Read-modify-write under policy.json.lock: reads the file (throws on an invalid one rather
    * than overwrite it), writes the change atomically keeping unknown keys, and swaps the
-   * in-memory policy. Returns the new policy.
+   * in-memory policy. Returns the new policy. `onOtherVersion` (only the owner's
+   * `capybara-device ceiling set`): a file in another format version is replaced, the change
+   * applied to {@link replacementPolicy} and nothing of the old file kept; it is called with
+   * the version error of the replaced file.
    */
-  update(change: (p: Policy) => Policy): Policy {
+  update(
+    change: (p: Policy) => Policy,
+    opts: { onOtherVersion?: (replaced: PolicyVersionError) => void } = {},
+  ): Policy {
     return withPolicyLock(this.dir, () => {
-      const { policy, extra } = readPolicyFile(this.dir);
+      let read: PolicyFile;
+      let replaced: PolicyVersionError | undefined;
+      try {
+        read = readPolicyFile(this.dir);
+      } catch (e) {
+        if (opts.onOtherVersion === undefined || !(e instanceof PolicyVersionError)) throw e;
+        read = { policy: replacementPolicy(), extra: {} };
+        replaced = e;
+      }
+      const { policy, extra } = read;
       const next = change(policy);
       writePolicy(this.dir, next, extra);
+      if (replaced !== undefined) opts.onOtherVersion?.(replaced);
       this.policy = next;
       this.version = versionOf(this.file);
       return next;

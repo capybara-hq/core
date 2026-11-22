@@ -37,8 +37,13 @@ it.runIf(process.platform === "darwin")(
         outsideSandbox: true,
         network: "allowlist",
         roots,
-        restrictedProjectReach: "os-user",
+        // the workspace reach: a restricted read stays in the device roots
+        projectReach: "workspace",
         allowedDomains: [],
+        projectPaths: [],
+        secretAndStateDenies: [stateDir],
+        otherConnectionDenies: [],
+        unreadableConnections: [],
         restrictedDeniedReadRoots: [stateDir],
         preparation: {
           skillsRoot: roots.skills,
