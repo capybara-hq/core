@@ -1,8 +1,9 @@
 import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
-import { Sheet } from "../overlays/index";
+import { BottomSheet, Sheet } from "../overlays/index";
 import { useDesignT } from "../provider";
+import { ClassForms, useClassForm } from "./class-forms";
 import { INLINE_RIGHT_AREA_BELOW } from "./size-class";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
@@ -30,6 +31,14 @@ export type BodyProps = {
    * fixed above the content's scroll area and lines up with the content frame.
    */
   head?: ReactNode;
+  /**
+   * Field filters (ListPage `filters`) that join the Filter sheet on compact (responsive system
+   * spec §2.2 level 3): below 600 a Filter button opens one bottom sheet holding them and the rail.
+   * From 600 the template draws them inline itself; the Body draws nothing for them.
+   */
+  filters?: ReactNode;
+  /** The number of active filters, shown on the Filter button (0 or absent: none). */
+  filterCount?: number;
   children?: ReactNode;
 };
 
@@ -45,6 +54,8 @@ export function Body({
   railFlush,
   railCollapsible = true,
   head,
+  filters,
+  filterCount,
   children,
 }: BodyProps) {
   const t = useDesignT();
@@ -68,6 +79,20 @@ export function Body({
   const inspectorInline = hasInspector && (pre || !inspectorInSheet);
   const inspectorButton = hasInspector && (pre || inspectorInSheet);
   const resp = (v: string) => (pre ? v : undefined);
+  // Field filters join the Filter sheet on compact only (the template draws them inline from 600).
+  const form = useClassForm();
+  const hasFilters = filters != null && filters !== false;
+  const filterOnly = hasFilters && !railButton;
+  const filterButton = (
+    <Button onClick={() => setRailOpen(true)}>
+      {t("shell.filter")}
+      {hasFilters && (filterCount ?? 0) > 0 ? (
+        <span className="cb-body-tool-count" data-part="filter-count">
+          {filterCount}
+        </span>
+      ) : null}
+    </Button>
+  );
 
   if (layout === "centered") {
     return (
@@ -113,8 +138,14 @@ export function Body({
         >
           {railButton ? (
             <span className="cb-body-tool" data-rail-fit="button">
-              <Button onClick={() => setRailOpen(true)}>{t("shell.filter")}</Button>
+              {filterButton}
             </span>
+          ) : null}
+          {filterOnly ? (
+            <ClassForms
+              compact={<span className="cb-body-tool">{filterButton}</span>}
+              wide={null}
+            />
           ) : null}
           {inspectorButton ? (
             <span className="cb-body-tool" data-responsive={resp("below-1280")}>
@@ -122,6 +153,16 @@ export function Body({
             </span>
           ) : null}
         </div>
+      ) : filterOnly ? (
+        // Field filters alone: the Filter button exists on compact only.
+        <ClassForms
+          compact={
+            <div className="cb-body-tools" data-part="body-filter-tools">
+              <span className="cb-body-tool">{filterButton}</span>
+            </div>
+          }
+          wide={null}
+        />
       ) : null}
       <div className="cb-body-row">
         {railInline ? (
@@ -174,7 +215,18 @@ export function Body({
           </aside>
         ) : null}
       </div>
-      {hasRail ? (
+      {form === "compact" && (hasRail || hasFilters) ? (
+        // Compact: one Filter bottom sheet holds the field filters and the rail (spec §2.2).
+        <BottomSheet
+          open={railOpen}
+          onOpenChange={setRailOpen}
+          title={t("shell.filter")}
+          part="filter-sheet"
+        >
+          {hasFilters ? <div className="cb-body-filter-fields">{filters}</div> : null}
+          {hasRail ? rail : null}
+        </BottomSheet>
+      ) : hasRail ? (
         <Sheet open={railOpen} onOpenChange={setRailOpen} title={t("shell.filter")}>
           {rail}
         </Sheet>

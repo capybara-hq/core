@@ -15,7 +15,7 @@ export { DetailPage, type FactsShape } from "./detail-page";
 export { FormPage, FormSection, type FormSectionLayout } from "./form-page";
 export type { BlockShape, FieldShape, ItemShape } from "./frame";
 export { type InboxLoading, InboxPage } from "./inbox-page";
-export { type ListLoading, ListPage } from "./list-page";
+export { type ListLoading, ListPage, type ListScope } from "./list-page";
 export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
 export { OnboardingPage } from "./onboarding-page";
 export { OverviewPage } from "./overview-page";
