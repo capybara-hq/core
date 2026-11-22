@@ -1,8 +1,15 @@
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
 import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
+import { reachWidens } from "../exec/read-model.js";
 import { PolicyStore } from "../policy-store.js";
-import { type OwnerCeilingPolicy, policyPath, readCredential } from "../state.js";
+import {
+  closedPolicy,
+  type OwnerCeilingPolicy,
+  PolicyVersionError,
+  policyPath,
+  readCredential,
+} from "../state.js";
 
 /** Printed before a widening is applied (by --yes or a confirmed prompt). */
 export const CEILING_WIDENING_TEXT =
@@ -48,7 +55,7 @@ class WideningNeedsConfirmation extends Error {}
 const describe = (c: OwnerCeilingPolicy): string[] => [
   `Outside the sandbox: ${c.outsideSandbox ? "on" : "off"}`,
   `Network: ${c.network}`,
-  `Project reach: ${c.restrictedProjectReach}`,
+  `Project reach: ${c.projectReach}`,
 ];
 
 /** True when `next` allows anything `cur` does not. */
@@ -56,7 +63,7 @@ export function widens(cur: OwnerCeilingPolicy, next: OwnerCeilingPolicy): boole
   return (
     (!cur.outsideSandbox && next.outsideSandbox) ||
     (cur.network === "allowlist" && next.network === "open") ||
-    (cur.restrictedProjectReach === "workspace" && next.restrictedProjectReach === "os-user")
+    reachWidens(cur.projectReach, next.projectReach)
   );
 }
 
@@ -68,14 +75,15 @@ function target(
   return {
     outsideSandbox: cmd.outsideSandbox ?? cur.outsideSandbox,
     network: cmd.network ?? cur.network,
-    restrictedProjectReach: cmd.projectReach ?? cur.restrictedProjectReach,
+    projectReach: cmd.projectReach ?? cur.projectReach,
   };
 }
 
 /**
  * `ceiling show` prints the owner ceiling, the sandbox allowlist and the revision; `ceiling set`
- * changes the named fields under the policy lock, the others as they are then (converting an
- * old-format file).
+ * changes the named fields under the policy lock, the others as they are then. A policy file in
+ * another format version is replaced by `ceiling set`: the named fields over the closed policy,
+ * a widening of it confirmed as any other.
  * Narrowing applies directly; widening needs --yes or a confirmed terminal answer. Only the
  * machine's owner widens it: the deployment may only narrow.
  */
@@ -85,11 +93,17 @@ export async function ceilingCommand(
 ): Promise<number> {
   const { stateDir, out, err } = deps;
   let store: PolicyStore;
+  // `ceiling set` on a file in another format version starts from the closed policy
+  let replaceOtherVersion = false;
   try {
     store = new PolicyStore(stateDir);
   } catch (e) {
-    err(`Cannot read ${policyPath(stateDir)}: ${(e as Error).message}`);
-    return 1;
+    if (!(cmd.action === "set" && e instanceof PolicyVersionError)) {
+      err(`Cannot read ${policyPath(stateDir)}: ${(e as Error).message}`);
+      return 1;
+    }
+    store = new PolicyStore(stateDir, { initial: closedPolicy() });
+    replaceOtherVersion = true;
   }
   const cur = store.current();
   if (cmd.action === "show" && cmd.json === true) {
@@ -98,7 +112,7 @@ export async function ceilingCommand(
         outsideSandbox: cur.ownerCeiling.outsideSandbox,
         network: cur.ownerCeiling.network,
         allowedDomains: cur.allowedDomains,
-        projectReach: cur.ownerCeiling.restrictedProjectReach,
+        projectReach: cur.ownerCeiling.projectReach,
         // the strict reader's digest of the policy generation; null while logged out
         revision: strictRevision(stateDir, deps.home),
       }),
@@ -158,11 +172,14 @@ export async function ceilingCommand(
   try {
     // decided again on the policy under the lock: a narrowing that landed since the read above
     // makes this a widening, which needs its own confirmation
-    written = store.update((p) => {
-      const next = target(cmd, p.ownerCeiling);
-      if (!confirmed && widens(p.ownerCeiling, next)) throw new WideningNeedsConfirmation();
-      return { ...p, ownerCeiling: next };
-    }).ownerCeiling;
+    written = store.update(
+      (p) => {
+        const next = target(cmd, p.ownerCeiling);
+        if (!confirmed && widens(p.ownerCeiling, next)) throw new WideningNeedsConfirmation();
+        return { ...p, ownerCeiling: next };
+      },
+      { replaceOtherVersion },
+    ).ownerCeiling;
   } catch (e) {
     if (e instanceof WideningNeedsConfirmation) {
       out(CEILING_WIDENING_TEXT);
@@ -175,7 +192,7 @@ export async function ceilingCommand(
   noteCliPolicyChange(
     stateDir,
     `ceiling set outsideSandbox ${written.outsideSandbox ? "on" : "off"}, network ` +
-      `${written.network}, projectReach ${written.restrictedProjectReach}`,
+      `${written.network}, projectReach ${written.projectReach}`,
   );
   out("This machine's owner ceiling is now:");
   for (const line of describe(written)) out(line);
@@ -184,7 +201,7 @@ export async function ceilingCommand(
       "Sandboxed commands reach only the sandbox allowlist (capybara-device policy add " +
         "allowedDomains <host>).",
     );
-  if (written.restrictedProjectReach === "os-user")
+  if (written.projectReach !== "workspace")
     out("Sandboxed work may reach selected projects outside the device's workspace.");
   return 0;
 }

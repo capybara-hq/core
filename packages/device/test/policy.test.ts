@@ -7,7 +7,6 @@ import { describeCeiling, policyCommand } from "../src/commands/policy.js";
 import { effectiveEgress, grantedHosts } from "../src/policy.js";
 import {
   DEFAULT_POLICY,
-  ownerCeilingOfMode,
   type Policy,
   policyPath,
   readPolicy,
@@ -25,7 +24,12 @@ const policy = (over: Partial<Policy> & { mode?: SandboxMode } = {}): Policy => 
   return {
     ...DEFAULT_POLICY,
     ...rest,
-    ...(mode !== undefined && { ownerCeiling: ownerCeilingOfMode(mode) }),
+    ...(mode !== undefined && {
+      ownerCeiling:
+        mode === "auto"
+          ? { outsideSandbox: true, network: "open", projectReach: "machine" }
+          : { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
+    }),
   };
 };
 const allowlistPolicy = (allowedDomains: string[]): Policy =>
@@ -34,13 +38,13 @@ const allowlistPolicy = (allowedDomains: string[]): Policy =>
     ownerCeiling: {
       outsideSandbox: false,
       network: "allowlist",
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
     },
   });
 const openPolicy = (allowedDomains: string[] = []): Policy =>
   policy({
     allowedDomains,
-    ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
+    ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "workspace" },
   });
 const hostsOf = (e: ReturnType<typeof effectiveEgress>) =>
   e.kind === "allowlist" ? [...e.hosts].sort() : e.kind;
@@ -165,7 +169,7 @@ describe("policy command", () => {
     // network with no host, the workspace reach; never the open default
     expect(r.out).toContain('"outsideSandbox": false');
     expect(r.out).toContain('"network": "allowlist"');
-    expect(r.out).toContain('"restrictedProjectReach": "workspace"');
+    expect(r.out).toContain('"projectReach": "workspace"');
     expect(r.out).toContain(
       "Commands run in the sandbox under every profile, Full access included.",
     );

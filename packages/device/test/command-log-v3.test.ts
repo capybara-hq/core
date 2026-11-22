@@ -18,7 +18,13 @@ import { CommandLog } from "../src/command-log.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "../src/server-ops.js";
-import { DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, type OwnerCeilingPolicy, writePolicy } from "../src/state.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 // The local command log under protocol 3: one line per executed operation (its isolation and
 // actor) and an audit line per policy change, cloud or CLI. Best effort; never a secret.
@@ -36,7 +42,7 @@ const REPORT: DeviceOwnerCeiling = {
   revision: "rev",
   outsideSandbox: true,
   network: "open",
-  restrictedProjectReach: "workspace",
+  projectReach: "workspace",
   allowedDomains: [],
 };
 const scope = (profile: "approve-for-me" | "full-access", tag = "t1") => ({
@@ -313,7 +319,7 @@ describe("policy changes in the command log", () => {
           "--outside-sandbox",
           "on",
           "--project-reach",
-          "os-user",
+          "machine",
           "--yes",
         ]),
       ).toBe(0);
@@ -329,7 +335,7 @@ describe("policy changes in the command log", () => {
         }),
         expect.objectContaining({
           op: "policy",
-          detail: `ceiling set outsideSandbox on, network open, projectReach os-user by ${user} via cli`,
+          detail: `ceiling set outsideSandbox on, network open, projectReach machine by ${user} via cli`,
         }),
       ]);
     } finally {

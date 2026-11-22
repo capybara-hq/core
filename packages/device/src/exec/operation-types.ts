@@ -14,6 +14,7 @@ import {
 import type { DeviceExecGrants, DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
 import { policyPath, readPolicyFile } from "../state.js";
+import type { ProjectReach } from "./read-model.js";
 import { osRoots } from "./shared.js";
 
 /**
@@ -29,7 +30,7 @@ export interface DeviceOwnerCeiling {
   readonly network: DeviceNetworkMode;
   readonly allowedDomains: readonly string[];
   readonly roots: Readonly<SandboxRoots>;
-  readonly restrictedProjectReach: "workspace" | "os-user";
+  readonly projectReach: ProjectReach;
   readonly restrictedDeniedReadRoots: readonly string[];
   readonly preparation: Readonly<{ skillsRoot: string; attachmentsBase: string }>;
 }
@@ -70,7 +71,7 @@ export async function readStrictOwnerCeiling(input: {
 }
 /**
  * {@link readStrictOwnerCeiling}, synchronously (the owner report issues it under the policy lock).
- * Only a version-3 policy file is authority: an old format is refused until it is converted.
+ * Only a policy file in the current format is authority: another version is refused.
  */
 export function readStrictOwnerCeilingSync(input: {
   stateDir: string;
@@ -82,10 +83,6 @@ export function readStrictOwnerCeilingSync(input: {
   const before = statSync(file);
   if (!before.isFile()) throw new SandboxScopeDeniedError("Owner policy must be a regular file");
   const read = readPolicyFile(input.stateDir);
-  if (read.legacy)
-    throw new SandboxScopeDeniedError(
-      "Owner policy is in the old format; restart capybara-device or run capybara-device ceiling set to convert it",
-    );
   const policy = read.policy;
   const after = statSync(file);
   const version = (s: typeof before) => `${s.ino}:${s.size}:${s.mtimeMs}`;
@@ -102,7 +99,7 @@ export function readStrictOwnerCeilingSync(input: {
     network: policy.ownerCeiling.network,
     allowedDomains: Object.freeze([...policy.allowedDomains]),
     roots,
-    restrictedProjectReach: policy.ownerCeiling.restrictedProjectReach,
+    projectReach: policy.ownerCeiling.projectReach,
     restrictedDeniedReadRoots: Object.freeze(
       withCanonicalForms([...deniedSecretPaths(input.home ?? homedir()), resolve(input.stateDir)]),
     ),
@@ -148,7 +145,7 @@ export function checkRoots(
       throw new SandboxScopeDeniedError("Supply normalized absolute roots");
     if (
       !preparation &&
-      ceiling.restrictedProjectReach === "workspace" &&
+      ceiling.projectReach === "workspace" &&
       !Object.values(ceiling.roots).some((r) => within(root, r))
     )
       throw new SandboxScopeDeniedError("Root exceeds the current workspace owner ceiling");

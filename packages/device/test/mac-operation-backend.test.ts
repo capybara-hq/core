@@ -36,7 +36,7 @@ async function fixture() {
     outsideSandbox: true,
     network: "allowlist",
     roots,
-    restrictedProjectReach: "os-user",
+    projectReach: "machine",
     allowedDomains: ["a.example.com"],
     restrictedDeniedReadRoots: [],
     preparation: {
@@ -178,7 +178,7 @@ it("re-reads ceilings at invocation and rejects restricted exec without private 
   await expect(
     op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal }),
   ).rejects.toThrow(/authority/);
-  f.setCeiling({ revision: "two", restrictedProjectReach: "workspace" });
+  f.setCeiling({ revision: "two", projectReach: "workspace" });
   await expect(op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).rejects.toThrow(
     /ceiling/,
   );
@@ -748,7 +748,7 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: true,
       network: "allowlist",
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
@@ -876,7 +876,7 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: true,
       network: "allowlist",
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
@@ -1068,7 +1068,7 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: false,
       network: "allowlist",
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },

@@ -653,7 +653,7 @@ it.runIf(process.platform === "darwin")(
             outsideSandbox: fullAccess,
             network: "allowlist",
             roots: { workspace: f.root, tmp: f.root, skills: f.root },
-            restrictedProjectReach: "os-user",
+            projectReach: "machine",
             allowedDomains: [],
             restrictedDeniedReadRoots: [],
             preparation: { skillsRoot: f.root, attachmentsBase: join(f.root, "attachments") },

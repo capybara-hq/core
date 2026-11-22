@@ -23,18 +23,29 @@ import { issueOwnerReport, ownerReportPath } from "../src/owner-report.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { serveOperationV3 } from "../src/server-ops.js";
 import {
-  convertPolicyFile,
   DEFAULT_POLICY,
-  FULL_OWNER_CEILING,
+  type OwnerCeilingPolicy,
+  type Policy,
   policyPath,
   readPolicyFile,
-  SANDBOX_OWNER_CEILING,
   writeCredential,
   writePolicy,
 } from "../src/state.js";
 
+/** The widest owner ceiling: outside the sandbox on, the open network, the whole machine. */
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+});
+/** The narrowest owner ceiling. */
+const SANDBOX_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
+  outsideSandbox: false,
+  network: "allowlist",
+  projectReach: "workspace",
+});
 /** The policy these tests were written against: outside the sandbox on, the open network. */
-const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
+const FULL_POLICY: Policy = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let root: string;
 let state: string;
 beforeEach(() => {
@@ -48,6 +59,11 @@ const writeRaw = (value: unknown) => {
   writeFileSync(policyPath(state), `${JSON.stringify(value, null, 2)}\n`);
 };
 const onDisk = () => JSON.parse(readFileSync(policyPath(state), "utf8")) as Record<string, unknown>;
+/** What {@link writePolicy} writes for `policy`, as a plain object. */
+const onDiskOf = (policy: Policy) => {
+  writePolicy(state, policy);
+  return onDisk();
+};
 const strict = () =>
   readStrictOwnerCeiling({
     stateDir: state,
@@ -81,116 +97,163 @@ const cli = async (
   return { code, out: out.join("\n"), err: err.join("\n") };
 };
 
-describe("version-3 local owner policy", () => {
-  it("converts old auto and sandbox exactly, keeping domains, resources and unknown keys", () => {
-    writeRaw({
-      allowedDomains: ["a.test"],
-      allowCredentials: ["GH"],
-      cpu: 2,
-      memoryMb: null,
-      mode: "auto",
-      future: { kept: true },
-    });
-    expect(readPolicyFile(state).legacy).toBe(true);
-    expect(convertPolicyFile(state)).toBe("converted");
-    expect(onDisk()).toEqual({
-      future: { kept: true },
-      version: 3,
-      allowedDomains: ["a.test"],
-      allowCredentials: ["GH"],
-      cpu: 2,
-      memoryMb: null,
-      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
-      keepAwake: "while-busy",
-    });
-    expect(convertPolicyFile(state)).toBe("current");
-
-    writeRaw({ allowedDomains: [], mode: "sandbox" });
-    convertPolicyFile(state);
-    expect(onDisk().ownerCeiling).toEqual({
-      outsideSandbox: false,
-      network: "allowlist",
-      restrictedProjectReach: "workspace",
-    });
-    expect(onDisk().mode).toBeUndefined();
+describe("local owner policy format", () => {
+  it("a new policy reads the whole machine and lists no project paths", () => {
+    expect(DEFAULT_POLICY.ownerCeiling.projectReach).toBe("machine");
+    expect(DEFAULT_POLICY.projectPaths).toEqual([]);
   });
 
-  it("refuses corruption and a mixed or unknown format without writing", () => {
+  it("a missing policy file reads as the workspace reach", () => {
+    const { policy, extra } = readPolicyFile(state);
+    expect(policy.ownerCeiling).toEqual(SANDBOX_OWNER_CEILING);
+    expect(policy.projectPaths).toEqual([]);
+    expect(extra).toEqual({});
+  });
+
+  it("round-trips projectReach and projectPaths, keeping unknown keys", () => {
+    writePolicy(
+      state,
+      {
+        ...FULL_POLICY,
+        ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "paths" },
+        projectPaths: ["/src/a", "/"],
+      },
+      { future: { kept: true } },
+    );
+    expect(onDisk()).toEqual({
+      future: { kept: true },
+      version: 4,
+      allowedDomains: [],
+      allowCredentials: [],
+      cpu: null,
+      memoryMb: null,
+      ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "paths" },
+      keepAwake: "while-busy",
+      projectPaths: ["/src/a", "/"],
+    });
+    const read = readPolicyFile(state);
+    expect(read.policy.ownerCeiling.projectReach).toBe("paths");
+    expect(read.policy.projectPaths).toEqual(["/src/a", "/"]);
+    expect(read.extra).toEqual({ future: { kept: true } });
+    // absent project paths read as none
+    const { projectPaths: _, ...rest } = onDisk();
+    writeRaw(rest);
+    expect(readPolicyFile(state).policy.projectPaths).toEqual([]);
+  });
+
+  it("refuses another version, a bad reach and relative or unnormalized project paths", () => {
+    const good = onDiskOf(FULL_POLICY);
+    for (const version of [3, 2, undefined, "4", 5]) {
+      writeRaw({ ...good, version });
+      expect(() => readPolicyFile(state)).toThrow(policyPath(state));
+      expect(() => readPolicyFile(state)).toThrow(/capybara-device ceiling set/);
+    }
+    const ceiling = good.ownerCeiling as Record<string, unknown>;
     for (const bad of [
-      { version: 2, allowedDomains: [], ownerCeiling: { fullAccess: "yes" } },
-      { version: 2, allowedDomains: [] },
+      { ...good, ownerCeiling: { ...ceiling, projectReach: "os-user" } },
+      { ...good, ownerCeiling: { ...ceiling, projectReach: undefined } },
       {
-        version: 2,
-        mode: "auto",
-        ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+        ...good,
+        ownerCeiling: {
+          outsideSandbox: true,
+          network: "open",
+          restrictedProjectReach: "os-user",
+        },
       },
-      { version: 3, ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" } },
-      {
-        version: 3,
-        ownerCeiling: { outsideSandbox: true, network: "any", restrictedProjectReach: "os-user" },
-      },
-      {
-        version: 4,
-        ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
-      },
-      { mode: "open" },
+      { ...good, ownerCeiling: { ...ceiling, projectPaths: [] } },
+      { ...good, ownerCeiling: { ...ceiling, network: "any" } },
+      { ...good, projectPaths: ["rel"] },
+      { ...good, projectPaths: ["/a/../b"] },
+      { ...good, projectPaths: ["/a/"] },
+      { ...good, projectPaths: ["/a//b"] },
+      { ...good, projectPaths: ["/a/./b"] },
+      { ...good, projectPaths: [""] },
+      { ...good, projectPaths: ["/a\0b"] },
+      { ...good, projectPaths: ["/a", "/a"] },
+      { ...good, projectPaths: "/a" },
+      { ...good, projectPaths: [1] },
+      { ...good, projectPaths: Array.from({ length: 101 }, (_, i) => `/p${i}`) },
     ]) {
       writeRaw(bad);
-      const before = readFileSync(policyPath(state), "utf8");
-      expect(() => convertPolicyFile(state)).toThrow();
-      expect(readFileSync(policyPath(state), "utf8")).toBe(before);
+      expect(() => readPolicyFile(state), JSON.stringify(bad).slice(0, 200)).toThrow(
+        policyPath(state),
+      );
     }
+    writeRaw({ ...good, projectPaths: Array.from({ length: 100 }, (_, i) => `/p${i}`) });
+    expect(readPolicyFile(state).policy.projectPaths).toHaveLength(100);
+    // the writer refuses what the reader would refuse, writing nothing
+    writePolicy(state, FULL_POLICY);
+    const before = readFileSync(policyPath(state), "utf8");
+    expect(() => writePolicy(state, { ...FULL_POLICY, projectPaths: ["/a/"] })).toThrow(
+      /projectPaths/,
+    );
+    expect(readFileSync(policyPath(state), "utf8")).toBe(before);
   });
 
   it("keeps outside the sandbox, network and project reach independent in the strict reader", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["a.test"],
-      ownerCeiling: {
-        outsideSandbox: false,
-        network: "allowlist",
-        restrictedProjectReach: "os-user",
-      },
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "machine" },
     });
-    const c = await strict();
-    expect(c).toMatchObject({
+    expect(await strict()).toMatchObject({
       outsideSandbox: false,
       network: "allowlist",
       allowedDomains: ["a.test"],
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
     });
     writePolicy(state, {
       ...FULL_POLICY,
-      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "workspace" },
+      ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "workspace" },
     });
-    const d = await strict();
-    expect(d).toMatchObject({
+    expect(await strict()).toMatchObject({
       outsideSandbox: true,
       network: "open",
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
     });
-    expect(readPolicyFile(state).policy.ownerCeiling.outsideSandbox).toBe(true);
   });
 
-  it("the strict reader refuses an unconverted old-format policy", async () => {
-    writeRaw({ allowedDomains: [], mode: "auto" });
-    await expect(strict()).rejects.toThrow(/old format/);
+  it("the strict reader, the store and a policy write refuse another version without writing", async () => {
+    writeRaw({ ...onDiskOf(FULL_POLICY), version: 3 });
+    const before = readFileSync(policyPath(state), "utf8");
+    await expect(strict()).rejects.toThrow(/capybara-device ceiling set/);
+    expect(() => new PolicyStore(state)).toThrow(/capybara-device ceiling set/);
+    const store = new PolicyStore(state, { initial: FULL_POLICY });
+    expect(() => store.update((p) => ({ ...p, allowedDomains: ["b.test"] }))).toThrow(
+      /capybara-device ceiling set/,
+    );
+    expect((await cli(["policy", "add", "allowedDomains", "b.test"])).code).toBe(1);
+    expect((await cli(["ceiling", "show"])).code).toBe(1);
+    expect(readFileSync(policyPath(state), "utf8")).toBe(before);
+  });
+
+  it("ceiling set replaces another version from the closed policy, a widening confirmed", async () => {
     writeRaw({
-      version: 2,
-      allowedDomains: [],
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+      version: 3,
+      allowedDomains: ["a.test"],
+      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
     });
-    await expect(strict()).rejects.toThrow(/old format/);
-  });
-
-  it("a write through the store converts the file to version 3", () => {
-    writeRaw({ allowedDomains: ["a.test"], mode: "sandbox" });
-    new PolicyStore(state).update((p) => ({ ...p, allowedDomains: ["b.test"] }));
+    const narrowing = await cli(["ceiling", "set", "--project-reach", "workspace"]);
+    expect(narrowing.code).toBe(0);
+    expect(onDisk()).toEqual({
+      version: 4,
+      allowedDomains: [],
+      allowCredentials: [],
+      cpu: null,
+      memoryMb: null,
+      ownerCeiling: SANDBOX_OWNER_CEILING,
+      keepAwake: "while-busy",
+      projectPaths: [],
+    });
+    writeRaw({ version: 3, ownerCeiling: {} });
+    const refused = await cli(["ceiling", "set", "--network", "open"]);
+    expect(refused.code).toBe(2);
     expect(onDisk().version).toBe(3);
-    expect(onDisk().ownerCeiling).toEqual({
-      outsideSandbox: false,
-      network: "allowlist",
-      restrictedProjectReach: "workspace",
+    const yes = await cli(["ceiling", "set", "--network", "open", "--yes"]);
+    expect(yes.code).toBe(0);
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
+      ...SANDBOX_OWNER_CEILING,
+      network: "open",
     });
   });
 });
@@ -223,26 +286,26 @@ describe("owner report sequence sidecar", () => {
       ownerCeiling: {
         outsideSandbox: false,
         network: "allowlist",
-        restrictedProjectReach: "os-user",
+        projectReach: "machine",
       },
     });
     expect(report()).toMatchObject({
       version: 3,
       outsideSandbox: false,
       network: "allowlist",
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: ["*.example.com"],
     });
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["a.test"],
-      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "workspace" },
+      ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "workspace" },
     });
     expect(report()).toMatchObject({
       version: 3,
       outsideSandbox: true,
       network: "open",
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
       allowedDomains: ["a.test"],
     });
   });
@@ -259,7 +322,7 @@ describe("owner report sequence sidecar", () => {
 
   it("issues no report for a missing, old-format or invalid policy", async () => {
     expect(() => report()).toThrow();
-    writeRaw({ allowedDomains: [], mode: "auto" });
+    writeRaw({ ...onDiskOf(FULL_POLICY), version: 3 });
     expect(() => report()).toThrow();
     expect(existsSync(ownerReportPath(state))).toBe(false);
   });
@@ -269,7 +332,7 @@ describe("capybara-device ceiling", () => {
   const NARROW = {
     outsideSandbox: false,
     network: "allowlist",
-    restrictedProjectReach: "workspace",
+    projectReach: "workspace",
   } as const;
   it("M1: the widening check runs on the locked policy, not an earlier read", async () => {
     writePolicy(state, FULL_POLICY);
@@ -297,7 +360,7 @@ describe("capybara-device ceiling", () => {
       ownerCeiling: {
         outsideSandbox: false,
         network: "allowlist",
-        restrictedProjectReach: "os-user",
+        projectReach: "machine",
       },
     });
     writeCredential(state, {
@@ -315,7 +378,7 @@ describe("capybara-device ceiling", () => {
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/Outside the sandbox: off/);
     expect(r.out).toMatch(/Network: allowlist/);
-    expect(r.out).toMatch(/Project reach: os-user/);
+    expect(r.out).toMatch(/Project reach: machine/);
     expect(r.out).toMatch(/Sandbox allowlist: a\.test/);
     expect(r.out).toMatch(/Revision: [0-9a-f]{64}/);
     expect(r.out).toMatch(/organization/i);
@@ -359,7 +422,7 @@ describe("capybara-device ceiling", () => {
     for (const flags of [
       ["--outside-sandbox", "on"],
       ["--network", "open"],
-      ["--project-reach", "os-user"],
+      ["--project-reach", "machine"],
     ]) {
       const refused = await cli(["ceiling", "set", ...flags]);
       expect(refused.code, flags.join(" ")).toBe(2);
@@ -378,7 +441,7 @@ describe("capybara-device ceiling", () => {
     });
     expect(declined.code).toBe(1);
     expect(readPolicyFile(state).policy.ownerCeiling.network).toBe("allowlist");
-    const confirmed = await cli(["ceiling", "set", "--project-reach", "os-user"], {
+    const confirmed = await cli(["ceiling", "set", "--project-reach", "machine"], {
       tty: true,
       answer: "y",
     });
@@ -397,7 +460,7 @@ describe("capybara-device ceiling", () => {
     expect(readPolicyFile(state).policy.ownerCeiling).toEqual(FULL_OWNER_CEILING);
     // the local audit line names the new fields
     expect(readFileSync(join(state, "commands.log"), "utf8")).toMatch(
-      /ceiling set outsideSandbox on, network open, projectReach os-user/,
+      /ceiling set outsideSandbox on, network open, projectReach machine/,
     );
   });
 });
@@ -421,7 +484,7 @@ describe("no owner-ceiling change over the wire", () => {
       { outsideSandbox: false },
       { network: "allowlist" },
       { fullAccess: true },
-      { restrictedProjectReach: "os-user" },
+      { projectReach: "machine" },
       { outsideSandbox: true },
       { network: "open" },
     ].entries()) {

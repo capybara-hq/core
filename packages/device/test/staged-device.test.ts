@@ -35,8 +35,19 @@ import {
 } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
 import { PROGRAM_RUN_ID } from "../src/staged-session.js";
-import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
+import {
+  type Credential,
+  DEFAULT_POLICY,
+  type OwnerCeilingPolicy,
+  writePolicy,
+} from "../src/state.js";
 import { FakeKernel } from "./fake-kernel.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 /** The policy these tests were written against: the owner allows Full access (old auto). */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };

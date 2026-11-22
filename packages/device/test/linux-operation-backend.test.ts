@@ -930,7 +930,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
       privateProxyTargets: false,
       fakeIpDns: net.doh,
       // a write root outside the workspace (the crontab spool's stand-in)
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
     });
   });
   afterAll(() => {
@@ -1496,7 +1496,7 @@ print(seen[0])
       network: "open",
       allowedDomains: [],
       privateProxyTargets: false,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       // test seam: the final rename and the move back both fail
       faultInjection: { stagedMove: "fail" },
     });
@@ -1538,7 +1538,7 @@ print(seen[0])
         network: "open",
         allowedDomains: [],
         privateProxyTargets: false,
-        restrictedProjectReach: "os-user",
+        projectReach: "machine",
         // test seam: a mkdir of "commands" pauses after its check, before the mkdir
         faultInjection: { pauseBeforeMkdir: "commands" },
       });

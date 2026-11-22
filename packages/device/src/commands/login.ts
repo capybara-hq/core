@@ -123,9 +123,10 @@ function defaultOpen(platform: NodeJS.Platform) {
 
 /**
  * A new setup writes the default policy: no running outside the sandbox, the open network and the
- * workspace as the project reach. Written under the policy lock, and only while no policy file
- * exists: an existing policy is the owner's choice and is never changed here (an old format still
- * converts exactly at start). Returns whether this call created the file.
+ * whole machine as the project reach. Written under the policy lock, and only while no policy file
+ * exists: an existing policy is the owner's choice and is never changed here (a file in another
+ * format version is rewritten only by the owner's `capybara-device ceiling set`). Returns whether
+ * this call created the file.
  */
 function persistDefaultPolicy(stateDir: string): boolean {
   const file = policyPath(stateDir);

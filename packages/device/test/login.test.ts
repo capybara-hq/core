@@ -34,20 +34,21 @@ import {
 } from "../src/state.js";
 
 /** The owner ceiling a new setup writes (B-14). */
-/** A new install's owner ceiling: in the sandbox only, the open network, the workspace reach. */
-const NEW_INSTALL = { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" };
-/** An old `mode: sandbox` file, converted never wider: the allowlist network kept. */
-const OLD_SANDBOX = {
+/** A new install's owner ceiling: in the sandbox only, the open network, the whole machine. */
+const NEW_INSTALL = { outsideSandbox: false, network: "open", projectReach: "machine" };
+/** An owner's sandbox-only policy with the allowlist network. */
+const SANDBOX_ONLY = {
   outsideSandbox: false,
   network: "allowlist",
-  restrictedProjectReach: "workspace",
+  projectReach: "workspace",
 };
-/** An old (version 1) policy file with `mode: auto`. */
-const writeOldAutoPolicy = (dir: string) => {
+const OUTSIDE_ALLOWED = { outsideSandbox: true, network: "open", projectReach: "machine" };
+/** An existing policy file whose owner allows running outside the sandbox. */
+const writeOutsideAllowedPolicy = (dir: string) => {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(
     policyPath(dir),
-    `${JSON.stringify({ allowedDomains: [], allowCredentials: [], cpu: null, memoryMb: null, mode: "auto" }, null, 2)}\n`,
+    `${JSON.stringify({ version: 4, ownerCeiling: OUTSIDE_ALLOWED }, null, 2)}\n`,
     { mode: 0o600 },
   );
 };
@@ -280,9 +281,9 @@ describe("login", () => {
   it("a new install writes the sandbox-only, open-network default and says how to widen it", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    // written, not just defaulted: version 3, in the sandbox only, the open network
+    // written, not just defaulted: version 4, in the sandbox only, the open network
     const file = JSON.parse(readFileSync(policyPath(stateDir()), "utf8"));
-    expect(file).toMatchObject({ version: 3, ownerCeiling: NEW_INSTALL });
+    expect(file).toMatchObject({ version: 4, ownerCeiling: NEW_INSTALL, projectPaths: [] });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(helloOutside()).toBe(false);
     expect(out.filter((l) => l === SANDBOX_ONLY_LOGIN_LINE)).toHaveLength(1);
@@ -302,32 +303,31 @@ describe("login", () => {
     expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
-  it("keeps an existing old auto policy (converted never wider) and says the org does not allow it", async () => {
-    writeOldAutoPolicy(stateDir());
+  it("keeps an existing policy allowing outside the sandbox and says the org does not allow it", async () => {
+    writeOutsideAllowedPolicy(stateDir());
     tokenAnswers = [{ status: 200, body: { ...granted.body, outsideSandbox: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
-    // an existing policy is the owner's choice: login never rewrites it; old auto reads as
-    // outside the sandbox on with the open network
-    expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8")).mode).toBe("auto");
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual({
-      outsideSandbox: true,
-      network: "open",
-      restrictedProjectReach: "os-user",
+    // an existing policy is the owner's choice: login never rewrites it
+    expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8"))).toEqual({
+      version: 4,
+      ownerCeiling: OUTSIDE_ALLOWED,
     });
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(OUTSIDE_ALLOWED);
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
     expect(out).toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
     expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
-  it("keeps an existing old sandbox policy (converted never wider: the allowlist kept)", async () => {
+  it("keeps an existing sandbox-only policy with the allowlist network", async () => {
     mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
-    writeFileSync(policyPath(stateDir()), `${JSON.stringify({ mode: "sandbox" })}\n`, {
+    const existing = { version: 4, ownerCeiling: SANDBOX_ONLY };
+    writeFileSync(policyPath(stateDir()), `${JSON.stringify(existing)}\n`, {
       mode: 0o600,
     });
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8"))).toEqual({ mode: "sandbox" });
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(OLD_SANDBOX);
+    expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8"))).toEqual(existing);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(SANDBOX_ONLY);
     expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(out).toContain(networkLoginLine("allowlist"));
     expect(networkLoginLine("allowlist")).toContain("capybara-device ceiling set --network open");
@@ -335,7 +335,7 @@ describe("login", () => {
   });
 
   it("prints the outside-sandbox line and the risk text once when the owner allows it", async () => {
-    writeOldAutoPolicy(stateDir());
+    writeOutsideAllowedPolicy(stateDir());
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
@@ -400,7 +400,7 @@ describe("login", () => {
     expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
     expect(await run(["logout"])).toBe(0);
     out.length = 0;
-    writeOldAutoPolicy(stateDir());
+    writeOutsideAllowedPolicy(stateDir());
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);

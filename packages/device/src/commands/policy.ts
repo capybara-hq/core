@@ -91,7 +91,7 @@ function edit(
 
 /** What `policy show` says the owner ceiling gives on this machine (English, one line each). */
 export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
-  const { outsideSandbox, network, restrictedProjectReach } = policy.ownerCeiling;
+  const { outsideSandbox, network, projectReach } = policy.ownerCeiling;
   const where = runMode === "docker" ? "in the device's container" : "as you on this machine";
   return [
     "Commands run in the sandbox under every profile, Full access included.",
@@ -101,7 +101,7 @@ export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os")
     network === "open"
       ? "Sandbox network: open (the public internet; private, local and metadata addresses stay closed)."
       : "Sandbox network: allowlist (allowedDomains only).",
-    restrictedProjectReach === "os-user"
+    projectReach !== "workspace"
       ? "Sandboxed work and project browsing may read projects outside the device's workspace."
       : "Sandboxed work and project browsing stay in the device's workspace.",
     `Change the owner ceiling with: ${CEILING_COMMAND}`,

@@ -185,7 +185,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       outsideSandbox: true,
       network: "open",
       roots,
-      restrictedProjectReach: "os-user",
+      projectReach: "machine",
       allowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },

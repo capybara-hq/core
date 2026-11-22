@@ -37,7 +37,7 @@ it.runIf(process.platform === "darwin")(
         outsideSandbox: true,
         network: "allowlist",
         roots,
-        restrictedProjectReach: "os-user",
+        projectReach: "machine",
         allowedDomains: [],
         restrictedDeniedReadRoots: [stateDir],
         preparation: {

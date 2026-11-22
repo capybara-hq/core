@@ -15,9 +15,10 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { DeviceMode } from "./args.js";
+import type { ProjectReach } from "./exec/read-model.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
 export interface Credential {
@@ -41,24 +42,26 @@ export interface Credential {
  */
 export type SandboxMode = "auto" | "sandbox";
 
-/** How far sandboxed operations and project browsing may reach on this machine. */
-export type RestrictedProjectReach = "workspace" | "os-user";
-
 /**
  * The owner's own ceiling for this machine (approval-only profiles design, "Settings model"): the
  * device sandbox for every profile. `outsideSandbox` is whether a call may be granted escalation
  * outside the sandbox; `network` is the sandbox network (`open` public internet, or the
- * `allowedDomains` allowlist); `restrictedProjectReach` is how far sandboxed work reaches. Only the
- * owner widens it on the machine (`capybara-device ceiling set`); the deployment may only narrow.
+ * `allowedDomains` allowlist); `projectReach` is what sandboxed work and project browsing read
+ * (`machine`: the whole machine minus the deny list; `paths`: the workspace plus
+ * {@link Policy.projectPaths}; `workspace`: the workspace only). Only the owner widens it on the
+ * machine (`capybara-device ceiling set`); the deployment may only narrow.
  */
 export interface OwnerCeilingPolicy {
   outsideSandbox: boolean;
   network: DeviceNetworkMode;
-  restrictedProjectReach: RestrictedProjectReach;
+  projectReach: ProjectReach;
 }
 
-/** The persisted local policy format (`version: 3`). */
-export const POLICY_VERSION = 3;
+/** The persisted local policy format (`version: 4`); a file in any other version is refused. */
+export const POLICY_VERSION = 4;
+
+/** The most project paths one policy lists. */
+export const MAX_PROJECT_PATHS = 100;
 
 /**
  * When the program keeps this computer awake: never, only while operations run, or the whole
@@ -80,40 +83,12 @@ export interface Policy {
   ownerCeiling: OwnerCeilingPolicy;
   /** Keep-awake (spec §9.7); absent in a file means the default. */
   keepAwake: KeepAwakeMode;
-}
-
-/** The exact old `mode: auto` ceiling, as the conversion table translates it. */
-export const FULL_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
-  outsideSandbox: true,
-  network: "open",
-  restrictedProjectReach: "os-user",
-});
-/** The exact old `mode: sandbox` ceiling, as the conversion table translates it. */
-export const SANDBOX_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
-  outsideSandbox: false,
-  network: "allowlist",
-  restrictedProjectReach: "workspace",
-});
-
-/** The owner ceiling an old `mode` translates to exactly. */
-export function ownerCeilingOfMode(mode: SandboxMode): OwnerCeilingPolicy {
-  return { ...(mode === "auto" ? FULL_OWNER_CEILING : SANDBOX_OWNER_CEILING) };
-}
-
-/**
- * The version 2 owner ceiling converted (approval-only profiles design, "Migration"), never wider:
- * Full access allowed becomes `outsideSandbox` with the open network; Full access denied keeps the
- * sandbox allowlist (the old `allowedDomains`). The project reach is kept.
- */
-export function convertV2OwnerCeiling(v2: {
-  fullAccess: boolean;
-  restrictedProjectReach: RestrictedProjectReach;
-}): OwnerCeilingPolicy {
-  return {
-    outsideSandbox: v2.fullAccess,
-    network: v2.fullAccess ? "open" : "allowlist",
-    restrictedProjectReach: v2.restrictedProjectReach,
-  };
+  /**
+   * The directories sandboxed work reads besides the workspace while the reach is `paths`:
+   * absolute, normalized, without a trailing slash, at most {@link MAX_PROJECT_PATHS}, no
+   * duplicates. Kept (and ignored) under the other reaches.
+   */
+  projectPaths: string[];
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -125,30 +100,36 @@ export const DEFAULT_POLICY: Policy = {
   cpu: null,
   memoryMb: null,
   // A new setup's owner ceiling: no running outside the sandbox, the open network (the design's
-  // shipped default), sandboxed work in the workspace. An old policy file converts never wider
-  // (convertPolicyFile).
-  ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
+  // shipped default), sandboxed work reads the whole machine minus the deny list.
+  ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "machine" },
   keepAwake: "while-busy",
+  projectPaths: [],
 };
 
 /**
  * The owner ceiling of a machine without policy.json. A new setup has one from `login`; before
  * rc.58 `login` wrote none, and such a device ran with no reachable host. So a missing file is
  * never the open default: no running outside the sandbox, the allowlist network with no host, the
- * workspace reach. `start` writes it once ({@link convertPolicyFile}) and says how to open it.
+ * workspace reach. `start` writes it once ({@link createMissingPolicyFile}) and says how to open it.
  */
 export const MISSING_POLICY_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
   outsideSandbox: false,
   network: "allowlist",
-  restrictedProjectReach: "workspace",
+  projectReach: "workspace",
 });
 
-/** The policy every reader sees while policy.json is missing: {@link MISSING_POLICY_OWNER_CEILING}. */
-function missingPolicy(): Policy {
+/**
+ * The closed policy: {@link MISSING_POLICY_OWNER_CEILING}, no domains, no project paths. Every
+ * reader sees it while policy.json is missing, and `capybara-device ceiling set` starts from it
+ * when it replaces a file in another version.
+ */
+export function closedPolicy(): Policy {
   return {
     ...DEFAULT_POLICY,
     allowedDomains: [],
+    allowCredentials: [],
     ownerCeiling: { ...MISSING_POLICY_OWNER_CEILING },
+    projectPaths: [],
   };
 }
 
@@ -240,27 +221,42 @@ const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
 
 const POLICY_KEYS: readonly string[] = ["version", ...Object.keys(DEFAULT_POLICY)];
-/**
- * Keys of older policy files: ignored on read and dropped on the next write. `tier` / `isolation` /
- * `localhost` / `remoteGrants` are the auto-mode migration (spec §4.4): a file without `mode` runs
- * in auto when it asked for no sandbox, else in sandbox.
- */
-const LEGACY_POLICY_KEYS: readonly string[] = [
-  "mode",
-  "network",
-  "allowLocalBinding",
-  "allowUnixSockets",
-  "tier",
-  "isolation",
-  "localhost",
-  "remoteGrants",
-];
+const OWNER_CEILING_KEYS: readonly string[] = ["outsideSandbox", "network", "projectReach"];
 
-const isMode = (v: unknown): v is SandboxMode => v === "auto" || v === "sandbox";
+/** The command that rewrites a policy file this version cannot read. */
+export const POLICY_REWRITE_COMMAND = "capybara-device ceiling set";
+
+/**
+ * policy.json is in another format version than {@link POLICY_VERSION}. No old format is
+ * converted: the owner rewrites the file with {@link POLICY_REWRITE_COMMAND}, which starts from
+ * the closed policy ({@link closedPolicy}).
+ */
+export class PolicyVersionError extends Error {}
+
+/**
+ * Why `paths` cannot be the project paths, or undefined when it can: a list of absolute,
+ * normalized paths without a trailing slash (`/` itself allowed), at most
+ * {@link MAX_PROJECT_PATHS}, without duplicates.
+ */
+export function projectPathsProblem(paths: unknown): string | undefined {
+  if (!isStringList(paths)) return "a list of strings";
+  if (paths.length > MAX_PROJECT_PATHS) return `at most ${MAX_PROJECT_PATHS} entries`;
+  const seen = new Set<string>();
+  for (const p of paths) {
+    if (!isAbsolute(p) || p.includes("\0") || normalize(p) !== p || (p !== "/" && p.endsWith("/")))
+      return `absolute normalized paths without a trailing slash (got ${JSON.stringify(p)})`;
+    if (seen.has(p)) return `a list without duplicates (${JSON.stringify(p)} twice)`;
+    seen.add(p);
+  }
+  return undefined;
+}
+
+const isProjectReach = (v: unknown): v is ProjectReach =>
+  v === "machine" || v === "paths" || v === "workspace";
 
 /**
  * The local policy (the closed {@link MISSING_POLICY_OWNER_CEILING} when absent, never the open
- * default). Throws, naming the file, on bad JSON or field types.
+ * default). Throws, naming the file, on bad JSON, another version or bad field types.
  */
 export function readPolicy(dir: string): Policy {
   return readPolicyFile(dir).policy;
@@ -269,23 +265,19 @@ export function readPolicy(dir: string): Policy {
 /** {@link readPolicyFile}'s result. */
 export interface PolicyFile {
   policy: Policy;
-  /** The file's keys this version does not know (legacy keys excluded). */
+  /** The file's top-level keys this version does not know. */
   extra: Record<string, unknown>;
-  /**
-   * The file is in an old format (not `version: 3`): its owner ceiling was converted never wider
-   * from its version 2 `fullAccess` or its older `mode` (or, before `mode`, its legacy keys).
-   * {@link convertPolicyFile} rewrites it; so does the next change.
-   */
-  legacy: boolean;
 }
 
 /**
- * The local policy plus the file's keys this version does not know (kept on every write, so an
- * older program never drops a newer one's settings). Throws like {@link readPolicy}.
+ * The local policy plus the file's top-level keys this version does not know (kept on every
+ * write, so an older program never drops a newer one's settings). This file is the owner's
+ * authority, so reading fails closed: anything but a well-formed `version: 4` file throws, naming
+ * the file ({@link PolicyVersionError} for another version).
  */
 export function readPolicyFile(dir: string): PolicyFile {
   const file = policyPath(dir);
-  if (!existsSync(file)) return { policy: missingPolicy(), extra: {}, legacy: false };
+  if (!existsSync(file)) return { policy: closedPolicy(), extra: {} };
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
@@ -296,71 +288,35 @@ export function readPolicyFile(dir: string): PolicyFile {
     throw new Error(`${file} is invalid: expected a JSON object`);
   }
   const o = raw as Record<string, unknown>;
+  if (o.version !== POLICY_VERSION) {
+    throw new PolicyVersionError(
+      `${file} is in policy format ${o.version === undefined ? "(none)" : JSON.stringify(o.version)}; ` +
+        `this program reads only format ${POLICY_VERSION}. Rewrite it with ${POLICY_REWRITE_COMMAND} ` +
+        "(it starts from the closed ceiling: workspace reach, allowlist network, nothing outside " +
+        "the sandbox)",
+    );
+  }
   const bad = (key: string, want: string): Error =>
     new Error(`${file} is invalid: ${key} must be ${want} (fix or delete the file)`);
-  let ownerCeiling: OwnerCeilingPolicy;
-  const ceilingObject = (): Record<string, unknown> => {
-    const c = o.ownerCeiling;
-    if (typeof c !== "object" || c === null || Array.isArray(c)) {
-      throw bad("ownerCeiling", "an object");
-    }
-    return c as Record<string, unknown>;
-  };
-  const reachOf = (r: Record<string, unknown>): RestrictedProjectReach => {
-    if (r.restrictedProjectReach !== "workspace" && r.restrictedProjectReach !== "os-user") {
-      throw bad("ownerCeiling.restrictedProjectReach", '"workspace" or "os-user"');
-    }
-    return r.restrictedProjectReach;
-  };
-  // Every format before version 3 is converted, never wider (approval-only profiles design,
-  // "Migration"); `legacy` makes start rewrite the file once.
-  const legacy = o.version !== POLICY_VERSION;
-  if (o.version === undefined) {
-    // Before version 2: `mode` exactly (auto -> outside the sandbox, open network, os-user reach;
-    // sandbox -> none of them); before `mode`, `isolation: none` or `tier: open` asked for no
-    // sandbox (spec §4.4).
-    const rawMode: unknown =
-      o.mode === undefined
-        ? o.isolation === "none" || o.tier === "open"
-          ? "auto"
-          : "sandbox"
-        : o.mode;
-    if (!isMode(rawMode)) throw bad("mode", '"auto" or "sandbox"');
-    ownerCeiling = ownerCeilingOfMode(rawMode);
-  } else if (o.version === 2) {
-    if (o.mode !== undefined) throw bad("mode", "absent in version 2 (use ownerCeiling)");
-    const r = ceilingObject();
-    if (Object.keys(r).some((k) => k !== "fullAccess" && k !== "restrictedProjectReach")) {
-      throw bad("ownerCeiling", "only fullAccess and restrictedProjectReach in version 2");
-    }
-    if (typeof r.fullAccess !== "boolean") throw bad("ownerCeiling.fullAccess", "a boolean");
-    ownerCeiling = convertV2OwnerCeiling({
-      fullAccess: r.fullAccess,
-      restrictedProjectReach: reachOf(r),
-    });
-  } else {
-    if (o.version !== POLICY_VERSION) throw bad("version", String(POLICY_VERSION));
-    if (o.mode !== undefined) throw bad("mode", "absent (use ownerCeiling)");
-    const r = ceilingObject();
-    if (
-      Object.keys(r).some(
-        (k) => k !== "outsideSandbox" && k !== "network" && k !== "restrictedProjectReach",
-      )
-    ) {
-      throw bad("ownerCeiling", "only outsideSandbox, network and restrictedProjectReach");
-    }
-    if (typeof r.outsideSandbox !== "boolean") {
-      throw bad("ownerCeiling.outsideSandbox", "a boolean");
-    }
-    if (r.network !== "open" && r.network !== "allowlist") {
-      throw bad("ownerCeiling.network", '"open" or "allowlist"');
-    }
-    ownerCeiling = {
-      outsideSandbox: r.outsideSandbox,
-      network: r.network,
-      restrictedProjectReach: reachOf(r),
-    };
+  const c = o.ownerCeiling;
+  if (typeof c !== "object" || c === null || Array.isArray(c))
+    throw bad("ownerCeiling", "an object");
+  const r = c as Record<string, unknown>;
+  if (Object.keys(r).some((k) => !OWNER_CEILING_KEYS.includes(k))) {
+    throw bad("ownerCeiling", "only outsideSandbox, network and projectReach");
   }
+  if (typeof r.outsideSandbox !== "boolean") throw bad("ownerCeiling.outsideSandbox", "a boolean");
+  if (r.network !== "open" && r.network !== "allowlist") {
+    throw bad("ownerCeiling.network", '"open" or "allowlist"');
+  }
+  if (!isProjectReach(r.projectReach)) {
+    throw bad("ownerCeiling.projectReach", '"machine", "paths" or "workspace"');
+  }
+  const ownerCeiling: OwnerCeilingPolicy = {
+    outsideSandbox: r.outsideSandbox,
+    network: r.network,
+    projectReach: r.projectReach,
+  };
   const policy: Policy = {
     allowedDomains: o.allowedDomains === undefined ? [] : (o.allowedDomains as string[]),
     allowCredentials: o.allowCredentials === undefined ? [] : (o.allowCredentials as string[]),
@@ -369,6 +325,7 @@ export function readPolicyFile(dir: string): PolicyFile {
     ownerCeiling,
     keepAwake:
       o.keepAwake === undefined ? DEFAULT_POLICY.keepAwake : (o.keepAwake as KeepAwakeMode),
+    projectPaths: o.projectPaths === undefined ? [] : (o.projectPaths as string[]),
   };
   if (!isKeepAwakeMode(policy.keepAwake)) {
     throw bad("keepAwake", '"off", "while-busy" or "connected"');
@@ -377,25 +334,32 @@ export function readPolicyFile(dir: string): PolicyFile {
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
+  const pathsProblem = projectPathsProblem(policy.projectPaths);
+  if (pathsProblem !== undefined) throw bad("projectPaths", pathsProblem);
+  policy.projectPaths = [...policy.projectPaths];
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
-    if (!POLICY_KEYS.includes(k) && !LEGACY_POLICY_KEYS.includes(k)) extra[k] = v;
+    if (!POLICY_KEYS.includes(k)) extra[k] = v;
   }
-  return { policy, extra, legacy };
+  return { policy, extra };
 }
 
-/** Writes policy.json atomically (owner-only); `extra` are unknown keys to keep (never legacy ones). */
+/**
+ * Writes policy.json atomically (owner-only) in format {@link POLICY_VERSION}; `extra` are
+ * unknown keys to keep. Refuses, writing nothing, project paths {@link readPolicyFile} would
+ * refuse.
+ */
 export function writePolicy(
   dir: string,
   policy: Policy,
   extra: Record<string, unknown> = {},
 ): void {
-  const kept = Object.fromEntries(
-    Object.entries(extra).filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)),
-  );
-  const { allowedDomains, allowCredentials, cpu, memoryMb, ownerCeiling, keepAwake } = policy;
+  const { allowedDomains, allowCredentials, cpu, memoryMb, ownerCeiling, keepAwake, projectPaths } =
+    policy;
+  const pathsProblem = projectPathsProblem(projectPaths);
+  if (pathsProblem !== undefined) throw new Error(`projectPaths must be ${pathsProblem}`);
   const body = {
-    ...kept,
+    ...extra,
     version: POLICY_VERSION,
     allowedDomains,
     allowCredentials,
@@ -404,30 +368,24 @@ export function writePolicy(
     ownerCeiling: {
       outsideSandbox: ownerCeiling.outsideSandbox,
       network: ownerCeiling.network,
-      restrictedProjectReach: ownerCeiling.restrictedProjectReach,
+      projectReach: ownerCeiling.projectReach,
     },
     keepAwake,
+    projectPaths,
   };
   writePrivate(policyPath(dir), `${JSON.stringify(body, null, 2)}\n`);
 }
 
 /**
- * The one-time explicit conversion of policy.json to version 3, under the policy lock and atomic:
- * an old ceiling converts never wider ({@link convertV2OwnerCeiling}, {@link ownerCeilingOfMode});
- * domains, resources and unknown keys are kept. `created`: no file, so the closed
- * {@link MISSING_POLICY_OWNER_CEILING} is written (a device set up before rc.58, whose `login`
- * wrote none); `current`: already version 3. Throws, writing nothing, on a malformed file.
+ * Writes the closed policy ({@link closedPolicy}) when policy.json is missing (a device set up
+ * before rc.58, whose `login` wrote none), under the policy lock. Returns whether it wrote one.
+ * An existing file is left as it is, whatever its content.
  */
-export function convertPolicyFile(dir: string): "created" | "current" | "converted" {
+export function createMissingPolicyFile(dir: string): boolean {
   return withPolicyLock(dir, () => {
-    if (!existsSync(policyPath(dir))) {
-      writePolicy(dir, missingPolicy());
-      return "created";
-    }
-    const { policy, extra, legacy } = readPolicyFile(dir);
-    if (!legacy) return "current";
-    writePolicy(dir, policy, extra);
-    return "converted";
+    if (existsSync(policyPath(dir))) return false;
+    writePolicy(dir, closedPolicy());
+    return true;
   });
 }
 

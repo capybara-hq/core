@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import { policySummary } from "../src/server-ops.js";
-import { DEFAULT_POLICY, FULL_OWNER_CEILING, ownerCeilingOfMode } from "../src/state.js";
+import { DEFAULT_POLICY, type OwnerCeilingPolicy } from "../src/state.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 /** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
@@ -26,11 +32,20 @@ describe("CommandLog", () => {
 describe("the policy summary", () => {
   it("reports the sandbox allowlist only, on the machine and in a container", () => {
     expect(
-      policySummary({ ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") }, { mode: "os" }),
+      policySummary(
+        {
+          ...FULL_POLICY,
+          ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "machine" },
+        },
+        { mode: "os" },
+      ),
     ).toEqual({ allowedDomains: [] });
     expect(
       policySummary(
-        { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") },
+        {
+          ...FULL_POLICY,
+          ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
+        },
         { mode: "docker" },
       ),
     ).toEqual({ allowedDomains: [] });

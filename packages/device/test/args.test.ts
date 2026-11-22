@@ -120,13 +120,13 @@ describe("parseCommandLine", () => {
         "--outside-sandbox",
         "off",
         "--project-reach",
-        "os-user",
+        "machine",
       ]),
     ).toEqual({
       command: "ceiling",
       action: "set",
       outsideSandbox: false,
-      projectReach: "os-user",
+      projectReach: "machine",
     });
     for (const argv of [
       ["ceiling", "set"],
@@ -138,7 +138,7 @@ describe("parseCommandLine", () => {
     ])
       expect(() => parseCommandLine(argv), argv.join(" ")).toThrow(UsageError);
     expect(() =>
-      parseCommandLine(["ceiling", "set", "--full-access", "allow", "--project-reach", "os-user"]),
+      parseCommandLine(["ceiling", "set", "--full-access", "allow", "--project-reach", "machine"]),
     ).toThrow(/--full-access is gone.*--outside-sandbox/);
     expect(USAGE).toMatch(/--outside-sandbox on\|off/);
     expect(USAGE).toMatch(/--network open\|allowlist/);

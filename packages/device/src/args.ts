@@ -1,6 +1,7 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
-import { isKeepAwakeMode, type KeepAwakeMode, type RestrictedProjectReach } from "./state.js";
+import type { ProjectReach } from "./exec/read-model.js";
+import { isKeepAwakeMode, type KeepAwakeMode } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
@@ -42,7 +43,7 @@ export type Command =
       /** `--network open|allowlist`; absent keeps the current value. */
       network?: DeviceNetworkMode;
       /** `--project-reach workspace|os-user`; absent keeps the current value. */
-      projectReach?: RestrictedProjectReach;
+      projectReach?: ProjectReach;
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
     }
@@ -224,7 +225,7 @@ export function parseCommandLine(argv: string[]): Command {
         throw new UsageError(usage);
       if (network !== undefined && network !== "open" && network !== "allowlist")
         throw new UsageError(usage);
-      if (reach !== undefined && reach !== "workspace" && reach !== "os-user")
+      if (reach !== undefined && reach !== "machine" && reach !== "paths" && reach !== "workspace")
         throw new UsageError(usage);
       return {
         command: "ceiling",

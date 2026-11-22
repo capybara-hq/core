@@ -560,7 +560,7 @@ describe("local-Docker skill preparation", () => {
           outsideSandbox: false,
           network: "allowlist",
           roots: hostRoots,
-          restrictedProjectReach: "workspace",
+          projectReach: "workspace",
           allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: {

@@ -60,7 +60,7 @@ async function fixture(
         outsideSandbox: true,
         network: "allowlist",
         roots,
-        restrictedProjectReach: "os-user",
+        projectReach: "machine",
         allowedDomains: [],
         restrictedDeniedReadRoots: [],
         preparation: {
@@ -173,7 +173,7 @@ async function fixture(
     ownerCeiling: {
       version: 3,
       sequence: 0,
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
       revision: "r",
       outsideSandbox: false,
       network: "allowlist",
@@ -798,7 +798,7 @@ it("the hello is the dial-in envelope around the device protocol body", async ()
     ownerCeiling: {
       version: 3,
       sequence: 0,
-      restrictedProjectReach: "workspace",
+      projectReach: "workspace",
       revision: "r",
       outsideSandbox: false,
       network: "allowlist",

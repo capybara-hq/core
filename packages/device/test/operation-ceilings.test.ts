@@ -10,12 +10,13 @@ import {
   readStrictOwnerCeiling,
 } from "../src/exec/operation-types.js";
 import { osRoots } from "../src/exec/shared.js";
-import {
-  DEFAULT_POLICY,
-  FULL_OWNER_CEILING,
-  ownerCeilingOfMode,
-  writePolicy,
-} from "../src/state.js";
+import { DEFAULT_POLICY, type OwnerCeilingPolicy, writePolicy } from "../src/state.js";
+
+const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
+  outsideSandbox: true,
+  network: "open",
+  projectReach: "machine",
+};
 
 /** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
@@ -194,7 +195,7 @@ describe("independent owner ceiling", () => {
     expect(intersectOperation(s, await f.read(), a).readRoots).toContain(join(f.dir, "project"));
     writePolicy(join(f.dir, "state"), {
       ...FULL_POLICY,
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
     });
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed, a)).toThrow();
@@ -241,7 +242,7 @@ describe("independent owner ceiling", () => {
     expect(intersectOperation(s, await f.read()).full).toBe(true);
     writePolicy(join(f.dir, "state"), {
       ...FULL_POLICY,
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
     });
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed)).toThrow();
@@ -259,7 +260,7 @@ describe("independent owner ceiling", () => {
     // the owner's outside-sandbox ceiling bounds it under every profile
     writePolicy(join(f.dir, "state"), {
       ...FULL_POLICY,
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
     });
     const narrowed = await f.read();
     expect(() => intersectOperation(escalated, narrowed)).toThrow();

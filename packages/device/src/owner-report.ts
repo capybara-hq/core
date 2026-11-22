@@ -112,7 +112,7 @@ export function issueOwnerReport(input: {
       outsideSandbox: ceiling.outsideSandbox,
       network: ceiling.network,
       allowedDomains: [...ceiling.allowedDomains],
-      restrictedProjectReach: ceiling.restrictedProjectReach,
+      projectReach: ceiling.projectReach,
     });
   });
 }

@@ -188,7 +188,7 @@ export async function hostBackend(
     /** Test seam: faults the launcher injects (a staged move that cannot finish, a paused mkdir). */
     faultInjection?: LinuxFaultInjection;
     /** The owner's restricted project reach (default the workspace). */
-    restrictedProjectReach?: "workspace" | "os-user";
+    projectReach?: "workspace" | "machine";
     /** The device's sandbox home a restricted exec gets as HOME (default none: the cwd). */
     sandboxHome?: string;
     /** A local-Docker device: the server runs here, its agents in this container. */
@@ -202,9 +202,7 @@ export async function hostBackend(
     restrictedDeniedReadRoots: options.deniedReadRoots ?? [],
     ...(options.network ? { network: options.network } : {}),
     ...(options.allowedDomains ? { allowedDomains: options.allowedDomains } : {}),
-    ...(options.restrictedProjectReach
-      ? { restrictedProjectReach: options.restrictedProjectReach }
-      : {}),
+    ...(options.projectReach ? { projectReach: options.projectReach } : {}),
   };
   await server.call({
     op: "create",

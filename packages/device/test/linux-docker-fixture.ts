@@ -610,7 +610,7 @@ export function fixtureCeiling(roots: DeviceOwnerCeiling["roots"]): DeviceOwnerC
     outsideSandbox: true,
     network: "allowlist",
     roots,
-    restrictedProjectReach: "workspace",
+    projectReach: "workspace",
     allowedDomains: [NAMES.granted],
     restrictedDeniedReadRoots: [],
     preparation: {
