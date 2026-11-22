@@ -7,8 +7,8 @@
  * `conversation.panel` embed; `fake-web` and `fake-web-2`, two scripted web search and web fetch
  * providers for the web tools case; all allowing local http), `fake-config-form` (a hinted
  * deployment config form) and the fake IM test plugin `fake-im`; no official plugin except
- * `model-fake` and the bootstrap plugins; server.mjs then starts the web layer (`next dev`)
- * pointing at it. A fake MCP server (stateful sessions; the destructive tool `delete_item`,
+ * `model-fake` and the bootstrap plugins; server.mjs then starts the web layer pointing at it,
+ * from a production build by default (see {@link WEB_MODE}; the build runs while the stack starts). A fake MCP server (stateful sessions; the destructive tool `delete_item`,
  * `signup` which starts an elicitation, the prompt `summarize` and the resource
  * `docs://handbook`) serves the tool / approval / slash command / resource reference cases; a
  * small pets API (an operations document for `fake-openapi` and the operations behind an API key
@@ -42,10 +42,10 @@
  */
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
-import { registerHooks } from "node:module";
+import { createRequire, registerHooks } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -188,6 +188,26 @@ type StartTestS3 = () => Promise<{
   stop(): Promise<void>;
 }>;
 
+/**
+ * The web tier the specs run against, from `CAPYBARA_E2E_WEB`:
+ * - `production` (default, and what CI runs): server.mjs with NODE_ENV=production serving a
+ *   `next build` output in `apps/web/.next`, as the web image does (docker/web.Dockerfile). The
+ *   build runs while the containers and the kernel start; `CAPYBARA_E2E_WEB_BUILD=reuse` keeps an
+ *   existing build instead (quick local reruns: it does not check that the build is current), and
+ *   builds only when `.next/BUILD_ID` is missing.
+ * - `dev`: server.mjs on `next dev` (local debugging: readable stacks, React's dev warnings; each
+ *   route compiles on its first visit, seconds each).
+ * Either way the server gets `CAPYBARA_DEV_UI=1`, so the design catalog under `/dev/ui` (the page
+ * css-layers.spec.ts styles without signing in) answers in production too, as in the visual job.
+ */
+const WEB_MODE = process.env.CAPYBARA_E2E_WEB === "dev" ? "dev" : "production";
+if (![undefined, "", "dev", "production"].includes(process.env.CAPYBARA_E2E_WEB)) {
+  throw new Error(
+    `CAPYBARA_E2E_WEB must be "production" or "dev", not ${process.env.CAPYBARA_E2E_WEB}`,
+  );
+}
+const REUSE_BUILD = process.env.CAPYBARA_E2E_WEB_BUILD === "reuse";
+
 /** 子进程日志（gitignore；每次运行覆盖，失败后可查看）。 */
 const logDir = join(webDir, "e2e-logs");
 
@@ -292,6 +312,28 @@ async function waitFor(url: string, child: ChildProcess, timeoutMs: number): Pro
 async function tail(file: string): Promise<string> {
   const text = await readFile(file, "utf8").catch(() => "");
   return text.split("\n").slice(-40).join("\n");
+}
+
+/**
+ * Builds the web app for {@link WEB_MODE} `production` (`next build`, what the `build` script runs
+ * after gen-client-host, which the caller has run), unless a reused build is there. Resolves when
+ * the build is done; rejects with the log's tail when it fails.
+ */
+function buildWeb(log: string, cleanups: Cleanup[]): Promise<void> {
+  if (WEB_MODE === "dev") return Promise.resolve();
+  if (REUSE_BUILD && existsSync(join(webDir, ".next", "BUILD_ID"))) return Promise.resolve();
+  const nextBin = createRequire(join(webDir, "package.json")).resolve("next/dist/bin/next");
+  const build = run(
+    process.execPath,
+    [nextBin, "build"],
+    { NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1" },
+    log,
+    webDir,
+  );
+  cleanups.push(() => stopChild(build, 5_000));
+  return exited(build).then(async (code) => {
+    if (code !== 0) throw new Error(`next build failed (${code}):\n${await tail(log)}`);
+  });
 }
 
 /** The subset of `startFakeNpmRegistry` / `startFakeMarketplace` used here. */
@@ -490,8 +532,18 @@ export default async function globalSetup(): Promise<Cleanup> {
     bootstrap: join(logDir, "bootstrap.log"),
     kernel: join(logDir, "kernel.log"),
     web: join(logDir, "web.log"),
+    webBuild: join(logDir, "web-build.log"),
   };
   try {
+    // The client host shims the import map points at (`pnpm dev` / `build` run it too); the build
+    // reads them, so first.
+    execFileSync(process.execPath, [join(webDir, "scripts", "gen-client-host.mjs")], {
+      stdio: "ignore",
+    });
+    // Started now, awaited before the web tier starts: it overlaps the stack's startup.
+    const webBuilt = buildWeb(logs.webBuild, cleanups);
+    // Settled here so a failure while the stack starts is not an unhandled rejection; awaited below.
+    webBuilt.catch(() => {});
     const { startTestS3 } = (await import(containersModule)) as { startTestS3: StartTestS3 };
     const [pg, valkey, s3] = await Promise.all([
       new PostgreSqlContainer("postgres:17").start(),
@@ -699,10 +751,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`${(e as Error).message}\n${await tail(logs.kernel)}`);
     });
 
-    // The client host shims the import map points at (`pnpm dev` / `build` run it too).
-    execFileSync(process.execPath, [join(webDir, "scripts", "gen-client-host.mjs")], {
-      stdio: "ignore",
-    });
+    await webBuilt;
     const web = run(
       process.execPath,
       [join(webDir, "server.mjs")],
@@ -710,6 +759,8 @@ export default async function globalSetup(): Promise<Cleanup> {
         PORT: String(webPort),
         CAPYBARA_KERNEL_URL: `http://127.0.0.1:${kernelPort}`,
         NEXT_TELEMETRY_DISABLED: "1",
+        NODE_ENV: WEB_MODE === "dev" ? "development" : "production",
+        CAPYBARA_DEV_UI: "1",
       },
       logs.web,
       // next-intl 插件按 cwd 解析 ./src/i18n/request.ts
@@ -717,7 +768,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     );
     cleanups.push(() => stopChild(web, 10_000));
     const baseUrl = `http://localhost:${webPort}`;
-    // 首次请求触发 next dev 编译；顺带预热登录 / 初始化页
+    // Dev: the first request compiles the login page (and warms up the setup page)
     await waitFor(`${baseUrl}/login`, web, 180_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.web)}`);
     });
@@ -744,7 +795,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     process.env.CAPYBARA_E2E_CLIENT_BROKEN_TGZ = (
       await packFixture("fake-client-broken", dir)
     ).file;
-    console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
+    console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl} (${WEB_MODE}), logs in ${logDir}`);
   } catch (e) {
     await cleanup();
     throw e;

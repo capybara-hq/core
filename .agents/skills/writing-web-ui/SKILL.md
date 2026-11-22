@@ -484,6 +484,9 @@ pnpm --filter @capybara-hq/web visual fidelity      # measuring + state coverage
 COMPARE=button,table pnpm --filter @capybara-hq/web compare   # side-by-side page in apps/web/compare-out/
 pnpm --filter @capybara-hq/web reference:render     # render the reference set PNGs locally (look only; CI commits them)
 pnpm --filter @capybara-hq/web e2e        # real-stack e2e (Testcontainers, needs Docker)
+                                          # on a production build (next build each run);
+                                          # CAPYBARA_E2E_WEB_BUILD=reuse keeps an existing
+                                          # build, CAPYBARA_E2E_WEB=dev runs next dev
 ```
 
 Before changing `apps/web`, read `node_modules/next/dist/docs` (see `apps/web/AGENTS.md`; Next 16 has breaking changes).

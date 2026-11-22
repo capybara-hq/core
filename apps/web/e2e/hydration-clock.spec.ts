@@ -14,14 +14,23 @@ import { signIn } from "./support/sign-in";
  * time on `/settings/tokens` has the browser's age as its tooltip.
  */
 
+/**
+ * A hydration error or warning: the dev build's messages, or the production build's minified
+ * errors with the same meaning (React 19: #418 the server's HTML didn't match the client, #422 /
+ * #423 an error while hydrating, recovered by client rendering). Production React does not check
+ * attributes at all (dev warns "some attributes … didn't match"); there the post-mount assertions
+ * below catch a stale server attribute instead, since React leaves it unpatched.
+ */
+const HYDRATION = /hydrat|didn't match|Minified React error #(418|422|423)\b/i;
+
 /** Hydration errors and warnings the page logs (Next's dev overlay shows them too). */
 function hydrationErrors(page: Page): string[] {
   const seen: string[] = [];
   page.on("console", (m) => {
-    if (m.type() === "error" && /hydrat|didn't match/i.test(m.text())) seen.push(m.text());
+    if (m.type() === "error" && HYDRATION.test(m.text())) seen.push(m.text());
   });
   page.on("pageerror", (e) => {
-    if (/hydrat|didn't match/i.test(e.message)) seen.push(e.message);
+    if (HYDRATION.test(e.message)) seen.push(e.message);
   });
   return seen;
 }
