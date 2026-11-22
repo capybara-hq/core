@@ -482,6 +482,23 @@ describe("the native strip (nav@1)", () => {
     }
   });
 
+  it("re-tapping 对话 on the home opens the conversations page (tab re-tap)", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    const onNavigate = vi.fn();
+    const view = render(shell(fake.nav, "/", { onNavigate }));
+    act(() => fake.select("chats"));
+    expect(onNavigate).toHaveBeenLastCalledWith("/conversations", { transition: "none" });
+    // from the conversations page or a conversation, Chats goes back to the home
+    view.rerender(shell(fake.nav, "/conversations", { onNavigate }));
+    act(() => fake.select("chats"));
+    expect(onNavigate).toHaveBeenLastCalledWith("/", { transition: "none" });
+    view.rerender(shell(fake.nav, "/chat/c1", { onNavigate }));
+    act(() => fake.select("chats"));
+    expect(onNavigate).toHaveBeenLastCalledWith("/", { transition: "none" });
+    expect(onNavigate).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps the action and account within bounds and the avatar to https or own-origin http", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const { nav } = fakeNav();

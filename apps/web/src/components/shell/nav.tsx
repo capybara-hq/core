@@ -416,6 +416,8 @@ export function useNav(
       items: [
         ...primary,
         { id: "inbox", label: t("nav.inbox"), href: inbox.href },
+        // the conversations page: with the native strip the drawer's All conversations is not on screen
+        { id: "conversations", label: t("drawer.allConversations"), href: "/conversations" },
         ...more,
         ...admin,
       ].map((n) => ({
