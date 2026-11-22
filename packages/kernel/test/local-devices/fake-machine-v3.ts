@@ -1,36 +1,45 @@
+import { randomUUID } from "node:crypto";
 import {
-  DEVICE_PROTOCOL_VERSION,
+  DEVICE_DIAL_IN_PROTOCOL,
   type DeviceHello,
   type DeviceLocalPolicySummary,
   type DeviceOwnerCeiling,
   type KernelCancel,
-  type KernelReady,
   type KernelReq,
-  type LegacyDeviceHello,
-  parseDeviceFrame,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import WebSocket from "ws";
-import {
-  FakeMachine as FakeMachineV2,
-  HELLO as HELLO_V2,
-  refusal,
-  stagedHello,
-} from "./fake-machine.js";
+import { refusal, stagedHello } from "./fake-machine.js";
 import type { Answer } from "./test-holder.js";
 
 export { refusal, stagedHello };
 
-/** What a fake machine of either protocol offers a test. */
+/** A `stop` the kernel sent (the envelope's `stop`). */
+export interface KernelStop {
+  type: "stop";
+  reason: "drain" | "stop";
+}
+
+/** A kernel frame as a test reads it: a request (its body's `op` and `args`), a cancel or a stop. */
+export type KernelFrame = KernelReq | KernelCancel | KernelStop;
+
+/** What a fake machine offers a test. */
 export interface FakeMachineApi {
-  readonly frames: (KernelReq | KernelCancel)[];
+  readonly frames: KernelFrame[];
   readonly ws: WebSocket;
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly opened: Promise<void>;
-  /** Sends the machine's hello: the protocol's default with `overrides` applied. */
+  /**
+   * Sends the machine's hello envelope: the default program facts and body with `overrides`
+   * applied (envelope keys `protocol`, `programRunId`, `program`, `transport`, `bootId` and
+   * `programVersion` go to the envelope, every other key to the body).
+   */
   hello(overrides?: Record<string, unknown>): void;
+  /** Sends a raw frame. */
   send(frame: unknown): void;
+  /** Sends an `event` envelope with `body`. */
+  event(body: unknown): void;
   respond(id: string, answer: NonNullable<Answer>): void;
-  next(pred?: (f: KernelReq | KernelCancel) => boolean): Promise<KernelReq | KernelCancel>;
+  next(pred?: (f: KernelFrame) => boolean): Promise<KernelFrame>;
   close(): void;
 }
 
@@ -53,32 +62,65 @@ export type FakeMachineConstructor = new (
   opts?: FakeMachineOptions,
 ) => FakeMachineApi;
 
-/** The staged hello of a machine whose instance is not bound yet (the kernel binds it). */
+/** The hello body of a machine whose instance is not bound yet (the kernel binds it). */
 export const HELLO_V3: DeviceHello = stagedHello();
 
 /** The v3 owner report a fake machine answers a bind with. */
 export const FAKE_OWNER_CEILING: DeviceOwnerCeiling = HELLO_V3.ownerCeiling;
 
+/** The frame capacity a fake machine announces by default. */
+export const FAKE_MAX_FRAME_BYTES = 69632;
+
+const ENVELOPE_KEYS = new Set(["protocol", "programRunId", "program", "transport", "bootId"]);
+
 /**
- * A `capybara-device` stand-in speaking the staged (protocol 4) wire over a real WebSocket,
- * against `DialInGateway.accept` (or, after the paired activation, the HTTP route):
- * it records the kernel's frames, keeps the `ready` frame apart (its connection id and capacity
- * are in {@link ready}), and answers requests with `answer` (undefined: the test answers with
- * {@link respond}). A `bindInstance` nobody answered is answered with the installed evidence of
- * the generation it asks for ({@link bindAnswer}), as an enforcing device would. The device's own
- * session code (`serveStagedSession`) is used where a test needs real operations; this fake is for
- * tests that script a machine's answers.
+ * The hello envelope of a fake machine: `capybara-device/5`, a fresh program run, the default
+ * program facts and {@link HELLO_V3} as the body, with `overrides` split between the envelope and
+ * the body ({@link FakeMachineApi.hello}).
+ */
+export function helloEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const envelope: Record<string, unknown> = {
+    type: "hello",
+    protocol: DEVICE_DIAL_IN_PROTOCOL,
+    programRunId: randomUUID(),
+    program: { version: "0.1.0", os: "linux", arch: "x64" },
+    transport: { maxFrameBytes: FAKE_MAX_FRAME_BYTES },
+  };
+  const body: Record<string, unknown> = { ...HELLO_V3 };
+  for (const [k, v] of Object.entries(overrides)) {
+    if (k === "bootId")
+      envelope.program = {
+        ...(envelope.program as object),
+        ...(v === undefined ? {} : { bootId: v }),
+      };
+    else if (k === "programVersion")
+      envelope.program = { ...(envelope.program as object), version: v };
+    else if (ENVELOPE_KEYS.has(k)) envelope[k] = v;
+    else if (v === undefined) delete body[k];
+    else body[k] = v;
+  }
+  return { ...envelope, body };
+}
+
+/**
+ * A `capybara-device` stand-in speaking the dial-in envelope (protocol `capybara-device/5`) over
+ * a real WebSocket, against the HTTP route: it records the kernel's frames (a request as its
+ * body's `op` and `args`), keeps the `ready` frame apart (its connection id is in {@link ready}),
+ * and answers requests with `answer` (undefined: the test answers with {@link respond}). A
+ * `bindInstance` nobody answered is answered with the installed evidence of the generation it asks
+ * for ({@link bindAnswer}), as an enforcing device would. The device's own session code is used
+ * where a test needs real operations; this fake is for tests that script a machine's answers.
  */
 export class FakeMachineV3 implements FakeMachineApi {
-  readonly frames: (KernelReq | KernelCancel)[] = [];
+  readonly frames: KernelFrame[] = [];
   readonly ws: WebSocket;
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly opened: Promise<void>;
-  /** Resolves with the kernel's `ready` frame (its connection id and negotiated capacity). */
-  readonly ready: Promise<KernelReady>;
+  /** Resolves with the kernel's `ready` frame (its connection id). */
+  readonly ready: Promise<{ type: "ready"; connectionId: string }>;
   private waiters: {
-    pred: (f: KernelReq | KernelCancel) => boolean;
-    resolve: (f: KernelReq | KernelCancel) => void;
+    pred: (f: KernelFrame) => boolean;
+    resolve: (f: KernelFrame) => void;
   }[] = [];
 
   constructor(
@@ -91,7 +133,7 @@ export class FakeMachineV3 implements FakeMachineApi {
     this.ws = new WebSocket(url, {
       headers: {
         Authorization: `Bearer ${credential}`,
-        "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+        "X-Capybara-Device-Protocol": DEVICE_DIAL_IN_PROTOCOL,
       },
       autoPong: opts.autoPong ?? true,
     });
@@ -105,19 +147,35 @@ export class FakeMachineV3 implements FakeMachineApi {
       });
       this.ws.on("error", reject);
     });
-    let onReady!: (r: KernelReady) => void;
+    let onReady!: (r: { type: "ready"; connectionId: string }) => void;
     this.ready = new Promise((resolve) => {
       onReady = resolve;
     });
     this.ws.on("message", (data) => {
-      const f = parseDeviceFrame(String(data), "kernel");
+      const f = JSON.parse(String(data)) as {
+        type: string;
+        id?: string;
+        deadlineMs?: number;
+        body?: { op?: string; args?: unknown };
+        reason?: "drain" | "stop";
+        connectionId?: string;
+      };
       if (f.type === "ready") {
-        onReady(f);
+        onReady({ type: "ready", connectionId: String(f.connectionId) });
         return;
       }
-      if (f.type !== "req" && f.type !== "cancel") return;
-      // a staged request names operations protocol 2's type does not know: tests read `op` as text
-      const frame = f as unknown as KernelReq | KernelCancel;
+      let frame: KernelFrame;
+      if (f.type === "req")
+        frame = {
+          type: "req",
+          id: String(f.id),
+          op: f.body?.op as KernelReq["op"],
+          args: f.body?.args,
+          deadlineMs: Number(f.deadlineMs),
+        };
+      else if (f.type === "cancel") frame = { type: "cancel", id: String(f.id) };
+      else if (f.type === "stop") frame = { type: "stop", reason: f.reason ?? "stop" };
+      else return;
       this.frames.push(frame);
       for (const w of [...this.waiters]) {
         if (w.pred(frame)) {
@@ -142,20 +200,22 @@ export class FakeMachineV3 implements FakeMachineApi {
   }
 
   hello(overrides: Record<string, unknown> = {}): void {
-    this.send({ ...HELLO_V3, ...overrides });
+    this.send(helloEnvelope(overrides));
   }
 
   send(frame: unknown): void {
     this.ws.send(JSON.stringify(frame));
   }
 
-  respond(id: string, answer: NonNullable<Answer>): void {
-    this.send({ type: "res", id, ...answer });
+  event(body: unknown): void {
+    this.send({ type: "event", body });
   }
 
-  next(
-    pred: (f: KernelReq | KernelCancel) => boolean = () => true,
-  ): Promise<KernelReq | KernelCancel> {
+  respond(id: string, answer: NonNullable<Answer>): void {
+    this.send({ type: "res", id, body: answer });
+  }
+
+  next(pred: (f: KernelFrame) => boolean = () => true): Promise<KernelFrame> {
     const seen = this.frames.find(pred);
     if (seen) return Promise.resolve(seen);
     return new Promise((resolve) => this.waiters.push({ pred, resolve }));
@@ -252,35 +312,42 @@ export function bindAnswer(req: KernelReq): NonNullable<Answer> {
   } as NonNullable<Answer>;
 }
 
-/** The staged (operation) protocol the fakes speak: the SDK's protocol constant (4). */
-type StagedProtocol = typeof DEVICE_PROTOCOL_VERSION;
+/** What the test files use: the machine of protocol 5 (the dial-in envelope). */
+export const FakeMachine: FakeMachineConstructor = FakeMachineV3;
+export type FakeMachine = FakeMachineApi;
+export const HELLO = HELLO_V3;
+/** The upgrade header a fake machine sends. */
+export const DEVICE_PROTOCOL_HEADER_VALUE = DEVICE_DIAL_IN_PROTOCOL;
+
+/** The local dial-in handler a hand-built gateway asks: accepts every hello unless given one. */
+export interface LocalHandlerStub {
+  readonly kernelInternal: true;
+  onHello(
+    deviceId: string,
+    hello: unknown,
+    signal: AbortSignal,
+    connection?: { machineId: string; connectionId: string },
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+  onFrame?(
+    deviceId: string,
+    frame: unknown,
+    connection?: { machineId: string; connectionId: string },
+  ): Promise<void>;
+}
 
 /**
- * The protocol under test: the SDK's protocol constant (the staged fakes).
- * `CAPYBARA_TEST_DEVICE_PROTOCOL=2` forces the protocol 2 fakes (refused at the upgrade).
+ * `DialInHandlers` for a hand-built gateway: every device is served by the kernel's `@local`
+ * provider speaking `capybara-device/5`, through `handler` (default: accepts every hello).
  */
-export function deviceProtocolUnderTest(): 2 | StagedProtocol {
-  return process.env.CAPYBARA_TEST_DEVICE_PROTOCOL === "2" ? 2 : DEVICE_PROTOCOL_VERSION;
-}
-
-/** The fake machine pieces of one protocol; a test file takes them from {@link fakeMachine}. */
-export function fakeMachineFor(protocol: 2 | StagedProtocol) {
-  const staged = protocol === DEVICE_PROTOCOL_VERSION;
+export function localHandlers(
+  handler: LocalHandlerStub = { kernelInternal: true, onHello: async () => ({ ok: true }) },
+) {
   return {
-    protocol,
-    /** The header an upgrade request of this protocol carries. */
-    protocolHeader: String(protocol),
-    Machine: (staged ? FakeMachineV3 : FakeMachineV2) as FakeMachineConstructor,
-    HELLO: (staged ? HELLO_V3 : HELLO_V2) as LegacyDeviceHello,
-    /** The hello frame with `overrides` (v2-only fields such as `policy` ride along in both). */
-    helloWith: (overrides: Record<string, unknown> = {}): LegacyDeviceHello =>
-      ({ ...(staged ? HELLO_V3 : HELLO_V2), ...overrides }) as LegacyDeviceHello,
+    forDevice: async () => ({
+      plugin: "@local",
+      protocol: DEVICE_DIAL_IN_PROTOCOL,
+      internal: true as const,
+      handler,
+    }),
   };
 }
-
-/** What the test files use: the machine of the protocol under test. */
-export const fakeMachine = fakeMachineFor(deviceProtocolUnderTest());
-export const FakeMachine = fakeMachine.Machine;
-export type FakeMachine = FakeMachineApi;
-export const HELLO = fakeMachine.HELLO;
-export const DEVICE_PROTOCOL_HEADER_VALUE = fakeMachine.protocolHeader;

@@ -1,38 +1,44 @@
 import { randomUUID } from "node:crypto";
 import {
   type ExtensionContext,
+  isDeviceOfflineError,
+  isDeviceRequestNotSent,
   isFileSystemGoneError,
   isSandboxGoneError,
   isSandboxWorkUnsettledError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
-import {
-  DeviceProtocolError,
-  type DeviceResponse,
-  type KernelReq,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import { DeviceProtocolError, type KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { storedResult } from "../../src/dial-in/envelope.js";
 import {
   deviceLeaseKey,
   deviceReqKey,
   deviceResKey,
   deviceResTopic,
+  deviceTransportKey,
 } from "../../src/dial-in/keys.js";
 import {
+  DialInFrameTooLargeError,
   DialInRelay,
   HOLDER_POLL_MS,
   LEASE_CHECK_TIMEOUT_MS,
   LIST_TTL_MARGIN_MS,
 } from "../../src/dial-in/relay.js";
-import type { DeviceTargetState, DeviceTargets } from "../../src/dial-in/targets.js";
+import { type DeviceTargetState, DeviceTargets } from "../../src/dial-in/targets.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { createLogger } from "../../src/log.js";
-import { TestHolder } from "../local-devices/test-holder.js";
+import {
+  TEST_HOLDER_CONNECTION,
+  TEST_HOLDER_TOKEN,
+  TestHolder,
+} from "../local-devices/test-holder.js";
 
 /**
  * The caller side of the device relay (environments spec §13.4): requests go through a Redis list
@@ -48,9 +54,12 @@ let relay: DialInRelay;
 let graceSeconds = 5;
 /** What the stubbed PG says about each device (absent: active). */
 const states = new Map<string, DeviceTargetState>();
+/** The connection a holder published, read as the gateway's (no database). */
+let published: DeviceTargets;
 const targets = {
   state: async (env: string) => states.get(env) ?? "active",
-} as Pick<DeviceTargets, "state"> as DeviceTargets;
+  current: (env: string) => published.current(env),
+} as Pick<DeviceTargets, "state" | "current"> as DeviceTargets;
 const log = createLogger("error", { write: () => {} });
 
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
@@ -68,8 +77,26 @@ const execArgs = {
   actor: { accountId: "a", conversationId: "c" },
   limits: LIMITS,
 };
+/** The `capybara-device` request bodies the tests send (opaque to the relay). */
+const execBody = { op: "exec", args: execArgs };
+const statBody = { op: "stat", args: { path: "/w", limits: { mode: "sandbox" } } };
+const EXEC_ANSWER = { ok: true, result: EXEC_RESULT };
 const signal = () => AbortSignal.timeout(30_000);
-const isOffline = (e: unknown) => e instanceof ApiError && e.code === "device.offline";
+/** An admitted operation scope on `deviceId` (the local codec validates request bodies). */
+const execScope = (deviceId: string) => ({
+  operationId: "op-1",
+  admitBeforeMs: Date.now() + 60_000,
+  deviceId,
+  rootConversationId: "c",
+  profileRevision: 1,
+  ceilingRevision: "r",
+  profile: "approve-for-me",
+  actor: { accountId: "a", conversationId: "c" },
+  tag: "t1",
+  filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
+  network: { kind: "none" },
+});
+const isOffline = (e: unknown) => isDeviceOfflineError(e);
 const rejection = (p: Promise<unknown>) =>
   p.then(
     () => undefined,
@@ -94,7 +121,7 @@ const relayOver = (r: Redis) =>
  * A relay whose request push is followed, before the push returns, by `onPush` (a holder that
  * answers within the push itself): the caller's ordering around the push decides what it sees.
  */
-const relayAnsweringInPush = (onPush: (req: KernelReq) => Promise<void>) => {
+const relayAnsweringInPush = (onPush: (req: { id: string }) => Promise<void>) => {
   const proxied = new Proxy(redis, {
     get(target, prop) {
       if (prop === "eval") {
@@ -102,7 +129,7 @@ const relayAnsweringInPush = (onPush: (req: KernelReq) => Promise<void>) => {
           const out = await (target.eval as (...x: unknown[]) => Promise<unknown>)(...a);
           // the push script has 5 arguments (script, 1, key, frame, ttl); giving up has 6
           if (a.length === 5) {
-            const f = JSON.parse(a[3] as string) as KernelReq;
+            const f = JSON.parse(a[3] as string) as { type: string; id: string };
             if (f.type === "req") await onPush(f);
           }
           return out;
@@ -116,13 +143,22 @@ const relayAnsweringInPush = (onPush: (req: KernelReq) => Promise<void>) => {
 };
 
 /** Holds the lease without draining: requests stay queued (a machine that has not taken them). */
-const holdLeaseOnly = (env: string) => redis.set(deviceLeaseKey(env), "x", "PX", 60_000);
+const holdLeaseOnly = async (env: string) => {
+  await redis.set(deviceLeaseKey(env), TEST_HOLDER_TOKEN, "PX", 60_000);
+  await redis.set(
+    deviceTransportKey(env, TEST_HOLDER_TOKEN),
+    JSON.stringify(TEST_HOLDER_CONNECTION),
+    "PX",
+    60_000,
+  );
+};
 
 beforeAll(async () => {
   rd = await startTestRedis();
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
+  published = new DeviceTargets(undefined as never, redis, new LockService(redis, log));
   relay = relayOver(redis);
 });
 afterAll(async () => {
@@ -142,24 +178,22 @@ describe("DialInRelay", () => {
   it("offline when no holder: device.offline at once, nothing queued", async () => {
     const env = randomUUID();
     const t0 = Date.now();
-    const e = await rejection(
-      relay.call(env, "exec", execArgs, { deadlineMs: 5000, signal: signal() }),
-    );
+    const e = await rejection(relay.request(env, execBody, { timeoutMs: 5000, signal: signal() }));
     expect(isOffline(e)).toBe(true);
     expect(Date.now() - t0).toBeLessThan(1000);
     expect(await redis.exists(deviceReqKey(env))).toBe(0);
-    expect(await relay.holderLive(env)).toBe(false);
+    expect(await relay.online(env)).toBe(false);
   });
 
   it("exec round-trip returns the ExecResult", async () => {
     const h = holder(() => ({ ok: true, result: EXEC_RESULT }));
     await h.connect();
-    expect(await relay.holderLive(h.deviceId)).toBe(true);
-    const r = await relay.call(h.deviceId, "exec", execArgs, {
-      deadlineMs: 6000,
+    expect(await relay.online(h.deviceId)).toBe(true);
+    const r = await relay.request(h.deviceId, execBody, {
+      timeoutMs: 6000,
       signal: signal(),
     });
-    expect(r).toEqual(EXEC_RESULT);
+    expect(r).toEqual(EXEC_ANSWER);
     const req = h.frames[0] as KernelReq;
     expect(req).toMatchObject({ type: "req", op: "exec", args: execArgs, deadlineMs: 6000 });
     // the result key is consumed
@@ -173,14 +207,14 @@ describe("DialInRelay", () => {
     const r = relayAnsweringInPush(async (req) => {
       await redis.set(
         deviceResKey(req.id),
-        JSON.stringify({ type: "res", id: req.id, ok: true, result: EXEC_RESULT }),
+        JSON.stringify(storedResult({ id: req.id, body: EXEC_ANSWER }, TEST_HOLDER_CONNECTION)),
         "PX",
         60_000,
       );
     });
     const t0 = Date.now();
-    expect(await r.call(env, "exec", execArgs, { deadlineMs: 20_000, signal: signal() })).toEqual(
-      EXEC_RESULT,
+    expect(await r.request(env, execBody, { timeoutMs: 20_000, signal: signal() })).toEqual(
+      EXEC_ANSWER,
     );
     expect(Date.now() - t0).toBeLessThan(2000);
     await redis.del(deviceLeaseKey(env), deviceReqKey(env));
@@ -190,16 +224,14 @@ describe("DialInRelay", () => {
     const env = randomUUID();
     await holdLeaseOnly(env);
     const r = relayAnsweringInPush(async (req) => {
-      await bus.publish(deviceResTopic(req.id), {
-        type: "res",
-        id: req.id,
-        ok: true,
-        result: EXEC_RESULT,
-      });
+      await bus.publish(
+        deviceResTopic(req.id),
+        storedResult({ id: req.id, body: EXEC_ANSWER }, TEST_HOLDER_CONNECTION),
+      );
     });
-    const call = r.call(env, "exec", execArgs, { deadlineMs: 20_000, signal: signal() });
+    const call = r.request(env, execBody, { timeoutMs: 20_000, signal: signal() });
     const late = sleep(2000).then(() => "too late");
-    expect(await Promise.race([call, late])).toEqual(EXEC_RESULT);
+    expect(await Promise.race([call, late])).toEqual(EXEC_ANSWER);
     await redis.del(deviceLeaseKey(env), deviceReqKey(env));
   });
 
@@ -207,8 +239,8 @@ describe("DialInRelay", () => {
     graceSeconds = 5;
     const h = holder();
     await h.connect();
-    const call = relay.call(h.deviceId, "exec", execArgs, {
-      deadlineMs: 1000,
+    const call = relay.request(h.deviceId, execBody, {
+      timeoutMs: 1000,
       signal: signal(),
     });
     const req = await h.next();
@@ -216,7 +248,7 @@ describe("DialInRelay", () => {
     await sleep(2000);
     await h.connect();
     await h.respond(req.id, { ok: true, result: EXEC_RESULT });
-    expect(await call).toEqual(EXEC_RESULT);
+    expect(await call).toEqual(EXEC_ANSWER);
     await h.disconnect();
   });
 
@@ -224,13 +256,13 @@ describe("DialInRelay", () => {
     graceSeconds = 1;
     const h = holder();
     await h.connect();
-    const call = relay.call(h.deviceId, "exec", execArgs, {
-      deadlineMs: 500,
+    const call = relay.request(h.deviceId, execBody, {
+      timeoutMs: 500,
       signal: signal(),
     });
     const req = await h.next();
     await h.respond(req.id, { ok: true, result: EXEC_RESULT }, { publish: false });
-    expect(await call).toEqual(EXEC_RESULT);
+    expect(await call).toEqual(EXEC_ANSWER);
     await h.disconnect();
   });
 
@@ -240,7 +272,7 @@ describe("DialInRelay", () => {
     await h.connect();
     const t0 = Date.now();
     const call = rejection(
-      relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 500, signal: signal() }),
+      relay.request(h.deviceId, execBody, { timeoutMs: 500, signal: signal() }),
     );
     const req = await h.next();
     // the lease stays (a holder that took the request and never answers)
@@ -263,19 +295,10 @@ describe("DialInRelay", () => {
     graceSeconds = 1;
     const env = randomUUID();
     await holdLeaseOnly(env);
-    const e = await rejection(
-      relay.call(env, "exec", execArgs, { deadlineMs: 500, signal: signal() }),
-    );
+    const e = await rejection(relay.request(env, execBody, { timeoutMs: 500, signal: signal() }));
     expect(isOffline(e)).toBe(true);
     const ac = new AbortController();
-    const aborted = rejection(
-      relay.call(
-        env,
-        "stat",
-        { path: "/w", limits: { mode: "sandbox" } },
-        { deadlineMs: 5000, signal: ac.signal },
-      ),
-    );
+    const aborted = rejection(relay.request(env, statBody, { timeoutMs: 5000, signal: ac.signal }));
     await sleep(100);
     ac.abort(new Error("stop"));
     expect(((await aborted) as Error).message).toBe("stop");
@@ -293,7 +316,7 @@ describe("DialInRelay", () => {
     await h.connect();
     const t0 = Date.now();
     const call = rejection(
-      relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 30_000, signal: signal() }),
+      relay.request(h.deviceId, execBody, { timeoutMs: 30_000, signal: signal() }),
     );
     const req = await h.next();
     await h.disconnect();
@@ -318,7 +341,7 @@ describe("DialInRelay", () => {
       await h.connect();
       const t0 = Date.now();
       const call = rejection(
-        relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 30_000, signal: signal() }),
+        relay.request(h.deviceId, execBody, { timeoutMs: 30_000, signal: signal() }),
       );
       await h.next();
       states.set(h.deviceId, state);
@@ -329,7 +352,7 @@ describe("DialInRelay", () => {
       expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 2000);
       // a new call is refused the same way at once, not as offline
       const again = await rejection(
-        relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 1000, signal: signal() }),
+        relay.request(h.deviceId, execBody, { timeoutMs: 1000, signal: signal() }),
       );
       expect(again instanceof ApiError && again.code === code).toBe(true);
       await redis.del(deviceReqKey(h.deviceId));
@@ -342,8 +365,8 @@ describe("DialInRelay", () => {
     const h = holder();
     await h.connect();
     const t0 = Date.now();
-    const call = relay.call(h.deviceId, "exec", execArgs, {
-      deadlineMs: 15_000,
+    const call = relay.request(h.deviceId, execBody, {
+      timeoutMs: 15_000,
       signal: signal(),
     });
     const req = await h.next();
@@ -357,7 +380,7 @@ describe("DialInRelay", () => {
     // answered well after the capped give-up time, well before the full one (~18 s)
     await at(HOLDER_POLL_MS + 3000 + 2500);
     await h.respond(req.id, { ok: true, result: EXEC_RESULT });
-    expect(await call).toEqual(EXEC_RESULT);
+    expect(await call).toEqual(EXEC_ANSWER);
     await h.disconnect();
   });
 
@@ -379,9 +402,7 @@ describe("DialInRelay", () => {
       targets,
     );
     const t0 = Date.now();
-    const call = rejection(
-      stalling.call(env, "exec", execArgs, { deadlineMs: 500, signal: signal() }),
-    );
+    const call = rejection(stalling.request(env, execBody, { timeoutMs: 500, signal: signal() }));
     await sleep(100);
     stall = true;
     expect(isOffline(await call)).toBe(true);
@@ -394,7 +415,7 @@ describe("DialInRelay", () => {
     await h.connect();
     const ac = new AbortController();
     const call = rejection(
-      relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 5000, signal: ac.signal }),
+      relay.request(h.deviceId, execBody, { timeoutMs: 5000, signal: ac.signal }),
     );
     const req = await h.next();
     const reason = new Error("stopped");
@@ -410,12 +431,7 @@ describe("DialInRelay", () => {
     const ac = new AbortController();
     ac.abort(new Error("early"));
     const e = await rejection(
-      relay.call(
-        h.deviceId,
-        "stat",
-        { path: "/x", limits: { mode: "sandbox" } },
-        { deadlineMs: 5000, signal: ac.signal },
-      ),
+      relay.request(h.deviceId, statBody, { timeoutMs: 5000, signal: ac.signal }),
     );
     expect((e as Error).message).toBe("early");
     expect(await redis.exists(deviceReqKey(h.deviceId))).toBe(0);
@@ -423,10 +439,11 @@ describe("DialInRelay", () => {
     await h.disconnect();
   });
 
-  it("fs_gone maps to FileSystemGoneError, gone to SandboxGoneError, policy and error to ToolErrors", async () => {
+  it("the local codec maps fs_gone, gone, unsettled, policy and error to the SDK's errors", async () => {
     const kinds = {
       create: "fs_gone",
       stat: "gone",
+      list: "unsettled",
       writeFile: "policy",
       readFile: "error",
     } as const;
@@ -435,16 +452,21 @@ describe("DialInRelay", () => {
       error: { kind: kinds[req.op as keyof typeof kinds], message: `${req.op} failed` },
     }));
     await h.connect();
+    const call = localCall(relay);
     const opts = () => ({ deadlineMs: 5000, signal: signal() });
     const env = h.deviceId;
-    const fsGone = await rejection(relay.call(env, "create", { limits: LIMITS }, opts()));
+    const scope = execScope(env);
+    const fsGone = await rejection(call(env, "create", { limits: LIMITS }, opts()));
     expect(isFileSystemGoneError(fsGone)).toBe(true);
-    const gone = await rejection(
-      relay.call(env, "stat", { path: "/w", limits: { mode: "sandbox" } }, opts()),
-    );
+    const gone = await rejection(call(env, "stat", { scope, path: "/work" }, opts()));
     expect(isSandboxGoneError(gone)).toBe(true);
+    const unsettled = await rejection(
+      call(env, "list", { scope, path: "/work", limit: 10 }, opts()),
+    );
+    expect(isSandboxWorkUnsettledError(unsettled)).toBe(true);
+    expect((unsettled as Error).message).toBe("list failed");
     const policy = await rejection(
-      relay.call(env, "writeFile", { path: "/w", dataB64: "" }, opts()),
+      call(env, "writeFile", { scope, path: "/work/a", dataB64: "" }, opts()),
     );
     expect(policy).toBeInstanceOf(ToolError);
     expect((policy as Error).message).toBe(
@@ -452,57 +474,105 @@ describe("DialInRelay", () => {
     );
     // ruling R28: the machine's own failure reaches the model as it said it
     const plain = await rejection(
-      relay.call(env, "readFile", { path: "/w", maxBytes: 1, limits: { mode: "sandbox" } }, opts()),
+      call(env, "readFile", { scope, path: "/work/a", maxBytes: 1 }, opts()),
     );
     expect(plain).toBeInstanceOf(ToolError);
     expect((plain as Error).message).toBe("On the connected machine: readFile failed");
     await h.disconnect();
   });
 
-  it("unsettled (a protocol 4 kind) maps to SandboxWorkUnsettledError carrying the message", () => {
-    const resultOf = (
-      relay as unknown as { resultOf: (op: string, res: DeviceResponse) => unknown }
-    ).resultOf.bind(relay);
-    let thrown: unknown;
-    try {
-      resultOf("stat", {
-        type: "res",
-        id: "r",
-        ok: false,
-        error: { kind: "unsettled", message: "Earlier work is not settled" },
-      });
-    } catch (e) {
-      thrown = e;
-    }
-    expect(isSandboxWorkUnsettledError(thrown)).toBe(true);
-    expect((thrown as Error).message).toBe("Earlier work is not settled");
-  });
-
-  it("an invalid result is refused (parseOpResult)", async () => {
+  it("the local codec refuses an invalid result (parseOperationResult) and maps offline", async () => {
     const h = holder(() => ({ ok: true, result: { exitCode: "zero" } }));
     await h.connect();
     const e = await rejection(
-      relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 5000, signal: signal() }),
+      localCall(relay)(
+        h.deviceId,
+        "create",
+        { limits: LIMITS },
+        { deadlineMs: 5000, signal: signal() },
+      ),
     );
     expect(e).toBeInstanceOf(DeviceProtocolError);
-    expect((e as Error).message).toMatch(/invalid exec result/);
+    await h.disconnect();
+    // no holder: the kernel's own device.offline, as the local provider's callers know it
+    const offline = await rejection(
+      localCall(relay)(
+        randomUUID(),
+        "create",
+        { limits: LIMITS },
+        { deadlineMs: 5000, signal: signal() },
+      ),
+    );
+    expect(offline instanceof ApiError && offline.code === "device.offline").toBe(true);
+  });
+
+  it("a request fenced to a replaced connection is refused as not sent before anything is queued", async () => {
+    const h = holder();
+    await h.connect();
+    const e = await rejection(
+      relay.request(h.deviceId, execBody, {
+        timeoutMs: 1000,
+        signal: signal(),
+        connection: { connectionId: "an-old-connection", maxFrameBytes: 69632 },
+      }),
+    );
+    expect(isDeviceRequestNotSent(e)).toBe(true);
+    expect(h.frames).toEqual([]);
     await h.disconnect();
   });
 
-  it("a malformed result frame: the key is deleted, the request cancelled, a protocol error thrown", async () => {
+  it("a request larger than the connection's capacity is refused before it is queued", async () => {
+    const h = holder();
+    await h.connect();
+    const e = await rejection(
+      relay.request(h.deviceId, { blob: "x".repeat(70_000) }, { timeoutMs: 1000 }),
+    );
+    expect(e).toBeInstanceOf(DialInFrameTooLargeError);
+    expect(await redis.exists(deviceReqKey(h.deviceId))).toBe(0);
+    await h.disconnect();
+  });
+
+  it("the gateway's not-sent refusal rejects with DeviceRequestNotSentError", async () => {
+    const h = holder();
+    await h.connect();
+    const call = rejection(relay.request(h.deviceId, execBody, { timeoutMs: 5000 }));
+    const req = await h.next();
+    const refused = storedResult({ id: req.id }, TEST_HOLDER_CONNECTION, "connection changed");
+    await redis.set(deviceResKey(req.id), JSON.stringify(refused), "PX", 60_000);
+    await bus.publish(deviceResTopic(req.id), refused);
+    const e = await call;
+    expect(isDeviceRequestNotSent(e)).toBe(true);
+    expect((e as Error).message).toBe("connection changed");
+    await h.disconnect();
+  });
+
+  it("a malformed stored result: the key is deleted, the request cancelled, an error thrown", async () => {
     const h = holder();
     await h.connect();
     const call = rejection(
-      relay.call(h.deviceId, "exec", execArgs, { deadlineMs: 5000, signal: signal() }),
+      relay.request(h.deviceId, execBody, { timeoutMs: 5000, signal: signal() }),
     );
     const req = await h.next();
     await redis.set(deviceResKey(req.id), '{"type":"res","ok":"maybe"}', "PX", 60_000);
     await bus.publish(deviceResTopic(req.id), { type: "res", id: req.id, ok: "maybe" });
     const e = await call;
-    expect(e).toBeInstanceOf(DeviceProtocolError);
+    expect((e as Error).message).toMatch(/invalid result/);
     expect(await redis.exists(deviceResKey(req.id))).toBe(0);
     expect(await h.next((f) => f.type === "cancel")).toEqual({ type: "cancel", id: req.id });
     await h.disconnect();
+  });
+
+  it("stop is queued only while a replica holds the connection, fenced to its machine", async () => {
+    const env = randomUUID();
+    await relay.stop(env, "drain");
+    expect(await redis.exists(deviceReqKey(env))).toBe(0);
+    await holdLeaseOnly(env);
+    await relay.stop(env, "stop", { machineId: "m-1" });
+    expect((await redis.lrange(deviceReqKey(env), 0, -1)).map((x) => JSON.parse(x))).toEqual([
+      { type: "stop", reason: "stop", machineId: "m-1" },
+    ]);
+    expect(await redis.pttl(deviceReqKey(env))).toBeGreaterThan(0);
+    await redis.del(deviceLeaseKey(env), deviceReqKey(env));
   });
 
   it("a failing cancel push does not replace the outcome", async () => {
@@ -523,9 +593,7 @@ describe("DialInRelay", () => {
     });
     const r = relayOver(proxied);
     const ac = new AbortController();
-    const call = rejection(
-      r.call(h.deviceId, "exec", execArgs, { deadlineMs: 5000, signal: ac.signal }),
-    );
+    const call = rejection(r.request(h.deviceId, execBody, { timeoutMs: 5000, signal: ac.signal }));
     await h.next();
     const reason = new Error("aborted by the run");
     ac.abort(reason);
@@ -539,22 +607,13 @@ describe("DialInRelay", () => {
     const env = randomUUID();
     await holdLeaseOnly(env);
     const ac = new AbortController();
-    const long = rejection(
-      relay.call(env, "exec", execArgs, { deadlineMs: 20_000, signal: ac.signal }),
-    );
+    const long = rejection(relay.request(env, execBody, { timeoutMs: 20_000, signal: ac.signal }));
     await sleep(200);
     const listKey = deviceReqKey(env);
     const first = await redis.pttl(listKey);
     expect(first).toBeGreaterThan(20_000 + 5000);
     expect(first).toBeLessThanOrEqual(20_000 + 5000 + LIST_TTL_MARGIN_MS);
-    const short = rejection(
-      relay.call(
-        env,
-        "stat",
-        { path: "/w", limits: { mode: "sandbox" } },
-        { deadlineMs: 100, signal: ac.signal },
-      ),
-    );
+    const short = rejection(relay.request(env, statBody, { timeoutMs: 100, signal: ac.signal }));
     await sleep(200);
     expect(await redis.llen(listKey)).toBe(2);
     expect(await redis.pttl(listKey)).toBeGreaterThan(20_000 + 5000);

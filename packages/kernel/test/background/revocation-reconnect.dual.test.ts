@@ -10,6 +10,7 @@ import type {
   SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
 import type { DeviceHello } from "@capybara-hq/plugin-sdk/device-protocol";
+import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +28,7 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
@@ -46,6 +48,7 @@ import {
 } from "../helpers/managed-background.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { localHandlers } from "../local-devices/fake-machine-v3.js";
 
 /**
  * B3 evidence across a disconnect (permission activation B-6): two kernels on one database and
@@ -209,12 +212,7 @@ async function stagedDevice(deviceId: string) {
   });
   const credential = randomUUID();
   const states = new StagedSessionStates();
-  const hello: Omit<DeviceHello, "transport"> = {
-    type: "hello",
-    protocol: 5,
-    programVersion: "fixture",
-    os: "darwin",
-    arch: "arm64",
+  const body: DeviceHello = {
     mode: "os",
     roots,
     sessionIsolation: false,
@@ -229,6 +227,10 @@ async function stagedDevice(deviceId: string) {
       allowedDomains: [],
     },
     instanceGeneration: generation,
+  };
+  const hello: import("../../../device/src/staged-session.js").StagedHello = {
+    envelope: { program: { version: "fixture", os: "darwin", arch: "arm64" } },
+    body,
   };
   /** Records the exact refs of every stop the device's session serves. */
   const recordStops = () => {
@@ -291,10 +293,10 @@ async function gatewayFor(
     {
       authenticate: async (c) =>
         c === device.credential ? { ...identity, machineId: "machine" } : null,
-      recordHelloV3: async () => {},
-      recordPolicyV3: async () => {},
+      recordConnect: async () => {},
       touch: async () => {},
     },
+    localHandlers(),
     locks,
     createBus(gr, sub, "kernel"),
     gr,
@@ -306,7 +308,7 @@ async function gatewayFor(
   const address = server.address();
   if (typeof address === "string" || !address) throw new Error("no address");
   server.on("connection", (socket) => {
-    void gateway.accept(socket, device.credential);
+    void gateway.accept(socket, device.credential, DEVICE_DIAL_IN_PROTOCOL);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -352,7 +354,7 @@ async function gatewayFor(
 function stagedProviderOf(k: TestKernel): DeviceProvider {
   const relay = k.app.get(DialInRelay);
   const staged = k.app.get(LocalDeviceProvider).stagedOperations({
-    call: relay.callV3.bind(relay),
+    call: localCall(relay),
     permissionSupport: async () => SUPPORT,
   });
   const base = managedOutputProvider().impl;
@@ -458,17 +460,15 @@ function staleFor(
   op: string,
   stale: Awaited<ReturnType<DialInRelay["connection"]>>,
 ) {
-  type Codec = (deviceId: string, op: string, ...rest: unknown[]) => Promise<unknown>;
-  const internal = relay as unknown as { callWithCodec: Codec };
   const scope = new AsyncLocalStorage<string>();
-  const codec = internal.callWithCodec.bind(relay);
+  const request = relay.request.bind(relay);
   const connection = relay.connection.bind(relay);
   let used = 0;
-  // every call of the relay (also through callers that bound callV3 earlier) passes here
+  // every request of the relay (a capybara-device body names its operation) passes here
   const calls = vi
-    .spyOn(internal, "callWithCodec")
-    .mockImplementation((deviceId, called, ...rest) =>
-      scope.run(called, () => codec(deviceId, called, ...rest)),
+    .spyOn(relay, "request")
+    .mockImplementation((deviceId, body, opts) =>
+      scope.run(String((body as { op?: unknown }).op), () => request(deviceId, body, opts)),
     );
   const reads = vi.spyOn(relay, "connection").mockImplementation(async (deviceId) => {
     if (scope.getStore() !== op) return connection(deviceId);

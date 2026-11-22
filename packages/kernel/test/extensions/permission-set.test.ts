@@ -10,12 +10,14 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  blockingKeys,
   buildPermissionSet,
   computePermissionSet,
   diffPermissions,
   parseCreatedTables,
   permissionKeys,
 } from "../../src/extensions/permission-set.js";
+import { permissionGroups, permissionKeyItems } from "../../src/extensions/permission-view.js";
 
 let dir: string;
 beforeAll(async () => {
@@ -222,11 +224,13 @@ describe("permissionKeys and marketplace manifests", () => {
         policyHooks: ["model.request", "tool.preExecute"],
         network: ["api.example.com"],
         ui: { views: ["tasks"], embeds: ["board"] },
+        dialIn: { protocol: "capybara-device/5" },
       },
       warningsDigest: "abc123",
     });
     const keys = permissionKeys(set);
     expect(keys).toContain("permissions.hooks.policy:model.request");
+    expect(keys).toContain("permissions.dialin:capybara-device/5");
     expect(keys).toContain("permissions.hooks.policy:tool.preExecute");
     const r = parseMarketplaceManifest({
       schemaVersion: 1,
@@ -247,5 +251,45 @@ describe("permissionKeys and marketplace manifests", () => {
       ],
     });
     expect("errors" in r ? r.errors : []).toEqual([]);
+  });
+});
+
+describe("permissions.dialIn", () => {
+  it("a declared dial-in protocol is a blocking key; a changed protocol is a new item", () => {
+    const set = (protocol?: string) =>
+      buildPermissionSet({
+        provides: ["device-provider@1"],
+        config: { deployment: [], org: [] },
+        tables: [],
+        permissions: protocol ? { dialIn: { protocol } } : {},
+      });
+    expect(set("fake-dial-in/1").permissions.dialIn).toEqual({ protocol: "fake-dial-in/1" });
+    expect(permissionKeys(set("fake-dial-in/1"))).toContain("permissions.dialin:fake-dial-in/1");
+    // a set without one stays as it was (older snapshots compare equal)
+    expect(set().permissions).not.toHaveProperty("dialIn");
+    expect(diffPermissions(set("fake-dial-in/1"), set("fake-dial-in/2"))).toEqual({
+      added: ["permissions.dialin:fake-dial-in/2"],
+      removed: ["permissions.dialin:fake-dial-in/1"],
+    });
+    expect(blockingKeys(["permissions.dialin:fake-dial-in/2"])).toEqual([
+      "permissions.dialin:fake-dial-in/2",
+    ]);
+  });
+
+  it("the approval display lists the protocol in its own group", () => {
+    const groups = permissionGroups(
+      buildPermissionSet({
+        provides: ["device-provider@1"],
+        config: { deployment: [], org: [] },
+        tables: [],
+        permissions: { dialIn: { protocol: "fake-dial-in/1" } },
+      }),
+    );
+    expect(groups.find((g) => g.category === "dialIn")).toMatchObject({
+      items: ["fake-dial-in/1"],
+    });
+    expect(permissionKeyItems(["permissions.dialin:fake-dial-in/1"])).toEqual([
+      { value: "permissions.dialin:fake-dial-in/1", sensitive: false },
+    ]);
   });
 });

@@ -1,32 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  type ExtensionContext,
-  FileSystemGoneError,
-  SandboxGoneError,
-  SandboxOperationOutcomeUnknownError,
-  SandboxPermissionUnsupportedError,
-  SandboxScopeDeniedError,
-  SandboxScopeValidationError,
-  SandboxWorkUnsettledError,
-  ToolError,
-} from "@capybara-hq/plugin-sdk";
-import {
-  type BindInstanceRequest,
-  type DeviceOp,
-  type DeviceOperation,
-  type DeviceOpResults,
-  DeviceProtocolError,
-  type DeviceResponse,
-  type DeviceStopArgs,
-  type KernelReq,
-  parseDeviceFrame,
-  parseLegacyDeviceFrame,
-  parseOperationResult,
-  parseOpResult,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import { DeviceOfflineError, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import { machineRevoked } from "../devices/errors.js";
+import { deviceNotFound, machineRevoked } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -37,7 +13,14 @@ import {
   DeviceRequestNotSentError,
   isDeviceRequestNotSent,
 } from "../sandbox/request-not-sent.js";
-import { deviceNotFound } from "../sandbox/sandbox.service.js";
+import {
+  type DialInConnectionFence,
+  type QueuedCancel,
+  type QueuedRequest,
+  type QueuedStop,
+  type ReadResult,
+  readStoredResult,
+} from "./envelope.js";
 import {
   deviceLeaseKey,
   deviceReqKey,
@@ -47,61 +30,38 @@ import {
 } from "./keys.js";
 import { type DeviceConnectionInfo, type DeviceTargetState, DeviceTargets } from "./targets.js";
 
-/** The device's connected machine is not connected (no replica holds its lease). */
+/** The device's machine is not connected (no replica holds its lease): the kernel's own error. */
 export const deviceOffline = (): ApiError =>
   new ApiError(
     "device.offline",
-    "The machine of this local device is offline. Start capybara-device on that machine, or pick another device.",
+    "The machine of this device is offline. Start its program on that machine, or pick another device.",
   );
 
 export { machineRevoked } from "../devices/errors.js";
 
-/** The text a machine's `policy` refusal reaches the model with. */
-export const POLICY_REFUSAL_PREFIX = "Refused by the machine's local policy: ";
-
-/** The text a machine's `error` result reaches the model with (ruling R28). */
-export const ON_MACHINE_PREFIX = "On the connected machine: ";
-
-/**
- * The text of a staged (protocol 4) request refused because the machine's connection changed.
- * Only an output read has an offset to retry from; every other operation is simply retried.
- */
-export const connectionChangedMessage = (op: string): string =>
-  op === "backgroundReadOutput"
-    ? "The machine's connection changed during the read; retry the read from the same offset"
-    : `The machine's connection changed before ${op} was sent; retry the operation`;
-
 export { DeviceRequestNotSentError, isDeviceRequestNotSent };
 
 /**
- * The operations held under a stable operation identity (native, preparation and browsing
- * operations, execution, a background start and an operation revoke): their not-sent refusal is
- * typed ({@link DeviceRequestNotSentError}) so the operation path records it as definite. Exact
- * status, tail, stop and reads, the policy controls and binding keep their plain errors.
+ * A fenced request's result arrived on another connection than the request went out on, or the
+ * machine reconnected while a fenced request waited: its answer was sized for the old connection.
  */
-const heldOperation = (op: string): boolean =>
-  op === "backgroundStart" ||
-  op === "revokeOperation" ||
-  /^(?:exec|readFile|writeFile|stat|list|scan|prepare(?:ReadFile|WriteFile|Stat)|browse(?:Stat|List|Scan))$/.test(
-    op,
-  );
+export class DialInConnectionChangedError extends Error {
+  readonly connectionChanged = true as const;
+  constructor() {
+    super("The machine's connection changed while the request waited; retry it");
+    this.name = "DialInConnectionChangedError";
+  }
+}
 
-/**
- * Whether a staged operation's result is fenced to the connection its request was sent on.
- * Protocol 4 (spec B5) fences every request to its connection, so an old capacity is never used on
- * a replacement socket. For results, only an output read is fenced: its range was sized for the
- * old connection's capacity and an in-flight read that meets a reconnect fails so the reader
- * retries from the same offset. Every other operation keeps protocol 2's grace semantics: the
- * machine keeps it running across a socket blip and its result, validated by the gateway against
- * the capacity of the connection it arrived on, is accepted after a reconnect within the grace.
- */
-const connectionFenced = (op: string): boolean => op === "backgroundReadOutput";
-
-/**
- * The kernel-internal field of a queued `stop` naming the machine it is for (stripped by the holder
- * before the frame goes out; a frame for another machine is dropped).
- */
-export const STOP_MACHINE = "machineId" as const;
+/** A request whose frame does not fit the machine connection's negotiated frame capacity. */
+export class DialInFrameTooLargeError extends Error {
+  constructor(maxFrameBytes: number) {
+    super(
+      `The request does not fit the machine connection's frame limit of ${maxFrameBytes} bytes; check the device and deployment frame limits`,
+    );
+    this.name = "DialInFrameTooLargeError";
+  }
+}
 
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
@@ -148,75 +108,49 @@ return 1
 const ABORTED = Symbol("aborted");
 const GRACE_EXPIRED = Symbol("grace expired");
 
-type Outcome =
+type Outcome = { res: ReadResult } | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
+
+/** The options of {@link DialInRelay.request}. */
+export interface DialInRequestOptions {
+  /** How long the machine may take (sent to it as `deadlineMs`). */
+  timeoutMs: number;
+  /** The caller's signal: aborting gives the request up and rejects with its reason. */
+  signal?: AbortSignal;
   /**
-   * `connectionId`: the connection a staged result arrived on (tagged by the gateway). `notSent`:
-   * the gateway's own marker that the request never reached the machine.
+   * Kernel-internal: the connection the caller sized its request for. Another current connection
+   * refuses the request as not sent before anything is queued. Never from an extension.
    */
-  | { res: DeviceResponse; connectionId?: string; notSent?: true }
-  | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
-
-/**
- * The kernel-internal fields the gateway adds to what it stores for a staged result, next to the
- * device's frame: the connection it arrived on, that connection's capacity and, only on the
- * gateway's own refusal of a request queued for another connection, {@link GATEWAY_NOT_SENT}. The
- * device's frame is parsed strictly (unknown keys refused), so a device can never set them.
- */
-export const GATEWAY_NOT_SENT = "notSent" as const;
-
-/**
- * A staged request refused because it was not sent, outside the operations held under an operation
- * identity (a policy control, a status read): a protocol error that also says nothing ran, so a
- * caller can record it as never received instead of unknown ({@link wasDeviceRequestNotSent}).
- */
-export class DeviceRequestNotSentProtocolError extends DeviceProtocolError {
-  readonly notSent = true as const;
-}
-
-/** Any staged request the kernel knows was never sent to the machine (held or not). */
-export const wasDeviceRequestNotSent = (e: unknown): boolean =>
-  e instanceof Error && (e as { notSent?: unknown }).notSent === true;
-
-/** The not-sent refusal of `op`: typed for held operations, a not-sent protocol error otherwise. */
-const notSentError = (op: string): Error =>
-  heldOperation(op)
-    ? new DeviceRequestNotSentError(connectionChangedMessage(op))
-    : new DeviceRequestNotSentProtocolError(connectionChangedMessage(op));
-
-export interface DeviceCallOptions {
-  /** How long the machine may take for the operation (sent to it as `deadlineMs`). */
-  deadlineMs: number;
-  /** The caller's signal: aborting gives the request up and rejects. */
-  signal: AbortSignal;
-  /** Internal authenticated lease/capacity fence; never part of caller operation arguments. */
-  connection?: { connectionId: string; maxFrameBytes: number };
+  connection?: DialInConnectionFence;
+  /**
+   * Kernel-internal: the result was sized for the request's connection, so it is accepted only from
+   * that connection and the wait ends as soon as the machine reconnects
+   * ({@link DialInConnectionChangedError}). Never from an extension.
+   */
+  fenced?: boolean;
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * The caller side of the device relay (environments spec §13.4). A request goes onto the
- * device's Redis list (`capk:device-req:<deviceId>`) and is announced on
- * `device.req.<deviceId>`; whichever gateway replica holds the machine's lease drains the
- * list and forwards the frames to the machine.
- *
- * **The holder's half of the wire** (Task 6 follows it): items on the list are `KernelReq` or
- * `KernelCancel` frames as JSON text, to be parsed with `parseLegacyDeviceFrame(item, "kernel")`; the
- * nudge's payload is `{ id }`. For each `res` frame the machine sends, the holder writes the frame
- * (the JSON text as validated by `parseLegacyDeviceFrame(…, "device")`) under
- * `capk:device-res:<requestId>` with a TTL and publishes the same frame object on
- * `device.res.<requestId>`.
+ * The caller side of the dial-in relay (environments spec §13.4), for every provider serving its
+ * devices over the dial-in channel. A request goes onto the device's Redis list
+ * (`capk:device-req:<deviceId>`) as a {@link QueuedRequest} fenced to the machine's current
+ * connection, and is announced on `device.req.<deviceId>`; whichever gateway replica holds the
+ * machine's lease drains the list and sends the envelope `req` to the machine (gateway.ts). The
+ * holder stores the machine's `res` under `capk:device-res:<requestId>` and publishes it on
+ * `device.res.<requestId>`, tagged with the connection it arrived on (envelope.ts); the relay hands
+ * back only the body, never reading it.
  *
  * The caller subscribes to its result topic before pushing and reads the result key once after,
  * and once more before giving up (the run-abort pattern; a publish lost while the subscriber
- * reconnects is still found). It waits within its own call for at most `deadlineMs` plus
+ * reconnects is still found). It waits within its own call for at most `timeoutMs` plus
  * `devices.local.reconnectGraceSeconds`; when the lease disappears meanwhile (checked every
- * {@link HOLDER_POLL_MS}) the wait ends at most one grace later, and when the machine is connected
- * again as another run of its program (`programRunId`) it ends at that poll with
- * {@link DeviceProgramRestartedError}: the old run's kept results died with it. A result produced
- * while the machine was disconnected arrives after it reconnects. Giving up (grace, abort, a bad result)
- * removes the request from the list, or queues a `cancel` when the machine already took it
- * (ruling R15). Nothing is kept in process memory beyond the call.
+ * {@link HOLDER_POLL_MS}) the wait ends at most one grace later ({@link DeviceOfflineError}), and
+ * when the machine is connected again as another run of its program (`programRunId`) it ends at
+ * that poll with {@link DeviceProgramRestartedError}: the old run's kept results died with it. A
+ * result produced while the machine was disconnected arrives after it reconnects. Giving up (grace,
+ * abort, a bad result) removes the request from the list, or queues a `cancel` when the machine
+ * already took it (ruling R15). Nothing is kept in process memory beyond the call.
  */
 @Injectable()
 export class DialInRelay {
@@ -231,30 +165,19 @@ export class DialInRelay {
   ) {}
 
   /** Whether a gateway replica holds the machine's connection now. */
-  async holderLive(deviceId: string): Promise<boolean> {
+  async online(deviceId: string): Promise<boolean> {
     return (await this.locks.holderOf(deviceLeaseKey(deviceId))) !== null;
   }
 
   /**
-   * The negotiated transport of the device's connection for the platform's own controls (policy
-   * ops): every connection speaks protocol 4, so this is {@link connection} (a missing or unready
-   * one throws its typed error).
-   */
-  async stagedTransport(
-    deviceId: string,
-  ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
-    return this.connection(deviceId);
-  }
-
-  /**
-   * The negotiated transport of the machine's current connection, for a staged call. Liveness is
-   * checked first (ruling R27): no holder throws `device.not_found` for a deleted device,
-   * `device.forbidden` for a revoked machine and `device.offline` otherwise. It carries the program
-   * run the connection's hello named (`programRunId`, when reported): kernel-internal evidence a
-   * staged call keeps, never put into a frame. Every staged call reads its connection here.
+   * The negotiated transport of the machine's current connection. Liveness is checked first
+   * (ruling R27): no holder throws `device.not_found` for a deleted device, `device.forbidden` for
+   * a revoked machine and `device.offline` ({@link deviceOffline}) otherwise. It carries the
+   * program run the connection's hello named (`programRunId`): kernel-internal evidence a request
+   * keeps, never put into a frame.
    */
   async connection(deviceId: string): Promise<DeviceConnectionInfo> {
-    if (await this.holderLive(deviceId)) {
+    if (await this.online(deviceId)) {
       const current = await this.targets.current(deviceId);
       if (current) return current;
     }
@@ -262,101 +185,79 @@ export class DialInRelay {
   }
 
   /**
-   * Queues `stop` for the machine without waiting for an answer (ruling R14). The caller checks
-   * {@link holderLive} first; the frame waits on the list for the grace like any request. It is
-   * fenced to the machine `machineId` ({@link STOP_MACHINE}): a holder hands it only to that
-   * machine's connection (on a staged connection as a protocol 4 `stop`, across a socket blip
-   * too), never to a newer machine of the device. Only `stop` is ever queued this way: a broad
-   * kill (`killAll` / `killTagged`) has no frame on protocol 4.
+   * Queues a `stop` for the machine without waiting for an answer (ruling R14), only while a
+   * replica holds its connection (an offline machine must not find it on the list later). With
+   * `machineId`, the holder hands it only to that machine's connection (across a socket blip too),
+   * never to a newer machine of the device.
    */
-  async send(
+  async stop(
     deviceId: string,
-    op: "stop",
-    args: DeviceStopArgs,
-    deadlineMs: number,
-    machineId: string,
+    reason: "drain" | "stop",
+    opts: { machineId?: string } = {},
   ): Promise<void> {
-    const id = randomUUID();
-    const d = Math.max(1, Math.ceil(deadlineMs));
-    const req: KernelReq = { type: "req", id, op, args, deadlineMs: d };
-    const tagged = { ...req, [STOP_MACHINE]: machineId };
-    await this.push(deviceId, JSON.stringify(tagged), this.graceMs() + d + LIST_TTL_MARGIN_MS);
-    await this.bus.publish(deviceReqTopic(deviceId), { id });
+    if (!(await this.online(deviceId))) return;
+    const frame: QueuedStop = {
+      type: "stop",
+      reason,
+      ...(opts.machineId !== undefined && { machineId: opts.machineId }),
+    };
+    await this.push(deviceId, JSON.stringify(frame), this.graceMs() + LIST_TTL_MARGIN_MS);
+    await this.bus.publish(deviceReqTopic(deviceId), { id: randomUUID() });
   }
 
   /**
-   * Runs `op` on the device's machine and returns its validated result. Throws
-   * `device.offline` when no replica holds the machine at send time or when the wait ran
-   * out, but `device.forbidden` ({@link machineRevoked}) when the machine was revoked and
-   * `device.not_found` when the device was deleted (checked whenever the connection is
-   * missing, ruling R27); the machine's failures map to `SandboxGoneError` (`gone`),
-   * `FileSystemGoneError` (`fs_gone`) or a `ToolError` (`policy`, and `error` prefixed
-   * {@link ON_MACHINE_PREFIX}); an invalid answer throws a `DeviceProtocolError`. On abort the
-   * abort reason is thrown.
+   * Sends `body` to the device's machine as the body of a `req` and resolves the body of its `res`
+   * (never read here). Throws {@link DeviceOfflineError} when no replica holds the machine at send
+   * time or when the wait ran out, but `device.forbidden` ({@link machineRevoked}) when the machine
+   * was revoked and `device.not_found` when the device was deleted (checked whenever the
+   * connection is missing, ruling R27); {@link DeviceRequestNotSentError} when the request never
+   * reached the machine (its connection changed first), {@link DialInFrameTooLargeError} when it
+   * cannot fit, {@link DeviceProgramRestartedError} when the machine's program restarted before
+   * answering. On abort the abort reason is thrown.
    */
-  async call<Op extends DeviceOp>(
-    deviceId: string,
-    op: Op,
-    args: unknown,
-    opts: DeviceCallOptions,
-  ): Promise<DeviceOpResults[Op]> {
-    return this.callWithCodec(deviceId, op, args, opts, false) as Promise<DeviceOpResults[Op]>;
-  }
-
-  /**
-   * Runs a protocol 4 operation on the device's machine over its current staged connection and
-   * returns its validated result; the request is checked against the protocol 4 codec first.
-   */
-  async callV3(
-    deviceId: string,
-    op: DeviceOperation,
-    args: Record<string, unknown>,
-    opts: DeviceCallOptions,
-  ): Promise<unknown> {
-    parseDeviceFrame(
-      JSON.stringify({ type: "req", id: "validation", op, args, deadlineMs: opts.deadlineMs }),
-      "kernel",
-    );
-    return this.callWithCodec(deviceId, op, args, opts, true);
-  }
-  private async callWithCodec(
-    deviceId: string,
-    op: DeviceOperation | DeviceOp,
-    args: unknown,
-    opts: DeviceCallOptions,
-    staged: boolean,
-  ): Promise<unknown> {
-    const { signal } = opts;
+  async request(deviceId: string, body: unknown, opts: DialInRequestOptions): Promise<unknown> {
+    const signal = opts.signal ?? new AbortController().signal;
     signal.throwIfAborted();
-    // liveness first: a deleted device or a revoked machine keeps its typed error (R27)
-    const current = staged ? await this.connection(deviceId) : undefined;
-    const connection = current && {
+    let current: DeviceConnectionInfo;
+    try {
+      // liveness first: a deleted device or a revoked machine keeps its typed error (R27)
+      current = await this.connection(deviceId);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "device.offline")
+        throw new DeviceOfflineError(deviceId, { cause: e });
+      throw e;
+    }
+    const connection: DialInConnectionFence = {
       connectionId: current.connectionId,
       maxFrameBytes: current.maxFrameBytes,
     };
-    // the program run the request goes to: the drain sends it only on this connection (a newer
-    // one refuses it as not sent), so a later connection of another run proves its result lost
-    const sentToRun = current?.programRunId;
-    if (!staged && !(await this.holderLive(deviceId))) {
-      throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
-    }
     if (
       opts.connection &&
-      (connection?.connectionId !== opts.connection.connectionId ||
-        connection?.maxFrameBytes !== opts.connection.maxFrameBytes)
+      (connection.connectionId !== opts.connection.connectionId ||
+        connection.maxFrameBytes !== opts.connection.maxFrameBytes)
     )
       // nothing was queued: the request was definitely not sent
-      throw notSentError(op);
-    const fenced = staged && connectionFenced(op);
-    signal.throwIfAborted();
+      throw new DeviceRequestNotSentError(
+        "The machine's connection changed before the request was sent; retry it",
+      );
+    // the program run the request goes to: the drain sends it only on this connection (a newer
+    // one refuses it as not sent), so a later connection of another run proves its result lost
+    const sentToRun = current.programRunId;
+    const fenced = opts.fenced === true;
+    if (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0)
+      throw new RangeError(`timeoutMs must be a positive number, got ${opts.timeoutMs}`);
+    if (body === undefined) throw new TypeError("a dial-in request needs a body");
 
     const id = randomUUID();
-    const deadlineMs = Math.max(1, Math.ceil(opts.deadlineMs));
+    const deadlineMs = Math.max(1, Math.ceil(opts.timeoutMs));
     const graceMs = this.graceMs();
     const listTtlMs = graceMs + deadlineMs + LIST_TTL_MARGIN_MS;
-    const frame = { type: "req", id, op, args, deadlineMs };
-    if (connection) parseDeviceFrame(JSON.stringify(frame), "kernel", connection.maxFrameBytes);
-    const reqJson = JSON.stringify({ ...frame, ...connection });
+    const wire = JSON.stringify({ type: "req", id, deadlineMs, body });
+    if (Buffer.byteLength(wire) > connection.maxFrameBytes)
+      throw new DialInFrameTooLargeError(connection.maxFrameBytes);
+    const queued: QueuedRequest = { type: "req", id, deadlineMs, body, ...connection };
+    const reqJson = JSON.stringify(queued);
+    signal.throwIfAborted();
 
     let settle!: (r: Outcome) => void;
     const outcome = new Promise<Outcome>((resolve) => {
@@ -367,13 +268,13 @@ export class DialInRelay {
         resolve(r);
       };
     });
-    const onStored = (raw: string | null) => {
-      if (raw !== null) settle(this.parseRes(raw, id, op, connection, fenced));
+    const onStored = (raw: unknown) => {
+      if (raw !== null && raw !== undefined) settle(this.parseRes(raw, id, connection, fenced));
     };
     const onAbort = () => settle({ error: ABORTED });
 
     const unsubscribe = await this.bus.subscribe(deviceResTopic(id), (payload) => {
-      onStored(JSON.stringify(payload));
+      onStored(payload);
     });
     let timer: NodeJS.Timeout | undefined;
     let stopped = false;
@@ -396,15 +297,15 @@ export class DialInRelay {
         try {
           // a stalled Redis must not hold the give-up back: no answer in time means "unknown"
           const live = await this.leaseCheck(deviceId);
-          if (fenced && connection && live === true) {
-            // an output read never waits across a reconnect: its range was sized for this socket
-            const current = await this.targets.current(deviceId);
+          if (fenced && live === true) {
+            // a fenced request never waits across a reconnect: its answer was sized for this socket
+            const now = await this.targets.current(deviceId);
             if (
-              current &&
-              (current.connectionId !== connection.connectionId ||
-                current.maxFrameBytes !== connection.maxFrameBytes)
+              now &&
+              (now.connectionId !== connection.connectionId ||
+                now.maxFrameBytes !== connection.maxFrameBytes)
             ) {
-              settle({ error: new DeviceProtocolError(connectionChangedMessage(op)) });
+              settle({ error: new DialInConnectionChangedError() });
               return;
             }
           }
@@ -418,8 +319,8 @@ export class DialInRelay {
                 (raw) =>
                   raw !== null
                     ? onStored(raw)
-                    : settle({ error: new DeviceProgramRestartedError(op) }),
-                () => settle({ error: new DeviceProgramRestartedError(op) }),
+                    : settle({ error: new DeviceProgramRestartedError("the request") }),
+                () => settle({ error: new DeviceProgramRestartedError("the request") }),
               );
               return;
             }
@@ -466,27 +367,17 @@ export class DialInRelay {
       if ("res" in r) {
         // the result's connection tag was checked in parseRes: a later reconnect changes nothing
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
-        // only the gateway's marker says a request never reached the machine: never its text
-        if (connection && r.notSent) throw notSentError(op);
-        return staged && r.res.ok
-          ? parseOperationResult(
-              op as DeviceOperation,
-              r.res.result,
-              op === "backgroundReadOutput"
-                ? (args as { offset: number; maxBytes: number })
-                : op === "bindInstance"
-                  ? (args as BindInstanceRequest)
-                  : undefined,
-            )
-          : this.resultOf(op as DeviceOp, r.res);
+        // only the gateway's marker says a request never reached the machine
+        if (r.res.notSent !== undefined) throw new DeviceRequestNotSentError(r.res.notSent);
+        return r.res.body;
       }
       if (r.error instanceof Error) {
-        // a bad answer: drop it, give the request up, report the protocol error
+        // a bad answer: drop it, give the request up, report the error
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
       }
-      await this.giveUp(deviceId, id, reqJson, listTtlMs, connection);
+      await this.giveUp(deviceId, id, reqJson, listTtlMs);
       if (r.error === ABORTED) throw signal.reason;
-      if (r.error === GRACE_EXPIRED) throw deviceOffline();
+      if (r.error === GRACE_EXPIRED) throw new DeviceOfflineError(deviceId);
       throw r.error;
     } finally {
       stopped = true;
@@ -496,10 +387,10 @@ export class DialInRelay {
     }
   }
 
-  /** {@link holderLive}, or undefined when it takes longer than {@link LEASE_CHECK_TIMEOUT_MS}. */
+  /** {@link online}, or undefined when it takes longer than {@link LEASE_CHECK_TIMEOUT_MS}. */
   private async leaseCheck(deviceId: string): Promise<boolean | undefined> {
     let timer: NodeJS.Timeout | undefined;
-    const check = this.holderLive(deviceId);
+    const check = this.online(deviceId);
     check.catch(() => {}); // a late failure after the timeout is not unhandled
     try {
       return await Promise.race([
@@ -562,21 +453,15 @@ export class DialInRelay {
   }
 
   /** Removes the request from the list, or queues a cancel when the machine took it (R15). */
-  private async giveUp(
-    deviceId: string,
-    id: string,
-    reqJson: string,
-    ttlMs: number,
-    connection?: { connectionId: string; maxFrameBytes: number },
-  ): Promise<void> {
-    const cancel = JSON.stringify({ type: "cancel", id, ...connection });
+  private async giveUp(deviceId: string, id: string, reqJson: string, ttlMs: number) {
+    const cancel: QueuedCancel = { type: "cancel", id };
     await this.quietly("give the request up", deviceId, async () => {
       const queued = await this.redis.eval(
         GIVE_UP,
         1,
         deviceReqKey(deviceId),
         reqJson,
-        cancel,
+        JSON.stringify(cancel),
         String(ttlMs),
       );
       if (queued === 1) this.nudge(deviceId, id);
@@ -593,99 +478,28 @@ export class DialInRelay {
   }
 
   /**
-   * A stored / published `res` frame for request `id`, or the protocol error it carries. A staged
-   * frame carries the tag of the connection it arrived on (added by the gateway); a fenced
-   * operation ({@link connectionFenced}) accepts only its request's connection, any other staged
-   * operation a well-formed tag, and the frame is parsed against that connection's capacity.
+   * A stored / published result for request `id` with the kernel's tags stripped
+   * ({@link readStoredResult}), or the error it carries. A fenced request accepts only its own
+   * connection's result.
    */
   private parseRes(
-    raw: string,
+    raw: unknown,
     id: string,
-    op: string,
-    connection?: { connectionId: string; maxFrameBytes: number },
-    fenced = false,
+    connection: DialInConnectionFence,
+    fenced: boolean,
   ): Outcome {
     try {
-      let wire = raw;
-      let cap: number | undefined;
-      let arrivedOn: string | undefined;
-      let notSent = false;
-      if (connection) {
-        const {
-          connectionId,
-          maxFrameBytes,
-          [GATEWAY_NOT_SENT]: marker,
-          ...frame
-        } = JSON.parse(raw) as Record<string, unknown>;
-        if (
-          typeof connectionId !== "string" ||
-          connectionId === "" ||
-          typeof maxFrameBytes !== "number" ||
-          !Number.isSafeInteger(maxFrameBytes) ||
-          maxFrameBytes < 1024
-        )
-          throw new DeviceProtocolError("the gateway stored a result without its connection");
-        if (
-          fenced &&
-          (connectionId !== connection.connectionId || maxFrameBytes !== connection.maxFrameBytes)
-        )
-          throw new DeviceProtocolError(connectionChangedMessage(op));
-        cap = maxFrameBytes;
-        arrivedOn = connectionId;
-        notSent = marker === true;
-        wire = JSON.stringify(frame);
-      }
-      const f = connection
-        ? parseDeviceFrame(wire, "device", cap)
-        : parseLegacyDeviceFrame(wire, "device");
-      if (f.type !== "res" || f.id !== id) {
-        return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
-      }
-      if (arrivedOn === undefined) return { res: f };
-      // a refusal only: a successful result never carries the marker
-      return notSent && !f.ok
-        ? { res: f, connectionId: arrivedOn, notSent: true }
-        : { res: f, connectionId: arrivedOn };
+      const r = readStoredResult(raw);
+      if (r.id !== id) throw new Error("the gateway stored a result for another request");
+      if (
+        fenced &&
+        (r.connection.connectionId !== connection.connectionId ||
+          r.connection.maxFrameBytes !== connection.maxFrameBytes)
+      )
+        return { error: new DialInConnectionChangedError() };
+      return { res: r };
     } catch (e) {
-      return {
-        error:
-          e instanceof DeviceProtocolError
-            ? e
-            : new DeviceProtocolError(`the connected machine sent an invalid frame: ${errMsg(e)}`),
-      };
-    }
-  }
-
-  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceResponse): DeviceOpResults[Op] {
-    if (res.ok) {
-      try {
-        return parseOpResult(op, res.result);
-      } catch (e) {
-        throw new DeviceProtocolError(
-          `The connected machine sent an invalid ${op} result: ${errMsg(e)}`,
-        );
-      }
-    }
-    const { kind, message } = res.error;
-    switch (kind) {
-      case "denied":
-        throw new SandboxScopeDeniedError(message);
-      case "unsupported":
-        throw new SandboxPermissionUnsupportedError(message);
-      case "unsettled":
-        throw new SandboxWorkUnsettledError(message);
-      case "unknown":
-        throw new SandboxOperationOutcomeUnknownError(message);
-      case "invalid":
-        throw new SandboxScopeValidationError(message);
-      case "gone":
-        throw new SandboxGoneError(message);
-      case "fs_gone":
-        throw new FileSystemGoneError(message);
-      case "policy":
-        throw new ToolError(`${POLICY_REFUSAL_PREFIX}${message}`);
-      default:
-        throw new ToolError(`${ON_MACHINE_PREFIX}${message}`);
+      return { error: new Error(`the device relay read an invalid result: ${errMsg(e)}`) };
     }
   }
 }

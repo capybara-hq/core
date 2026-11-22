@@ -3,13 +3,6 @@ import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type {
   DeviceFeature,
   DeviceLocalPolicySummary,
-  DeviceStopArgs,
-  LegacyDeviceHello,
-} from "@capybara-hq/plugin-sdk/device-protocol";
-import {
-  type DeviceHello,
-  type DeviceOwnerCeiling,
-  parseDeviceFrame,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -19,29 +12,11 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
-import { OwnerReports } from "../local-devices/owner-reports.js";
-import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "../local-devices/policy-op-jobs.js";
-import {
-  deviceFeaturesOf,
-  localPolicyDiff,
-  localPolicyOf,
-  opExplains,
-  opVisibleIn,
-  ownerPolicyRevokes,
-  pendingPolicyOpsOf,
-  type ReportedPolicyOp,
-} from "../local-devices/policy-summary.js";
+import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { LegacyRetirementStore } from "../sandbox/legacy-retirement.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
-import {
-  type PermissionRuntimeIdentity,
-  PermissionRuntimeReports,
-  sameRuntimeIdentity,
-} from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
@@ -51,8 +26,18 @@ import { DialInRelay } from "./relay.js";
 export const MACHINE_CREDENTIAL_PREFIX = "cap_dev_";
 const CREDENTIAL_RE = /^cap_dev_[A-Za-z0-9_-]{43}$/;
 
-/** How long the `stop` frame told to a revoked machine may take (it only closes the connection). */
-const STOP_DEADLINE_MS = 30_000;
+/**
+ * Why a machine was revoked, for the machine (`stop`) and for the provider (`onClose`): `revoked`
+ * (disconnected, signed out) or `deleted` (its device was deleted); null when a replacement or a
+ * failed sign-in revoked it (no stop: it could reach the replacement instead).
+ */
+export type MachineRevocationReason = "revoked" | "deleted" | null;
+
+/** The payload of `device.revoked.<deviceId>`. */
+export interface MachineRevokedMessage {
+  machineId: string;
+  reason: MachineRevocationReason;
+}
 
 /** What a machine credential stands for. */
 export interface MachineIdentity {
@@ -85,33 +70,20 @@ export interface ActiveMachine {
  * credential is `cap_dev_` plus 32 random bytes; only its sha256 is stored. It is accepted only
  * by the device connection route ({@link authenticate}), never by `/api`: it is no `Principal`.
  *
- * A revoked machine is told so after the commit: `stop { reason }` relayed while a replica holds
- * its connection (fire-and-forget, ruling R14) and `device.revoked.<deviceId>` published with
- * `{ machineId }`, so the holder closes that machine's connection.
+ * A revoked machine is told so after the commit: a `stop` relayed while a replica holds its
+ * connection (fire-and-forget, ruling R14) and `device.revoked.<deviceId>` published with
+ * {@link MachineRevokedMessage}, so the holder closes that machine's connection (and tells the
+ * provider why).
  */
-/** Roots in a fixed key order (null when absent), whatever order jsonb stored them in. */
-const canonicalRoots = (roots: unknown): string => {
-  if (!roots || typeof roots !== "object") return "null";
-  const r = roots as Record<string, unknown>;
-  return JSON.stringify(
-    Object.keys(r)
-      .sort()
-      .map((k) => [k, r[k]]),
-  );
-};
-
 @Injectable()
 export class DialInMachines {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(DialInRelay) private readonly relay: Pick<DialInRelay, "holderLive" | "send">,
+    @Inject(DialInRelay) private readonly relay: Pick<DialInRelay, "stop">,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
-    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
-    @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
-    @Inject(OwnerReports) private readonly owners: OwnerReports,
     /** The host's boot identity: restart evidence for local legacy obligations (8.5). */
     @Inject(LegacyRetirementStore)
     private readonly retirement: Pick<LegacyRetirementStore, "recordBoot" | "clearBoot">,
@@ -174,7 +146,7 @@ export class DialInMachines {
    * ones, so conversations that used the old files are told their files were reset, not that they
    * were kept: lost files come back as an empty directory, and another machine (`moved`: name, OS
    * or arch differ from the device's previous machine) has other files. Another directory on
-   * the same machine is known only from the new machine's first hello ({@link recordHello}).
+   * the same machine is known only from the new machine's first hello (`LocalMachineReports`).
    */
   private async resetInstance(deviceId: string, moved: boolean): Promise<void> {
     await this.db
@@ -230,449 +202,32 @@ export class DialInMachines {
   }
 
   /**
-   * Stores what the program reported in its hello frame and marks the machine seen. On the
-   * machine's first hello, when it is the same machine as the device's previous one (else
-   * {@link issue} already counted the reset) but serves another directory or mode (other roots,
-   * ruling R23), the device's files are other files: `fs_resets` moves on (maintainer
-   * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
-   * never said hello has no known roots: nothing to compare. The reported features (known ones
-   * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
-   * program downgraded to one without them is no longer sent what it cannot do. The summary is the
-   * device's sandbox allowlist; a change of what the owner sets, made on the machine while it was
-   * away, is audited `device.policy_changed` (the owner ceiling's, `device.owner_ceiling_changed`)
-   * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
-   * platform's ops still pending on the row ({@link backfillOps}). The owner's home directory
-   * (`home`) replaces the stored one too (null when the hello has none).
+   * What a machine's hello envelope says about its program, recorded once the connection holds the
+   * device's lease (before the provider's `onHello`): its version, OS and architecture, and the
+   * host's boot identity (restart evidence for the legacy retirement; none clears the stored one,
+   * so a downgraded program leaves no stale boot as evidence). Marks the machine seen. A revoked
+   * machine is left alone.
    */
   @Transactional()
-  async recordHello(
+  async recordConnect(
     machineId: string,
-    hello: LegacyDeviceHello,
-    /** A protocol 4 hello's authenticated owner report (B2): it, not the summary, decides publication. */
-    owner?: { report: DeviceOwnerCeiling; connectionId: string | null },
+    program: { version: string; os: string; arch: string; bootId?: string },
   ): Promise<void> {
-    const subject = await this.db
-      .selectFrom("device_machines")
-      .select(["org_id", "device_id"])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (!subject) return;
-    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
-    const self = await this.db
-      .selectFrom("device_machines")
-      .select([
-        "device_id",
-        "org_id",
-        "account_id",
-        "name",
-        "os",
-        "arch",
-        "roots",
-        "created_at",
-        "local_policy",
-        "pending_policy_ops",
-      ])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .where("org_id", "=", subject.org_id)
-      .where("device_id", "=", subject.device_id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (self === undefined) return;
-    if (self.roots === null) {
-      const prev = await this.db
-        .selectFrom("device_machines")
-        .select(["name", "os", "arch", "mode"])
-        .select(sql<boolean>`roots = ${JSON.stringify(hello.roots)}::jsonb`.as("same_roots"))
-        .where("device_id", "=", self.device_id)
-        .where("id", "!=", machineId)
-        .where("created_at", "<=", self.created_at)
-        .where("roots", "is not", null)
-        .orderBy("created_at", "desc")
-        .orderBy("id", "desc")
-        .limit(1)
-        .executeTakeFirst();
-      if (
-        prev !== undefined &&
-        sameMachine(prev, self) &&
-        (!prev.same_roots || prev.mode !== hello.mode)
-      ) {
-        await this.db
-          .updateTable("device_instances")
-          .set({ fs_resets: sql<number>`fs_resets + 1` })
-          .where("device_id", "=", self.device_id)
-          .execute();
-      }
-    }
-    const policy = await this.reportedPolicy(machineId, self, hello.policy);
-    // jsonb returns keys in its own order: compare roots canonically, or every reconnect would
-    // look like a changed reach and reset Full consent (B4 consent stability)
-    const rootsChanged = canonicalRoots(self.roots) !== canonicalRoots(hello.roots);
-    if (owner !== undefined)
-      await this.owners.recordLocked(machineId, owner.report, {
-        connectionId: owner.connectionId,
-        via: "hello",
-        rootsChanged,
-      });
-    else if (
-      rootsChanged ||
-      JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy)
-    )
-      await this.ceilings.publishLocked(
-        { orgId: self.org_id, deviceId: self.device_id },
-        "device",
-        (scope, row) =>
-          rootsChanged ||
-          ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        rootsChanged,
-      );
-    await this.db
+    const row = await this.db
       .updateTable("device_machines")
       .set({
-        program_version: hello.programVersion,
-        os: hello.os,
-        arch: hello.arch,
-        mode: hello.mode,
-        roots: JSON.stringify(hello.roots),
-        session_isolation: hello.sessionIsolation,
-        features: deviceFeaturesOf(hello.features),
-        local_policy: jsonOrNull(policy),
-        // the base of an auto-mode project's relative path (project root §4.2); absent: unknown
-        home: hello.home ?? null,
+        program_version: program.version,
+        os: program.os,
+        arch: program.arch,
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
-      .execute();
-    if (hello.recentOps !== undefined) {
-      await this.backfillOps(machineId, self, hello.recentOps, localPolicyOf(hello.policy));
-    }
-    // only an authenticated, claimed connection's hello reaches here (the machine row locked):
-    // its boot identity is the evidence a restart ended the old processes
-    if (hello.bootId !== undefined) await this.retirement.recordBoot(machineId, hello.bootId);
-    // a hello without one (a downgraded program) leaves no stale boot as evidence (M2)
+      .returning("id")
+      .executeTakeFirst();
+    if (!row) return;
+    if (program.bootId !== undefined) await this.retirement.recordBoot(machineId, program.bootId);
     else await this.retirement.clearBoot(machineId);
-  }
-
-  /**
-   * Hello backfill (transactional outbox spec §7): a pending op of the platform's whose outcome
-   * the hello reports (`applied`, `refused`), or that it does not list although the op can no
-   * longer reach the machine (`absent`: past its `resolveAt`), is marked `reported` and owes a
-   * `device-op-resolve` job (`device-op-reported-<opId>`) that records the outcome. An op the
-   * machine logged only as `started` (it stopped between the log and the answer) is judged once
-   * past its `resolveAt` by the policy the hello reports: its change there → `applied`, else
-   * `interrupted` (within the window, or with no readable policy, it is left). An expired entry
-   * (past `until`) is skipped: the machine's reports are no longer the op's. Runs in the caller's
-   * transaction, with the machine's row locked; an op already reported is not owed again.
-   */
-  private async backfillOps(
-    machineId: string,
-    self: { org_id: string; pending_policy_ops: unknown },
-    recentOps: NonNullable<LegacyDeviceHello["recentOps"]>,
-    policy: DeviceLocalPolicySummary | null,
-  ): Promise<void> {
-    const outcomes = new Map(recentOps.map((r) => [r.opId, r.outcome]));
-    const now = Date.now();
-    const reported = new Map<string, ReportedPolicyOp>();
-    for (const op of pendingPolicyOpsOf(self.pending_policy_ops)) {
-      if (op.reported !== undefined || op.until <= now) continue;
-      const outcome = outcomes.get(op.id);
-      if (outcome === "applied" || outcome === "refused") reported.set(op.id, { outcome });
-      else if (now < op.resolveAt) continue;
-      else if (outcome === undefined) reported.set(op.id, { outcome: "absent" });
-      else if (policy !== null) {
-        reported.set(op.id, { outcome: opVisibleIn(op, policy) ? "applied" : "interrupted" });
-      }
-    }
-    if (reported.size === 0) return;
-    const ops = Array.isArray(self.pending_policy_ops) ? self.pending_policy_ops : [];
-    const next = ops.map((e: unknown) => {
-      const id = (e as { id?: unknown } | null)?.id;
-      const r = typeof id === "string" ? reported.get(id) : undefined;
-      return r === undefined ? e : { ...(e as object), reported: r };
-    });
-    await this.db
-      .updateTable("device_machines")
-      .set({ pending_policy_ops: JSON.stringify(next) })
-      .where("id", "=", machineId)
-      .execute();
-    for (const opId of reported.keys()) {
-      await this.outbox.add({
-        queue: MAINTENANCE_QUEUE_NAME,
-        name: DEVICE_OP_RESOLVE_JOB,
-        jobId: deviceOpReportedJobId(opId),
-        data: { machineId, opId },
-        orgId: self.org_id,
-      });
-    }
-  }
-
-  /**
-   * A protocol 4 hello on an authenticated connection: validated as a frame, then recorded like
-   * {@link recordHello} with its owner report and the connection it arrived on.
-   */
-  @Transactional()
-  async recordHelloV3(
-    machineId: string,
-    hello: DeviceHello,
-    connectionId: string | null = null,
-  ): Promise<void> {
-    const parsed = parseDeviceFrame(JSON.stringify(hello), "device");
-    if (parsed.type !== "hello") throw new Error("Expected a validated operation hello");
-    await this.recordHello(machineId, parsed, {
-      report: parsed.ownerCeiling,
-      connectionId,
-    });
-    const machine = await this.db
-      .selectFrom("device_machines")
-      .select(["org_id", "device_id"])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (!machine) return;
-    const subject = { orgId: machine.org_id, deviceId: machine.device_id };
-    await this.ceilings.lock(subject, "device");
-    const attested = await this.boundIdentityLocked(subject, machineId, parsed, connectionId);
-    // the hello predates the binding its own connection installed: that install recorded the
-    // report, which this hello's must not overwrite
-    if (attested === "installed-here") return;
-    await this.reports.record(
-      machine.device_id,
-      LOCAL_PROVIDER,
-      parsed.programVersion,
-      attested,
-      parsed.permissionSupport,
-    );
-  }
-
-  /**
-   * The runtime identity a v3 hello may attest (B4): only a bound hello re-reporting exactly the
-   * identity of the current instance generation's installed binding. An unbound hello, another
-   * generation or a binding still awaiting the device attests nothing (unprobed; it never finishes
-   * an installation, which only the bindInstance answer does).
-   *
-   * The machine the current generation was installed for no longer attesting it means its program
-   * can never serve that generation again: a restarted program whose verified runtime differs from
-   * the one its stored binding attested (every capybara-device upgrade changes the runtime bytes)
-   * starts unbound, and the device refuses to rebind a generation under a changed runtime. The
-   * instance is then replaced ({@link replaceUnattestedLocked}), so the next use creates and binds
-   * a new generation under the new evidence instead of staying unprobed until a new login.
-   *
-   * A connection answers bindInstance before its own hello is recorded (the hello is recorded
-   * after `ready`), so a binding installed on the hello's own connection is newer than the hello:
-   * it is left as it is (`installed-here`), never replaced by the evidence the hello predates.
-   */
-  private async boundIdentityLocked(
-    subject: { orgId: string; deviceId: string },
-    machineId: string,
-    hello: DeviceHello,
-    connectionId: string | null,
-  ): Promise<PermissionRuntimeIdentity | "installed-here" | undefined> {
-    const instance = await this.db
-      .selectFrom("device_instances")
-      .select(["provider", "status", "handle", "created_at", "permission_runtime_identity"])
-      .where("device_id", "=", subject.deviceId)
-      .executeTakeFirst();
-    if (
-      !instance ||
-      instance.provider !== LOCAL_PROVIDER ||
-      !instance.handle ||
-      (instance.status !== "running" && instance.status !== "suspended")
-    )
-      return undefined;
-    const generation = String(instance.created_at.getTime());
-    const binding = await this.db
-      .selectFrom("device_instance_bindings")
-      .select(["status", "runtime_identity", "machine_id", "installed_connection_id"])
-      .where("device_id", "=", subject.deviceId)
-      .where("instance_generation", "=", generation)
-      .executeTakeFirst();
-    // not installed yet (the kernel's bindInstance finishes it), or installed for another machine
-    // (a login replaced the instance already): nothing to attest, nothing to replace
-    if (binding?.status !== "installed" || !binding.runtime_identity) return undefined;
-    if (binding.machine_id !== machineId) return undefined;
-    if (connectionId !== null && binding.installed_connection_id === connectionId)
-      return "installed-here";
-    const reported = hello.runtimeIdentity;
-    if (
-      hello.instanceGeneration === generation &&
-      reported?.instanceGeneration === generation &&
-      sameRuntimeIdentity(binding.runtime_identity, reported)
-    )
-      return reported;
-    await this.replaceUnattestedLocked(subject);
-    return undefined;
-  }
-
-  /**
-   * Replaces a local instance whose installed binding its machine no longer attests (under the
-   * device authority writer): the row forgets its instance (status `none`, no handle) and its
-   * fence moves on, so a lifecycle holder of the old instance fails its next write; the device's
-   * admission epoch advances, revoking every admitted or started operation of the old generation.
-   * The files stay (the same machine and directory): the next use creates a new instance on them,
-   * which the kernel binds under the program's new runtime evidence. Full consent is left to that
-   * install, which resets it when the proven environment fingerprint changed: a fingerprint a
-   * hello merely names proves nothing, and nothing is admitted before the install records a
-   * report, so resetting here too would reset twice.
-   */
-  private async replaceUnattestedLocked(subject: {
-    orgId: string;
-    deviceId: string;
-  }): Promise<void> {
-    await this.ceilings.publishLocked(subject, "device", true, false);
-    await this.db
-      .updateTable("device_instances")
-      .set((eb) => ({
-        status: "none",
-        handle: null,
-        running_since: null,
-        suspended_at: null,
-        destroyed_at: sql<Date>`now()`,
-        generation: eb("generation", "+", 1),
-        permission_runtime_identity: null,
-      }))
-      .where("device_id", "=", subject.deviceId)
-      .execute();
-  }
-
-  /**
-   * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
-   * its policy file changed on the machine: its sandbox allowlist), read and audited as the hello's
-   * ({@link recordHello}). A change the owner made on the machine is audited
-   * `device.policy_changed`. The next sandbox call then records a
-   * new `device_paths` event when the facts the model is told changed. A revoked machine is left
-   * alone.
-   */
-  @Transactional()
-  async recordPolicy(
-    machineId: string,
-    summary: DeviceLocalPolicySummary | undefined,
-  ): Promise<void> {
-    const subject = await this.db
-      .selectFrom("device_machines")
-      .select(["org_id", "device_id"])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (!subject) return;
-    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
-    const self = await this.db
-      .selectFrom("device_machines")
-      .select(["device_id", "org_id", "account_id", "local_policy", "pending_policy_ops"])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .where("org_id", "=", subject.org_id)
-      .where("device_id", "=", subject.device_id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (self === undefined) return;
-    const policy = await this.reportedPolicy(machineId, self, summary);
-    if (JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy))
-      await this.ceilings.publishLocked(
-        { orgId: self.org_id, deviceId: self.device_id },
-        "device",
-        (scope, row) =>
-          ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        false,
-      );
-    await this.db
-      .updateTable("device_machines")
-      .set({ local_policy: jsonOrNull(policy), last_seen_at: sql<Date>`now()` })
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .execute();
-  }
-
-  /**
-   * A staged (v3) `policy` frame (B2): the summary is kept for the device page like protocol 2's,
-   * while the authenticated owner report alone decides what changed ({@link OwnerReports}).
-   */
-  @Transactional()
-  async recordPolicyV3(
-    machineId: string,
-    frame: unknown,
-    connectionId: string | null = null,
-  ): Promise<void> {
-    const parsed = parseDeviceFrame(JSON.stringify(frame), "device");
-    if (parsed.type !== "policy") throw new Error("Expected a validated policy frame");
-    const subject = await this.db
-      .selectFrom("device_machines")
-      .select(["org_id", "device_id", "account_id", "local_policy", "pending_policy_ops"])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (!subject) return;
-    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
-    const policy = await this.reportedPolicy(
-      machineId,
-      { ...subject, device_id: subject.device_id },
-      parsed.policy,
-    );
-    await this.db
-      .updateTable("device_machines")
-      .set({ local_policy: jsonOrNull(policy), last_seen_at: sql<Date>`now()` })
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .execute();
-    await this.owners.recordLocked(machineId, parsed.ownerCeiling, {
-      connectionId,
-      via: "policy",
-    });
-  }
-
-  /**
-   * The summary to store for one a program reported (hello or `policy` frame): the parsed one, else
-   * null. When both the stored and the reported summary are readable and what the owner sets
-   * changed ({@link localPolicyDiff}) by no `policy` op the platform sent ({@link opExplains}: its
-   * answer may come after the machine's own report), the owner changed it on the machine
-   * (`capybara-device policy add|remove allowedDomains ...`): the host changes are audited
-   * `device.policy_changed`, `via: "device"`, so the device page lists them beside the platform's
-   * changes (an owner ceiling change is the owner report writer's, `device.owner_ceiling_changed`);
-   * one an op explains is not audited here (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,
-   * with the machine's row locked.
-   */
-  private async reportedPolicy(
-    machineId: string,
-    self: {
-      device_id: string;
-      org_id: string;
-      account_id: string;
-      local_policy: unknown;
-      pending_policy_ops: unknown;
-    },
-    reported: DeviceLocalPolicySummary | undefined,
-  ): Promise<DeviceLocalPolicySummary | null> {
-    const summary = localPolicyOf(reported);
-    const prev = localPolicyOf(self.local_policy);
-    const diff = summary !== null && prev !== null ? localPolicyDiff(prev, summary) : null;
-    if (diff !== null) {
-      const now = Date.now();
-      const byOp = pendingPolicyOpsOf(self.pending_policy_ops).some(
-        (op) => op.until > now && opExplains(op, diff),
-      );
-      if (byOp) return summary;
-      const base = {
-        actorAccountId: self.account_id,
-        orgId: self.org_id,
-        target: self.device_id,
-      };
-      if (diff.add.length > 0 || diff.remove.length > 0) {
-        await audit(this.db.db, {
-          ...base,
-          action: "device.policy_changed",
-          detail: {
-            add: diff.add,
-            remove: diff.remove,
-            by: self.account_id,
-            via: "device",
-            machineId,
-          },
-        });
-      }
-      return summary;
-    }
-    return summary;
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */
@@ -736,10 +291,7 @@ export class DialInMachines {
    * {@link revoke} and the device's deletion (`deleted`).
    */
   @Transactional()
-  async revokeActive(
-    deviceId: string,
-    reason: DeviceStopArgs["reason"] | null,
-  ): Promise<string | null> {
+  async revokeActive(deviceId: string, reason: MachineRevocationReason): Promise<string | null> {
     const device = await this.db
       .selectFrom("devices")
       .select("org_id")
@@ -837,28 +389,25 @@ export class DialInMachines {
   private async disconnect(
     deviceId: string,
     machineId: string,
-    reason: DeviceStopArgs["reason"] | null,
+    reason: MachineRevocationReason,
   ): Promise<void> {
     try {
-      if (reason !== null && (await this.relay.holderLive(deviceId))) {
-        // fenced to this machine: on a staged connection it goes out as a protocol 4 `stop`
-        await this.relay.send(deviceId, "stop", { reason }, STOP_DEADLINE_MS, machineId);
-      }
+      // fenced to this machine; queued only while a replica holds its connection
+      if (reason !== null) await this.relay.stop(deviceId, "stop", { machineId });
     } catch (err) {
       this.log.warn("could not tell a revoked machine to stop", { deviceId, machineId, err });
     }
     try {
-      await this.bus.publish(deviceRevokedTopic(deviceId), { machineId });
+      const message: MachineRevokedMessage = { machineId, reason };
+      await this.bus.publish(deviceRevokedTopic(deviceId), message);
     } catch (err) {
       this.log.warn("could not publish a machine revocation", { deviceId, machineId, err });
     }
   }
 }
 
-const jsonOrNull = (v: unknown): string | null => (v === null ? null : JSON.stringify(v));
-
 /** Two machine rows (or a login) name the same machine: same name, OS and arch. */
-function sameMachine(
+export function sameMachine(
   a: { name: string; os: string; arch: string },
   b: { name: string; os: string; arch: string },
 ): boolean {

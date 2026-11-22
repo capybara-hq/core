@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
+import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -12,8 +13,9 @@ import { DeviceTargets } from "../../src/dial-in/targets.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { createLogger } from "../../src/log.js";
-import { FakeMachineV3, fakeMachineFor, HELLO_V3 } from "./fake-machine-v3.js";
+import { FakeMachineV3, HELLO_V3, helloEnvelope, localHandlers } from "./fake-machine-v3.js";
 
 /**
  * The staged fake machine (permission activation B-28) against the real gateway's `accept`:
@@ -55,13 +57,23 @@ async function fixture() {
       c === credential
         ? { deviceId, machineId: "machine", orgId: "org", accountId: "owner" }
         : null,
-    recordHello: vi.fn(async () => {}),
-    recordPolicy: vi.fn(async () => {}),
-    recordHelloV3: vi.fn(async () => {}),
-    recordPolicyV3: vi.fn(async () => {}),
+    recordConnect: vi.fn(async () => {}),
     touch: async () => {},
   };
-  const gateway = new DialInGateway(machines, locks, bus, redis, config, log);
+  const handler = {
+    kernelInternal: true as const,
+    onHello: vi.fn(async () => ({ ok: true as const })),
+    onFrame: vi.fn(async () => {}),
+  };
+  const gateway = new DialInGateway(
+    machines,
+    localHandlers(handler),
+    locks,
+    bus,
+    redis,
+    config,
+    log,
+  );
   const targets = new DeviceTargets({} as KernelDb, redis, locks);
   const relay = new DialInRelay(redis, bus, locks, config, log, {
     current: targets.current.bind(targets),
@@ -72,7 +84,7 @@ async function fixture() {
   const address = server.address();
   if (typeof address === "string" || !address) throw Error("no address");
   server.on("connection", (socket) => {
-    void gateway.accept(socket, credential);
+    void gateway.accept(socket, credential, DEVICE_DIAL_IN_PROTOCOL);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -80,37 +92,43 @@ async function fixture() {
   });
   cleanups.push(() => gateway.stop());
   const url = `ws://127.0.0.1:${address.port}`;
-  return { deviceId, credential, url, machines, relay, targets };
+  return { deviceId, credential, url, machines, handler, relay, targets };
 }
 
 const signal = () => AbortSignal.timeout(15000);
 
-it("a staged fake machine's hello is recorded with the connection id of its ready frame", async () => {
+it("a fake machine's hello body reaches the handler with the connection id of its ready frame", async () => {
   const f = await fixture();
   const machine = new FakeMachineV3(f.url, f.credential);
   cleanups.push(async () => machine.close());
   const ready = await machine.ready;
-  await expect.poll(() => f.machines.recordHelloV3.mock.calls.length).toBe(1);
-  const [, hello, connectionId] = f.machines.recordHelloV3.mock.calls[0] as unknown as [
+  expect(f.handler.onHello).toHaveBeenCalledTimes(1);
+  const [deviceId, hello, , connection] = f.handler.onHello.mock.calls[0] as unknown as [
     string,
     typeof HELLO_V3,
-    string,
+    AbortSignal,
+    { machineId: string; connectionId: string },
   ];
-  expect(hello).toMatchObject({ protocol: 5, ownerCeiling: HELLO_V3.ownerCeiling });
-  expect(connectionId).toBe(ready.connectionId);
-  expect(f.machines.recordHello).not.toHaveBeenCalled();
+  expect(deviceId).toBe(f.deviceId);
+  expect(hello).toEqual(HELLO_V3);
+  expect(connection).toEqual({ machineId: "machine", connectionId: ready.connectionId });
+  // the envelope's program facts are recorded apart from the body
+  expect(f.machines.recordConnect).toHaveBeenCalledWith("machine", {
+    version: "0.1.0",
+    os: "linux",
+    arch: "x64",
+  });
 });
 
-it("hello overrides carry v2-only fields (features, policy) on a staged hello", async () => {
+it("hello overrides carry body fields (features, policy)", async () => {
   const f = await fixture();
   const machine = new FakeMachineV3(f.url, f.credential, undefined, { hello: false });
   cleanups.push(async () => machine.close());
   await machine.opened;
-  machine.hello({ features: ["policyOp"], policy: { allowedDomains: ["a.test"] } });
+  machine.hello({ features: ["projects"], policy: { allowedDomains: ["a.test"] } });
   await machine.ready;
-  await expect.poll(() => f.machines.recordHelloV3.mock.calls.length).toBe(1);
-  expect((f.machines.recordHelloV3.mock.calls[0] as unknown as unknown[])[1]).toMatchObject({
-    features: ["policyOp"],
+  expect((f.handler.onHello.mock.calls[0] as unknown as unknown[])[1]).toMatchObject({
+    features: ["projects"],
     policy: { allowedDomains: ["a.test"] },
   });
 });
@@ -127,7 +145,7 @@ it("answers a bindInstance with evidence the relay validates against the request
     bindingId: randomUUID(),
     expectedPreviousGeneration: null,
   };
-  const result = await f.relay.callV3(f.deviceId, "bindInstance", args, {
+  const result = await localCall(f.relay)(f.deviceId, "bindInstance", args, {
     deadlineMs: 6000,
     signal: signal(),
   });
@@ -157,7 +175,7 @@ it("a catch-all null answer still binds; with autoBind false the scripted null r
     cleanups.push(async () => machine.close());
     await machine.ready;
     await expect.poll(() => f.targets.transport(f.deviceId).catch(() => null)).not.toBeNull();
-    const call = f.relay.callV3(f.deviceId, "bindInstance", bindArgs(), {
+    const call = localCall(f.relay)(f.deviceId, "bindInstance", bindArgs(), {
       deadlineMs: 6000,
       signal: signal(),
     });
@@ -178,7 +196,7 @@ it("a scripted answer reaches the relay and the frames are recorded", async () =
   cleanups.push(async () => machine.close());
   await machine.ready;
   await expect.poll(() => f.targets.transport(f.deviceId).catch(() => null)).not.toBeNull();
-  const result = await f.relay.callV3(
+  const result = await localCall(f.relay)(
     f.deviceId,
     "create",
     {
@@ -196,13 +214,14 @@ it("a scripted answer reaches the relay and the frames are recorded", async () =
   expect(machine.frames.map((r) => (r.type === "req" ? r.op : r.type))).toEqual(["create"]);
 });
 
-it("fakeMachineFor picks the machine and hello of a protocol", () => {
-  expect(fakeMachineFor(5).Machine).toBe(FakeMachineV3);
-  expect(fakeMachineFor(5).protocolHeader).toBe("5");
-  expect(fakeMachineFor(2).protocolHeader).toBe("2");
-  expect(fakeMachineFor(2).HELLO.protocol).toBe(2);
-  expect(fakeMachineFor(5).helloWith({ bootId: "b1" })).toMatchObject({
-    protocol: 5,
-    bootId: "b1",
+it("helloEnvelope splits overrides between the envelope and the body", () => {
+  const e = helloEnvelope({ bootId: "b1", programRunId: "run-1", roots: { a: 1 } });
+  expect(e).toMatchObject({
+    type: "hello",
+    protocol: DEVICE_DIAL_IN_PROTOCOL,
+    programRunId: "run-1",
+    program: { version: "0.1.0", os: "linux", arch: "x64", bootId: "b1" },
+    body: { ...HELLO_V3, roots: { a: 1 } },
   });
+  expect(e.body).not.toHaveProperty("bootId");
 });

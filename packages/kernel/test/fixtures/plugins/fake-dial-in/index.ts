@@ -18,7 +18,9 @@ import {
  * The machine's hello body is `{ revision: string; outsideSandbox: boolean; refuse?: string }`: a
  * `refuse` makes `onHello` refuse with code `fake.refused`. The accepted hello is kept in `ctx.kv`
  * (`hello:<deviceId>`, one hour) and `report()` is built from it; an `event` frame
- * `{ revision }` replaces the revision. Both tell the kernel through `ctx.devices.reportChanged`.
+ * `{ revision }` replaces the revision. Both tell the kernel through `ctx.devices.reportChanged`
+ * (skipped while the kernel denies `ctx.devices`). Every event body is kept as `frame:<deviceId>`
+ * and the reason of the last close as `closed:<deviceId>` (one hour), for the tests to read.
  *
  * Handles are the device id: the device's file system and its instance are both named
  * `cap-device-<deviceId>`, so every operation can address its machine.
@@ -57,6 +59,14 @@ export default defineExtension({
     };
     const writeHello = (deviceId: string, hello: StoredHello) =>
       ctx.kv.set(helloKey(deviceId), JSON.stringify(hello), { ttlSeconds: HELLO_TTL_SECONDS });
+    // ctx.devices is denied until the kernel wires the report revision: the hello still succeeds
+    const reportChanged = async (deviceId: string): Promise<void> => {
+      try {
+        await ctx.devices.reportChanged(deviceId);
+      } catch (e) {
+        if (!(e instanceof Error && e.name === "ExtensionPermissionError")) throw e;
+      }
+    };
 
     const relay = (
       deviceId: string,
@@ -92,17 +102,23 @@ export default defineExtension({
             revision: typeof body.revision === "string" ? body.revision : "0",
             outsideSandbox: body.outsideSandbox === true,
           });
-          await ctx.devices.reportChanged(deviceId);
+          await reportChanged(deviceId);
           return { ok: true };
         },
         async onFrame(deviceId, frame) {
+          await ctx.kv.set(`frame:${deviceId}`, JSON.stringify(frame), {
+            ttlSeconds: HELLO_TTL_SECONDS,
+          });
           if (!isRecord(frame) || typeof frame.revision !== "string") return;
           const hello = await readHello(deviceId);
           await writeHello(deviceId, {
             outsideSandbox: hello?.outsideSandbox ?? false,
             revision: frame.revision,
           });
-          await ctx.devices.reportChanged(deviceId);
+          await reportChanged(deviceId);
+        },
+        onClose(deviceId, reason) {
+          void ctx.kv.set(`closed:${deviceId}`, reason, { ttlSeconds: HELLO_TTL_SECONDS });
         },
       },
       async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {

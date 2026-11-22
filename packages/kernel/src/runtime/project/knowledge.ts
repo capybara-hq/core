@@ -7,7 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { MAX_DEVICE_LIST_ENTRIES } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { EventPayload } from "../../conversations/events.js";
-import { POLICY_REFUSAL_PREFIX } from "../../dial-in/relay.js";
+import { POLICY_REFUSAL_PREFIX } from "../../local-devices/local-codec.js";
 import { PROJECT_SKILLS_DIR } from "../../sandbox/kernel-read.js";
 import type { SandboxMode } from "../../sandbox/modes.js";
 

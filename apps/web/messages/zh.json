@@ -3156,7 +3156,8 @@
       "network": "网络访问",
       "ui": "界面（视图 / 嵌入页面）",
       "client": "客户端代码",
-      "components": "界面组件"
+      "components": "界面组件",
+      "dialIn": "机器接入（协议）"
     },
     "configTitle": "组织配置",
     "save": "保存配置",

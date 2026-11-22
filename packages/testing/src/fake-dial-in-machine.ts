@@ -39,6 +39,10 @@ export class FakeDialInMachine {
   readonly cancels: string[] = [];
   /** The reasons of the `stop` frames received, in order. */
   readonly stops: ("drain" | "stop")[] = [];
+  /** Socket errors after `ready` (kept, so an error never goes unhandled), in order. */
+  readonly errors: Error[] = [];
+  /** Kernel frames that were not JSON, in order (the kernel never sends one). */
+  readonly invalid: string[] = [];
   private handler: RequestHandler = () => ({});
 
   private constructor(
@@ -48,6 +52,8 @@ export class FakeDialInMachine {
   ) {
     this.connectionId = connectionId;
     this.closed = closed;
+    // the connect promise's listener is gone once settled: an error later must not go unhandled
+    ws.on("error", (e) => this.errors.push(e));
     ws.on("message", (data) => this.onMessage(data.toString()));
   }
 
@@ -138,12 +144,13 @@ export class FakeDialInMachine {
   }
 
   private onMessage(text: string): void {
-    const frame = JSON.parse(text) as {
-      type: string;
-      id?: string;
-      body?: unknown;
-      reason?: "drain" | "stop";
-    };
+    let frame: { type: string; id?: string; body?: unknown; reason?: "drain" | "stop" };
+    try {
+      frame = JSON.parse(text);
+    } catch {
+      this.invalid.push(text);
+      return;
+    }
     if (frame.type === "req" && frame.id !== undefined) {
       const id = frame.id;
       this.requests.push(frame.body);

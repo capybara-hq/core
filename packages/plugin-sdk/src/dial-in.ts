@@ -95,7 +95,7 @@ function parseFrame(schema: z.ZodType, text: string, maxBytes: number): unknown 
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
     throw new RangeError(`maxBytes must be a positive integer, got ${maxBytes}`);
   // a UTF-16 code unit is at least one UTF-8 byte: the length alone may already decide it
-  if (text.length > maxBytes || Buffer.byteLength(text, "utf8") > maxBytes)
+  if (text.length > maxBytes || new TextEncoder().encode(text).byteLength > maxBytes)
     throw new DialInProtocolError(`frame exceeds ${maxBytes} bytes`);
   let parsed: unknown;
   try {

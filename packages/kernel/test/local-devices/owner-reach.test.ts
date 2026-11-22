@@ -8,12 +8,9 @@ import { PermissionProfileStore } from "../../src/conversations/permission-profi
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
-import { DevicePatchBody, DevicePolicyBody } from "../../src/devices/dto.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
-import { DialInRelay } from "../../src/dial-in/relay.js";
+import { DevicePatchBody } from "../../src/devices/dto.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
+import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { OwnerReports } from "../../src/local-devices/owner-reports.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
@@ -299,37 +296,6 @@ describe("reordered carriers (fix round 1)", () => {
       ).toBe("stale");
     expect(await f.view()).toMatchObject({ state: "report", outsideSandbox: true, sequence: 5 });
     expect((await f.browse()).readRoots).toEqual(["/"]);
-    // a late policy answer with an older sequence still settles its op as applied
-    await f.db
-      .updateTable("device_machines")
-      .set({
-        pending_policy_ops: JSON.stringify([
-          {
-            id: "op-late",
-            add: [],
-            remove: [],
-            source: { accountId: f.accountId, via: "web", approvalId: null },
-            status: "sent",
-            sentAt: Date.now(),
-            resolveAt: Date.now() + 60_000,
-            until: Date.now() + 3_600_000,
-          },
-        ]),
-      })
-      .where("id", "=", f.machineId)
-      .execute();
-    const out = await k.app.get(TransactionHost).run(() =>
-      k.app.get(DevicePolicyService).settleIn(
-        { machineId: f.machineId, opId: "op-late" },
-        {
-          outcome: "applied",
-          policy: { allowedDomains: [] },
-          ownerCeiling: report(3, true, "os-user"),
-        },
-      ),
-    );
-    expect(out).toMatchObject({ applied: true });
-    expect(await f.view()).toMatchObject({ state: "report", sequence: 5 });
   });
 
   it("I1: unblocking with a higher report and the same Full keeps Full consent and audits nothing", async () => {
@@ -464,7 +430,7 @@ describe("Full consent and revocation follow only actual Full changes", () => {
       roots,
       ownerCeiling: report(2, false, "os-user"),
     };
-    await k.app.get(DialInMachines).recordHelloV3(f.machineId, hello, "c-reconnect");
+    await k.app.get(LocalMachineReports).recordHelloV3(f.machineId, hello, "c-reconnect");
     expect(await f.view()).toMatchObject({
       outsideSandbox: false,
       restrictedProjectReach: "os-user",
@@ -472,88 +438,9 @@ describe("Full consent and revocation follow only actual Full changes", () => {
     expect((await f.profileView()).profile).toBe("full-access");
     // a stale report on a reconnect blocks instead of reverting
     await k.app
-      .get(DialInMachines)
+      .get(LocalMachineReports)
       .recordHelloV3(f.machineId, { ...hello, ownerCeiling: report(1, true, "os-user") }, "c-old");
     await expect(f.browse()).rejects.toMatchObject({ code: "device.owner_report_stale" });
-  });
-});
-
-describe("web writes only narrow", () => {
-  it("the local policy route refuses any widening; narrowing needs an owner-reporting program", async () => {
-    for (const ownerCeiling of [
-      { outsideSandbox: true },
-      { network: "open" },
-      { restrictedProjectReach: "os-user" },
-      { outsideSandbox: false, extra: 1 },
-      { fullAccess: false },
-      {},
-    ])
-      expect(DevicePolicyBody.safeParse({ ownerCeiling }).success).toBe(false);
-    for (const ownerCeiling of [{ outsideSandbox: false }, { network: "allowlist" }])
-      expect(DevicePolicyBody.safeParse({ ownerCeiling }).success).toBe(true);
-    const f = await fixture();
-    // a connected program that reports no authenticated owner facts cannot take it: nothing is
-    // sent (protocol 2 programs are refused at the upgrade since the activation)
-    await f.db
-      .updateTable("device_machines")
-      .set({ features: ["projects", "policyOp", "policyOpId"], owner_report: null })
-      .where("id", "=", f.machineId)
-      .execute();
-    const relay = k.app.get(DialInRelay);
-    vi.spyOn(relay, "holderLive").mockResolvedValue(true);
-    vi.spyOn(relay, "stagedTransport").mockResolvedValue({
-      connectionId: "c-1",
-      maxFrameBytes: 69632,
-    });
-    const call = vi.spyOn(relay, "callV3");
-    await expect(
-      k.app
-        .get(DevicesService)
-        .changePolicy(f.orgId, { id: f.accountId, displayName: "Owner" }, f.deviceId, {
-          ownerCeiling: { outsideSandbox: false },
-        }),
-    ).rejects.toMatchObject({ code: "device.policy_unsupported", message: /ceiling set/ });
-    expect(call).not.toHaveBeenCalled();
-  });
-
-  it("an applied staged answer is accepted only once its owner report is committed", async () => {
-    const f = await fixture();
-    await f.record(report(4, true, "os-user"));
-    const policies = k.app.get(DevicePolicyService);
-    await f.db
-      .updateTable("device_machines")
-      .set({
-        pending_policy_ops: JSON.stringify([
-          {
-            id: "op-1",
-            add: [],
-            remove: [],
-            source: { accountId: f.accountId, via: "web", approvalId: null },
-            status: "sent",
-            sentAt: Date.now(),
-            resolveAt: Date.now() + 60_000,
-            until: Date.now() + 3_600_000,
-          },
-        ]),
-      })
-      .where("id", "=", f.machineId)
-      .execute();
-    const settle = (ownerCeiling: DeviceOwnerCeiling) =>
-      k.app.get(TransactionHost).run(() =>
-        policies.settleIn(
-          { machineId: f.machineId, opId: "op-1" },
-          {
-            outcome: "applied",
-            policy: { allowedDomains: [] },
-            ownerCeiling,
-          },
-        ),
-      );
-    // a conflicting report (same sequence, other bytes) is not accepted as applied
-    expect(await settle(report(4, false, "os-user"))).toMatchObject({ applied: false });
-    expect(await f.view()).toMatchObject({ state: "blocked" });
-    expect(await settle(report(5, false, "os-user"))).toMatchObject({ applied: true });
-    expect(await f.view()).toMatchObject({ state: "report", outsideSandbox: false, sequence: 5 });
   });
 });
 

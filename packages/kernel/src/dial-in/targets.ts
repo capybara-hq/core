@@ -1,11 +1,8 @@
-import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
-import type { DeviceFeature } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { REDIS } from "../infra/tokens.js";
-import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { deviceLeaseKey, deviceTransportKey } from "./keys.js";
 
 /**
@@ -22,14 +19,8 @@ export interface DeviceConnectionInfo {
   programRunId?: string;
 }
 
-const ROOT_KEYS = ["workspace", "skills", "tmp"] as const;
-
-/** Whether two sets of roots name the same three directories. */
-export const sameRoots = (a: SandboxRoots, b: SandboxRoots): boolean =>
-  ROOT_KEYS.every((k) => a[k] === b[k]);
-
 /**
- * Reads a local device and its machine from PG for the relay and the `@local` provider.
+ * Reads a dial-in device and its machine connection (PG and Redis) for the relay.
  * The relay asks {@link state} when a machine has no connection, so a revoked machine or a deleted
  * device fails a waiting call at once instead of after the reconnect grace (ruling R27).
  * Kept apart from `DialInMachines` (which depends on the relay) so there is no dependency cycle.
@@ -118,23 +109,6 @@ export class DeviceTargets {
     return row?.org_id ?? null;
   }
 
-  /**
-   * The roots the device's active machine last reported in its hello frame, or null (no
-   * active machine, or none reported yet).
-   */
-  async machineRoots(deviceId: string): Promise<SandboxRoots | null> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select("roots")
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    const r = row?.roots as Partial<Record<(typeof ROOT_KEYS)[number], unknown>> | null | undefined;
-    if (!r || typeof r !== "object") return null;
-    if (!ROOT_KEYS.every((k) => typeof r[k] === "string")) return null;
-    return r as SandboxRoots;
-  }
-
   /** The owner's home directory the active machine reported in its hello, or null. */
   async machineHome(deviceId: string): Promise<string | null> {
     const row = await this.db
@@ -144,19 +118,5 @@ export class DeviceTargets {
       .where("revoked_at", "is", null)
       .executeTakeFirst();
     return row?.home ?? null;
-  }
-
-  /**
-   * The features the device's active machine announced in its last hello (known ones only);
-   * empty without an active machine.
-   */
-  async machineFeatures(deviceId: string): Promise<DeviceFeature[]> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select("features")
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    return deviceFeaturesOf(row?.features);
   }
 }

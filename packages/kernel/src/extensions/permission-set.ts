@@ -57,6 +57,12 @@ export interface PermissionSet {
      * already gets for the same target). Absent when none are declared (and in older snapshots).
      */
     setupChecks?: string[];
+    /**
+     * The dial-in protocol of a device provider whose machines connect to the deployment
+     * (`permissions.dialIn`, device provider spec §5): blocking like any other permission. Absent
+     * when not declared (and in older snapshots).
+     */
+    dialIn?: { protocol: string };
   };
   /**
    * 安装记录包迁移警告的摘要（`warningsDigest`，Ruling P4）；没有警告或不是安装记录时省略。
@@ -202,6 +208,8 @@ export function buildPermissionSet(input: {
       ...(p.setupChecks && p.setupChecks.length > 0
         ? { setupChecks: sortedUnique(p.setupChecks) }
         : {}),
+      // only when declared: sets (and snapshots) of plugins without a dial-in channel stay as they were
+      ...(p.dialIn ? { dialIn: { protocol: p.dialIn.protocol } } : {}),
     },
     ...(input.warningsDigest ? { warningsDigest: input.warningsDigest } : {}),
   };
@@ -211,7 +219,8 @@ export function buildPermissionSet(input: {
  * The stable string keys of a permission set (sorted), such as `provides:channel@1`,
  * `config.org.secret:apiKey`, `table:todos`, `permissions.tools:write`,
  * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
- * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`.
+ * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`,
+ * `permissions.dialin:capybara-device/5`.
  * Tolerates old snapshots missing fields (read as empty), so format changes never throw.
  */
 export function permissionKeys(set: PermissionSet): string[] {
@@ -244,6 +253,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const e of p.ui?.embeds ?? []) keys.push(`ui.embed:${e}`);
   for (const c of p.ui?.components ?? []) keys.push(`${UI_COMPONENT_KEY_PREFIX}${c}`);
   for (const c of p.setupChecks ?? []) keys.push(`${SETUP_CHECK_KEY_PREFIX}${c}`);
+  if (p.dialIn?.protocol) keys.push(`${DIAL_IN_KEY_PREFIX}${p.dialIn.protocol}`);
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
@@ -259,6 +269,12 @@ export const POLICY_HOOK_KEY_PREFIX = "permissions.hooks.policy:";
  * bundle's bytes, is reviewed: an upgrade that only changes the bundle adds no key.
  */
 export const CLIENT_KEY = "permissions.client";
+
+/**
+ * Key prefix of a dial-in protocol (`permissions.dialIn`): blocking. Lower-case letters and dots
+ * before the colon, as catalog permission keys require (`PERMISSION_KEY_RE`).
+ */
+export const DIAL_IN_KEY_PREFIX = "permissions.dialin:";
 
 /** Key prefix of a client component (`ui.component:<id>`): sensitive and blocking. */
 export const UI_COMPONENT_KEY_PREFIX = "ui.component:";

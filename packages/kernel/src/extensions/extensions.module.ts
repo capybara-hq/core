@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { DialInRelayModule } from "../dial-in/relay.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgNetworkAllowancesModule } from "../orgs/network-allowances.service.js";
@@ -54,6 +55,8 @@ import { UsageSubscribersModule } from "./usage-subscribers.js";
     UsageSubscribersModule,
     // ctx.net reads each org's allowed internal endpoints per call
     OrgNetworkAllowancesModule,
+    // ctx.dialIn: the dial-in relay (global infrastructure only: no cycle)
+    DialInRelayModule,
   ],
   providers: [
     PluginInstallLock,

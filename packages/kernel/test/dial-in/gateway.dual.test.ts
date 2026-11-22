@@ -10,11 +10,12 @@ import { DialInRelay } from "../../src/dial-in/relay.js";
 import { DeviceTargets } from "../../src/dial-in/targets.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { createLogger } from "../../src/log.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
-import { FakeMachine } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, type FakeMachineV3 } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Device connections across replicas (environments spec §13.4): the socket lives on a gateway
@@ -162,6 +163,7 @@ describe("device connections on gateway replicas (dual replica)", () => {
     cleanups.push(() => machine.close());
     await machine.opened;
     await waitFor(() => redis.get(deviceLeaseKey(deviceId)));
+    await (machine as FakeMachineV3).ready;
 
     // a waited call through the shared Redis, by the relay every replica runs
     const sub = createBusSubscriber(() => new Redis(harness.redisUrl));
@@ -182,7 +184,7 @@ describe("device connections on gateway replicas (dual replica)", () => {
       Object.assign(targets, { state: async () => "active" }) as DeviceTargets,
     );
     expect(
-      await relay.callV3(deviceId, "exec", execArgs(deviceId), {
+      await localCall(relay)(deviceId, "exec", execArgs(deviceId), {
         deadlineMs: 6000,
         signal: AbortSignal.timeout(20_000),
       }),
@@ -191,9 +193,7 @@ describe("device connections on gateway replicas (dual replica)", () => {
     // the api replica disconnects the machine: its stop frame, then the close
     const del = await call("DELETE", `/api/v1/orgs/${orgId}/devices/${deviceId}/machine`);
     expect(del.status, JSON.stringify(del.json)).toBe(204);
-    expect(await machine.next((f) => f.type === "req" && f.op === "stop")).toMatchObject({
-      args: { reason: "revoked" },
-    });
+    expect(await machine.next((f) => f.type === "stop")).toEqual({ type: "stop", reason: "stop" });
     expect((await machine.closed).code).toBe(4003);
     await waitFor(
       async () => (await redis.get(deviceLeaseKey(deviceId))) === null,

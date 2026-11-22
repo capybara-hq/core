@@ -1,19 +1,19 @@
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk/device-protocol";
 import websocket, { type WebSocket } from "@fastify/websocket";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { errorBody } from "../errors.js";
-import type { MachineIdentity } from "./machines.js";
+import type { DialInAdmission } from "./gateway.js";
 
 /** The device connection route (environments spec §13.4). */
 export const DEVICE_CONNECT_ROUTE = "/device/connect";
-/** The header carrying the program's protocol version. */
+/** The header carrying the dial-in protocol the program speaks (`<name>/<major>`). */
 export const DEVICE_PROTOCOL_HEADER = "x-capybara-device-protocol";
 
 /** What the route needs from the gateway (`DialInGateway`). */
 export interface DeviceRoutesGateway {
-  authenticate(credential: string): Promise<MachineIdentity | null>;
+  /** Who the credential stands for and the provider serving its device; null when unknown. */
+  admit(credential: string): Promise<DialInAdmission>;
   /** Serves the upgraded socket (re-checks the credential with the socket paused). */
-  accept(socket: WebSocket, credential: string): Promise<void>;
+  accept(socket: WebSocket, credential: string, protocol: string): Promise<void>;
 }
 
 export interface DeviceRoutesOptions {
@@ -53,14 +53,39 @@ function bearer(req: FastifyRequest): string {
   return m?.[1] ?? "";
 }
 
+/** A `<name>/<major>` protocol split in two; null for anything else. */
+function protocolParts(v: string): { name: string; major: number } | null {
+  const m = /^([a-z][a-z0-9-]{0,40})\/([1-9][0-9]{0,3})$/.exec(v);
+  return m ? { name: m[1] as string, major: Number(m[2]) } : null;
+}
+
+/**
+ * The text of a 426: the device's provider speaks `expected`, the program `spoken`. A program of
+ * the same protocol family with a newer major is told the deployment is the one to upgrade; an
+ * older one (or another protocol) to update the program. The program's protocol is named only
+ * when it is a well-formed `<name>/<major>` (header input).
+ */
+export function protocolMismatchMessage(plugin: string, expected: string, spoken: unknown): string {
+  const theirs = typeof spoken === "string" ? protocolParts(spoken) : null;
+  const ours = protocolParts(expected);
+  const said = theirs
+    ? `this program speaks ${theirs.name}/${theirs.major}`
+    : "this program speaks another protocol";
+  const fix =
+    theirs && ours && theirs.name === ours.name && theirs.major > ours.major
+      ? "This deployment is older than the program; ask the platform's super admin to upgrade it, or install the program release that matches this deployment."
+      : "Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.";
+  return `This device is served by ${plugin}, which speaks ${expected}; ${said}. ${fix}`;
+}
+
 /**
  * Registers `GET /device/connect` (the gateway role only) in its own encapsulated scope with
  * `@fastify/websocket`: a raw Fastify route outside Nest, so neither the API's `AuthGuard` nor its
- * CSRF check applies; the route checks the machine credential itself, before the upgrade (401
- * `device.credential_invalid`), then the protocol header (426 `device.program_outdated`): only
- * {@link DEVICE_PROTOCOL_VERSION} (5) is served; an older program (protocol 4 among them) must
- * update. A newer program reads the kernel's protocol in the message and asks for the deployment
- * to be upgraded instead.
+ * CSRF check applies. Before the upgrade the route checks the machine credential (401
+ * `device.credential_invalid`), then the device's provider: off in the org, not loaded or not a
+ * dial-in provider is 403 `device.provider_unavailable`; then the protocol header, which must
+ * equal the provider's `permissions.dialIn.protocol` (426 `device.program_outdated`, naming the
+ * provider's protocol).
  * Must be called before Nest `app.init()`, on the root instance.
  *
  * `@fastify/websocket` sends every upgrade request of the server through the Fastify router; the
@@ -84,15 +109,15 @@ export async function registerDeviceConnectRoute(
   });
   await fastify.register(async (scope) => {
     await scope.register(websocket, { options: { maxPayload: opts.maxFrameBytes } });
-    const credentials = new WeakMap<FastifyRequest, string>();
+    const admitted = new WeakMap<FastifyRequest, { credential: string; protocol: string }>();
     scope.get(
       DEVICE_CONNECT_ROUTE,
       {
         websocket: true,
         preValidation: async (req, reply) => {
           const cred = bearer(req);
-          const identity = cred === "" ? null : await opts.gateway.authenticate(cred);
-          if (identity === null) {
+          const admission = cred === "" ? null : await opts.gateway.admit(cred);
+          if (admission === null) {
             return reply
               .code(401)
               .send(
@@ -102,39 +127,40 @@ export async function registerDeviceConnectRoute(
                 ),
               );
           }
+          if ("unavailable" in admission) {
+            return reply
+              .code(403)
+              .send(
+                errorBody(
+                  "device.provider_unavailable",
+                  admission.unavailable === "off"
+                    ? "The provider serving this device is switched off in its organization; ask an organization admin to switch it on."
+                    : "The provider serving this device cannot accept machine connections now; ask the platform's super admin to check it.",
+                ),
+              );
+          }
+          const { serving } = admission;
           const spoken = req.headers[DEVICE_PROTOCOL_HEADER];
-          if (spoken !== String(DEVICE_PROTOCOL_VERSION)) {
-            // the program's own protocol, named only when it is a plain number (header input)
-            const number =
-              typeof spoken === "string" && /^[0-9]{1,3}$/.test(spoken) ? Number(spoken) : null;
-            const theirs =
-              number !== null
-                ? `this capybara-device protocol ${number}`
-                : "this capybara-device an older protocol";
-            // a newer program than this deployment: the deployment is the one to upgrade
-            const fix =
-              number !== null && number > DEVICE_PROTOCOL_VERSION
-                ? "This deployment is older than the program; ask the platform's super admin to upgrade it, or install the capybara-device release that matches this deployment."
-                : "Update capybara-device on the machine (npm install -g @capybara-hq/device@next), then start it again.";
+          if (spoken !== serving.protocol) {
             return reply
               .code(426)
               .send(
                 errorBody(
                   "device.program_outdated",
-                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}, ${theirs}. ${fix}`,
+                  protocolMismatchMessage(serving.plugin, serving.protocol, spoken),
                 ),
               );
           }
-          credentials.set(req, cred);
+          admitted.set(req, { credential: cred, protocol: serving.protocol });
         },
       },
       (socket, req) => {
-        const cred = credentials.get(req);
-        if (cred === undefined) {
+        const a = admitted.get(req);
+        if (a === undefined) {
           socket.close(4400, "not authenticated");
           return;
         }
-        void opts.gateway.accept(socket, cred);
+        void opts.gateway.accept(socket, a.credential, a.protocol);
       },
     );
   });

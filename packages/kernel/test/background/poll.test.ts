@@ -25,9 +25,9 @@ import { PermissionProfilesService } from "../../src/conversations/permission-pr
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
@@ -1032,7 +1032,7 @@ describe("exact background revocation through the outbox and the worker", () => 
     // the owner's restricted baseline allows the host when the first task is admitted: written
     // by the machine's authenticated policy frame (B2 owner report), not by SQL
     await k.app
-      .get(DialInMachines)
+      .get(LocalMachineReports)
       .recordPolicyV3(
         machine.id,
         ownerFrame(1, { fullAccess: true, domains: [HOST] }),
@@ -1093,7 +1093,7 @@ describe("exact background revocation through the outbox and the worker", () => 
     // the owner removes the host from the baseline on the machine (a restricted-only change),
     // reported by the next authenticated policy frame
     await k.app
-      .get(DialInMachines)
+      .get(LocalMachineReports)
       .recordPolicyV3(machine.id, ownerFrame(2, { fullAccess: true, domains: [] }), "connection-1");
     expect((await intentOf(baselineTask)).state).toBe("revoked");
     expect((await intentOf(grantedTask)).state).toBe("background-running");
@@ -1124,7 +1124,7 @@ describe("exact background revocation through the outbox and the worker", () => 
       .select("id")
       .where("device_id", "=", f.deviceId)
       .executeTakeFirstOrThrow();
-    const machines = k.app.get(DialInMachines);
+    const machines = k.app.get(LocalMachineReports);
     await machines.recordPolicyV3(
       machine.id,
       ownerFrame(1, { fullAccess: true, domains: [HOST] }),
@@ -1210,7 +1210,7 @@ describe("exact background revocation through the outbox and the worker", () => 
       .executeTakeFirstOrThrow();
     // the owner allows no Full but OS-user project reach (B2 report)
     await k.app
-      .get(DialInMachines)
+      .get(LocalMachineReports)
       .recordPolicyV3(
         machine.id,
         ownerFrame(1, { fullAccess: false, domains: [], reach: "os-user" }),
@@ -1288,7 +1288,7 @@ describe("exact background revocation through the outbox and the worker", () => 
       .select("id")
       .where("device_id", "=", f.deviceId)
       .executeTakeFirstOrThrow();
-    const machines = k.app.get(DialInMachines);
+    const machines = k.app.get(LocalMachineReports);
     // Full allowed with OS-user reach (as a protocol 2 auto machine translates), no baseline host
     await machines.recordPolicyV3(
       machine.id,

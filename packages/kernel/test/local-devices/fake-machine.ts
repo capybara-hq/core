@@ -127,13 +127,13 @@ export class FakeMachine {
   }
 }
 
-/** Explicit test-only staged frames; the current fake's socket handshake remains protocol 2. */
+/** The protocol 5 hello body of a machine (the envelope carries the program facts). */
 export const stagedHello = (
   identity?: import("@capybara-hq/plugin-sdk/device-protocol").DeviceHello["runtimeIdentity"],
 ): import("@capybara-hq/plugin-sdk/device-protocol").DeviceHello => ({
-  ...HELLO,
-  protocol: 5,
-  transport: { maxFrameBytes: 69632 },
+  mode: "os",
+  roots: { ...DEFAULT_SANDBOX_ROOTS },
+  sessionIsolation: false,
   permissionSupport: {
     version: 2,
     restricted: null,
@@ -156,9 +156,3 @@ export const stagedHello = (
   instanceGeneration: identity?.instanceGeneration ?? "test-instance-1",
   ...(identity && { runtimeIdentity: identity }),
 });
-export async function stagedRequest(raw: string) {
-  const { parseDeviceFrame } = await import("@capybara-hq/plugin-sdk/device-protocol");
-  const frame = parseDeviceFrame(raw, "kernel");
-  if (frame.type !== "req") throw new Error("Expected staged kernel request");
-  return frame;
-}

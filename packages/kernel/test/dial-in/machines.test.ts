@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
+  DeviceHello,
   DeviceLocalPolicySummary,
   DeviceOwnerCeiling,
-  LegacyDeviceHello,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
@@ -12,6 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -26,6 +27,9 @@ import {
 } from "../helpers/runs.js";
 import { stagedHello } from "../local-devices/fake-machine.js";
 
+/** A hello body without the owner facts (recorded through `LocalMachineReports.recordHello`). */
+type HelloBody = Omit<DeviceHello, "permissionSupport" | "ownerCeiling" | "instanceGeneration">;
+
 /**
  * Machine rows and credentials (environments spec §13.2): one active machine per device
  * device, a credential accepted only while the machine, its device, the org and the
@@ -38,6 +42,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
 let machines: DialInMachines;
+let reports: LocalMachineReports;
 let devices: DevicesService;
 let txHost: TransactionHost;
 let ownerId: string;
@@ -49,6 +54,7 @@ beforeAll(async () => {
   db = legacyDbFor(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
   machines = k.app.get(DialInMachines);
+  reports = k.app.get(LocalMachineReports);
   devices = k.app.get(DevicesService);
   txHost = k.app.get(TransactionHost);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -179,18 +185,13 @@ describe("DialInMachines", () => {
   it("recordHello keeps the known features and a valid policy summary; a later hello replaces them", async () => {
     const a = await member();
     const m = await connected(a);
-    const hello: LegacyDeviceHello = {
-      type: "hello",
-      protocol: 2,
-      programVersion: "0.3.0",
-      os: "linux",
-      arch: "x64",
+    const hello: HelloBody = {
       mode: "os",
       roots: { workspace: "/w", skills: "/s", tmp: "/t" },
       sessionIsolation: false,
     };
     const policy = { allowedDomains: ["pypi.org"] };
-    await machines.recordHello(m.machineId, {
+    await reports.recordHello(m.machineId, {
       ...hello,
       features: [
         "policyOpId",
@@ -198,7 +199,7 @@ describe("DialInMachines", () => {
         "teleport",
         "networkReport",
         "mode",
-      ] as unknown as NonNullable<LegacyDeviceHello["features"]>,
+      ] as unknown as NonNullable<HelloBody["features"]>,
       policy,
     });
     expect(await machines.activeFor(m.deviceId)).toMatchObject({
@@ -212,12 +213,10 @@ describe("DialInMachines", () => {
     });
 
     // a malformed summary is none
-    await machines.recordHello(m.machineId, {
+    await reports.recordHello(m.machineId, {
       ...hello,
       features: ["policyOp"],
-      policy: { ...policy, allowedDomains: "x" } as unknown as NonNullable<
-        LegacyDeviceHello["policy"]
-      >,
+      policy: { ...policy, allowedDomains: "x" } as unknown as NonNullable<HelloBody["policy"]>,
     });
     expect(await machines.activeFor(m.deviceId)).toMatchObject({
       features: ["policyOp"],
@@ -225,7 +224,7 @@ describe("DialInMachines", () => {
     });
 
     // an older program reports neither: the kernel stops sending what it cannot do
-    await machines.recordHello(m.machineId, hello);
+    await reports.recordHello(m.machineId, hello);
     expect(await machines.activeFor(m.deviceId)).toMatchObject({ features: [], localPolicy: null });
     expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
       features: [],
@@ -256,12 +255,12 @@ describe("DialInMachines", () => {
         .orderBy("id")
         .execute();
     // a first report is no change, nor is the same report again
-    await machines.recordHelloV3(m.machineId, hello(report(1, false)));
-    await machines.recordHelloV3(m.machineId, hello(report(1, false)));
+    await reports.recordHelloV3(m.machineId, hello(report(1, false)));
+    await reports.recordHelloV3(m.machineId, hello(report(1, false)));
     expect(await reported()).toEqual([]);
     // the owner allowed running outside the sandbox: audited once, however many hellos say so
-    await machines.recordHelloV3(m.machineId, hello(report(2, true)));
-    await machines.recordHelloV3(m.machineId, hello(report(2, true)));
+    await reports.recordHelloV3(m.machineId, hello(report(2, true)));
+    await reports.recordHelloV3(m.machineId, hello(report(2, true)));
     expect(await reported()).toEqual([
       {
         actor_account_id: a,
@@ -311,7 +310,7 @@ describe("DialInMachines", () => {
         .orderBy("id")
         .execute();
     // the first summary and report a machine reports are no change
-    await machines.recordPolicyV3(m.machineId, {
+    await reports.recordPolicyV3(m.machineId, {
       type: "policy",
       policy: base,
       ownerCeiling: report(1, true),
@@ -322,12 +321,12 @@ describe("DialInMachines", () => {
     // again (protocol 4: the owner report's change, no summary mode)
     const k2 = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
     try {
-      const other = k2.app.get(DialInMachines);
+      const other = k2.app.get(LocalMachineReports);
       const next = { type: "policy", policy: base, ownerCeiling: report(2, false) };
       await Promise.all([
-        machines.recordPolicyV3(m.machineId, next),
+        reports.recordPolicyV3(m.machineId, next),
         other.recordPolicyV3(m.machineId, next),
-        machines.recordPolicyV3(m.machineId, next),
+        reports.recordPolicyV3(m.machineId, next),
         other.recordPolicyV3(m.machineId, next),
       ]);
     } finally {
@@ -335,9 +334,9 @@ describe("DialInMachines", () => {
     }
     // `capybara-device policy add allowedDomains files.example.com`
     const last = { allowedDomains: ["pypi.org", "files.example.com"] };
-    await machines.recordPolicy(m.machineId, base);
-    await machines.recordPolicy(m.machineId, last);
-    await machines.recordPolicy(m.machineId, last);
+    await reports.recordPolicy(m.machineId, base);
+    await reports.recordPolicy(m.machineId, last);
+    await reports.recordPolicy(m.machineId, last);
     const common = {
       by: a,
       via: "device",
@@ -366,15 +365,11 @@ describe("DialInMachines", () => {
     ]);
   });
 
-  it("recordHello stores what the program reported; touch writes at most every 60 s", async () => {
+  it("recordConnect and recordHello store what the program reported; touch writes at most every 60 s", async () => {
     const a = await member();
     const m = await connected(a);
-    await machines.recordHello(m.machineId, {
-      type: "hello",
-      protocol: 2,
-      programVersion: "0.2.0",
-      os: "linux",
-      arch: "arm64",
+    await machines.recordConnect(m.machineId, { version: "0.2.0", os: "linux", arch: "arm64" });
+    await reports.recordHello(m.machineId, {
       mode: "docker",
       roots: { workspace: "/w", skills: "/s", tmp: "/t" },
       sessionIsolation: false,
@@ -420,12 +415,7 @@ describe("DialInMachines", () => {
   it("derives a machine's mode from its owner report only, fail closed without one", async () => {
     const a = await member();
     const m = await connected(a);
-    const hello: LegacyDeviceHello = {
-      type: "hello",
-      protocol: 2,
-      programVersion: "0.2.0",
-      os: "linux",
-      arch: "x64",
+    const hello: HelloBody = {
       mode: "os",
       roots: { workspace: "/w", skills: "/s", tmp: "/t" },
       sessionIsolation: false,
@@ -433,16 +423,16 @@ describe("DialInMachines", () => {
     };
     // protocol 4 has no legacy owner state: a hello without a report is sandbox, whatever summary
     // an older program would have sent
-    await machines.recordHello(m.machineId, hello);
+    await reports.recordHello(m.machineId, hello);
     expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
     expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
     // an authenticated report allowing outside the sandbox is auto
-    await machines.recordHelloV3(m.machineId, {
+    await reports.recordHelloV3(m.machineId, {
       ...stagedHello(),
       ownerCeiling: { ...stagedHello().ownerCeiling, sequence: 1, outsideSandbox: true },
     });
     expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("auto");
-    await machines.recordHelloV3(m.machineId, {
+    await reports.recordHelloV3(m.machineId, {
       ...stagedHello(),
       ownerCeiling: {
         ...stagedHello().ownerCeiling,
@@ -455,7 +445,7 @@ describe("DialInMachines", () => {
   });
 });
 
-it.each(["hello", "policy", "settle"] as const)(
+it.each(["hello", "policy"] as const)(
   "%s takes device authority before the machine row while credential revocation runs on another connection",
   async (kind) => {
     const { vi } = await import("vitest");
@@ -463,30 +453,8 @@ it.each(["hello", "policy", "settle"] as const)(
       "../../src/sandbox/permission-ceiling-writes.js"
     );
     const { KernelDb } = await import("../../src/infra/database/kernel-db.js");
-    const { DevicePolicyService } = await import(
-      "../../src/local-devices/device-policy.service.js"
-    );
     const m = await connected(await member());
     const policy = { allowedDomains: ["example.com"] };
-    const opId = randomUUID();
-    await db
-      .updateTable("device_machines")
-      .set({
-        pending_policy_ops: JSON.stringify([
-          {
-            id: opId,
-            add: [],
-            remove: ["old.example.com"],
-            source: { accountId: ownerId, via: "web", approvalId: null },
-            status: "sent",
-            sentAt: Date.now(),
-            resolveAt: Date.now() + 60000,
-            until: Date.now() + 3600000,
-          },
-        ]),
-      })
-      .where("id", "=", m.machineId)
-      .execute();
     let signalReady!: () => void, release!: () => void;
     const ready = new Promise<void>((r) => {
         signalReady = r;
@@ -513,24 +481,13 @@ it.each(["hello", "policy", "settle"] as const)(
     });
     const write =
       kind === "hello"
-        ? machines.recordHello(m.machineId, {
-            type: "hello",
-            protocol: 2,
-            programVersion: "test",
-            os: "linux",
-            arch: "x64",
+        ? reports.recordHello(m.machineId, {
             mode: "os",
             roots: { workspace: "/w", skills: "/s", tmp: "/t" },
             sessionIsolation: false,
             policy,
           })
-        : kind === "policy"
-          ? machines.recordPolicy(m.machineId, policy)
-          : txHost.run(() =>
-              k.app
-                .get(DevicePolicyService)
-                .settleIn({ machineId: m.machineId, opId }, { outcome: "applied", policy }),
-            );
+        : reports.recordPolicy(m.machineId, policy);
     const writeResult = write.then(
       () => null,
       (e) => e,

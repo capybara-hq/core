@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import {
-  DEVICE_PROTOCOL_VERSION,
-  type DeviceFrame,
-  type DeviceResponse,
-  type KernelCancel,
-  type KernelRequest,
-  parseDeviceFrame,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+  DIAL_IN_PROTOCOL_RE,
+  type DialInMachineFrame,
+  type ExtensionContext,
+  parseDialInMachineFrame,
+} from "@capybara-hq/plugin-sdk";
 import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
@@ -15,6 +12,8 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { storedResult, wireFrameOf } from "./envelope.js";
+import { DialInHandlers, type DialInServing, type DialInUnavailable } from "./handlers.js";
 import {
   DEVICE_TAKEN_PREFIX,
   deviceLeaseKey,
@@ -27,13 +26,8 @@ import {
   deviceTakeoverTopic,
   deviceTransportKey,
 } from "./keys.js";
-import { DialInMachines, type MachineIdentity } from "./machines.js";
-import {
-  connectionChangedMessage,
-  GATEWAY_NOT_SENT,
-  LIST_TTL_MARGIN_MS,
-  STOP_MACHINE,
-} from "./relay.js";
+import { DialInMachines, type MachineIdentity, type MachineRevokedMessage } from "./machines.js";
+import { LIST_TTL_MARGIN_MS } from "./relay.js";
 
 /** WebSocket close codes the gateway uses (the program reads 4002 and 4003). */
 export const DEVICE_CLOSE = {
@@ -49,13 +43,16 @@ export const DEVICE_CLOSE = {
   replaced: 4002,
   /** The machine's credential was revoked: the program exits. */
   revoked: 4003,
-  /** No valid `hello` first, or a frame that is not the current protocol from a device. */
+  /**
+   * No valid `hello` first, a frame that is no valid envelope or does not fit the negotiated
+   * capacity, or the provider refused the hello (the reason carries its code).
+   */
   protocol: 4400,
   /** The lease could not be claimed in time: reconnect. */
   claimTimeout: 4409,
 } as const;
 
-/** How long the program has to send `hello` after the upgrade. */
+/** How long the program has to send `hello` after the upgrade, and the provider to answer it. */
 export const HELLO_TIMEOUT_MS = 10_000;
 /** How often a connection is pinged; two pings without a pong close it. */
 export const PING_INTERVAL_MS = 20_000;
@@ -122,6 +119,16 @@ return 1
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** A WebSocket close reason is at most 123 UTF-8 bytes. */
+const closeReason = (text: string): string => {
+  let out = text;
+  while (Buffer.byteLength(out) > 123) out = out.slice(0, -1);
+  return out;
+};
+
+/** Why a provider's `onClose` is called. */
+type CloseReason = "offline" | "replaced" | "revoked" | "deleted";
+
 type State = "hello" | "claiming" | "holding" | "closed";
 
 /**
@@ -142,14 +149,22 @@ class DeviceConnection {
   private chain: Promise<void> = Promise.resolve();
   /** Resolves once the lease is handed back (or was never held). */
   private released: Promise<void> | undefined;
-  /** The hello's record, then each policy frame's, one after another (never rejects). */
-  private recorded: Promise<void> = Promise.resolve();
+  /** The hello's handling, then each event's, one after another (never rejects). */
+  private handled: Promise<void> = Promise.resolve();
+  /** Aborted when the connection closes: the provider's `onHello` stops waiting. */
+  private readonly ended = new AbortController();
+  /** The provider whose `onHello` accepted this connection: it gets `onClose`. */
+  private accepted: DialInServing | undefined;
+  /** Why the connection closed, for the provider's `onClose` (offline unless set). */
+  private closeReason: CloseReason = "offline";
 
   constructor(
     private readonly gw: DialInGateway,
     private readonly socket: WebSocket,
     readonly identity: MachineIdentity,
     private readonly credential: string,
+    /** The protocol the route admitted (the serving provider's `permissions.dialIn.protocol`). */
+    private readonly protocol: string,
   ) {}
 
   /**
@@ -157,6 +172,7 @@ class DeviceConnection {
    * Random and separate from the lease token, which stays internal to the kernel.
    */
   readonly connectionId = randomUUID();
+  /** The negotiated capacity: the smaller of the machine's and the kernel's frame limits. */
   private effectiveCap: number | undefined;
   /** The program run the hello named (`programRunId`), published with the capacity. */
   private programRunId: string | undefined;
@@ -216,11 +232,11 @@ class DeviceConnection {
   }
 
   private async onFrame(text: string): Promise<void> {
-    let frame: DeviceFrame;
+    let frame: DialInMachineFrame;
     try {
-      // protocol 4 only: an older hello (or any frame that is not protocol 4, such as a hello
-      // whose protocol differs from the upgrade header's) fails the strict parse and closes 4400
-      frame = parseDeviceFrame(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes());
+      // the envelope only (the body is the provider's), bounded by the negotiated capacity once
+      // the hello set it, by the kernel's own limit before
+      frame = parseDialInMachineFrame(text, this.effectiveCap ?? this.gw.maxFrameBytes());
       if (this.effectiveCap !== undefined && this.gw.maxFrameBytes() < this.effectiveCap)
         throw new Error("Frame capacity changed; reconnect");
     } catch (e) {
@@ -236,10 +252,11 @@ class DeviceConnection {
         this.close(DEVICE_CLOSE.protocol, "hello sent twice");
         return;
       }
-      if (frame.protocol !== DEVICE_PROTOCOL_VERSION) {
-        this.close(DEVICE_CLOSE.protocol, "unsupported protocol");
+      if (frame.protocol !== this.protocol) {
+        this.close(DEVICE_CLOSE.protocol, `unsupported protocol; expected ${this.protocol}`);
         return;
       }
+      // the machine's announced limit never raises the kernel's own
       this.effectiveCap = Math.min(frame.transport.maxFrameBytes, this.gw.maxFrameBytes());
       if (this.effectiveCap < 1024 || Buffer.byteLength(text) > this.effectiveCap) {
         this.close(DEVICE_CLOSE.protocol, "Check frame limits: hello cannot fit");
@@ -248,68 +265,157 @@ class DeviceConnection {
       clearTimeout(this.helloTimer);
       this.programRunId = frame.programRunId;
       this.state = "claiming";
-      // set before the first await: a policy frame that follows is recorded after the hello
-      this.recorded = (async () => {
-        if (!(await this.claim())) return;
-        try {
-          // the hello carries the authenticated owner report and runtime facts: recorded with
-          // the connection it opened (the id the machine gets in `ready`)
-          await this.gw.machines.recordHelloV3(this.identity.machineId, frame, this.connectionId);
-        } catch (e) {
-          this.gw.log.warn("could not record a device hello", {
-            deviceId: this.deviceId,
-            error: errMsg(e),
-          });
-        }
-      })();
-      await this.recorded;
+      // set before the first await: an event that follows is handled after the hello
+      const hello = frame;
+      this.handled = this.welcome(hello);
+      await this.handled;
       return;
     }
-    if (frame.type === "policy" && this.state !== "hello") {
-      // after the hello's record and the earlier policy frames, in the order they came
-      this.recorded = this.recorded.then(async () => {
-        if (this.state === "closed") return;
-        try {
-          await this.gw.machines.recordPolicyV3(this.identity.machineId, frame, this.connectionId);
-        } catch (e) {
-          this.gw.log.warn("could not record a device policy change", {
-            deviceId: this.deviceId,
-            error: errMsg(e),
-          });
-        }
-      });
-      await this.recorded;
+    if (frame.type === "event") {
+      if (this.state === "hello") {
+        this.close(DEVICE_CLOSE.protocol, "hello expected");
+        return;
+      }
+      // after the hello and the earlier events, in the order they came
+      const body = frame.body;
+      this.handled = this.handled.then(() => this.dispatchEvent(body));
+      await this.handled;
       return;
     }
-    if (frame.type !== "res" || this.state === "hello" || !this.ready) {
+    if (this.state === "hello" || !this.ready) {
       this.close(DEVICE_CLOSE.protocol, "hello expected");
       return;
     }
-    // results are stored in any state after hello: the program sends those it kept while
-    // disconnected right after its hello, before the lease is claimed
+    // results are stored in any state after ready: the program sends those it kept while
+    // disconnected right after its ready
     await this.store(frame);
   }
 
   /**
-   * Stores one result and announces it (the relay's wire, relay.ts), only for a request taken for
-   * this device (ruling R20); anything else is dropped.
+   * The accepted hello: claims the lease, records the program facts, then asks the provider
+   * (`onHello`, within {@link HELLO_TIMEOUT_MS}); only an accepted hello gets `ready`. A refusal, a
+   * failure or the timeout releases the lease and closes 4400 with the provider's code.
    */
-  private async store(
-    res: DeviceResponse,
-    /** The gateway's own refusal of a request it never sent (never a device's frame). */
-    notSent = false,
-  ): Promise<void> {
+  private async welcome(hello: Extract<DialInMachineFrame, { type: "hello" }>): Promise<void> {
+    if (!(await this.claim())) return;
     try {
-      // the kernel-internal fields go next to the device's frame, which the relay strips before
-      // its strict parse. The device's frame was rebuilt by the strict parser; the marker is
-      // dropped from it all the same, so only this gateway's own refusal can carry it
-      const { [GATEWAY_NOT_SENT]: _never, ...frame } = res as typeof res & { notSent?: unknown };
-      const tagged = {
-        ...frame,
-        connectionId: this.connectionId,
-        maxFrameBytes: this.effectiveCap,
-        ...(notSent && { [GATEWAY_NOT_SENT]: true }),
-      };
+      await this.gw.machines.recordConnect(this.identity.machineId, hello.program);
+    } catch (e) {
+      this.gw.log.warn("could not record a device connection", {
+        deviceId: this.deviceId,
+        error: errMsg(e),
+      });
+    }
+    if (this.state !== "holding") return;
+    let serving: DialInServing | DialInUnavailable;
+    try {
+      serving = await this.gw.handlers.forDevice(this.deviceId);
+    } catch (e) {
+      this.gw.log.warn("could not read a device's dial-in provider", {
+        deviceId: this.deviceId,
+        error: errMsg(e),
+      });
+      await this.close(DEVICE_CLOSE.internal, "internal error");
+      return;
+    }
+    if ("unavailable" in serving || serving.protocol !== this.protocol) {
+      await this.close(DEVICE_CLOSE.protocol, "the device's provider is unavailable");
+      return;
+    }
+    const verdict = await this.askProvider(serving, hello.body);
+    if (this.state !== "holding") return;
+    if (!verdict.ok) {
+      this.gw.log.info("device provider refused a hello", {
+        deviceId: this.deviceId,
+        plugin: serving.plugin,
+        code: verdict.code,
+      });
+      await this.close(DEVICE_CLOSE.protocol, closeReason(`${verdict.code}: ${verdict.message}`));
+      return;
+    }
+    this.accepted = serving;
+    try {
+      await this.sendReady();
+    } catch (e) {
+      this.gw.log.warn("could not open a device connection", {
+        deviceId: this.deviceId,
+        error: errMsg(e),
+      });
+      await this.close(DEVICE_CLOSE.internal, "internal error");
+    }
+  }
+
+  /** The provider's answer to the hello body; a throw or the timeout is a refusal. */
+  private async askProvider(
+    serving: DialInServing,
+    body: unknown,
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    const signal = AbortSignal.any([this.ended.signal, AbortSignal.timeout(HELLO_TIMEOUT_MS)]);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const answer = serving.internal
+        ? serving.handler.onHello(this.deviceId, body, signal, this.facts())
+        : serving.handler.onHello(this.deviceId, body, signal);
+      const r = await Promise.race([
+        answer,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("the provider did not answer the hello in time")),
+            HELLO_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      if (r?.ok === true) return { ok: true };
+      if (r?.ok === false && typeof r.code === "string")
+        return { ok: false, code: r.code, message: String(r.message ?? "") };
+      return { ok: false, code: "provider.invalid_answer", message: "no valid answer" };
+    } catch (e) {
+      this.gw.log.warn("device provider failed a hello", {
+        deviceId: this.deviceId,
+        plugin: serving.plugin,
+        error: errMsg(e),
+      });
+      return { ok: false, code: "provider.failed", message: "the provider failed the hello" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Hands one event body to the provider that accepted the hello (dropped otherwise). */
+  private async dispatchEvent(body: unknown): Promise<void> {
+    if (this.state === "closed" || this.accepted === undefined) return;
+    try {
+      // read again: a provider switched off (or replaced) since the hello gets no more frames
+      const serving = await this.gw.handlers.forDevice(this.deviceId);
+      if ("unavailable" in serving || serving.plugin !== this.accepted.plugin) return;
+      if (serving.internal) await serving.handler.onFrame?.(this.deviceId, body, this.facts());
+      else await serving.handler.onFrame?.(this.deviceId, body);
+    } catch (e) {
+      this.gw.log.warn("device provider failed a frame", {
+        deviceId: this.deviceId,
+        error: errMsg(e),
+      });
+    }
+  }
+
+  /** The authenticated connection, for a kernel-internal handler only. */
+  private facts(): { machineId: string; connectionId: string } {
+    return { machineId: this.identity.machineId, connectionId: this.connectionId };
+  }
+
+  /**
+   * Stores one result and announces it (the relay's wire, envelope.ts), only for a request taken
+   * for this device (ruling R20); anything else is dropped. `notSent`: the gateway's own refusal
+   * of a request it never sent (never a machine's frame).
+   */
+  private async store(res: { id: string; body?: unknown }, notSent?: string): Promise<void> {
+    if (this.effectiveCap === undefined) return;
+    try {
+      const tagged = storedResult(
+        res,
+        { connectionId: this.connectionId, maxFrameBytes: this.effectiveCap },
+        notSent,
+      );
       const stored = await this.gw.redis.eval(
         ACCEPT,
         2,
@@ -346,6 +452,7 @@ class DeviceConnection {
       await this.subscribe(deviceTakeoverTopic(env), (p) => {
         const token = (p as { token?: unknown } | null)?.token;
         if (this.state === "holding" && token !== this.token) {
+          this.closeReason = "replaced";
           this.close(DEVICE_CLOSE.replaced, "replaced by a newer connection");
         }
       });
@@ -380,35 +487,16 @@ class DeviceConnection {
       lease.lost.addEventListener("abort", onLost, { once: true });
       await this.subscribe(deviceReqTopic(env), () => this.drain());
       await this.subscribe(deviceRevokedTopic(env), (p) => {
-        const id = (p as { machineId?: unknown } | null)?.machineId;
-        if (id !== this.identity.machineId) return;
+        const message = p as Partial<MachineRevokedMessage> | null;
+        if (message?.machineId !== this.identity.machineId) return;
+        this.closeReason = message.reason === "deleted" ? "deleted" : "revoked";
         // one more drain first: a stop frame whose nudge was lost still goes out before the close
         this.drain();
         this.chain = this.chain.then(() =>
           this.close(DEVICE_CLOSE.revoked, "the machine was disconnected"),
         );
       });
-      if (this.state !== "holding") return false;
-      this.gw.log.info("device connected", {
-        deviceId: env,
-        machineId: this.identity.machineId,
-      });
-      const raw = JSON.stringify({
-        type: "ready",
-        connectionId: this.connectionId,
-        maxFrameBytes: this.effectiveCap,
-      });
-      if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
-        throw new Error("Check frame limits: ready cannot fit");
-      parseDeviceFrame(raw, "kernel", this.effectiveCap);
-      // published before ready: a reader that sees the machine ready also finds its capacity
-      await this.publishCapacity();
-      if (this.state !== "holding") return false;
-      this.socket.send(raw);
-      this.ready = true;
-      // what was queued while nobody held the machine
-      this.drain();
-      return true;
+      return this.state === "holding";
     } catch (e) {
       this.gw.log.warn("could not claim a device connection", {
         deviceId: env,
@@ -417,6 +505,24 @@ class DeviceConnection {
       this.close(DEVICE_CLOSE.internal, "internal error");
       return false;
     }
+  }
+
+  /** Publishes the capacity, sends `ready` and drains what was queued meanwhile. */
+  private async sendReady(): Promise<void> {
+    const raw = JSON.stringify({ type: "ready", connectionId: this.connectionId });
+    if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
+      throw new Error("Check frame limits: ready cannot fit");
+    // published before ready: a reader that sees the machine ready also finds its capacity
+    await this.publishCapacity();
+    if (this.state !== "holding") return;
+    this.gw.log.info("device connected", {
+      deviceId: this.deviceId,
+      machineId: this.identity.machineId,
+    });
+    this.socket.send(raw);
+    this.ready = true;
+    // what was queued while nobody held the machine
+    this.drain();
   }
 
   /** Subscribes for this connection; a subscription that completes after the close is ended. */
@@ -440,8 +546,9 @@ class DeviceConnection {
 
   private async drainOnce(): Promise<void> {
     const key = deviceReqKey(this.deviceId);
-    while (this.state === "holding" && this.ready) {
-      if (this.effectiveCap !== undefined && this.gw.maxFrameBytes() < this.effectiveCap) {
+    while (this.state === "holding" && this.ready && this.effectiveCap !== undefined) {
+      const cap = this.effectiveCap;
+      if (this.gw.maxFrameBytes() < cap) {
         await this.close(DEVICE_CLOSE.protocol, "Frame capacity changed; reconnect");
         return;
       }
@@ -457,79 +564,37 @@ class DeviceConnection {
         String(LIST_TTL_MARGIN_MS),
       )) as string | null;
       if (raw === null) return;
-      let frame: KernelRequest | KernelCancel;
-      let wire = raw;
-      try {
-        const {
-          connectionId,
-          maxFrameBytes,
-          [STOP_MACHINE]: stopFor,
-          ...request
-        } = JSON.parse(raw) as Record<string, unknown>;
-        // a `stop` is fenced to the machine it was queued for (relay.send): a newer machine of
-        // the device never gets an older one's stop
-        if (stopFor !== undefined && stopFor !== this.identity.machineId) {
-          this.gw.log.warn("dropping a stop queued for another machine of the device", {
-            deviceId: this.deviceId,
-          });
-          continue;
-        }
-        // a cancel carries no capacity-sized payload and must reach the machine after a
-        // reconnect too (an operation keeps running across a socket blip, as in protocol 2);
-        // so does a machine's `stop`, fenced to the machine above instead of the socket
-        const unfenced =
-          request.type === "cancel" || (request.op === "stop" && stopFor !== undefined);
-        if (
-          !unfenced &&
-          (connectionId !== this.connectionId || maxFrameBytes !== this.effectiveCap)
-        ) {
-          if (request.type === "req" && typeof request.id === "string")
-            await this.store(
-              {
-                type: "res",
-                id: request.id,
-                ok: false,
-                error: {
-                  kind: "error",
-                  message: connectionChangedMessage(String(request.op)),
-                },
-              },
-              true,
-            );
-          continue;
-        }
-        wire = JSON.stringify(request);
-        frame = parseDeviceFrame(wire, "kernel", this.effectiveCap) as KernelRequest | KernelCancel;
-      } catch (e) {
-        this.gw.log.warn("dropping an invalid device request", {
-          deviceId: this.deviceId,
-          error: errMsg(e),
-        });
+      // a request goes out only on the connection it was fenced to, a stop only to its machine,
+      // without the kernel-internal fields (envelope.ts)
+      const decision = wireFrameOf(raw, {
+        connectionId: this.connectionId,
+        maxFrameBytes: cap,
+        machineId: this.identity.machineId,
+      });
+      if ("drop" in decision) {
+        this.gw.log.warn(`dropping ${decision.drop}`, { deviceId: this.deviceId });
         continue;
       }
+      if ("refuse" in decision) {
+        await this.store({ id: decision.id }, decision.refuse);
+        continue;
+      }
+      const { send, text } = decision;
       const ttlMs =
-        this.gw.graceMs() + (frame.type === "req" ? frame.deadlineMs : 0) + LIST_TTL_MARGIN_MS;
+        this.gw.graceMs() + (send.type === "req" ? send.deadlineMs : 0) + LIST_TTL_MARGIN_MS;
       if (this.state !== "holding" || this.socket.readyState !== this.socket.OPEN) {
         // closed while popping: back to the head of the list for the next connection
         await this.gw.redis.eval(PUT_BACK, 1, key, raw, String(ttlMs));
         return;
       }
-      if (
-        frame.type === "req" &&
-        Buffer.byteLength(wire) > (this.effectiveCap ?? this.gw.maxFrameBytes())
-      ) {
-        await this.store({
-          type: "res",
-          id: frame.id,
-          ok: false,
-          error: {
-            kind: "error",
-            message: "The request is larger than devices.local.maxFrameBytes",
-          },
-        });
+      if (send.type === "req" && Buffer.byteLength(text) > cap) {
+        await this.store(
+          { id: send.id },
+          `The request is larger than the connection's frame limit of ${cap} bytes`,
+        );
         continue;
       }
-      this.socket.send(wire);
+      this.socket.send(text);
     }
   }
 
@@ -552,7 +617,7 @@ class DeviceConnection {
     this.missedPongs++;
     this.socket.ping();
     // a backstop for a lost nudge (the bus delivers at most once)
-    if (this.state === "holding") {
+    if (this.state === "holding" && this.ready) {
       void this.publishCapacity().then(
         () => {
           this.publishFailures = 0;
@@ -583,6 +648,7 @@ class DeviceConnection {
     try {
       const id = await this.gw.machines.authenticate(this.credential);
       if (id === null || id.machineId !== this.identity.machineId) {
+        this.closeReason = "revoked";
         this.close(DEVICE_CLOSE.revoked, "the machine was disconnected");
       }
     } catch (e) {
@@ -617,11 +683,15 @@ class DeviceConnection {
     return this.shutdown();
   }
 
-  /** Stops timers and subscriptions and releases the lease (a lost one is abandoned). */
+  /**
+   * Stops timers and subscriptions, releases the lease (a lost one is abandoned) and tells the
+   * provider that accepted the hello why the connection ended (`onClose`).
+   */
   shutdown(): Promise<void> {
     if (this.released) return this.released;
     this.state = "closed";
     this.ready = false;
+    this.ended.abort();
     clearTimeout(this.helloTimer);
     clearTimeout(this.pingTimer);
     const lease = this.lease;
@@ -646,21 +716,53 @@ class DeviceConnection {
           machineId: this.identity.machineId,
         });
       }
+      this.tellClosed();
     })();
     return this.released;
   }
+
+  /** The provider's `onClose`, after the lease is handed back; its failure is only logged. */
+  private tellClosed(): void {
+    const accepted = this.accepted;
+    if (accepted === undefined) return;
+    this.accepted = undefined;
+    try {
+      const r = accepted.handler.onClose?.(this.deviceId, this.closeReason) as unknown;
+      if (r instanceof Promise)
+        r.catch((e: unknown) =>
+          this.gw.log.warn("device provider failed onClose", {
+            deviceId: this.deviceId,
+            error: errMsg(e),
+          }),
+        );
+    } catch (e) {
+      this.gw.log.warn("device provider failed onClose", {
+        deviceId: this.deviceId,
+        error: errMsg(e),
+      });
+    }
+  }
 }
 
+/** What the device connection route learns before the upgrade: who connects and what it speaks. */
+export type DialInAdmission =
+  | { identity: MachineIdentity; serving: DialInServing }
+  | { identity: MachineIdentity; unavailable: DialInUnavailable["unavailable"] }
+  | null;
+
 /**
- * The gateway role's half of the device relay (environments spec §13.4): holds the WebSocket
- * connections of connected machines (`GET /device/connect`, device-routes.ts). One connection per
- * device across replicas, under the lease `capk:device-lease:<deviceId>` (the newest
- * connection wins: it publishes `device.takeover.<deviceId>` and the holder lets go). The
- * holder drains `capk:device-req:<deviceId>` on every `device.req.<deviceId>` nudge,
- * once after claiming and on every ping, marking each forwarded request taken for its device
- * (`capk:device-taken:<id>`, TTL the reconnect grace plus the request's deadline plus a margin).
- * A `res` is accepted only for a request taken for the socket's device: it is stored under
- * `capk:device-res:<id>` for the rest of that TTL and published on `device.res.<id>`.
+ * The gateway role's half of the dial-in relay (environments spec §13.4): holds the WebSocket
+ * connections of connected machines (`GET /device/connect`, routes.ts) and speaks the dial-in
+ * envelope with them. One connection per device across replicas, under the lease
+ * `capk:device-lease:<deviceId>` (the newest connection wins: it publishes
+ * `device.takeover.<deviceId>` and the holder lets go). A hello is answered by the device's
+ * provider (`DialInHandler.onHello`, {@link DialInHandlers}) once the lease is held; only an
+ * accepted hello gets `ready`. The holder drains `capk:device-req:<deviceId>` on every
+ * `device.req.<deviceId>` nudge, once after `ready` and on every ping, marking each forwarded
+ * request taken for its device (`capk:device-taken:<id>`, TTL the reconnect grace plus the
+ * request's deadline plus a margin). A `res` is accepted only for a request taken for the socket's
+ * device: it is stored under `capk:device-res:<id>` for the rest of that TTL and published on
+ * `device.res.<id>`. An `event` goes to the provider's `onFrame`; the close to its `onClose`.
  * `device.revoked.<deviceId>` closes the connection of that machine only (ruling R16). The
  * sockets are this process's own; everything other replicas need is in Redis.
  */
@@ -674,10 +776,8 @@ export class DialInGateway {
 
   constructor(
     @Inject(DialInMachines)
-    readonly machines: Pick<
-      DialInMachines,
-      "authenticate" | "recordHelloV3" | "recordPolicyV3" | "touch"
-    >,
+    readonly machines: Pick<DialInMachines, "authenticate" | "recordConnect" | "touch">,
+    @Inject(DialInHandlers) readonly handlers: Pick<DialInHandlers, "forDevice">,
     @Inject(LockService) readonly locks: Pick<LockService, "hold">,
     @Inject(KERNEL_BUS) readonly bus: ExtensionContext["bus"],
     @Inject(REDIS) readonly redis: Redis,
@@ -697,35 +797,51 @@ export class DialInGateway {
     return this.config.get().devices.local.maxFrameBytes;
   }
 
-  /** Who a `Bearer` machine credential stands for, or null (checked before the upgrade). */
-  authenticate(credential: string): Promise<MachineIdentity | null> {
-    return this.machines.authenticate(credential);
+  /**
+   * Who a `Bearer` machine credential stands for and the provider serving its device (checked
+   * before the upgrade): null for an unknown or revoked credential.
+   */
+  async admit(credential: string): Promise<DialInAdmission> {
+    const identity = await this.machines.authenticate(credential);
+    if (identity === null) return null;
+    const serving = await this.handlers.forDevice(identity.deviceId);
+    return "unavailable" in serving
+      ? { identity, unavailable: serving.unavailable }
+      : { identity, serving };
   }
 
   /**
-   * Serves one upgraded socket of a machine until it closes (protocol 4 only: the route refused any
-   * other header with 426, and a hello that is not protocol 4 closes 4400). The credential is
-   * checked again here, with the socket paused, so a credential revoked since the upgrade check
-   * never gets a connection.
+   * Serves one upgraded socket of a machine until it closes, speaking `protocol` (the route
+   * admitted it). The credential and the provider are checked again here, with the socket paused,
+   * so a credential revoked or a provider switched off since the upgrade check never gets a
+   * connection.
    */
-  async accept(socket: WebSocket, credential: string): Promise<void> {
+  async accept(socket: WebSocket, credential: string, protocol: string): Promise<void> {
     socket.pause();
     try {
       if (this.stopping) {
         socket.close(DEVICE_CLOSE.shutdown, "shutting down");
         return;
       }
-      const identity = await this.authenticate(credential);
+      const admission = await this.admit(credential);
       if (socket.readyState !== socket.OPEN) return;
       if (this.stopping) {
         socket.close(DEVICE_CLOSE.shutdown, "shutting down");
         return;
       }
-      if (!identity) {
+      if (!admission) {
         socket.close(DEVICE_CLOSE.revoked, "Reconnect with a current credential");
         return;
       }
-      const conn = new DeviceConnection(this, socket, identity, credential);
+      if (
+        !("serving" in admission) ||
+        admission.serving.protocol !== protocol ||
+        !DIAL_IN_PROTOCOL_RE.test(protocol)
+      ) {
+        socket.close(DEVICE_CLOSE.protocol, "the device's provider is unavailable");
+        return;
+      }
+      const conn = new DeviceConnection(this, socket, admission.identity, credential, protocol);
       this.connections.add(conn);
       conn.start();
     } catch (error) {

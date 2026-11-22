@@ -34,6 +34,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { stagedHello } from "../local-devices/fake-machine-v3.js";
+import { answering } from "../local-devices/test-holder.js";
 
 /**
  * The SandboxService acquire gates of the permission activation plan (W1-E):
@@ -352,26 +353,28 @@ function deviceAnswers(events: string[]) {
   const relay = k.app.get(DialInRelay);
   const state = { lose: false, sent: [] as Record<string, unknown>[] };
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
-  vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
-    expect(op).toBe("bindInstance");
-    events.push("bindInstance");
-    state.sent.push(args);
-    if (state.lose) throw new Error("device.offline: the answer was lost");
-    const g = args.instanceGeneration as string;
-    return {
-      instanceId: args.instanceId as string,
-      instanceGeneration: g,
-      bindingId: args.bindingId as string,
-      runtimeIdentity: {
-        runtimeHash: "a".repeat(64),
-        helperHash: "b".repeat(64),
-        imageFingerprint: "c".repeat(64),
+  vi.spyOn(relay, "request").mockImplementation(
+    answering(async (op, args) => {
+      expect(op).toBe("bindInstance");
+      events.push("bindInstance");
+      state.sent.push(args);
+      if (state.lose) throw new Error("device.offline: the answer was lost");
+      const g = args.instanceGeneration as string;
+      return {
+        instanceId: args.instanceId as string,
         instanceGeneration: g,
-      },
-      permissionSupport: support,
-      ownerCeiling: stagedHello().ownerCeiling,
-    };
-  });
+        bindingId: args.bindingId as string,
+        runtimeIdentity: {
+          runtimeHash: "a".repeat(64),
+          helperHash: "b".repeat(64),
+          imageFingerprint: "c".repeat(64),
+          instanceGeneration: g,
+        },
+        permissionSupport: support,
+        ownerCeiling: stagedHello().ownerCeiling,
+      };
+    }),
+  );
   return state;
 }
 

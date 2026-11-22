@@ -467,8 +467,13 @@ export const ERROR_CODES = {
   "device.files_on_device": 409,
   /** The local device's machine is not connected now (no replica holds its lease). */
   "device.offline": 503,
-  /** The local device's machine runs a `capybara-device` too old for this kernel; update it. */
+  /** The device's machine speaks another dial-in protocol than its provider declares. */
   "device.program_outdated": 426,
+  /**
+   * A machine connected for a device whose provider is off in the org, not loaded, or serves no
+   * dial-in channel (`GET /device/connect`).
+   */
+  "device.provider_unavailable": 403,
   /**
    * The device's machine refused a network policy change (it runs in Docker mode or an older
    * program, or a host is invalid); the message says how to allow it on the machine.

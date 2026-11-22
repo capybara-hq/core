@@ -341,22 +341,6 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
-  // `local-devices/policy-op-jobs.ts` DEVICE_OP_RESOLVE_JOB: owed by a device policy op's intent
-  // transaction under `deviceOpResolveJobId` with `runAt` = when the op can no longer reach the
-  // machine, and by a hello that reported the op's outcome under `deviceOpReportedJobId` (spec §7)
-  "device-op-resolve": {
-    queue: "cap-kernel-maintenance",
-    idempotent:
-      "resolving an op whose entry is gone is a no-op (the entry is read under the machine row's lock, and under the network ask's lock for an op that answers one, so the ask is decided at most once); the resolver only reads the device, never sends a change",
-    processedIn: "packages/kernel/src/runtime/maintenance.ts",
-    // retried while PG or the device is briefly unreachable; removed once done
-    opts: {
-      attempts: 5,
-      backoff: { type: "exponential", delay: 5_000 },
-      removeOnComplete: true,
-      removeOnFail: true,
-    },
-  },
   // `background/wake-rules.ts` BG_WAKE_JOB: owed by the `ensureRun` transaction that finds a
   // conversation's wake inside its wake window, under `bgWakeJobId`, with `runAt` = the window's
   // end (background Bash spec §3)

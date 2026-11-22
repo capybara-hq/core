@@ -29,13 +29,15 @@ import {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DialInRelay, deviceOffline } from "../dial-in/relay.js";
-import { DeviceTargets, sameRoots } from "../dial-in/targets.js";
+import { DeviceTargets } from "../dial-in/targets.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { providerLimits } from "../sandbox/modes.js";
 import { normalizeHost, orgAllows } from "../sandbox/network-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { localCall } from "./local-codec.js";
+import { LocalMachineReports, sameRoots } from "./local-machine-reports.js";
 
 /** Extra time the machine gets beyond a command's own timeout (spawn, output, the trip back). */
 export const EXEC_DEADLINE_MARGIN_MS = 5000;
@@ -69,7 +71,7 @@ const refuseRaw =
     );
   };
 
-/** What the staged provider sends through: the relay's protocol 4 call and the attested support. */
+/** What the staged provider sends through: the local codec's call and the attested support. */
 export interface StagedDeviceTransport {
   call(
     deviceId: string,
@@ -137,9 +139,12 @@ export class LocalDeviceProvider implements DeviceProvider {
   }
 
   constructor(
-    @Inject(DialInRelay) private readonly relay: DialInRelay,
+    @Inject(DialInRelay)
+    private readonly relay: Pick<DialInRelay, "request" | "connection" | "online">,
     @Inject(DeviceTargets)
-    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots" | "machineHome">,
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineHome">,
+    @Inject(LocalMachineReports)
+    private readonly machineReports: Pick<LocalMachineReports, "machineRoots">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<
       SandboxService,
@@ -328,14 +333,11 @@ export class LocalDeviceProvider implements DeviceProvider {
       readOutput: async (h, ref, opts) => {
         opts.signal.throwIfAborted();
         parseDeviceFrame(
-          JSON.stringify({
-            type: "req",
-            id: "validate",
+          {
             op: "backgroundReadOutput",
             args: { ref, offset: opts.offset, maxBytes: opts.maxBytes },
-            deadlineMs: OP_DEADLINE_MS,
-          }),
-          "kernel",
+          },
+          "req",
         );
         // liveness first (R27): a deleted or revoked device keeps its typed error
         const connection = await this.relay.connection(h.id);
@@ -469,12 +471,12 @@ export class LocalDeviceProvider implements DeviceProvider {
     signal: AbortSignal;
   }): Promise<LocalDeviceHandle> {
     const id = args.fileSystem.id;
-    const r = await this.relay.call(
+    const r = (await localCall(this.relay)(
       id,
       "create",
       { limits: args.limits },
       { deadlineMs: OP_DEADLINE_MS, signal: args.signal },
-    );
+    )) as { roots: SandboxRoots };
     return { id, roots: r.roots, limits: args.limits };
   }
 
@@ -485,9 +487,9 @@ export class LocalDeviceProvider implements DeviceProvider {
    */
   async resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone"> {
     signal.throwIfAborted();
-    if (!(await this.relay.holderLive(h.id))) throw deviceOffline();
+    if (!(await this.relay.online(h.id))) throw deviceOffline();
     const had = rootsOf(h);
-    const now = await this.targets.machineRoots(h.id);
+    const now = await this.machineReports.machineRoots(h.id);
     if (had === undefined || (now !== null && !sameRoots(had, now))) return "gone";
     return "resumed";
   }

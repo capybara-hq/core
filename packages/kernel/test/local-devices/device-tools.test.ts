@@ -577,9 +577,7 @@ describe("local devices through the sandbox tools", () => {
     const waiting = toolError(m.run("Bash", { command: "sleep 100" }));
     await machine.next((f) => f.type === "req" && f.op === "exec");
     await devices.remove(orgId, m.accountId, m.deviceId);
-    expect(await machine.next((f) => f.type === "req" && f.op === "stop")).toMatchObject({
-      args: { reason: "deleted" },
-    });
+    expect(await machine.next((f) => f.type === "stop")).toEqual({ type: "stop", reason: "stop" });
     expect((await machine.closed).code).toBe(4003);
     expect(await waiting).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
@@ -631,7 +629,7 @@ describe("local devices through the sandbox tools", () => {
     // the platform cannot reset a machine's files, and never tells it to stop
     const reset = await rejection(devices.resetFiles(orgId, m.accountId, m.deviceId));
     expect(reset instanceof ApiError && reset.code === "device.files_on_device").toBe(true);
-    expect(machine.frames.some((f) => f.type === "req" && f.op === "stop")).toBe(false);
+    expect(machine.frames.some((f) => f.type === "stop")).toBe(false);
 
     // the owner signs in again (the program recreates the directory): the next call works
     const next = await signIn(m.deviceId, m.accountId, ROOTS_A);

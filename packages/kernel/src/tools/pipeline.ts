@@ -45,7 +45,7 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { DevicePolicyService } from "../local-devices/device-policy.service.js";
+import { LocalMachineReports } from "../local-devices/local-machine-reports.js";
 import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
@@ -533,7 +533,7 @@ interface PipelineDeps {
     | {
         /** `deviceId` scopes the run tree's asks to the device (ignored by an older provider). */
         grants: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
-        devices: Pick<DevicePolicyService, "summary">;
+        devices: Pick<LocalMachineReports, "summary">;
         /** The device's per-call host ceiling (absent: every device-layer host is asked about). */
         sandbox?: Pick<SandboxService, "hostRefusal">;
       }
@@ -1017,7 +1017,9 @@ export class ToolPipeline {
     @Optional()
     @Inject(NetworkGrants)
     networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> },
-    @Optional() @Inject(DevicePolicyService) devicePolicy?: Pick<DevicePolicyService, "summary">,
+    @Optional()
+    @Inject(LocalMachineReports)
+    devicePolicy?: Pick<LocalMachineReports, "summary">,
     /** The command review (auto mode spec §5.4); absent in hand-built pipelines. */
     @Optional() @Inject(CommandReviewService) review?: CommandReview,
     /** The reviewed call's device facts; absent in hand-built pipelines. */

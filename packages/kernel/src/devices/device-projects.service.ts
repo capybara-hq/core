@@ -15,13 +15,13 @@ import {
 import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
-import { POLICY_REFUSAL_PREFIX } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { POLICY_REFUSAL_PREFIX } from "../local-devices/local-codec.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
 import type { KernelLogger } from "../log.js";
 import type { SandboxMode } from "../sandbox/modes.js";

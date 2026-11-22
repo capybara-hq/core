@@ -9,7 +9,6 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { SettingsService } from "../../src/identity/settings.js";
@@ -20,6 +19,7 @@ import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { localProviderEntry } from "../../src/local-devices/local-devices.module.js";
+import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { createLogger } from "../../src/log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { HOLDER_REVOKE, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
@@ -43,6 +43,7 @@ import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { stagedHello } from "../local-devices/fake-machine-v3.js";
+import { answering } from "../local-devices/test-holder.js";
 
 /**
  * B3 evidence end to end (permission activation B-6): the platform's network ceiling narrowed to
@@ -143,7 +144,7 @@ async function fullAccessFixture() {
     .select("id")
     .where("device_id", "=", f.deviceId)
     .executeTakeFirstOrThrow();
-  await k.app.get(DialInMachines).recordPolicyV3(
+  await k.app.get(LocalMachineReports).recordPolicyV3(
     machine.id,
     {
       type: "policy",
@@ -593,28 +594,30 @@ async function localDevice() {
   const frames: { op: string; args: Record<string, unknown> }[] = [];
   const relay = k.app.get(DialInRelay);
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
-  vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
-    frames.push({ op, args });
-    if (op === "create") return { roots: ROOTS };
-    if (op === "revokeOperation") return null;
-    if (op === "bindInstance") {
-      const g = args.instanceGeneration as string;
-      return {
-        instanceId: args.instanceId as string,
-        instanceGeneration: g,
-        bindingId: args.bindingId as string,
-        runtimeIdentity: {
-          runtimeHash: "a".repeat(64),
-          helperHash: "b".repeat(64),
-          imageFingerprint: "c".repeat(64),
+  vi.spyOn(relay, "request").mockImplementation(
+    answering(async (op, args) => {
+      frames.push({ op, args });
+      if (op === "create") return { roots: ROOTS };
+      if (op === "revokeOperation") return null;
+      if (op === "bindInstance") {
+        const g = args.instanceGeneration as string;
+        return {
+          instanceId: args.instanceId as string,
           instanceGeneration: g,
-        },
-        permissionSupport: support,
-        ownerCeiling: stagedHello().ownerCeiling,
-      };
-    }
-    throw new Error(`unexpected device op ${op}`);
-  });
+          bindingId: args.bindingId as string,
+          runtimeIdentity: {
+            runtimeHash: "a".repeat(64),
+            helperHash: "b".repeat(64),
+            imageFingerprint: "c".repeat(64),
+            instanceGeneration: g,
+          },
+          permissionSupport: support,
+          ownerCeiling: stagedHello().ownerCeiling,
+        };
+      }
+      throw new Error(`unexpected device op ${op}`);
+    }),
+  );
   // the production @local registration, over the answering transport
   k.app.get(DeviceProviders).register(
     localProviderEntry({

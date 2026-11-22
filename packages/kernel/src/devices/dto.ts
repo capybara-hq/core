@@ -69,41 +69,6 @@ export const DevicePatchBody = z
   });
 
 /**
- * `POST /devices/:id/policy` (approval-only profiles design, "Settings model"): the device owner
- * narrows the local machine's sandbox from the web: `remove` hosts from its allowlist, and narrow
- * its owner ceiling (`outsideSandbox: false`, `network: "allowlist"`, `restrictedProjectReach:
- * "workspace"`). The web never widens it: the owner adds hosts, opens the network or allows
- * running outside the sandbox on the machine (`capybara-device policy add allowedDomains`,
- * `capybara-device ceiling set`).
- */
-export const DevicePolicyBody = z
-  .object({
-    remove: z.array(PolicyHost).min(1).max(100).optional(),
-    ownerCeiling: z
-      .object({
-        outsideSandbox: z.literal(false).optional(),
-        network: z.literal("allowlist").optional(),
-        restrictedProjectReach: z.literal("workspace").optional(),
-      })
-      .strict()
-      .refine(
-        (c) =>
-          c.outsideSandbox !== undefined ||
-          c.network !== undefined ||
-          c.restrictedProjectReach !== undefined,
-        {
-          message:
-            "Give outsideSandbox: false, network: allowlist or restrictedProjectReach: workspace",
-        },
-      )
-      .optional(),
-  })
-  .strict()
-  .refine((b) => b.remove !== undefined || b.ownerCeiling !== undefined, {
-    message: "Give at least one of remove or ownerCeiling",
-  });
-
-/**
  * A project's name (project root §4.1, `isDeviceProjectName`): 1-64 UTF-16 code units, not `.` or
  * `..`, no `/`, no control characters, no leading or trailing whitespace; unique on its device.
  */
@@ -144,7 +109,6 @@ export const DeviceProjectParams = DeviceParams.extend({ name: DeviceProjectName
 export class DeviceCreateBodyDto extends createZodDto(DeviceCreateBody, "DeviceCreateBody") {}
 export class DevicePatchBodyDto extends createZodDto(DevicePatchBody, "DevicePatchBody") {}
 export class DeviceParamsDto extends createZodDto(DeviceParams, "DeviceParams") {}
-export class DevicePolicyBodyDto extends createZodDto(DevicePolicyBody, "DevicePolicyBody") {}
 export class DeviceProjectAddBodyDto extends createZodDto(
   DeviceProjectAddBody,
   "DeviceProjectAddBody",

@@ -1,6 +1,7 @@
 import {
   type AvailableHook,
   DEVICE_PROVIDER_EXTENSION_POINT,
+  type DialInChannel,
   type EmbedClaims,
   EXTENSION_POINTS,
   type ExtensionContext,
@@ -42,6 +43,7 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import type { DialInAccess } from "../dial-in/access.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
@@ -114,6 +116,12 @@ export interface KernelDeps {
    * in a test) verifies no share token (fail closed).
    */
   shares: Pick<ShareLiveness, "embedLive"> | undefined;
+  /**
+   * What `ctx.dialIn` is built from (`DialInAccess`): the relay and the check that a device is
+   * served by the calling extension. Absent (a ctx built alone in a test): `ctx.dialIn` calls
+   * reject.
+   */
+  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "stop">;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -403,7 +411,9 @@ type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices";
  *   (through `deps.net`, see `ctx/net.ts`);
  * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
  *   only with `permissions.models` (`embed` only its `embedding` purposes, `generateImage` only its
- *   `image_generation` ones, through `deps.models`); `http.route`
+ *   `image_generation` ones, through `deps.models`); `dialIn` only with `permissions.dialIn`, each
+ *   call only for a device whose provider is this extension and that it serves in the device's org
+ *   (through `deps.dialIn`; another device throws `ExtensionPermissionError`); `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
  *   its mount, see {@link Route}); `tools.register` only names declared in
  *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` or
@@ -516,6 +526,45 @@ export function createExtensionContext(
           },
         }
       : undefined;
+  // ctx.dialIn: only with permissions.dialIn, and each call only for a device this extension serves
+  // (`devices.provider` is this extension and it is on in the device's org, read per call)
+  const dialInApi: DialInChannel | undefined = perms.dialIn
+    ? (() => {
+        const access = deps.dialIn;
+        const served = async (deviceId: unknown): Promise<string> => {
+          if (!access) throw new Error(`plugin ${name}: ctx.dialIn is not available`);
+          if (typeof deviceId !== "string" || !(await access.serves(name, deviceId))) {
+            const item = `dialIn:device ${String(deviceId)}`;
+            const p: Promise<void> = recordDenial(deps, name, item).finally(() => audits.delete(p));
+            audits.add(p);
+            const e = new ExtensionPermissionError(name, "permissions.dialIn");
+            e.message = `device ${String(deviceId)} is not served by ${name}`;
+            throw e;
+          }
+          return deviceId;
+        };
+        return {
+          request: async (deviceId, frame, opts) => {
+            const id = await served(deviceId);
+            const signal = opts?.signal
+              ? AbortSignal.any([lifecycle.signal, opts.signal])
+              : lifecycle.signal;
+            // only the options an extension may pass: never the kernel's connection fences
+            return (access as NonNullable<typeof access>).request(id, frame, {
+              timeoutMs: Number(opts?.timeoutMs),
+              signal,
+            });
+          },
+          online: async (deviceId) =>
+            (access as NonNullable<typeof access>).online(await served(deviceId)),
+          stop: async (deviceId, reason) => {
+            if (reason !== "drain" && reason !== "stop")
+              throw new TypeError(`plugin ${name}: ctx.dialIn.stop reason must be drain or stop`);
+            await (access as NonNullable<typeof access>).stop(await served(deviceId), reason);
+          },
+        } satisfies DialInChannel;
+      })()
+    : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
   const declaredRoutes = new Map<string, HttpAccess>(
     (perms.http ?? []).map((r) => [`${r.method} ${r.path}`, r.access]),
@@ -920,7 +969,7 @@ export function createExtensionContext(
         extensionPoint === FILE_PREVIEW_EXTENSION_POINT
           ? checkFilePreviewProvider(manifest, impl, uiResolution, deps.log)
           : extensionPoint === DEVICE_PROVIDER_EXTENSION_POINT
-            ? checkDeviceProvider(name, impl)
+            ? checkDeviceProvider(name, impl, manifest.permissions?.dialIn)
             : impl;
       provided.set(extensionPoint, served);
       ledger.add({
@@ -996,9 +1045,9 @@ export function createExtensionContext(
   gated("secrets", secretsApi);
   gated("storage", storageApi);
   gated("models", modelsApi);
-  // ctx.dialIn / ctx.devices (SDK contract only so far): denied for every extension until the
-  // dial-in channel and the report revision wire them
-  gated("dialIn", undefined);
+  gated("dialIn", dialInApi);
+  // ctx.devices (SDK contract only so far): denied for every extension until the report
+  // revision wires it
   gated("devices", undefined, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   return ctx as KernelExtensionContext;
 }

@@ -10,7 +10,7 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { deviceReqKey } from "../../src/dial-in/keys.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
-import type { DeviceTargets } from "../../src/dial-in/targets.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -134,23 +134,29 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
+  const locks = new LockService(redis, log);
+  // the connection a TestHolder publishes is read as the gateway's (no database)
+  const targets = new DeviceTargets(undefined as never, redis, locks);
   const relay = new DialInRelay(
     redis,
     bus,
-    new LockService(redis, log),
+    locks,
     {
       get: () => ({ devices: { local: { reconnectGraceSeconds: 2 } } }),
     } as unknown as KernelConfigService,
     log,
-    { state: async () => "active" } as Pick<DeviceTargets, "state"> as DeviceTargets,
+    {
+      state: async () => "active",
+      current: (id: string) => targets.current(id),
+    } as Pick<DeviceTargets, "state" | "current"> as DeviceTargets,
   );
   provider = new LocalDeviceProvider(
     relay,
     {
       orgOf: async () => orgOfEnv,
-      machineRoots: async () => machineRoots,
       machineHome: async () => machineHome,
     },
+    { machineRoots: async () => machineRoots },
     {
       devicePolicy: async () => effectiveDevicePolicy(deployment, orgSettings, null),
       // the per-call host ceiling of a device whose owner keeps the open network

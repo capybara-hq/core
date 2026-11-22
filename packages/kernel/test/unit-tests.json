@@ -42,6 +42,7 @@
   "ctx/device-provider-check.test.ts",
   "devices/label.test.ts",
   "devices/sandbox-state.test.ts",
+  "dial-in/envelope.test.ts",
   "evals/diff.test.ts",
   "evals/recorded-permission-context.test.ts",
   "evals/sets.unit.test.ts",

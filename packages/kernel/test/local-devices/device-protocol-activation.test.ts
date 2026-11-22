@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  DEVICE_DIAL_IN_PROTOCOL,
   DEVICE_PROTOCOL_VERSION,
   type DeviceOperation,
   type KernelRequest,
@@ -16,6 +17,7 @@ import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import { DeviceTargets } from "../../src/dial-in/targets.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -29,7 +31,7 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 import { HELLO as LEGACY_HELLO, refusal } from "./fake-machine.js";
-import { FAKE_OWNER_CEILING, FakeMachineV3, HELLO_V3 } from "./fake-machine-v3.js";
+import { FakeMachineV3, HELLO_V3, helloEnvelope } from "./fake-machine-v3.js";
 import type { Answer } from "./test-holder.js";
 
 /**
@@ -110,7 +112,7 @@ async function rawSocket(credential: string) {
   const ws = new WebSocket(url, {
     headers: {
       Authorization: `Bearer ${credential}`,
-      "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+      "X-Capybara-Device-Protocol": DEVICE_DIAL_IN_PROTOCOL,
     },
   });
   open.push({ close: () => ws.terminate() });
@@ -132,17 +134,17 @@ describe("the production route speaks protocol 5 only", () => {
     expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(4);
   });
 
-  it("a protocol 4 program gets 426 Update capybara-device", async () => {
+  it("a protocol 4 program gets 426 Update the program", async () => {
     const m = await connected();
     const r = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
-      "X-Capybara-Device-Protocol": "4",
+      "X-Capybara-Device-Protocol": "capybara-device/4",
     });
     expect(r?.status).toBe(426);
     expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
-    expect(r?.body).toContain("device protocol 5");
-    expect(r?.body).toContain("this capybara-device protocol 4");
-    expect(r?.body).toContain("Update capybara-device");
+    expect(r?.body).toContain("speaks capybara-device/5");
+    expect(r?.body).toContain("this program speaks capybara-device/4");
+    expect(r?.body).toContain("Update the program");
   });
 
   it("an older protocol header is refused before the upgrade: 426 device.program_outdated", async () => {
@@ -154,8 +156,8 @@ describe("the production route speaks protocol 5 only", () => {
       });
       expect(r?.status).toBe(426);
       expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
-      // a newer capybara-device reads the kernel's protocol from this text (`outdatedMessage`)
-      expect(r?.body).toContain("device protocol 5");
+      // a newer capybara-device reads the provider's protocol from this text (`outdatedMessage`)
+      expect(r?.body).toContain("capybara-device/5");
     }
   });
 
@@ -163,13 +165,13 @@ describe("the production route speaks protocol 5 only", () => {
     const m = await connected();
     const r = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
-      "X-Capybara-Device-Protocol": "6",
+      "X-Capybara-Device-Protocol": "capybara-device/6",
     });
     expect(r?.status).toBe(426);
     expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
-    expect(r?.body).toContain("device protocol 5");
+    expect(r?.body).toContain("capybara-device/5");
     expect(r?.body).toContain("older");
-    expect(r?.body).not.toContain("Update capybara-device");
+    expect(r?.body).not.toContain("Update the program");
   });
 
   it("a protocol 2 hello on a protocol 5 connection closes 4400 and claims nothing", async () => {
@@ -178,26 +180,25 @@ describe("the production route speaks protocol 5 only", () => {
     ws.send(JSON.stringify(LEGACY_HELLO));
     expect(LEGACY_HELLO.protocol).toBe(2);
     expect((await closed).code).toBe(DEVICE_CLOSE.protocol);
-    expect(await k.app.get(DialInRelay).holderLive(m.deviceId)).toBe(false);
+    expect(await k.app.get(DialInRelay).online(m.deviceId)).toBe(false);
   });
 
   it("a hello whose protocol does not match the protocol 5 header closes 4400", async () => {
     const m = await connected();
     for (const hello of [
-      { ...HELLO_V3, protocol: 2 },
-      // the staged protocol before the cutover
-      { ...HELLO_V3, protocol: 3 },
-      // the protocol before the project-root scope
-      { ...HELLO_V3, protocol: 4 },
-      { ...HELLO_V3, protocol: 6 },
-      // protocol 5 in name, protocol 2 in shape (no transport, runtime or owner facts)
+      helloEnvelope({ protocol: "capybara-device/4" }),
+      helloEnvelope({ protocol: "capybara-device/6" }),
+      helloEnvelope({ protocol: "fake-dial-in/1" }),
+      // a protocol 4 hello frame (no envelope)
+      { ...HELLO_V3, type: "hello", protocol: 4 },
+      // protocol 5 in name, protocol 2 in shape (no envelope)
       { ...LEGACY_HELLO, protocol: 5 },
     ]) {
       const { ws, closed } = await rawSocket(m.credential);
       ws.send(JSON.stringify(hello));
       expect((await closed).code).toBe(DEVICE_CLOSE.protocol);
     }
-    expect(await k.app.get(DialInRelay).holderLive(m.deviceId)).toBe(false);
+    expect(await k.app.get(DialInRelay).online(m.deviceId)).toBe(false);
   });
 
   it("a malformed frame closes 4400: not JSON, binary, incomplete, before and after ready", async () => {
@@ -210,22 +211,18 @@ describe("the production route speaks protocol 5 only", () => {
     binary.ws.send(Buffer.from(JSON.stringify(HELLO_V3)), { binary: true });
     expect((await binary.closed).code).toBe(DEVICE_CLOSE.protocol);
 
-    // a protocol 5 hello without its owner report
-    const { ownerCeiling: _dropped, ...noOwner } = HELLO_V3;
+    // a hello whose body lacks the owner report: the local provider refuses it
     const partial = await rawSocket(m.credential);
-    partial.ws.send(JSON.stringify(noOwner));
-    expect((await partial.closed).code).toBe(DEVICE_CLOSE.protocol);
+    partial.ws.send(JSON.stringify(helloEnvelope({ ownerCeiling: undefined })));
+    const refused = await partial.closed;
+    expect(refused.code).toBe(DEVICE_CLOSE.protocol);
+    expect(refused.reason).toContain("device.hello_invalid");
 
-    // after a valid hello and ready: a result with an unknown error kind is malformed too
+    // after a valid hello and ready: a result with a field outside the envelope is malformed too
     const machine = new FakeMachineV3(url, m.credential);
     open.push(machine);
     await machine.ready;
-    machine.send({
-      type: "res",
-      id: randomUUID(),
-      ok: false,
-      error: { kind: "made-up", message: "x" },
-    });
+    machine.send({ type: "res", id: randomUUID(), body: {}, ok: false });
     expect((await machine.closed).code).toBe(DEVICE_CLOSE.protocol);
   });
 });
@@ -322,19 +319,6 @@ function operations(deviceId: string): [DeviceOperation, Record<string, unknown>
     ],
     ["backgroundStop", { ref, graceMs: 100 }, { outcome: "stopped" }],
     ["revokeOperation", { ref: { operationId: "op-1", admitBeforeMs: scope.admitBeforeMs } }, null],
-    [
-      "policy",
-      {
-        opId: randomUUID(),
-        remove: ["example.com"],
-        source: { accountId: "a", accountName: "A", via: "web" },
-      },
-      {
-        policy: { allowedDomains: [] },
-        ownerCeiling: FAKE_OWNER_CEILING,
-      },
-    ],
-    ["policyStatus", { opId: randomUUID() }, { outcome: "unknown" }],
     ["stop", { reason: "revoked" }, null],
   ];
 }
@@ -356,7 +340,7 @@ describe("every protocol 5 operation makes the round trip over the production ro
     const targets = k.app.get(DeviceTargets);
     await expect.poll(() => targets.transport(m.deviceId).catch(() => null)).not.toBeNull();
     for (const [op, args, result] of ops) {
-      const got = await relay.callV3(m.deviceId, op, args, {
+      const got = await localCall(relay)(m.deviceId, op, args, {
         deadlineMs: 6000,
         signal: AbortSignal.timeout(15_000),
       });
@@ -373,7 +357,7 @@ describe("every protocol 5 operation makes the round trip over the production ro
       expectedPreviousGeneration: null,
     };
     expect(
-      await relay.callV3(m.deviceId, "bindInstance", bind, {
+      await localCall(relay)(m.deviceId, "bindInstance", bind, {
         deadlineMs: 6000,
         signal: AbortSignal.timeout(15_000),
       }),

@@ -19,6 +19,7 @@ import {
   runtimeIdentity,
 } from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER, type SandboxInstanceBinder } from "../sandbox/providers.js";
+import { localCall } from "./local-codec.js";
 import { OP_DEADLINE_MS } from "./local-device-provider.js";
 import { OwnerReports } from "./owner-reports.js";
 
@@ -53,7 +54,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(DialInRelay)
-    private readonly relay: Pick<DialInRelay, "callV3" | "connection">,
+    private readonly relay: Pick<DialInRelay, "request" | "connection">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
     @Inject(OwnerReports) private readonly owners: Pick<OwnerReports, "recordLocked">,
@@ -170,7 +171,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
     const connection = await this.relay.connection(deviceId);
     const answer = parseOperationResult(
       "bindInstance",
-      await this.relay.callV3(
+      await localCall(this.relay)(
         deviceId,
         "bindInstance",
         { ...committed.request },

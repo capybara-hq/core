@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { KernelReq } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -572,8 +571,8 @@ describe("device authorization", () => {
       // the old machine's connection is closed; no stop frame is queued (the replacement
       // machine connecting next would drain it)
       await waitFor(async () => revoked.length > 0);
-      expect(holder.frames.filter((f) => f.type === "req" && f.op === "stop")).toEqual([]);
-      expect(revoked[0]).toEqual({ machineId: old?.id });
+      expect(holder.frames.filter((f) => f.type === "stop")).toEqual([]);
+      expect(revoked[0]).toEqual({ machineId: old?.id, reason: null });
       expect((await machines.activeFor(first.deviceId))?.name).toBe("desk-2");
     } finally {
       await unsub();
@@ -597,8 +596,8 @@ describe("device authorization", () => {
     try {
       const res = await m.req({ method: "DELETE", url });
       expect(res.statusCode, res.body).toBe(204);
-      const stop = (await holder.next((f) => f.type === "req" && f.op === "stop")) as KernelReq;
-      expect(stop.args).toEqual({ reason: "revoked" });
+      const stop = await holder.next((f) => f.type === "stop");
+      expect(stop).toEqual({ type: "stop", reason: "stop", machineId: expect.any(String) });
     } finally {
       await holder.disconnect();
     }
@@ -627,8 +626,8 @@ describe("device authorization", () => {
         .where("device_id", "=", g.deviceId)
         .executeTakeFirstOrThrow();
       expect(row.revoked_at).not.toBeNull();
-      const stop = (await holder.next((f) => f.type === "req" && f.op === "stop")) as KernelReq;
-      expect(stop.args).toEqual({ reason: "deleted" });
+      const stop = await holder.next((f) => f.type === "stop");
+      expect(stop).toEqual({ type: "stop", reason: "stop", machineId: expect.any(String) });
     } finally {
       await holder.disconnect();
     }

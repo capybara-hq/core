@@ -11,7 +11,7 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
-import type { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
+import type { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import type { NetworkRunState } from "../../src/sandbox/network-grants.js";
@@ -165,7 +165,7 @@ export interface PipelineTestDeps {
   /** The run's network grants (default: none: no network ask). */
   networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
   /** The device's active machine (default: none: no network ask). */
-  devicePolicy?: Pick<DevicePolicyService, "summary">;
+  devicePolicy?: Pick<LocalMachineReports, "summary">;
   onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 

@@ -11,6 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import {
   type DevicePathsPayload,
   devicePathsChange,
@@ -117,7 +118,7 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
     return { deviceId: id, machineId: issued.machineId };
   });
   await k.app
-    .get(DialInMachines)
+    .get(LocalMachineReports)
     .recordHello(
       machineId,
       { ...HELLO, policy: SUMMARY(policy) },
@@ -141,7 +142,7 @@ async function unreportedLocalDevice(): Promise<string> {
     });
     return { deviceId: id, machineId: issued.machineId };
   });
-  await k.app.get(DialInMachines).recordHello(machineId, { ...HELLO, features: [] });
+  await k.app.get(LocalMachineReports).recordHello(machineId, { ...HELLO, features: [] });
   return deviceId;
 }
 
@@ -203,7 +204,7 @@ describe("DevicesService.modeLevel", () => {
     // the owner ran `capybara-device ceiling set --outside-sandbox off --network allowlist` and
     // allowed a host: the program pushes the new owner report with its summary
     const summary: DeviceLocalPolicySummary = { allowedDomains: ["a.example.com"] };
-    await machines.recordPolicyV3(machineId, {
+    await k.app.get(LocalMachineReports).recordPolicyV3(machineId, {
       type: "policy",
       policy: summary,
       ownerCeiling: ownerReportFor(summary, { outsideSandbox: false, network: "allowlist" }),

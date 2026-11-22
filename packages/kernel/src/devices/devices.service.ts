@@ -6,10 +6,7 @@ import type {
   SandboxLimits,
   SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
-import type {
-  DeviceLocalPolicySummary,
-  DeviceOwnerCeilingNarrowing,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
@@ -29,7 +26,6 @@ import {
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { type OwnerFacts, ownerFactsOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
@@ -232,19 +228,6 @@ export interface DeviceNetworkSetting {
   hosts: string[];
 }
 
-/** A narrowing of a local device's policy by its owner (`POST /devices/:id/policy`). */
-export interface DevicePolicyChange {
-  remove?: string[] | undefined;
-  /** Narrow the owner ceiling (never widen; the schema refuses anything wider). */
-  ownerCeiling?:
-    | {
-        outsideSandbox?: false | undefined;
-        network?: "allowlist" | undefined;
-        restrictedProjectReach?: "workspace" | undefined;
-      }
-    | undefined;
-}
-
 /** What `PATCH /devices/:id` changes. */
 export interface DevicePatch {
   name?: string;
@@ -346,8 +329,6 @@ export class DevicesService {
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(DialInMachines)
     private readonly machines: Pick<DialInMachines, "revoke" | "revokeActive">,
-    @Inject(DevicePolicyService)
-    private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "deviceSandbox" | "deviceSandboxFacts">,
@@ -1000,41 +981,6 @@ export class DevicesService {
     actorTokenId?: string,
   ): Promise<void> {
     await this.machines.revoke(orgId, accountId, id, actorTokenId);
-  }
-
-  /**
-   * The owner narrows one of their own local devices' sandbox from the web (approval-only
-   * profiles design, "Settings model"): sent to the machine with the `policy` op, which is the
-   * authority and answers with the policy as written. Anyone but the owner gets
-   * `device.not_found`. The owner may remove hosts from the machine's allowlist and narrow its
-   * owner ceiling (no running outside the sandbox, the allowlist network, the workspace reach);
-   * widening happens on the machine only. The machine offline → `device.offline`; a cloud device
-   * or a program without the `policyOpId` feature → `device.policy_unsupported`; the machine's
-   * refusal → `device.policy_refused` with its message. Callers are human sessions only (no
-   * personal access token, no service token, no Platform op).
-   */
-  async changePolicy(
-    orgId: string,
-    account: { id: string; displayName: string },
-    id: string,
-    change: DevicePolicyChange,
-  ): Promise<DeviceLocalPolicySummary> {
-    await this.access.usable(orgId, account.id, id);
-    const out = await this.policies.apply({
-      orgId,
-      deviceId: id,
-      change: {
-        ...(change.remove !== undefined && { remove: change.remove }),
-        ...(change.ownerCeiling !== undefined && { ownerCeiling: narrowOnly(change.ownerCeiling) }),
-      },
-      source: { accountId: account.id, accountName: account.displayName, via: "web" },
-    });
-    if (out.applied) return out.policy;
-    if (out.reason === "offline") throw new ApiError("device.offline", out.message);
-    if (out.reason === "unsupported") {
-      throw new ApiError("device.policy_unsupported", out.message);
-    }
-    throw new ApiError("device.policy_refused", out.message);
   }
 
   /**
@@ -1697,29 +1643,5 @@ function ownerCeilingViewOf(
     restrictedProjectReach: f.restrictedProjectReach,
     observedAt: f.observedAt,
     stale: !online || f.state !== "report",
-  };
-}
-
-/** The owner ceiling narrowing the web may send: anything wider is refused, never sent. */
-function narrowOnly(c: {
-  outsideSandbox?: unknown;
-  network?: unknown;
-  restrictedProjectReach?: unknown;
-}): DeviceOwnerCeilingNarrowing {
-  if (
-    (c.outsideSandbox !== undefined && c.outsideSandbox !== false) ||
-    (c.network !== undefined && c.network !== "allowlist") ||
-    (c.restrictedProjectReach !== undefined && c.restrictedProjectReach !== "workspace")
-  )
-    throw new ApiError(
-      "validation_failed",
-      "The device page can only narrow a machine's owner ceiling; widen it on the machine with capybara-device ceiling set",
-    );
-  return {
-    ...(c.outsideSandbox === false && { outsideSandbox: false as const }),
-    ...(c.network === "allowlist" && { network: "allowlist" as const }),
-    ...(c.restrictedProjectReach === "workspace" && {
-      restrictedProjectReach: "workspace" as const,
-    }),
   };
 }

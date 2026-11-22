@@ -3168,7 +3168,8 @@
       "network": "Network access",
       "ui": "Interface (views / embeds)",
       "client": "Client code",
-      "components": "Interface components"
+      "components": "Interface components",
+      "dialIn": "Machine connections (protocol)"
     },
     "configTitle": "Organization config",
     "save": "Save config",

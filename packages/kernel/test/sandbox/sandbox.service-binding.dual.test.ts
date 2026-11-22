@@ -26,6 +26,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { stagedHello } from "../local-devices/fake-machine-v3.js";
+import { answering } from "../local-devices/test-holder.js";
 
 /**
  * Two kernel replicas (two independent kernels in one process: own PG pools, Redis connections and
@@ -178,35 +179,37 @@ async function device(opts: { binder?: boolean } = {}) {
     });
     const relay = k.app.get(DialInRelay);
     vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
-    vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
-      expect(op).toBe("bindInstance");
-      machine.sent.push({ replica, bindingId: args.bindingId as string });
-      machine.reached.resolve();
-      await machine.release;
-      if (machine.lose) throw new Error("device.offline: the answer was lost");
-      const g = args.instanceGeneration as string;
-      return {
-        instanceId: args.instanceId as string,
-        instanceGeneration: g,
-        bindingId: args.bindingId as string,
-        runtimeIdentity: {
-          runtimeHash: "a".repeat(64),
-          helperHash: "b".repeat(64),
-          imageFingerprint: "c".repeat(64),
+    vi.spyOn(relay, "request").mockImplementation(
+      answering(async (op, args) => {
+        expect(op).toBe("bindInstance");
+        machine.sent.push({ replica, bindingId: args.bindingId as string });
+        machine.reached.resolve();
+        await machine.release;
+        if (machine.lose) throw new Error("device.offline: the answer was lost");
+        const g = args.instanceGeneration as string;
+        return {
+          instanceId: args.instanceId as string,
           instanceGeneration: g,
-        },
-        permissionSupport: {
-          version: 2 as const,
-          restricted: null,
-          boundary: "operation",
-          network: { openPublic: false, allowlist: false, perOperationHosts: false },
-          outsideSandbox: true,
-          background: true,
-          unavailableReason: "Restricted per-instance validation pending",
-        },
-        ownerCeiling: stagedHello().ownerCeiling,
-      };
-    });
+          bindingId: args.bindingId as string,
+          runtimeIdentity: {
+            runtimeHash: "a".repeat(64),
+            helperHash: "b".repeat(64),
+            imageFingerprint: "c".repeat(64),
+            instanceGeneration: g,
+          },
+          permissionSupport: {
+            version: 2 as const,
+            restricted: null,
+            boundary: "operation",
+            network: { openPublic: false, allowlist: false, perOperationHosts: false },
+            outsideSandbox: true,
+            background: true,
+            unavailableReason: "Restricted per-instance validation pending",
+          },
+          ownerCeiling: stagedHello().ownerCeiling,
+        };
+      }),
+    );
   });
   const ctx = {
     orgId: seed.orgId,

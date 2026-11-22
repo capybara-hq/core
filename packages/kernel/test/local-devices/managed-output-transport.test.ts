@@ -3,12 +3,13 @@ import { once } from "node:events";
 import {
   isSandboxScopeDeniedError,
   isSandboxScopeValidationError,
+  parseDialInKernelFrame,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import {
+  DEVICE_DIAL_IN_PROTOCOL,
   type DeviceHello,
   DeviceProtocolError,
-  type KernelReady,
   parseDeviceFrame,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -24,8 +25,10 @@ import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
+import { helloEnvelope, localHandlers } from "./fake-machine-v3.js";
 
 let rd: TestContainer;
 let redis: Redis;
@@ -117,10 +120,10 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
         c === credential
           ? { deviceId, machineId: "machine", orgId: "org", accountId: "owner" }
           : null,
-      recordHelloV3: async () => {},
-      recordPolicyV3: async () => {},
+      recordConnect: async () => {},
       touch: async () => {},
     },
+    localHandlers(),
     locks,
     bus,
     gatewayRedis,
@@ -136,12 +139,13 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   });
   const provider = new LocalDeviceProvider(
     relay,
-    { orgOf: forbidden, machineRoots: forbidden, machineHome: forbidden },
+    { orgOf: forbidden, machineHome: forbidden },
+    { machineRoots: forbidden },
     { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
     config,
   );
   const staged = provider.stagedOperations({
-    call: relay.callV3.bind(relay),
+    call: localCall(relay),
     permissionSupport: backend.permissionSupport,
   });
   const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
@@ -149,7 +153,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const address = server.address();
   if (typeof address === "string" || !address) throw Error();
   server.on("connection", (socket) => {
-    void gateway.accept(socket, credential);
+    void gateway.accept(socket, credential, DEVICE_DIAL_IN_PROTOCOL);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -160,15 +164,9 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const frames: string[] = [];
   let beforeReply = async () => {};
   const hello: DeviceHello = {
-    type: "hello",
-    protocol: 5,
-    programVersion: "fixture",
-    os: "darwin",
-    arch: "arm64",
     mode: "os",
     roots,
     sessionIsolation: false,
-    transport: { maxFrameBytes: clientCap },
     permissionSupport: {
       version: 2,
       restricted: null,
@@ -191,20 +189,21 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const connect = async (cap = clientCap, waitReady = true) => {
     socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
     await once(socket, "open");
-    let ready: KernelReady | undefined;
+    let ready: { connectionId: string } | undefined;
     const activeSocket = socket;
     socket.on("message", async (raw) => {
-      const frame = parseDeviceFrame(raw.toString(), "kernel", ready?.maxFrameBytes ?? cap);
-      frames.push(frame.type);
-      if (frame.type === "ready") {
-        ready = frame;
+      const envelope = parseDialInKernelFrame(raw.toString(), cap);
+      frames.push(envelope.type);
+      if (envelope.type === "ready") {
+        ready = envelope;
         return;
       }
-      if (frame.type === "cancel") {
-        cancelled(frame.id);
+      if (envelope.type === "cancel") {
+        cancelled(envelope.id);
         return;
       }
-      if (frame.type !== "req" || !ready) throw Error("Request before ready");
+      if (envelope.type !== "req" || !ready) throw Error("Request before ready");
+      const frame = { id: envelope.id, ...parseDeviceFrame(envelope.body, "req") };
       requested(frame.op, frame.id);
       const a = frame.args,
         r = a.ref as typeof ref;
@@ -215,8 +214,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
           JSON.stringify({
             type: "res",
             id: frame.id,
-            ok: true,
-            result: await backend.background.status(),
+            body: { ok: true, result: await backend.background.status() },
           }),
         );
         return;
@@ -236,26 +234,22 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
       await beforeReply();
       if (activeSocket.readyState !== activeSocket.OPEN) return;
       activeSocket.send(
-        JSON.stringify(
-          r.instanceGeneration === "invalid"
-            ? {
-                type: "res",
-                id: frame.id,
-                ok: false,
-                error: { kind: "invalid", message: "The scope is invalid" },
-              }
-            : r.instanceGeneration !== "g"
-              ? {
-                  type: "res",
-                  id: frame.id,
-                  ok: false,
-                  error: { kind: "denied", message: "Check exact instance generation" },
-                }
-              : { type: "res", id: frame.id, ok: true, result },
-        ),
+        JSON.stringify({
+          type: "res",
+          id: frame.id,
+          body:
+            r.instanceGeneration === "invalid"
+              ? { ok: false, error: { kind: "invalid", message: "The scope is invalid" } }
+              : r.instanceGeneration !== "g"
+                ? {
+                    ok: false,
+                    error: { kind: "denied", message: "Check exact instance generation" },
+                  }
+                : { ok: true, result },
+        }),
       );
     });
-    socket.send(JSON.stringify({ ...hello, transport: { maxFrameBytes: cap } }));
+    socket.send(JSON.stringify(helloEnvelope({ ...hello, transport: { maxFrameBytes: cap } })));
     const session = { ready: () => ready, socket: activeSocket };
     if (!waitReady) return session;
     await expect.poll(() => session.ready()).toBeDefined();
@@ -344,7 +338,7 @@ it.each([
   "negotiates client %i/server %i and forwards >65KiB through real provider, relay and sockets",
   async (client, server) => {
     const f = await fixture(client, server);
-    expect(f.session.ready()?.maxFrameBytes).toBe(69632);
+    expect((await f.targets.transport(f.deviceId))?.maxFrameBytes).toBe(69632);
     const data = Buffer.alloc(180000, 65);
     await f.emit(data);
     const probe = await f.read(0, 0);
@@ -417,19 +411,17 @@ it("a reconnect changes the exact capacity and fences requests of the old connec
   const next = await f.connect(66560);
   expect(next.ready()?.connectionId).not.toBe(old.connectionId);
   const stale = (op: "backgroundReadOutput" | "backgroundStatus") =>
-    f.relay
-      .callV3(
-        f.handle.id,
-        op,
-        op === "backgroundReadOutput" ? { ref: f.ref, offset: 0, maxBytes: 3072 } : { ref: f.ref },
-        { deadlineMs: 1000, signal: signal(), connection: old },
-      )
-      .then(
-        () => {
-          throw Error("expected the stale connection to be refused");
-        },
-        (e: unknown) => e as Error,
-      );
+    localCall(f.relay)(
+      f.handle.id,
+      op,
+      op === "backgroundReadOutput" ? { ref: f.ref, offset: 0, maxBytes: 3072 } : { ref: f.ref },
+      { deadlineMs: 1000, signal: signal(), connection: old },
+    ).then(
+      () => {
+        throw Error("expected the stale connection to be refused");
+      },
+      (e: unknown) => e as Error,
+    );
   const read = await stale("backgroundReadOutput");
   expect(read.message).toContain("connection changed");
   expect(read.message).toContain("same offset");
@@ -442,19 +434,17 @@ it("a reconnect changes the exact capacity and fences requests of the old connec
     expect(e).not.toBeInstanceOf(DeviceRequestNotSentError);
   }
   // a held operation fenced to a replaced connection is refused before it is queued: not sent
-  const revoke = await f.relay
-    .callV3(
-      f.handle.id,
-      "revokeOperation",
-      { ref: { operationId: "op", admitBeforeMs: Date.now() + 60_000 } },
-      { deadlineMs: 1000, signal: signal(), connection: old },
-    )
-    .then(
-      () => {
-        throw Error("expected the stale connection to be refused");
-      },
-      (e: unknown) => e as Error,
-    );
+  const revoke = await localCall(f.relay)(
+    f.handle.id,
+    "revokeOperation",
+    { ref: { operationId: "op", admitBeforeMs: Date.now() + 60_000 } },
+    { deadlineMs: 1000, signal: signal(), connection: old },
+  ).then(
+    () => {
+      throw Error("expected the stale connection to be refused");
+    },
+    (e: unknown) => e as Error,
+  );
   expect(revoke).toBeInstanceOf(DeviceRequestNotSentError);
   expect(isSandboxScopeDeniedError(revoke)).toBe(true);
   expect(revoke.message).toContain("connection changed before revokeOperation was sent");
@@ -546,7 +536,7 @@ it("closes a staged connection whose device answers before ready", async () => {
   const release = f.holdPublish();
   const s = await f.connect(69632, false);
   const closed = once(s.socket, "close");
-  s.socket.send(JSON.stringify({ type: "res", id: "early", ok: true, result: null }));
+  s.socket.send(JSON.stringify({ type: "res", id: "early", body: { ok: true, result: null } }));
   expect((await closed)[0]).toBe(4400);
   release();
 });

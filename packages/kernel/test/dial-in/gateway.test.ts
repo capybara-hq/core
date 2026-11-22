@@ -19,6 +19,7 @@ import {
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { localCall } from "../../src/local-devices/local-codec.js";
 import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { DeviceProgramRestartedError } from "../../src/sandbox/request-not-sent.js";
@@ -41,7 +42,6 @@ import {
   DEVICE_PROTOCOL_HEADER_VALUE,
   FakeMachine,
   FakeMachineV3,
-  HELLO,
   ownerReportFor,
   refusal,
 } from "../local-devices/fake-machine-v3.js";
@@ -182,8 +182,12 @@ function rawUpgrade(
   });
 }
 
-const held = (deviceId: string) =>
-  waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
+/** The lease token once the device's connection is ready (its capacity published after `ready`). */
+const held = async (deviceId: string) => {
+  const token = await waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
+  await waitFor(() => relay.connection(deviceId).catch(() => null), 10_000, "connection ready");
+  return token;
+};
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
 
 /** Each boot-evidence test starts without a freeze or obligations, with no machine connected. */
@@ -241,11 +245,12 @@ async function hello(credential: string, machineId: string, bootId?: string): Pr
         WHERE id = ${machineId} AND roots IS NOT NULL`.execute(raw)
     ).rows[0]?.at?.getTime() ?? 0;
   const before = await seen();
-  const m = new FakeMachine(url, credential, undefined, { hello: false });
+  const m = new FakeMachineV3(url, credential, undefined, { hello: false });
   bootOpen.push(m);
   await m.opened;
   m.hello({ ...(bootId !== undefined && { bootId }) });
-  // the hello's record moves last_seen_at (in the same transaction as the boot record)
+  // `ready` follows the connection's record (program facts and boot) and the provider's hello
+  await m.ready;
   await waitFor(async () => ((await seen()) > before ? true : null), 10_000, "hello recorded");
 }
 
@@ -386,7 +391,12 @@ describe("boot identity evidence for local legacy retirement", () => {
         "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
       }),
     ).toMatchObject({ status: 401 });
-    await machines.recordHello(d.machineId, { ...HELLO, bootId: B2 });
+    await machines.recordConnect(d.machineId, {
+      version: "0.1.0",
+      os: "linux",
+      arch: "x64",
+      bootId: B2,
+    });
     expect(await machineBoot(d.machineId)).toBe(B1);
     expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
 
@@ -468,7 +478,7 @@ describe("the hello's policy summary and the reported mode", () => {
     // the owner turns Full off on the machine (`capybara-device ceiling set`)
     // (protocol 4: the summary carries the allowlist only; Full is the owner report's)
     const narrowed = { allowedDomains: [] };
-    machine.send({
+    machine.event({
       type: "policy",
       policy: narrowed,
       ownerCeiling: ownerReportFor(narrowed, { outsideSandbox: false }),
@@ -556,7 +566,7 @@ describe("GET /device/connect", () => {
     );
     await machine.opened;
     expect(await held(m.deviceId)).toBeTruthy();
-    const r = await relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
+    const r = await localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
       deadlineMs: 6000,
       signal: AbortSignal.timeout(20_000),
     });
@@ -596,9 +606,10 @@ describe("GET /device/connect", () => {
     await machine.opened;
     await held(m.deviceId);
     const ac = new AbortController();
-    const call = relay
-      .callV3(m.deviceId, "exec", execArgs(m.deviceId), { deadlineMs: 8000, signal: ac.signal })
-      .catch((e: unknown) => e);
+    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
+      deadlineMs: 8000,
+      signal: ac.signal,
+    }).catch((e: unknown) => e);
     const req = (await machine.next((f) => f.type === "req")) as KernelReq;
     ac.abort(new Error("stop"));
     await call;
@@ -642,9 +653,7 @@ describe("GET /device/connect", () => {
     expect(machine.ws.readyState).toBe(machine.ws.OPEN);
     await machines.revoke(orgId, m.accountId, m.deviceId);
     // the stop frame goes out before the close
-    expect(await machine.next((f) => f.type === "req" && f.op === "stop")).toMatchObject({
-      args: { reason: "revoked" },
-    });
+    expect(await machine.next((f) => f.type === "stop")).toEqual({ type: "stop", reason: "stop" });
     expect((await machine.closed).code).toBe(4003);
     const again = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
@@ -667,8 +676,9 @@ describe("GET /device/connect", () => {
       const t = await redis.get(deviceLeaseKey(m.deviceId));
       return t !== null && t !== firstToken;
     });
+    await waitFor(() => relay.connection(m.deviceId).catch(() => null));
     expect(
-      await relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
+      await localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
         deadlineMs: 6000,
         signal: AbortSignal.timeout(20_000),
       }),
@@ -715,7 +725,7 @@ describe("GET /device/connect", () => {
     const first = new FakeMachine(url, m.credential);
     await first.opened;
     await held(m.deviceId);
-    const call = relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
+    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
       deadlineMs: 20_000,
       signal: AbortSignal.timeout(30_000),
     });
@@ -739,7 +749,7 @@ describe("GET /device/connect", () => {
     await first.opened;
     first.hello({ programRunId: "run-1" });
     await first.ready;
-    const call = relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
+    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
       deadlineMs: 20_000,
       signal: AbortSignal.timeout(30_000),
     });
@@ -764,15 +774,13 @@ describe("GET /device/connect", () => {
     await first.ready;
     const started = Date.now();
     // a long command: without the evidence the call would wait for its whole deadline
-    const call = relay
-      .callV3(m.deviceId, "exec", execArgs(m.deviceId), {
-        deadlineMs: 600_000,
-        signal: AbortSignal.timeout(900_000),
-      })
-      .then(
-        () => undefined,
-        (e: unknown) => e,
-      );
+    const call = localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
+      deadlineMs: 600_000,
+      signal: AbortSignal.timeout(900_000),
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
     const req = (await first.next((f) => f.type === "req")) as KernelReq;
     // the program crashes and its service manager starts a new process
     first.close();

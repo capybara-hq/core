@@ -5,6 +5,7 @@ import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import {
   CLIENT_KEY,
+  DIAL_IN_KEY_PREFIX,
   type PermissionSet,
   permissionKeys,
   UI_COMPONENT_KEY_PREFIX,
@@ -47,7 +48,8 @@ export interface PermissionGroup {
     | "network"
     | "ui"
     | "components"
-    | "client";
+    | "client"
+    | "dialIn";
   /**
    * Sensitive category: secrets, public routes, tools, hooks, client components, client code; also
    * the "provides" group when it holds one of {@link SENSITIVE_EXTENSION_POINTS}, and the "UI" group
@@ -188,6 +190,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     ["ui.embed:", "ui", "embed:"],
     [UI_COMPONENT_KEY_PREFIX, "components", ""],
     ["ui.view:", "ui", "view:"],
+    [DIAL_IN_KEY_PREFIX, "dialIn", ""],
   ];
   for (const [prefix, category, itemPrefix] of table) {
     const rest = after(prefix);
@@ -266,6 +269,8 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     },
     { category: "components", items: components },
     { category: "client", items: p.client === true ? [CLIENT_ITEM] : [] },
+    // machines that connect to the deployment for this provider's devices, speaking its protocol
+    { category: "dialIn", items: p.dialIn ? [p.dialIn.protocol] : [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)
