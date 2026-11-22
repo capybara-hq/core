@@ -295,7 +295,7 @@ export async function login(
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(
-          hasLoginService(deps.home, platform)
+          hasLoginService(deps.home, platform, granted.deviceId)
             ? "The login service is installed: bring it online with `capybara-device service restart`."
             : "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
         );

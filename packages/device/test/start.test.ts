@@ -367,7 +367,8 @@ describe("a login service", () => {
     }) as typeof process.kill;
     // the service file launchd would have written
     mkdirSync(join(dir, "Library", "LaunchAgents"), { recursive: true });
-    writeFileSync(join(dir, "Library", "LaunchAgents", "top.capybara.device.plist"), "plist");
+    writeFileSync(join(dir, "Library", "LaunchAgents", "top.capybara.device.e1.plist"), "plist");
+    writeCredential(dir, cred);
     writePid(dir, 4242);
     const err: string[] = [];
     // launchd has the agent loaded and runs the pid file's program

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ import {
 } from "../src/pid.js";
 import { plistBinPath, plistContent, plistPath } from "../src/service/launchd.js";
 import { startedByServiceManager } from "../src/service/manager.js";
-import { unitBinPath, unitContent, unitPath } from "../src/service/systemd.js";
+import { unitBinPath, unitContent, unitPath, unitWantsLink } from "../src/service/systemd.js";
 import type { StagedDevice } from "../src/staged-device.js";
 import { writeCredential } from "../src/state.js";
 
@@ -36,6 +36,7 @@ const ours = (started = new Date(0)): ProcessInfo => ({
 });
 const alive = (() => true) as typeof process.kill;
 
+const id = "e1";
 let home: string;
 let stateDir: string;
 let lines: string[];
@@ -44,6 +45,17 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "device-control-")));
   stateDir = join(home, ".config", "capybara-device");
   mkdirSync(stateDir, { recursive: true });
+  writeCredential(stateDir, {
+    url: "http://x.test",
+    connectUrl: "ws://x.test/device/connect",
+    credential: "cap_dev_a",
+    orgId: "o",
+    deviceId: id,
+    dir: "/w",
+    mode: "os",
+    reconnectGraceSeconds: 120,
+    maxFrameBytes: 16 * 1024 * 1024,
+  });
   lines = [];
   calls = [];
 });
@@ -142,18 +154,20 @@ function fakeSystemctl(state: { active: boolean; pid?: number; onStart?: () => v
 }
 
 const installPlist = (binPath = "/b/bin/capybara-device.mjs") => {
-  mkdirSync(dirname(plistPath(home)), { recursive: true });
+  mkdirSync(dirname(plistPath(home, id)), { recursive: true });
   writeFileSync(
-    plistPath(home),
-    plistContent({ nodePath: "/n/node", binPath, stateDir, env: { PATH: "/bin" } }),
+    plistPath(home, id),
+    plistContent({ nodePath: "/n/node", binPath, stateDir, deviceId: id, env: { PATH: "/bin" } }),
   );
 };
 const installUnit = (binPath = "/b/bin/capybara-device.mjs") => {
   mkdirSync(dirname(unitPath(home)), { recursive: true });
   writeFileSync(
     unitPath(home),
-    unitContent({ nodePath: "/n/node", binPath, stateDir, env: { PATH: "/bin" } }),
+    unitContent({ nodePath: "/n/node", binPath, stateDir, deviceId: id, env: { PATH: "/bin" } }),
   );
+  mkdirSync(dirname(unitWantsLink(home, id)), { recursive: true });
+  symlinkSync(unitPath(home), unitWantsLink(home, id));
 };
 
 describe("stop under a service (DV2)", () => {
@@ -229,6 +243,7 @@ describe("stop under a service (DV2)", () => {
     writePid(stateDir, 5151);
     const base = {
       stateDir,
+      deviceId: id,
       home,
       env: { PATH: "/bin" },
       out,
@@ -291,18 +306,23 @@ describe("stop under a service (DV2)", () => {
       return printed.some((l) => l.includes("runs as a login service"));
     };
     expect(await run({ XPC_SERVICE_NAME: "0" })).toBe(true);
-    expect(await run({ XPC_SERVICE_NAME: "top.capybara.device" })).toBe(false);
-    expect(startedByServiceManager({ INVOCATION_ID: "abc" }, 7)).toBe(true);
-    expect(startedByServiceManager({ INVOCATION_ID: "abc", SYSTEMD_EXEC_PID: "7" }, 7)).toBe(true);
+    expect(await run({ XPC_SERVICE_NAME: "top.capybara.device.e1" })).toBe(false);
+    expect(startedByServiceManager({ INVOCATION_ID: "abc" }, id, 7)).toBe(true);
+    expect(startedByServiceManager({ INVOCATION_ID: "abc", SYSTEMD_EXEC_PID: "7" }, id, 7)).toBe(
+      true,
+    );
     // a shell in a terminal that systemd started inherits INVOCATION_ID, not the exec pid
-    expect(startedByServiceManager({ INVOCATION_ID: "abc", SYSTEMD_EXEC_PID: "3" }, 7)).toBe(false);
-    expect(startedByServiceManager({}, 7)).toBe(false);
+    expect(startedByServiceManager({ INVOCATION_ID: "abc", SYSTEMD_EXEC_PID: "3" }, id, 7)).toBe(
+      false,
+    );
+    expect(startedByServiceManager({}, id, 7)).toBe(false);
   });
 });
 
 describe("service status says what is true (DV5)", () => {
   const base = () => ({
     stateDir,
+    deviceId: id,
     home,
     env: { PATH: "/bin" },
     out,
@@ -326,6 +346,7 @@ describe("service status says what is true (DV5)", () => {
       nodePath: "/n",
       binPath: "/a&b/100%/bin/capybara-device.mjs",
       stateDir,
+      deviceId: id,
       env: {},
     };
     expect(plistBinPath(plistContent(spec))).toBe(spec.binPath);
@@ -468,7 +489,7 @@ describe("service status says what is true (DV5)", () => {
     expect(
       await serviceCommand("start", { ...base(), platform: "darwin", run: fakeLaunchctl(state) }),
     ).toBe(0);
-    expect(calls).toContainEqual(["launchctl", "kickstart", "gui/501/top.capybara.device"]);
+    expect(calls).toContainEqual(["launchctl", "kickstart", "gui/501/top.capybara.device.e1"]);
     expect(lines.join("\n")).toContain("Started");
   });
 

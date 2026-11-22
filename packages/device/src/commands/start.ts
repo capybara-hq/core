@@ -97,8 +97,8 @@ export async function start(deps: StartDeps): Promise<number> {
   }
   const where = deps.service ?? { home: homedir(), platform: process.platform };
   if (
-    hasLoginService(where.home, where.platform) &&
-    !startedByServiceManager(deps.env ?? process.env, proc.pid)
+    hasLoginService(where.home, where.platform, cred.deviceId) &&
+    !startedByServiceManager(deps.env ?? process.env, cred.deviceId, proc.pid)
   ) {
     // Started in a terminal while a service is installed: say how to control the installed one.
     // The service manager runs exactly this command, so it must keep working, without the hint.

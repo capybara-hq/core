@@ -15,7 +15,7 @@ import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { RunSystem } from "./service/manager.js";
 import type { StagedDevice } from "./staged-device.js";
-import { type Credential, stateDir } from "./state.js";
+import { type Credential, readCredential, stateDir } from "./state.js";
 
 export interface CliEnv {
   env?: Record<string, string | undefined>;
@@ -172,11 +172,24 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         err,
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
       });
-    case "service":
+    case "service": {
+      // Interim (Task 9 resolves the connection): the current credential's device.
+      let deviceId: string | undefined;
+      try {
+        deviceId = readCredential(dir)?.deviceId;
+      } catch (e) {
+        err((e as Error).message);
+        return 1;
+      }
+      if (deviceId === undefined) {
+        err("Not logged in. Run capybara-device login --url <url> first.");
+        return 1;
+      }
       return serviceCommand(
         cmd.action,
         {
           stateDir: dir,
+          deviceId,
           home,
           platform,
           env: io.env ?? process.env,
@@ -189,5 +202,6 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         },
         { json: cmd.json === true },
       );
+    }
   }
 }

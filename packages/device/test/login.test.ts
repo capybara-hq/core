@@ -409,7 +409,10 @@ describe("login", () => {
 
   it("points at the installed login service instead of start", async () => {
     mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-    writeFileSync(join(home, ".config", "systemd", "user", "capybara-device.service"), "unit");
+    const unitDir = join(home, ".config", "systemd", "user");
+    writeFileSync(join(unitDir, "capybara-device@.service"), "unit");
+    mkdirSync(join(unitDir, "default.target.wants"), { recursive: true });
+    writeFileSync(join(unitDir, "default.target.wants", "capybara-device@env-1.service"), "");
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(out.join("\n")).toContain("capybara-device service restart");
