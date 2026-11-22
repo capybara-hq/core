@@ -230,6 +230,10 @@ export interface NavAccountV1 {
 export interface NavStateV1 {
   /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
   items: NavItemV1[];
+  /**
+   * The section of the page on screen; `null`: no section is selected and the shell clears its
+   * highlight (the new-conversation home, a page outside the sections). Never `search`.
+   */
   current: NavSectionId | null;
   /** The pill's top item: the page's primary, else the new conversation (no menu button, D12). */
   action: NavActionV1;

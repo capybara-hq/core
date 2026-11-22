@@ -37,6 +37,7 @@ export const NATIVE_NAV_ACCOUNT_NAME = 64;
  */
 export interface NativeNavState {
   items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
+  /** `null`: no section is selected (the shell clears its highlight), as on the home. */
   current: NativeSectionId | null;
   action: { id: string; label: string; icon: "plus" | "square-pen" };
   account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number };
