@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type Column, DataTable } from "../src/index";
+import { type Column, DataTable, DesignProvider, type NativeHandlers } from "../src/index";
 import { renderAtClass } from "./width";
 
 const real = window.matchMedia;
@@ -281,5 +281,120 @@ describe("DataTable grouped rows", () => {
     expect(screen.getByText("Remove")).not.toBeNull();
     resize(1440);
     expect(screen.getByText("Remove")).not.toBeNull();
+  });
+
+  it("one header per slot, and every row draws every declared slot's cell, empty or not", () => {
+    const rows: Row[] = [{ ...(ROWS[0] as Row), role: "", email: "" }, ROWS[1] as Row];
+    const cols = [
+      col("name", "Name", "title"),
+      col("role", "Role", "subtitle"),
+      col("email", "Email", "subtitle"),
+      col("state", "State", "meta"),
+    ];
+    renderAtClass(390, <DataTable {...base} rows={rows} columns={cols} />);
+    const table = screen.getByRole("table", { name: "Members" });
+    const [head, ...body] = within(table).getAllByRole("row");
+    expect(
+      within(head as HTMLElement)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual(["Name", "Role · Email", "State"]);
+    expect(
+      body.map((r) =>
+        within(r)
+          .getAllByRole("cell")
+          .map((c) => c.textContent),
+      ),
+    ).toEqual([
+      ["Ada", "", "Active"],
+      ["Bo", "Member · bo@x.io", "Invited"],
+    ]);
+  });
+
+  it("a row that opens nothing but has a menu draws one ⋯ button that opens the sheet", () => {
+    renderAtClass(390, <DataTable {...base} columns={declared} rowMenu={menu} />);
+    const table = screen.getByRole("table", { name: "Members" });
+    const [head, first] = within(table).getAllByRole("row");
+    // the actions column has a header so the cells stay aligned
+    expect(within(head as HTMLElement).getAllByRole("columnheader")).toHaveLength(5);
+    const more = within(first as HTMLElement).getByRole("button", { name: "行操作" });
+    expect(within(table).getAllByRole("button", { name: "行操作" })).toHaveLength(ROWS.length);
+    expect(screen.queryByText("Remove")).toBeNull();
+    act(() => {
+      fireEvent.click(more);
+    });
+    expect(screen.getByText("Remove")).not.toBeNull();
+  });
+
+  it("a row that opens keeps the chevron and no ⋯ button; its menu cell stays, empty", () => {
+    renderAtClass(390, <DataTable {...base} columns={declared} rowMenu={menu} onOpen={() => {}} />);
+    const table = screen.getByRole("table", { name: "Members" });
+    expect(within(table).queryByRole("button", { name: "行操作" })).toBeNull();
+    const [, first] = within(table).getAllByRole("row");
+    expect(within(first as HTMLElement).getAllByRole("cell")).toHaveLength(5);
+  });
+
+  it("the sheet title is the title cell, not the first column", () => {
+    const cols = [col("id", "Id", "hidden"), col("name", "Name", "title")];
+    const { container } = renderAtClass(390, <DataTable {...base} columns={cols} rowMenu={menu} />);
+    act(() => {
+      fireEvent.contextMenu(container.querySelector('[data-row-key="a"]') as HTMLElement);
+    });
+    const sheet = document.querySelector('[data-part="action-sheet"]') as HTMLElement;
+    expect(within(sheet).getByText("Ada")).not.toBeNull();
+    expect(within(sheet).queryByText("a")).toBeNull();
+  });
+
+  it("an interactive column is never the title fallback; an interactive declared title does not open", () => {
+    const onOpen = vi.fn();
+    const sw: Column<Row> = {
+      ...col("on", "On"),
+      interactive: true,
+      cell: () => <button type="button">sw</button>,
+    };
+    const first = renderAtClass(
+      390,
+      <DataTable {...base} columns={[sw, col("name", "Name"), col("role", "Role", "meta")]} />,
+    );
+    expect(first.container.querySelector("[data-part=compact-title]")?.textContent).toBe("Ada");
+    cleanup();
+    renderAtClass(
+      390,
+      <DataTable
+        {...base}
+        columns={[{ ...sw, compact: "title" }, col("role", "Role", "meta")]}
+        onOpen={onOpen}
+      />,
+    );
+    fireEvent.click(screen.getAllByText("sw")[0] as HTMLElement);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("native shell: a native sheet up, rotating out of compact and back calls menu once", async () => {
+    let settle: (v: string | null) => void = () => {};
+    const nativeMenu = vi.fn<NonNullable<NativeHandlers["menu"]>>(
+      () =>
+        new Promise<string | null>((r) => {
+          settle = r;
+        }),
+    );
+    const { container, resize } = renderAtClass(
+      390,
+      <DesignProvider locale="zh" native={{ menu: nativeMenu }}>
+        <DataTable {...base} columns={declared} rowMenu={menu} />
+      </DesignProvider>,
+    );
+    act(() => {
+      fireEvent.contextMenu(container.querySelector('[data-row-key="a"]') as HTMLElement);
+    });
+    await act(async () => {});
+    expect(nativeMenu).toHaveBeenCalledTimes(1);
+    resize(1440);
+    await act(async () => {});
+    expect(document.querySelector('[data-part="action-sheet"]')).toBeNull();
+    resize(390);
+    await act(async () => {});
+    expect(nativeMenu).toHaveBeenCalledTimes(1);
+    await act(async () => settle(null));
   });
 });

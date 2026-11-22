@@ -24,7 +24,13 @@ import { ClassForms, useClassForm } from "../shell/class-forms";
 import { SIZE_CLASS_QUERIES } from "../shell/size-class";
 import { useMediaQuery } from "../shell/use-media-query";
 import { CellTitle } from "./cell-title";
-import { assertCompactColumns, CompactHeader, CompactRow, declaresCompact } from "./compact-rows";
+import {
+  assertCompactColumns,
+  CompactHeader,
+  CompactRow,
+  compactRoles,
+  declaresCompact,
+} from "./compact-rows";
 import { EmptyArea } from "./empty";
 import type { DataTableProps } from "./types";
 
@@ -448,7 +454,7 @@ export function DataTable<T>({
   const compactList = (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: the explicit table role is spread (ROLE)
     <div className="cb-table-compact" {...ROLE.table} aria-label={label} data-part="table-compact">
-      <CompactHeader columns={columns} />
+      <CompactHeader columns={columns} menuLabel={rowMenu ? t("table.rowActions") : undefined} />
       <div {...ROLE.rowgroup}>
         {rows.map((row) => {
           const key = rowKey(row);
@@ -470,6 +476,8 @@ export function DataTable<T>({
               disabled={disabled}
               open={onOpen && !disabled ? () => onOpen(row) : undefined}
               menuItems={menuItems}
+              menuColumn={rowMenu !== undefined}
+              menuLabel={t("table.rowActions")}
               onMenu={() => setSheetKey(key)}
               extra={expand?.(row)}
             />
@@ -483,7 +491,7 @@ export function DataTable<T>({
   const sheetName =
     sheetRow === undefined
       ? undefined
-      : (rowLabel?.(sheetRow) ?? rowNameOf(columns[0]?.cell(sheetRow)));
+      : (rowLabel?.(sheetRow) ?? rowNameOf(compactRoles(columns).title?.cell(sheetRow)));
 
   // Density (spec §6.6): the toolbar, bulk bar and empty-state actions are `default`, as the signed
   // reference draws them; the rows (row menus) and pagination are `dense`.

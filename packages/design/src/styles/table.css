@@ -585,6 +585,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The actions cell: a ⋯ button on a row that opens nothing, else empty. */
+.cb-table-compact-menu {
+  display: inline-flex;
+  flex: none;
+}
+/* An empty cell stays for assistive tech (it sits under its header) but takes no gap. */
+.cb-table-compact-trailing:empty,
+.cb-table-compact-menu:empty {
+  margin-inline-start: calc(-1 * var(--cb-space-3));
+}
 .cb-table-compact-chevron {
   display: inline-flex;
   flex: none;

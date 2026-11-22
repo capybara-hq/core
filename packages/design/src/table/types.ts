@@ -27,10 +27,12 @@ export type Column<T> = {
   interactive?: boolean;
   /**
    * The column's role in the grouped rows below 600 (responsive spec §4.2, design spec §6.6).
-   * `title`: the first line (the first column when none declares it); `subtitle` / `meta`: the
-   * muted and faint lines (several are joined with a middle dot); `trailing`: at most one, at the end
-   * of the row; `hidden`: not drawn. A table where any column declares a role draws the grouped
-   * rows, and a column without a role is not drawn there; no declaration keeps the stacked rows.
+   * `title`: the first line (when none declares it, the first column without a role that is not
+   * `interactive`; an `interactive` declared title does not open the row); `subtitle` / `meta`:
+   * the muted and faint lines (several are joined with a middle dot); `trailing`: at most one, at
+   * the end of the row; `hidden`: not drawn. A table where any column declares a role draws the
+   * grouped rows, and a column without a role is not drawn there; no declaration keeps the
+   * stacked rows.
    */
   compact?: "title" | "subtitle" | "meta" | "trailing" | "hidden";
 };
