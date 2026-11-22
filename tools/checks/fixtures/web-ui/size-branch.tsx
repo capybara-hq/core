@@ -27,3 +27,18 @@ export function Bound(matchMedia: (q: string) => boolean) {
   const innerWidth = 3;
   return [matchMedia("x"), innerWidth, design.Button];
 }
+
+// Names in key and type positions are not reads.
+export type P = { innerWidth: number; matchMedia(): void };
+export class K {
+  innerWidth = 1;
+  matchMedia() {}
+}
+export type T = typeof innerWidth;
+
+// Destructuring evasions are reads.
+export function Destructure() {
+  const { innerWidth: w } = window;
+  const { useSizeClass: u } = design;
+  return [w, u];
+}

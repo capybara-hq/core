@@ -56,3 +56,12 @@ tests failed 2 (size-branch, template-only) before the fix.
 2. `templateOnlyPropsFindings` dedupes on line + message.
 3. README: a `header` a hook returns or an imported const holds is not followed (stated; not followed in code).
 Result: tools/checks 446 tests pass, `pnpm check` passes, tsc / biome / english-comments clean.
+
+## Fix round 2 (re-review minors)
+RED first: `size-branch.tsx` lines 31-42 (type member, class members, `typeof innerWidth`, destructuring of
+`window` and a namespace import); 2 tests failed (false positives on keys/types, missed destructuring).
+- M-3: key positions of Property / MethodDefinition / PropertyDefinition / TSPropertySignature /
+  TSMethodSignature and `TSTypeQuery` are no longer reads.
+- M-4: doc comment of `sizeBranchFindings` lists namespace members, destructuring and bare globals.
+- Optional done: `const { innerWidth: w } = window` and `const { useSizeClass } = design` are flagged.
+Result: 446 tests, `pnpm check`, tsc, biome, english-comments pass.

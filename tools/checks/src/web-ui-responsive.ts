@@ -99,13 +99,26 @@ const SIZE_NAMES = new Set([
   "TOUCH_QUERY",
 ]);
 const WINDOW_GLOBALS = new Set(["window", "globalThis", "self"]);
+/** Nodes whose `key` is a name, not a reference. */
+const KEY_PARENTS = new Set([
+  "Property",
+  "MethodDefinition",
+  "PropertyDefinition",
+  "TSPropertySignature",
+  "TSMethodSignature",
+]);
 const WINDOW_READS = new Set(["matchMedia", "innerWidth"]);
 
 /**
  * `web-ui-size-branch`: a page branching on the size class draws structure the design package
- * owns. A file under `apps/web/src` (tests and `dev/` apart) that imports `useSizeClass`,
- * `useMediaQuery`, `useTouch`, `SIZE_CLASS_QUERIES` or `TOUCH_QUERY`, or reads `window.matchMedia`
- * / `window.innerWidth`, fails unless it is in `SIZE_BRANCH_ALLOWED`.
+ * owns. A file under `apps/web/src` (tests and `dev/` apart) fails unless it is in
+ * `SIZE_BRANCH_ALLOWED` when it
+ * - imports `useSizeClass`, `useMediaQuery`, `useTouch`, `SIZE_CLASS_QUERIES` or `TOUCH_QUERY`, or
+ *   reads one as a member of a namespace import (`design.useSizeClass`) or destructures it from
+ *   one;
+ * - reads `window.matchMedia` / `window.innerWidth` (also on `globalThis` / `self`), destructures
+ *   them from the window, or reads a bare global `matchMedia` / `innerWidth` no enclosing scope
+ *   binds (object keys, class members and type positions are not reads).
  */
 export function sizeBranchFindings(p: ParsedFile): Finding[] {
   const out: Finding[] = [];
@@ -172,9 +185,26 @@ export function sizeBranchFindings(p: ParsedFile): Finding[] {
       if (!WINDOW_READS.has(name) || scopes.some((s) => s.has(name))) return;
       // a property name or an object key is not a read of the global
       if (parent?.type === "MemberExpression" && key === "property" && !parent.computed) return;
-      if (parent?.type === "Property" && key === "key" && !parent.computed) return;
+      if (key === "key" && !parent?.computed && KEY_PARENTS.has(parent?.type ?? "")) return;
+      // a type position (`typeof innerWidth`, an interface member) reads nothing at runtime
+      if (parent?.type === "TSTypeQuery") return;
       flag(n, `\`${name}\``);
       return;
+    }
+    if (n.type === "VariableDeclarator" && (n.id as Node).type === "ObjectPattern") {
+      const init = n.init as Node | null;
+      if (init?.type === "Identifier") {
+        const from = init.name as string;
+        const names = WINDOW_GLOBALS.has(from)
+          ? WINDOW_READS
+          : namespaces.has(from)
+            ? SIZE_NAMES
+            : undefined;
+        for (const prop of (n.id as Node).properties as Node[]) {
+          const k = propKey(prop);
+          if (names && k && names.has(k)) flag(prop, `\`${from}.${k}\``);
+        }
+      }
     }
     if (n.type === "MemberExpression") {
       const obj = n.object as Node;

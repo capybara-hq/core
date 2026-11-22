@@ -463,14 +463,19 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-size-branch", 19],
         ["web-ui-size-branch", 20],
         ["web-ui-size-branch", 21],
+        // destructuring the window and the namespace
+        ["web-ui-size-branch", 41],
+        ["web-ui-size-branch", 42],
       ]);
       expect(f[0]?.message).toContain("design package");
     });
 
     it("other window reads and a string naming a hook pass", () => {
       const f = sizeBranchFindings(parse("size-branch.tsx"));
-      // line 13 reads other window props; lines 26-29 bind the names locally
-      expect(f.some((x) => (x.line >= 12 && x.line <= 18) || x.line >= 22)).toBe(false);
+      // line 13 reads other window props; 26-29 bind the names locally; 31-37 are keys and types
+      expect(f.some((x) => (x.line >= 12 && x.line <= 18) || (x.line >= 22 && x.line <= 40))).toBe(
+        false,
+      );
     });
 
     it("the tree: tests and dev/ are skipped, a file fails unless allowlisted", () => {
