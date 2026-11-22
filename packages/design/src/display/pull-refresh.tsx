@@ -1,8 +1,9 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../icons/icon";
-import { useHaptics, useNative } from "../native";
+import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
+import { useShellKind } from "../shell/shell-environment";
 import { useTouch } from "../shell/touch";
 
 /** The pull distance (px of finger travel, after damping) that triggers a refresh. */
@@ -43,9 +44,9 @@ function scrollersOf(target: Element): Element[] {
 const atTop = (scrollers: readonly Element[]) => scrollers.every((s) => s.scrollTop <= 0);
 
 /**
- * Pull to refresh (interaction spec §3, D4): only in the native mobile shell (its handlers say so
- * with `pullToRefresh`, set by the web's adapter; never the user agent) on a touch device, where a
- * pull down from the top reads the data again. The browser keeps its own pull-to-reload and the
+ * Pull to refresh (interaction spec §3, D4): only in the native mobile shell (the shell's declared
+ * `kind`, read from `window.capybaraShell` like the shell environment; never the user agent) on a
+ * touch device, where a pull down from the top reads the data again. The browser keeps its own pull-to-reload and the
  * desktop shell has none: there the children render untouched and no listener is added. The
  * listeners are passive: the scroller's own overscroll bounce plays and the indicator rides on
  * top. A pull counts only when every scroller under the finger starts at its top and the drag is
@@ -53,7 +54,7 @@ const atTop = (scrollers: readonly Element[]) => scrollers.every((s) => s.scroll
  * there plays the `selection` haptic and calls `onRefresh`; the spinner stays until it settles.
  */
 export function PullToRefresh({ onRefresh, children }: PullRefreshProps) {
-  const shell = useNative()?.pullToRefresh === true;
+  const shell = useShellKind() === "mobile";
   const touch = useTouch() === true;
   const active = shell && touch;
   if (!active) return <>{children}</>;

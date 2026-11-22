@@ -339,8 +339,7 @@ describe("DesignRoot", () => {
         <Probe />
       </DesignRoot>,
     );
-    // haptics@1 is the mobile app's: its lists pull to refresh too
-    expect(getByRole("button").getAttribute("data-has")).toBe("haptics,pullToRefresh");
+    expect(getByRole("button").getAttribute("data-has")).toBe("haptics");
     getByRole("button").click();
     expect(impact).toHaveBeenCalledWith("light");
   });

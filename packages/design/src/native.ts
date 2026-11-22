@@ -73,12 +73,6 @@ export interface NativeHandlers {
   }): Promise<string | null>;
   share?(input: { title?: string; text?: string; url?: string }): Promise<void>;
   haptics?(kind: NativeHapticKind): void;
-  /**
-   * The native mobile shell (its WebView has no pull-to-reload of its own): lists that offer it
-   * refresh on a pull down (interaction spec §3, D4). The web's adapter sets it for the mobile
-   * app's capability set only; a browser and the desktop shell never get it.
-   */
-  pullToRefresh?: boolean;
 }
 
 export const NativeContext = createContext<NativeHandlers | null>(null);

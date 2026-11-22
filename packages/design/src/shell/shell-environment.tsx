@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PAGE_BACKGROUND } from "../tokens";
 
 export { SHELL_ENVIRONMENT_SCRIPT, ShellEnvironmentScript } from "./shell-environment-script";
@@ -123,6 +123,30 @@ export function readShellEnvironment(win: Window): ShellEnvironment | null {
   } catch {
     return null;
   }
+}
+
+function subscribeKind(notify: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const shell = shellOf(window);
+  if (shell === null) return () => {};
+  try {
+    const off = shell.on("change", notify);
+    return typeof off === "function" ? () => off() : () => {};
+  } catch {
+    return () => {};
+  }
+}
+
+const kindNow = (): ShellKind | null =>
+  typeof window === "undefined" ? null : (readShellEnvironment(window)?.kind ?? null);
+
+/**
+ * The native shell's declared kind (`window.capybaraShell.kind`, checked as the shell environment
+ * reads it: never the user agent), following the envelope's `change`; null in a browser, on the
+ * server and during hydration.
+ */
+export function useShellKind(): ShellKind | null {
+  return useSyncExternalStore<ShellKind | null>(subscribeKind, kindNow, () => null);
 }
 
 /**

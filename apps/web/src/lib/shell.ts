@@ -580,10 +580,6 @@ export function useNativeHandlers(): NativeHandlers {
             haptics: (kind) => {
               haptics.impact(kind).catch(() => {});
             },
-            // haptics@1 is the mobile app's alone (mobile app spec §5.2): its WebView has no
-            // pull-to-reload, so lists offer their own (interaction spec D4); the browser keeps
-            // its native one and the desktop shell has none
-            pullToRefresh: true,
           }),
     }),
     [haptics, share, menu],
