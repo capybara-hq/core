@@ -103,11 +103,11 @@ Who sets the sandbox (each layer can only narrow the one above):
   [--outside-sandbox on|off] [--network open|allowlist] [--project-reach workspace|os-user]`, and
   the owner's allowlist (`capybara-device policy add allowedDomains <host>`). With the allowlist
   network the owner's list is the machine's ceiling: a per-call host grant counts only where it
-  covers the host. A new install starts with outside-sandbox off and the open network. The device
-  page's sandbox section can narrow a local device (the allowlist network, removing hosts,
-  outside-sandbox off, workspace project reach; `POST /api/v1/orgs/:orgId/devices/:id/policy`) but
-  never widen it (a local device's network PATCH is refused with `device.ceiling_on_machine`,
-  which names the machine commands).
+  covers the host. A new install starts with outside-sandbox off and the open network. The
+  machine's owner ceiling is the `device-local` provider's: the kernel reads what the provider
+  reports (its permission support and report), the same as for any provider. On the device page,
+  a local device's network is its own setting, as for every device (`PATCH
+  /api/v1/orgs/:orgId/devices/:id` with `network`), within what the provider allows.
 - **Device (cloud)**: follows its org's network until its owner picks one on the device page
   (`PATCH /api/v1/orgs/:orgId/devices/:id` with `network: { mode: open | allowlist | none | null,
   hosts? }`; `null` follows the org again). The choice stays within the org's and the platform's

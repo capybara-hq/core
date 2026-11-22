@@ -130,7 +130,10 @@ Each line is the rule you must not miss; the skill has the rest.
   every org until switched on; a deployment may add pinned entries through
   `bootstrap.extraManifest`, merged, never overriding);
   `device-provider@1` is a `multi`, brokered, org-scoped point (several providers side by side; the
-  resolver refuses unknown point names);
+  resolver refuses unknown point names); the dial-in channel is a kernel service on `ctx`
+  (`ctx.dialIn`, `ctx.devices`) for providers that declare `permissions.dialIn` and implement
+  `DeviceProvider.dialIn` (the kernel has no device location of its own; local devices are the
+  `device-local` plugin's), its long connections held only by the `gateway` role;
   hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
   extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields) and
   `ctx.models.generateImage` (`purpose: "image"`), and policy hooks fail closed. An extension

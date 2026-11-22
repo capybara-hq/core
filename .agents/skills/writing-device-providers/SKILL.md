@@ -260,12 +260,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     abandoned cloud obligation that later gains a matching recorded destruction resolves too. Abandonment is never evidence:
     its members stay unsettled. `report()` keeps it out of `retired` and counts it in `abandoned` / `abandonedMembers`;
     `cleanRetirement` also requires none.
-  - **Local machines.** A local obligation keeps the boot identity (`bootId`, from authenticated hellos; a hello without one clears
-    it) that the device's machine last reported. It resolves `host-rebooted` once any current machine of the device reports
-    another, not earlier, boot: the OS instance is the evidence, not the credential. Until then the device answers
-    `device.restart_required`. With no boot recorded it never resolves and answers `device.replace_required`: delete the device
-    and connect the computer as a new one.
-  - **What never clears an obligation.** A local destroy, a service restart, a new generation, a timeout or a SID.
+  - **What never clears an obligation.** A destroy the provider does not confirm, a service restart, a new generation, a
+    timeout or a SID.
   - **After the freeze.** Nothing in `SandboxService` signals a SID or clears kill marks (the old `killPendingTasks` is gone).
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
@@ -329,12 +325,11 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **Network ceiling:** the narrower of `devices.network.ceiling` and the org's
     `deviceNetwork.ceiling` (`allowlist` is narrower than `open`), clamped to what the provider
     can enforce; `sandbox.limits.egress: none` (the kill switch) closes it.
-  - **Network mode:** the device's choice (a local owner's `network`, a cloud device's
-    `devices.network_mode`; NULL follows the org), else the org default, else
+  - **Network mode:** the device's choice (`devices.network_mode`, the same setting for every
+    provider; NULL follows the org), else the org default, else
     `devices.network.default`, clamped to the ceiling. `network_mode: none` is a closed cloud network.
-    The owner sets a cloud device's choice on the device page (`PATCH /devices/:id` `network:
-    { mode, hosts? }`, `DevicesService.update` / `planNetwork`; a local device gets
-    `device.ceiling_on_machine`): within the ceilings and the org's hosts
+    The owner sets a device's choice on the device page (`PATCH /devices/:id` `network:
+    { mode, hosts? }`, `DevicesService.update` / `planNetwork`): within the ceilings and the org's hosts
     (`device.network_not_allowed`), under the ordered locks (membership, device row, the device's
     permission write lock). An API token or the Platform tool (`devices.set-network`) may only
     narrow, compared on the stored setting and on the effective sandbox. The view reports
@@ -404,49 +399,43 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   Where a provider enforces more weakly, write it in the README (E2B looks only at Host / SNI and
   does not verify the destination IP, Ruling M14).
 
-## The kernel-internal provider `@local` (local devices; until phase 2)
+## Dial-in devices (`packages/kernel/src/dial-in`)
 
-This section describes the state until phase 2 of the device-provider design (`docs/superpowers/specs/2026-11-21-device-provider-design.md`),
-which moves local devices to the `device-local` provider over a dial-in channel; it is not done yet.
+A provider whose machines connect to the deployment (device provider spec §5) declares
+`permissions.dialIn: { protocol }` and implements `DeviceProvider.dialIn` (`onHello`, optional
+`onFrame` / `onClose`); providing the point is refused when one is declared without the other. The
+kernel knows no device location: local devices are the `device-local` plugin's, and the kernel
+treats a dial-in device like any other (its provider, report and permission support).
 
-Local devices (spec §6, §13 and §15) run on a person's machine, driven through a program that
-connects to the gateway. Their provider is `@local`, registered by the kernel itself
-(`packages/kernel/src/sandbox/providers.ts`, `packages/kernel/src/local-devices`); it is not an extension and
-no plugin can take the name.
-
-- **Per-device resolution.** The provider is chosen by the device's row
-  (`devices.provider`, `DeviceProviders.forDevice`), so cloud and local
-  devices coexist. Handle ids are the device id (parsed from `cap-device-<deviceId>`).
-- **Relay.** Calls become requests on `capk:device-req:<deviceId>` and results come back under
-  `capk:device-res:<requestId>`; no holder means `device.offline` at once. A waiting staged call
-  ends at its deadline plus `reconnectGraceSeconds`, or at the next holder poll once the machine is
-  connected as another program run (the hello's `programRunId`, random per process: the results a
-  program keeps for a reconnect live in its memory), with `DeviceProgramRestartedError`; the
-  operation path records it as an unknown outcome and the model gets
-  `DEVICE_PROGRAM_RESTARTED_TOOL_TEXT`. See
-  `packages/kernel/src/local-devices` and spec §13.4. The handle carries the org's limits from `create`; a
-  handle without them answers `SandboxGoneError`, which rebuilds the instance.
-- **Offline-safe destroys.** `destroy`, `destroyByName`, `destroyFileSystem` and
-  `destroyFileSystemByName` never fail because the machine is away (a stop is relayed only when it is
-  online and is fire-and-forget). Files on the machine are never removed.
-- **Never swept.** Idle suspension, `maxRunning` eviction and inactivity destruction skip `@local`;
-  the only sweep that includes its rows is the gone-sweep for a deleted org or device.
-- **Roots and real paths.** `SandboxHandle.roots` (`{ workspace, skills, tmp }`, absolute paths in the
-  instance) is optional; absent means `SANDBOX_ROOTS`. A device reports its roots in `hello`. Every
-  kernel tool, attachment copy, skill file and background task builds paths from the **held
-  instance's roots**, never from constants, and tool descriptions never name `/workspace` ("the
-  workspace directory"). Root-independent path checks run before entering the instance
-  (`validateSandboxPathShape`). Each conversation records an `device_paths` event on its first
-  sandbox call and whenever the roots change, including back to the defaults; it is in the log, so it
-  needs no `DriftReason`. A new tool must use the roots too.
-- **Projects.** A machine that serves the device operations `list` and `scan` announces the `projects`
-  feature in its hello, plus the owner's home (`DeviceHello.home`, stored with the machine: the base of
-  a project path under `os-user` project reach). `@local`'s `list` / `scan` forward them only to a
-  machine that announced `projects` (the device answers within its owner ceiling: `os-user` reach
-  reads with the owner's rights, `workspace` reach only the workspace, a docker-mode device in its
-  container); for
-  any other the device offers no projects (`device.projects_unsupported`). The device keeps no project
-  list and has no project operations; projects live only in the kernel's `device_projects`.
+- **Sign-in.** `capybara-device login` (or any program speaking the provider's protocol) runs the
+  device authorization flow against `/api/v1/device/*`: `authorize` names the program's protocol,
+  the person confirms into a new or own device of a dial-in provider on in the org that speaks it,
+  `token` hands over the machine credential (`cap_dev_…`, only its sha256 in `device_machines`, one
+  active machine per device). `DialInMachines.authenticate` accepts a credential while its machine,
+  device, org and membership stand; whether the device's provider takes it now is the connection's
+  next check (`DialInHandlers.forDevice`: 403 `device.provider_unavailable`, then 426
+  `device.program_outdated` for another protocol).
+- **Connection.** The gateway role holds the WebSocket at `/device/connect`, claims the device's
+  lease after the hello envelope (program facts and frame capacity; the body is the provider's),
+  records the program facts (`recordConnect`), asks the provider's `onHello`, then sends `ready`
+  (connection id and effective `maxFrameBytes`). Events go to `onFrame`, the close reason to
+  `onClose`.
+- **Relay.** `ctx.dialIn.request(deviceId, body, { timeoutMs, signal })` queues an opaque body on
+  `capk:device-req:<deviceId>`; the holder sends it and stores the response under
+  `capk:device-res:<requestId>`. No holder: `DeviceOfflineError` at once; a request refused before
+  it was sent: `DeviceRequestNotSentError`; a machine that reconnects as another program run
+  (`programRunId`) ends a waiting request with `DeviceProgramRestartedError`. Every call checks the
+  device is bound to the calling provider. Before a new managed dispatch on a dial-in device the
+  sandbox service asks `DialInRelay.connection`, so an offline or revoked machine fails before
+  anything is recorded as sent.
+- **Reports.** A provider stores what its machine says (in `ctx.kv` / `ctx.db`) and calls
+  `ctx.devices.reportChanged(deviceId)`; the kernel reads `report()` again and moves the device's
+  authority epoch when the revision changed. Online state is `DialInRelay.online` (a replica holds
+  the connection).
+- **Tests.** The fixture `fake-dial-in` (`test/fixtures/plugins/fake-dial-in`, loaded as a bootstrap
+  plugin with `fakeDialInPkg()`) relays every provider method as `{ op, args }`;
+  `FakeDialInMachine` (`@capybara-hq/testing`) or `EnvelopeMachine` (`test/helpers/dial-in-machine.ts`,
+  for scripted hellos, raw frames and recorded requests) answers it.
 
 ## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 
@@ -529,7 +518,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   provider may give the new file system the old id (sandbox-docker's volumes are named after the device; the fake does it with `setFakeFileSystemIdsByName`). A file system gone at the provider is never replaced: `fs_status = 'lost'` and `device.files_lost` until reset.
 - **Provider per device**: a device is bound to its provider (`devices.provider`) for life
   (`DeviceProviders.forDevice`, never another provider in its place). A use needs that provider loaded **and** on in the
-  device's org (`DeviceProviderSelection.isOnInOrg`, read at every use; `@local` is on wherever it is registered);
+  device's org (`DeviceProviderSelection.isOnInOrg`, read at every use; an in-process provider a test registers is on wherever it is registered);
   otherwise, and for an instance row naming another provider, the use fails `device.unavailable` (503) and nothing
   changes: files and instance stay, nothing is demoted, recreated or taken over. Lifecycle work (destroy, reset, the
   sweeps, revocation delivery) needs the provider loaded only; deleting a device whose provider is not loaded fails and
@@ -588,24 +577,6 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
   `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
-## Local file access on protocol 5
-
-A protocol 5 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
-(`packages/kernel/src/local-devices/local-device-provider.ts`) is the `@local` registration, and its raw
-`exec` / `readFile` / `writeFile` / `stat` / `list` / `scan` refuse with `SandboxPermissionUnsupportedError` before anything
-is queued, while `killAll` / `killTagged` queue nothing. Reads and writes go through `operation(h, scope)` (the scope's project root and
-write roots, the frame-sized `readFile` cap of `devices.local.maxFrameBytes`), staging through `prepare`, owner browsing
-through `browse`, commands through the request-bound execution adapter (the admitted call grants, cut to the org's current
-limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling
-(`ownerCeiling { outsideSandbox, network, allowedDomains, restrictedProjectReach }`, reported as `DeviceOwnerCeiling`
-version 3). The web narrows it only through the `policy` op (network to `allowlist`, hosts removed, `outsideSandbox`
-off, `restrictedProjectReach: workspace`); a `policy` op that adds hosts or carries a `mode` is refused (`POLICY_ADD_REFUSED`): widening happens only on the
-machine (`capybara-device ceiling set --outside-sandbox on|off --network open|allowlist`, `capybara-device policy add
-allowedDomains <host>`). Kernels and device programs upgrade together with no fallback: the kernel refuses a protocol 3
-program (426, "Update capybara-device"), and a protocol 4 program is refused the same way (426); a protocol 5 program facing an older deployment says the deployment must be
-upgraded. Interim (ruling R1): a scope has no read roots, so an approved read outside the project on a local device is
-refused until phase 4 gives the device its own read rule.
-
 ## Per-call sandbox escalation
 
 Running one `Bash` call outside the sandbox (`sandbox: "escalated"` with a justification) is the `outside-sandbox`
@@ -617,8 +588,7 @@ pair (`filesystem: device`, `network: environment`) for its command only (exec o
 keep the base scope), and only while the call holds an `outside-sandbox` grant and the snapshot's
 `outsideSandboxCeiling` holds. `isFullExecutionScope` (`sandbox/operation-authority-types.ts`) recognizes the pair for
 the provider support check (`held-operations.ts`) and the `outside-sandbox-off` revocation predicates
-(`permission-ceiling-writes.ts`, `owner-report.ts`, `policy-summary.ts`); the device's `intersectOperation` decides the
-same way. Admission (`resolveInvocation`) refuses an escalation without its grant under every profile, and when the
+(`permission-ceiling-writes.ts`); a machine provider's own enforcement decides the same way. Admission (`resolveInvocation`) refuses an escalation without its grant under every profile, and when the
 snapshot's `escalationRefusal` is set (running outside not allowed by a layer, a runtime without `outsideSandbox`, an
 unattended run). An escalated call runs as the owner with the device program's environment minus every `CAPYBARA_*`
 variable. The device's `commands.log` writes `isolation: "full"` and the grant source for such an operation, never the
