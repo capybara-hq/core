@@ -18,6 +18,7 @@ import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+import { stubInView, stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -221,10 +222,43 @@ describe("/admin/connectors", () => {
           : json(200, { connectors: [ROWS[0]], next: "c1" }),
     });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: C.loadMore }));
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
     expect(await screen.findByText("Billing API")).toBeTruthy();
     expect(calls.map((c) => c.url)).toContain(`${LIST}?after=c1`);
-    expect(screen.queryByRole("button", { name: C.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("compact: the next page is read from the list's end, no Load more button", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    const { calls } = await open("/admin/connectors", {
+      [`GET ${LIST}`]: (c) =>
+        c.url.includes("after=c1")
+          ? json(200, { connectors: [ROWS[1]], next: null })
+          : json(200, { connectors: [ROWS[0]], next: "c1" }),
+    });
+    expect(await screen.findByText("Billing API")).toBeTruthy();
+    expect(calls.map((c) => c.url)).toContain(`${LIST}?after=c1`);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("compact: a failed next page shows Retry, which reads it again", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    let fail = true;
+    await open("/admin/connectors", {
+      [`GET ${LIST}`]: (c) => {
+        if (!c.url.includes("after=c1")) return json(200, { connectors: [ROWS[0]], next: "c1" });
+        return fail
+          ? json(500, { error: { code: "internal", message: "boom" } })
+          : json(200, { connectors: [ROWS[1]], next: null });
+      },
+    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.queryByText("Billing API")).toBeNull();
+    fail = false;
+    await userEvent.setup().click(retry);
+    expect(await screen.findByText("Billing API")).toBeTruthy();
   });
 
   it("empty: no org has added a connector yet", async () => {

@@ -42,7 +42,7 @@ function AdminConnectorTemplates() {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   return (
-    <ListPage header={header} filters={owner.filters}>
+    <ListPage header={header} scope={owner.scope}>
       <ComponentsTable kind="connector_template" rows={owner.rows} />
     </ListPage>
   );

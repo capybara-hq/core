@@ -665,6 +665,11 @@ a.cb-item-list-title:hover {
 .cb-item-list > .cb-item-list-row[data-shape="item"]:last-child {
   padding-bottom: var(--cb-space-2);
 }
+/* With more pages on compact the list end li follows the rows, so the last item row is the one before
+   it (kept apart from the rule above: an engine without :has() drops only this one). */
+.cb-item-list > .cb-item-list-row[data-shape="item"]:has(+ .cb-list-end) {
+  padding-bottom: var(--cb-space-2);
+}
 .cb-item-list[data-inset="flush"] {
   margin: 0;
 }
@@ -769,7 +774,7 @@ a.cb-item-list-title:hover {
 .cb-object-row:first-child {
   border-top: 0;
 }
-/* The end of a list with more pages (ObjectList, CardGrid, DataTable; mobile interaction model
+/* The end of a list with more pages (ObjectList, CardGrid, DataTable, ItemList; mobile interaction model
    spec §3 "Infinite scroll", D6): below 600, inside the list's grouped card, the sentinel and the
    loading status take no room (the skeleton row before them shows the load) and a failure is one
    row with its message and Retry; from 600 up a Load more button under the list. */
@@ -810,6 +815,13 @@ a.cb-item-list-title:hover {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
+  margin-top: var(--cb-space-3);
+}
+/* The list's -8px block margin pulls the next sibling up: give the button back its space.3 below the box. */
+.cb-item-list + .cb-list-more {
+  margin-top: calc(var(--cb-space-3) + 8px);
+}
+.cb-item-list[data-inset="flush"] + .cb-list-more {
   margin-top: var(--cb-space-3);
 }
 .cb-list-more-error {

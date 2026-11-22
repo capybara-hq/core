@@ -21,11 +21,8 @@ import {
   type FooterPending,
   filtersScopeFindings,
   filtersScopeTreeFindings,
-  LOAD_MORE_PENDING,
-  type LoadMorePending,
   loadMoreFindings,
   loadMoreTreeFindings,
-  type ScopePending,
   type SizeBranchAllowed,
   sizeBranchFindings,
   sizeBranchTreeFindings,
@@ -39,7 +36,6 @@ const run = (
   boxPending: BoxPending[] = [],
   responsive: ResponsiveLists = {
     sizeAllowed: [],
-    scopePending: [],
     footerPending: [],
     dualPending: [],
   },
@@ -469,7 +465,6 @@ describe("responsive guards (spec §5.3, §7)", () => {
   };
   const tree = fx("responsive-tree");
   const allow = (path: string): SizeBranchAllowed => ({ path, reason: "test" });
-  const pend = (path: string): ScopePending => ({ path, fix: "test" });
 
   describe("web-ui-size-branch", () => {
     it("imports of the class hooks and constants and reads of window.matchMedia / innerWidth fail", () => {
@@ -542,7 +537,7 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-filters-scope", 37],
         ["web-ui-filters-scope", 42],
       ]);
-      expect(f[0]?.message).toContain("ScopeChips");
+      expect(f[0]?.message).toContain("ListPage.scope");
     });
 
     it("Select fields in filters and a Segmented in the body pass", () => {
@@ -550,19 +545,9 @@ describe("responsive guards (spec §5.3, §7)", () => {
       expect(f.some((x) => x.line >= 44)).toBe(false);
     });
 
-    it("the tree: a pending entry hides its file, a clean or missing entry is stale", () => {
-      expect(filtersScopeTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+    it("the tree: a view choice in filters fails, with no allowlist", () => {
+      expect(filtersScopeTreeFindings(tree).map((x) => x.file.slice(tree.length + 1))).toEqual([
         "pages/scope.tsx",
-      ]);
-      expect(filtersScopeTreeFindings(tree, [pend("pages/scope.tsx")])).toEqual([]);
-      const f = filtersScopeTreeFindings(tree, [
-        pend("pages/scope.tsx"),
-        pend("pages/clean.tsx"),
-        pend("pages/gone.tsx"),
-      ]);
-      expect(f.map((x) => x.rule)).toEqual([
-        "web-ui-filters-scope-stale",
-        "web-ui-filters-scope-stale",
       ]);
     });
   });
@@ -619,23 +604,15 @@ describe("responsive guards (spec §5.3, §7)", () => {
       expect(f.some((x) => x.line >= 38)).toBe(false);
     });
 
-    it("the tree: a pending entry hides it; a clean or missing entry fails as stale", () => {
-      const pendMore = (path: string): LoadMorePending => ({ path, fix: "test" });
-      expect(loadMoreTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+    it("the tree: a Load more row fails, with no allowlist", () => {
+      expect(loadMoreTreeFindings(tree).map((x) => x.file.slice(tree.length + 1))).toEqual([
         "pages/more.tsx",
       ]);
-      expect(loadMoreTreeFindings(tree, [pendMore("pages/more.tsx")])).toEqual([]);
-      const f = loadMoreTreeFindings(tree, [
-        pendMore("pages/more.tsx"),
-        pendMore("pages/clean.tsx"),
-        pendMore("pages/gone.tsx"),
-      ]);
-      expect(f.map((x) => x.rule)).toEqual(["web-ui-load-more-stale", "web-ui-load-more-stale"]);
     });
 
-    it("every pending page still draws a Load more button (the list only shrinks)", () => {
+    it("no page of apps/web draws a Load more row", () => {
       const web = fileURLToPath(new URL("../../../apps/web/src", import.meta.url));
-      expect(loadMoreTreeFindings(web, LOAD_MORE_PENDING)).toEqual([]);
+      expect(loadMoreTreeFindings(web)).toEqual([]);
     });
   });
 

@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  ListPage,
-  type MenuItem,
-  ObjectRow,
-  Stack,
-  Tabs,
-  Text,
-  versionLabel,
-} from "@capybara-hq/design";
+import { ListPage, type MenuItem, ObjectRow, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
@@ -357,17 +349,15 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       {...(empty ? { empty } : {})}
       {...(sourceList.length > 1
         ? {
-            filters: (
-              <Tabs
-                label={ta("filters.source")}
-                value={sourceId === "" ? "all" : sourceId}
-                onChange={(id) => setSourceId(id === "all" ? "" : id)}
-                items={[
-                  { id: "all", label: ta("filters.allSources") },
-                  ...sourceList.map((s) => ({ id: s.id, label: s.name })),
-                ]}
-              />
-            ),
+            scope: {
+              label: ta("filters.source"),
+              value: sourceId === "" ? "all" : sourceId,
+              onChange: (id: string) => setSourceId(id === "all" ? "" : id),
+              options: [
+                { value: "all", label: ta("filters.allSources") },
+                ...sourceList.map((s) => ({ value: s.id, label: s.name })),
+              ],
+            },
           }
         : {})}
     >

@@ -16,7 +16,7 @@ import {
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { type CursorSlice, LoadMore, useCursorPages } from "../../../../components/cursor-pages";
+import { type CursorSlice, useCursorPages } from "../../../../components/cursor-pages";
 import {
   type AdminAttention,
   type AttentionExtension,
@@ -353,8 +353,14 @@ function OutboxDeadList({
         }));
   return (
     <>
-      <ItemList label={label} rows={rows} />
-      <LoadMore pages={pages} label={t("outbox.loadMore")} />
+      <ItemList
+        label={label}
+        rows={rows}
+        onLoadMore={pages.loadMore}
+        hasMore={pages.next !== null}
+        loadingMore={pages.loadingMore}
+        loadMoreError={pages.error}
+      />
       <Dialog
         open={discarding !== null}
         onOpenChange={(open) => {

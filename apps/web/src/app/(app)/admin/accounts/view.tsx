@@ -125,15 +125,18 @@ function Accounts({
   const rows = [...first.accounts, ...pages.flatMap((p) => p.accounts)];
   const next = pages.length > 0 ? (pages[pages.length - 1] as AdminAccountsPage).next : first.next;
   const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [creating, setCreating] = useState(false);
   const firstKey = adminAccountsQuery().queryKey;
 
-  const loadMore = (after: string) => {
+  const loadMore = () => {
+    if (next === null || loadingMore) return;
     setLoadingMore(true);
-    qc.fetchQuery(adminAccountsQuery(after))
+    setMoreError(null);
+    qc.fetchQuery(adminAccountsQuery(next))
       .then((page) => setMore({ source: first, pages: [...pages, page] }))
-      .catch(() => {})
+      .catch((e: unknown) => setMoreError(errorMessage(e)))
       .finally(() => setLoadingMore(false));
   };
 
@@ -159,59 +162,49 @@ function Accounts({
         actions: [{ label: t("new"), variant: "primary", onSelect: () => setCreating(true) }],
       }}
     >
-      <Stack gap={12}>
-        <DataTable
-          label={t("title")}
-          columns={columns}
-          rows={rows}
-          rowKey={(a) => a.id}
-          state="ready"
-          empty={{ title: t("empty") }}
-          isDisabled={(a) => a.status === "disabled"}
-          rowMenu={(a) => {
-            // The kernel refuses to revoke or disable the last active super admin
-            // (account.last_super_admin): with the whole list loaded the page knows it and
-            // offers neither, so the row has no menu; a partial list leaves it to the kernel.
-            const activeAdmins = rows.filter((r) => r.isSuperAdmin && r.status === "active");
-            const last =
-              next === null && a.isSuperAdmin && a.status === "active" && activeAdmins.length <= 1;
-            if (last) return [];
-            return [
-              a.isSuperAdmin
-                ? {
-                    label: t("menu.revoke"),
-                    onSelect: () => setPending({ account: a, action: "revoke" }),
-                  }
-                : {
-                    label: t("menu.grant"),
-                    onSelect: () => setPending({ account: a, action: "grant" }),
-                  },
-              a.status === "active"
-                ? {
-                    label: t("menu.disable"),
-                    danger: true,
-                    onSelect: () => setPending({ account: a, action: "disable" }),
-                  }
-                : {
-                    label: t("menu.enable"),
-                    onSelect: () => setPending({ account: a, action: "enable" }),
-                  },
-            ];
-          }}
-        />
-        {next !== null && (
-          <Stack direction="row">
-            <Button
-              loading={loadingMore}
-              onClick={() => {
-                loadMore(next);
-              }}
-            >
-              {t("loadMore")}
-            </Button>
-          </Stack>
-        )}
-      </Stack>
+      <DataTable
+        label={t("title")}
+        columns={columns}
+        rows={rows}
+        rowKey={(a) => a.id}
+        state="ready"
+        empty={{ title: t("empty") }}
+        isDisabled={(a) => a.status === "disabled"}
+        rowMenu={(a) => {
+          // The kernel refuses to revoke or disable the last active super admin
+          // (account.last_super_admin): with the whole list loaded the page knows it and
+          // offers neither, so the row has no menu; a partial list leaves it to the kernel.
+          const activeAdmins = rows.filter((r) => r.isSuperAdmin && r.status === "active");
+          const last =
+            next === null && a.isSuperAdmin && a.status === "active" && activeAdmins.length <= 1;
+          if (last) return [];
+          return [
+            a.isSuperAdmin
+              ? {
+                  label: t("menu.revoke"),
+                  onSelect: () => setPending({ account: a, action: "revoke" }),
+                }
+              : {
+                  label: t("menu.grant"),
+                  onSelect: () => setPending({ account: a, action: "grant" }),
+                },
+            a.status === "active"
+              ? {
+                  label: t("menu.disable"),
+                  danger: true,
+                  onSelect: () => setPending({ account: a, action: "disable" }),
+                }
+              : {
+                  label: t("menu.enable"),
+                  onSelect: () => setPending({ account: a, action: "enable" }),
+                },
+          ];
+        }}
+        onLoadMore={loadMore}
+        hasMore={next !== null}
+        loadingMore={loadingMore}
+        loadMoreError={moreError}
+      />
       {pending !== null && (
         <ConfirmDialog
           pending={pending}

@@ -1,6 +1,5 @@
 "use client";
 
-import { Button, Stack, Text } from "@capybara-hq/design";
 import { type UseQueryOptions, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { ApiClientError } from "../lib/api";
@@ -19,7 +18,7 @@ export interface CursorSlice<R> {
  * belong to the first page they continue: a first page with another identity (a refetch that
  * changed it; the query cache keeps the identity of an unchanged answer) starts over. A failed
  * Load more leaves the rows as they are and gives `error` (the localized message), shown by
- * {@link LoadMore} until the next try. `reset()` drops the later pages (a list whose rows a
+ * the list until the next try. `reset()` drops the later pages (a list whose rows a
  * mutation changed: an unchanged first page keeps its identity, so it would not start over).
  */
 export function useCursorPages<P, R>(
@@ -61,23 +60,4 @@ export function useCursorPages<P, R>(
       .finally(() => setLoadingMore(false));
   };
   return { rows, next, loadingMore, error, loadMore, reset };
-}
-
-/** The Load more row of a {@link useCursorPages} list: nothing on the last page. */
-export function LoadMore({
-  pages,
-  label,
-}: {
-  pages: Pick<ReturnType<typeof useCursorPages>, "next" | "loadingMore" | "error" | "loadMore">;
-  label: string;
-}) {
-  if (pages.next === null) return null;
-  return (
-    <Stack direction="row" gap={8} align="center">
-      <Button loading={pages.loadingMore} onClick={pages.loadMore}>
-        {label}
-      </Button>
-      {pages.error !== null && <Text tone="fail">{pages.error}</Text>}
-    </Stack>
-  );
 }

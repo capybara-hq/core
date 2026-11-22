@@ -327,7 +327,7 @@ describe("admin component lists", () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
-  it("/admin/agents/templates: header tabs 智能体 / 模板 (模板 active) and the owner filter inside", async () => {
+  it("/admin/agents/templates: header tabs 智能体 / 模板 (模板 active) and the owner scope", async () => {
     await open("/admin/agents/templates");
     await screen.findByRole("link", { name: "researcher" });
     const pick = (name: string) => {
@@ -336,8 +336,8 @@ describe("admin component lists", () => {
     };
     expect(pick(en.adminItems.tabs.agents)).toEqual(["/admin/agents", null]);
     expect(pick(en.adminItems.tabs.templates)).toEqual(["/admin/agents/templates", "page"]);
-    // the owner filter is a second tab row
-    expect(screen.getByRole("tab", { name: new RegExp(`^${C.tabs.all}`) })).toBeTruthy();
+    // the owner choice is the list's scope (a Segmented on a wide window)
+    expect(screen.getByRole("radio", { name: new RegExp(`^${C.tabs.all}`) })).toBeTruthy();
   });
 
   it("/admin/connectors/templates: header tabs 连接器 / 模板", async () => {
@@ -416,7 +416,9 @@ describe("admin component lists", () => {
     cleanup();
     await open("/admin/agents/templates");
     await screen.findByRole("link", { name: "researcher" });
-    await userEvent.setup().click(screen.getByRole("tab", { name: new RegExp(`^${C.tabs.org}`) }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("radio", { name: new RegExp(`^${C.tabs.org}`) }));
     expect(screen.getByText(C.emptyTab.agent_template)).toBeTruthy();
   });
 

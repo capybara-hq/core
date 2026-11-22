@@ -1,9 +1,9 @@
 "use client";
 
-import { DataTable, ListPage, Stack } from "@capybara-hq/design";
+import { DataTable, ListPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { auditSlice, useAuditColumns } from "../../../../components/audit-log";
-import { LoadMore, useCursorPages } from "../../../../components/cursor-pages";
+import { useCursorPages } from "../../../../components/cursor-pages";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -16,8 +16,9 @@ import NotFound from "../../not-found";
 /**
  * `/admin/audit`: the platform-level audit log (super admins, ListPage; spec
  * 2026-11-11-admin-overview-design.md §6.4, decision D2): events with no org, newest first, in the
- * overview's table, 加载更多 by cursor, no filters. The first page comes from the query cache (the
- * layout prefetched it on a first load); later pages are read through the cache and appended.
+ * overview's table, paged by cursor through the list, no filters. The first page comes from the
+ * query cache (the layout prefetched it on a first load); later pages are read through the cache
+ * and appended.
  */
 export default function AdminAuditView() {
   const gate = useAdmin();
@@ -65,17 +66,18 @@ function AuditLog({
       }}
       {...(rows.length === 0 ? { empty: { text: t("empty") } } : {})}
     >
-      <Stack gap={12}>
-        <DataTable<AuditEvent>
-          label={t("listLabel")}
-          columns={columns}
-          rows={rows}
-          rowKey={(e) => e.id}
-          state="ready"
-          empty={{ title: t("empty") }}
-        />
-        <LoadMore pages={pages} label={t("loadMore")} />
-      </Stack>
+      <DataTable<AuditEvent>
+        label={t("listLabel")}
+        columns={columns}
+        rows={rows}
+        rowKey={(e) => e.id}
+        state="ready"
+        empty={{ title: t("empty") }}
+        onLoadMore={pages.loadMore}
+        hasMore={next !== null}
+        loadingMore={pages.loadingMore}
+        loadMoreError={pages.error}
+      />
     </ListPage>
   );
 }

@@ -57,6 +57,10 @@ export const PAGE_ROUTES = [
   "pages/org-evals",
   "pages/org-eval-set",
   "pages/org-eval-run",
+  // three super admin pages of the sizing audit (`super-admin-pages.tsx`)
+  "pages/platform-agent-templates",
+  "pages/platform-agent-template",
+  "pages/platform-settings",
 ] as const;
 
 /** The member pages drawn at `pages/member-<page>` (`member-pages.tsx`). */
@@ -74,6 +78,18 @@ export const ADMIN_PAGES = PAGE_ROUTES.filter((r) => r.startsWith("pages/org-"))
 ) as readonly AdminPage[];
 export type AdminPage =
   Extract<(typeof PAGE_ROUTES)[number], `pages/org-${string}`> extends `pages/org-${infer P}`
+    ? P
+    : never;
+
+/** The super admin pages drawn at `pages/platform-<page>` (`super-admin-pages.tsx`). */
+export const SUPER_ADMIN_PAGES = PAGE_ROUTES.filter((r) => r.startsWith("pages/platform-")).map(
+  (r) => r.slice("pages/platform-".length),
+) as readonly SuperAdminPage[];
+export type SuperAdminPage =
+  Extract<
+    (typeof PAGE_ROUTES)[number],
+    `pages/platform-${string}`
+  > extends `pages/platform-${infer P}`
     ? P
     : never;
 

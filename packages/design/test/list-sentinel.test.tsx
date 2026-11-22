@@ -8,6 +8,7 @@ import {
   ConversationList,
   DataTable,
   DesignProvider,
+  ItemList,
   ObjectCard,
   ObjectList,
   ObjectRow,
@@ -151,7 +152,16 @@ const dataTable = (more: More) => (
   />
 );
 
+const itemList = (more: More) => (
+  <ItemList
+    label="待处理"
+    rows={[0, 1, 2].map((i) => ({ id: String(i), title: `任务 ${i}` }))}
+    {...more}
+  />
+);
+
 const LISTS = [
+  { name: "ItemList", ui: itemList, card: ".cb-item-list" },
   { name: "ObjectList", ui: objectList, card: ".cb-object-list" },
   { name: "CardGrid", ui: cardGrid, card: ".cb-card-grid" },
   { name: "DataTable", ui: dataTable, card: '[data-part="table-compact"]' },

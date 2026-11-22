@@ -18,9 +18,11 @@ import {
   PAGE_ROUTES,
   REFERENCE_ROUTES,
   referenceComponentOf,
+  type SuperAdminPage,
 } from "./routes";
 import { SchedulesPageCatalog } from "./schedules-page";
 import { StressCatalog } from "./stress";
+import { SuperAdminPageCatalog } from "./super-admin-pages";
 import { TableCatalog } from "./table";
 import { TemplateCatalog } from "./templates";
 
@@ -47,6 +49,8 @@ export function Catalog({ route }: { route: string }) {
     return <MemberPageCatalog page={route.slice("pages/member-".length) as MemberPage} />;
   if (route.startsWith("pages/org-") && isPageRoute(route))
     return <AdminPageCatalog page={route.slice("pages/org-".length) as AdminPage} />;
+  if (route.startsWith("pages/platform-") && isPageRoute(route))
+    return <SuperAdminPageCatalog page={route.slice("pages/platform-".length) as SuperAdminPage} />;
   if (isPageRoute(route)) {
     return (
       <Suspense fallback={null}>

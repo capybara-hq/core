@@ -15,6 +15,8 @@ import {
   Subsection,
   Text,
 } from "../src/index";
+import { parseCss } from "./css-rules";
+import { renderAtClass } from "./width";
 
 afterEach(cleanup);
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
@@ -334,5 +336,44 @@ describe("Grid divided and Text h3", () => {
   it("Text h3 is a level-3 heading", () => {
     zh(<Text variant="h3">AGENTS.md</Text>);
     expect(screen.getByRole("heading", { level: 3, name: "AGENTS.md" })).toBeTruthy();
+  });
+});
+
+describe("ItemList with more pages", () => {
+  const rules = parseCss(
+    readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8"),
+  );
+  const decls = (selector: string) => rules.find((r) => r.selector === selector)?.decls;
+  const realMatchMedia = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  it("the Load more button sits space.3 below the list's visible box, past its -8px margin", () => {
+    expect(decls(".cb-item-list")?.margin).toBe("-8px 0");
+    expect(decls(".cb-item-list + .cb-list-more")?.["margin-top"]).toBe(
+      "calc(var(--cb-space-3) + 8px)",
+    );
+    expect(decls('.cb-item-list[data-inset="flush"] + .cb-list-more')?.["margin-top"]).toBe(
+      "var(--cb-space-3)",
+    );
+  });
+
+  it("the last item row is matched by a rule that survives the list end li after the rows", () => {
+    const selector = '.cb-item-list > .cb-item-list-row[data-shape="item"]:has(+ .cb-list-end)';
+    expect(decls(selector)?.["padding-bottom"]).toBe("var(--cb-space-2)");
+    const { container } = renderAtClass(
+      390,
+      <ItemList label="用途" hasMore onLoadMore={() => {}}>
+        <ItemListItem title="一" />
+        <ItemListItem title="二" />
+      </ItemList>,
+    );
+    const rows = [...container.querySelectorAll(".cb-item-list-row")];
+    const end = container.querySelector(".cb-list-end");
+    expect(end).not.toBeNull();
+    expect(rows[rows.length - 1]?.nextElementSibling).toBe(end);
+    expect(rows[rows.length - 1]?.matches(".cb-item-list-row:has(+ .cb-list-end)")).toBe(true);
+    expect(rows[0]?.matches(".cb-item-list-row:has(+ .cb-list-end)")).toBe(false);
   });
 });

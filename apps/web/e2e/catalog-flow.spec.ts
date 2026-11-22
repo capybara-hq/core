@@ -152,7 +152,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
 /** Installs `notes <version>` from the git marketplace's entries and confirms the review. */
 async function importNotes(page: Page, version: string, { latest }: { latest: boolean }) {
   await page.goto("/admin/plugins/market");
-  await page.getByRole("tab", { name: "Team git" }).click();
+  await page.getByRole("radio", { name: "Team git" }).click();
   const label = fill(D.admin.entries.importVersion, { version: `v${version}` });
   // One row per plugin, its latest version (the entry shows the display name 笔记, not only its id)
   const row = page.getByRole("listitem").filter({ hasText: "笔记" });
@@ -218,7 +218,7 @@ test("git marketplace: add a repository in the admin console -> refresh -> insta
   // listing each component's change, confirmed together (maintainer decision 2026-11-13; ruling
   // F2: one version for the deployment, the org upgrade is gone)
   await page.goto("/admin/plugins/market");
-  await page.getByRole("tab", { name: "Team git" }).click();
+  await page.getByRole("radio", { name: "Team git" }).click();
   await page
     .getByRole("listitem")
     .filter({ hasText: "笔记" })

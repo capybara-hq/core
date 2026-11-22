@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Button,
   type Column,
   DataTable,
   DateTime,
@@ -56,8 +55,8 @@ function hrefOf(f: Filter): string {
  * connector extension), the template it came from, the status, the tool count, the last tool sync
  * and who created it. The org and status filters and the name search live in the address
  * (`?orgId=&status=&q=`), so changing one is a navigation and each filter is its own cache entry
- * (the layout prefetched the address's first page and the orgs on a first load); "Load more" reads
- * later pages in the browser. A row opens the connector's detail.
+ * (the layout prefetched the address's first page and the orgs on a first load); the later pages
+ * are read in the browser. A row opens the connector's detail.
  */
 export default function AdminConnectorsView({ filter }: { filter: Filter }) {
   const gate = useAdmin();
@@ -212,7 +211,10 @@ function AdminConnectors({ filter }: { filter: Filter }) {
   );
 }
 
-/** The list under one filter: its first page, then "Load more" by `next`. */
+/**
+ * The list under one filter: its first page, then the later pages by `next` (the list's own
+ * paging).
+ */
 function ConnectorTable({
   filter,
   first,
@@ -242,11 +244,12 @@ function ConnectorTable({
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
 
-  const loadMore = async (after: string) => {
+  const loadMore = async () => {
+    if (next === null || loadingMore) return;
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const page = await qc.fetchQuery(adminConnectorsQuery(filter, after));
+      const page = await qc.fetchQuery(adminConnectorsQuery(filter, next));
       setMore({ source: firstAt, pages: [...pages, page] });
     } catch (e) {
       setMoreError(errorMessage(e));
@@ -256,26 +259,20 @@ function ConnectorTable({
   };
 
   return (
-    <Stack gap={12}>
-      <DataTable<AdminConnectorRow>
-        label={t("listLabel")}
-        columns={connectorColumns(t)}
-        rows={rows}
-        rowKey={(c) => c.id}
-        rowLabel={(c) => c.name}
-        state="ready"
-        empty={{ title: t("empty"), hint: t("emptyHint") }}
-        {...(filtered && { noResults: { description: t("noMatch"), onClear } })}
-        onOpen={(c) => router.push(`/admin/connectors/${encodeURIComponent(c.id)}`)}
-      />
-      {next !== null && (
-        <Stack direction="row" gap={8} align="center">
-          <Button loading={loadingMore} onClick={() => void loadMore(next)}>
-            {t("loadMore")}
-          </Button>
-          {moreError !== null && <Text tone="fail">{moreError}</Text>}
-        </Stack>
-      )}
-    </Stack>
+    <DataTable<AdminConnectorRow>
+      label={t("listLabel")}
+      columns={connectorColumns(t)}
+      rows={rows}
+      rowKey={(c) => c.id}
+      rowLabel={(c) => c.name}
+      state="ready"
+      empty={{ title: t("empty"), hint: t("emptyHint") }}
+      {...(filtered && { noResults: { description: t("noMatch"), onClear } })}
+      onLoadMore={() => void loadMore()}
+      hasMore={next !== null}
+      loadingMore={loadingMore}
+      loadMoreError={moreError}
+      onOpen={(c) => router.push(`/admin/connectors/${encodeURIComponent(c.id)}`)}
+    />
   );
 }

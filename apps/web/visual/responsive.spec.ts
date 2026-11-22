@@ -1,5 +1,10 @@
 import { expect, type Page, test } from "@playwright/test";
-import { ADMIN_PAGES, MEMBER_PAGES, TEMPLATE_ROUTES } from "../src/dev/catalog/routes";
+import {
+  ADMIN_PAGES,
+  MEMBER_PAGES,
+  SUPER_ADMIN_PAGES,
+  TEMPLATE_ROUTES,
+} from "../src/dev/catalog/routes";
 import { findSmallTargets } from "./mobile-sizes";
 import { heightFor } from "./size-matrix";
 
@@ -34,6 +39,12 @@ const memberRoute = (p: string) => `pages/member-${p}`;
  * every width.
  */
 const orgRoute = (p: string) => `pages/org-${p}`;
+
+/**
+ * A super admin page's route (`super-admin-pages.tsx`): the console is desktop-only on touch, so a
+ * fine pointer at every width.
+ */
+const platformRoute = (p: string) => `pages/platform-${p}`;
 
 async function open(page: Page, route: string, theme: Theme) {
   await page.context().addCookies([{ name: "cb-theme", value: theme, url: ORIGIN }]);
@@ -92,6 +103,22 @@ for (const theme of THEMES) {
       }
     });
   }
+
+  // Three super admin pages (a list, a detail, a form): the same fine pointer at every width.
+  for (const width of [390, 768, 1440]) {
+    test.describe(`responsive platform ${width} fine pointer ${theme}`, () => {
+      test.use({ viewport: { width, height: heightFor(width) }, isMobile: false, hasTouch: false });
+
+      for (const p of SUPER_ADMIN_PAGES) {
+        test(`platform ${p}`, async ({ page }) => {
+          await open(page, platformRoute(p), theme);
+          await expect(page).toHaveScreenshot(`responsive-platform-${p}-${width}-${theme}.png`, {
+            fullPage: true,
+          });
+        });
+      }
+    });
+  }
 }
 
 for (const touch of [true, false]) {
@@ -122,6 +149,19 @@ for (const touch of [true, false]) {
           await open(page, orgRoute(p), "dark");
           const small = await findSmallTargets(page);
           expect(small.out, "controls without a 44 x 44 hit box").toEqual([]);
+        });
+      }
+
+      // the super admin pages: the 44 x 44 rule and no horizontal page scroll at 390
+      for (const p of SUPER_ADMIN_PAGES) {
+        test(`platform ${p}`, async ({ page }) => {
+          await open(page, platformRoute(p), "dark");
+          const small = await findSmallTargets(page);
+          expect(small.out, "controls without a 44 x 44 hit box").toEqual([]);
+          const overflow = await page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+          expect(overflow, "horizontal page scroll in px").toBeLessThanOrEqual(0);
         });
       }
     }

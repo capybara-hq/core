@@ -18,7 +18,6 @@ import {
 export const SIZE_BRANCH_RULE = "web-ui-size-branch";
 export const SIZE_BRANCH_STALE_RULE = "web-ui-size-branch-stale";
 export const FILTERS_SCOPE_RULE = "web-ui-filters-scope";
-export const FILTERS_SCOPE_STALE_RULE = "web-ui-filters-scope-stale";
 export const TEMPLATE_ONLY_RULE = "web-ui-template-only-props";
 export const DIALOG_FOOTER_RULE = "web-ui-dialog-footer";
 export const DIALOG_FOOTER_STALE_RULE = "web-ui-dialog-footer-stale";
@@ -367,27 +366,7 @@ export function templateOnlyPropsFindings(p: ParsedFile): Finding[] {
 const SCOPE_CONTROLS = new Set(["Segmented", "Tabs"]);
 
 export const FILTERS_SCOPE_MESSAGE =
-  "ListPage `filters` holds a view choice (<Segmented> / <Tabs>): a scope such as all / mine / shared is a ScopeChips row, a view switch is the header's tabs; `filters` is for narrowing controls (Select, search fields) only";
-
-export interface ScopePending {
-  /** Under apps/web/src, `/`-separated. */
-  path: string;
-  /** The task that moves the page onto ScopeChips. */
-  fix: string;
-}
-
-/** Pages that still hand a Segmented / Tabs to `filters`; a ratchet like `BOX_PENDING`. */
-export const SCOPE_PENDING: readonly ScopePending[] = [
-  {
-    path: "app/(app)/admin/agents/templates/view.tsx",
-    fix: "useOwnerFilter's owner Tabs become ScopeChips",
-  },
-  {
-    path: "app/(app)/admin/connectors/templates/view.tsx",
-    fix: "useOwnerFilter's owner Tabs become ScopeChips",
-  },
-  { path: "app/(app)/admin/plugins/market/view.tsx", fix: "the source Tabs become ScopeChips" },
-];
+  "ListPage `filters` holds a view choice (<Segmented> / <Tabs>): a scope such as all / mine / shared is `ListPage.scope`, a view switch is the header's tabs; `filters` is for narrowing controls (Select, search fields) only";
 
 interface Binding {
   init: Node;
@@ -538,23 +517,13 @@ export function filtersScopeFindings(file: string, webSrcDir: string): Finding[]
   return new FilterScan(webSrcDir).findings(file);
 }
 
-export function filtersScopeTreeFindings(
-  webSrcDir: string,
-  pending: readonly ScopePending[] = SCOPE_PENDING,
-): Finding[] {
+export function filtersScopeTreeFindings(webSrcDir: string): Finding[] {
   const scan = new FilterScan(webSrcDir);
-  const raw: Finding[] = [];
+  const out: Finding[] = [];
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
-    if (!isTest) raw.push(...scan.findings(file));
+    if (!isTest) out.push(...scan.findings(file));
   }
-  return applyPathRatchet(
-    raw,
-    pending,
-    webSrcDir,
-    FILTERS_SCOPE_STALE_RULE,
-    "Segmented / Tabs in ListPage filters",
-    "SCOPE_PENDING in tools/checks/src/web-ui-responsive.ts",
-  );
+  return out;
 }
 
 /** The template-only rule over the tree. */
@@ -656,31 +625,13 @@ export function dialogFooterTreeFindings(
 // --- web-ui-load-more ------------------------------------------------------------------------
 
 export const LOAD_MORE_RULE = "web-ui-load-more";
-export const LOAD_MORE_STALE_RULE = "web-ui-load-more-stale";
 
 export const LOAD_MORE_MESSAGE =
-  "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
-
-export interface LoadMorePending {
-  /** Under apps/web/src, `/`-separated. */
-  path: string;
-  /** The task that moves the page onto the list's `onLoadMore`. */
-  fix: string;
-}
-
-const LOAD_MORE_FIX = "pass onLoadMore / hasMore / loadingMore / loadMoreError to the list";
-
-/** Pages that still draw their own Load more button; a ratchet, new pages are never added. */
-export const LOAD_MORE_PENDING: readonly LoadMorePending[] = [
-  { path: "app/(app)/admin/accounts/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/agents/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/audit/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/connectors/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/overview/AttentionSection.tsx", fix: LOAD_MORE_FIX },
-];
+  "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable, ItemList), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
 
 const LOAD_MORE_BUTTONS = new Set(["Button", "LinkButton"]);
 /** The apps/web wrapper that draws a Load more row (components/cursor-pages.tsx). */
+// A banned name: the wrapper that used to exist is gone, so a page drawing one is drawing its own.
 const LOAD_MORE_WRAPPER = "LoadMore";
 const LOAD_MORE_TEXT = /加载更多|\bload more\b/i;
 
@@ -704,7 +655,7 @@ function saysLoadMore(children: Node[]): boolean {
 
 /**
  * `web-ui-load-more` over one parsed file: a `Button` / `LinkButton` whose content is a
- * `loadMore` message or the words 加载更多 / Load more, and the `LoadMore` wrapper, fail
+ * `loadMore` message or the words 加载更多 / Load more, and the name `LoadMore`, fail
  * (english-comments-ok: the zh words the rule matches).
  */
 export function loadMoreFindings(p: ParsedFile): Finding[] {
@@ -726,22 +677,12 @@ export function loadMoreFindings(p: ParsedFile): Finding[] {
   return out;
 }
 
-export function loadMoreTreeFindings(
-  webSrcDir: string,
-  pending: readonly LoadMorePending[] = LOAD_MORE_PENDING,
-): Finding[] {
-  const raw: Finding[] = [];
+export function loadMoreTreeFindings(webSrcDir: string): Finding[] {
+  const out: Finding[] = [];
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
     if (isTest) continue;
     const p = parseFile(file);
-    if (!isParseError(p)) raw.push(...loadMoreFindings(p));
+    if (!isParseError(p)) out.push(...loadMoreFindings(p));
   }
-  return applyPathRatchet(
-    raw,
-    pending,
-    webSrcDir,
-    LOAD_MORE_STALE_RULE,
-    "Load more button",
-    "LOAD_MORE_PENDING in tools/checks/src/web-ui-responsive.ts",
-  );
+  return out;
 }
