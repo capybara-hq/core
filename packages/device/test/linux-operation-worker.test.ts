@@ -201,7 +201,8 @@ describe("Linux operation worker", () => {
     await handle.completion;
     const [sent] = await fake.lines();
     expect(sent).toMatchObject({
-      readRoots: [join(home, ".asdf"), "/repo"],
+      // the carve returns its roots sorted by code point
+      readRoots: [join(home, ".asdf"), "/repo"].sort(),
       readFiles: [join(home, ".tool-versions")],
       writeRoots: ["/work"],
       env: {
@@ -340,7 +341,7 @@ describe("Linux operation worker", () => {
     ).completion;
     const [sent] = await fake.lines();
     expect(sent).toMatchObject({
-      readRoots: [home, "/repo"],
+      readRoots: [home, "/repo"].sort(),
       writeRoots: ["/work", home],
       env: {
         HOME: home,
