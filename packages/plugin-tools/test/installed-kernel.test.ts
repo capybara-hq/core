@@ -37,16 +37,31 @@ const MODEL_FAKE = "@capybara-hq/plugin-model-fake";
 
 let dir: string;
 
-/** A core library as its npm build would install it: `dist/index.js` (one bundle) and package.json. */
+/**
+ * A core library as its npm build would install it: one bundle per export under `dist/` (shared
+ * code split into chunks, so a subpath such as the SDK's `./device-protocol` shares its classes
+ * with the main entry) and a package.json with those exports.
+ */
 async function installLibrary(nm: string, name: string, pkgDir: string): Promise<void> {
   const out = join(nm, name);
   const pkg = JSON.parse(await readFile(join(repo, pkgDir, "package.json"), "utf8")) as {
     version: string;
+    exports?: Record<string, string | Record<string, string>>;
   };
+  const entries: Record<string, string> = { index: join(repo, pkgDir, "src/index.ts") };
+  const exports: Record<string, string> = { ".": "./dist/index.js" };
+  for (const [key, target] of Object.entries(pkg.exports ?? {})) {
+    const source = typeof target === "string" ? undefined : target["@capybara-hq/source"];
+    if (key === "." || source === undefined) continue;
+    const base = key.replace(/^\.\//, "");
+    entries[base] = join(repo, pkgDir, source);
+    exports[key] = `./dist/${base}.js`;
+  }
   await build({
-    entryPoints: [join(repo, pkgDir, "src/index.ts")],
-    outfile: join(out, "dist/index.js"),
+    entryPoints: entries,
+    outdir: join(out, "dist"),
     bundle: true,
+    splitting: true,
     platform: "node",
     format: "esm",
     target: "node24",
@@ -61,7 +76,7 @@ async function installLibrary(nm: string, name: string, pkgDir: string): Promise
       version: pkg.version,
       type: "module",
       main: "./dist/index.js",
-      exports: { ".": "./dist/index.js" },
+      exports,
     }),
   );
 }
