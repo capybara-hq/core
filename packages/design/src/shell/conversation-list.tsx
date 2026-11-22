@@ -4,6 +4,7 @@ import { Button, IconButton } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Avatar, type AvatarValue } from "../display/avatar";
 import { type DayBucket, dayBucket, formatListTime } from "../display/date-time";
+import { PullToRefresh } from "../display/pull-refresh";
 import { SkeletonBox, SkeletonText } from "../display/skeleton";
 import type { DesignKey } from "../i18n";
 import { Icon } from "../icons/icon";
@@ -59,6 +60,8 @@ export type ConversationListProps = {
    * (`onMore`), never by a button; a failure shows its message and Retry at the end.
    */
   end?: { more: boolean; loading: boolean; error?: string | null; onMore(): void };
+  /** A pull down in a native shell reads the list again (interaction spec §3, D4). */
+  onRefresh?: () => Promise<unknown>;
 };
 
 const BUCKETS: readonly DayBucket[] = ["today", "yesterday", "week", "older"];
@@ -93,6 +96,7 @@ export function ConversationList({
   empty,
   actions,
   end,
+  onRefresh,
 }: ConversationListProps) {
   const t = useDesignT();
   const locale = useDesignLocale();
@@ -194,7 +198,7 @@ export function ConversationList({
       </ul>
     );
   }
-  return (
+  const list = (
     <section
       className="cb-convlist"
       data-part="conversation-list"
@@ -229,6 +233,7 @@ export function ConversationList({
       ) : null}
     </section>
   );
+  return onRefresh ? <PullToRefresh onRefresh={onRefresh}>{list}</PullToRefresh> : list;
 }
 
 function Row({

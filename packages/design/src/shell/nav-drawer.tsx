@@ -22,6 +22,8 @@ export interface DrawerRecent {
   /** The open conversation (its row is current). */
   activeId?: string;
   onRetry(): void;
+  /** A pull down in a native shell reads the list again (interaction spec §3). */
+  onRefresh?: () => Promise<unknown>;
   /** A row's long press or right click: rename, archive, delete. */
   actions?: ConversationListActions;
 }
@@ -206,6 +208,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
               activeId={recent.activeId}
               empty={<EmptyState size="panel" text={t("sidebar.empty")} />}
               {...(recent.actions ? { actions: recent.actions } : {})}
+              {...(recent.onRefresh ? { onRefresh: recent.onRefresh } : {})}
             />
           </div>
           <div className="cb-navdrawer-foot" data-part="drawer-foot">
