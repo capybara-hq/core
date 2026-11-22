@@ -1,5 +1,13 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.72
+
+### Patch Changes
+
+- d0e209d: `GET /api/v1/meta` reports `features.localDevices` only while a dial-in provider speaking
+  `capybara-device/<major>` (device-local) is loaded, and takes `protocols.device` from that
+  provider's declared `permissions.dialIn.protocol`.
+
 ## 0.1.0-rc.71
 
 ### Minor Changes
