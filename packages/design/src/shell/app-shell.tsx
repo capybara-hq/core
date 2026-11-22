@@ -780,7 +780,8 @@ function joinOverflow(menu: ConvMenuEntry[], actions: ConvMenuEntry[]): ConvMenu
 /**
  * The head's secondary actions as the floating row's overflow entries (responsive system spec
  * §2.5): a link calls `go(href)` after its own `onSelect`; a submenu becomes a labelled run of its
- * items between separators; a desktop-only entry is left out on touch (as a menu hides it there).
+ * items between separators; a desktop-only entry is left out on touch (as a menu hides it there),
+ * and a submenu left with no item draws no label.
  * Separators at either end or doubled are dropped.
  */
 function headActionEntries(
@@ -801,9 +802,16 @@ function headActionEntries(
       }
       if (item.desktopOnly && touch) return;
       if (item.submenu) {
+        const before = out.length;
         separate();
+        const labelAt = out.length;
         out.push({ kind: "label", label: item.label });
         walk(item.submenu, `${prefix}${i}-`);
+        // nothing left in the run (every item desktop-only on touch): no bare label
+        if (!out.slice(labelAt + 1).some((e) => e.kind === "item")) {
+          out.length = before;
+          return;
+        }
         separate();
         return;
       }

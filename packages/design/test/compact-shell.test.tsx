@@ -651,6 +651,32 @@ describe("head actions and the scrolled title in the compact top row (responsive
     expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual(["导出"]);
   });
 
+  it("a submenu whose items are all desktop-only leaves no bare label on touch", async () => {
+    touchWindow(390);
+    function Page() {
+      useRegisterShellPage({
+        title: "研究助手",
+        actions: [
+          { label: "导出", onSelect: () => {} },
+          {
+            label: "流程",
+            submenu: [{ label: "编辑流程", desktopOnly: true, href: "/agents/a1/flow" }],
+          },
+          { label: "删除", danger: true, onSelect: () => {} },
+        ],
+      });
+      return null;
+    }
+    render(pushed(<Page />));
+    await userEvent.click(more());
+    const menu = await screen.findByRole("menu");
+    const kinds = [...menu.querySelectorAll('[role="menuitem"], [role="separator"]')].map((e) =>
+      e.getAttribute("role") === "separator" ? "|" : e.textContent,
+    );
+    expect(kinds).toEqual(["导出", "删除"]);
+    expect(within(menu).queryByText("流程")).toBeNull();
+  });
+
   it("a submenu's run is set apart by separators", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     function Page() {

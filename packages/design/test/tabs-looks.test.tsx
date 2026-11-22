@@ -37,7 +37,7 @@ describe("Tabs look", () => {
 
 describe("Tabs segmented look CSS", () => {
   const rules = parseCss(css("display.css")).filter(
-    (r) => r.at !== null && /^\(\s*max-width:\s*599px\s*\)$/.test(r.at),
+    (r) => r.at === "not all and (min-width: 600px)",
   );
   const find = (selector: string) =>
     rules.find((r) =>
@@ -47,14 +47,22 @@ describe("Tabs segmented look CSS", () => {
         .includes(selector),
     );
 
-  it("below 600 the tabs share the width equally at control.default / touch.hit", () => {
+  it("below 600 (ClassForms' query) the tabs share the width equally at control.default", () => {
     expect(find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls.flex).toBe("1 1 0");
     expect(find('.cb-tabs[data-look="segmented-compact"]')?.decls.height).toBe(
       "var(--cb-control-default)",
     );
-    expect(find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls["min-height"]).toBe(
-      "var(--cb-touch-hit)",
-    );
+  });
+
+  it("the tabs fill the whole box, so nothing is clipped and the hit area is the box's 44", () => {
+    const box = find('.cb-tabs[data-look="segmented-compact"]')?.decls ?? {};
+    const tab = find('.cb-tabs[data-look="segmented-compact"] > .cb-tab')?.decls ?? {};
+    expect(tab.height).toBe("100%");
+    expect(tab["min-height"]).toBeUndefined();
+    // the frame line is an inset outline: it takes no room from the tabs and paints over them
+    expect(box.border).toBe("0");
+    expect(box.outline).toBe("1px solid var(--cb-line)");
+    expect(box["outline-offset"]).toBe("-1px");
   });
 
   it("the selected tab takes the selected ground and tabs keep the touch padding", () => {
