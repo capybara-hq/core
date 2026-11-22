@@ -1,5 +1,6 @@
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { isSafePackagePath } from "./plugin-package.js";
+import { parseViewBox } from "./svg-viewbox.js";
 import { type ParsedTheme, THEME_LIMITS, type ThemeLogo } from "./theme.js";
 
 /**
@@ -84,10 +85,6 @@ const SVG_ELEMENTS: ReadonlySet<string> = new Set([
 const XML_ATTRS: ReadonlySet<string> = new Set(["space", "lang"]);
 /** Root attributes dropped: the design system sizes the logo to its slot. */
 const ROOT_DROPPED: ReadonlySet<string> = new Set(["width", "height", "class"]);
-/** Characters of a viewBox value; longer values are refused before they are split. */
-const VIEWBOX_MAX_CHARS = 128;
-/** Characters a viewBox number may use (checked per character class, no backtracking). */
-const VIEWBOX_NUMBER_RE = /^[-+.0-9eE]+$/;
 /**
  * The only functions an attribute value may call: colors and transforms. `url` is allowed only as
  * `url(#id)` (checked separately); everything else (`image-set`, `cross-fade`, `element`,
@@ -157,19 +154,6 @@ function checkValue(el: string, attr: string, value: string): void {
       }
     }
   }
-}
-
-/** `min-x min-y width height`, width and height > 0; undefined when malformed. */
-function parseViewBox(v: string): [number, number, number, number] | undefined {
-  if (v.length > VIEWBOX_MAX_CHARS) return undefined;
-  const parts = v
-    .trim()
-    .split(/[\s,]+/)
-    .filter((p) => p !== "");
-  if (parts.length !== 4 || !parts.every((p) => VIEWBOX_NUMBER_RE.test(p))) return undefined;
-  const n = parts.map(Number) as [number, number, number, number];
-  if (!n.every(Number.isFinite) || n[2] <= 0 || n[3] <= 0) return undefined;
-  return n;
 }
 
 /** The serialized attributes of an allowed SVG element; rejects the forbidden ones. */
