@@ -1,5 +1,31 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.85
+
+### Patch Changes
+
+- 1834986: An `oauth_code` auth preset may set `authorizationParams`, extra query parameters of the
+  authorize request (Google's `access_type: "offline"` and `prompt: "consent"`, Slack's `team`):
+  at most 10, lowercase names, plain printable values, never a secret. The kernel appends them after
+  its own parameters on every connect and reconnect, never on a token request. Names the kernel owns
+  or that would change the callback or the token exchange (`OAUTH_RESERVED_AUTHORIZATION_PARAMS`)
+  are refused there and in the query of a manual `authorizationUrl`. A template update that changes
+  only `authorizationParams` keeps members' connections. A member whose access token dies without a
+  refresh token is now asked to reconnect instead of told the authorization server is unavailable.
+  `startFakeOAuthServer` records the form parameter names of each token request (`paramNames`).
+- 794cc3c: The image pins device-docker rc.22 as its cloud device provider.
+- 6a0c32f: Responsive system, system pieces (#605): `ClassForms` / `useClassForm` render a structure per size
+  class (both on the server, CSS shows one, only the matching one stays mounted after hydration);
+  the `ActionSheet` uses the native `menu@1` sheet on compact when it holds no links; card grids are
+  one grouped list of rows below 600 (no buttons, long press or right click opens the card's actions);
+  DataTable columns may declare `compact` roles (title, subtitle, meta, trailing, hidden) and are
+  then drawn as grouped rows below 600; `Tabs look="segmented-compact"`; `ShellPage.actions` and
+  `titleAway` with the centred scrolled title, and `useCompactScroll` for one-scroller pages. New
+  checks keep size-class reads out of pages, view choices out of `ListPage.filters`, template-only
+  props in templates and dual renders in `ClassForms`.
+- Updated dependencies [1834986]
+  - @capybara-hq/kernel@0.1.0-rc.68
+
 ## 0.1.0-rc.84
 
 ### Patch Changes
