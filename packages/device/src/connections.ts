@@ -112,7 +112,8 @@ export function ensureMachineFile(machineDir: string): void {
   }
 }
 
-interface Scan {
+/** One snapshot of the connections directory: what can be used, and what cannot and why. */
+export interface ConnectionScan {
   readable: ConnectionInfo[];
   unreadable: Array<{ deviceId: string; reason: string }>;
 }
@@ -147,38 +148,61 @@ function readConnection(dir: string, deviceId: string): ConnectionInfo {
 
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-function scan(machineDir: string): Scan {
+const isMissing = (e: unknown): boolean => (e as NodeJS.ErrnoException).code === "ENOENT";
+
+/**
+ * {@link listConnections} and {@link unreadableConnections} from one read of the directory, for a
+ * caller that needs both to agree. Only a missing file means "absent": a connection directory or
+ * credential that cannot be examined (EACCES, ELOOP, …) is unreadable, never skipped, and a
+ * `connections/` directory that cannot be read, or is not a directory (a symlink included), throws.
+ * Fails closed: a caller that denies other connections' files never misses one silently.
+ */
+export function scanConnections(machineDir: string = stateDir()): ConnectionScan {
   const root = connectionsDir(machineDir);
+  const unusable = (why: string): Error =>
+    new Error(`${root} cannot be read (${why}); fix its permissions or remove it`);
   let names: string[];
+  let isDir: boolean;
   try {
-    names = readdirSync(root);
-  } catch {
-    return { readable: [], unreadable: [] };
+    // lstat: a symlinked connections/ is refused, never followed
+    isDir = lstatSync(root).isDirectory();
+    names = isDir ? readdirSync(root) : [];
+  } catch (e) {
+    if (isMissing(e)) return { readable: [], unreadable: [] };
+    throw unusable((e as Error).message);
   }
-  const out: Scan = { readable: [], unreadable: [] };
+  if (!isDir) throw unusable("not a directory");
+  const out: ConnectionScan = { readable: [], unreadable: [] };
   for (const name of names.sort(compare)) {
     if (!DEVICE_ID_PATTERN.test(name)) continue;
     const dir = join(root, name);
+    const unreadable = (reason: string): void => {
+      out.unreadable.push({ deviceId: name, reason });
+    };
     try {
       // lstat: a symlink is never followed, whatever it points at
       if (!lstatSync(dir).isDirectory()) continue;
-    } catch {
+    } catch (e) {
+      if (!isMissing(e)) unreadable(`${dir} cannot be examined (${(e as Error).message})`);
       continue;
     }
     let cred: ReturnType<typeof lstatSync>;
     try {
       cred = lstatSync(credentialPath(dir));
-    } catch {
+    } catch (e) {
+      if (!isMissing(e)) {
+        unreadable(`${credentialPath(dir)} cannot be examined (${(e as Error).message})`);
+      }
       continue;
     }
     if (!cred.isFile()) {
-      out.unreadable.push({ deviceId: name, reason: `${credentialPath(dir)} is not a file` });
+      unreadable(`${credentialPath(dir)} is not a file`);
       continue;
     }
     try {
       out.readable.push(readConnection(dir, name));
     } catch (e) {
-      out.unreadable.push({ deviceId: name, reason: (e as Error).message });
+      unreadable((e as Error).message);
     }
   }
   out.readable.sort(
@@ -193,17 +217,17 @@ function scan(machineDir: string): Scan {
 /**
  * Readable connections, sorted by host, then deviceName, then deviceId. Skips non-directories,
  * symlinks, names failing DEVICE_ID_PATTERN, dirs without credential.json, unreadable ones (those
- * are in {@link unreadableConnections}).
+ * are in {@link unreadableConnections}). Throws when `connections/` cannot be read.
  */
 export function listConnections(machineDir: string = stateDir()): ConnectionInfo[] {
-  return scan(machineDir).readable;
+  return scanConnections(machineDir).readable;
 }
 
 /** Connection directories with a credential.json that cannot be used, and why, by device id. */
 export function unreadableConnections(
   machineDir: string = stateDir(),
 ): Array<{ deviceId: string; reason: string }> {
-  return scan(machineDir).unreadable;
+  return scanConnections(machineDir).unreadable;
 }
 
 /** Why no single connection was chosen; `candidates` are the connections to choose from. */
@@ -232,7 +256,7 @@ export function resolveConnection(
   selector?: string,
   machineDir: string = stateDir(),
 ): ConnectionInfo {
-  const { readable: all, unreadable } = scan(machineDir);
+  const { readable: all, unreadable } = scanConnections(machineDir);
   if (all.length === 0) {
     const broken = unreadable.map((u) => `\n  ${u.deviceId}: ${u.reason}`).join("");
     throw new ConnectionSelectError(

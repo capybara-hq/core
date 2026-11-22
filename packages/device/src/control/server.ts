@@ -77,9 +77,9 @@ export function controlUnavailableReason(stateDir: string): string | undefined {
   try {
     st = statSync(machineDir);
   } catch (e) {
-    return `the state directory ${machineDir} cannot be read (${(e as Error).message})`;
+    return `the machine directory ${machineDir} cannot be read (${(e as Error).message})`;
   }
-  const machineReason = ownerOnlyDirReason("the state directory", machineDir, st);
+  const machineReason = ownerOnlyDirReason("the machine directory", machineDir, st);
   if (machineReason !== undefined) return machineReason;
   const run = dirname(path);
   try {
