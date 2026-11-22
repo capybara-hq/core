@@ -113,7 +113,8 @@ export function readStrictOwnerCeilingSync(input: {
   });
 }
 /**
- * Each path plus its canonical form (the real path of its nearest existing ancestor with the
+ * Each path plus its canonical form (the native real path of its nearest existing ancestor, in
+ * its on-disk case so a case variant on a case-insensitive volume matches, with the
  * missing names appended), so a denied path is matched whether a grant names it through a link
  * (a symlinked home, a symlinked ~/.aws) or by its real location.
  */
@@ -125,7 +126,7 @@ export function withCanonicalForms(paths: readonly string[]): string[] {
     const missing: string[] = [];
     for (;;) {
       try {
-        out.add(join(realpathSync(anchor), ...missing));
+        out.add(join(realpathSync.native(anchor), ...missing));
         break;
       } catch {
         if (anchor === dirname(anchor)) break;

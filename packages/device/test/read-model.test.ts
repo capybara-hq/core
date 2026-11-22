@@ -1,8 +1,17 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSandboxScopeDeniedError, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { withCanonicalForms } from "../src/exec/operation-types.js";
 import {
   otherConnectionDenies,
   PROJECT_REACH_RANK,
@@ -11,6 +20,18 @@ import {
   reachWidens,
   readRootsFor,
 } from "../src/exec/read-model.js";
+
+/** Whether the temporary volume ignores case (APFS default on macOS). */
+function tempVolumeIgnoresCase(): boolean {
+  const dir = mkdtempSync(join(tmpdir(), "case-probe-"));
+  try {
+    writeFileSync(join(dir, "probe"), "");
+    return existsSync(join(dir, "PROBE"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const ignoresCase = tempVolumeIgnoresCase();
 
 const sorted = (xs: readonly string[]) => [...xs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
@@ -242,5 +263,63 @@ describe("projectPathRefusal", () => {
     expect(projectPathRefusal(`${roots.workspace}/../b/x`, input("machine"))).toBe(
       "other-connection",
     );
+  });
+
+  it("follows a dangling link into another connection's directory", () => {
+    const dang = join(project, "dang");
+    symlinkSync(join(bDir, "new"), dang);
+    for (const reach of ["machine", "paths", "workspace"] as const)
+      expect(projectPathRefusal(dang, input(reach, [project]))).toBe("other-connection");
+    expect(projectPathRefusal(join(dang, "x"), input("machine"))).toBe("other-connection");
+    // a relative dangling link, two hops deep
+    const hop = join(tmp, "outside", "hop");
+    symlinkSync("../home/.ssh/missing", hop);
+    const first = join(project, "first");
+    symlinkSync(hop, first);
+    expect(projectPathRefusal(first, input("machine"))).toBe("denied");
+  });
+
+  it("treats a dangling link as outside a narrower reach", () => {
+    const dang = join(project, "later");
+    symlinkSync(join(project, "not-yet"), dang);
+    expect(projectPathRefusal(dang, input("machine"))).toBeNull();
+    expect(projectPathRefusal(dang, input("paths", [project]))).toBe("outside-reach");
+    const ws = join(roots.workspace, "later");
+    symlinkSync(join(roots.workspace, "not-yet"), ws);
+    expect(projectPathRefusal(ws, input("workspace"))).toBe("outside-reach");
+  });
+
+  it("ends a dangling link loop", () => {
+    const a = join(project, "loop-a");
+    const b = join(project, "loop-b");
+    symlinkSync(b, a);
+    symlinkSync(a, b);
+    expect(projectPathRefusal(a, input("machine"))).toBeNull();
+    expect(projectPathRefusal(a, input("paths", [project]))).toBe("outside-reach");
+  });
+
+  it.skipIf(!ignoresCase)("refuses case variants of denied directories", () => {
+    const variant = join(tmp, "HOME", "Capybara-Device", "B", "x");
+    expect(projectPathRefusal(variant, input("machine"))).toBe("other-connection");
+    expect(projectPathRefusal(join(home, ".SSH"), input("machine"))).toBe("denied");
+    expect(projectPathRefusal(join(home, ".Ssh", "id"), input("machine"))).toBe("denied");
+  });
+
+  it.skipIf(!ignoresCase)("allows a case variant of a listed path under paths reach", () => {
+    const variant = join(tmp, "Projects", "P", "src");
+    expect(projectPathRefusal(variant, input("paths", [project]))).toBeNull();
+  });
+});
+
+describe("withCanonicalForms", () => {
+  it.skipIf(!ignoresCase)("adds the on-disk case of an existing ancestor", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "canon-case-"));
+    try {
+      mkdirSync(join(tmp, "Real"));
+      const forms = withCanonicalForms([join(tmp, "REAL", "missing")]);
+      expect(forms).toContain(join(realpathSync(tmp), "Real", "missing"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,5 @@
-import { isAbsolute, join, resolve } from "node:path";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { type SandboxRoots, SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import type {
   DeviceProjectReach,
@@ -36,9 +37,11 @@ function checkedDeviceId(deviceId: string): string {
   return deviceId;
 }
 
+const tempParentName = (checkedId: string) => `capybara-op-${checkedId}`;
+
 /** The name of a connection's private temporary parent inside the macOS user temp dir. */
 export function privateTempParentName(deviceId: string): string {
-  return `capybara-op-${checkedDeviceId(deviceId)}`;
+  return tempParentName(checkedDeviceId(deviceId));
 }
 
 /**
@@ -73,7 +76,7 @@ export function otherConnectionDenies(input: {
       );
     out.add(resolve(c.workDir));
     if (input.macTempBase !== undefined)
-      out.add(join(resolve(input.macTempBase), privateTempParentName(id)));
+      out.add(join(resolve(input.macTempBase), tempParentName(id)));
   }
   return [...out];
 }
@@ -104,6 +107,50 @@ export function readRootsFor(input: {
   ]);
 }
 
+/** At most this many dangling links are followed for one path (a link loop ends here). */
+const MAX_DANGLING_HOPS = 40;
+
+/**
+ * The forms a path takes when its dangling links (links whose target does not exist yet) are
+ * followed by their link text: `realpath` cannot resolve them, so a link to a missing name inside
+ * a denied directory would otherwise look like a path outside it. `dangling` says whether any
+ * component of the path was such a link (or the hops ran out, as with a link loop).
+ */
+function danglingLinkForms(path: string): { forms: string[]; dangling: boolean } {
+  const forms: string[] = [];
+  let cur = path;
+  for (let hop = 0; hop < MAX_DANGLING_HOPS; hop++) {
+    const next = followFirstDanglingLink(cur);
+    if (next === null) return { forms, dangling: forms.length > 0 };
+    forms.push(next);
+    cur = next;
+  }
+  return { forms, dangling: true };
+}
+
+/** `path` with its first dangling link replaced by the link's target; null when it has none. */
+function followFirstDanglingLink(path: string): string | null {
+  const parts = path.split("/").filter(Boolean);
+  let prefix = "/";
+  for (let i = 0; i < parts.length; i++) {
+    prefix = join(prefix, parts[i] as string);
+    let isLink: boolean;
+    try {
+      isLink = lstatSync(prefix).isSymbolicLink();
+    } catch {
+      return null; // a missing name: nothing below it exists, so no link either
+    }
+    if (!isLink) continue;
+    try {
+      realpathSync.native(prefix);
+    } catch {
+      const target = resolve(dirname(prefix), readlinkSync(prefix));
+      return join(target, ...parts.slice(i + 1));
+    }
+  }
+  return null;
+}
+
 /** The real location of a path (nearest existing ancestor resolved, missing names appended). */
 function canonical(path: string): string {
   const forms = withCanonicalForms([path]);
@@ -117,6 +164,7 @@ function canonical(path: string): string {
  * root's forms), so a link inside a listed path never leads out of it. Other connections are
  * checked first, then secret and state paths, then the reach. A path that only contains a denied
  * directory is not refused here: the sandbox denies inside it. A relative path is outside reach.
+ * A dangling link is followed by its link text for the deny check, and is outside a narrower reach.
  */
 export function projectPathRefusal(
   path: string,
@@ -130,7 +178,8 @@ export function projectPathRefusal(
 ): DeviceProjectRefusal | null {
   if (!isAbsolute(path)) return "outside-reach";
   const given = resolve(path);
-  const forms = withCanonicalForms([given]);
+  const followed = danglingLinkForms(given);
+  const forms = withCanonicalForms([given, ...followed.forms]);
   const hits = (denies: readonly string[]) => {
     const all = withCanonicalForms(denies.map((d) => resolve(d)));
     return forms.some((f) => all.some((d) => within(f, d)));
@@ -138,6 +187,8 @@ export function projectPathRefusal(
   if (hits(input.otherConnectionDenies)) return "other-connection";
   if (hits(input.secretAndStateDenies)) return "denied";
   if (input.reach === "machine") return null;
+  // the sandbox decides a dangling link when its target appears; nothing proves it stays in reach
+  if (followed.dangling) return "outside-reach";
   const allowed = withCanonicalForms(
     [
       ...(input.reach === "paths" ? input.projectPaths : []),
