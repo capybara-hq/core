@@ -338,7 +338,8 @@ export class ConversationDevices {
   /**
    * The person's IM default when `im` and it is still theirs, live, in this org and usable (the
    * table has no such guard), else their default device (created when missing); null when
-   * that is needed and there is none and no default provider on in the org to make it. The owner
+   * that is needed and there is none and no default provider on in the org to make it (a dial-in
+   * default provider makes none: its devices come from a machine signing in). The owner
    * having left the org reads as `device.not_found`.
    */
   private async defaultFor(orgId: string, accountId: string, im: boolean): Promise<string | null> {

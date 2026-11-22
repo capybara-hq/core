@@ -295,8 +295,9 @@ export interface NetworkPlanContext {
    */
   refusal?: (host: string) => string | null;
   /**
-   * When a host the device's own list already names applies there, or null when the list does not
-   * name it: such a host is not asked again, its note says when it applies.
+   * When a host the device's network settings already allow (its own list, or its org's hosts when
+   * it follows them) applies there, or null when they do not allow it: such a host is not asked
+   * again, its note says when it applies.
    */
   onList?: (host: string) => NetworkAppliesAt | null;
   /**
