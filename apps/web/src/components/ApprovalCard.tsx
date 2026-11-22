@@ -232,9 +232,9 @@ export function useDecide(orgId: string) {
  * nothing is drawn until the read answers, so a decided approval never paints as pending first.
  *
  * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
- * hosts, the refused command, "allow this time" / "deny" and the checked hosts in the decision. Device
- * protocol 4 never widens a device from the deployment, so it offers no "always" (the block names
- * the machine command instead). Decided, it still reads the approval: the granted hosts are only
+ * hosts, the refused command, "allow this time" / "deny" and the checked hosts in the decision. An
+ * ask never adds a host to the device's own network list (only its owner's network setting does),
+ * so it offers no "always". Decided, it still reads the approval: the granted hosts are only
  * there.
  */
 export function ApprovalCard({
@@ -395,7 +395,8 @@ export function ApprovalCard({
   // decision 2026-11-21); decided or superseded, only its one line remains.
   const details = useCardDetails(scope, escalation, command?.path);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
-  // a network ask is granted for this run only: an "always" is never offered (device protocol 4)
+  // a network ask is granted for this run only: an "always" is never offered (an ask never adds a
+  // host to the device's own network list; only its owner's network setting does)
   const scopes = view
     ? scopesFor(view).filter((s) => network === undefined || s !== "always")
     : (["once"] as const);

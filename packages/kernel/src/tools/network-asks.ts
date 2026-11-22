@@ -38,7 +38,10 @@ const pron = (hosts: readonly string[]) => (one(hosts) ? "it" : "them");
 const blockedLead = (hosts: readonly string[]) =>
   `[network] ${list(hosts)} ${one(hosts) ? "was" : "were"} blocked by this device's network policy.`;
 
-/** Asked, allowed this time (a run grant, the only offer under device protocol 4). */
+/**
+ * Asked, allowed this time (a run grant, the only offer: an ask never adds a host to the device's
+ * own network list, only its owner's network setting does).
+ */
 export const allowedOnceNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts)} The user allowed ${pron(hosts)} for the rest of this task. Run the command again.`;
 

@@ -127,7 +127,10 @@ export interface NetworkAskDetail {
   result: KeptToolResult;
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
-  /** What took effect: a run grant (`once`, the only decision under device protocol 4). */
+  /**
+   * What took effect: a run grant (`once`, the only decision: an ask never adds a host to the
+   * device's own network list, only its owner's network setting does).
+   */
   outcome?: "once";
 }
 
