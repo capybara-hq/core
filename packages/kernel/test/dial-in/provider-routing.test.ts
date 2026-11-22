@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type DeviceProvider,
   ExtensionPermissionError,
@@ -21,9 +25,15 @@ import { DEVICE_CLOSE, MAX_EVENTS_IN_FLIGHT } from "../../src/dial-in/gateway.js
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { DeviceReports } from "../../src/sandbox/device-reports.js";
+import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
+import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import { permissionScopeHash } from "../../src/sandbox/permission-facts.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
+import { setFakeReportRevision } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createOrg,
@@ -35,14 +45,20 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { seedDevice } from "../helpers/sandbox.js";
 
 /**
  * The generic dial-in channel (device provider spec §5): `GET /device/connect` routes a machine
  * credential to the provider of its device (`permissions.dialIn`), the gateway speaks the envelope
  * and hands the bodies to the provider's `dialIn` handler, and the provider talks to its own
- * machines only through `ctx.dialIn`. Driven with the `fake-dial-in` fixture provider and
- * `FakeDialInMachine`.
+ * machines only through `ctx.dialIn` and tells the kernel about its devices through
+ * `ctx.devices`. Driven with the `fake-dial-in` fixture provider and `FakeDialInMachine`; the
+ * report revision tests also drive the instance-boundary cloud fixture `device-fake`.
  */
+
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
+);
 
 const GRACE_SECONDS = 2;
 
@@ -56,12 +72,15 @@ let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 let ownerId: string;
 let orgId: string;
 let url: string;
+/** `device-fake`'s deployment root. */
+let root: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
+  root = await mkdtemp(join(tmpdir(), "cap-dial-in-routing-"));
   // an optional preinstall: loaded on the deployment, on only in the orgs that switch it on
   bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
@@ -70,6 +89,8 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         devices: { maxPersonal: 50, local: { reconnectGraceSeconds: GRACE_SECONDS } },
+        extensions: [MODEL_FAKE, SANDBOX_FAKE],
+        extensionConfig: { "device-fake": { root } },
       },
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
@@ -88,6 +109,7 @@ afterAll(async () => {
   await raw?.destroy();
   await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (root) await rm(root, { recursive: true, force: true });
 });
 
 /**
@@ -356,5 +378,158 @@ describe("ctx.dialIn", () => {
     expect(e).toBeInstanceOf(ExtensionPermissionError);
     expect((e as Error).message).toBe(`device ${other.deviceId} is not served by fake-dial-in`);
     expect(await redis.exists(`capk:device-req:${other.deviceId}`)).toBe(0);
+  });
+});
+
+/**
+ * Report revisions drive the provider-neutral device authority epoch (device-provider spec §6.7,
+ * index Review Focus): a revision a provider reports between an approval being asked and being
+ * granted moves the epoch the approval is bound to, for an instance-boundary cloud provider
+ * (`device-fake`) as well as a dial-in one (`fake-dial-in`, whose machine's hello and event frames
+ * make the fixture call `ctx.devices.reportChanged` itself).
+ */
+describe("ctx.devices.reportChanged and the device authority epoch", () => {
+  /**
+   * The authority revision an approval asked now is bound to: its `authorityRevision` hashes the
+   * epoch vector read under the admission lock, and issuing the grant and admitting the call
+   * compare it again.
+   */
+  const askedUnder = (deviceId: string): Promise<string> =>
+    k.app.get(TransactionHost).run(async () => {
+      const subject = { orgId, deviceId };
+      await k.app.get(PermissionAuthorityLock).acquire(subject, { kind: "admit" });
+      return permissionScopeHash(
+        await k.app.get(PermissionAuthorityEpochStore).readLocked(subject),
+      );
+    });
+
+  const fullRevision = async (deviceId: string): Promise<number> =>
+    (
+      await db
+        .selectFrom("permission_authority_epochs")
+        .select("full_revision")
+        .where("kind", "=", "device")
+        .where("id", "=", deviceId)
+        .executeTakeFirst()
+    )?.full_revision ?? 0;
+
+  const storedRevision = async (deviceId: string) =>
+    (await k.app.get(DeviceReports).current(deviceId))?.revision ?? null;
+
+  const reportAt = async (deviceId: string) =>
+    (
+      await db
+        .selectFrom("devices")
+        .select("report_at")
+        .where("id", "=", deviceId)
+        .executeTakeFirstOrThrow()
+    ).report_at?.getTime() ?? 0;
+
+  /** How each fixture's report changes: a device whose report says `revision`, then new ones. */
+  interface Driver {
+    device(revision: string): Promise<string>;
+    /** The provider reports `revision` and tells the kernel; resolves once it is stored again. */
+    report(deviceId: string, revision: string, extra?: Record<string, unknown>): Promise<void>;
+    close(): Promise<void>;
+  }
+
+  const drivers: Record<"device-fake" | "fake-dial-in", () => Driver> = {
+    // its revision changes through its seam; it tells the kernel what ctx.devices.reportChanged
+    // tells (`DeviceReports.changed` for the calling provider)
+    "device-fake": () => ({
+      async device(revision) {
+        const id = await seedDevice(raw, orgId, ownerId);
+        await setFakeReportRevision(root, revision);
+        expect(await k.app.get(DeviceReports).changed("device-fake", id)).toBe("same");
+        return id;
+      },
+      async report(deviceId, revision) {
+        await setFakeReportRevision(root, revision);
+        await k.app.get(DeviceReports).changed("device-fake", deviceId);
+      },
+      async close() {
+        await setFakeReportRevision(root, null);
+      },
+    }),
+    // the machine's hello and event frames carry the revision; the provider calls
+    // ctx.devices.reportChanged itself
+    "fake-dial-in": () => {
+      const machines = new Map<string, FakeDialInMachine>();
+      return {
+        async device(revision) {
+          const d = await device();
+          machines.set(
+            d.deviceId,
+            await FakeDialInMachine.connect({
+              url,
+              credential: d.credential,
+              hello: { revision, outsideSandbox: true },
+            }),
+          );
+          await waitFor(async () => (await storedRevision(d.deviceId)) === revision);
+          return d.deviceId;
+        },
+        async report(deviceId, revision, extra = {}) {
+          const before = await reportAt(deviceId);
+          await machines.get(deviceId)?.send({ revision, ...extra });
+          await waitFor(async () => (await reportAt(deviceId)) > before);
+        },
+        async close() {
+          for (const m of machines.values()) await m.close();
+        },
+      };
+    },
+  };
+
+  describe.each(["device-fake", "fake-dial-in"] as const)("%s", (name) => {
+    it("an approval asked under one report revision is stale after reportChanged; the same revision keeps it", async () => {
+      const d = drivers[name]();
+      try {
+        const id = await d.device("r1");
+        const asked = await askedUnder(id);
+        // told again with the same revision: the approval still matches
+        await d.report(id, "r1");
+        expect(await askedUnder(id)).toBe(asked);
+        // another revision before the grant: the approval no longer matches
+        await d.report(id, "r2");
+        expect(await storedRevision(id)).toBe("r2");
+        expect(await askedUnder(id)).not.toBe(asked);
+      } finally {
+        await d.close();
+      }
+    });
+  });
+
+  it("a machine that stops allowing outside-sandbox runs resets Full consent once", async () => {
+    const d = drivers["fake-dial-in"]();
+    try {
+      const id = await d.device("r1");
+      // an instance of the provider: its permission support is read with the report
+      await db
+        .insertInto("device_instances")
+        .values({
+          device_id: id,
+          org_id: orgId,
+          provider: "fake-dial-in",
+          status: "running",
+          handle: JSON.stringify({ id }),
+          fs_status: "ready",
+          had_instance: true,
+        })
+        .execute();
+      await d.report(id, "r2");
+      expect((await k.app.get(DeviceReports).current(id))?.support?.outsideSandbox).toBe(true);
+      const full = await fullRevision(id);
+      const before = await askedUnder(id);
+      await d.report(id, "r3", { outsideSandbox: false });
+      expect(await fullRevision(id)).toBe(full + 1);
+      expect(await askedUnder(id)).not.toBe(before);
+      expect((await k.app.get(DeviceReports).current(id))?.support?.outsideSandbox).toBe(false);
+      // another revision that keeps it off: the epoch moves, the consent stays
+      await d.report(id, "r4");
+      expect(await fullRevision(id)).toBe(full + 1);
+    } finally {
+      await d.close();
+    }
   });
 });

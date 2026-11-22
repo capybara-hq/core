@@ -414,14 +414,62 @@ describe("ctx 按权限清单构造", () => {
       expect((await denials())[0]?.detail).toMatchObject({ item: "permissions.dialIn" });
     });
 
-    it("ctx.devices stays denied until the report revision wires it", async () => {
+    /** A device reports double: `own` is the only device bound to `perm-dial-in`. */
+    const reports = (own: string) => {
+      const calls: { plugin: string; deviceId: string; signal?: AbortSignal }[] = [];
+      return {
+        calls,
+        api: {
+          changed: async (plugin: string, deviceId: string, signal?: AbortSignal) => {
+            calls.push({ plugin, deviceId, ...(signal && { signal }) });
+            return plugin === "perm-dial-in" && deviceId === own ? "bumped" : "not-served";
+          },
+        } as NonNullable<KernelDeps["devices"]>,
+      };
+    };
+
+    it("ctx.devices for an extension that provides no device provider throws ExtensionPermissionError", async () => {
+      const ctx = createExtensionContext({ ...deps, devices: reports("d-1").api }, mf(), {});
+      expect(() => ctx.devices).toThrow(ExtensionPermissionError);
+      expect(Object.keys(ctx)).not.toContain("devices");
+      await ctx.close();
+      expect((await denials())[0]?.detail).toMatchObject({
+        item: "provides device-provider@1",
+      });
+    });
+
+    it("ctx.devices.reportChanged reads its own device's report again, under the instance's signal", async () => {
+      const r = reports("d-1");
+      const ctx = createExtensionContext({ ...deps, devices: r.api }, dialInManifest(), {});
+      await ctx.devices.reportChanged("d-1");
+      expect(r.calls.map((c) => [c.plugin, c.deviceId])).toEqual([["perm-dial-in", "d-1"]]);
+      expect(r.calls[0]?.signal?.aborted).toBe(false);
+      await ctx.close();
+      expect(r.calls[0]?.signal?.aborted).toBe(true);
+      expect(await denials()).toEqual([]);
+    });
+
+    it("ctx.devices.reportChanged for a device of another provider throws ExtensionPermissionError and audits", async () => {
       const ctx = createExtensionContext(
-        { ...deps, dialIn: access("d-1").api },
+        { ...deps, devices: reports("d-1").api },
         dialInManifest(),
         {},
       );
-      expect(() => ctx.devices).toThrow(ExtensionPermissionError);
+      for (const id of ["d-other", 42 as unknown as string]) {
+        const e = await ctx.devices.reportChanged(id).then(
+          () => null,
+          (x: unknown) => x,
+        );
+        expect(e).toBeInstanceOf(ExtensionPermissionError);
+        expect((e as Error).message).toBe(`device ${id} is not served by perm-dial-in`);
+      }
       await ctx.close();
+      expect((await denials()).map((d) => d.detail)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ item: "devices:device d-other" }),
+          expect.objectContaining({ item: "devices:device 42" }),
+        ]),
+      );
     });
 
     it("ctx.dialIn for a device of another provider throws ExtensionPermissionError and audits", async () => {

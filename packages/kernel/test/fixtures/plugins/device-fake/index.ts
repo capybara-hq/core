@@ -112,6 +112,8 @@ import { z } from "zod";
  *   `createFileSystem` throw an ordinary error whose message carries {@link FAKE_REFUSAL_SECRET},
  *   so tests can check that it never reaches the model.
  *
+ * - `report`: the revision is the instance's file system id (`none` without an instance) unless
+ *   `root/report-revision` names another ({@link setFakeReportRevision}; read at each call).
  * - the permission-scoped surface (`permissionSupport`, `operation`, `prepare`, `browse` with
  *   `list`, `revokeOperation`, `background`; see {@link managedSurface}): restricted and Full
  *   access with background ownership by default ({@link FAKE_PERMISSION_SUPPORT};
@@ -719,8 +721,9 @@ export function createFakeSandbox(
     networkAllowlist: true as const,
     async report(device) {
       const meta = device.handle === null ? null : await fakeSandboxMeta(root, device.handle.id);
+      const override = await readFile(join(root, "report-revision"), "utf8").catch(() => null);
       return {
-        revision: meta?.fileSystem ?? "none",
+        revision: override ?? meta?.fileSystem ?? "none",
         description: { en: options.description ?? DEFAULT_DESCRIPTION },
         home: null,
         limits: [],
@@ -1150,6 +1153,14 @@ export async function setFakeSandboxPermissionSupport(
   const file = join(root, "permission-support.json");
   if (report === null) await rm(file, { force: true });
   else await writeFile(file, JSON.stringify(report));
+}
+
+/** Overrides the revision `report` answers (read at each call); `null` restores the default. */
+export async function setFakeReportRevision(root: string, revision: string | null): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const file = join(root, "report-revision");
+  if (revision === null) await rm(file, { force: true });
+  else await writeFile(file, revision);
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");

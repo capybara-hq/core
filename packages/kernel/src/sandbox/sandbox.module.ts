@@ -8,7 +8,7 @@ import { ModelsModule } from "../models/models.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { CloudPermissionSnapshotsModule } from "./cloud-permission-snapshot.module.js";
-import { DeviceReports } from "./device-reports.js";
+import { DeviceReportsModule } from "./device-reports.module.js";
 import { SandboxJobs } from "./jobs.js";
 import { LegacyRetirementModule } from "./legacy-retirement.module.js";
 import { OperationAuthorityModule } from "./operation-authority.module.js";
@@ -31,6 +31,7 @@ import { SandboxService } from "./sandbox.service.js";
     // which providers serve an org: a use needs the device's provider on in its org
     DeviceProviderSelectionModule,
     SandboxProviderRegistryModule,
+    DeviceReportsModule,
     PermissionAuthorityModule,
     PermissionFactsModule,
     OperationIntentsModule,
@@ -45,7 +46,7 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [SandboxService, SandboxJobs, CommandReviewService, DeviceReports],
+  providers: [SandboxService, SandboxJobs, CommandReviewService],
   exports: [
     SandboxProviderRegistryModule,
     LegacyRetirementModule,
@@ -56,7 +57,7 @@ import { SandboxService } from "./sandbox.service.js";
     SandboxJobs,
     CommandReviewService,
     CloudPermissionSnapshotsModule,
-    DeviceReports,
+    DeviceReportsModule,
   ],
 })
 export class SandboxModule {}

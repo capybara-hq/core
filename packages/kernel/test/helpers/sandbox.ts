@@ -24,7 +24,7 @@ import {
   LOCAL_PROVIDER,
 } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { handlesFor, instanceWritesFor, retirementFor } from "./identity.js";
+import { ceilingWritesOver, handlesFor, instanceWritesFor, retirementFor } from "./identity.js";
 
 /** A kernel logger over a test's partial logger (the missing levels are dropped). */
 function kernelLog(log: Partial<Pick<Logger, "info" | "warn" | "error">>): KernelLogger {
@@ -98,16 +98,29 @@ export interface SandboxServiceDeps {
   reports?: Pick<DeviceReports, "refresh">;
 }
 
-/** {@link DeviceReports} over a test's own database and Redis. */
+/**
+ * {@link DeviceReports} over a test's own database and Redis; `providers` are what `changed` finds
+ * a calling provider among (none when omitted).
+ */
 export function deviceReportsFor(
   db: KernelSchemaDb,
   redis: Redis,
   log: Partial<Pick<Logger, "warn">> = {},
   timeoutMs?: number,
+  loaded: () => readonly DeviceProviderEntry[] = () => [],
 ): DeviceReports {
   const h = handlesFor(db);
   const kl = kernelLog(log);
-  return new DeviceReports(h.db, h.txHost, new LockService(redis, kl), kl, timeoutMs);
+  const providers = { forDevice: (plugin: string) => loaded().find((p) => p.plugin === plugin) };
+  return new DeviceReports(
+    h.db,
+    h.txHost,
+    new LockService(redis, kl),
+    kl,
+    ceilingWritesOver(h),
+    providers,
+    timeoutMs,
+  );
 }
 
 /** A {@link SandboxService} over a test's own database, Redis and provider. */
@@ -165,7 +178,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
     instanceWritesFor(d.db),
     d.retirement ?? retirementFor(d.db),
     d.snapshots ?? { reconcileHeld: async () => ({ state: "existing" }) },
-    d.reports ?? deviceReportsFor(d.db, d.redis, d.log),
+    d.reports ?? deviceReportsFor(d.db, d.redis, d.log, undefined, d.providers),
   );
 }
 

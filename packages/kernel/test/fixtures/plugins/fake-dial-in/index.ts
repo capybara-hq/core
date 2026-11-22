@@ -6,6 +6,7 @@ import {
   type ExecResult,
   type FileSystemHandle,
   type SandboxHandle,
+  type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
 
 /**
@@ -18,10 +19,11 @@ import {
  * The machine's hello body is `{ revision: string; outsideSandbox: boolean; refuse?: string }`: a
  * `refuse` makes `onHello` refuse with code `fake.refused`. The accepted hello is kept in `ctx.kv`
  * (`hello:<deviceId>`, one hour) and `report()` is built from it; an `event` frame
- * `{ revision }` replaces the revision. Both tell the kernel through `ctx.devices.reportChanged`
- * (skipped while the kernel denies `ctx.devices`). Every event body is kept as `frame:<deviceId>`
- * and the reason of the last close as `closed:<deviceId>` (one hour), for the tests to read; an
- * event `{ hang: true }` is never finished.
+ * `{ revision, outsideSandbox? }` replaces the revision (and the outside-sandbox answer, when
+ * given). Both tell the kernel through `ctx.devices.reportChanged`. `permissionSupport` is an
+ * operation boundary whose `outsideSandbox` is the stored answer. Every event body is kept as
+ * `frame:<deviceId>` and the reason of the last close as `closed:<deviceId>` (one hour), for the
+ * tests to read; an event `{ hang: true }` is never finished.
  *
  * Handles are the device id: the device's file system and its instance are both named
  * `cap-device-<deviceId>`, so every operation can address its machine.
@@ -60,14 +62,7 @@ export default defineExtension({
     };
     const writeHello = (deviceId: string, hello: StoredHello) =>
       ctx.kv.set(helloKey(deviceId), JSON.stringify(hello), { ttlSeconds: HELLO_TTL_SECONDS });
-    // ctx.devices is denied until the kernel wires the report revision: the hello still succeeds
-    const reportChanged = async (deviceId: string): Promise<void> => {
-      try {
-        await ctx.devices.reportChanged(deviceId);
-      } catch (e) {
-        if (!(e instanceof Error && e.name === "ExtensionPermissionError")) throw e;
-      }
-    };
+    const reportChanged = (deviceId: string): Promise<void> => ctx.devices.reportChanged(deviceId);
 
     const relay = (
       deviceId: string,
@@ -94,6 +89,17 @@ export default defineExtension({
           reset: false,
         };
       },
+      async permissionSupport(h): Promise<SandboxPermissionSupport> {
+        const hello = await readHello(h.id);
+        return {
+          version: 2,
+          boundary: "operation",
+          restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
+          network: { openPublic: false, allowlist: true, perOperationHosts: true },
+          outsideSandbox: hello?.outsideSandbox ?? false,
+          background: false,
+        };
+      },
       dialIn: {
         async onHello(deviceId, hello) {
           const body = isRecord(hello) ? hello : {};
@@ -115,7 +121,10 @@ export default defineExtension({
           if (!isRecord(frame) || typeof frame.revision !== "string") return;
           const hello = await readHello(deviceId);
           await writeHello(deviceId, {
-            outsideSandbox: hello?.outsideSandbox ?? false,
+            outsideSandbox:
+              typeof frame.outsideSandbox === "boolean"
+                ? frame.outsideSandbox
+                : (hello?.outsideSandbox ?? false),
             revision: frame.revision,
           });
           await reportChanged(deviceId);

@@ -478,8 +478,12 @@ import {
   TransactionHost,
 } from "../../src/infra/database/transaction-host.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
+import { DeviceReports } from "../../src/sandbox/device-reports.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
-import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import {
+  PermissionAdmissionStale,
+  SandboxOperationIntents,
+} from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import {
@@ -894,6 +898,38 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
     .where("job_id", "=", `sandbox-operation-revoke-${row.operation_id}-1`)
     .executeTakeFirst();
   expect(retry).toBeDefined();
+});
+it("an operation pending under one report revision is stale after its provider reports another", async () => {
+  let revision = "r1";
+  const f = await operationFixture({
+    async report() {
+      return { revision, description: { en: "Test device" }, home: null, limits: [], reset: false };
+    },
+  });
+  const intents = k.app.get(SandboxOperationIntents),
+    reports = k.app.get(DeviceReports);
+  const pend = (ordinal: number) =>
+    intents.pending(
+      f.ctx,
+      { ...f.invocation, ordinal },
+      { provider: "@permission-test", providerVersion: "test-1", generation: "1700000000000" },
+      "stat",
+      { path: "/work/file" },
+      "holder",
+      new AbortController().signal,
+    );
+  // the first report publishes nothing; the same revision told again keeps the pending admission
+  expect(await reports.changed("@permission-test", f.deviceId)).toBe("same");
+  await pend(0);
+  expect(await reports.changed("@permission-test", f.deviceId)).toBe("same");
+  expect((await intents.admit(f.ctx, { ...f.invocation, ordinal: 0 })).state).toBe("admitted");
+  // asked under r1, the provider reports r2 before it is admitted: stale, never admitted
+  await pend(1);
+  revision = "r2";
+  expect(await reports.changed("@permission-test", f.deviceId)).toBe("bumped");
+  await expect(intents.admit(f.ctx, { ...f.invocation, ordinal: 1 })).rejects.toBeInstanceOf(
+    PermissionAdmissionStale,
+  );
 });
 it("a newly acquired run claim and lease reconcile the same unknown ID without new effects", async () => {
   let effects = 0;
