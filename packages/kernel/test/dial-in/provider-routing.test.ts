@@ -341,6 +341,55 @@ describe("GET /device/connect routes by the device's provider", () => {
   });
 });
 
+describe("DialInHandler callbacks name the machine and the connection", () => {
+  const connectionOf = async (key: string) =>
+    JSON.parse((await kv(key)) ?? "null") as { machineId: string; connectionId: string } | null;
+
+  it("a second machine of the device gets another machineId; the old onClose(replaced) names the old one", async () => {
+    const d = await device();
+    const first = await FakeDialInMachine.connect({
+      url,
+      credential: d.credential,
+      hello: { revision: "r1" },
+    });
+    const firstConn = { machineId: d.machineId, connectionId: first.connectionId };
+    expect(await connectionOf(`hello-connection:${d.deviceId}`)).toEqual(firstConn);
+    await first.send({ revision: "r2" });
+    await waitFor(async () => connectionOf(`frame-connection:${d.deviceId}`));
+    expect(await connectionOf(`frame-connection:${d.deviceId}`)).toEqual(firstConn);
+
+    // the device signs in from another machine: the old credential is replaced
+    const second = await k.app.get(TransactionHost).run(() =>
+      k.app.get(DialInMachines).issue({
+        orgId,
+        deviceId: d.deviceId,
+        accountId: ownerId,
+        name: "fake-2",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.0.0",
+      }),
+    );
+    expect(second.machineId).not.toBe(d.machineId);
+    expect((await first.closed).code).toBe(DEVICE_CLOSE.replaced);
+    await waitFor(async () => ((await kv(`closed:${d.deviceId}`)) === "replaced" ? true : null));
+    expect(await connectionOf(`closed-connection:${d.deviceId}`)).toEqual(firstConn);
+
+    await waitFor(async () => ((await k.app.get(DialInRelay).online(d.deviceId)) ? null : true));
+    const next = await FakeDialInMachine.connect({
+      url,
+      credential: second.credential,
+      hello: { revision: "r3" },
+    });
+    expect(next.connectionId).not.toBe(first.connectionId);
+    expect(await connectionOf(`hello-connection:${d.deviceId}`)).toEqual({
+      machineId: second.machineId,
+      connectionId: next.connectionId,
+    });
+    await next.close();
+  });
+});
+
 describe("ctx.dialIn", () => {
   it("ctx.dialIn.request relays a body and resolves the machine's res body", async () => {
     const d = await device();
@@ -404,6 +453,48 @@ describe("ctx.dialIn", () => {
     expect(e).toBeInstanceOf(ExtensionPermissionError);
     expect((e as Error).message).toBe(`device ${other.deviceId} is not served by fake-dial-in`);
     expect(await redis.exists(`capk:device-req:${other.deviceId}`)).toBe(0);
+  });
+
+  /** `ctx.dialIn.capacity` called by the fixture's `GET /capacity` route. */
+  const capacity = async (deviceId: string) => {
+    const res = await fetch(
+      `http://127.0.0.1:${k.port}/plugins/fake-dial-in/capacity?deviceId=${deviceId}`,
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as
+      | { ok: true; capacity: { maxFrameBytes: number } | null }
+      | { ok: false; error: { name: string; message: string } };
+  };
+
+  it("ctx.dialIn.capacity is the maxFrameBytes of ready while connected, null once offline", async () => {
+    const d = await device();
+    expect(await capacity(d.deviceId)).toEqual({ ok: true, capacity: null });
+    const machine = await FakeDialInMachine.connect({
+      url,
+      credential: d.credential,
+      hello: { revision: "r1" },
+      maxFrameBytes: 4096,
+    });
+    // the machine announced less than the kernel's 16 MiB default: its own cap wins
+    expect(machine.maxFrameBytes).toBe(4096);
+    expect(await capacity(d.deviceId)).toEqual({
+      ok: true,
+      capacity: { maxFrameBytes: machine.maxFrameBytes },
+    });
+    await machine.close();
+    await waitFor(async () => ((await k.app.get(DialInRelay).online(d.deviceId)) ? null : true));
+    expect(await capacity(d.deviceId)).toEqual({ ok: true, capacity: null });
+  });
+
+  it("ctx.dialIn.capacity for a device of another provider throws ExtensionPermissionError", async () => {
+    const other = await device(undefined, "device-fake");
+    expect(await capacity(other.deviceId)).toEqual({
+      ok: false,
+      error: {
+        name: "ExtensionPermissionError",
+        message: `device ${other.deviceId} is not served by fake-dial-in`,
+      },
+    });
   });
 });
 

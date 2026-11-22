@@ -404,7 +404,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 
 A provider whose machines connect to the deployment (device provider spec §5) declares
 `permissions.dialIn: { protocol }` and implements `DeviceProvider.dialIn` (`onHello`, optional
-`onFrame` / `onClose`); providing the point is refused when one is declared without the other. The
+`onFrame` / `onClose`, each called with the connection's `{ machineId, connectionId }`: the
+authenticated machine and the id `ready` carries, so a `replaced` close names the old machine);
+providing the point is refused when one is declared without the other. The
 kernel knows no device location: local devices are the `device-local` plugin's, and the kernel
 treats a dial-in device like any other (its provider, report and permission support).
 
@@ -428,7 +430,10 @@ treats a dial-in device like any other (its provider, report and permission supp
   (`programRunId`) ends a waiting request with `DeviceProgramRestartedError`. Every call checks the
   device is bound to the calling provider. Before a new managed dispatch on a dial-in device the
   sandbox service asks `DialInRelay.connection`, so an offline or revoked machine fails before
-  anything is recorded as sent.
+  anything is recorded as sent. `ctx.dialIn.capacity(deviceId)` gives a provider the current
+  connection's negotiated `maxFrameBytes` (the value of `ready`, read from the holder's
+  `capk:device-transport:*` record under its lease, never config) to size its frames by; null
+  with no holder.
 - **Reports.** A provider stores what its machine says (in `ctx.kv` / `ctx.db`) and calls
   `ctx.devices.reportChanged(deviceId)`; the kernel reads `report()` again and moves the device's
   authority epoch when the revision changed. Online state is `DialInRelay.online` (a replica holds

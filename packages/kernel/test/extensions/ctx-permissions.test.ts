@@ -395,6 +395,10 @@ describe("ctx 按权限清单构造", () => {
             calls.push({ method: "online", deviceId });
             return true;
           },
+          capacity: async (deviceId: string) => {
+            calls.push({ method: "capacity", deviceId });
+            return { maxFrameBytes: 4096 };
+          },
           stop: async (deviceId: string) => {
             calls.push({ method: "stop", deviceId });
           },
@@ -478,6 +482,7 @@ describe("ctx 按权限清单构造", () => {
       for (const call of [
         () => ctx.dialIn.request("d-other", { x: 1 }, { timeoutMs: 1000 }),
         () => ctx.dialIn.online("d-other"),
+        () => ctx.dialIn.capacity("d-other"),
         () => ctx.dialIn.stop("d-other", "stop"),
       ]) {
         const e = await call().then(
@@ -505,8 +510,9 @@ describe("ctx 按权限清单构造", () => {
         } as never),
       ).toEqual({ echoed: { x: 1 } });
       expect(await ctx.dialIn.online("d-1")).toBe(true);
+      expect(await ctx.dialIn.capacity("d-1")).toEqual({ maxFrameBytes: 4096 });
       await ctx.dialIn.stop("d-1", "drain");
-      expect(a.calls.map((c) => c.method)).toEqual(["request", "online", "stop"]);
+      expect(a.calls.map((c) => c.method)).toEqual(["request", "online", "capacity", "stop"]);
       const opts = a.calls[0]?.opts as { timeoutMs: number; signal: AbortSignal };
       expect(Object.keys(opts).sort()).toEqual(["signal", "timeoutMs"]);
       // the instance's signal joins the extension's: an unload aborts the wait
