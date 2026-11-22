@@ -381,10 +381,11 @@ function SkillDeleteDialog({
 function FilesTab({ files }: { files: SkillFile[] }) {
   const t = useTranslations("skills.detail");
   const columns: Column<SkillFile>[] = [
-    { key: "path", header: t("columns.path"), cell: (f) => f.path },
+    { key: "path", header: t("columns.path"), compact: "title", cell: (f) => f.path },
     {
       key: "size",
       header: t("columns.size"),
+      compact: "meta",
       tone: "muted",
       width: 120,
       cell: (f) => formatBytes(f.size),
@@ -409,12 +410,14 @@ function VersionsTab({ versions }: { versions: SkillVersion[] }) {
     {
       key: "version",
       header: t("columns.version"),
+      compact: "title",
       width: 90,
       cell: (v) => tv("version", { version: v.version }),
     },
     {
       key: "description",
       header: t("columns.description"),
+      compact: "subtitle",
       cell: (v) => (
         <Text variant="small" truncate>
           {v.description}
@@ -424,6 +427,7 @@ function VersionsTab({ versions }: { versions: SkillVersion[] }) {
     {
       key: "files",
       header: t("columns.files"),
+      compact: "hidden",
       tone: "muted",
       width: 90,
       cell: (v) => String(v.files.length),
@@ -431,6 +435,7 @@ function VersionsTab({ versions }: { versions: SkillVersion[] }) {
     {
       key: "created",
       header: t("columns.created"),
+      compact: "meta",
       tone: "muted",
       width: 160,
       cell: (v) => <DateTime value={v.createdAt} />,

@@ -133,8 +133,15 @@ describe("reads", () => {
     await conversations.create(env.orgId, env.bossId, otherAgent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     const out = (await run("conversations.list", {}, c)) as {
-      conversations: { id: string; name: string; state: string; agentId: string }[];
+      conversations: {
+        id: string;
+        name: string;
+        state: string;
+        agentId: string;
+        agent: { id: string; name: string } | null;
+      }[];
       next: string | null;
+      total?: number;
     };
     expect(out.conversations).toHaveLength(1);
     expect(out.conversations[0]).toMatchObject({
@@ -143,7 +150,10 @@ describe("reads", () => {
       state: "idle",
       agentId: agent,
     });
+    expect(out.conversations[0]?.agent?.id).toBe(agent);
+    expect(out.conversations[0]?.agent?.name).toBe("Helper");
     expect(out.next).toBeNull();
+    expect(out.total).toBe(1);
     const got = (await run("conversations.get", { conversationId: mine.id }, c)) as {
       conversation: { id: string };
     };

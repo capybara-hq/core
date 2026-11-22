@@ -436,6 +436,115 @@ describe("GET /conversations?agentId=", () => {
       url: `/api/v1/orgs/${orgId}/conversations?agentId=${agent}`,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ conversations: [], next: null });
+    expect(res.json()).toEqual({ conversations: [], next: null, total: 0 });
+  });
+});
+
+type ListRow = {
+  id: string;
+  agentId: string;
+  agent: { id: string; name: string; profile: Profile } | null;
+};
+type ListJson = { conversations: ListRow[]; next: string | null; total?: number };
+
+async function list(req: Req, orgId: string, query = ""): Promise<ListJson> {
+  const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations${query}` });
+  expect(res.statusCode, res.body).toBe(200);
+  return res.json() as ListJson;
+}
+
+describe("GET /conversations: each row's agent and the total", () => {
+  it("each row carries its agent's name and profile, as the agents API returns them", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const { a, b, bConv, aConvs } = await threeAgents(req, orgId);
+    // the avatar half of the agents API's profile, as the sidebar groups carry it
+    const profileOf = async (id: string) => {
+      const { profile } = (
+        (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${id}` })).json() as {
+          agent: { profile: Profile };
+        }
+      ).agent;
+      return { avatar: profile.avatar, updatedAt: profile.updatedAt };
+    };
+    const res = await list(req, orgId, "?limit=2");
+    expect(res.conversations.map((c) => c.id)).toEqual([bConv, aConvs[6]]);
+    expect(res.conversations.map((c) => c.agent)).toEqual([
+      { id: b, name: "Agent B", profile: await profileOf(b) },
+      { id: a, name: "Agent A", profile: await profileOf(a) },
+    ]);
+    for (const c of res.conversations) expect(c.agentId).toBe(c.agent?.id);
+  });
+
+  it("total counts every match on the first page only, and follows q and agentId", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const { a, aConvs } = await threeAgents(req, orgId);
+    const p1 = await list(req, orgId, "?limit=3");
+    expect(p1.total).toBe(10);
+    expect(p1.next).not.toBeNull();
+    const p2 = await list(req, orgId, `?limit=3&after=${p1.next}`);
+    expect(p2.conversations).toHaveLength(3);
+    expect("total" in p2).toBe(false);
+    expect((await list(req, orgId, `?agentId=${a}&limit=2`)).total).toBe(7);
+    const renamed = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/conversations/${aConvs[0]}`,
+      payload: { title: "Quarterly report" },
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect((await list(req, orgId, "?q=report")).total).toBe(1);
+    expect((await list(req, orgId, `?q=report&agentId=${a}`)).total).toBe(1);
+    expect((await list(req, orgId, "?q=nomatch")).total).toBe(0);
+    expect((await list(req, orgId, "?archived=1")).total).toBe(0);
+  });
+
+  it("a hidden or deleted agent's conversations are neither listed nor counted", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const priv = await createAgent(ownerReq, orgId, "Soon private");
+    const gone = await createAgent(ownerReq, orgId, "Soon deleted");
+    const kept = await createAgent(ownerReq, orgId, "Kept");
+    const m = await memberSession(orgId, "mem", "member");
+    for (const agent of [priv, gone, kept]) await createConv(m.req, orgId, agent);
+    expect((await list(m.req, orgId)).total).toBe(3);
+    await ownerReq({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${priv}`,
+      payload: { visibility: "private" },
+    });
+    await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${gone}` });
+    const res = await list(m.req, orgId);
+    expect(res.total).toBe(1);
+    expect(res.conversations.map((c) => c.agent?.id)).toEqual([kept]);
+  });
+
+  it("a row pointing at another org's agent is never listed with that agent", async () => {
+    // The same account in two orgs, where it can see the other org's agent: a conversation row of
+    // org 1 that references org 2's agent (inconsistent data) must not surface org 2's agent.
+    const req = await session("owner");
+    const org1 = await createOrg(req);
+    const org2 = await createOrg(req, "Beta");
+    const a1 = await createAgent(req, org1, "In org 1");
+    const a2 = await createAgent(req, org2, "Secret org 2 agent");
+    const c1 = await createConv(req, org1, a1);
+    const stray = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: stray,
+        org_id: org1,
+        agent_id: a2,
+        account_id: owner.id,
+        kind: "chat",
+        source: "web",
+      })
+      .execute();
+    const res = await list(req, org1);
+    expect(res.conversations.map((c) => c.id)).toEqual([c1]);
+    expect(res.total).toBe(1);
+    expect(JSON.stringify(res)).not.toContain(a2);
+    expect(JSON.stringify(res)).not.toContain("Secret org 2 agent");
+    expect((await list(req, org1, `?agentId=${a2}`)).conversations).toEqual([]);
   });
 });

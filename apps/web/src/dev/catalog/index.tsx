@@ -4,6 +4,7 @@ import { applyTheme, Button, Card, Stack, Text, useDesignLink } from "@capybara-
 import { lazy, Suspense } from "react";
 import { BrandFixtureCatalog } from "./brand-blocks";
 import { ComponentsCatalog } from "./components";
+import { MemberPageCatalog } from "./member-pages";
 import { OverlayCatalog } from "./overlays";
 import { ReferenceCatalog } from "./reference";
 import {
@@ -11,6 +12,7 @@ import {
   isOverlayRoute,
   isPageRoute,
   isTemplateRoute,
+  type MemberPage,
   PAGE_ROUTES,
   REFERENCE_ROUTES,
   referenceComponentOf,
@@ -39,6 +41,8 @@ export function Catalog({ route }: { route: string }) {
   if (route === "pages/schedules-calendar") return <SchedulesPageCatalog variant="week" />;
   if (route === "pages/schedules-calendar-month") return <SchedulesPageCatalog variant="month" />;
   if (route === "pages/schedules-calendar-admin") return <SchedulesPageCatalog variant="admin" />;
+  if (route.startsWith("pages/member-") && isPageRoute(route))
+    return <MemberPageCatalog page={route.slice("pages/member-".length) as MemberPage} />;
   if (isPageRoute(route)) {
     return (
       <Suspense fallback={null}>

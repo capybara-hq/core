@@ -4,19 +4,20 @@ import { ConversationList, ListPage, useToast } from "@capybara-hq/design";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import {
-  conversationRow,
-  useConversationAgents,
-  useConversationRowActions,
-} from "../../../components/conversation-rows";
+import { conversationRow, useConversationRowActions } from "../../../components/conversation-rows";
 import { useCursorPages } from "../../../components/cursor-pages";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { usePathname } from "../../../i18n/navigation";
-import type { Conversation } from "../../../lib/conversations";
+import { avatarValue } from "../../../lib/agents";
+import type { ConversationListRow } from "../../../lib/conversations";
 import { retryOnMountOf } from "../../../lib/query/client";
-import { type ConversationListSearch, conversationListQuery } from "../../../lib/query/shell";
+import {
+  type ConversationListSearch,
+  conversationGroupsQuery,
+  conversationListQuery,
+} from "../../../lib/query/shell";
 import { useWorkspace } from "../../../lib/query/workspace";
 import { HOME_PATH } from "../../../lib/routes";
 import { useErrorMessage } from "../../../lib/use-error-message";
@@ -73,18 +74,21 @@ function Conversations({ orgId }: { orgId: string }) {
     (page) => ({ rows: page.conversations, next: page.next }),
   );
   const rows = dedupe(pages.rows);
-  const { byId, agents } = useConversationAgents(
-    orgId,
-    rows.map((c) => c.agentId),
-  );
+  // Rows carry their agent; only the chips need the agents of my conversations (the groups').
+  const groupsQ = conversationGroupsQuery(orgId);
+  const groups = useQuery({ ...groupsQ, retryOnMount: retryOnMountOf(groupsQ.queryKey) }).data;
+  const agents = (groups?.groups ?? []).map((g) => ({
+    id: g.agent.id,
+    name: g.agent.name,
+    avatar: avatarValue(g.agent, orgId),
+  }));
   const actions = useConversationRowActions(orgId, pathname, (e) => toast.error(errorMessage(e)));
   if (read.error?.status === 404) return <NotFound />;
   const loading = read.data === undefined && read.error === null;
   if (read.data === undefined && read.error !== null) {
     return <ErrorFrame reset={() => void read.refetch()} />;
   }
-  // The total is known once the last page is in; before that the loaded rows and a "+".
-  const count = loading ? undefined : pages.next === null ? rows.length : `${rows.length}+`;
+  const count = loading ? undefined : (read.data?.total ?? rows.length);
   const header = {
     path: [...scope, { label: "conversations" }],
     title: t("title"),
@@ -125,7 +129,7 @@ function Conversations({ orgId }: { orgId: string }) {
     >
       <ConversationList
         label={t("list")}
-        items={rows.map((c) => conversationRow(c, byId))}
+        items={rows.map((c) => conversationRow(c, orgId))}
         sections
         state={loading ? "loading" : "ready"}
         actions={actions}
@@ -143,7 +147,7 @@ function Conversations({ orgId }: { orgId: string }) {
 }
 
 /** Pages read by cursor can repeat a row that moved between two reads: the first one stays. */
-function dedupe(rows: Conversation[]): Conversation[] {
+function dedupe(rows: ConversationListRow[]): ConversationListRow[] {
   const seen = new Set<string>();
   return rows.filter((c) => !seen.has(c.id) && seen.add(c.id));
 }

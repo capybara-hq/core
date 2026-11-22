@@ -9,7 +9,7 @@ export type CssRule = { at: string | null; selector: string; decls: Record<strin
 
 /**
  * The style rules of a stylesheet with the at-rule (`@media` / `@container` condition) they sit in,
- * one nesting level: `at` is e.g. `(max-width: 599px)` or `cb-body (max-width: 791px)`.
+ * one nesting level: `at` is e.g. `not all and (min-width: 600px)` or `cb-body (max-width: 791px)`.
  */
 export function parseCss(source: string): CssRule[] {
   const text = source.replace(/\/\*[\s\S]*?\*\//g, "");

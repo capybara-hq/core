@@ -39,7 +39,24 @@ export const PAGE_ROUTES = [
   "pages/schedules-calendar",
   "pages/schedules-calendar-month",
   "pages/schedules-calendar-admin",
+  // the member pages of the responsive matrix (`member-pages.tsx`)
+  "pages/member-agents",
+  "pages/member-skills",
+  "pages/member-connectors",
+  "pages/member-schedules",
+  "pages/member-conversations",
+  "pages/member-inbox",
+  "pages/member-profile",
 ] as const;
+
+/** The member pages drawn at `pages/member-<page>` (`member-pages.tsx`). */
+export const MEMBER_PAGES = PAGE_ROUTES.filter((r) => r.startsWith("pages/member-")).map((r) =>
+  r.slice("pages/member-".length),
+) as readonly MemberPage[];
+export type MemberPage =
+  Extract<(typeof PAGE_ROUTES)[number], `pages/member-${string}`> extends `pages/member-${infer P}`
+    ? P
+    : never;
 
 export const CATALOG_ROUTES = [
   "components",

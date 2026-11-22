@@ -6839,6 +6839,7 @@
         "scheduledFor": "Time",
         "kind": "Kind",
         "status": "Status",
+        "reason": "Reason",
         "detail": "Detail"
       },
       "kind": {

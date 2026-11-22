@@ -796,7 +796,7 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     // the floating form does the same with its own offset (browser, touch, mobile)
     const lift = base.find(
       (r) =>
-        r.at === "(max-width: 599px)" &&
+        r.at === "not all and (min-width: 600px)" &&
         r.selector === '.cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar',
     );
     expect(lift?.decls.top).toBe("calc(var(--cb-float-top) - var(--cb-float-row))");

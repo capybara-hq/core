@@ -10,6 +10,7 @@ import { ME } from "./support/render";
 import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
+import { stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -322,6 +323,53 @@ describe("技能库列表（ListPage）", () => {
     expect(await screen.findByText(u.created.replace("{name}", "pdf-tools"))).toBeTruthy();
     expect(FakeXhr.instances).toHaveLength(2);
     expect(screen.queryByRole("button", { name: u.retry })).toBeNull();
+  });
+
+  it("an upload in flight keeps its progress, retry file and abort handle across 600", async () => {
+    const u = en.skills.upload;
+    const win = stubWindowWidth(390);
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`POST ${BASE}/uploads`]: () =>
+        json(201, { id: "up1", upload: { method: "PUT", url: S3_URL, headers: {} }, expiresAt: T }),
+      [`POST ${BASE}`]: () =>
+        json(201, { skill: skill("s1", "pdf-tools"), version: 1, created: true }),
+    });
+    await renderSkills();
+    await screen.findByText(en.skills.empty);
+    await openUpload();
+    FakeXhr.hold = true;
+    const user = userEvent.setup();
+    await user.upload(fileInput(), zipFile());
+    const uploading = (pct: number) =>
+      u.uploading.replace("{name}", "pdf-tools.zip").replace("{percent}", String(pct));
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    act(() => {
+      FakeXhr.instances[0]?.upload.onprogress?.({
+        lengthComputable: true,
+        loaded: 1,
+        total: 2,
+      } as ProgressEvent);
+    });
+    expect(await screen.findByText(uploading(50))).toBeTruthy();
+    // crossing 600 both ways remounts the dialog body: the upload keeps running
+    win.setWidth(1440);
+    expect(screen.getByText(uploading(50))).toBeTruthy();
+    win.setWidth(390);
+    expect(screen.getByText(uploading(50))).toBeTruthy();
+    expect(FakeXhr.instances).toHaveLength(1);
+    // the abort handle is the same one: cancelling after the remount aborts that request
+    win.setWidth(1440);
+    await user.click(screen.getByRole("button", { name: u.cancel }));
+    expect(await screen.findByText(u.cancelled)).toBeTruthy();
+    // the retry file survives another remount
+    win.setWidth(390);
+    expect(screen.getByText(u.cancelled)).toBeTruthy();
+    FakeXhr.hold = false;
+    await user.click(screen.getByRole("button", { name: u.retry }));
+    expect(await screen.findByText(u.created.replace("{name}", "pdf-tools"))).toBeTruthy();
+    expect(FakeXhr.instances).toHaveLength(2);
+    expect(calls.filter((c) => c.method === "POST" && c.url === BASE)).toHaveLength(1);
   });
 
   it("前端预检：不是 zip、超过 50MB 不发请求", async () => {

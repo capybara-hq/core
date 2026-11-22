@@ -64,20 +64,33 @@ function Grants({ orgId }: { orgId: string }) {
   }
 
   const columns: Column<ToolGrant>[] = [
-    { key: "agent", header: t("grants.columns.agent"), cell: (g) => g.agentName },
-    { key: "tool", header: t("grants.columns.tool"), cell: labelOf },
+    {
+      key: "agent",
+      header: t("grants.columns.agent"),
+      compact: "subtitle",
+      cell: (g) => g.agentName,
+    },
+    { key: "tool", header: t("grants.columns.tool"), compact: "title", cell: labelOf },
     // the raw key stays as secondary text
-    { key: "key", header: t("grants.columns.key"), tone: "muted", cell: (g) => g.toolKey },
+    {
+      key: "key",
+      header: t("grants.columns.key"),
+      tone: "muted",
+      compact: "hidden",
+      cell: (g) => g.toolKey,
+    },
     {
       key: "created",
       header: t("grants.columns.created"),
       tone: "muted",
+      compact: "trailing",
       cell: (g) => <DateTime value={g.createdAt} />,
     },
     {
       key: "actions",
       header: t("grants.columns.actions"),
       align: "right",
+      compact: "hidden",
       cell: (g) => (
         <Button
           density="dense"
@@ -110,6 +123,15 @@ function Grants({ orgId }: { orgId: string }) {
         columns={columns}
         rows={read.kind === "ready" ? read.data.grants : []}
         rowKey={keyOf}
+        rowLabel={labelOf}
+        rowMenu={(g) => [
+          {
+            label: t("grants.revoke"),
+            danger: true,
+            disabled: revoking !== undefined,
+            onSelect: () => void revoke(g),
+          },
+        ]}
         state={read.kind === "ready" ? "ready" : "loading"}
         empty={{ title: t("grants.empty"), hint: t("grants.emptyHint") }}
       />

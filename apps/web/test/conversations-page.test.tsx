@@ -35,6 +35,7 @@ const TODAY = at(0, 0);
 const YESTERDAY = at(1, 12);
 const OLD = at(12, 9);
 
+const NAMES: Record<string, string> = { ag1: "Researcher", ag2: "Writer" };
 const conv = (
   id: string,
   agentId: string,
@@ -45,6 +46,10 @@ const conv = (
   id,
   orgId: "o1",
   agentId,
+  agent:
+    NAMES[agentId] === undefined
+      ? null
+      : { id: agentId, name: NAMES[agentId], profile: { avatar: null, updatedAt } },
   title,
   titleSource: null,
   deviceId: null,
@@ -71,6 +76,7 @@ const FIRST = {
     conv("c3", "ag1", null, OLD),
   ],
   next: "c3",
+  total: 4,
 };
 const SECOND = { conversations: [conv("c4", "ag2", "Older research", OLD)], next: null };
 const ROUTES: Routes = {
@@ -182,8 +188,8 @@ describe("/conversations", () => {
     await renderRouteWithCache("/conversations", ROUTES);
     const head = document.querySelector('[data-part="page-header"]') as HTMLElement;
     expect(within(head).getByRole("heading", { level: 1 }).textContent).toBe(C.title);
-    // more pages to come: the loaded rows and a "+"
-    expect(head.querySelector(".cb-pageheader-count")?.textContent).toBe("3+");
+    // more pages to come: the exact total the first page carries
+    expect(head.querySelector(".cb-pageheader-count")?.textContent).toBe("4");
     expect(head.querySelector('[data-part="page-header-description"]')).toBeNull();
     expect(within(head).getByRole("searchbox", { name: C.search })).toBeTruthy();
     const chips = screen.getByRole("radiogroup", { name: C.byAgent });
@@ -199,6 +205,28 @@ describe("/conversations", () => {
     expect(calls.map((c) => c.url)).toContain(`${O}/conversations?agentId=ag2&limit=30`);
   });
 
+  it("rows name their agent themselves: no groups or agents read for the names", async () => {
+    await renderRouteWithCache("/conversations", {
+      ...ROUTES,
+      [`GET ${O}/conversations/groups`]: () => json(200, { groups: [], next: null }),
+    });
+    const calls = stubApi({ ...ROUTES, [`GET ${O}/agents`]: () => json(200, { agents: [] }) });
+    expect(within(list()).getByRole("link", { name: /Industry reports/ }).textContent).toContain(
+      "Researcher",
+    );
+    await settle();
+    expect(calls.map((c) => c.url)).not.toContain(`${O}/agents`);
+  });
+
+  it("a row whose agent is null reads as its agent id", async () => {
+    await renderRouteWithCache("/conversations", {
+      ...ROUTES,
+      [`GET ${O}/conversations`]: () =>
+        json(200, { conversations: [conv("c9", "agX", "Orphan", TODAY)], next: null, total: 1 }),
+    });
+    expect(within(list()).getByRole("link", { name: /Orphan/ }).textContent).toContain("agX");
+  });
+
   it("reads the next page as the end comes near, with no Load more row", async () => {
     await renderRouteWithCache("/conversations", ROUTES);
     expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
@@ -206,7 +234,7 @@ describe("/conversations", () => {
     await scrollToEnd();
     expect(await within(list()).findByRole("link", { name: /Older research/ })).toBeTruthy();
     expect(calls.map((c) => c.url)).toEqual([`${O}/conversations?after=c3&limit=30`]);
-    // the last page: the count is the total
+    // a later page carries no total: the count stays the first page's
     expect(document.querySelector(".cb-pageheader-count")?.textContent).toBe("4");
   });
 
