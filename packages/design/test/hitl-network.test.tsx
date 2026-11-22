@@ -83,17 +83,12 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
 
   it("offers only 这次允许 (primary, with its hint), 拒绝 and the machine command, even if always is listed", async () => {
     const onApprove = vi.fn();
-    const { container } = wrap(
-      <ApprovalBlock {...ask({ scopes: ["once", "always"], onApprove })} />,
-    );
+    wrap(<ApprovalBlock {...ask({ scopes: ["once"], onApprove })} />);
     const once = screen.getByRole("button", { name: "这次允许" });
     expect(once.getAttribute("data-variant")).toBe("primary");
     expect(screen.queryByRole("button", { name: /一直允许/ })).toBeNull();
     expect(screen.getByText("到智能体这次回复结束为止有效")).toBeTruthy();
     expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
-    expect(container.querySelector('[data-part="network-on-machine"]')?.textContent).toBe(
-      "要让这台设备一直允许，请在设备上运行 capybara-device policy add allowedDomains files.slack.com",
-    );
     await userEvent.setup().click(once);
     expect(onApprove).toHaveBeenCalledWith("once", ["files.slack.com"]);
   });
@@ -205,6 +200,51 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     expect(container.textContent).toContain("Denied files.slack.com · Ann · “no”");
   });
 
+  it("a network ask offering once and always shows both, always with its timing hint", async () => {
+    const onApprove = vi.fn();
+    wrap(
+      <ApprovalBlock
+        {...ask({
+          scopes: ["once", "always"],
+          onApprove,
+          network: { hosts: ["a.dev"], command: "curl a.dev", appliesAt: "next-use" },
+        })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "这次允许" })).toBeTruthy();
+    const always = screen.getByRole("button", { name: "加入此设备的列表" });
+    expect(screen.getByText("下次使用这台设备时生效")).toBeTruthy();
+    await userEvent.setup().click(always);
+    expect(onApprove).toHaveBeenCalledWith("always", ["a.dev"]);
+  });
+
+  it("a list-only network ask offers only add-to-list, as the primary", () => {
+    wrap(
+      <ApprovalBlock
+        {...ask({
+          scopes: ["always"],
+          network: { hosts: ["a.dev"], command: "curl a.dev", appliesAt: "files-reset" },
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "这次允许" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "加入此设备的列表" }).getAttribute("data-variant"),
+    ).toBe("primary");
+    expect(screen.getByText("重建文件后生效")).toBeTruthy();
+  });
+
+  it("an always decision reads as added to the device's list", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...ask({
+          state: { kind: "decided", decision: "approved", who: "Ann", when: "", scope: "always" },
+        })}
+      />,
+    );
+    expect(container.textContent).toContain("已加入此设备的列表");
+  });
+
   it("speaks English", () => {
     wrap(<ApprovalBlock {...ask({ network: many })} />, "en");
     expect(
@@ -212,9 +252,6 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Allow this time" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Always allow/ })).toBeNull();
-    expect(document.querySelector('[data-part="network-on-machine"]')?.textContent).toBe(
-      "To always allow it on this device, run capybara-device policy add allowedDomains <host> on the device",
-    );
     expect(screen.getByText("Until the agent finishes this reply")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
   });

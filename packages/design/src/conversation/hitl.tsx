@@ -90,6 +90,8 @@ export type NetworkAsk = {
   command: string;
   /** The command's description (model-controlled), when it had one. */
   description?: string;
+  /** When an "always" (add to the device's list) takes effect; its hint under the button. */
+  appliesAt?: "next-command" | "next-use" | "files-reset";
 };
 
 /** How much of a network ask's command the card shows. */
@@ -775,6 +777,8 @@ function HostName({ host }: { host: string }) {
   );
 }
 
+const NETWORK_SCOPES: ApprovalScope[] = ["once", "always"];
+
 const NETWORK_DECIDED = {
   denied: "hitl.network.denied",
   expired: "hitl.network.expired",
@@ -797,7 +801,10 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
     const shown = s.hosts && s.hosts.length > 0 ? s.hosts : hosts;
     const d = s.decision;
     const approved = d === "approved";
-    const word = d === "approved" ? t("hitl.network.allowedOnce") : t(NETWORK_DECIDED[d]);
+    const word =
+      d === "approved"
+        ? t(s.scope === "always" ? "hitl.network.allowedDevice" : "hitl.network.allowedOnce")
+        : t(NETWORK_DECIDED[d]);
     // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
     const who = s.decision === "expired" || s.decision === "cancelled" ? "" : whoNode(s.who);
     return (
@@ -831,13 +838,25 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   const description = p.network.description?.trim();
   const picked = one ? hosts : hosts.filter((h) => checked.includes(h));
   const none = picked.length === 0;
-  // a network ask is allowed for this run only: it never adds a host to the device's own network
-  // list, which only its owner's network setting widens
-  const scopes = p.scopes.filter((scope) => scope === "once");
+  // a network ask offers this run only (once) and adding the host to the device's list (always)
+  const scopes = NETWORK_SCOPES.filter((scope) => p.scopes.includes(scope));
+  const appliesAt = p.network.appliesAt;
   const label = (scope: ApprovalScope) =>
-    p.scopeLabels?.[scope] ?? t(scope === "once" ? "hitl.network.once" : SCOPE_LABEL[scope]);
+    p.scopeLabels?.[scope] ??
+    t(
+      scope === "once"
+        ? "hitl.network.once"
+        : scope === "always"
+          ? "hitl.network.addToDevice"
+          : SCOPE_LABEL[scope],
+    );
   const hint = (scope: ApprovalScope): ReactNode =>
-    p.scopeHints?.[scope] ?? (scope === "once" ? t("hitl.network.hintOnce") : undefined);
+    p.scopeHints?.[scope] ??
+    (scope === "once"
+      ? t("hitl.network.hintOnce")
+      : scope === "always" && appliesAt
+        ? t(`hitl.network.applies.${appliesAt}` as const)
+        : undefined);
 
   let actions: ReactNode;
   if (denying) {
@@ -948,11 +967,6 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
         </div>
       )}
       {actions}
-      {!denying ? (
-        <div className="cb-muted cb-small" data-part="network-on-machine">
-          {richCopy(t("hitl.network.onMachine"), { host: one ? (hosts[0] ?? "") : "<host>" })}
-        </div>
-      ) : null}
     </div>
   );
 }
