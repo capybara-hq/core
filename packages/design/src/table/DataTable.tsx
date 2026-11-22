@@ -333,7 +333,7 @@ export function DataTable<T>({
               const rowName = rowLabel?.(row) ?? rowNameOf(first) ?? key;
               const extra = expand?.(row);
               const menuItems = rowMenu?.(row);
-              // 行内控件随行做 roving tabindex：只有 Tab 停靠行的复选框 / ⋯ 在 Tab 顺序里
+              // Row controls follow the row (roving tabindex): only the Tab-stop row's checkbox / ⋯ is in the Tab order
               const inTabRow = key === tabKey ? 0 : -1;
               return (
                 <Fragment key={key}>
@@ -345,7 +345,7 @@ export function DataTable<T>({
                     data-state={states || undefined}
                     aria-current={key === activeKey ? "true" : undefined}
                     tabIndex={key === tabKey ? 0 : -1}
-                    // 焦点进入行内任意控件（如点击复选框）也让该行成为 Tab 停靠行
+                    // Focus entering any control in the row (a checkbox click) also makes it the Tab-stop row
                     onFocus={() => setFocusKey(key)}
                     onKeyDown={(e) => onRowKey(e, row, idx)}
                     onClick={(e) => onRowClick(e, row)}
@@ -395,7 +395,7 @@ export function DataTable<T>({
                       );
                     })}
                     {menuItems === undefined ? null : menuActions(menuItems).length === 0 ? (
-                      // 这一行没有可用的操作：保留单元格对齐列，不显示 ⋯
+                      // This row has no available action: keep the cell so columns align, draw no ⋯
                       <td
                         className="cb-table-menu"
                         {...ROLE.cell}
@@ -425,7 +425,7 @@ export function DataTable<T>({
                   {extra ? (
                     <tr className="cb-table-expand" {...ROLE.row}>
                       <td colSpan={colCount} {...ROLE.cell}>
-                        {/* 每个直接子元素是一行，CSS 在行首加 └ 引导 */}
+                        {/* Each direct child is one line; CSS adds a └ lead at the start of the line */}
                         <div className="cb-table-expand-body">
                           {typeof extra === "string" || typeof extra === "number" ? (
                             <div>{extra}</div>
@@ -492,6 +492,7 @@ export function DataTable<T>({
       className="cb-table"
       data-row-height={rowHeight}
       data-framed={framed ? "true" : "false"}
+      data-compact-map={mapped ? "true" : undefined}
       data-error={kind === "error" ? "true" : undefined}
     >
       {bulk ? (
@@ -529,7 +530,8 @@ export function DataTable<T>({
         )}
       </div>
       {pagination ? <Pagination {...pagination} /> : null}
-      {mappedCompact && rowMenu ? (
+      {rowMenu && (mappedCompact || sheetRow !== undefined) ? (
+        // Mounted while its row is chosen, so leaving compact with a sheet up does not drop it.
         <ActionSheet
           open={sheetRow !== undefined}
           onOpenChange={(o) => {

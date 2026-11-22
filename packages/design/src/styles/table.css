@@ -486,8 +486,18 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+/* The one rounded box of the grouped rows (the panel has no radius of its own). */
 .cb-table-compact {
   min-width: 0;
+  overflow: hidden;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-table-ground);
+}
+/* A declaring table has no bulk bar below 600; before hydration it would flash. */
+@media not all and (min-width: 600px) {
+  .cb-table[data-compact-map="true"] .cb-table-bulk {
+    display: none;
+  }
 }
 .cb-table-compact-row {
   position: relative;

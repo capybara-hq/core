@@ -18,9 +18,13 @@ export function assertCompactColumns<T>(columns: readonly Column<T>[]): void {
   else throw new Error(msg);
 }
 
-/** The columns by role; the title column is the declared one, else the first column. */
+/**
+ * The columns by role. The title column is the declared one, else the first column without a
+ * role (never a column that declares another role); columns without a role are not drawn.
+ */
 export function compactRoles<T>(columns: readonly Column<T>[]) {
-  const title = columns.find((c) => c.compact === "title") ?? columns[0];
+  const title =
+    columns.find((c) => c.compact === "title") ?? columns.find((c) => c.compact === undefined);
   const pick = (role: "subtitle" | "meta") =>
     columns.filter((c) => c.compact === role && !c.interactive);
   return {
@@ -33,7 +37,7 @@ export function compactRoles<T>(columns: readonly Column<T>[]) {
 
 const shown = (v: ReactNode) => v != null && v !== false && v !== "";
 
-/** Cells joined with 「 · 」, empty ones dropped; null when nothing is left. */
+/** Cells joined with a middle dot, empty ones dropped; null when nothing is left. */
 function joined(parts: ReactNode[]): ReactNode {
   const items = parts.filter(shown);
   if (items.length === 0) return null;
@@ -94,7 +98,7 @@ export function CompactRow<T>({
   };
   const onKey = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget || !open) return;
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       open();
     }

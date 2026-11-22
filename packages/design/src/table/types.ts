@@ -28,7 +28,7 @@ export type Column<T> = {
   /**
    * The column's role in the grouped rows below 600 (responsive spec §4.2, design spec §6.6).
    * `title`: the first line (the first column when none declares it); `subtitle` / `meta`: the
-   * muted and faint lines (several are joined with 「 · 」); `trailing`: at most one, at the end
+   * muted and faint lines (several are joined with a middle dot); `trailing`: at most one, at the end
    * of the row; `hidden`: not drawn. A table where any column declares a role draws the grouped
    * rows, and a column without a role is not drawn there; no declaration keeps the stacked rows.
    */
