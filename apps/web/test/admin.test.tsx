@@ -507,7 +507,7 @@ describe("/admin 概览（OverviewPage）", () => {
     const list = await screen.findByRole("list", { name: o.groups.outbox });
     await within(list).findByText("first-page-job");
     expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
-    // the row buttons are 重试 too: the list end's retry sits in the end row
+    // the row buttons are named Retry in zh too: the list end's retry sits in the end row
     await vi.waitFor(() =>
       expect(list.querySelector('[data-part="list-end"][data-state="error"]')).not.toBeNull(),
     );
