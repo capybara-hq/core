@@ -568,18 +568,19 @@ describe("responsive guards (spec §5.3, §7)", () => {
   });
 
   describe("web-ui-dialog-footer", () => {
-    it("a Dialog footer wrapped in an element fails, also in a conditional branch", () => {
+    it("a Dialog footer wrapped in an element fails, also in a conditional branch or by a member name", () => {
       const f = dialogFooterFindings(parse("dialog-footer.tsx"));
       expect(f.map((x) => [x.rule, x.line])).toEqual([
-        ["web-ui-dialog-footer", 9],
-        ["web-ui-dialog-footer", 24],
+        ["web-ui-dialog-footer", 11],
+        ["web-ui-dialog-footer", 26],
+        ["web-ui-dialog-footer", 35],
       ]);
       expect(f[0]?.message).toContain("fragment");
     });
 
-    it("fragments, arrays, a single Button / LinkButton, values and other components pass", () => {
+    it("fragments (React.Fragment too), arrays, a single Button / LinkButton, values and other components pass", () => {
       const f = dialogFooterFindings(parse("dialog-footer.tsx"));
-      expect(f.some((x) => x.line >= 27)).toBe(false);
+      expect(f.some((x) => x.line >= 40)).toBe(false);
     });
 
     it("the tree: a pending entry hides it; a clean or missing entry fails as stale", () => {

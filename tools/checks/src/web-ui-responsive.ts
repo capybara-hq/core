@@ -597,7 +597,14 @@ function footerWrapper(v: Node | null | undefined): Node | undefined {
       return footerWrapper(v.expression as Node);
     case "JSXElement": {
       const name = (v.openingElement as Node).name as Node;
-      if (name.type === "JSXMemberExpression") return undefined; // React.Fragment
+      if (name.type === "JSXMemberExpression") {
+        // only React.Fragment is a fragment; UI.Stack and the like are wrappers
+        const obj = name.object as Node;
+        const prop = name.property as Node;
+        const fragment =
+          obj.type === "JSXIdentifier" && obj.name === "React" && prop.name === "Fragment";
+        return fragment ? undefined : v;
+      }
       const id = name.name as string;
       return id === "Fragment" || FOOTER_SINGLE.has(id) ? undefined : v;
     }
