@@ -199,6 +199,7 @@ export async function hostBackend(
   const deviceId = options.deviceId ?? "device-linux";
   const ceiling = {
     ...fixtureCeiling({ workspace: "/workspace", skills: "/home/sandbox/skills", tmp: "/tmp" }),
+    secretAndStateDenies: options.deniedReadRoots ?? [],
     restrictedDeniedReadRoots: options.deniedReadRoots ?? [],
     ...(options.network ? { network: options.network } : {}),
     ...(options.allowedDomains ? { allowedDomains: options.allowedDomains } : {}),

@@ -159,6 +159,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     await mkdir(stateDir, { mode: 0o700 });
     root = join(home, "code", "project");
     await mkdir(root, { recursive: true });
+    const projectPaths: string[] = [root];
     const key = join(home, ".ssh", "id_ed25519");
     const profile = join(home, ".zshrc");
     await writeFile(key, "synthetic-private-key\n", { mode: 0o600 });
@@ -185,8 +186,13 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       outsideSandbox: true,
       network: "open",
       roots,
-      projectReach: "machine",
+      // listed project paths (each fresh project joins them): the conformance proves a restricted
+      // read never reaches a sibling, which a machine reach would read
+      projectReach: "paths",
       allowedDomains: [],
+      projectPaths,
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
@@ -281,6 +287,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     fresh = async () => {
       const project = join(home, "code", `p${++projects}`);
       const sibling = join(home, "code", `s${projects}`);
+      projectPaths.push(project);
       await mkdir(project, { recursive: true });
       await mkdir(sibling, { recursive: true });
       return { ...fixture, root: project, sibling };

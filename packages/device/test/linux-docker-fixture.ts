@@ -612,6 +612,9 @@ export function fixtureCeiling(roots: DeviceOwnerCeiling["roots"]): DeviceOwnerC
     roots,
     projectReach: "workspace",
     allowedDomains: [NAMES.granted],
+    projectPaths: [],
+    secretAndStateDenies: [],
+    otherConnectionDenies: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,

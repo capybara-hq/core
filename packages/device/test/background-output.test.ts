@@ -655,6 +655,9 @@ it.runIf(process.platform === "darwin")(
             roots: { workspace: f.root, tmp: f.root, skills: f.root },
             projectReach: "machine",
             allowedDomains: [],
+            projectPaths: [],
+            secretAndStateDenies: [],
+            otherConnectionDenies: [],
             restrictedDeniedReadRoots: [],
             preparation: { skillsRoot: f.root, attachmentsBase: join(f.root, "attachments") },
           };

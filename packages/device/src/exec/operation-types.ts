@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
-  type SandboxFileScope,
   type SandboxLimits,
   type SandboxOperationScope,
   type SandboxRoots,
@@ -11,16 +10,26 @@ import {
   sandboxRuntimeDirectoryOf,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
-import type { DeviceExecGrants, DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
+import type {
+  DeviceExecGrants,
+  DeviceNetworkMode,
+  DeviceProjectRefusal,
+} from "@capybara-hq/plugin-sdk/device-protocol";
+import { listConnections, unreadableConnections } from "../connections.js";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
-import { policyPath, readPolicyFile } from "../state.js";
-import type { ProjectReach } from "./read-model.js";
-import { osRoots } from "./shared.js";
+import { policyPath, readPolicyFile, stateDir } from "../state.js";
+import {
+  otherConnectionDenies,
+  type ProjectReach,
+  projectPathRefusal,
+  readRootsFor,
+} from "./read-model.js";
+import { macUserTempDir, osRoots } from "./shared.js";
 
 /**
  * The owner ceiling as this program enforces it: the fields of the protocol's
  * `DeviceOwnerCeiling` (the device sandbox for every profile) plus the local facts the
- * intersection needs (roots, denied read roots, preparation roots).
+ * intersection needs (roots, project reach, denied read roots, preparation roots).
  */
 export interface DeviceOwnerCeiling {
   readonly revision: string;
@@ -30,7 +39,18 @@ export interface DeviceOwnerCeiling {
   readonly network: DeviceNetworkMode;
   readonly allowedDomains: readonly string[];
   readonly roots: Readonly<SandboxRoots>;
+  /** What a sandboxed operation of this connection reads: machine, paths or workspace. */
   readonly projectReach: ProjectReach;
+  /** Canonical (real path) forms of the policy's project paths that exist as directories. */
+  readonly projectPaths: readonly string[];
+  /** Secret paths, this connection's state and the program state root, canonical forms included. */
+  readonly secretAndStateDenies: readonly string[];
+  /**
+   * Every other connection's working directory (and on macOS its private temporary parent),
+   * canonical forms included.
+   */
+  readonly otherConnectionDenies: readonly string[];
+  /** {@link secretAndStateDenies} ∪ {@link otherConnectionDenies}: what every sandboxed grant denies. */
   readonly restrictedDeniedReadRoots: readonly string[];
   readonly preparation: Readonly<{ skillsRoot: string; attachmentsBase: string }>;
 }
@@ -60,25 +80,62 @@ export function within(path: string, root: string): boolean {
 export function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
-/** Strict additive reader: no absent-file defaults or last-good fallback. */
-export async function readStrictOwnerCeiling(input: {
+/** What {@link readStrictOwnerCeilingSync} reads. */
+export interface OwnerCeilingInput {
+  /** This connection's state directory (its policy.json). */
   stateDir: string;
   deviceId: string;
+  /** This connection's device directory. */
   dir: string;
   home?: string;
-}): Promise<DeviceOwnerCeiling> {
+  /** The program state root holding every connection's state; default {@link stateDir}(). */
+  stateRoot?: string;
+  /**
+   * The connections of this machine, called on every read; default the readable and unreadable
+   * connections under {@link stateRoot}.
+   */
+  connections?: () => {
+    readable: readonly { deviceId: string; workDir: string }[];
+    unreadable: readonly { deviceId: string; reason: string }[];
+  };
+  /** The macOS user temp dir holding each connection's private temporary parent. */
+  macTempBase?: string;
+}
+/** Strict additive reader: no absent-file defaults or last-good fallback. */
+export async function readStrictOwnerCeiling(
+  input: OwnerCeilingInput,
+): Promise<DeviceOwnerCeiling> {
   return readStrictOwnerCeilingSync(input);
+}
+/** The macOS user temp dir the operation worker makes private temporary directories in. */
+function defaultMacTempBase(): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  return macUserTempDir() ?? realpathSync(tmpdir());
+}
+/**
+ * The real paths of the listed project paths that exist as directories, without duplicates. A
+ * missing one grants nothing (a project root under it is outside the reach), and one whose real
+ * path is `/` (a link to the root) is never a project path.
+ */
+function canonicalProjectPaths(paths: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const path of paths) {
+    try {
+      const real = realpathSync.native(path);
+      if (real !== "/" && statSync(real).isDirectory()) out.add(real);
+    } catch {
+      // missing or unreadable: not granted
+    }
+  }
+  return [...out];
 }
 /**
  * {@link readStrictOwnerCeiling}, synchronously (the owner report issues it under the policy lock).
- * Only a policy file in the current format is authority: another version is refused.
+ * Only a policy file in the current format is authority: another version is refused. The
+ * connections of this machine are read every time, and a connection that cannot be read fails the
+ * read closed (its working directory could not be denied).
  */
-export function readStrictOwnerCeilingSync(input: {
-  stateDir: string;
-  deviceId: string;
-  dir: string;
-  home?: string;
-}): DeviceOwnerCeiling {
+export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwnerCeiling {
   const file = policyPath(input.stateDir);
   const before = statSync(file);
   if (!before.isFile()) throw new SandboxScopeDeniedError("Owner policy must be a regular file");
@@ -93,16 +150,46 @@ export function readStrictOwnerCeilingSync(input: {
   if (policy.allowedDomains.some((h) => validateAllowHost(h).length > 0))
     throw new SandboxScopeDeniedError("Owner policy contains invalid allowed domains");
   const roots = Object.freeze(osRoots(resolve(input.dir)));
+  const stateRoot = resolve(input.stateRoot ?? stateDir());
+  const connections = input.connections
+    ? input.connections()
+    : { readable: listConnections(stateRoot), unreadable: unreadableConnections(stateRoot) };
+  const macTempBase = input.macTempBase ?? defaultMacTempBase();
+  const others = otherConnectionDenies({
+    ownDeviceId: input.deviceId,
+    connections: connections.readable,
+    unreadable: connections.unreadable,
+    ...(macTempBase !== undefined && { macTempBase }),
+  });
+  const secretAndStateDenies = withCanonicalForms([
+    ...deniedSecretPaths(input.home ?? homedir()),
+    resolve(input.stateDir),
+    stateRoot,
+  ]);
+  const otherDenies = withCanonicalForms(others);
+  const projectPaths = canonicalProjectPaths(policy.projectPaths);
   return Object.freeze({
-    revision: digest({ generation: version(after), policy, roots, deviceId: input.deviceId }),
+    revision: digest({
+      generation: version(after),
+      policy,
+      roots,
+      deviceId: input.deviceId,
+      projectReach: policy.ownerCeiling.projectReach,
+      projectPaths,
+      secretAndStateDenies,
+      otherConnectionDenies: otherDenies,
+    }),
     outsideSandbox: policy.ownerCeiling.outsideSandbox,
     network: policy.ownerCeiling.network,
     allowedDomains: Object.freeze([...policy.allowedDomains]),
     roots,
     projectReach: policy.ownerCeiling.projectReach,
-    restrictedDeniedReadRoots: Object.freeze(
-      withCanonicalForms([...deniedSecretPaths(input.home ?? homedir()), resolve(input.stateDir)]),
-    ),
+    projectPaths: Object.freeze(projectPaths),
+    secretAndStateDenies: Object.freeze(secretAndStateDenies),
+    otherConnectionDenies: Object.freeze(otherDenies),
+    restrictedDeniedReadRoots: Object.freeze([
+      ...new Set([...secretAndStateDenies, ...otherDenies]),
+    ]),
     preparation: Object.freeze({
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
@@ -134,6 +221,37 @@ export function withCanonicalForms(paths: readonly string[]): string[] {
   }
   return [...out];
 }
+/** The English text of each project refusal (operations, and project browsing later). */
+export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<DeviceProjectRefusal, string>> =
+  Object.freeze({
+    "other-connection": "This directory belongs to another connection on this machine.",
+    "outside-reach":
+      "This directory is outside this connection's project reach (capybara-device ceiling set " +
+      "--project-reach, capybara-device policy add projectPaths).",
+    denied: "This directory holds secrets or capybara-device's own state.",
+  });
+/** Why the ceiling refuses `path` (a project root or a scoped root), or null when it allows it. */
+export function ceilingPathRefusal(
+  path: string,
+  ceiling: DeviceOwnerCeiling,
+  reach: ProjectReach = ceiling.projectReach,
+): DeviceProjectRefusal | null {
+  return projectPathRefusal(path, {
+    reach,
+    projectPaths: ceiling.projectPaths,
+    roots: ceiling.roots,
+    // the union too, so whatever a grant denies is refused here whichever list holds it
+    secretAndStateDenies: [...ceiling.secretAndStateDenies, ...ceiling.restrictedDeniedReadRoots],
+    otherConnectionDenies: ceiling.otherConnectionDenies,
+  });
+}
+/**
+ * Refuses roots the owner ceiling does not allow: not normalized and absolute, in or through a
+ * link into another connection's directory or a denied path, or outside the project reach (paths:
+ * a listed path or a device root; workspace: a device root; machine: anywhere not denied); write
+ * roots in a system runtime or socket directory or on the read-only skills. Preparation roots
+ * (trusted skill and attachment staging) are checked against the denies only.
+ */
 export function checkRoots(
   read: readonly string[],
   write: readonly string[],
@@ -143,14 +261,8 @@ export function checkRoots(
   for (const root of [...read, ...write]) {
     if (root !== resolve(root))
       throw new SandboxScopeDeniedError("Supply normalized absolute roots");
-    if (
-      !preparation &&
-      ceiling.projectReach === "workspace" &&
-      !Object.values(ceiling.roots).some((r) => within(root, r))
-    )
-      throw new SandboxScopeDeniedError("Root exceeds the current workspace owner ceiling");
-    if (ceiling.restrictedDeniedReadRoots.some((r) => within(root, r)))
-      throw new SandboxScopeDeniedError("Root is denied by the owner");
+    const refusal = ceilingPathRefusal(root, ceiling, preparation ? "machine" : undefined);
+    if (refusal !== null) throw new SandboxScopeDeniedError(PROJECT_REFUSAL_MESSAGES[refusal]);
   }
   // the kernel's candidate builder and admission refuse the same roots: another process's socket
   // there would let a sandboxed command act outside the sandbox. Checked before the skills rule so
@@ -199,20 +311,6 @@ export function freezeAuthority(a: LocalExecAuthority): LocalExecAuthority {
       : {}),
   });
 }
-/**
- * The read roots of a scoped operation on this machine (the scope names only the project root
- * and the write roots; what a sandboxed operation reads is this program's rule): the write roots,
- * the project root (the workspace in free mode) and the kernel-staged skills root, sorted by code
- * point, without duplicates or entries inside another entry. The device filesystem reads `/`.
- */
-export function normalizedReadRoots(fs: SandboxFileScope, roots: SandboxRoots): string[] {
-  if (fs.kind === "device") return ["/"];
-  const all = [...new Set([...fs.writeRoots, fs.projectRoot ?? roots.workspace, roots.skills])];
-  return all
-    .filter((root) => !all.some((other) => other !== root && within(root, other)))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
 /** The refusal of an escalated call the owner ceiling does not allow. */
 export const OUTSIDE_SANDBOX_REFUSAL =
   "Running outside the sandbox is outside the current owner ceiling; the owner allows it on " +
@@ -220,10 +318,11 @@ export const OUTSIDE_SANDBOX_REFUSAL =
 
 /**
  * One operation's scope intersected with the owner ceiling now (approval-only profiles design).
- * Every profile's ordinary call is sandboxed: scoped roots, the owner's denied read roots and the
- * sandbox network. Only an escalated call (`filesystem: device` with `network: environment`) runs
- * outside the sandbox, and only while the owner ceiling allows `outsideSandbox`. The profile in the
- * scope is audit only: it never widens anything here.
+ * Every profile's ordinary call is sandboxed: the read roots of the connection's project reach,
+ * the scope's write roots, the owner's denied read roots and the sandbox network. Only an
+ * escalated call (`filesystem: device` with `network: environment`) runs outside the sandbox, and
+ * only while the owner ceiling allows `outsideSandbox`. The profile in the scope is audit only: it
+ * never widens anything here.
  */
 export function intersectOperation(
   scope: SandboxOperationScope,
@@ -249,8 +348,16 @@ export function intersectOperation(
     throw new SandboxScopeDeniedError(
       "The device filesystem and the environment network come only together, as one escalated call",
     );
-  const readRoots = normalizedReadRoots(scope.filesystem, ceiling.roots);
-  checkRoots(readRoots, scope.filesystem.writeRoots, ceiling);
+  // the project root and every write root within the reach and outside every denied directory;
+  // what the operation reads is this program's rule (the reach), never the scope
+  const fs = scope.filesystem;
+  checkRoots(fs.projectRoot === null ? [] : [fs.projectRoot], fs.writeRoots, ceiling);
+  const readRoots = readRootsFor({
+    reach: ceiling.projectReach,
+    projectPaths: ceiling.projectPaths,
+    roots: ceiling.roots,
+    writeRoots: fs.writeRoots,
+  });
   if (!native && !authority)
     throw new SandboxScopeDeniedError("Restricted execution requires authenticated authority");
   let openNetwork = false;
@@ -292,14 +399,15 @@ export function intersectOperation(
 /**
  * Whether a live operation's grant still holds against the grant the fresh owner ceiling gives the
  * same scope (owner reconcile): a full grant only while the next one is full; a sandboxed grant
- * only while every host, the open network if it had one, and exactly the same denied read roots
- * remain. Anything narrower revokes the operation.
+ * only while every host, the open network if it had one, every read root (inside a next read
+ * root) and exactly the same denied read roots remain. Anything narrower revokes the operation.
  */
 export function grantStillHolds(grant: LocalOperationGrant, next: LocalOperationGrant): boolean {
   if (grant.full) return next.full;
   return (
     !next.full &&
     (!grant.openNetwork || next.openNetwork === true) &&
+    grant.readRoots.every((r) => next.readRoots.some((n) => within(r, n))) &&
     grant.hosts.every((h) => next.hosts.includes(h)) &&
     grant.deniedReadRoots.every((r) => next.deniedReadRoots.includes(r)) &&
     next.deniedReadRoots.every((r) => grant.deniedReadRoots.includes(r))

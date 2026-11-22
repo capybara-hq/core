@@ -1,6 +1,6 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, realpathSync } from "node:fs";
+import { constants } from "node:fs";
 import {
   type FileHandle,
   lstat,
@@ -54,6 +54,7 @@ import {
 } from "./runtime-source.js";
 import {
   ENV_NAME_RE,
+  macUserTempDir,
   OutputCap,
   prepareSandboxHome,
   restrictedToolHomes,
@@ -565,22 +566,6 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
     child.once("exit", exit);
     child.once("error", error);
   });
-}
-let userTempDir: string | undefined | null = null;
-/** The canonical `DARWIN_USER_TEMP_DIR` of this user, looked up once; undefined when unknown. */
-function macUserTempDir(): string | undefined {
-  if (userTempDir !== null) return userTempDir;
-  try {
-    const out = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    const dir = out.status === 0 ? out.stdout.trim() : "";
-    userTempDir = dir ? realpathSync(dir) : undefined;
-  } catch {
-    userTempDir = undefined;
-  }
-  return userTempDir;
 }
 const PRIVATE_TMP_PREFIX = "capybara-op-";
 /**

@@ -562,6 +562,9 @@ describe("local-Docker skill preparation", () => {
           roots: hostRoots,
           projectReach: "workspace",
           allowedDomains: [],
+          projectPaths: [],
+          secretAndStateDenies: [],
+          otherConnectionDenies: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,

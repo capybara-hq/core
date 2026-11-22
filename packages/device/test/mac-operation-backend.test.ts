@@ -38,6 +38,9 @@ async function fixture() {
     roots,
     projectReach: "machine",
     allowedDomains: ["a.example.com"],
+    projectPaths: [],
+    secretAndStateDenies: [],
+    otherConnectionDenies: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
@@ -750,6 +753,9 @@ it.runIf(process.platform === "darwin")(
       roots,
       projectReach: "machine",
       allowedDomains: [],
+      projectPaths: [],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
     };
@@ -878,6 +884,9 @@ it.runIf(process.platform === "darwin")(
       roots,
       projectReach: "machine",
       allowedDomains: [],
+      projectPaths: [],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
@@ -943,7 +952,11 @@ it("retained output controls use the exact reference without a fresh profile gra
   });
   const reads = f.ceilingReads(),
     launches = f.launched.length;
-  f.setCeiling({ outsideSandbox: false, restrictedDeniedReadRoots: [f.roots.tmp] });
+  f.setCeiling({
+    outsideSandbox: false,
+    secretAndStateDenies: [f.roots.tmp],
+    restrictedDeniedReadRoots: [f.roots.tmp],
+  });
   expect(
     await f.backend.background.readOutput({ id: "d" }, ref, { offset: 0, maxBytes: 0, signal }),
   ).toMatchObject({ totalBytes: 0, nextOffset: 0 });
@@ -1068,8 +1081,13 @@ it.runIf(process.platform === "darwin")(
       outsideSandbox: false,
       network: "allowlist",
       roots,
-      projectReach: "machine",
+      // listed paths: under machine reach the whole machine minus the denies is readable, so a
+      // link to an undenied file is no escape there
+      projectReach: "paths",
       allowedDomains: [],
+      projectPaths: [project, linked],
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
@@ -1100,7 +1118,7 @@ it.runIf(process.platform === "darwin")(
             profile: "request-approval",
             actor: { accountId: "a", conversationId: "r" },
             tag: "kernel-read",
-            filesystem: { kind: "scoped", projectRoot: agents, writeRoots: [] },
+            filesystem: { kind: "scoped", projectRoot: dirname(agents), writeRoots: [] },
             network: { kind: "none" },
           },
           signal,

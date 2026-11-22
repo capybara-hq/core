@@ -513,6 +513,9 @@ it.runIf(darwin)(
       allowedDomains: [],
       roots: { workspace: home, skills: join(root, "skills"), tmp: join(root, "tmp") },
       projectReach: "machine",
+      projectPaths: [],
+      secretAndStateDenies: [join(home, ".ssh")],
+      otherConnectionDenies: [],
       restrictedDeniedReadRoots: [join(home, ".ssh")],
       preparation: { skillsRoot: join(root, "skills"), attachmentsBase: join(home, "attachments") },
     };

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -14,6 +15,23 @@ import {
   SandboxScopeDeniedError,
   sandboxRuntimeDirectoryOf,
 } from "@capybara-hq/plugin-sdk";
+
+let userTempDir: string | undefined | null = null;
+/** The canonical `DARWIN_USER_TEMP_DIR` of this user, looked up once; undefined when unknown. */
+export function macUserTempDir(): string | undefined {
+  if (userTempDir !== null) return userTempDir;
+  try {
+    const out = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const dir = out.status === 0 ? out.stdout.trim() : "";
+    userTempDir = dir ? realpathSync(dir) : undefined;
+  } catch {
+    userTempDir = undefined;
+  }
+  return userTempDir;
+}
 
 /** The file that marks a directory as a device directory this program has used. */
 const ROOT_MARKER = ".capybara-device";
