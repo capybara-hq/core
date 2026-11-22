@@ -1,5 +1,65 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.54
+
+### Minor Changes
+
+- f761d8f: `bootstrap.json` entries that are optional preinstalls (neither `required` nor `builtin`) accept
+  `scope: "all"`: the catalog item is created on in every org and an org admin may switch it off.
+  The scope is read only at the first import.
+- d1d0861: `capybara-device` speaks protocol 5 over the dial-in envelope: it sends
+  `X-Capybara-Device-Protocol: capybara-device/5` (`DEVICE_DIAL_IN_PROTOCOL`), names that protocol
+  when it signs in, and wraps every frame in the envelope (`hello` with the program facts and the
+  frame capacity, `req` / `res` / `event` with a device protocol body, the kernel's `ready`,
+  `cancel` and `stop`). The kernel's `ready` names the connection's effective frame capacity
+  (`maxFrameBytes`, at most what the machine announced); the program sends no larger frame on that
+  connection. A kernel `stop` with reason `drain` drains the program and exits it; reason `stop`
+  stops the owned work at once and exits with the reason the kernel's close names. The hello body (`DeviceHello`) no longer carries the program facts, the
+  recent policy ops or the `policyOp` / `policyOpId` features. The deployment can no longer change
+  a machine's policy: the `policy` and `policyStatus` operations, `DevicePolicyArgs`,
+  `DevicePolicyResult` and `DevicePolicyStatus` are removed, and the device keeps no policy op log;
+  a change the owner makes on the machine is still pushed as an event. `parseDeviceFrame(body, kind)`
+  parses one body; `parseDialInKernelFrame` parses a kernel frame on the machine. A 426 names the
+  protocol the deployment serves the device with, and the program says which side to update.
+- c69c0f0: The device protocol frames (`parseDeviceFrame`, `DeviceFrame`, `DeviceHello`, ...) move from the
+  package root to the subpath `@capybara-hq/plugin-sdk/device-protocol`. The `list` / `scan` bounds
+  of the `device-provider@1` contract stay at the root: `MAX_DEVICE_LIST_ENTRIES` now lives with the
+  scan bounds in the device-provider module (one definition, which the protocol subpath imports), so
+  providers built against the previous SDK still load.
+- 6265634: Dial-in channel contract: `permissions.dialIn = { protocol }` for a `device-provider@1` extension,
+  `DialInHandler` (`DeviceProvider.dialIn`), `ctx.dialIn` (`DialInChannel`), `ctx.devices`
+  (`DevicesCtx`), the frame envelope (`DialInMachineFrame`, `DialInKernelFrame`,
+  `parseDialInMachineFrame`, `DIAL_IN_PROTOCOL_RE`), `DeviceOfflineError`, and
+  `DeviceRequestNotSentError` moved from the kernel into the SDK.
+- 5bef1fd: Local device semantics leave the kernel: the kernel-internal `@local` provider, its machine
+  reports, owner reports, instance bindings and boot history are gone; the kernel knows only
+  generic dial-in devices (a provider implementing `DeviceProvider.dialIn` and declaring
+  `permissions.dialIn`), and the `device-local` plugin takes local devices over. Until it is
+  installed, a deployment has no local device provider. Local devices registered before the upgrade stay
+  bound to the removed `@local` provider and are unavailable (`device.unavailable`; their files stay
+  on the machine); their owners delete them on the devices page and connect the machine again with a
+  `capybara-device` that signs in to the `device-local` provider. Migration 0177 drops `device_machines`'
+  `features`, `local_policy`, `owner_report`, `pending_policy_ops`, `home`, `roots`, `mode` and
+  `session_isolation`, the tables `device_machine_boots` and `device_instance_bindings`, and
+  `devices.source`; a machine credential is accepted for any device a machine signed in to, and the
+  connection's provider check decides the rest. The error codes `device.policy_refused`,
+  `device.policy_unsupported` and `device.owner_report_stale` are removed. The dial-in config moves from
+  `devices.local.*` to `devices.dialIn.*` (`CAPYBARA_DEVICES__LOCAL__*` becomes
+  `CAPYBARA_DEVICES__DIAL_IN__*`); rename any value you set.
+  
+  The SDK's `device-protocol` subpath drops the protocol 4 surface: `LEGACY_DEVICE_PROTOCOL_VERSION`,
+  `LegacyDeviceHello`, `LegacyDeviceFrame`, `parseLegacyDeviceFrame`, `KernelReq`, `KernelCancel`,
+  `DeviceRes`, the policy op types and constants (`LegacyDevicePolicyArgs`,
+  `LegacyDevicePolicyResult`, `LegacyDevicePolicyStatus`, `DevicePolicyStatusArgs`,
+  `DevicePolicyOpReport`, `DevicePolicyOpOutcome`, `isPolicyOpId`, `POLICY_ADD_REFUSED`,
+  `MAX_POLICY_OP_ID_LENGTH`, `MAX_RECENT_POLICY_OPS`) and the `policyOp` / `policyOpId` features;
+  `DeviceOp` no longer lists `policy` / `policyStatus`.
+
+### Patch Changes
+
+- ee9ae2a: Move the logo SVG viewBox parser into an internal module so its non-backtracking structure is
+  tested directly; no behavior change.
+
 ## 0.1.0-rc.53
 
 ### Patch Changes

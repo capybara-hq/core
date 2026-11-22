@@ -1,5 +1,32 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.35
+
+### Minor Changes
+
+- 12b1abf: A fake dial-in machine for kernel tests: `FakeDialInMachine` (with `FakeDialInMachineOptions`),
+  `signInFakeMachine` and `FAKE_DIAL_IN_PROTOCOL`.
+
+### Patch Changes
+
+- c69c0f0: The device protocol frames (`parseDeviceFrame`, `DeviceFrame`, `DeviceHello`, ...) move from the
+  package root to the subpath `@capybara-hq/plugin-sdk/device-protocol`. The `list` / `scan` bounds
+  of the `device-provider@1` contract stay at the root: `MAX_DEVICE_LIST_ENTRIES` now lives with the
+  scan bounds in the device-provider module (one definition, which the protocol subpath imports), so
+  providers built against the previous SDK still load.
+- Updated dependencies [f761d8f]
+- Updated dependencies [d1d0861]
+- Updated dependencies [c69c0f0]
+- Updated dependencies [6265634]
+- Updated dependencies [76b2320]
+- Updated dependencies [b449aa8]
+- Updated dependencies [5bef1fd]
+- Updated dependencies [b8588c5]
+- Updated dependencies [ee9ae2a]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.54
+  - @capybara-hq/kernel@0.1.0-rc.69
+  - @capybara-hq/plugin-tools@0.1.0-rc.20
+
 ## 0.1.0-rc.34
 
 ### Patch Changes

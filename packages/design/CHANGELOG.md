@@ -1,5 +1,14 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.36
+
+### Patch Changes
+
+- b8588c5: Responsive system, phase 1: the member pages (schedules, the account tables, skill detail) draw
+  compact grouped rows below 600, and every action a row offers is reachable on its detail page.
+  Conversation rows carry their agent and the list an exact total (kernel API and web). Dialogs keep
+  their state across the 600 boundary, and every compact CSS block uses the ClassForms query.
+
 ## 0.2.0-rc.35
 
 ### Patch Changes
