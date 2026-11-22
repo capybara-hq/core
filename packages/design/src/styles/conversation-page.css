@@ -509,11 +509,35 @@ span.cb-title-btn {
   max-height: calc(8 * var(--cb-type-prose-line));
   overflow-y: auto;
 }
+.cb-composer > :not(.cb-composer-box, .cb-composer-bar) {
+  grid-column: 1 / -1;
+}
+.cb-composer-box {
+  display: contents;
+}
+.cb-composer-box > .cb-composer-input,
+.cb-composer-box > .cb-composer-line {
+  grid-row: 3;
+  grid-column: 1 / -1;
+}
+/* ＋, the control row and send: one line under the text, ＋ a space.2 into the frame's padding */
+.cb-composer-box > .cb-composer-attach {
+  grid-row: 4;
+  grid-column: 1;
+  margin-left: calc(-1 * var(--cb-space-2));
+}
 .cb-composer-bar {
+  grid-row: 4;
+  grid-column: 2;
   display: flex;
   align-items: center;
   gap: var(--cb-space-1);
-  margin-left: calc(-1 * var(--cb-space-2));
+  min-width: 0;
+}
+.cb-composer-box > .cb-send,
+.cb-composer-box > .cb-stop {
+  grid-row: 4;
+  grid-column: 3;
 }
 .cb-composer-bar > .cb-grow {
   flex: 1;
@@ -1983,16 +2007,14 @@ button.cb-property-row {
  * thread runs under it, the user's bubble sits at the end edge and the approval card's buttons
  * are 48 high. Medium and expanded with a fine pointer keep the layouts above.
  *
- * The frame turns into a grid of three columns; the pill itself is the frame's ::before in row 4,
- * and the controls sit on it. Rows: 1 token warning, 2 attachments, 3 chip and agent picker,
- * 4 the pill, 5 quick actions, 6 the agents chip.
+ * The frame is a column grid; the text box (`.cb-composer-box`, part composer.box) is the pill in
+ * row 4, itself a grid of ＋, the text and send. Rows: 1 token warning, 2 attachments, 3 chip and
+ * agent picker, 4 the pill, 5 quick actions, 6 the agents chip. The control row's controls take
+ * their cells in the frame's grid (the bar is `display: contents`), outside the pill.
  */
 @media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-composer {
-    display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    column-gap: var(--cb-space-1);
     /* no row gap: an empty row would still take it; the rows above and below the pill carry
        their own margin */
     row-gap: 0;
@@ -2005,11 +2027,16 @@ button.cb-property-row {
     border: 0;
     box-shadow: none;
   }
-  .cb-composer::before {
-    content: "";
+  /* The pill. Its 1px border is inside its box: the cells inside take 1px off their edge offsets,
+     so ＋, the text and send sit where they would on a borderless 60 high pill. */
+  .cb-composer-box {
+    display: grid;
     grid-row: 4;
     grid-column: 1 / -1;
-    align-self: stretch;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--cb-space-1);
+    min-width: 0;
     min-height: var(--cb-touch-composer);
     border: 1px solid var(--cb-float-line);
     /* half the one-line height: round ends on one line, a rounded box (not an oval) once grown */
@@ -2020,14 +2047,17 @@ button.cb-property-row {
       border-color var(--cb-motion-hover),
       box-shadow var(--cb-motion-hover);
   }
-  .cb-composer:has(.cb-composer-input:focus)::before {
+  /* the text's own focus, as above 600: an open picker or the chip leaves the pill neutral */
+  .cb-composer-box:has(.cb-composer-input:focus) {
     border-color: var(--cb-accent);
     box-shadow:
       0 0 0 3px var(--cb-focus-ring),
       var(--cb-shadow-float-touch);
   }
-  .cb-composer[data-frame="bare"]::before {
-    content: none;
+  .cb-composer[data-frame="bare"] > .cb-composer-box {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
   }
   .cb-composer > .cb-callout {
     grid-row: 1;
@@ -2043,44 +2073,44 @@ button.cb-property-row {
   .cb-composer-bar {
     display: contents;
   }
-  .cb-composer > .cb-composer-input,
-  .cb-composer > .cb-composer-line {
-    grid-row: 4;
+  .cb-composer-box > .cb-composer-input,
+  .cb-composer-box > .cb-composer-line {
+    grid-row: 1;
     grid-column: 2;
     margin: 0;
-    padding-block: var(--cb-space-3);
+    padding-block: calc(var(--cb-space-3) - 1px);
   }
-  .cb-composer > .cb-composer-line {
+  .cb-composer-box > .cb-composer-line {
     padding-block: 0;
   }
   /* ＋ and send sit at the pill's bottom, centred on its last line, however far the input grew */
-  .cb-composer-bar > .cb-icon-btn:first-child {
-    grid-row: 4;
+  .cb-composer-box > .cb-composer-attach {
+    grid-row: 1;
     grid-column: 1;
     align-self: end;
-    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2);
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2 - 1px);
     width: var(--cb-touch-hit);
     height: var(--cb-touch-hit);
-    margin-inline-start: var(--cb-space-2);
+    margin-inline-start: calc(var(--cb-space-2) - 1px);
     color: var(--cb-muted);
   }
-  .cb-composer-bar > .cb-send.cb-btn,
-  .cb-composer-bar > .cb-stop.cb-btn {
-    grid-row: 4;
+  .cb-composer-box > .cb-send.cb-btn,
+  .cb-composer-box > .cb-stop.cb-btn {
+    grid-row: 1;
     grid-column: 3;
     align-self: end;
-    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2);
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px);
     width: var(--cb-touch-float);
     height: var(--cb-touch-float);
-    margin-inline-end: var(--cb-space-2);
+    margin-inline-end: calc(var(--cb-space-2) - 1px);
     padding: 0;
     border-radius: var(--cb-radius-pill);
   }
-  .cb-composer-bar > .cb-send.cb-btn {
+  .cb-composer-box > .cb-send.cb-btn {
     background: var(--cb-accent);
     color: var(--cb-on-accent);
   }
-  .cb-composer-bar > .cb-send.cb-btn:disabled {
+  .cb-composer-box > .cb-send.cb-btn:disabled {
     background: var(--cb-selected);
     color: var(--cb-disabled);
   }

@@ -22,6 +22,9 @@ export const UI_PART_NAMES = [
   "message.assistant",
   "tool-row",
   "composer",
+  "composer.box",
+  "composer.options",
+  "composer.send",
   "properties-panel",
   "section",
   "right-panel",
@@ -178,8 +181,38 @@ export const UI_PARTS: readonly UiPartSpec[] = [
     owner: ["packages/design/src/conversation/composer.tsx"],
     states: ["aria-busy"],
     description: {
-      en: "The composer box.",
-      zh: "输入框。",
+      en: "The whole composer: the token warning, the attachments, the text box and the control row. From 600 up with a fine pointer it is the box; in the mobile form (below 600, or a touch device at any width) it draws nothing and `composer.box` is the floating pill, the control row around it.",
+      zh: "整个输入框：令牌提醒、附件、文本框与控件行。600 及以上且为精确指针时它就是那个框；移动形态（600 以下，或任意宽度的触屏设备）下它不画任何东西，`composer.box` 是浮动的胶囊，控件行在其上下。",
+    },
+  },
+  {
+    name: "composer.box",
+    version: 1,
+    owner: ["packages/design/src/conversation/composer.tsx"],
+    states: [],
+    description: {
+      en: "The composer's text box: the text with the attach and send buttons. In the mobile form it is the floating pill (round ends, `:focus-within` while the text or one of its buttons has focus, never for the control row); from 600 up with a fine pointer it draws no box of its own (`display: contents`).",
+      zh: "输入框的文本框：文字与添加、发送按钮。移动形态下它是浮动胶囊（圆头；文字或其中按钮获得焦点时 `:focus-within`，控件行获得焦点时不会）；600 及以上且为精确指针时它不画自己的框（`display: contents`）。",
+    },
+  },
+  {
+    name: "composer.options",
+    version: 1,
+    owner: ["packages/design/src/conversation/composer-options.tsx"],
+    states: ["aria-expanded"],
+    description: {
+      en: "The composer's settings chip (model, effort, device, permission) opening the options sheet: in the mobile form only, above the pill.",
+      zh: "输入框的设置胶囊（模型、推理强度、设备、权限），打开选项面板：仅移动形态，位于胶囊上方。",
+    },
+  },
+  {
+    name: "composer.send",
+    version: 1,
+    owner: ["packages/design/src/conversation/composer.tsx"],
+    states: ["disabled", "aria-busy"],
+    description: {
+      en: "The composer's send button, and the stop button in its place while a run is going (its `aria-label` tells them apart). In the mobile form a round button inside `composer.box`.",
+      zh: "输入框的发送按钮，运行中同一位置的停止按钮（以 `aria-label` 区分）。移动形态下是 `composer.box` 内的圆形按钮。",
     },
   },
   {
@@ -228,7 +261,11 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "button",
     version: 1,
-    owner: ["packages/design/src/controls/button.tsx"],
+    owner: [
+      "packages/design/src/controls/button.tsx",
+      "packages/design/src/conversation/composer.tsx",
+      "packages/design/src/conversation/composer-options.tsx",
+    ],
     states: ["disabled"],
     description: {
       en: "Every button.",

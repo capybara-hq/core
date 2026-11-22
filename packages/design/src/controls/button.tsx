@@ -28,11 +28,12 @@ export function Button({
   const step = useDensity(density);
   return (
     <button
+      // before the caller's props: a part naming the control too ("button composer.send") wins
+      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       {...rest}
       type={type}
       className={rest.className ? `cb-btn ${rest.className}` : "cb-btn"}
       data-part={part}
-      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       data-variant={variant}
       data-density={step}
       // As a Menu / Popover trigger, Radix passes data-state (open / closed); keep it.
@@ -116,11 +117,12 @@ export function IconButton({
   const step = useDensity(density);
   return (
     <button
+      // before the caller's props: a part naming the control too ("button composer.send") wins
+      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       {...rest}
       type={type}
       className={rest.className ? `cb-btn cb-icon-btn ${rest.className}` : "cb-btn cb-icon-btn"}
       data-part={part}
-      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       data-variant={variant}
       data-density={step}
       aria-label={label}

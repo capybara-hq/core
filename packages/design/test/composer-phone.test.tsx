@@ -517,9 +517,7 @@ describe("the new conversation on a phone (§5.4)", () => {
     expect(phoneCss).toMatch(
       /\.cb-shell\[data-keyboard="open"\] \.cb-conv-new-composer \{\s*padding-bottom: var\(--cb-space-3\);/,
     );
-    expect(phoneCss).toMatch(
-      /\.cb-conv-scroll\[data-center="true"\] \{[^}]*padding-bottom: 0;/,
-    );
+    expect(phoneCss).toMatch(/\.cb-conv-scroll\[data-center="true"\] \{[^}]*padding-bottom: 0;/);
     expect(phoneCss).toMatch(
       /\.cb-conv-new \.cb-agent-row \{\s*flex-wrap: nowrap;\s*overflow-x: auto;/,
     );

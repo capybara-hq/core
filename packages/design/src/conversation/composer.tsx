@@ -571,29 +571,33 @@ export function ComposerBox({
       <label className="cb-sr-only" htmlFor={id}>
         {t("composer.message")}
       </label>
-      {token ? (
-        <div className="cb-composer-line" data-part="composer-line">
-          <ComposerTokenChip
-            token={token}
-            labelId={tokenLabelId}
-            onRemove={() => {
-              refocus.current = true;
-              token.onRemove();
-            }}
-          />
-          {input}
-        </div>
-      ) : (
-        input
-      )}
-      {suggested ? (
-        <span id={suggestionHintId} className="cb-sr-only" data-part="composer-suggestion-hint">
-          {t("composer.suggestion.hint")}
-        </span>
-      ) : null}
-      <div className="cb-composer-bar" data-part="composer-bar">
+      {/* The text box (part composer.box): the text with ＋ and send. In the mobile form it is the
+          floating pill, the control row above and below it; 600 and up it draws no box of its own
+          (the frame is the box) and the three join the control row's line. */}
+      <div className="cb-composer-box" data-part="composer-box" data-cap-part="composer.box">
+        {token ? (
+          <div className="cb-composer-line" data-part="composer-line">
+            <ComposerTokenChip
+              token={token}
+              labelId={tokenLabelId}
+              onRemove={() => {
+                refocus.current = true;
+                token.onRemove();
+              }}
+            />
+            {input}
+          </div>
+        ) : (
+          input
+        )}
+        {suggested ? (
+          <span id={suggestionHintId} className="cb-sr-only" data-part="composer-suggestion-hint">
+            {t("composer.suggestion.hint")}
+          </span>
+        ) : null}
         <IconButton
           label={t("composer.attach")}
+          className="cb-composer-attach"
           icon={<Icon name="plus" size={16} />}
           disabled={attachDisabled}
           onClick={() => {
@@ -602,6 +606,37 @@ export function ComposerBox({
             onAttach();
           }}
         />
+        {send.mode === "stop" ? (
+          <IconButton
+            className="cb-stop"
+            part="stop"
+            data-cap-part="button composer.send"
+            variant="ghost"
+            label={t("composer.stop")}
+            icon={<Icon name="square" size={14} />}
+            disabled={send.busy}
+            aria-busy={send.busy ? true : undefined}
+            onClick={send.onClick}
+          />
+        ) : (
+          <IconButton
+            className="cb-send"
+            part="send"
+            data-cap-part="button composer.send"
+            variant="ghost"
+            label={t("composer.send")}
+            icon={<Icon name="arrow-up" size={16} />}
+            disabled={send.disabled || send.busy}
+            aria-busy={send.busy ? true : undefined}
+            onClick={() => {
+              if (!gate()) return;
+              haptics("light");
+              send.onClick();
+            }}
+          />
+        )}
+      </div>
+      <div className="cb-composer-bar" data-part="composer-bar">
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
         {/* 600 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
@@ -650,33 +685,6 @@ export function ComposerBox({
             {t("composer.suggestion.use")}
           </Button>
         ) : null}
-        {send.mode === "stop" ? (
-          <IconButton
-            className="cb-stop"
-            part="stop"
-            variant="ghost"
-            label={t("composer.stop")}
-            icon={<Icon name="square" size={14} />}
-            disabled={send.busy}
-            aria-busy={send.busy ? true : undefined}
-            onClick={send.onClick}
-          />
-        ) : (
-          <IconButton
-            className="cb-send"
-            part="send"
-            variant="ghost"
-            label={t("composer.send")}
-            icon={<Icon name="arrow-up" size={16} />}
-            disabled={send.disabled || send.busy}
-            aria-busy={send.busy ? true : undefined}
-            onClick={() => {
-              if (!gate()) return;
-              haptics("light");
-              send.onClick();
-            }}
-          />
-        )}
       </div>
     </ComposerFrame>
   );

@@ -2021,9 +2021,14 @@ button.cb-file-card:focus-visible {
 
 /* ── Composer frame (§6.16.2; the control row comes with the full composer) ── */
 
+/* A grid: the token warning, the attachments and the text across the three columns, then ＋ · the
+   control row · send on one line (the text box, `.cb-composer-box`, draws no box of its own here:
+   its text, ＋ and send take the frame's cells). */
 .cb-composer {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--cb-space-1);
   padding: var(--cb-space-2) var(--cb-space-2) var(--cb-space-2) var(--cb-space-3);
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-md);

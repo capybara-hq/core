@@ -105,6 +105,7 @@ export function ComposerOptions({
           variant="ghost"
           className="cb-composer-options"
           part="composer-options"
+          data-cap-part="button composer.options"
           aria-label={`${name}: ${full.join(" · ")}`}
           title={full.join(" · ")}
         >
