@@ -2956,7 +2956,7 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
 - **Grouped list** (maintainer decision 2026-11-22; responsive system spec §2.3; mobile layout spec §4.5): below 600 **every** `ObjectList` (a ListPage's `objects` variant and any other use) draws its rows as one **grouped list**: one card (the `panel` ground, 1px `line-soft`, radius `md`; one card, never a box per row) from the shared grouped values (`--cb-grouped-*`, as CardGrid's and DataTable's compact rows: rows padded `space.3` `space.4`, the 40 lead, hairlines `line-soft` inset to the text column), each row exactly 64 high with a lead and up to two text lines (`--cb-grouped-row-lead`; a meta line adds its height); the mark, the name and its chips, the description and the meta line in the text column, and the **state closes the meta line** in its tone (`ok` / `warn` / `fail`; `muted` in `faint`; a row with a state and no meta draws a meta line for it here only; a long meta line takes the ellipsis, never the state; the row's own state label is hidden, the label stays one node read from the meta's `data-state`). A row with `href` shows **no buttons**: the action and the `more-horizontal` menu are not drawn, a `chevron-right` ends the row and the name's link covers it; its actions (the action, then the menu items) open as an ActionSheet on long press or right click (§6.61, §6.66), one sheet per list titled with the row's name, and every action stays reachable on the object's detail page. A row without `href` keeps its one button (the marketplace's 安装; a lone menu item drawn as a button) at the mobile control height (44, §2.5), and whenever it has more menu items a labelled ⋯ (「行操作：<name>」 / "Row actions: <name>") that opens the same sheet, so they stay reachable without a long press (coordinator ruling 2026-11-22). The skeleton rows take the same frame. The buttons exist on the wide forms and not on this one: two DOMs (§6.64).
 
 <!-- states: object-list -->
-States: `person`
+States: `person`, `compact`
 
 <!-- size-table: object-list -->
 | Part | State | Property | Value |
@@ -2974,6 +2974,8 @@ States: `person`
 | object-row-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
 | object-row-person person-name[data-size=16] | person | column-gap | space.1 |
 | object-row-person person-name-text | person | font-size | type.small |
+| object-row | compact | min-height | 64 |
+| object-row | compact | padding-left | space.4 |
 
 ### 6.18 EmptyState
 
@@ -4047,7 +4049,21 @@ States: `idle`, `copied`, `manual`, `in-box`, `long`
 
 ### 6.61 ActionSheet
 
-`ActionSheet({ open, onOpenChange, title, items })` is an object's actions on compact (responsive system spec §2.4; the minimal form of plan T0.3, which phase 0 completes with the native `menu@1` form): a bottom sheet (§6.59) titled with the object's name, its `MenuItem`s as rows `touch.hit` (44) high padded `space.4`, separators as `line-soft` hairlines, a `danger` item in `fail`. A pick closes the sheet and then runs (a dialog it opens starts over the page); a link item navigates through the design link. `actionSheetItems(ObjectActions)` lists an object's primary first, then its items, a submenu flattened. `useLongPress` is the one long press / context menu hook. **Native form** (maintainer decision 2026-11-22; plan P3, responsive system spec §2.4): in a native shell that offers `menu@1`, a sheet of plain actions (no link item) may be the platform's sheet; a sheet that holds a link stays the web sheet, so `menu@1` is used only for sheets without links, and no page chooses.
+`ActionSheet({ open, onOpenChange, title, items })` is an object's actions on compact (responsive system spec §2.4; the minimal form of plan T0.3, which phase 0 completes with the native `menu@1` form): a bottom sheet (§6.59) titled with the object's name, its `MenuItem`s as the bottom sheet's rows (§6.59: `SheetGroup` / `SheetRow`, `touch.row` (52) high padded `space.4`, the group on the `hover` ground, separators as `line-soft` hairlines), a separator in the items starting a new group, a `danger` item in `fail`. A pick closes the sheet and then runs (a dialog it opens starts over the page); a link item navigates through the design link. `actionSheetItems(ObjectActions)` lists an object's primary first, then its items, a submenu flattened. `useLongPress` is the one long press / context menu hook. **Native form** (maintainer decision 2026-11-22; plan P3, responsive system spec §2.4): in a native shell that offers `menu@1`, a sheet of plain actions (no link item) may be the platform's sheet; a sheet that holds a link stays the web sheet, so `menu@1` is used only for sheets without links, and no page chooses.
+
+The `open` state is the sheet at rest over a list page at the phone size, one group of a primary, two actions and one `danger` action (the same id and box as the reference block).
+
+<!-- states: action-sheet -->
+States: `open`
+
+<!-- size-table: action-sheet -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| action-sheet-group | open | background-color | color.hover |
+| action-sheet-group | open | border-top-left-radius | radius.sm |
+| action-sheet-item | open | height | touch.row |
+| action-sheet-item | open | padding-left | space.4 |
+| action-sheet-item[data-danger=true] | open | color | color.fail |
 
 ### 6.62 List floating action button
 
