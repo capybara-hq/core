@@ -388,12 +388,14 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
   const columns: Column<TaskRun>[] = [
     {
       key: "at",
+      compact: "title",
       header: t("columns.scheduledFor"),
       fit: true,
       cell: (r) => <DateTime value={r.firedAt ?? r.scheduledFor} />,
     },
     {
       key: "kind",
+      compact: "meta",
       header: t("columns.kind"),
       tone: "muted",
       fit: true,
@@ -401,6 +403,7 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
     },
     {
       key: "status",
+      compact: "trailing",
       header: t("columns.status"),
       fit: true,
       cell: (r) => (
@@ -422,6 +425,7 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
     },
     {
       key: "detail",
+      compact: "hidden",
       header: t("columns.detail"),
       wrap: true,
       cell: (r) => {

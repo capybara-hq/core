@@ -1,6 +1,6 @@
 "use client";
 
-import { DataTable, ListPage, useToast } from "@capybara-hq/design";
+import { type Column, DataTable, ListPage, useToast } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -105,6 +105,16 @@ function Schedules({
   return <ScheduleList orgId={orgId} header={header} tasks={tasks} off={off} />;
 }
 
+/** Compact rows (below 600): the name leads, the next run under it, the state at the end. */
+const COMPACT: Record<string, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
+  name: "title",
+  next: "subtitle",
+  agent: "meta",
+  status: "trailing",
+  schedule: "hidden",
+  last: "hidden",
+};
+
 type Header = Parameters<typeof ListPage>[0]["header"];
 
 function ScheduleList({
@@ -130,7 +140,10 @@ function ScheduleList({
   // Agent names are display only: the id shows when they can't be read.
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
-  const columns = scheduleColumns(t, when, agentName);
+  const columns = scheduleColumns(t, when, agentName).map((c) => {
+    const compact = COMPACT[c.key];
+    return compact === undefined ? c : { ...c, compact };
+  });
   if (tasks === null) {
     return <ListPage header={header} loading={{ table: { label: t("listLabel"), columns } }} />;
   }
