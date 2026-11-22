@@ -7589,6 +7589,18 @@ span.r-scal-daynum {
 [data-narrow] .r-orow-mark {
   justify-self: center;
 }
+/* Each text line takes half the 40 lead, so a name and one more line is exactly 64. */
+[data-narrow] .r-orow-text {
+  gap: 0;
+}
+[data-narrow] .r-orow-line,
+[data-narrow] .r-orow-desc,
+[data-narrow] .r-orow-meta {
+  line-height: 20px;
+}
+[data-narrow] .r-orow-desc {
+  font-size: var(--cb-type-small-size);
+}
 .r-orow-chevron {
   color: var(--cb-faint);
   line-height: 0;

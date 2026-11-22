@@ -130,7 +130,8 @@ type ObjectActions = {
   DataTable's row menu.
 - **compact**: the object's row shows no buttons; long press (500 ms, < 10 px movement) or a
   context-menu event (right click, two-finger tap, Android long press) opens the **ActionSheet**
-  (new design overlay: bottom sheet titled with the object's name, `touch.hit` rows, `danger` in
+  (new design overlay: bottom sheet titled with the object's name, `touch.hit` rows (corrected 2026-11-22, coordinator ruling: the rows follow the
+  sheet standard's `touch.row` 52, §6.59 of the design spec, #591; the 44 hit target holds), `danger` in
   fail, links navigate, a pick closes then runs, system back closes it). In a native shell with
   `menu@1` a sheet of plain actions may use the platform sheet.
 - Every action stays reachable on the object's detail page (a page requirement, §4.4).
