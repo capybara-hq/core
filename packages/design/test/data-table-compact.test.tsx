@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Column, DataTable, DesignProvider, type NativeHandlers } from "../src/index";
+import { css, parseCss } from "./css-rules";
 import { renderAtClass } from "./width";
 
 const real = window.matchMedia;
@@ -398,5 +399,19 @@ describe("DataTable grouped rows", () => {
     await act(async () => {});
     expect(nativeMenu).toHaveBeenCalledTimes(1);
     await act(async () => settle(null));
+  });
+});
+
+describe("DataTable compact rows with a lead are exactly 64", () => {
+  it("the title and the lines under it take half the lead each", () => {
+    const rules = parseCss(css("table.css")).filter((r) => r.at === null);
+    const half = "calc(var(--cb-grouped-lead) / 2)";
+    const rule = rules.find((r) =>
+      r.selector.includes('.cb-table-compact-row[data-lead="true"] .cb-table-compact-title'),
+    );
+    for (const part of ["title", "subtitle", "meta"]) {
+      expect(rule?.selector).toContain(`.cb-table-compact-${part}`);
+    }
+    expect(rule?.decls["line-height"]).toBe(half);
   });
 });

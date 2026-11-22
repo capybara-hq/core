@@ -20,6 +20,7 @@ import { ClassForms, useClassForm } from "../shell/class-forms";
 import { Avatar, type AvatarValue } from "./avatar";
 import { MarkImage } from "./object-mark";
 import { type PersonLike, PersonName } from "./person-name";
+import { rowActionsLabel } from "./row-actions-label";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 export type ObjectRowProps = {
@@ -70,9 +71,6 @@ export type ObjectRowProps = {
    */
   busy?: boolean;
 };
-
-const fill = (s: string, vars: Record<string, string>) =>
-  s.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? "");
 
 /** A button or link at the row's right: the row action, or a menu's lone item. */
 type RowButton = { label: string; href?: string; onSelect?(): void; loading?: boolean };
@@ -223,9 +221,10 @@ export function ObjectRow({
   const sheetItems = waiting
     ? listed.map((i) => (i === "separator" ? i : { ...i, disabled: true }))
     : listed;
-  // A row that opens nothing and has no button of its own keeps one labelled ⋯, so its menu stays
-  // reachable without a long press.
-  const compactMenu = href === undefined && compactButton === undefined && sheetItems.length > 0;
+  // A row that opens nothing keeps a labelled ⋯ whenever its sheet has items (beside its one
+  // button, if any), so its menu is reachable without a gesture.
+  const compactMenu = href === undefined && sheetItems.length > 0;
+  const pressRow = href !== undefined || sheetItems.length > 0;
   const form = useClassForm();
   const host = useContext(SheetHostContext);
   const rowKey = useId();
@@ -290,6 +289,7 @@ export function ObjectRow({
         className="cb-object-row"
         data-part="object-row"
         data-open={href !== undefined ? "true" : undefined}
+        data-press={pressRow ? "true" : undefined}
         {...press}
       >
         {mark.avatar !== undefined ? (
@@ -395,18 +395,31 @@ export function ObjectRow({
         {/* Interaction differs per class (spec §6.64): buttons from 600, the action sheet below. */}
         <ClassForms
           compact={
-            compactButton !== undefined ? (
-              <span className="cb-object-actions">{button(compactButton, 0)}</span>
-            ) : compactMenu ? (
-              <IconButton
-                label={fill(t("table.rowActionsOf"), { title: name })}
-                icon={<Icon name="more-horizontal" />}
-                density="dense"
-                variant="default"
-                className="cb-object-menu"
-                onClick={openSheet}
-              />
-            ) : null
+            <>
+              {compactButton !== undefined ? (
+                <span className="cb-object-actions">{button(compactButton, 0)}</span>
+              ) : null}
+              {compactMenu ? (
+                <IconButton
+                  label={rowActionsLabel(t, name)}
+                  icon={
+                    menuLoading ? (
+                      <span className="cb-btn-spin" aria-hidden="true">
+                        <Icon name="spinner" size={14} />
+                      </span>
+                    ) : (
+                      <Icon name="more-horizontal" />
+                    )
+                  }
+                  density="dense"
+                  variant="default"
+                  className="cb-object-menu"
+                  disabled={waiting}
+                  aria-busy={menuLoading ? true : undefined}
+                  onClick={openSheet}
+                />
+              ) : null}
+            </>
           }
           wide={
             <>

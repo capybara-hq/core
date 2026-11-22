@@ -840,8 +840,11 @@ a.cb-object-name:hover {
     column-gap: var(--cb-space-3);
     row-gap: 0;
     min-height: var(--cb-grouped-row-lead);
-    -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
+  }
+  /* Only a row that opens or has a sheet is pressable: the others keep their text selectable. */
+  .cb-object-row[data-press="true"] {
+    -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
   }

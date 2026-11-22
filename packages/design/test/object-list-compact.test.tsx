@@ -79,14 +79,14 @@ describe("ObjectRow at 390", () => {
     expect(chevron?.getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("row without href keeps its action at 390 and loses only the ⋯", () => {
+  it("row without href keeps its action at 390 and a ⋯ naming the row", () => {
     renderAtClass(390, list([without(row(), "href")]));
     const item = screen.getByRole("listitem");
     expect(
       within(item)
         .getAllByRole("button")
-        .map((b) => b.textContent),
-    ).toEqual(["对话"]);
+        .map((b) => b.textContent || b.getAttribute("aria-label")),
+    ).toEqual(["对话", "行操作：研究助手"]);
     expect(item.querySelector('[data-part="object-row-chevron"]')).toBeNull();
     expect(prevented(item, "contextmenu")).toBe(true);
     expect(within(sheet() as HTMLElement).getByRole("heading").textContent).toBe("研究助手");
@@ -139,6 +139,28 @@ describe("ObjectRow at 390", () => {
     expect(sheetItems()).toEqual(["编辑", "删除"]);
   });
 
+  it("the ⋯ opens the sheet; while a menu action runs it is disabled with the spinner", () => {
+    renderAtClass(390, list([without(row({ busy: true }), "href", "action")]));
+    const more = screen.getByRole("button", { name: "行操作：研究助手" }) as HTMLButtonElement;
+    expect(more.disabled).toBe(true);
+    expect(more.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("rows that open or have a sheet are pressable; the others stay selectable", () => {
+    renderAtClass(
+      390,
+      list([
+        row(),
+        without(row({ name: "只读", menu: [] }), "href", "action"),
+        without(row({ name: "有菜单" }), "href", "action"),
+      ]),
+    );
+    const [linked, plain, menued] = screen.getAllByRole("listitem");
+    expect(linked?.getAttribute("data-press")).toBe("true");
+    expect(plain?.getAttribute("data-press")).toBeNull();
+    expect(menued?.getAttribute("data-press")).toBe("true");
+  });
+
   it("while the action runs, every sheet item waits", () => {
     renderAtClass(
       390,
@@ -180,6 +202,7 @@ describe("ObjectRow compact styles", () => {
     expect(frame.padding).toBe("var(--cb-grouped-pad)");
     const loaded = decl('.cb-object-list > .cb-object-row:not([data-skeleton="true"])');
     expect(loaded["min-height"]).toBe("var(--cb-grouped-row-lead)");
-    expect(loaded["-webkit-touch-callout"]).toBe("none");
+    expect(decl('.cb-object-row[data-press="true"]')["-webkit-touch-callout"]).toBe("none");
+    expect(decl('.cb-object-row[data-press="true"]')["user-select"]).toBe("none");
   });
 });

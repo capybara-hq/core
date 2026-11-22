@@ -14,6 +14,7 @@ import { DensityContext } from "../controls/density";
 import { Select } from "../controls/select";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
+import { rowActionsLabel } from "../display/row-actions-label";
 import { useScrollbarRelayout } from "../display/scrollbar-relayout";
 import { Icon } from "../icons/icon";
 import { useInBox } from "../layout/box";
@@ -479,11 +480,7 @@ export function DataTable<T>({
               open={onOpen && !disabled ? () => onOpen(row) : undefined}
               menuItems={menuItems}
               menuColumn={rowMenu !== undefined}
-              menuLabel={
-                rowName === undefined
-                  ? t("table.rowActions")
-                  : t("table.rowActionsOf").replace("{title}", rowName)
-              }
+              menuLabel={rowActionsLabel(t, rowName)}
               onMenu={() => setSheetKey(key)}
               extra={expand?.(row)}
             />

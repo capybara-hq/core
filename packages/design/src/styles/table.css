@@ -571,6 +571,13 @@
   color: var(--cb-ink);
   font-weight: 500;
 }
+/* A row with a lead fits the text column in it, so the row is exactly 64 (the 40 lead and
+   space.3 twice, as the card rows): the title and the line under it take half the lead each. */
+.cb-table-compact-row[data-lead="true"] .cb-table-compact-title,
+.cb-table-compact-row[data-lead="true"] .cb-table-compact-subtitle,
+.cb-table-compact-row[data-lead="true"] .cb-table-compact-meta {
+  line-height: calc(var(--cb-grouped-lead) / 2);
+}
 .cb-table-compact-subtitle {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);

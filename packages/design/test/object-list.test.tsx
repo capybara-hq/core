@@ -192,7 +192,7 @@ describe("ObjectRow", () => {
     expect(meta.hasAttribute("data-empty")).toBe(false);
     expect(meta.textContent).toBe("1 个扩展 · 平台 · 组织自选");
     expect(within(full as HTMLElement).getAllByText("已启用")).toHaveLength(1);
-    // The row action sits in its group, the menu is the last of the row's buttons (named 更多操作)
+    // The row action sits in its group, the menu is the last of the row's buttons (named by `shell.moreActions`)
     const group = full?.querySelector(".cb-object-actions") as HTMLElement;
     expect(within(group).getByRole("link", { name: "组织配置" })).toBeTruthy();
     const menu = within(full as HTMLElement).getByRole("button", { name: "更多操作" });
