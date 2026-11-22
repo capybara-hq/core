@@ -30,8 +30,9 @@ import NotFound from "../not-found";
  * members up: guests cannot create agents, so they get the agents and no tabs), both lists as
  * cards. Agents: the org's agents with the scope All / Mine / Shared with the org (ListPage
  * `scope`); Templates: the templates the org can use and the platform ones offered to it, with
- * the org admin's switch. One search per tab (cleared on a switch). From the query cache (the layout prefetched both tabs'
- * lists on a first load, so a switch paints at once and the head counts both).
+ * the org admin's switch. One search per tab (cleared on a switch). From the query cache (the
+ * layout prefetched both tabs' lists on a first load, so a switch paints at once and the head
+ * counts both).
  */
 export default function AgentsView({ tab = "agents" }: { tab?: AgentsTab }) {
   const ws = useWorkspace();
