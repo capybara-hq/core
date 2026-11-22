@@ -116,6 +116,7 @@ export {
 export { KeyValue, type KeyValueProps } from "./key-value";
 export { KeycapCommand, type KeycapCommandProps } from "./keycap-command";
 export { LinkCard, TextLink } from "./link";
+export { ListEnd, ListMoreButton, type ListMoreProps } from "./list-end";
 export { CAPYBARA_BITMAP, Logo } from "./logo";
 export {
   isHttpUrl,
