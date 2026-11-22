@@ -102,7 +102,7 @@ scope against the **owner ceiling** in `policy.json`, which only you widen, on t
   reach does not cover is refused with a reason (`project_refused`: another connection's directory,
   outside the reach, or a denied path), never shown as missing.
 
-A new login starts with outside-the-sandbox off, the open network and `workspace` reach. `login`
+A new login starts with outside-the-sandbox off, the open network and `machine` reach. `login`
 prints the ceiling and how to widen it; a widening (including a wider reach) prints the risk text
 and needs `--yes` or a `y` at the prompt. The organization and the platform have their own
 settings; the narrowest wins.
@@ -117,7 +117,7 @@ silently, and a missing or broken file never reads as open.
 
 ```bash
 capybara-device ceiling show                    # the owner ceiling, network, revision
-capybara-device ceiling show --json             # {"outsideSandbox":…,"network":…,"allowedDomains":[…],"projectReach":…,"revision":…}  (revision: string | null)
+capybara-device ceiling show --json             # {"outsideSandbox":…,"network":…,"allowedDomains":[…],"projectReach":…,"projectPaths":[…],"revision":…}  (revision: string | null)
 capybara-device ceiling set --outside-sandbox off --network allowlist --project-reach workspace  # narrow
 capybara-device ceiling set --project-reach machine --yes                                        # read the whole machine minus the deny list
 capybara-device ceiling set --outside-sandbox on --network open --yes                            # widen
@@ -137,8 +137,10 @@ only), the system and developer tool directories (on macOS `/System`, `/usr`, `/
 `/private/etc`, Homebrew, Xcode and the Command Line Tools, `/Library/Apple`, `/Library/Frameworks`,
 installed JDKs) and the data of the version managers your home uses, read only. The deny list is
 never readable, whatever the reach: secret paths (`~/.ssh`, cloud CLI credentials, `~/.netrc`,
-`~/.gnupg`, browser profiles), this program's state directory, every other connection's state and
-working directory on this machine, and the private temporary directories of other connections
+`~/.gnupg`, browser profiles, other tool credential stores and shell histories:
+`DEVICE_DENIED_SECRET_PATHS` in the plugin SDK), this program's state directory (and the default
+`~/.config/capybara-device` when `XDG_CONFIG_HOME` moves it), every other connection's state and
+working directory on this machine (a logged-out connection's default working directory too), and the private temporary directories of other connections
 (`<userTemp>/capybara-op-<deviceId>/`; this connection's own operations use their own such
 directory). An escalated call runs outside the sandbox and reads everything you can, and the owner
 report is unaffected by what follows.

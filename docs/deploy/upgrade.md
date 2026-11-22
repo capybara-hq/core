@@ -207,7 +207,7 @@ Platform tool (`devices.set-network`) may only narrow.
 **Local devices.** `capybara-device` converts nothing: it reads only the current `policy.json`
 format and refuses an older file when it starts (see "Device protocol 6" below: `capybara-device
 ceiling set ...` rewrites it from the closed policy). A missing file never reads as the open
-network. New installs (`login`) get outside-the-sandbox off, the open network and `workspace`
+network. New installs (`login`) get outside-the-sandbox off, the open network and `machine`
 reach. The CLI is `capybara-device ceiling set [--outside-sandbox on|off] [--network
 open|allowlist] [--project-reach machine|paths|workspace]`; `--full-access` is gone. The
 deployment cannot change a local device's ceiling (`POST …/devices/:id/policy` and
@@ -333,3 +333,6 @@ kernel and no fallback: upgrade the kernel first, then the programs.
 - **Linux.** Files directly inside a directory on the path to a denied one (`~/.bashrc` when
   `~/.ssh` is denied) are unreadable under `machine` reach, and a bind mount of a denied directory
   stays readable. See the device README.
+- **Old temporary directories.** Earlier versions left flat temporary directories
+  `capybara-op-<pid>-*` in the user temp dir (`getconf DARWIN_USER_TEMP_DIR` on macOS); this version
+  no longer sweeps them. Remove them by hand once no older `capybara-device` runs.

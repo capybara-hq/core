@@ -564,7 +564,7 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
   }
 }
 
-// ---- Protocol 5: scope-bearing operations ----
+// ---- Protocol 6: scope-bearing operations ----
 
 /**
  * The operations the kernel asks a protocol 6 device to run: every user operation carries its
