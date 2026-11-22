@@ -709,7 +709,7 @@ span.cb-title-btn {
 }
 .cb-bsheet {
   position: fixed;
-  inset: auto 0 0 0;
+  inset: auto 0 var(--cb-keyboard-inset, 0px) 0;
   z-index: var(--cb-z-sheet);
   display: flex;
   flex-direction: column;

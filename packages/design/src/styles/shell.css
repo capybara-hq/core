@@ -1040,9 +1040,12 @@ a.cb-stat-card:focus-visible {
   display: none;
 }
 
-/* While the on-screen keyboard is open (`AppShell` sets the state on `<html>`; sheets portal to the
-   body), a scroller keeps the keyboard's height clear at its bottom, so `scrollIntoView` on a
-   focused field lands above it (mobile interaction model §5). */
-:root[data-keyboard="open"] * {
+/* While the on-screen keyboard is open (`AppShell` sets the state on `<html>`), the page's scrollers
+   keep the keyboard's height clear at their bottom, so `scrollIntoView` on a focused field lands
+   above it (mobile interaction model §5). Not the conversation page (it lifts its column by the
+   inset itself, counted once) and not a bottom sheet (it sits above the keyboard). */
+:root[data-keyboard="open"]
+  :is(.cb-shell-main, [data-scroll="one"]):not(:has(.cb-conv-page))
+  :not(textarea) {
   scroll-padding-bottom: var(--cb-keyboard-inset, 0px);
 }

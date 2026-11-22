@@ -152,10 +152,17 @@ describe("scroll to input", () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
-  it("scrollers keep the keyboard inset as scroll padding while it is open", () => {
+  it("page scrollers keep the keyboard inset as scroll padding, never the conversation page", () => {
     const css = readFileSync(resolve(__dirname, "../src/styles/shell.css"), "utf8");
-    expect(css).toMatch(
-      /:root\[data-keyboard="open"\][^{]*\{[^}]*scroll-padding-bottom:[^;}]*--cb-keyboard-inset/,
-    );
+    const rule = css.match(/:root\[data-keyboard="open"\][^{]*\{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toMatch(/scroll-padding-bottom:[^;}]*--cb-keyboard-inset/);
+    expect(rule).toContain(":not(:has(.cb-conv-page))");
+    expect(rule).not.toMatch(/\*\s*\{/);
+  });
+
+  it("a bottom sheet sits above the keyboard", () => {
+    const css = readFileSync(resolve(__dirname, "../src/styles/conversation-page.css"), "utf8");
+    const rule = css.match(/\n\.cb-bsheet \{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toMatch(/inset:\s*auto 0 var\(--cb-keyboard-inset, 0px\) 0/);
   });
 });
