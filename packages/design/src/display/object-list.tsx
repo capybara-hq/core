@@ -18,6 +18,7 @@ import { useLongPress } from "../overlays/long-press";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ClassForms, useClassForm } from "../shell/class-forms";
 import { Avatar, type AvatarValue } from "./avatar";
+import { ListEnd, ListMoreButton, type ListMoreProps } from "./list-end";
 import { MarkImage } from "./object-mark";
 import { type PersonLike, PersonName } from "./person-name";
 import { rowActionsLabel } from "./row-actions-label";
@@ -105,17 +106,21 @@ const SKELETON_ROWS = 3;
  * The panel of an object list: rows split by `line-soft` (spec §6.17). `loading` (true, or a row
  * count) draws skeleton rows in the row's shape instead of the children (a mark box and a name and
  * a description line, in the one bar look of spec §6.29), and marks the list busy. Inside a skeleton
- * group the group announces.
+ * group the group announces. A list with more pages (`onLoadMore`, `hasMore`, `loadingMore`,
+ * `loadMoreError`; {@link ListMoreProps}) reads the next one as its end comes into view below 600
+ * (a skeleton row, then the rows; a failure with Retry in the card) and draws Load more under it
+ * from 600 up.
  */
 export function ObjectList({
   label,
   loading,
   children,
+  ...more
 }: {
   label: string;
   loading?: boolean | number;
   children?: ReactNode;
-}) {
+} & ListMoreProps) {
   const t = useDesignT();
   const announces = useSkeletonAnnounces();
   const form = useClassForm();
@@ -134,9 +139,15 @@ export function ObjectList({
   if (loading === undefined || loading === false) {
     return (
       <SheetHostContext.Provider value={host}>
-        <ul className="cb-object-list" aria-label={label}>
+        <ul
+          className="cb-object-list"
+          aria-label={label}
+          aria-busy={more.loadingMore === true ? true : undefined}
+        >
           <BoxScope kind="object-list">{children}</BoxScope>
+          <ListEnd more={more} skeleton={<SkeletonRow end />} />
         </ul>
+        <ListMoreButton more={more} />
         {form === "compact" || sheet !== null ? (
           // One sheet for the list, beside it: mounted while a row is chosen, so leaving compact
           // with the sheet up does not drop it.
@@ -156,20 +167,39 @@ export function ObjectList({
   return (
     <ul className="cb-object-list" aria-label={label} aria-busy="true">
       {Array.from({ length: rows }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
-        <li key={i} className="cb-object-row" data-part="object-row" data-skeleton="true">
-          {/* the loaded row's mark place (same part, same box), holding the mark placeholder */}
-          <span className="cb-object-mark" data-part="object-row-mark" data-skeleton="true">
-            <SkeletonBox part="mark" />
-          </span>
-          <span className="cb-object-text">
-            <SkeletonText width="30%" />
-            <SkeletonText width="55%" />
-          </span>
-          {i === 0 && announces ? <span className="cb-sr-only">{t("table.loading")}</span> : null}
-        </li>
+        <SkeletonRow
+          // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
+          key={i}
+          announce={i === 0 && announces ? t("table.loading") : undefined}
+        />
       ))}
     </ul>
+  );
+}
+
+/**
+ * A skeleton row in the row's shape; `end`: the row a list with more pages shows at its end while
+ * the next page loads (hidden from assistive tech: the end's status announces).
+ */
+function SkeletonRow({ announce, end }: { announce?: string | undefined; end?: boolean }) {
+  return (
+    <li
+      className="cb-object-row"
+      data-part="object-row"
+      data-skeleton="true"
+      data-end={end ? "skeleton" : undefined}
+      aria-hidden={end ? true : undefined}
+    >
+      {/* the loaded row's mark place (same part, same box), holding the mark placeholder */}
+      <span className="cb-object-mark" data-part="object-row-mark" data-skeleton="true">
+        <SkeletonBox part="mark" />
+      </span>
+      <span className="cb-object-text">
+        <SkeletonText width="30%" />
+        <SkeletonText width="55%" />
+      </span>
+      {announce ? <span className="cb-sr-only">{announce}</span> : null}
+    </li>
   );
 }
 

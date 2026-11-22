@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { ListMoreProps } from "../display/list-end";
 import type { PaginationProps } from "../display/pagination";
 import type { MenuItem } from "../overlays/menus";
 
@@ -39,7 +40,12 @@ export type Column<T> = {
 
 export type SortDir = "asc" | "desc";
 
-export type DataTableProps<T> = {
+/**
+ * A table read by cursor adds {@link ListMoreProps} (`onLoadMore`, `hasMore`, `loadingMore`,
+ * `loadMoreError`): below 600 the next page is read as the rows' end comes into view (a skeleton
+ * row, a failure with Retry, in the rows' box); from 600 up a Load more button under the table.
+ */
+export type DataTableProps<T> = ListMoreProps & {
   columns: Column<T>[];
   rows: T[];
   rowKey(row: T): string;
@@ -62,6 +68,7 @@ export type DataTableProps<T> = {
   /** The grouped rows' lead (an avatar or a mark, about 40 px) when a column declares `compact`. */
   compactLead?(row: T): ReactNode;
   sort?: { key: string; dir: SortDir; onChange(key: string, dir: SortDir): void };
+  /** Numbered pages; a table read by cursor passes {@link ListMoreProps} instead. */
   pagination?: PaginationProps;
   /** Row height step (spec §6.6): dense 28, default 32, roomy 44 (two lines or a thumbnail). */
   rowHeight?: "dense" | "default" | "roomy";

@@ -769,6 +769,54 @@ a.cb-item-list-title:hover {
 .cb-object-row:first-child {
   border-top: 0;
 }
+/* The end of a list with more pages (ObjectList, CardGrid, DataTable; mobile interaction model
+   spec §3 "Infinite scroll", D6): below 600, inside the list's grouped card, the sentinel and the
+   loading status take no room (the skeleton row before them shows the load) and a failure is one
+   row with its message and Retry; from 600 up a Load more button under the list. */
+.cb-list-end {
+  display: block;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-list-end[data-state="idle"],
+.cb-list-end[data-state="loading"] {
+  height: 0;
+  overflow: hidden;
+}
+.cb-list-end[data-state="error"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-4);
+  box-shadow: inset 0 1px var(--cb-line-soft);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-list-end-cell {
+  display: contents;
+}
+.cb-list-end-error {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-fail);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-list-more {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  margin-top: var(--cb-space-3);
+}
+.cb-list-more-error {
+  color: var(--cb-fail);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .cb-object-mark {
   display: grid;
   flex: none;

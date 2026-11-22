@@ -13,9 +13,11 @@ import { Button, IconButton } from "../controls/button";
 import { DensityContext } from "../controls/density";
 import { Select } from "../controls/select";
 import { Checkbox } from "../controls/toggles";
+import { ListEnd, ListMoreButton } from "../display/list-end";
 import { Pagination } from "../display/pagination";
 import { rowActionsLabel } from "../display/row-actions-label";
 import { useScrollbarRelayout } from "../display/scrollbar-relayout";
+import { SkeletonBox, SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import { useInBox } from "../layout/box";
 import { ActionSheet } from "../overlays/action-sheet";
@@ -106,7 +108,12 @@ export function DataTable<T>({
   pagination,
   rowHeight = "default",
   framed: framedProp,
+  onLoadMore,
+  hasMore,
+  loadingMore,
+  loadMoreError,
 }: DataTableProps<T>) {
+  const more = { onLoadMore, hasMore, loadingMore, loadMoreError };
   const t = useDesignT();
   // One box is enough (spec §1, §6.6): inside a box the table has no ground of its own.
   const box = useInBox();
@@ -486,6 +493,28 @@ export function DataTable<T>({
             />
           );
         })}
+        <ListEnd
+          as="row"
+          more={more}
+          skeleton={
+            <div
+              className="cb-table-compact-row"
+              data-end="skeleton"
+              data-lead={compactLead ? "true" : undefined}
+              aria-hidden="true"
+            >
+              {compactLead ? (
+                <span className="cb-table-compact-lead">
+                  <SkeletonBox part="block" width={40} height={40} />
+                </span>
+              ) : null}
+              <span className="cb-table-compact-text">
+                <SkeletonText width="45%" />
+                <SkeletonText width="30%" size="small" />
+              </span>
+            </div>
+          }
+        />
       </div>
     </div>
   );
@@ -526,7 +555,11 @@ export function DataTable<T>({
         </div>
       ) : null}
       {narrowBar}
-      <div className="cb-table-panel" data-part="table" aria-busy={kind === "loading" || undefined}>
+      <div
+        className="cb-table-panel"
+        data-part="table"
+        aria-busy={kind === "loading" || loadingMore === true || undefined}
+      >
         {kind ? (
           <>
             {/* The header only, drawn above every empty state (spec §6.6); hidden from
@@ -537,10 +570,25 @@ export function DataTable<T>({
             <EmptyArea<T> kind={kind} error={error} empty={empty} noResults={noResults} />
           </>
         ) : (
-          tableArea
+          <>
+            {tableArea}
+            {mapped ? null : (
+              // The stacked rows below 600 keep the table's DOM: the end follows it in the panel.
+              <ListEnd
+                as="div"
+                more={more}
+                skeleton={
+                  <div className="cb-table-skel-row" data-end="skeleton" aria-hidden="true">
+                    <span className="cb-table-skel" data-part="skeleton-bar" data-width={52} />
+                  </div>
+                }
+              />
+            )}
+          </>
         )}
       </div>
       {pagination ? <Pagination {...pagination} /> : null}
+      <ListMoreButton more={more} />
       {rowMenu && (mappedCompact || sheetRow !== undefined) ? (
         // Mounted while its row is chosen, so leaving compact with a sheet up does not drop it.
         <ActionSheet
