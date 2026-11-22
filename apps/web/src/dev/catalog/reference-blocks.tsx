@@ -564,7 +564,7 @@ const stepAt = (id: string) => `[data-part="step-item"][href*="at=${id}"]`;
 const PendingHere = createContext(false);
 const usePendingHere = () => useContext(PendingHere);
 function pendingLink(target: string): LinkComponent {
-  return function PendingLink({ href, children, ...rest }) {
+  return function PendingLink({ href, children, replace: _replace, ...rest }) {
     return (
       <PendingHere.Provider value={href === target}>
         <a href={href} {...rest}>

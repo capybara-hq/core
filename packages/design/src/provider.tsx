@@ -15,6 +15,11 @@ export type LinkComponent = ComponentType<{
   target?: string;
   rel?: string;
   tabIndex?: number;
+  /**
+   * Replaces the current history entry instead of pushing one: a switch between a page's sibling
+   * views (the settings sub-nav) adds no back step, so back leaves the page.
+   */
+  replace?: boolean;
   /** The size-table part (spec §9.2) and the roving-focus key (Sidebar). */
   "data-part"?: string;
   "data-rove"?: string;
@@ -28,7 +33,7 @@ export type LinkComponent = ComponentType<{
   "data-nav-section"?: string | undefined;
 }>;
 
-const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
+const DefaultLink: LinkComponent = ({ href, children, replace: _replace, ...rest }) => (
   <a href={href} {...rest}>
     {children}
   </a>
