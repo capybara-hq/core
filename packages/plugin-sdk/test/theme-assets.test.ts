@@ -8,6 +8,12 @@ import {
   themeAssetRefs,
   validateThemeAssets,
 } from "../src/index.js";
+import {
+  parseViewBox,
+  VIEWBOX_MAX_CHARS,
+  VIEWBOX_NUMBER_RE,
+  VIEWBOX_SEPARATOR_RE,
+} from "../src/svg-viewbox.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const SVG_NS = 'xmlns="http://www.w3.org/2000/svg"';
@@ -87,12 +93,10 @@ describe("sanitizeThemeSvg", () => {
     expect(svgOf(svgDoc(inner))).toContain(inner);
   });
 
-  it("refuses a pathological viewBox quickly", () => {
+  it("refuses a pathological viewBox", () => {
     const hostile = `0 0 0 ${"1".repeat(THEME_LIMITS.svgBytes - 200)}x`;
-    const t0 = performance.now();
     expect(errorOf(svgDoc("", `viewBox="${hostile}"`))).toMatch(/viewBox/);
     expect(errorOf(svgDoc("", `viewBox="0 0 0 ${"1".repeat(120)}x"`))).toMatch(/viewBox/);
-    expect(performance.now() - t0).toBeLessThan(100);
   });
 
   it("accepts a prefixed SVG namespace and serializes it unprefixed", () => {
@@ -542,5 +546,37 @@ describe("validateThemeAssets", () => {
       files,
     );
     expect(over.errors).toEqual([expect.stringMatching(/16777216 bytes/)]);
+  });
+});
+
+// The viewBox parser's cost is bounded by its structure, not measured by a clock (#571): an over-long
+// value is refused before any string method or regex runs, and every regex it runs is a single
+// character class under one quantifier, so matching the capped input cannot backtrack.
+describe("parseViewBox", () => {
+  it("refuses an over-long value before touching its characters", () => {
+    const touched: string[] = [];
+    const hostile = new Proxy(Object.create(String.prototype) as object, {
+      get(_t, key) {
+        if (key === "length") return THEME_LIMITS.svgBytes;
+        touched.push(String(key));
+        throw new Error(`parseViewBox read ${String(key)} of an over-long value`);
+      },
+    }) as unknown as string;
+    expect(parseViewBox(hostile)).toBeUndefined();
+    expect(touched).toEqual([]);
+  });
+
+  it("runs only single-class regexes, which cannot backtrack", () => {
+    expect(VIEWBOX_SEPARATOR_RE.source).toMatch(/^\[[^\]]*\]\+$/);
+    expect(VIEWBOX_NUMBER_RE.source).toMatch(/^\^\[[^\]]*\]\+\$$/);
+    expect(VIEWBOX_SEPARATOR_RE.flags).toBe("");
+    expect(VIEWBOX_NUMBER_RE.flags).toBe("");
+  });
+
+  it("parses at the length cap and refuses one character past it", () => {
+    const at = `0 0 1 ${"1".padStart(VIEWBOX_MAX_CHARS - 6, "0")}`;
+    expect(at).toHaveLength(VIEWBOX_MAX_CHARS);
+    expect(parseViewBox(at)).toEqual([0, 0, 1, 1]);
+    expect(parseViewBox(`${at} `)).toBeUndefined();
   });
 });
