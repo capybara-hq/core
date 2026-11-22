@@ -87,6 +87,24 @@ describe("parseBootstrapManifest", () => {
     ]);
   });
 
+  it("accepts scope all on an optional preinstall", () => {
+    const m = manifest([npm({ scope: "all" })], { marketplace: MARKETPLACE });
+    expect(parseBootstrapManifest(m)).toEqual(m);
+  });
+
+  it("rejects scope on a builtin or required entry", () => {
+    expect(errorsOf(manifest([workspace({ scope: "all" })]))).toEqual([
+      "plugins.0.scope: scope applies only to optional preinstalls",
+    ]);
+    expect(
+      errorsOf(
+        manifest([npm({ builtin: true, required: false, scope: "all" })], {
+          marketplace: MARKETPLACE,
+        }),
+      ),
+    ).toEqual(["plugins.0.scope: scope applies only to optional preinstalls"]);
+  });
+
   const rejects: [string, unknown, RegExp][] = [
     [
       "bad integrity",

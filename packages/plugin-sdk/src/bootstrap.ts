@@ -26,11 +26,18 @@ import {
  * `all`, on in every org, not switchable) and are imported again when missing. An entry is never
  * both.
  *
+ * An optional preinstall (neither) may carry `scope: "all"`: its catalog item is then created with
+ * scope `all` (on in every org, an org admin may switch it off) instead of `optional` (off until
+ * switched on). The scope is read only at the first import; a later change in the manifest never
+ * rewrites the item, the super admin owns it after that. `scope` on a required or builtin entry
+ * is refused.
+ *
  * Objects are strict (unknown keys rejected, `$schema` allowed): the manifest ships with core, so
  * there is no older reader to stay compatible with and a misspelt key is a mistake. The committed
  * JSON Schema (`schemas/bootstrap.v1.schema.json`) is generated from {@link BootstrapManifestSchema}
  * by `pnpm gen:package-schemas`; the cross-field rules (unique names, `marketplace` required with an
- * npm entry, not both `required` and `builtin`) are decided only by {@link parseBootstrapManifest}.
+ * npm entry, not both `required` and `builtin`, `scope` only on an optional preinstall) are
+ * decided only by {@link parseBootstrapManifest}.
  */
 
 /** Manifest format version. */
@@ -55,6 +62,13 @@ export type BootstrapEntry =
        * catalog item builtin; a failure does not stop the start. Never together with `required`.
        */
       builtin?: boolean;
+      /**
+       * Only for an optional preinstall (neither `required` nor `builtin`): the scope its catalog
+       * item gets when first imported (default `optional`: off in every org until switched on).
+       * `all` is on in every org and an org admin may switch it off. Read only at the first
+       * import: a later change here never rewrites the item (the super admin owns it then).
+       */
+      scope?: "all" | "optional";
     }
   | {
       name: string;
@@ -65,6 +79,13 @@ export type BootstrapEntry =
       integrity: string;
       required: boolean;
       builtin?: boolean;
+      /**
+       * Only for an optional preinstall (neither `required` nor `builtin`): the scope its catalog
+       * item gets when first imported (default `optional`: off in every org until switched on).
+       * `all` is on in every org and an org admin may switch it off. Read only at the first
+       * import: a later change here never rewrites the item (the super admin owns it then).
+       */
+      scope?: "all" | "optional";
     };
 
 /** `bootstrap.json`. */
@@ -78,6 +99,7 @@ export interface BootstrapManifest {
 }
 
 const MAX_ERRORS = 50;
+const SCOPE_MESSAGE = "scope applies only to optional preinstalls";
 const URL_CHARS = 2000;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const HTTPS_URL_RE = /^https:\/\/\S+$/;
@@ -96,6 +118,7 @@ const common = {
     .regex(SHA512_INTEGRITY_RE, { message: "integrity must be sha512-<86 base64 chars>==" }),
   required: z.boolean(),
   builtin: z.boolean().optional(),
+  scope: z.enum(["all", "optional"]).optional(),
 };
 
 const entry = z.discriminatedUnion("source", [
@@ -142,6 +165,13 @@ const schema = z
           code: "custom",
           path: ["plugins", i, "builtin"],
           message: "an entry is either required or builtin, not both",
+        });
+      }
+      if (e.scope !== undefined && (e.required || e.builtin === true)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["plugins", i, "scope"],
+          message: SCOPE_MESSAGE,
         });
       }
     });
@@ -201,6 +231,8 @@ export interface BootstrapGitEntry {
   integrity: string;
   required?: boolean;
   builtin?: boolean;
+  /** As on {@link BootstrapEntry}: only for an optional preinstall. */
+  scope?: "all" | "optional";
 }
 
 /** An entry of the extra manifest: npm (`required` optional) or git. */
@@ -246,6 +278,7 @@ const extraCommon = {
   integrity: common.integrity,
   required: z.boolean().optional(),
   builtin: common.builtin,
+  scope: common.scope,
 };
 
 const extraEntry = z.discriminatedUnion("source", [
@@ -347,6 +380,13 @@ const extraSchema = z
           code: "custom",
           path: ["plugins", i, "builtin"],
           message: "an entry is either required or builtin, not both",
+        });
+      }
+      if (e.scope !== undefined && (e.required === true || e.builtin === true)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["plugins", i, "scope"],
+          message: SCOPE_MESSAGE,
         });
       }
       if (e.source === "git" && !marketplaces.has(e.marketplace)) {

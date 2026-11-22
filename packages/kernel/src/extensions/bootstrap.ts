@@ -94,6 +94,11 @@ import type { SingleProviderNote } from "./single-provider.js";
  *   the first pass (`deferBuiltin`: skipped, not a failure; the run is then not recorded and the
  *   start runs the second pass), so it may ship skills and templates. A required entry is imported
  *   by the first pass and must succeed; a builtin one that fails is logged like an optional one.
+ * - An optional preinstall (neither required nor builtin) may carry `scope: "all"`: its catalog
+ *   item is created with that scope (on in every org, switchable) instead of `optional`. The
+ *   scope is read only when the item is first imported (a new version of a live item keeps the
+ *   item's scope), so a later change of `scope` in the manifest never rewrites it: the super
+ *   admin owns the scope after import.
  * - Only entries new to the manifest are installed (Ruling 5): an optional entry that the last
  *   completed run already handled and that is not installed now (a super admin uninstalled
  *   it) stays uninstalled -> `kept`. A required or builtin entry is always installed (a
@@ -1041,7 +1046,10 @@ export class BootstrapService {
         git !== undefined
           ? await this.prepareGitEntry(e, git, source, imports)
           : await imports.prepare(null, bytes, source);
-      await imports.confirm(null, stagingId, { reviewHash: review.reviewHash });
+      await imports.confirm(null, stagingId, {
+        reviewHash: review.reviewHash,
+        scope: e.scope ?? "optional",
+      });
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.code === "catalog.version_exists") return false;
@@ -1078,6 +1086,7 @@ export class BootstrapService {
     const r = await imports.confirm(null, staged.stagingId, {
       reviewHash: staged.review.reviewHash,
       enable,
+      scope: e.scope ?? "optional",
     });
     if (r.deploy?.result === "failed") {
       throw new ApiError(

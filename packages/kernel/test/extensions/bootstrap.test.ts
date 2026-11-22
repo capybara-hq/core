@@ -1025,6 +1025,52 @@ const OBJECT_STORE_CONFIG = {
   extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
 };
 
+describe("a preinstall with a scope", () => {
+  afterAll(stopAll);
+  type Item = { id: string; name: string; builtin: boolean; scope: string; disabled: boolean };
+  const itemNamed = async (name: string) =>
+    (
+      (await admin({ method: "GET", url: "/api/v1/admin/catalog/items" })).json().items as Item[]
+    ).find((i) => i.name === name);
+
+  it("a preinstall with scope all is on in every org and switchable", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await skillPkg("delta"), required: false },
+      { bytes: await packFake("fake-bootstrap-b") },
+    ]);
+    const first = fx.manifest.plugins[0];
+    if (first === undefined) throw new Error("no entry");
+    first.scope = "all";
+    const k = await boot(fx, OBJECT_STORE_CONFIG);
+    await loginAdmin(k);
+    expect(await itemNamed("delta")).toMatchObject({
+      builtin: false,
+      scope: "all",
+      disabled: false,
+    });
+    const orgId = await createOrgWithProviders(k, admin, "Scoped");
+    const item = (await itemNamed("delta")) as Item;
+    const off = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/catalog/${item.id}/switch`,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+  });
+
+  it("a preinstall without scope stays optional and off", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await skillPkg("delta"), required: false },
+      { bytes: await packFake("fake-bootstrap-b") },
+    ]);
+    const k = await boot(fx, OBJECT_STORE_CONFIG);
+    await loginAdmin(k);
+    expect(await itemNamed("delta")).toMatchObject({ builtin: false, scope: "optional" });
+  });
+});
+
 describe("a builtin entry", () => {
   afterAll(stopAll);
   type Item = { id: string; name: string; builtin: boolean; scope: string; disabled: boolean };

@@ -71,6 +71,13 @@
               "builtin": {
                 "type": "boolean"
               },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "optional"
+                ]
+              },
               "source": {
                 "type": "string",
                 "const": "npm"
@@ -111,6 +118,13 @@
               },
               "builtin": {
                 "type": "boolean"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "optional"
+                ]
               },
               "source": {
                 "type": "string",
