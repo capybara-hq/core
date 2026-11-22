@@ -14,6 +14,7 @@ import {
   Input,
   KeyValue,
   LinkButton,
+  type MenuItem,
   ObjectMark,
   Select,
   Stack,
@@ -715,33 +716,25 @@ function PersonalConnectionActions({ orgId, app }: { orgId: string; app: Connect
   });
   const parts = connection.parts(app);
   if (parts === null) return null;
-  type Item = {
-    label: string;
-    href?: string | undefined;
-    onSelect?: (() => void) | undefined;
-    loading?: boolean | undefined;
-    danger?: boolean | undefined;
-    disabled?: boolean | undefined;
-  };
-  const items: Item[] = [
-    ...(parts.primary !== undefined ? [parts.primary as Item] : []),
-    ...(parts.menu ?? []).flatMap((m) => (m === "separator" ? [] : [m as Item])),
+  const items = [
+    ...(parts.primary !== undefined ? [parts.primary] : []),
+    ...(parts.menu ?? []).filter((m): m is Exclude<MenuItem, "separator"> => m !== "separator"),
   ];
   return (
     <>
       <Stack direction="row" wrap>
         {items.map((item) =>
-          item.href !== undefined ? (
+          "href" in item && item.href !== undefined ? (
             <LinkButton key={item.label} href={item.href}>
               {item.label}
             </LinkButton>
           ) : (
             <Button
               key={item.label}
-              {...(item.loading === true ? { loading: true } : {})}
-              {...(item.danger === true ? { variant: "danger" as const } : {})}
-              disabled={item.disabled === true}
-              onClick={() => item.onSelect?.()}
+              {...("loading" in item && item.loading === true ? { loading: true } : {})}
+              {...("danger" in item && item.danger === true ? { variant: "danger" as const } : {})}
+              disabled={"disabled" in item && item.disabled === true}
+              onClick={() => "onSelect" in item && item.onSelect?.()}
             >
               {item.label}
             </Button>

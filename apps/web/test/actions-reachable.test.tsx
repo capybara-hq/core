@@ -1,4 +1,5 @@
 import { cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import type { Me } from "../src/lib/session";
@@ -7,6 +8,7 @@ import { cardMenuLabels, findCard, footControls, MORE } from "./support/cards";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
@@ -49,53 +51,149 @@ afterEach(cleanup);
 
 describe("connector card actions are on the connector's page", () => {
   it.each([
-    ["c-slack", "Slack", AUTH.oauth],
-    ["c-api", "Docs API", AUTH.bearer],
-  ])("%s: the connected card's button and ⋯ items are on the 凭据 tab", async (id, name, auth) => {
-    const connector = summary({ id, name, auth });
-    const read = {
-      connector: {
-        ...connector,
-        tools: [],
-        credential: { ownership: "personal", status: "connected" },
-      },
-    };
-    stubApi({
-      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [connector] }),
-      [`GET /api/v1/orgs/o1/connectors/${id}`]: () => json(200, read),
-      "GET /api/v1/orgs/o1/components?kind=connector_template": () => json(200, { components: [] }),
-    });
-    await renderRouteWithCache("/connectors", lastStubRoutes(), { me: MEMBER });
-    const card = await findCard(en.connectors.title, name);
-    await within(card).findByText(en.connections.connected);
-    await vi.waitFor(() => expect(footControls(card)).toContain(MORE.en));
-    const onCard = [...footControls(card).slice(0, 1), ...(await cardMenuLabels(card))];
-    expect(onCard.length).toBeGreaterThan(1);
-    cleanup();
-    resetNavigation(`/connectors/${id}`);
-    await renderRouteWithCache(`/connectors/${id}?tab=credentials`, lastStubRoutes(), {
-      me: MEMBER,
-    });
-    await screen.findByText(en.connectors.credential.personalTitle);
-    for (const label of onCard) {
-      expect(screen.getByRole("button", { name: label })).toBeTruthy();
-    }
-  });
+    ["c-slack", "Slack", AUTH.oauth, "connected"],
+    ["c-api", "Docs API", AUTH.bearer, "connected"],
+    ["c-slack2", "Slack two", AUTH.oauth, "missing"],
+  ])(
+    "%s: the %s card's button and ⋯ items are on the 凭据 tab (%s)",
+    async (id, name, auth, status) => {
+      const connector = summary({ id, name, auth });
+      const read = {
+        connector: {
+          ...connector,
+          tools: [],
+          credential: { ownership: "personal", status },
+        },
+      };
+      stubApi({
+        "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [connector] }),
+        [`GET /api/v1/orgs/o1/connectors/${id}`]: () => json(200, read),
+        "GET /api/v1/orgs/o1/components?kind=connector_template": () =>
+          json(200, { components: [] }),
+      });
+      await renderRouteWithCache("/connectors", lastStubRoutes(), { me: MEMBER });
+      const card = await findCard(en.connectors.title, name);
+      const shown = status === "connected" ? en.connections.connected : en.connections.missing;
+      await within(card).findByText(shown);
+      // not connected: the one button (连接); connected: the primary and the ⋯ items
+      await vi.waitFor(() =>
+        expect(footControls(card)).toContain(
+          status === "connected" ? MORE.en : en.connections.oauthConnect,
+        ),
+      );
+      const onCard = [
+        ...footControls(card).filter((l) => l !== MORE.en),
+        ...(status === "connected" ? await cardMenuLabels(card) : []),
+      ];
+      expect(onCard.length).toBeGreaterThan(status === "connected" ? 1 : 0);
+      cleanup();
+      resetNavigation(`/connectors/${id}`);
+      await renderRouteWithCache(`/connectors/${id}?tab=credentials`, lastStubRoutes(), {
+        me: MEMBER,
+      });
+      await screen.findByText(en.connectors.credential.personalTitle);
+      for (const label of onCard) {
+        expect(screen.getByRole("button", { name: label })).toBeTruthy();
+      }
+    },
+  );
 });
 
+const DEVICE = {
+  id: "e1",
+  name: "Sandbox",
+  isDefault: false,
+  ownerKind: "personal",
+  source: "cloud",
+  provider: "sandbox-docker",
+  available: true,
+  sessionIsolation: false,
+  filesLost: false,
+  instance: null,
+  limits: { cpu: 2, memoryMb: 2048, diskMb: 10240, network: { kind: "open-public", hosts: [] } },
+  report: null,
+  sandbox: {
+    network: "open",
+    networkCeiling: "open",
+    hosts: [],
+    ownNetwork: null,
+    allowedDomains: [],
+    outsideSandbox: false,
+    restrictedProjectReach: "workspace",
+    layer: { network: null, outsideSandbox: "provider" },
+    pendingNextUse: false,
+    pendingFilesReset: false,
+    recent: [],
+  },
+  createdAt: T,
+};
+
 describe("device cards carry no actions beyond opening the device", () => {
-  it("a device card has no ⋯ menu", async () => {
+  it("a device card has no button and no ⋯ menu: its only control is the link to the device", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/devices": () =>
         json(200, {
-          items: [],
+          items: [DEVICE],
           defaultId: null,
           lastUsedId: null,
-          providers: [],
-          defaultProvider: null,
+          providers: [{ plugin: "sandbox-docker", displayName: null }],
+          defaultProvider: "sandbox-docker",
         }),
     });
     await renderRouteWithCache("/devices", lastStubRoutes());
-    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
+    const card = await findCard(en.devices.listLabel, "Sandbox");
+    expect(footControls(card)).toEqual([]);
+    expect(within(card).queryByRole("button")).toBeNull();
+    const links = within(card).getAllByRole("link");
+    expect(links.map((l) => l.getAttribute("href"))).toEqual(["/devices/e1"]);
+  });
+});
+
+describe("the skill detail tables at 390 draw grouped rows", () => {
+  it("files and versions use their roles; the file count is hidden", async () => {
+    stubWindowWidth(390);
+    resetNavigation("/skills/s1");
+    const version = (n: number, files: { path: string; size: number; sha256: string }[]) => ({
+      version: n,
+      description: `Version ${n}.`,
+      files,
+      createdBy: "a1",
+      createdAt: T,
+    });
+    stubApi({
+      "GET /api/v1/orgs/o1/skills/s1": () =>
+        json(200, {
+          id: "s1",
+          scope: "org",
+          agentId: null,
+          name: "pdf-tools",
+          description: "Use for pdf-tools.",
+          currentVersion: 2,
+          createdBy: "a1",
+          createdAt: T,
+          updatedAt: T,
+          body: "# PDF tools\n",
+          versions: [
+            version(2, [{ path: "scripts/run.py", size: 2048, sha256: "b" }]),
+            version(1, [{ path: "SKILL.md", size: 90, sha256: "c" }]),
+          ],
+        }),
+    });
+    const { container } = await renderRouteWithCache("/skills/s1", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: en.skills.detail.tabs.files }));
+    await screen.findByText("scripts/run.py");
+    const file = container.querySelector<HTMLElement>("[data-part=compact-row]");
+    expect(file?.querySelector("[data-part=compact-title]")?.textContent).toBe("scripts/run.py");
+    expect(file?.querySelector("[data-part=compact-meta]")?.textContent).toBe("2 KB");
+    await user.click(screen.getByRole("tab", { name: en.skills.detail.tabs.versions }));
+    await screen.findByText("Version 2.");
+    const row = Array.from(container.querySelectorAll<HTMLElement>("[data-part=compact-row]")).find(
+      (r) => r.textContent?.includes("Version 2."),
+    );
+    expect(row?.querySelector("[data-part=compact-title]")?.textContent).toBe("v2");
+    expect(row?.querySelector("[data-part=compact-subtitle]")?.textContent).toBe("Version 2.");
+    // the bare file count (1) is not among the meta parts
+    expect(row?.querySelector("[data-part=compact-meta]")?.textContent).not.toMatch(/^1 · /);
   });
 });

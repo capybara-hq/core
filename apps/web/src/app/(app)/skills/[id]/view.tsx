@@ -427,7 +427,7 @@ function VersionsTab({ versions }: { versions: SkillVersion[] }) {
     {
       key: "files",
       header: t("columns.files"),
-      compact: "meta",
+      compact: "hidden",
       tone: "muted",
       width: 90,
       cell: (v) => String(v.files.length),
