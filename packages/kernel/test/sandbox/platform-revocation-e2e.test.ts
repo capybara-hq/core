@@ -896,6 +896,52 @@ it("owed holder and operation revocations carry the device's org", async () => {
   }
 });
 
+// final whole-branch review I1: an owed revoke of a background start whose device is gone (its
+// provider may be gone too) is never acknowledged; it stops queueing retries once the device is
+// deleted, and the retirement settles it, instead of being retried hourly for ever
+it("a revoked background start keeps its retries on a live device and stops them once the device is deleted", async () => {
+  const f = await intentDevice();
+  const intents = k.app.get(SandboxOperationIntents);
+  const outbox = k.app.get(OutboxService);
+  const add = outbox.add.bind(outbox);
+  const owed: string[] = [];
+  const spy = vi.spyOn(outbox, "add").mockImplementation(async (job) => {
+    owed.push(job.jobId);
+    return add(job);
+  });
+  try {
+    const op = await seedIntent(f, {
+      generation: "1",
+      state: "background-running",
+      method: "backgroundStart",
+    });
+    await db()
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "revoked" })
+      .where("operation_id", "=", op)
+      .execute();
+    await intents.deferRevocation(op);
+    await intents.deferRevocation(op);
+    expect(owed).toEqual([revokeJobId(op, "-1"), revokeJobId(op, "-2")]);
+    await db()
+      .updateTable("devices")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await intents.deferRevocation(op);
+    expect(owed).toEqual([revokeJobId(op, "-1"), revokeJobId(op, "-2")]);
+    const row = await db()
+      .selectFrom("sandbox_operation_intents")
+      .select(["state", "revoke_acknowledged", "reconcile_attempt"])
+      .where("operation_id", "=", op)
+      .executeTakeFirstOrThrow();
+    // nothing claims a cleanup that did not happen
+    expect(row).toEqual({ state: "revoked", revoke_acknowledged: false, reconcile_attempt: 2 });
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 // final review m2: a revoked exec / read / write on an incarnation that no longer runs is
 // acknowledged once that incarnation provably ended (its confirmed destruction is recorded, or
 // the operation is past its device-enforced time limit), instead of being retried for ever; a

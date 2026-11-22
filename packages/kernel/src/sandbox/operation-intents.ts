@@ -1485,7 +1485,10 @@ export class SandboxOperationIntents {
   /**
    * A disconnected or still-pending revoke remains owed; every retry is a new deterministic
    * persisted attempt, backing off (30 s doubling, at most an hour) so an obligation that only
-   * retirement can resolve (a lost or replaced instance) never spins.
+   * retirement can resolve (a lost or replaced instance) never spins. Retries stop once the
+   * device or its org is deleted: nothing can reach its instance any more, the revoke stays
+   * unacknowledged (no cleanup is claimed) and the retirement settles it from the device's
+   * recorded destruction, if any.
    */
   @Transactional({ propagation: "requires_new" })
   async deferRevocation(id: string): Promise<void> {
@@ -1495,6 +1498,16 @@ export class SandboxOperationIntents {
       .where("operation_id", "=", id)
       .where("state", "=", "revoked")
       .where("revoke_acknowledged", "=", false)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("devices as d")
+            .innerJoin("orgs as o", "o.id", "d.org_id")
+            .select("d.id")
+            .whereRef("d.id", "=", "sandbox_operation_intents.device_id")
+            .where("d.deleted_at", "is", null)
+            .where("o.deleted_at", "is", null),
+        ),
+      )
       .returning(["org_id", "reconcile_attempt"])
       .executeTakeFirst();
     if (row)
