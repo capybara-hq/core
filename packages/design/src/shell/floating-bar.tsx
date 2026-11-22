@@ -10,7 +10,7 @@ import { withViewTransition } from "./view-transition";
  * the current page, whatever its link; every page head has a path), else the home, so a deep link
  * opened from outside still has a way up (mobile app plan Decision 19). A segment that links to
  * the current page (`pathname`; a section whose home is its first page, as `/account/profile`
- * under 个人资料) is skipped: a link to the page itself replaces its entry and changes nothing,
+ * under the account section) is skipped: a link to the page itself replaces its entry and changes nothing,
  * so back would never leave.
  */
 export function backTarget(
