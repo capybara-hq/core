@@ -279,7 +279,8 @@ export class DialInAuthService {
             .selectFrom("orgs")
             .select("name")
             .where("id", "=", grant.orgId)
-            .executeTakeFirst(),
+            // the grant's org exists: the device row it names references it
+            .executeTakeFirstOrThrow(),
         ]);
         return {
           ...grant,
@@ -291,7 +292,7 @@ export class DialInAuthService {
               ? "allowed"
               : "off",
           deviceName: device?.name ?? null,
-          orgName: org?.name ?? "",
+          orgName: org.name,
         };
       }
       case "slow_down":

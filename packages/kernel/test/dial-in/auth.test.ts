@@ -416,6 +416,21 @@ describe("device authorization", () => {
     expect(g.outsideSandbox).toBe("off");
   });
 
+  it("a device without a name gives deviceName null in the token", async () => {
+    const m = await member();
+    const a = await authorize();
+    const c = await confirm(m.req, { userCode: a.userCode, name: "Nameless" });
+    expect(c.statusCode, c.body).toBe(200);
+    const { deviceId } = c.json() as { deviceId: string };
+    await db.updateTable("devices").set({ name: null }).where("id", "=", deviceId).execute();
+    const t = await token(a.deviceCode);
+    expect(t.statusCode, t.body).toBe(200);
+    const g = t.json() as Granted;
+    expect(g.deviceId).toBe(deviceId);
+    expect(g.deviceName).toBeNull();
+    expect(g.orgName).toEqual(expect.any(String));
+  });
+
   it("token before confirm is authorization_pending", async () => {
     const a = await authorize();
     const t = await token(a.deviceCode);
