@@ -15,6 +15,9 @@ afterEach(cleanup);
 const STYLES = resolve(import.meta.dirname, "../src/styles");
 const css = (file: string) => readFileSync(resolve(STYLES, file), "utf8");
 
+/** ClassForms' compact query (the complement of min-width 600), which the PageHeader rules use. */
+const COMPACT = "not all and (min-width: 600px)";
+
 /** The bodies of every `@media <query> {…}` block in `text`, joined. */
 function media(text: string, query = "(max-width: 599px)"): string {
   const open = `@media ${query} {`;
@@ -71,8 +74,8 @@ describe("tabs", () => {
     expect(decls(css("shell.css"), ".cb-pageheader-tabs .cb-tabs")).toContain("min-width: 0;");
   });
 
-  it("below 640 the search takes its own line above the tabs", () => {
-    const narrow = media(css("shell.css"));
+  it("below 600 the search takes its own line above the tabs", () => {
+    const narrow = media(css("shell.css"), COMPACT);
     const row = decls(narrow, ".cb-pageheader-tabs");
     expect(row).toContain("flex-wrap: wrap;");
     expect(row).toContain("height: auto;");
@@ -121,8 +124,8 @@ describe("ObjectRow below 600", () => {
   });
 });
 
-describe("PageHeader below 640", () => {
-  const narrow = media(css("shell.css"));
+describe("PageHeader below 600", () => {
+  const narrow = media(css("shell.css"), COMPACT);
 
   it("gives the title and description the full width, the description wrapping", () => {
     expect(decls(narrow, ".cb-pageheader-row")).toContain("flex-wrap: wrap;");
@@ -189,7 +192,7 @@ describe("size-class widths in the stylesheets", () => {
     const hiding = parseCss(shell).filter(
       (r) => r.selector === ".cb-pageheader-path" && r.decls.display === "none",
     );
-    expect(hiding.map((r) => r.at)).toEqual(["(max-width: 599px)"]);
+    expect(hiding.map((r) => r.at)).toEqual([COMPACT]);
     // no rule hides it from 600 (a desktop shell's top row included)
     const all = ["shell.css", "templates.css", "shell-environment.css"].flatMap((f) =>
       parseCss(css(f)),
@@ -199,7 +202,7 @@ describe("size-class widths in the stylesheets", () => {
         (r) =>
           /cb-pageheader-path(?![\w-])/.test(r.selector) &&
           r.decls.display === "none" &&
-          r.at !== "(max-width: 599px)",
+          r.at !== COMPACT,
       ),
     ).toEqual([]);
   });

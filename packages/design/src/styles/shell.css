@@ -346,9 +346,11 @@
   width: 240px;
   max-width: 100%;
 }
-/* Phones (below 600): the search takes its own full-width line above the tabs, and the tabs
-   scroll on theirs (the mobile size tabs are touch.hit targets, display.css). */
-@media (max-width: 599px) {
+/* Compact (below 600; design spec §4.2 "Compact head"): the search takes its own full-width line
+   above the tabs, and the tabs take theirs: 2-3 tabs a segmented control (Tabs
+   `look="segmented-compact"`, display.css), 4+ a sideways-scrolling row of touch.hit tabs. The
+   query is ClassForms' compact one (the complement of min-width 600). */
+@media not all and (min-width: 600px) {
   /* The placeholders follow the loaded parts' phone sizes (44 px tabs), so nothing moves. */
   .cb-pageheader-tabs .cb-pageheader-tab-slots {
     height: var(--cb-touch-hit);
@@ -371,6 +373,10 @@
   .cb-pageheader-search .cb-input {
     border-color: transparent;
     background: var(--cb-selected);
+  }
+  /* A segmented control carries its own frame: no underline row under it. */
+  .cb-pageheader-tabs:has(> .cb-tabs[data-look="segmented-compact"]) {
+    border-bottom: 0;
   }
 }
 
@@ -542,18 +548,13 @@ a.cb-pageheader-path-seg:hover {
 .cb-pageheader-row[data-avatar="true"] > .cb-pageheader-actions {
   min-height: 0;
 }
-/* Before hydration both forms are drawn (m6): the width picks the inline actions or the menu. */
-.cb-pageheader-fold {
-  display: contents;
-}
-/* Phones (below 600, spec §4.2, §4.3): the title and the description take the full width (the
-   description wraps), and the actions go under them, start-aligned: the primary as a button, the
-   others folded into ⋯ when there are several. The buttons are the mobile size controls (44,
-   spec §2.5). */
-@media (max-width: 599px) {
-  .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
-    display: none;
-  }
+/* Compact (below 600; design spec §4.2 "Compact head"): the title and the description take the
+   full width (the description wraps) and the actions go under them, start-aligned. The secondary
+   actions are in the shell's "…" (or the head's ⋯ outside a shell, page-header.tsx); the primary
+   is the head button (`data-form="head"`), a full-width button (`block`) or the ListPage's
+   floating action button (`fab`, templates.css). The buttons are the mobile size controls (44,
+   spec §2.5). The count beside the large title is mono. */
+@media not all and (min-width: 600px) {
   /* A title-less head on a phone: the path takes a line of its own and the actions sit under it
      (spec §4.2), rather than the path being squeezed to nothing beside them. */
   .cb-pageheader-titleless {
@@ -577,10 +578,22 @@ a.cb-pageheader-path-seg:hover {
   .cb-pageheader-actions {
     flex: 1 1 100%;
   }
-}
-@media (min-width: 600px) {
-  .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
-    display: none;
+  .cb-pageheader-count {
+    font-family: var(--cb-font-code);
+  }
+  /* The block primary fills the line (the room the head's ⋯ leaves when there is no shell). */
+  .cb-pageheader-primary[data-form="block"] > .cb-btn {
+    flex: 1 1 0;
+  }
+  /* An actions line with nothing in flow (the secondaries in the shell's "…", the primary absent
+     or the out-of-flow FAB) takes no room in the row; a FAB inside it still draws. */
+  .cb-pageheader-actions[data-part="page-header-actions"]:not(
+    :has(
+      > [data-head-primary]:not([data-form="fab"]),
+      > .cb-class-form[data-class-form="compact"] > *
+    )
+  ) {
+    display: contents;
   }
 }
 
@@ -975,7 +988,7 @@ a.cb-stat-card:focus-visible {
    height, in a browser and in every shell: the floating row's back button and the h1 are enough
    (medium and expanded have no floating row: the path row is their way up, and stays). A
    title-less head keeps its actions. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-pageheader-path {
     display: none;
   }
@@ -999,11 +1012,12 @@ a.cb-stat-card:focus-visible {
   }
 }
 
-/* The head's primary sits in a wrapper of no box of its own (a ListPage with a FAB hides it below
-   600, templates.css). */
+/* The head's primary sits in a wrapper of no box of its own (a ListPage with a FAB restyles its
+   button below 600, templates.css). The label keeps a box (an inline flex item of the button's
+   body, as its text was), so the FAB form can hide it visually: a box-less element cannot be
+   clipped. */
 .cb-pageheader-primary,
-.cb-pageheader-primary-icon,
-.cb-pageheader-primary-label {
+.cb-pageheader-primary-icon {
   display: contents;
 }
 /* the default plus is the floating action button's alone (templates.css) */
