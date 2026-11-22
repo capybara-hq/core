@@ -116,7 +116,7 @@ describe("local owner policy format", () => {
       {
         ...FULL_POLICY,
         ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "paths" },
-        projectPaths: ["/src/a", "/"],
+        projectPaths: ["/src/a", "/src/b"],
       },
       { future: { kept: true } },
     );
@@ -129,11 +129,11 @@ describe("local owner policy format", () => {
       memoryMb: null,
       ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "paths" },
       keepAwake: "while-busy",
-      projectPaths: ["/src/a", "/"],
+      projectPaths: ["/src/a", "/src/b"],
     });
     const read = readPolicyFile(state);
     expect(read.policy.ownerCeiling.projectReach).toBe("paths");
-    expect(read.policy.projectPaths).toEqual(["/src/a", "/"]);
+    expect(read.policy.projectPaths).toEqual(["/src/a", "/src/b"]);
     expect(read.extra).toEqual({ future: { kept: true } });
     // absent project paths read as none
     const { projectPaths: _, ...rest } = onDisk();
@@ -170,6 +170,7 @@ describe("local owner policy format", () => {
       { ...good, projectPaths: [""] },
       { ...good, projectPaths: ["/a\0b"] },
       { ...good, projectPaths: ["/a", "/a"] },
+      { ...good, projectPaths: ["/"] },
       { ...good, projectPaths: "/a" },
       { ...good, projectPaths: [1] },
       { ...good, projectPaths: Array.from({ length: 101 }, (_, i) => `/p${i}`) },
@@ -235,6 +236,7 @@ describe("local owner policy format", () => {
     });
     const narrowing = await cli(["ceiling", "set", "--project-reach", "workspace"]);
     expect(narrowing.code).toBe(0);
+    // keep-awake off: the rewrite widens nothing
     expect(onDisk()).toEqual({
       version: 4,
       allowedDomains: [],
@@ -242,9 +244,22 @@ describe("local owner policy format", () => {
       cpu: null,
       memoryMb: null,
       ownerCeiling: SANDBOX_OWNER_CEILING,
-      keepAwake: "while-busy",
+      keepAwake: "off",
       projectPaths: [],
     });
+    expect(narrowing.out.split("\n")).toContain(
+      `Replaced ${policyPath(state)} (format 3, this program reads format 4): allowed domains, ` +
+        "credentials, resource limits and keep-awake are back to their defaults; set them again " +
+        "with capybara-device policy / keep-awake.",
+    );
+    // a newer format is named too, and a current file gets no notice
+    writeRaw({ ...onDiskOf(FULL_POLICY), version: 5 });
+    const newer = await cli(["ceiling", "set", "--project-reach", "workspace"]);
+    expect(newer.code).toBe(0);
+    expect(newer.out).toContain("(format 5, this program reads format 4)");
+    const current = await cli(["ceiling", "set", "--project-reach", "workspace"]);
+    expect(current.code).toBe(0);
+    expect(current.out).not.toContain("Replaced");
     writeRaw({ version: 3, ownerCeiling: {} });
     const refused = await cli(["ceiling", "set", "--network", "open"]);
     expect(refused.code).toBe(2);

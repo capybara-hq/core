@@ -1,11 +1,11 @@
 import { statSync } from "node:fs";
 import {
-  closedPolicy,
   type Policy,
   type PolicyFile,
   PolicyVersionError,
   policyPath,
   readPolicyFile,
+  replacementPolicy,
   withPolicyLock,
   writePolicy,
 } from "./state.js";
@@ -60,22 +60,29 @@ export class PolicyStore {
   /**
    * Read-modify-write under policy.json.lock: reads the file (throws on an invalid one rather
    * than overwrite it), writes the change atomically keeping unknown keys, and swaps the
-   * in-memory policy. Returns the new policy. `replaceOtherVersion` (only the owner's
+   * in-memory policy. Returns the new policy. `onOtherVersion` (only the owner's
    * `capybara-device ceiling set`): a file in another format version is replaced, the change
-   * applied to the closed policy and nothing of the old file kept.
+   * applied to {@link replacementPolicy} and nothing of the old file kept; it is called with
+   * the version error of the replaced file.
    */
-  update(change: (p: Policy) => Policy, opts: { replaceOtherVersion?: boolean } = {}): Policy {
+  update(
+    change: (p: Policy) => Policy,
+    opts: { onOtherVersion?: (replaced: PolicyVersionError) => void } = {},
+  ): Policy {
     return withPolicyLock(this.dir, () => {
       let read: PolicyFile;
+      let replaced: PolicyVersionError | undefined;
       try {
         read = readPolicyFile(this.dir);
       } catch (e) {
-        if (!(opts.replaceOtherVersion === true && e instanceof PolicyVersionError)) throw e;
-        read = { policy: closedPolicy(), extra: {} };
+        if (opts.onOtherVersion === undefined || !(e instanceof PolicyVersionError)) throw e;
+        read = { policy: replacementPolicy(), extra: {} };
+        replaced = e;
       }
       const { policy, extra } = read;
       const next = change(policy);
       writePolicy(this.dir, next, extra);
+      if (replaced !== undefined) opts.onOtherVersion?.(replaced);
       this.policy = next;
       this.version = versionOf(this.file);
       return next;

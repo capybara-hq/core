@@ -120,8 +120,7 @@ export const MISSING_POLICY_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
 
 /**
  * The closed policy: {@link MISSING_POLICY_OWNER_CEILING}, no domains, no project paths. Every
- * reader sees it while policy.json is missing, and `capybara-device ceiling set` starts from it
- * when it replaces a file in another version.
+ * reader sees it while policy.json is missing.
  */
 export function closedPolicy(): Policy {
   return {
@@ -131,6 +130,14 @@ export function closedPolicy(): Policy {
     ownerCeiling: { ...MISSING_POLICY_OWNER_CEILING },
     projectPaths: [],
   };
+}
+
+/**
+ * What `capybara-device ceiling set` starts from when it replaces a policy file in another format
+ * version: the closed policy with keep-awake off, so the rewrite widens nothing.
+ */
+export function replacementPolicy(): Policy {
+  return { ...closedPolicy(), keepAwake: "off" };
 }
 
 type Env = Record<string, string | undefined>;
@@ -229,13 +236,26 @@ export const POLICY_REWRITE_COMMAND = "capybara-device ceiling set";
 /**
  * policy.json is in another format version than {@link POLICY_VERSION}. No old format is
  * converted: the owner rewrites the file with {@link POLICY_REWRITE_COMMAND}, which starts from
- * the closed policy ({@link closedPolicy}).
+ * {@link replacementPolicy}. `found` is the file's `version` value (undefined when absent).
  */
-export class PolicyVersionError extends Error {}
+export class PolicyVersionError extends Error {
+  constructor(
+    message: string,
+    readonly file: string,
+    readonly found: unknown,
+  ) {
+    super(message);
+  }
+}
+
+/** How a policy format version found in a file is named in messages. */
+export function policyFormatName(found: unknown): string {
+  return found === undefined ? "(none)" : JSON.stringify(found);
+}
 
 /**
  * Why `paths` cannot be the project paths, or undefined when it can: a list of absolute,
- * normalized paths without a trailing slash (`/` itself allowed), at most
+ * normalized paths without a trailing slash (never `/`: that is the machine reach), at most
  * {@link MAX_PROJECT_PATHS}, without duplicates.
  */
 export function projectPathsProblem(paths: unknown): string | undefined {
@@ -243,6 +263,7 @@ export function projectPathsProblem(paths: unknown): string | undefined {
   if (paths.length > MAX_PROJECT_PATHS) return `at most ${MAX_PROJECT_PATHS} entries`;
   const seen = new Set<string>();
   for (const p of paths) {
+    if (p === "/") return 'paths other than "/" (use the machine project reach instead)';
     if (!isAbsolute(p) || p.includes("\0") || normalize(p) !== p || (p !== "/" && p.endsWith("/")))
       return `absolute normalized paths without a trailing slash (got ${JSON.stringify(p)})`;
     if (seen.has(p)) return `a list without duplicates (${JSON.stringify(p)} twice)`;
@@ -290,10 +311,12 @@ export function readPolicyFile(dir: string): PolicyFile {
   const o = raw as Record<string, unknown>;
   if (o.version !== POLICY_VERSION) {
     throw new PolicyVersionError(
-      `${file} is in policy format ${o.version === undefined ? "(none)" : JSON.stringify(o.version)}; ` +
+      `${file} is in policy format ${policyFormatName(o.version)}; ` +
         `this program reads only format ${POLICY_VERSION}. Rewrite it with ${POLICY_REWRITE_COMMAND} ` +
         "(it starts from the closed ceiling: workspace reach, allowlist network, nothing outside " +
         "the sandbox)",
+      file,
+      o.version,
     );
   }
   const bad = (key: string, want: string): Error =>

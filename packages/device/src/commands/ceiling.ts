@@ -4,12 +4,23 @@ import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
 import { reachWidens } from "../exec/read-model.js";
 import { PolicyStore } from "../policy-store.js";
 import {
-  closedPolicy,
   type OwnerCeilingPolicy,
+  POLICY_VERSION,
   PolicyVersionError,
+  policyFormatName,
   policyPath,
   readCredential,
+  replacementPolicy,
 } from "../state.js";
+
+/** Printed once when `ceiling set` replaced a policy file in another format version. */
+export function policyReplacedNotice(replaced: PolicyVersionError): string {
+  return (
+    `Replaced ${replaced.file} (format ${policyFormatName(replaced.found)}, this program reads ` +
+    `format ${POLICY_VERSION}): allowed domains, credentials, resource limits and keep-awake are ` +
+    "back to their defaults; set them again with capybara-device policy / keep-awake."
+  );
+}
 
 /** Printed before a widening is applied (by --yes or a confirmed prompt). */
 export const CEILING_WIDENING_TEXT =
@@ -93,8 +104,7 @@ export async function ceilingCommand(
 ): Promise<number> {
   const { stateDir, out, err } = deps;
   let store: PolicyStore;
-  // `ceiling set` on a file in another format version starts from the closed policy
-  let replaceOtherVersion = false;
+  // `ceiling set` on a file in another format version starts from the replacement policy
   try {
     store = new PolicyStore(stateDir);
   } catch (e) {
@@ -102,8 +112,7 @@ export async function ceilingCommand(
       err(`Cannot read ${policyPath(stateDir)}: ${(e as Error).message}`);
       return 1;
     }
-    store = new PolicyStore(stateDir, { initial: closedPolicy() });
-    replaceOtherVersion = true;
+    store = new PolicyStore(stateDir, { initial: replacementPolicy() });
   }
   const cur = store.current();
   if (cmd.action === "show" && cmd.json === true) {
@@ -169,6 +178,7 @@ export async function ceilingCommand(
   }
   deps.beforeWrite?.();
   let written: OwnerCeilingPolicy;
+  let replaced: PolicyVersionError | undefined;
   try {
     // decided again on the policy under the lock: a narrowing that landed since the read above
     // makes this a widening, which needs its own confirmation
@@ -178,7 +188,11 @@ export async function ceilingCommand(
         if (!confirmed && widens(p.ownerCeiling, next)) throw new WideningNeedsConfirmation();
         return { ...p, ownerCeiling: next };
       },
-      { replaceOtherVersion },
+      {
+        onOtherVersion: (e) => {
+          replaced = e;
+        },
+      },
     ).ownerCeiling;
   } catch (e) {
     if (e instanceof WideningNeedsConfirmation) {
@@ -194,6 +208,7 @@ export async function ceilingCommand(
     `ceiling set outsideSandbox ${written.outsideSandbox ? "on" : "off"}, network ` +
       `${written.network}, projectReach ${written.projectReach}`,
   );
+  if (replaced !== undefined) out(policyReplacedNotice(replaced));
   out("This machine's owner ceiling is now:");
   for (const line of describe(written)) out(line);
   if (written.network === "allowlist")
