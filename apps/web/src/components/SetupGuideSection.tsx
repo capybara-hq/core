@@ -99,7 +99,7 @@ export type SetupGuideSectionProps = (
   /** A line under the mode switch (why a mode is the default, or why it cannot be used). */
   modeNote?: { text: string; tone: "muted" | "warn" } | null;
   /**
-   * Draws a `::shell-action` block (a `device-connection` guide's 连接本机): the page owns the
+   * Draws a `::shell-action` block (a `device-connection` guide's Connect this machine): the page owns the
    * button. Absent or null: the block draws nothing.
    */
   renderShellAction?: (action: "connect-this-machine", label: string) => ReactNode;

@@ -105,7 +105,7 @@ const settle = async () => {
 };
 const renderDetail = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
-/** The device page's 项目 tab. */
+/** The device page's Projects tab. */
 const openProjects = async () => {
   const user = userEvent.setup();
   await user.click(await screen.findByRole("tab", { name: E.detail.tabProjects }));

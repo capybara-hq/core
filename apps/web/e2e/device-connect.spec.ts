@@ -105,7 +105,7 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
       page.locator('[data-template="DetailPage"]').getByText(machine).first(),
     ).toBeVisible();
 
-    // clean up: delete the device (概览's danger zone, typing its name)
+    // clean up: delete the device (the Overview tab's danger zone, typing its name)
     await page.getByRole("button", { name: zh.devices.detail.delete }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("textbox").fill(machine);

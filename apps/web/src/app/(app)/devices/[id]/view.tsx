@@ -54,12 +54,12 @@ import NotFound from "../../not-found";
  * display name, status light and the sandbox mark on the left, program version (a dial-in
  * device's machine), last seen (the machine's, else the instance's last use) and creation time on
  * the right — the page's one bright element, and the page's title: the PageHeader is title-less,
- * so the name is said once (`titleHidden`). Tabs 概览 (values: the provider's report, files,
- * recent changes, the danger zone), 网络 (the network setting) and 项目 (the projects).
- * Rename, 重建文件 (only when the provider's report offers a reset and its files are lost, a change
+ * so the name is said once (`titleHidden`). Tabs Overview (values: the provider's report, files,
+ * recent changes, the danger zone), Network (the network setting) and Projects (the projects).
+ * Rename, Rebuild files (only when the provider's report offers a reset and its files are lost, a change
  * waits for a file reset or its sandbox limits must be established again, said up front in a
  * callout; behind a confirmation; a job, so the page then polls until the files are back) and
- * 删除 (typing its name; deleting 个人设备 says a new empty one is created the next time one is
+ * Delete (typing its name; deleting the personal device says a new empty one is created the next time one is
  * needed). A provider not on in the org is one callout naming it.
  * From the query cache (the layout prefetched it on a first load); a device the kernel does not
  * find is the not-found state.

@@ -75,8 +75,8 @@ function UnsupportedNote() {
 }
 
 /**
- * 项目 (device provider design §6.6), the same for every provider: the list with Remove each
- * (after a confirmation), and 添加项目 in a dialog taking the path relative to the base the kernel
+ * Projects (device provider design §6.6), the same for every provider: the list with Remove each
+ * (after a confirmation), and Add project in a dialog taking the path relative to the base the kernel
  * returns (the provider's home, else the workspace; project root §4.2), the base drawn as a fixed
  * prefix. A device without project support says so and offers no form; a refusal of the
  * provider's (`device.project_refused`) shows its reason in the page language.

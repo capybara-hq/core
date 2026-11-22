@@ -25,15 +25,15 @@ import { SetupGuideSection } from "./SetupGuideSection";
 const WAIT_POLL_MS = 3000;
 
 /**
- * 新建设备 on the 设备 page: a card per device provider on in the org (the org's default preselected
+ * New device on the Devices page: a card per device provider on in the org (the org's default preselected
  * when it is one, else the first) and, under the cards, the chosen provider's connection guide.
  *
- * - A provider that creates devices itself: a name (1-64 characters) and 新建 (primary, disabled until
+ * - A provider that creates devices itself: a name (1-64 characters) and Create (primary, disabled until
  *   the name is valid). A created device is ready at once: the dialog invalidates the list and opens
  *   its page. A kernel refusal (name taken, limit reached) keeps the dialog open with its copy.
  * - A dial-in provider (a machine signs in): no name; the guide says how, and the dialog reads the
  *   devices until one of that provider it had not seen appears, and opens its page.
- * - In the desktop shell the guide's shell-action block is a primary 连接本机 button; in a browser it
+ * - In the desktop shell the guide's shell-action block is a primary Connect this machine button; in a browser it
  *   draws nothing.
  */
 export function DeviceCreateDialog({
@@ -212,7 +212,7 @@ function useWatchNewDevice(
 }
 
 /**
- * The guide's shell-action block: the primary 连接本机 button, only in a shell that offers
+ * The guide's shell-action block: the primary Connect this machine button, only in a shell that offers
  * `device@1` (a browser draws nothing). `connect` runs inside the click-driven mutation, so the
  * shell sees the person's activation.
  */

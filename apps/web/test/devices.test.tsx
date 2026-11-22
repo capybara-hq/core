@@ -140,7 +140,7 @@ const renderList = (opts: RenderOpts = {}) =>
 const renderDetail = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
-/** The device page's 网络 tab. */
+/** The device page's Network tab. */
 const openNetwork = async () => {
   const user = userEvent.setup();
   await user.click(await screen.findByRole("tab", { name: E.detail.tabNetwork }));

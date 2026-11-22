@@ -12,7 +12,8 @@ export type DeviceNameplateState = "running" | "suspended" | "online" | "offline
 export type DeviceNameplateProps = {
   /** The device's name, the plate's one large line. */
   name: string;
-  /** The device provider's display name (such as "Docker devices" or "本机"), drawn as is. */
+  /** The device provider's display name (such as "Docker devices" or "This machine"), drawn
+   * as is. */
   origin: string;
   state: DeviceNameplateState;
   /**
@@ -37,7 +38,7 @@ export type DeviceNameplateProps = {
   badge?: ReactNode;
   /**
    * The page's own labels. Anything left out comes from the design i18n (§7): the four state
-   * words, 程序 / 最后活跃 / 从未连接.
+   * words, Program / Last active / Never connected.
    */
   labels?: {
     state?: Partial<Record<DeviceNameplateState, string>>;
