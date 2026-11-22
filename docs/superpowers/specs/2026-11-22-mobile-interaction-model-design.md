@@ -161,7 +161,7 @@ Selects on compact open this sheet instead of a dropdown.
 | **Infinite scroll** | decided (D6): lists with cursors load the next page when the last rows come into view (an `IntersectionObserver` sentinel in the list component), with a skeleton row while loading and an inline retry row on error; no 「加载更多」 button rows on compact. Desktop keeps its pagination / load-more. |
 | Long press actions | decided (responsive doc §2.4) |
 | **Swipe actions** | decided (D3): **none for now**. Reasons: they compete with the iOS edge swipe and horizontal scrolling chips; they hide actions (principle 3 needs a visible equivalent anyway); the only strong candidate (archive a conversation) is one long press away. Revisit with real use (Q3). |
-| **Pull to refresh** | decided (D4) per surface: **yes** on the inbox, the conversations page and the drawer's recents in a native shell only (the browser's own pull-to-reload already exists in mobile Safari / Chrome and must not be doubled); **no** elsewhere: lists stay fresh through the query cache and SSE. |
+| **Pull to refresh** | decided (D4) per surface: **yes** on the inbox, the conversations page and the drawer's recents in the native mobile shell only (the browser's own pull-to-reload already exists in mobile Safari / Chrome and must not be doubled); **no** elsewhere: lists stay fresh through the query cache and SSE. |
 | Empty | the page EmptyState, centred in the remaining height, its action full width (one primary per screen: no FAB then) |
 | Loading | skeleton rows in the list's own card (never a spinner page); the head and compact bar real |
 | Error | the list's place says so with 重试 (full width); the head stays; a toast only for an action's failure |
@@ -437,8 +437,8 @@ All sixteen open questions of the review draft were answered as recommended:
 - **D1** Every desktop Dialog is a bottom sheet on compact (one modal form on phones).
 - **D2** Toasts sit at the bottom on phones, above the composer / FAB / ActionRow.
 - **D3** No swipe actions on rows for now; long press covers them.
-- **D4** Pull to refresh only in a native shell, on the inbox, the conversations page and the
-  drawer's recents; the browser keeps its own pull-to-reload.
+- **D4** Pull to refresh only in the native mobile shell, on the inbox, the conversations page and
+  the drawer's recents; the browser keeps its own pull-to-reload.
 - **D5** Return in the composer on touch inserts a newline; the button sends; a hardware keyboard
   keeps Enter to send.
 - **D6** Infinite scroll replaces load-more rows on compact; the desktop is unchanged.
