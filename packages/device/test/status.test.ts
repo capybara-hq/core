@@ -3,20 +3,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { status } from "../src/commands/status.js";
+import { connectionDir } from "../src/connections.js";
 import { CONTROL_PATH_MAX_BYTES, type LiveStatus } from "../src/control/protocol.js";
 import { startControlServer } from "../src/control/server.js";
 import { writeCredential } from "../src/state.js";
 
+/** The machine directory, and `dir` the connection directory in it. */
+let m: string;
 let dir: string;
 let close: (() => Promise<void>) | undefined;
 beforeEach(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), "device-status-")));
-  chmodSync(dir, 0o700);
+  m = realpathSync(mkdtempSync(join(tmpdir(), "device-status-")));
+  chmodSync(m, 0o700);
+  dir = connectionDir(m, "e1");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
 });
 afterEach(async () => {
   await close?.();
   close = undefined;
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(m, { recursive: true, force: true });
 });
 
 const cred = {
@@ -89,8 +94,9 @@ describe("status: the running program's live state", () => {
   });
 
   it("a running program whose socket path is too long is unavailable, with the reason", async () => {
-    const base = join(dir, "x".repeat(Math.max(1, CONTROL_PATH_MAX_BYTES - dir.length)));
-    mkdirSync(base, { mode: 0o700 });
+    const longMachine = join(m, "x".repeat(Math.max(1, CONTROL_PATH_MAX_BYTES - m.length)));
+    const base = connectionDir(longMachine, "e1");
+    mkdirSync(base, { recursive: true, mode: 0o700 });
     writeCredential(base, cred);
     const { out } = await run(base, true, { running: () => 4242 });
     expect(JSON.parse(out[0] as string)).toMatchObject({

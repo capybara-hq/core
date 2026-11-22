@@ -18,6 +18,7 @@ import { CommandLog } from "../src/command-log.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, MISSING_POLICY_NOTICE, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
+import { connectionDir } from "../src/connections.js";
 import { queryControl } from "../src/control/client.js";
 import { controlSocketPath } from "../src/control/protocol.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
@@ -40,11 +41,15 @@ const ps: ProcessLookup = () => ({
   started: new Date(0),
 });
 
+/** The machine directory, and `dir` the connection directory in it. */
+let m: string;
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "device-start-"));
+  m = mkdtempSync(join(tmpdir(), "device-start-"));
+  dir = connectionDir(m, "e1");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => rmSync(m, { recursive: true, force: true }));
 
 const cred = {
   url: "http://x.test",
@@ -581,7 +586,7 @@ describe("start: the control socket", () => {
 
   it("a control socket that cannot be made leaves the program serving", async () => {
     writeCredential(dir, cred);
-    chmodSync(dir, 0o755);
+    chmodSync(m, 0o755);
     const errs: string[] = [];
     const code = await start({
       stateDir: dir,

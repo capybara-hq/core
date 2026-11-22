@@ -3,8 +3,9 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivate } from "./state.js";
 
+/** `<connection dir>/pid`. */
 export function pidPath(dir: string): string {
-  return join(dir, "capybara-device.pid");
+  return join(dir, "pid");
 }
 
 /**
