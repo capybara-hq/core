@@ -740,8 +740,55 @@ describe("a dial-in device's sandbox network", () => {
         },
       ]);
       expect(await authorityEpoch(g.deviceId)).toBeGreaterThan(before);
+      // the page's recent changes carry it: kind network, via web, from → to
+      const view = await envView(m.req, g.deviceId);
+      expect(view.sandbox.recent[0]).toMatchObject({
+        kind: "network",
+        via: "web",
+        network: { from: { mode: null, hosts: [] }, to: { mode: "open", hosts: [] } },
+        by: { id: m.id },
+      });
     } finally {
       await setOrgDeviceNetwork(null);
+    }
+  });
+
+  it("local device: the platform's ceiling clamps it too (allowlist only, open refused)", async () => {
+    const m = await member();
+    const g = await login(m.req, "Clamped");
+    await accountsFor(db).createLocal({
+      login: "platform-admin",
+      password: PW,
+      displayName: "P",
+      superAdmin: true,
+    });
+    const admin = await session(k, "platform-admin");
+    const platformCeiling = async (ceiling: "allowlist" | null) => {
+      const res = await admin({
+        method: "PUT",
+        url: "/api/v1/admin/settings",
+        payload: { devicesNetwork: { ceiling } },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    await platformCeiling("allowlist");
+    try {
+      const res = await patchDevice(m.req, g.deviceId, { network: { mode: "open" } });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("device.network_not_allowed");
+      expect(await networkAudits(g.deviceId)).toHaveLength(0);
+      const view = await envView(m.req, g.deviceId);
+      expect(view.sandbox).toMatchObject({
+        networkCeiling: "allowlist",
+        layer: { network: "platform" },
+      });
+      // within the ceiling it is set as usual
+      const ok = await patchDevice(m.req, g.deviceId, {
+        network: { mode: "allowlist", hosts: ["registry.npmjs.org"] },
+      });
+      expect(ok.statusCode, ok.body).toBe(200);
+    } finally {
+      await platformCeiling(null);
     }
   });
 
