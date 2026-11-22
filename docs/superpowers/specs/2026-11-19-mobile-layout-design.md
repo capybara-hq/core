@@ -819,8 +819,13 @@ declare global {
   platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/"` (the home, the new
   conversation, decided 2026-11-21; the 2026-11-20 `/conversations` start followed the retired
   bottom navigation, where `/` was a pushed page), `scope: "/"`,
-  `theme_color` / `background_color` from the built-in theme's token values, never a plugin
-  theme's (a theme is CSS, which the manifest cannot read) **(decided)**. The document
+  `theme_color` / `background_color` from the platform default theme's page colour (its dark
+  `bg`, else its light one; the kernel's `ThemeRef.background`), else the built-in dark page
+  background (amended by the theme brand coverage spec §6, which supersedes "never a plugin
+  theme's"). The browser chrome's `themeColor` is one colour, the page colour of the scheme the
+  page renders (the `cb-theme` cookie, or a single-scheme theme's), from the route-group layout's
+  resolved theme (the root: the brand cookie's, else the platform default's), kept current after
+  a scheme toggle by `useThemeColorMeta`. The document
   `<title>` default and the `apple-mobile-web-app-title` follow the same name.
 - **Signed out**: the web proxy's matcher (`apps/web/src/proxy.ts`) excludes
   `/manifest.webmanifest` and the default icons, so a signed-out request is not redirected to
@@ -857,6 +862,12 @@ declare global {
   the tab), and the desktop shell as a consumer if it wants one (its start page, `/api/v1/meta`,
   the Dock icon at runtime; the desktop spec decides).
 - **Default**: the Capybara icon set shipped with the web (app, maskable, monochrome SVG).
+- **Precedence** (theme brand coverage spec §6, decision 8): apple-touch and manifest icons are
+  the upload, else the platform default theme's `logo.appIcon` / `logo.appIconMaskable` (the
+  theme's maskable only beside its own app icon), else the built-in PNGs; only the platform
+  default counts (the manifest is fetched without a session). The tab favicon keeps the resolved
+  theme > upload > built-in. The 应用图标 section previews that effective default, labelled
+  「来自主题 {name}」 / "From theme {name}" when it is the theme's.
 
 ### 10.3 Notifications (deferred)
 
