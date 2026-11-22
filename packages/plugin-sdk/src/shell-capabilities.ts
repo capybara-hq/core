@@ -174,15 +174,27 @@ export const MOBILE_SHELL_LIMITS = {
   navLabel: 32,
   /** `nav@1`: a badge count is an integer 0..9999 (`countMore` says there are more). */
   navCount: 9999,
+  /** `nav@1`: the account's name is 1..64 characters (its initial 1..2). */
+  navAccountName: 64,
 } as const;
 
 /** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */
 export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
 
-export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+/**
+ * The strip's items: the four sections and, last, `search` (opens the web's command palette; never
+ * `current`). A shell before the 2026-11-22 minor version knows only the four sections.
+ */
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
-/** The strip's sections in display order. */
-export const NAV_SECTION_ORDER: readonly NavSectionId[] = ["chats", "inbox", "agents", "schedules"];
+/** The strip's items in display order. */
+export const NAV_SECTION_ORDER: readonly NavSectionId[] = [
+  "chats",
+  "inbox",
+  "agents",
+  "schedules",
+  "search",
+];
 
 export interface NavBadgeV1 {
   count?: number;
@@ -198,19 +210,57 @@ export interface NavMenuV1 extends NavBadgeV1 {
   label: string;
 }
 
-export interface NavStateV1 {
-  /** The sections the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
-  items: NavItemV1[];
-  current: NavSectionId | null;
-  /** The strip's menu button, or null for none (non-null while the web's class is compact). */
-  menu: NavMenuV1 | null;
+/**
+ * The pill's top item, accent-filled: the page's primary action, else the new conversation
+ * (`id` matches MENU_ITEM_ID, `label` 1..navLabel; the shell draws its own glyph per `icon`).
+ */
+export interface NavActionV1 {
+  id: string;
+  label: string;
+  icon: "plus" | "square-pen";
 }
 
-/** `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is visibility. */
+/**
+ * The account avatar under the strip's status: the image at `avatarUrl` (an absolute https URL
+ * or one on the profile's origin), else `initial` in a circle; `badge` a count 0..navCount.
+ */
+export interface NavAccountV1 {
+  name: string;
+  avatarUrl?: string | null;
+  initial: string;
+  badge?: number;
+}
+
+export interface NavStateV1 {
+  /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
+  items: NavItemV1[];
+  current: NavSectionId | null;
+  /**
+   * The strip's menu button, or null for none. Optional since the 2026-11-22 minor version: the
+   * web no longer sends it (no menu button on the strip); kept for an older web.
+   */
+  menu?: NavMenuV1 | null;
+  /** The pill's top item (absent: the shell shows none). */
+  action?: NavActionV1;
+  /** The avatar under the status (absent: the shell shows none). */
+  account?: NavAccountV1;
+}
+
+/**
+ * `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is
+ * visibility. `side` is the edge the strip is on (right unless the app is the left one of a
+ * split), reported with the capability and updated with the envelope's `change`. `onAction`,
+ * `onAccount` and `side` arrived in a minor version: a shell before it lacks them.
+ */
 export interface NavCapabilityV1 {
   set(state: NavStateV1): Promise<void>;
   onSelect(listener: (id: NavSectionId) => void): () => void;
   onMenu(listener: () => void): () => void;
+  /** The pill's top item was tapped: the web runs the action. */
+  onAction?(listener: () => void): () => void;
+  /** The account avatar was tapped: the web opens its account sheet. */
+  onAccount?(listener: () => void): () => void;
+  readonly side?: "left" | "right";
 }
 
 /** `profiles@1`: the native profile switcher. */

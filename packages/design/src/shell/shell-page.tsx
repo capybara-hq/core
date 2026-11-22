@@ -23,6 +23,22 @@ export type ShellPage = {
    * `title` centred with a hairline under its strip. Registered by {@link useRegisterScrolledTitle}.
    */
   titleAway?: boolean;
+  /**
+   * The page's primary action (the head's primary, design spec §6.62): while a native strip
+   * shows (`nav@1`) on compact, the shell sends it as the strip pill's top item and runs it on a
+   * tap (interaction model §10.3, D10); without one the pill carries the new conversation. The
+   * template registers it (T0b.9). `id` is a short stable key (letters, digits, `_.-`).
+   */
+  primary?: ShellPrimary;
+};
+
+/** A page's primary action as the shell carries it to the strip (`nav@1` `action`). */
+export type ShellPrimary = {
+  id: string;
+  label: string;
+  /** The strip's glyph: `plus` (the default) or `square-pen`. */
+  icon?: "plus" | "square-pen";
+  run(): void;
 };
 
 type Register = (id: symbol, page: ShellPage | null, layer?: number) => void;
@@ -40,12 +56,35 @@ export const ShellPageContext = createContext<Register | null>(null);
 export function useRegisterShellPage(page: ShellPage, layer = 0): void {
   const register = useContext(ShellPageContext);
   const id = useRef<symbol>(Symbol("shell-page"));
-  const key = JSON.stringify([page.title, page.path, page.titleAway]);
+  const key = JSON.stringify([
+    page.title,
+    page.path,
+    page.titleAway,
+    page.primary && [page.primary.id, page.primary.label, page.primary.icon],
+  ]);
   // Layout effects: the row follows the page before paint (a restored scroll's titleAway lands
   // with the restored position, no late flash).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for title, path and titleAway
+  // the primary's latest `run` (an inline function changes every render): called through a ref
+  const run = useRef(page.primary?.run);
+  run.current = page.primary?.run;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for title, path, titleAway and the primary's fields
   useLayoutEffect(() => {
-    register?.(id.current, page, layer);
+    const p = page.primary;
+    register?.(
+      id.current,
+      p === undefined
+        ? page
+        : {
+            ...page,
+            primary: {
+              id: p.id,
+              label: p.label,
+              ...(p.icon ? { icon: p.icon } : {}),
+              run: () => run.current?.(),
+            },
+          },
+      layer,
+    );
   }, [register, key, page.menu, page.actions, page.onBack, layer]);
   useLayoutEffect(() => {
     const own = id.current;

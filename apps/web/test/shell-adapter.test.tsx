@@ -438,11 +438,16 @@ describe("the nav@1 and profiles@1 accessors", () => {
     expect(seen.at(-1)).toBeNull();
     const set = vi.fn(() => Promise.reject(new Error("no strip")));
     const off = vi.fn();
-    const nav = { set, onSelect: vi.fn(() => off), onMenu: vi.fn(() => off) };
+    const nav = {
+      set,
+      onSelect: vi.fn(() => off),
+      onMenu: vi.fn(() => off),
+      onAction: vi.fn(() => off),
+    };
     act(() => f.change({ "nav@1": nav }));
     const handle = seen.at(-1);
     expect(handle).toBeTruthy();
-    const state = { items: [{ id: "chats" as const, label: "对话" }], current: null, menu: null };
+    const state = { items: [{ id: "chats" as const, label: "对话" }], current: null };
     const unhandled = await unhandledDuring(() => handle?.set(state));
     expect(set).toHaveBeenCalledWith(state);
     expect(unhandled).not.toHaveBeenCalled();
@@ -453,8 +458,12 @@ describe("the nav@1 and profiles@1 accessors", () => {
     // the listeners pass through
     const l = () => {};
     expect(handle?.onSelect(l)).toBe(off);
-    expect(handle?.onMenu(l)).toBe(off);
+    expect(handle?.onAction?.(l)).toBe(off);
     expect(nav.onSelect).toHaveBeenCalledWith(l);
+    expect(nav.onAction).toHaveBeenCalledWith(l);
+    // a shell before the minor version has no onAccount: the handle has none; no onMenu ever
+    expect(handle?.onAccount).toBeUndefined();
+    expect(handle).not.toHaveProperty("onMenu");
     // a rerender keeps the handle while the capability object stays
     const before = seen.at(-1);
     view.rerender(<H />);

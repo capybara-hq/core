@@ -354,6 +354,9 @@ function ShellFrame({
   const router = useRouter();
   const navigate = useCallback((href: string) => router.push(href), [router]);
   // A native shell's strip (`nav@1`) and profile switcher (`profiles@1`): undefined in a browser.
+  // The AppShell drives the strip from the drawer's data below (interaction model §10.2–10.3):
+  // its sections and Search, the pill's top item (a page's registered primary, else the drawer's
+  // new conversation) and the account (the drawer's account, whose sheet the avatar opens).
   const nativeNav = useNativeNavHandle();
   const switchProfile = useSwitchProfile();
   const qc = useQueryClient();

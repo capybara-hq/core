@@ -1,8 +1,10 @@
-// The native wiring (mobile app spec §6): the frame hands the shell's nav@1 strip to the design
-// (the sections with the inbox count, taps navigate, the strip's menu button opens the drawer) and
-// profiles@1 to the account sheet and menu as "Switch platform"; downloads go to the system browser in a
-// shell with openExternal@1; DesignRoot passes the shell's menu / share / haptics and tells
-// chrome@1 the page has drawn.
+// The native wiring (mobile app spec §6; interaction model §10.2–10.4): the frame hands the
+// shell's nav@1 strip to the design (the sections with the inbox count and Search, the pill's top
+// item New conversation, the account; taps navigate after closing an open sheet, Search opens the
+// palette, the top item runs the primary, the avatar opens the account sheet; no menu button on
+// the strip, D12) and profiles@1 to the account sheet and menu as "Switch platform"; downloads go
+// to the system browser in a shell with openExternal@1; DesignRoot passes the shell's menu /
+// share / haptics and tells chrome@1 the page has drawn.
 import { useHaptics, useNative } from "@capybara-hq/design";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
@@ -42,29 +44,48 @@ function window_(width: number) {
   });
 }
 
-function fakeNav() {
+function fakeNav(side?: "left" | "right") {
   const select = new Set<(id: string) => void>();
   const menu = new Set<() => void>();
+  const action = new Set<() => void>();
+  const account = new Set<() => void>();
+  const sub =
+    <L,>(set: Set<L>) =>
+    (l: L) => {
+      set.add(l);
+      return () => set.delete(l);
+    };
+  const fire = (set: Set<() => void>) => {
+    for (const l of [...set]) l();
+  };
   return {
     nav: {
       set: vi.fn(async (_state: unknown) => {}),
-      onSelect: vi.fn((l: (id: string) => void) => {
-        select.add(l);
-        return () => select.delete(l);
-      }),
-      onMenu: vi.fn((l: () => void) => {
-        menu.add(l);
-        return () => menu.delete(l);
-      }),
+      onSelect: vi.fn(sub(select)),
+      onMenu: vi.fn(sub(menu)),
+      onAction: vi.fn(sub(action)),
+      onAccount: vi.fn(sub(account)),
+      ...(side ? { side } : {}),
     },
     select: (id: string) => {
       for (const l of [...select]) l(id);
     },
-    menu: () => {
-      for (const l of [...menu]) l();
-    },
+    menuListeners: () => menu.size,
+    action: () => fire(action),
+    account: () => fire(account),
   };
 }
+
+type NavState = {
+  items: { id: string; label: string; count?: number }[];
+  current: string | null;
+  menu?: unknown;
+  action?: { id: string; label: string; icon: string };
+  account?: { name: string; initial: string; avatarUrl?: string };
+};
+const lastState = (fake: ReturnType<typeof fakeNav>) =>
+  fake.nav.set.mock.calls.at(-1)?.[0] as NavState;
+const accountSheet = () => document.querySelector('[data-part="account-sheet"]');
 
 const pending = { pending: { count: 3, more: false } };
 const drawerEl = () => document.querySelector('[data-part="drawer"]') as HTMLElement | null;
@@ -79,29 +100,114 @@ afterEach(() => {
   vi.unstubAllGlobals();
   Reflect.deleteProperty(window, "capybaraShell");
   document.documentElement.removeAttribute("data-native-nav");
+  document.documentElement.removeAttribute("data-strip");
 });
 
 describe("AppFrame with nav@1", () => {
-  it("hands the strip the sections with the inbox count; a tap navigates, the menu opens the drawer", () => {
+  it("set carries action (page primary or 新会话) and account", () => {
     const fake = fakeNav();
     install(shellWith({ "nav@1": fake.nav }));
     renderFrame(shellOf(ME, pending));
     expect(document.querySelector(".cb-shell")?.hasAttribute("data-native-nav")).toBe(true);
     expect(fake.nav.set).toHaveBeenCalled();
-    const state = fake.nav.set.mock.calls.at(-1)?.[0] as {
-      items: { id: string; count?: number }[];
-      current: string | null;
-      menu: { label: string; count?: number } | null;
-    };
-    expect(state.items.map((i) => i.id)).toEqual(["chats", "inbox", "agents", "schedules"]);
+    const state = lastState(fake);
+    expect(state.items.map((i) => i.id)).toEqual([
+      "chats",
+      "inbox",
+      "agents",
+      "schedules",
+      "search",
+    ]);
     expect(state.items[1]?.count).toBe(3);
     expect(state.current).toBe("chats");
-    expect(state.menu).toEqual({ label: "打开菜单", count: 3 });
+    // no menu button on the strip (D12); the pill's top item is New conversation on a page without a primary
+    expect(state).not.toHaveProperty("menu");
+    expect(state.action).toEqual({ id: "new-conversation", label: "新会话", icon: "square-pen" });
+    expect(state.account).toEqual(
+      expect.objectContaining({ name: ME.account.displayName, initial: "G" }),
+    );
+    // the web never listens for the retired menu button
+    expect(fake.menuListeners()).toBe(0);
+  });
+
+  it("a section tap navigates without opening the drawer", () => {
+    const fake = fakeNav();
+    install(shellWith({ "nav@1": fake.nav }));
+    renderFrame(shellOf(ME, pending));
     act(() => fake.select("inbox"));
     expect(router.push).toHaveBeenCalledWith("/inbox");
     expect(drawerEl()).toBeNull();
-    act(() => fake.menu());
-    expect(drawerEl()).not.toBeNull();
+  });
+
+  it("onAction runs the primary (新会话 without one)", () => {
+    resetNavigation("/agents");
+    const fake = fakeNav();
+    install(shellWith({ "nav@1": fake.nav }));
+    renderFrame(shellOf(ME, pending));
+    act(() => fake.action());
+    expect(router.push).toHaveBeenCalledWith("/");
+  });
+
+  it("onAccount opens the account sheet", () => {
+    const fake = fakeNav();
+    install(shellWith({ "nav@1": fake.nav }));
+    renderFrame(shellOf(ME, pending));
+    expect(accountSheet()).toBeNull();
+    act(() => fake.account());
+    const sheet = accountSheet() as HTMLElement;
+    expect(sheet).not.toBeNull();
+    expect(within(sheet).getByText(ME.account.displayName)).toBeTruthy();
+    expect(drawerEl()).toBeNull();
+  });
+
+  it("a strip selection closes the open sheet first", async () => {
+    const fake = fakeNav();
+    install(shellWith({ "nav@1": fake.nav }));
+    renderFrame(shellOf(ME, pending));
+    act(() => fake.account());
+    // the touch window: the sheet holds a history entry
+    await waitFor(() =>
+      expect((window.history.state as Record<string, unknown> | null)?.cbOverlay).toBeDefined(),
+    );
+    const at: unknown[] = [];
+    router.push.mockImplementation(() => {
+      at.push((window.history.state as Record<string, unknown> | null)?.cbOverlay);
+    });
+    act(() => fake.select("agents"));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    // the sheet's entry was popped before the move
+    expect(at).toEqual([undefined]);
+    await waitFor(() => expect(accountSheet()).toBeNull());
+  });
+
+  it("search item opens the palette", async () => {
+    const fake = fakeNav();
+    install(shellWith({ "nav@1": fake.nav }));
+    renderFrame(shellOf(ME, pending));
+    expect(document.querySelector("[cmdk-root]")).toBeNull();
+    act(() => fake.select("search"));
+    await waitFor(() => expect(document.querySelector("[cmdk-root]")).not.toBeNull());
+  });
+
+  it("side from nav@1 is written as data-strip", () => {
+    const fake = fakeNav("left");
+    const listeners = new Set<() => void>();
+    const shell = {
+      ...shellWith({ "nav@1": fake.nav }),
+      on: (_e: string, l: () => void) => {
+        listeners.add(l);
+        return () => listeners.delete(l);
+      },
+    };
+    install(shell);
+    renderFrame(shellOf(ME, pending));
+    expect(document.documentElement.getAttribute("data-strip")).toBe("left");
+    // a live split change: the side moves with change
+    act(() => {
+      shell.capabilities = { "nav@1": { ...fake.nav, side: "right" } };
+      for (const l of [...listeners]) l();
+    });
+    expect(document.documentElement.getAttribute("data-strip")).toBe("right");
   });
 
   it("has no strip without nav@1", () => {

@@ -9,39 +9,53 @@ import type { MenuItem } from "./overlays/menus";
  * `AppShell nativeNav`). Without them (the browser) the design draws its own.
  */
 
-/** The native strip's sections (`nav@1`), in display order. */
-export type NativeSectionId = "chats" | "inbox" | "agents" | "schedules";
+/**
+ * The native strip's items (`nav@1`), in display order: the four sections and `search`, which
+ * opens the command palette (never current).
+ */
+export type NativeSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
-/** The strip's sections in display order (the SDK's `NAV_SECTION_ORDER`). */
+/** The strip's items in display order (the SDK's `NAV_SECTION_ORDER`). */
 export const NATIVE_SECTION_ORDER: readonly NativeSectionId[] = [
   "chats",
   "inbox",
   "agents",
   "schedules",
+  "search",
 ];
 
 /** The bounds the shell validates `nav@1` state against (the SDK's `MOBILE_SHELL_LIMITS`). */
 export const NATIVE_NAV_LIMITS = { label: 32, count: 9999 } as const;
+/** The account name's bound (the SDK's `MOBILE_SHELL_LIMITS.navAccountName`). */
+export const NATIVE_NAV_ACCOUNT_NAME = 64;
 
 /**
- * The native strip (`nav@1`, mobile app spec §6.1): a vertical tab bar in the iPhone Duo's strip,
- * offered only while the window has one (its presence is the strip's visibility).
+ * The strip's whole state (`nav@1.set`, mobile app spec §5.2; interaction model §10.2–10.3): the
+ * items the person sees (with the inbox count), the current section, the pill's top item (the
+ * page's primary, else the new conversation) and the account avatar. The web sends no `menu`
+ * (no menu button on the strip, D12).
+ */
+export interface NativeNavState {
+  items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
+  current: NativeSectionId | null;
+  action?: { id: string; label: string; icon: "plus" | "square-pen" };
+  account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number };
+}
+
+/**
+ * The native strip (`nav@1`, mobile app spec §6.1): the iPhone Duo's strip with the account
+ * avatar and the pill, offered only while the window has one (its presence is the strip's
+ * visibility). The strip's side is not here: the environment reads it (`data-strip`).
  */
 export interface NativeNavHandle {
-  /**
-   * The strip's whole state: the sections the person sees (with the inbox count), the current
-   * one, and its menu button (non-null while the web's class is compact; the button asks the web
-   * to open its drawer).
-   */
-  set(state: {
-    items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
-    current: NativeSectionId | null;
-    menu: { label: string; count?: number; countMore?: boolean } | null;
-  }): void;
-  /** A tap on a section, also the current one; returns the unsubscribe. */
+  /** The strip's whole state. */
+  set(state: NativeNavState): void;
+  /** A tap on an item, also the current one; returns the unsubscribe. */
   onSelect(listener: (id: NativeSectionId) => void): () => void;
-  /** A tap on the strip's menu button; returns the unsubscribe. */
-  onMenu(listener: () => void): () => void;
+  /** A tap on the pill's top item; returns the unsubscribe. Absent on an older shell. */
+  onAction?(listener: () => void): () => void;
+  /** A tap on the account avatar; returns the unsubscribe. Absent on an older shell. */
+  onAccount?(listener: () => void): () => void;
 }
 
 export type NativeHapticKind = "selection" | "light" | "success" | "warning";
