@@ -645,3 +645,98 @@ export function dialogFooterTreeFindings(
     "FOOTER_PENDING in tools/checks/src/web-ui-responsive.ts",
   );
 }
+
+// --- web-ui-load-more ------------------------------------------------------------------------
+
+export const LOAD_MORE_RULE = "web-ui-load-more";
+export const LOAD_MORE_STALE_RULE = "web-ui-load-more-stale";
+
+export const LOAD_MORE_MESSAGE =
+  "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
+
+export interface LoadMorePending {
+  /** Under apps/web/src, `/`-separated. */
+  path: string;
+  /** The task that moves the page onto the list's `onLoadMore`. */
+  fix: string;
+}
+
+const LOAD_MORE_FIX = "pass onLoadMore / hasMore / loadingMore / loadMoreError to the list";
+
+/** Pages that still draw their own Load more button; a ratchet, new pages are never added. */
+export const LOAD_MORE_PENDING: readonly LoadMorePending[] = [
+  { path: "app/(app)/admin/accounts/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/agents/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/audit/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/connectors/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/admin/overview/AttentionSection.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/evals/runs/[runId]/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/settings/audit/view.tsx", fix: LOAD_MORE_FIX },
+  { path: "app/(app)/trajectories/view.tsx", fix: LOAD_MORE_FIX },
+];
+
+const LOAD_MORE_BUTTONS = new Set(["Button", "LinkButton"]);
+/** The apps/web wrapper that draws a Load more row (components/cursor-pages.tsx). */
+const LOAD_MORE_WRAPPER = "LoadMore";
+const LOAD_MORE_TEXT = /加载更多|\bload more\b/i;
+
+/** A message key whose last segment is `loadMore` (`t("loadMore")`, `t("run.loadMore")`). */
+const isLoadMoreKey = (v: unknown) => typeof v === "string" && v.split(".").at(-1) === "loadMore";
+
+/** Does a button's content say Load more: a `loadMore` message key or the words themselves? */
+function saysLoadMore(children: Node[]): boolean {
+  let found = false;
+  for (const child of children) {
+    walk(child, (n) => {
+      if (found) return;
+      if (n.type === "JSXText" && LOAD_MORE_TEXT.test(n.value as string)) found = true;
+      else if (n.type === "Literal" && typeof n.value === "string") {
+        if (LOAD_MORE_TEXT.test(n.value) || isLoadMoreKey(n.value)) found = true;
+      }
+    });
+  }
+  return found;
+}
+
+/**
+ * `web-ui-load-more` over one parsed file: a `Button` / `LinkButton` whose content is a
+ * `loadMore` message or the words 加载更多 / Load more, and the `LoadMore` wrapper, fail.
+ */
+export function loadMoreFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  walk(p.program, (n) => {
+    if (n.type !== "JSXElement") return;
+    const name = jsxName(n.openingElement as Node);
+    const bad =
+      name === LOAD_MORE_WRAPPER ||
+      (name !== undefined && LOAD_MORE_BUTTONS.has(name) && saysLoadMore(n.children as Node[]));
+    if (bad)
+      out.push({
+        file: p.file,
+        line: p.lineOf(n.start),
+        rule: LOAD_MORE_RULE,
+        message: LOAD_MORE_MESSAGE,
+      });
+  });
+  return out;
+}
+
+export function loadMoreTreeFindings(
+  webSrcDir: string,
+  pending: readonly LoadMorePending[] = LOAD_MORE_PENDING,
+): Finding[] {
+  const raw: Finding[] = [];
+  for (const { file, isTest } of listSourceFiles(webSrcDir)) {
+    if (isTest) continue;
+    const p = parseFile(file);
+    if (!isParseError(p)) raw.push(...loadMoreFindings(p));
+  }
+  return applyPathRatchet(
+    raw,
+    pending,
+    webSrcDir,
+    LOAD_MORE_STALE_RULE,
+    "Load more button",
+    "LOAD_MORE_PENDING in tools/checks/src/web-ui-responsive.ts",
+  );
+}
