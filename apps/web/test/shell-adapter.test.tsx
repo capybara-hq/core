@@ -350,7 +350,10 @@ describe("typed capability accessors", () => {
     expect(screen.getByTestId("typed").textContent).toBe("---");
     act(() => f.change({ "notify@1": {}, "signIn@1": {} }));
     expect(screen.getByTestId("typed").textContent).toBe("-++");
+    // the web speaks device@2 only: a shell offering device@1 offers no device
     act(() => f.change({ "device@1": {} }));
+    expect(screen.getByTestId("typed").textContent).toBe("---");
+    act(() => f.change({ "device@2": {} }));
     expect(screen.getByTestId("typed").textContent).toBe("+--");
   });
 });

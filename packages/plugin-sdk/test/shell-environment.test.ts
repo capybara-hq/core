@@ -8,7 +8,7 @@ describe("shell environment", () => {
 
   it("the capability registry lists the eleven known keys", () => {
     expect(SHELL_CAPABILITIES.map((c) => c.key)).toEqual([
-      "device@1",
+      "device@2",
       "notify@1",
       "openExternal@1",
       "signIn@1",

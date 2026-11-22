@@ -1,7 +1,9 @@
 import { homedir } from "node:os";
+import { DEVICE_ID_PATTERN } from "../connections.js";
 import { type ProcessChecks, readRunning } from "../pid.js";
 import { hasLoginService } from "../service/installed.js";
 import { defaultRunSystem, managerState, type RunSystem } from "../service/manager.js";
+import { readCredential } from "../state.js";
 import { signalRunning } from "./signal.js";
 
 export interface StopOptions extends ProcessChecks {
@@ -9,6 +11,16 @@ export interface StopOptions extends ProcessChecks {
   service?: { home: string; platform: NodeJS.Platform; uid?: number };
   /** Asks the service manager (default: execFileSync). */
   run?: RunSystem;
+}
+
+/** The device of the connection's credential; none when it is missing or unreadable. */
+function credentialDeviceId(stateDir: string): string | undefined {
+  try {
+    const id = readCredential(stateDir)?.deviceId;
+    return id !== undefined && DEVICE_ID_PATTERN.test(id) ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -29,8 +41,9 @@ export function stop(
     ...(opts.kill && { kill: opts.kill }),
     ...(opts.ps && { ps: opts.ps }),
   };
-  if (hasLoginService(where.home, where.platform)) {
-    const state = managerState(where, opts.run ?? defaultRunSystem);
+  const deviceId = credentialDeviceId(stateDir);
+  if (deviceId !== undefined && hasLoginService(where.home, where.platform, deviceId)) {
+    const state = managerState({ ...where, deviceId }, opts.run ?? defaultRunSystem);
     const program = readRunning(stateDir, checks);
     if (state.loaded && program !== undefined && state.pid === program.pid) {
       err(

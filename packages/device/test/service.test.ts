@@ -5,6 +5,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,28 +18,41 @@ import {
   SERVICE_POLL_MS,
   serviceCommand,
 } from "../src/commands/service.js";
+import { connectionDir } from "../src/connections.js";
 import { writePid } from "../src/pid.js";
+import { hasLoginService } from "../src/service/installed.js";
 import {
   LAUNCHD_THROTTLE_INTERVAL_SECONDS,
+  launchdLabel,
   plistContent,
   plistPath,
   rotateServiceLog,
 } from "../src/service/launchd.js";
-import { SYSTEMD_UNIT, unitContent, unitPath } from "../src/service/systemd.js";
+import { startedByServiceManager } from "../src/service/manager.js";
+import {
+  SYSTEMD_TEMPLATE,
+  systemdUnit,
+  unitContent,
+  unitPath,
+  unitWantsLink,
+} from "../src/service/systemd.js";
+import { writeCredential } from "../src/state.js";
 
+const id = "dev-1";
 const spec = {
   nodePath: "/opt/node 22/bin/node",
   binPath: "/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs",
-  stateDir: "/home/u/.config/capybara-device",
+  stateDir: "/home/u/.config/capybara-device/connections/dev-1",
+  deviceId: id,
   env: { PATH: "/usr/local/bin:/usr/bin", XDG_CONFIG_HOME: "/home/u/.config" },
 };
 
 describe("service files", () => {
   it("launchd plist runs start with the node path", () => {
     const p = plistContent(spec);
-    expect(p).toContain("<key>Label</key>\n  <string>top.capybara.device</string>");
+    expect(p).toContain("<key>Label</key>\n  <string>top.capybara.device.dev-1</string>");
     expect(p).toContain(
-      "<string>/opt/node 22/bin/node</string>\n    <string>/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs</string>\n    <string>start</string>",
+      "<string>/opt/node 22/bin/node</string>\n    <string>/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs</string>\n    <string>start</string>\n    <string>--connection</string>\n    <string>dev-1</string>",
     );
     expect(p).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
     // Only a failing exit restarts the program: exit 0 is a deliberate stop (logout, revoked,
@@ -52,9 +66,13 @@ describe("service files", () => {
       ),
     );
     expect(LAUNCHD_THROTTLE_INTERVAL_SECONDS).toBeGreaterThanOrEqual(10);
-    expect(p).toContain("<string>/home/u/.config/capybara-device/service.log</string>");
+    expect(p).toContain(
+      "<string>/home/u/.config/capybara-device/connections/dev-1/service.log</string>",
+    );
     expect(p).toContain("<key>PATH</key>");
-    expect(plistPath("/Users/u")).toBe("/Users/u/Library/LaunchAgents/top.capybara.device.plist");
+    expect(plistPath("/Users/u", id)).toBe(
+      "/Users/u/Library/LaunchAgents/top.capybara.device.dev-1.plist",
+    );
   });
 
   it("escapes XML in paths", () => {
@@ -64,12 +82,12 @@ describe("service files", () => {
   it("systemd unit restarts on failure", () => {
     const u = unitContent(spec);
     expect(u).toContain(
-      'ExecStart="/opt/node 22/bin/node" "/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs" start',
+      'ExecStart="/opt/node 22/bin/node" "/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs" start --connection %i',
     );
     expect(u).toContain("Restart=on-failure");
     expect(u).toContain("WantedBy=default.target");
     expect(u).toContain('Environment="PATH=/usr/local/bin:/usr/bin"');
-    expect(unitPath("/home/u")).toBe("/home/u/.config/systemd/user/capybara-device.service");
+    expect(unitPath("/home/u")).toBe("/home/u/.config/systemd/user/capybara-device@.service");
     expect(unitContent({ ...spec, binPath: "/x/100%/b" })).toContain("100%%");
   });
 });
@@ -104,9 +122,10 @@ describe("service command", () => {
     return "";
   };
   const sleep = async (ms: number) => void slept.push(ms);
-  const label = "gui/501/top.capybara.device";
+  const label = "gui/501/top.capybara.device.dev-1";
   const base = () => ({
-    stateDir: join(home, ".config", "capybara-device"),
+    stateDir: join(home, ".config", "capybara-device", "connections", id),
+    deviceId: id,
     home,
     env: { PATH: "/bin" },
     out: (l: string) => void lines.push(l),
@@ -139,7 +158,8 @@ describe("service command", () => {
       calls.push([cmd, ...args]);
       if (args[0] === "print") {
         if (goneAfter !== undefined && goneAfter-- <= 0) loaded = false;
-        if (!loaded) throw failed(113, `Could not find service "top.capybara.device" in domain`);
+        if (!loaded)
+          throw failed(113, `Could not find service "top.capybara.device.dev-1" in domain`);
         return `\tstate = running\n\tpid = ${pid}\n`;
       }
       if (args[0] === "bootout") {
@@ -163,11 +183,11 @@ describe("service command", () => {
     expect(await serviceCommand("install", { ...base(), run: launchctl, platform: "darwin" })).toBe(
       0,
     );
-    expect(readFileSync(plistPath(home), "utf8")).toContain("<string>/n/node</string>");
+    expect(readFileSync(plistPath(home, id), "utf8")).toContain("<string>/n/node</string>");
     // nothing loaded: no bootout
     expect(calls).toEqual([
       ["launchctl", "print", label],
-      ["launchctl", "bootstrap", "gui/501", plistPath(home)],
+      ["launchctl", "bootstrap", "gui/501", plistPath(home, id)],
     ]);
     calls.length = 0;
     expect(
@@ -177,7 +197,7 @@ describe("service command", () => {
       ["launchctl", "bootout", label],
       ["launchctl", "print", label],
     ]);
-    expect(existsSync(plistPath(home))).toBe(false);
+    expect(existsSync(plistPath(home, id))).toBe(false);
   });
 
   it("macOS install waits until the old service is gone after bootout, then bootstraps", async () => {
@@ -192,21 +212,21 @@ describe("service command", () => {
       ["launchctl", "print", label],
       ["launchctl", "print", label],
       ["launchctl", "print", label],
-      ["launchctl", "bootstrap", "gui/501", plistPath(home)],
+      ["launchctl", "bootstrap", "gui/501", plistPath(home, id)],
     ]);
     expect(slept).toEqual([SERVICE_POLL_MS, SERVICE_POLL_MS, SERVICE_POLL_MS]);
   });
 
   it("macOS install over a loaded agent rewrites the plist and loads the new one", async () => {
-    mkdirSync(dirname(plistPath(home)), { recursive: true });
-    writeFileSync(plistPath(home), "old plist");
+    mkdirSync(dirname(plistPath(home, id)), { recursive: true });
+    writeFileSync(plistPath(home, id), "old plist");
     const launchctl = fakeLaunchctl({ loaded: true });
     expect(await serviceCommand("install", { ...base(), run: launchctl, platform: "darwin" })).toBe(
       0,
     );
     // bootout before the write, bootstrap after it: launchd reads the new plist at bootstrap.
     expect(calls.map((c) => c[1])).toEqual(["bootout", "print", "bootstrap"]);
-    const written = readFileSync(plistPath(home), "utf8");
+    const written = readFileSync(plistPath(home, id), "utf8");
     expect(written).not.toContain("old plist");
     expect(written).toMatch(/<key>SuccessfulExit<\/key>\s*<false\/>/);
     expect(written).toContain(
@@ -215,12 +235,14 @@ describe("service command", () => {
   });
 
   const installPlist = () => {
-    mkdirSync(dirname(plistPath(home)), { recursive: true });
-    writeFileSync(plistPath(home), plistContent(spec));
+    mkdirSync(dirname(plistPath(home, id)), { recursive: true });
+    writeFileSync(plistPath(home, id), plistContent(spec));
   };
   const installUnit = () => {
     mkdirSync(dirname(unitPath(home)), { recursive: true });
     writeFileSync(unitPath(home), unitContent(spec));
+    mkdirSync(dirname(unitWantsLink(home, id)), { recursive: true });
+    symlinkSync(unitPath(home), unitWantsLink(home, id));
   };
 
   it("macOS start: refuses without an install, bootstraps an installed one, no-ops when loaded", async () => {
@@ -331,15 +353,15 @@ describe("service command", () => {
     lines.length = 0;
     calls.length = 0;
     expect(await serviceCommand("start", { ...base(), run: inactive, platform: "linux" })).toBe(0);
-    expect(calls).toContainEqual(["systemctl", "--user", "start", SYSTEMD_UNIT]);
+    expect(calls).toContainEqual(["systemctl", "--user", "start", systemdUnit(id)]);
     lines.length = 0;
     calls.length = 0;
     expect(await serviceCommand("restart", { ...base(), run: running, platform: "linux" })).toBe(0);
-    expect(calls).toContainEqual(["systemctl", "--user", "restart", SYSTEMD_UNIT]);
+    expect(calls).toContainEqual(["systemctl", "--user", "restart", systemdUnit(id)]);
     lines.length = 0;
     calls.length = 0;
     expect(await serviceCommand("stop", { ...base(), run: running, platform: "linux" })).toBe(0);
-    expect(calls).toContainEqual(["systemctl", "--user", "stop", SYSTEMD_UNIT]);
+    expect(calls).toContainEqual(["systemctl", "--user", "stop", systemdUnit(id)]);
   });
 
   it("macOS install stops waiting for the old service at the time limit", async () => {
@@ -353,7 +375,7 @@ describe("service command", () => {
     );
     const total = slept.reduce((a, b) => a + b, 0);
     expect(total).toBe(SERVICE_GONE_TIMEOUT_MS);
-    expect(calls.at(-1)).toEqual(["launchctl", "bootstrap", "gui/501", plistPath(home)]);
+    expect(calls.at(-1)).toEqual(["launchctl", "bootstrap", "gui/501", plistPath(home, id)]);
   });
 
   it("macOS install retries a bootstrap that fails with error 5", async () => {
@@ -396,8 +418,8 @@ describe("service command", () => {
     // restart: a unit already running picks up the new file too
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
-      ["systemctl", "--user", "enable", "capybara-device.service"],
-      ["systemctl", "--user", "restart", "capybara-device.service"],
+      ["systemctl", "--user", "enable", "capybara-device@dev-1.service"],
+      ["systemctl", "--user", "restart", "capybara-device@dev-1.service"],
     ]);
     calls.length = 0;
     expect(await serviceCommand("uninstall", { ...base(), platform: "linux" })).toBe(0);
@@ -406,7 +428,7 @@ describe("service command", () => {
       "--user",
       "disable",
       "--now",
-      "capybara-device.service",
+      "capybara-device@dev-1.service",
     ]);
     expect(existsSync(unitPath(home))).toBe(false);
   });
@@ -465,6 +487,8 @@ describe("service command", () => {
       unitPath(home),
       unitContent({ ...spec, binPath: join(pkg, "bin", "capybara-device.mjs") }),
     );
+    mkdirSync(dirname(unitWantsLink(home, id)), { recursive: true });
+    symlinkSync(unitPath(home), unitWantsLink(home, id));
     const systemctl = (_cmd: string, args: string[]): string => {
       if (args.includes("is-active")) throw failed(3, "inactive");
       return "";
@@ -519,12 +543,129 @@ describe("service command", () => {
     expect(lines.join("\n")).not.toContain("{");
   });
 
+  it("the plist's label and arguments name the connection", () => {
+    const c = plistContent({
+      ...spec,
+      deviceId: "dev-2",
+      stateDir: join(home, "connections", "dev-2"),
+    });
+    expect(c).toContain("<string>top.capybara.device.dev-2</string>");
+    expect(c).toMatch(
+      /<string>start<\/string>\s*<string>--connection<\/string>\s*<string>dev-2<\/string>/,
+    );
+    expect(c).toContain(join(home, "connections", "dev-2", "service.log"));
+  });
+
+  it("two connections install two agents side by side; uninstalling one leaves the other", async () => {
+    const launchctl = fakeLaunchctl({});
+    const two = { ...base(), deviceId: "dev-2", stateDir: join(home, "c2") };
+    await serviceCommand("install", { ...base(), run: launchctl, platform: "darwin" });
+    await serviceCommand("install", { ...two, run: launchctl, platform: "darwin" });
+    expect(calls).toContainEqual(["launchctl", "bootstrap", "gui/501", plistPath(home, "dev-2")]);
+    expect(existsSync(plistPath(home, "dev-1"))).toBe(true);
+    expect(existsSync(plistPath(home, "dev-2"))).toBe(true);
+    calls.length = 0;
+    await serviceCommand("uninstall", { ...base(), run: launchctl, platform: "darwin" });
+    expect(existsSync(plistPath(home, "dev-1"))).toBe(false);
+    expect(existsSync(plistPath(home, "dev-2"))).toBe(true);
+    expect(calls.flat().some((a) => a.includes("dev-2"))).toBe(false);
+  });
+
+  it("systemd: one template, one enabled instance per connection", async () => {
+    const two = { ...base(), deviceId: "dev-2", stateDir: join(home, "c2") };
+    await serviceCommand("install", { ...base(), platform: "linux" });
+    await serviceCommand("install", { ...two, platform: "linux" });
+    expect(readFileSync(unitPath(home), "utf8")).toMatch(/ExecStart=.* start --connection %i$/m);
+    expect(calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "enable",
+      "capybara-device@dev-1.service",
+    ]);
+    expect(calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "enable",
+      "capybara-device@dev-2.service",
+    ]);
+    expect(hasLoginService(home, "linux", "dev-1")).toBe(true);
+    expect(hasLoginService(home, "linux", "dev-2")).toBe(true);
+    // a non-last instance keeps the template; the last one removes it
+    await serviceCommand("uninstall", { ...base(), platform: "linux" });
+    expect(existsSync(unitPath(home))).toBe(true);
+    expect(hasLoginService(home, "linux", "dev-1")).toBe(false);
+    expect(hasLoginService(home, "linux", "dev-2")).toBe(true);
+    await serviceCommand("uninstall", { ...two, platform: "linux" });
+    expect(existsSync(unitPath(home))).toBe(false);
+    expect(SYSTEMD_TEMPLATE).toBe("capybara-device@.service");
+  });
+
+  it("startedByServiceManager matches only this connection's label", () => {
+    expect(startedByServiceManager({ XPC_SERVICE_NAME: launchdLabel("dev-1") }, "dev-1")).toBe(
+      true,
+    );
+    expect(startedByServiceManager({ XPC_SERVICE_NAME: launchdLabel("dev-2") }, "dev-1")).toBe(
+      false,
+    );
+    expect(startedByServiceManager({ XPC_SERVICE_NAME: "top.capybara.device" }, "dev-1")).toBe(
+      false,
+    );
+  });
+
+  it("an invalid device id is refused before any path, label or unit is built", async () => {
+    for (const bad of ["../../x", "a/b", "", "a%i", "x".repeat(129)]) {
+      expect(() => launchdLabel(bad)).toThrow(/Invalid device id/);
+      expect(() => plistPath(home, bad)).toThrow(/Invalid device id/);
+      expect(() => systemdUnit(bad)).toThrow(/Invalid device id/);
+      expect(() => unitWantsLink(home, bad)).toThrow(/Invalid device id/);
+      for (const platform of ["darwin", "linux"] as const) {
+        const deps = { ...base(), deviceId: bad, platform };
+        expect(await serviceCommand("install", deps)).toBe(1);
+        expect(await serviceCommand("uninstall", deps)).toBe(1);
+      }
+    }
+    expect(calls).toEqual([]);
+    expect(existsSync(join(home, "Library"))).toBe(false);
+    expect(existsSync(join(home, ".config", "systemd"))).toBe(false);
+  });
+
+  it("the old top.capybara.device agent and capybara-device.service unit are never touched", async () => {
+    const oldPlist = join(home, "Library", "LaunchAgents", "top.capybara.device.plist");
+    mkdirSync(dirname(oldPlist), { recursive: true });
+    writeFileSync(oldPlist, "old plist");
+    const oldUnit = join(home, ".config", "systemd", "user", "capybara-device.service");
+    mkdirSync(dirname(oldUnit), { recursive: true });
+    writeFileSync(oldUnit, "old unit");
+    const launchctl = fakeLaunchctl({});
+    await serviceCommand("install", { ...base(), run: launchctl, platform: "darwin" });
+    await serviceCommand("uninstall", { ...base(), run: launchctl, platform: "darwin" });
+    await serviceCommand("install", { ...base(), platform: "linux" });
+    await serviceCommand("uninstall", { ...base(), platform: "linux" });
+    const args = calls.flat();
+    expect(args).not.toContain("gui/501/top.capybara.device");
+    expect(args).not.toContain("capybara-device.service");
+    expect(readFileSync(oldPlist, "utf8")).toBe("old plist");
+    expect(readFileSync(oldUnit, "utf8")).toBe("old unit");
+  });
+
   it("is wired into the CLI", async () => {
     const out: string[] = [];
+    const env = { PATH: "/bin", XDG_CONFIG_HOME: join(home, "xdg") };
+    writeCredential(connectionDir(join(home, "xdg", "capybara-device"), id), {
+      url: "http://x.test",
+      connectUrl: "ws://x.test/device/connect",
+      credential: "cap_dev_a",
+      orgId: "o",
+      deviceId: id,
+      dir: "/w",
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 16 * 1024 * 1024,
+    });
     const code = await runCli(["service", "install"], {
       home,
       platform: "linux",
-      env: { PATH: "/bin" },
+      env,
       out: (l) => void out.push(l),
       err: (l) => void out.push(l),
       runSystem: run,

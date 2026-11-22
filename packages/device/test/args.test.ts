@@ -7,7 +7,6 @@ describe("parseCommandLine", () => {
       command: "login",
       url: "u",
       browser: false,
-      mode: "os",
       json: true,
     });
   });
@@ -37,12 +36,11 @@ describe("parseCommandLine", () => {
     ).toThrow(UsageError);
   });
 
-  it("parses login flags with defaults", () => {
+  it("parses login flags; --mode is absent unless given", () => {
     expect(parseCommandLine(["login", "--url", "https://x.test"])).toEqual({
       command: "login",
       url: "https://x.test",
       browser: true,
-      mode: "os",
     });
     expect(
       parseCommandLine(["login", "--url", "u", "--no-browser", "--dir", "/d", "--mode", "docker"]),
@@ -156,5 +154,37 @@ describe("parseCommandLine", () => {
     expect(() => parseCommandLine(["service"])).toThrow(UsageError);
     expect(() => parseCommandLine(["service", "status", "now"])).toThrow(UsageError);
     expect(parseCommandLine([])).toEqual({ command: "help" });
+  });
+});
+
+describe("--connection / -c", () => {
+  it("every command but login and help takes --connection and -c", () => {
+    for (const line of [
+      ["status"],
+      ["logout"],
+      ["start"],
+      ["stop"],
+      ["drain"],
+      ["drain", "--wait"],
+      ["policy"],
+      ["policy", "set", "cpu", "2"],
+      ["ceiling"],
+      ["ceiling", "set", "--network", "open"],
+      ["keep-awake"],
+      ["keep-awake", "connected", "--yes"],
+      ["service", "status"],
+    ]) {
+      expect(parseCommandLine([...line, "-c", "dev-1"])).toMatchObject({ connection: "dev-1" });
+      expect(parseCommandLine([...line, "--connection", "dev-1"])).toMatchObject({
+        connection: "dev-1",
+      });
+      expect(parseCommandLine(line)).not.toHaveProperty("connection");
+    }
+    expect(() => parseCommandLine(["login", "--url", "https://x", "-c", "a"])).toThrow(UsageError);
+  });
+
+  it("an empty selector is a usage error", () => {
+    expect(() => parseCommandLine(["status", "-c", ""])).toThrow(UsageError);
+    expect(() => parseCommandLine(["start", "--connection", ""])).toThrow(UsageError);
   });
 });

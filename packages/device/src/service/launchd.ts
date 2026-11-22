@@ -1,7 +1,13 @@
 import { copyFileSync, statSync, truncateSync } from "node:fs";
 import { join } from "node:path";
+import { serviceDeviceId } from "./device-id.js";
 
-export const LAUNCHD_LABEL = "top.capybara.device";
+export const LAUNCHD_LABEL_PREFIX = "top.capybara.device.";
+
+/** The launchd label of one connection's agent. */
+export function launchdLabel(deviceId: string): string {
+  return `${LAUNCHD_LABEL_PREFIX}${serviceDeviceId(deviceId)}`;
+}
 
 /**
  * Minimum seconds between launchd restarts of the agent: a program that keeps failing (exit code
@@ -14,14 +20,16 @@ export interface ServiceSpec {
   nodePath: string;
   /** Absolute path of the `capybara-device` bin script. */
   binPath: string;
-  /** The state directory: logs go there. */
+  /** The connection directory: logs go there. */
   stateDir: string;
+  /** The connection the agent serves: `start --connection <deviceId>`. */
+  deviceId: string;
   /** Environment the service needs: PATH (for docker) and XDG_CONFIG_HOME when set. */
   env: Record<string, string>;
 }
 
-export function plistPath(home: string): string {
-  return join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+export function plistPath(home: string, deviceId: string): string {
+  return join(home, "Library", "LaunchAgents", `${launchdLabel(deviceId)}.plist`);
 }
 
 function xml(s: string): string {
@@ -29,7 +37,8 @@ function xml(s: string): string {
 }
 
 /**
- * The launchd agent: `node <bin> start` at login, and again after every failing exit. The program
+ * The launchd agent: `node <bin> start --connection <id>` at login, and again after every
+ * failing exit. The program
  * exits 0 only for a deliberate stop (logout, a revoked credential, `drain`, not logged in, a
  * newer connection of this device), which must stay stopped; every exit it must recover from (a
  * crash, a deployment that needs a newer program) is non-zero, so `KeepAlive { SuccessfulExit:
@@ -44,12 +53,14 @@ export function plistContent(spec: ServiceSpec): string {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${LAUNCHD_LABEL}</string>
+  <string>${xml(launchdLabel(spec.deviceId))}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${xml(spec.nodePath)}</string>
     <string>${xml(spec.binPath)}</string>
     <string>start</string>
+    <string>--connection</string>
+    <string>${xml(spec.deviceId)}</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

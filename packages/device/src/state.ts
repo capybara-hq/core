@@ -32,6 +32,10 @@ export interface Credential {
   reconnectGraceSeconds: number;
   /** The deployment's `devices.dialIn.maxFrameBytes`: no frame this program sends is larger. */
   maxFrameBytes: number;
+  /** The device's name at the deployment when it returned one with the credential. */
+  deviceName?: string;
+  /** The organization's name at the deployment when it returned one with the credential. */
+  orgName?: string;
 }
 
 /**
@@ -214,6 +218,11 @@ export function readCredential(dir: string): Credential | undefined {
   for (const key of ["url", "connectUrl", "credential", "orgId", "deviceId", "dir", "mode"]) {
     if (typeof raw[key as keyof Credential] !== "string") {
       throw new Error(`${file} is invalid: missing ${key}; log in again`);
+    }
+  }
+  for (const key of ["deviceName", "orgName"] as const) {
+    if (raw[key] !== undefined && typeof raw[key] !== "string") {
+      throw new Error(`${file} is invalid: ${key} must be a string; log in again`);
     }
   }
   const grace = raw.reconnectGraceSeconds ?? DEFAULT_RECONNECT_GRACE_SECONDS;
