@@ -5,6 +5,7 @@ import {
   Callout,
   CheckRow,
   type CheckRowState,
+  type GuideBlock,
   GuideDocument,
   Segmented,
   Skeleton,
@@ -20,6 +21,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { ApiClientError } from "../lib/api";
@@ -96,6 +98,11 @@ export type SetupGuideSectionProps = (
   onModeShown?: (mode: string | null) => void;
   /** A line under the mode switch (why a mode is the default, or why it cannot be used). */
   modeNote?: { text: string; tone: "muted" | "warn" } | null;
+  /**
+   * Draws a `::shell-action` block (a `device-connection` guide's Connect this machine): the page
+   * owns the button. Absent or null: the block draws nothing.
+   */
+  renderShellAction?: (action: "connect-this-machine", label: string) => ReactNode;
 };
 
 /**
@@ -121,6 +128,7 @@ export function SetupGuideSection({
   onModeChange,
   onModeShown,
   modeNote = null,
+  renderShellAction,
 }: SetupGuideSectionProps) {
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
@@ -174,8 +182,12 @@ export function SetupGuideSection({
     g.target !== null || query.connectionId !== undefined || query.connectorId !== undefined;
   // Before save (新建渠道): the reference part after the last thematic break is not shown, and the
   // check rows, which need a saved target, are one line (channel inbound mode fields spec §5)
-  const blocks = saved || admin || onDeployment ? g.blocks : beforeReference(g.blocks);
-  const pendingChecks = !saved && !admin && !onDeployment && blocks.some((b) => b.kind === "check");
+  // (a device-connection guide has no target: it shows every block)
+  const full = saved || admin || onDeployment || g.place === "device-connection";
+  const blocks = full ? g.blocks : beforeReference(g.blocks);
+  const pendingChecks = !full && blocks.some((b) => b.kind === "check");
+  const renderAction = (a: { id: string; label: string }) =>
+    renderShellAction?.(a.id as "connect-this-machine", a.label) ?? null;
   const selection: SetupCheckSelection = {
     ...(query.connectionId !== undefined && { connectionId: query.connectionId }),
     ...(query.connectorId !== undefined && { connectorId: query.connectorId }),
@@ -232,10 +244,12 @@ export function SetupGuideSection({
           key={g.mode ?? ""}
           g={g}
           source={source}
+          renderAction={renderAction}
         />
       ) : (
         <GuideDocument
-          blocks={blocks}
+          blocks={blocks.map(guideBlock)}
+          renderAction={renderAction}
           renderCheck={(c) =>
             // the platform view has no target to check (spec §9.3), and before save the rows are
             // the one line below
@@ -330,6 +344,10 @@ const MAX_IN_FLIGHT = 4;
 /** Runs a row gets on view (a run answered `running` that left no result is tried again). */
 const MAX_AUTO_RUNS = 3;
 
+/** A rendered guide block as the design's: a `::shell-action` is an action block the page draws. */
+const guideBlock = (b: RenderedSetupGuide["blocks"][number]): GuideBlock =>
+  b.kind === "shell-action" ? { kind: "action", id: b.action, label: b.label } : b;
+
 /**
  * The guide with live check rows (spec §10.3, §10.4): the cached states first (`GET …/checks`,
  * which runs nothing), then a run without `force` for each row without a fresh result (at most
@@ -338,7 +356,15 @@ const MAX_AUTO_RUNS = 3;
  * `cooldownUntil`). Over the per-account limit (429 `rate_limited`) the rows keep their last state
  * and a muted line says so; runs on view stop.
  */
-function LiveGuideDocument({ g, source }: { g: RenderedSetupGuide; source: CheckSource }) {
+function LiveGuideDocument({
+  g,
+  source,
+  renderAction,
+}: {
+  g: RenderedSetupGuide;
+  source: CheckSource;
+  renderAction: (a: { id: string; label: string }) => ReactNode;
+}) {
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
   const qc = useQueryClient();
@@ -452,7 +478,8 @@ function LiveGuideDocument({ g, source }: { g: RenderedSetupGuide; source: Check
   return (
     <>
       <GuideDocument
-        blocks={g.blocks}
+        blocks={g.blocks.map(guideBlock)}
+        renderAction={renderAction}
         renderCheck={(c) => (
           <CheckRow
             label={c.label}

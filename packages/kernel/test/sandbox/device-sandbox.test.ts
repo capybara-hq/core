@@ -6,10 +6,12 @@ import {
   type DeviceSandboxOrgLayer,
   type DeviceSandboxPlatformLayer,
   type DeviceSandboxProviderLayer,
+  deviceListAddRefusal,
   effectiveDeviceSandbox,
   hostGrantable,
   hostGrantCeiling,
   hostGrantRefusal,
+  orgHostsOf,
   providerLayerOf,
   reachWithin,
 } from "../../src/sandbox/device-sandbox.js";
@@ -327,6 +329,125 @@ describe("a device's own allowlist", () => {
       );
       expect([box.networkMode, box.hosts]).toEqual(["allowlist", HOSTS]);
     }
+  });
+
+  it("every device follows the org default when its mode is null", () => {
+    const org: DeviceSandboxOrgLayer = {
+      deviceNetwork: { default: "allowlist", extraHosts: ["api.test"] },
+    };
+    for (const provider of [operation, instance]) {
+      const box = effectiveDeviceSandbox(platform(), org, device(), provider);
+      expect(box.networkMode).toBe("allowlist");
+      expect(box.hosts).toEqual(orgHostsOf(platform(), org));
+    }
+  });
+});
+
+describe("deviceListAddRefusal", () => {
+  const LIST = (allowHosts: string[], orgHosts: "extend" | "within" = "extend") =>
+    ({ egress: "allowlist", allowHosts, orgHosts }) as const;
+  const ALLOWLIST_BOX = {
+    networkMode: "allowlist",
+    networkCeiling: "open",
+    layer: { network: null, outsideSandbox: null },
+  } as const;
+
+  it("null for a host within the org's hosts", () => {
+    expect(deviceListAddRefusal("a.dev", ALLOWLIST_BOX, LIST(["a.dev"]), {})).toBeNull();
+    expect(deviceListAddRefusal("A.Dev", ALLOWLIST_BOX, LIST(["a.dev"]), {})).toBeNull();
+    expect(deviceListAddRefusal("x.a.dev", ALLOWLIST_BOX, LIST(["*.a.dev"]), {})).toBeNull();
+    // an org extra is within the org's hosts too
+    expect(
+      deviceListAddRefusal("api.test", ALLOWLIST_BOX, LIST(["a.dev"]), {
+        deviceNetwork: { extraHosts: ["api.test"] },
+      }),
+    ).toBeNull();
+    // the device's own list narrows any mode, so an open device may keep one ready
+    expect(
+      deviceListAddRefusal("a.dev", { ...ALLOWLIST_BOX, networkMode: "open" }, LIST(["a.dev"]), {}),
+    ).toBeNull();
+  });
+
+  it("names the org admin for a host outside the org's hosts", () => {
+    expect(deviceListAddRefusal("x.dev", ALLOWLIST_BOX, LIST(["a.dev"]), {})).toBe(
+      "an organization admin adds x.dev to the organization's device network list",
+    );
+    // under an org allowlist ceiling the list still only narrows the org's hosts
+    expect(
+      deviceListAddRefusal(
+        "x.dev",
+        {
+          ...ALLOWLIST_BOX,
+          networkCeiling: "allowlist",
+          layer: { network: "org", outsideSandbox: null },
+        },
+        LIST(["a.dev"]),
+        { deviceNetwork: { ceiling: "allowlist" } },
+      ),
+    ).toMatch(/organization admin adds x\.dev/);
+  });
+
+  it("names the super admin when only the platform's list could cover the host", () => {
+    expect(deviceListAddRefusal("x.dev", ALLOWLIST_BOX, LIST(["a.dev"], "within"), {})).toBe(
+      "x.dev is outside the platform's host list; a super admin adds the host",
+    );
+    // within the platform's list, the org admin can bring it back (exclusion or base none)
+    expect(
+      deviceListAddRefusal("a.dev", ALLOWLIST_BOX, LIST(["a.dev"], "within"), {
+        deviceNetwork: { base: "none" },
+      }),
+    ).toMatch(/organization admin adds a\.dev/);
+  });
+
+  // exclusions drop platform entries only (orgEffectiveHosts): never an extra, nothing under base none
+  it("an org extra kept in the org's hosts is addable whatever the exclusions say", () => {
+    expect(
+      deviceListAddRefusal("api.corp.com", ALLOWLIST_BOX, LIST(["*.corp.com"]), {
+        deviceNetwork: { excludedHosts: ["*.corp.com"], extraHosts: ["api.corp.com"] },
+      }),
+    ).toBeNull();
+    // the excluded platform wildcard still refuses its other subdomains
+    expect(
+      deviceListAddRefusal("db.corp.com", ALLOWLIST_BOX, LIST(["*.corp.com"]), {
+        deviceNetwork: { excludedHosts: ["*.corp.com"], extraHosts: ["api.corp.com"] },
+      }),
+    ).toBe("the organization excludes db.corp.com; an organization admin removes the exclusion");
+    expect(
+      deviceListAddRefusal("a.dev", ALLOWLIST_BOX, LIST(["b.dev"]), {
+        deviceNetwork: { base: "none", extraHosts: ["a.dev"], excludedHosts: ["a.dev"] },
+      }),
+    ).toBeNull();
+    // under within, an extra the platform list does not cover is dropped, so not addable
+    expect(
+      deviceListAddRefusal("x.dev", ALLOWLIST_BOX, LIST(["a.dev"], "within"), {
+        deviceNetwork: { extraHosts: ["x.dev"] },
+      }),
+    ).toMatch(/super admin adds the host/);
+  });
+
+  it("an excluded host or a closed network is refused", () => {
+    expect(
+      deviceListAddRefusal("a.dev", ALLOWLIST_BOX, LIST(["a.dev"]), {
+        deviceNetwork: { excludedHosts: ["a.dev"] },
+      }),
+    ).toBe("the organization excludes a.dev; an organization admin removes the exclusion");
+    // an exclusion is a pattern: it refuses a host a wider platform entry still covers
+    expect(
+      deviceListAddRefusal("x.a.dev", ALLOWLIST_BOX, LIST(["*.a.dev"]), {
+        deviceNetwork: { excludedHosts: ["x.a.dev"] },
+      }),
+    ).not.toBeNull();
+    expect(
+      deviceListAddRefusal("a.dev", { ...ALLOWLIST_BOX, networkMode: "none" }, LIST(["a.dev"]), {}),
+    ).toBe("network access is turned off for this device's sandbox");
+    expect(
+      deviceListAddRefusal(
+        "a.dev",
+        ALLOWLIST_BOX,
+        { egress: "none", allowHosts: ["a.dev"], orgHosts: "extend" },
+        {},
+      ),
+    ).toMatch(/turned off/);
   });
 });
 

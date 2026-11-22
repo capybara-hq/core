@@ -318,12 +318,12 @@ describe("project knowledge at run start", () => {
     expect(roots[0]?.payload.agentsMd).toBeUndefined();
   });
 
-  it("records a root outside the workspace a cloud device reads as unavailable (outside_mode)", async () => {
+  it("a root outside the workspace is the device's to judge: the kernel asks it, never narrows", async () => {
     const convId = await insertBound({ name: "etc", path: "/etc" });
     const roots = projectRoots(await run(convId, 1));
     expect(roots).toHaveLength(1);
-    expect(roots[0]?.payload.unavailable?.reason).toBe("outside_mode");
-    expect(roots[0]?.payload.unavailable?.message).toMatch(/outside what the device can read/);
+    // the fake device has no /etc: its answer, not a kernel-side outside_mode
+    expect(roots[0]?.payload.unavailable?.reason).toBe("gone");
   });
 
   it("a provider refusing a project path answers 422 device.project_refused with its reason", async () => {

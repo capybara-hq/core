@@ -23,7 +23,7 @@ const BASE = "/api/v1/orgs/o1/devices";
 /** The device page also reads the device's projects (project root §4.1): none here. */
 const NO_PROJECTS = {
   [`GET ${BASE}/e1/projects`]: () =>
-    json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
+    json(200, { projects: [], base: "/workspace", supported: true }),
 };
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
@@ -47,6 +47,14 @@ const SANDBOX = {
   pendingFilesReset: false,
   recent: [],
 };
+/** What the provider last reported (kernel `DeviceReport`): it offers a file rebuild. */
+const REPORT = {
+  revision: "r1",
+  description: { en: "A container on the platform" },
+  home: null,
+  limits: [],
+  reset: true,
+};
 const env = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
   id,
   name,
@@ -54,20 +62,75 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   ownerKind: "personal",
   dialIn: false,
   provider: "sandbox-docker",
+  providerDisplayName: null,
   available: true,
+  online: null,
+  machine: null,
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  report: null,
+  report: REPORT,
   sandbox: SANDBOX,
   createdAt: T,
   ...over,
+});
+const DOCKER = {
+  plugin: "sandbox-docker",
+  displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+  description: { en: "Runs in a container", zh: "在容器里运行" },
+  dialIn: false,
+  guide: { itemId: "item-docker", guideId: "connect" },
+};
+const LOCAL = {
+  plugin: "device-local",
+  displayName: { zh: "本机", en: "Local machine" },
+  description: { en: "Your own computer or server" },
+  dialIn: true,
+  guide: { itemId: "item-local", guideId: "connect" },
+};
+const DOCKER_GUIDE_TEXT = "Docker needs nothing installed";
+const LOCAL_GUIDE_TEXT = "Run the connector on the machine";
+/** The catalog guide route of a provider: a markdown block, and for a dial-in one the shell action. */
+const guide = (p: { plugin: string; guide: { itemId: string; guideId: string } }) => ({
+  [`GET /api/v1/orgs/o1/catalog/${p.guide.itemId}/guides/${p.guide.guideId}`]: () =>
+    json(200, {
+      guide: {
+        itemId: p.guide.itemId,
+        plugin: p.plugin,
+        version: "0.1.0",
+        id: p.guide.guideId,
+        place: "device-connection",
+        locale: "en",
+        title: "Connect",
+        modes: [],
+        mode: null,
+        audiences: ["member"],
+        audience: "member",
+        blocks:
+          p.plugin === LOCAL.plugin
+            ? [
+                { kind: "markdown", text: LOCAL_GUIDE_TEXT },
+                {
+                  kind: "shell-action",
+                  action: "connect-this-machine",
+                  label: "Connect this machine",
+                },
+              ]
+            : [{ kind: "markdown", text: DOCKER_GUIDE_TEXT }],
+        checks: [],
+        unresolved: [],
+        hash: "a".repeat(64),
+        target: null,
+      },
+    }),
 });
 const list = (items: unknown[], over: Record<string, unknown> = {}) => ({
   items,
   defaultId: "e1",
   lastUsedId: null,
-  providers: [{ plugin: "sandbox-docker", displayName: null }],
+  providers: [
+    { plugin: "sandbox-docker", displayName: null, description: null, dialIn: false, guide: null },
+  ],
   defaultProvider: "sandbox-docker",
   ...over,
 });
@@ -77,11 +140,10 @@ const renderList = (opts: RenderOpts = {}) =>
 const renderDetail = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
-/** The device page's 设置 tab: every control lives there. */
-const settingsTab = () => screen.findByRole("tab", { name: E.detail.tabSettings });
-const openSettings = async () => {
+/** The device page's Network tab. */
+const openNetwork = async () => {
   const user = userEvent.setup();
-  await user.click(await settingsTab());
+  await user.click(await screen.findByRole("tab", { name: E.detail.tabNetwork }));
   return user;
 };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
@@ -121,6 +183,7 @@ describe("devices list", () => {
       within(cards[0] as HTMLElement).getByText(E.sandbox.mark.sandbox, { exact: false }),
     ).toBeTruthy();
     expect(within(cards[1] as HTMLElement).getByText("Build box")).toBeTruthy();
+    expect(within(cards[1] as HTMLElement).getByText("sandbox-docker")).toBeTruthy();
     expect(
       within(cards[1] as HTMLElement).getByText(E.state.filesLost, { exact: false }),
     ).toBeTruthy();
@@ -157,15 +220,15 @@ describe("devices list", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("no provider shows the empty state (新建设备 still connects a device)", async () => {
+  it("no provider shows the empty state and offers no 新建设备", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(200, list([], { providers: [], defaultProvider: null, defaultId: null })),
     });
     await renderList();
-    expect(await screen.findByText(E.noCloud.text)).toBeTruthy();
-    expect(screen.getByText(E.noCloud.hint)).toBeTruthy();
-    expect(screen.getByRole("button", { name: E.new })).toBeTruthy();
+    expect(await screen.findByText(E.noProviders.text)).toBeTruthy();
+    expect(screen.getByText(E.noProviders.hint)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: E.new })).toBeNull();
   });
 
   it("without a provider the existing devices are still listed as 不可用, with a notice", async () => {
@@ -184,8 +247,8 @@ describe("devices list", () => {
     const card = await screen.findByRole("listitem");
     expect(within(card).getByText("Old box")).toBeTruthy();
     expect(within(card).getByText(E.state.unavailable, { exact: false })).toBeTruthy();
-    expect(screen.getByText(E.noCloud.notice)).toBeTruthy();
-    expect(screen.queryByText(E.noCloud.text)).toBeNull();
+    expect(screen.getByText(E.noProviders.notice)).toBeTruthy();
+    expect(screen.queryByText(E.noProviders.text)).toBeNull();
   });
 
   it("a device whose instance never started is 未启动", async () => {
@@ -219,53 +282,34 @@ describe("devices list", () => {
     });
   });
 
-  it("新建设备 with two providers offers a provider choice and posts the chosen one", async () => {
+  it("新建设备 with two providers: cards, the chosen guide, a name for a non-dial-in one", async () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () =>
         json(
           200,
-          list([env("e1", null)], {
-            providers: [
-              {
-                plugin: "sandbox-docker",
-                displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
-              },
-              { plugin: "sandbox-e2b", displayName: null },
-            ],
-            defaultProvider: "sandbox-docker",
-          }),
+          list([env("e1", null)], { providers: [DOCKER, LOCAL], defaultProvider: DOCKER.plugin }),
         ),
-      [`POST ${BASE}`]: () => json(201, { device: env("e3", "Scratch") }),
+      [`POST ${BASE}`]: () => json(201, { device: env("e3", "Box") }),
+      ...guide(DOCKER),
+      ...guide(LOCAL),
     });
     await renderList();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    const select = within(dialog).getByRole("combobox", { name: E.create.provider });
-    // the default is preselected, by its display name
-    expect(within(select).getByText("Docker sandbox")).toBeTruthy();
-    await user.click(select);
-    await user.click(await screen.findByRole("option", { name: "sandbox-e2b" }));
-    await user.type(within(dialog).getByRole("textbox"), "Scratch");
+    expect(within(dialog).getByRole("radio", { name: /Docker sandbox/ })).toHaveProperty(
+      "checked",
+      true,
+    );
+    expect(within(dialog).getByText("Runs in a container")).toBeTruthy();
+    expect(await within(dialog).findByText(DOCKER_GUIDE_TEXT)).toBeTruthy();
+    await user.type(within(dialog).getByRole("textbox"), "Box");
     await user.click(within(dialog).getByRole("button", { name: E.create.submit }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/e3"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      name: "Scratch",
-      provider: "sandbox-e2b",
+      name: "Box",
+      provider: DOCKER.plugin,
     });
-  });
-
-  it("with no provider on in the org the cloud option is absent and the local steps remain", async () => {
-    stubApi({
-      [`GET ${BASE}`]: () => json(200, list([], { providers: [], defaultProvider: null })),
-    });
-    await renderList();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: E.new }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).queryByRole("radio")).toBeNull();
-    expect(within(dialog).queryByRole("textbox")).toBeNull();
-    expect(within(dialog).getByText(E.create.installStep)).toBeTruthy();
   });
 
   it("a refused create keeps the dialog open with the error copy", async () => {
@@ -297,8 +341,8 @@ describe("device detail", () => {
     const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
     expect(within(plate).getByText("Build box")).toBeTruthy();
     expect(screen.getByText(E.detail.filesAndSuspendNote)).toBeTruthy();
-    // origin and state live in the nameplate alone (the facts rows no longer repeat them)
-    expect(screen.getByText(E.source.cloud)).toBeTruthy();
+    // the nameplate names the provider (its plugin name without a display name)
+    expect(plate.textContent).toContain("sandbox-docker");
     await settle();
     expect(browser).toEqual([]);
   });
@@ -311,7 +355,9 @@ describe("device detail", () => {
     });
     await renderDetail({ locale: "zh" });
     expect(
-      await screen.findByText("此设备的提供方已在本组织关闭或未安装，文件仍保留。"),
+      await screen.findByText(
+        "这台设备的设备类型（sandbox-gone）在这个组织里没有启用，文件保留着。",
+      ),
     ).toBeTruthy();
   });
 
@@ -428,14 +474,14 @@ describe("device detail", () => {
     client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
     // the composer's cached permission preview of this device
     client.setQueryData(["org", "o1", "device", "e1", "permissionPreview", null], { cached: 1 });
-    const user = await openSettings();
-    const group = await screen.findByRole("radiogroup", { name: E.sandbox.network });
+    const user = await openNetwork();
+    const group = await screen.findByRole("radiogroup", { name: E.network.title });
     await user.click(
       within(group).getByRole("radio", {
-        name: new RegExp(`^${E.sandbox.networkValue.allowlist}`),
+        name: new RegExp(`^${E.network.allowlist}`),
       }),
     );
-    await user.click(screen.getByRole("button", { name: E.sandbox.save }));
+    await user.click(screen.getByRole("button", { name: E.network.save }));
     await vi.waitFor(() =>
       expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true),
     );
@@ -455,7 +501,7 @@ describe("device detail", () => {
     const calls = stubApi({ ...routes, [`DELETE ${BASE}/e1`]: () => json(202, {}) });
     const { client, unmount } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
-    const user = await openSettings();
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(E.detail.deleteHint.replace("{name}", "Build box"));
@@ -474,7 +520,7 @@ describe("device detail", () => {
   it("deleting the default device says a new empty one comes next time", async () => {
     stubApi({ ...NO_PROJECTS, [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", null) }) });
     await renderDetail();
-    const user = await openSettings();
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(
@@ -558,7 +604,8 @@ describe("local devices (environments spec §6, §9)", () => {
   const device = (id: string, name: string, over: Record<string, unknown> = {}) =>
     env(id, name, {
       dialIn: true,
-      provider: "@local",
+      provider: "device-local",
+      providerDisplayName: LOCAL.displayName,
       online: true,
       machine: MACHINE,
       ...over,
@@ -571,7 +618,7 @@ describe("local devices (environments spec §6, §9)", () => {
     });
     await renderList();
     const cards = await screen.findAllByRole("listitem");
-    expect(within(cards[0] as HTMLElement).getByText(E.source.local)).toBeTruthy();
+    expect(within(cards[0] as HTMLElement).getByText("Local machine")).toBeTruthy();
     expect(
       within(cards[0] as HTMLElement).getByText(E.state.online, { exact: false }),
     ).toBeTruthy();
@@ -580,100 +627,110 @@ describe("local devices (environments spec §6, §9)", () => {
     ).toBeTruthy();
   });
 
-  it("without a cloud sandbox 新建设备 still connects a device", async () => {
-    stubApi({
-      [`GET ${BASE}`]: () =>
-        json(200, list([], { providers: [], defaultProvider: null, defaultId: null })),
-    });
-    await renderList();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: E.new }));
-    const dialog = await screen.findByRole("dialog");
-    // no choice to make: only 本地设备, its steps at once
-    expect(within(dialog).queryByRole("radiogroup")).toBeNull();
-    expect(within(dialog).getByText("npm install -g @capybara-hq/device@next")).toBeTruthy();
-  });
-
-  it("新建设备 → 本地设备 shows the steps and waits until the new machine appears", async () => {
-    let connected = false;
+  it("the list shows each device's provider display name", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(
           200,
-          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+          list([
+            env("e1", "Cloud box", {
+              provider: "device-e2b",
+              providerDisplayName: { zh: "E2B 云端", en: "E2B" },
+            }),
+          ]),
         ),
+    });
+    await renderList();
+    expect(await screen.findByText("E2B")).toBeTruthy();
+  });
+
+  /** The dialog on a list of the given providers, the local one picked. */
+  const openLocal = async (items: unknown[] | (() => unknown[])) => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list(typeof items === "function" ? items() : items, {
+            providers: [DOCKER, LOCAL],
+            defaultProvider: DOCKER.plugin,
+          }),
+        ),
+      ...guide(DOCKER),
+      ...guide(LOCAL),
     });
     await renderList();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    // each step is a CopyField: its label names the code line holding the command
-    const step = (name: string) => within(dialog).getByRole("group", { name });
-    expect(step(E.create.installStep).querySelector("code")?.textContent).toBe(
-      "npm install -g @capybara-hq/device@next",
+    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    return { user, dialog, calls };
+  };
+
+  it("a dial-in provider: no name field; waits for its new device and opens it", async () => {
+    let connected = false;
+    const { dialog } = await openLocal(() =>
+      connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)],
     );
-    expect(step(E.create.loginStep).querySelector("code")?.textContent).toBe(
-      `capybara-device login --url ${window.location.origin}`,
+    expect(await within(dialog).findByText(LOCAL_GUIDE_TEXT)).toBeTruthy();
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: E.create.submit })).toBeNull();
+    expect(within(dialog).getAllByRole("button", { name: E.create.close }).length).toBeGreaterThan(
+      0,
     );
-    // login only registers the machine: the third step keeps it online
-    expect(step(E.create.startStep).querySelector("code")?.textContent).toBe(
-      "capybara-device start",
-    );
-    expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
-    expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
     connected = true;
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
       timeout: 6000,
     });
   });
 
-  it("a machine that connects after the window crossed 600 is still detected as new", async () => {
-    const win = stubWindowWidth(390);
-    let connected = false;
+  it("a dial-in provider without a guide says to ask an org admin", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(
           200,
-          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+          list([env("e1", null)], {
+            providers: [DOCKER, { ...LOCAL, guide: null }],
+            defaultProvider: DOCKER.plugin,
+          }),
         ),
+      ...guide(DOCKER),
     });
     await renderList();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    await screen.findByText(E.create.waiting);
-    // the snapshot (no local device yet) is taken; the machine connects, then the window rotates
+    expect(within(dialog).queryByText(E.create.noGuide)).toBeNull();
+    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    expect(await within(dialog).findByText(E.create.noGuide)).toBeTruthy();
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+  });
+
+  it("a machine that connects after the window crossed 600 is still detected as new", async () => {
+    const win = stubWindowWidth(390);
+    let connected = false;
+    const { dialog } = await openLocal(() =>
+      connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)],
+    );
+    await within(dialog).findByText(LOCAL_GUIDE_TEXT);
     connected = true;
     win.setWidth(1440);
-    await screen.findByText(E.create.waiting);
+    await screen.findByText(LOCAL_GUIDE_TEXT);
     win.setWidth(390);
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
       timeout: 6000,
     });
   });
 
-  it("a machine that connected while the cloud choice was shown is not taken as new", async () => {
+  it("a device that was there when the wait began is not taken as new", async () => {
     let connected = false;
-    const calls = stubApi({
-      [`GET ${BASE}`]: () =>
-        json(
-          200,
-          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
-        ),
-    });
-    await renderList();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: E.new }));
-    const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    await screen.findByText(E.create.waiting);
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.cloud) }));
+    const { user, dialog, calls } = await openLocal(() =>
+      connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)],
+    );
+    await within(dialog).findByText(LOCAL_GUIDE_TEXT);
+    await user.click(within(dialog).getByRole("radio", { name: /Docker sandbox/ }));
     connected = true;
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    // the wait begins again: the device that is already there is not the new one
-    await screen.findByText(E.create.waiting);
+    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    await within(dialog).findByText(LOCAL_GUIDE_TEXT);
     // a poll after the switch back has read the list that holds d7
     const reads = () => calls.filter((c) => c.method === "GET" && c.url === BASE).length;
     const before = reads();
@@ -681,126 +738,13 @@ describe("local devices (environments spec §6, §9)", () => {
     expect(router.push).not.toHaveBeenCalledWith("/devices/d7");
   });
 
-  describe("连接本机 in the desktop shell (desktop client spec §5)", () => {
-    function installShell(device: Record<string, unknown>) {
-      const listeners = new Set<() => void>();
-      (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
-        version: 1,
-        // no connections yet unless the test says otherwise (the list page reads the status too)
-        capabilities: {
-          "device@2": {
-            status: vi.fn().mockResolvedValue({ connections: [] }),
-            onStatus: () => () => {},
-            ...device,
-          },
-        },
-        on: (_e: "change", l: () => void) => {
-          listeners.add(l);
-          return () => listeners.delete(l);
-        },
-      };
-    }
-    afterEach(() => Reflect.deleteProperty(window, "capybaraShell"));
-    const openLocal = async () => {
-      stubApi({ [`GET ${BASE}`]: () => json(200, list([env("e1", null)])) });
-      await renderList();
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: E.new }));
-      const dialog = await screen.findByRole("dialog");
-      await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-      return { user, dialog };
-    };
-
-    it("a primary 连接本机 above the steps; a click calls connect({ orgId })", async () => {
-      const connect = vi.fn().mockResolvedValue("connected");
-      installShell({ connect });
-      const { user, dialog } = await openLocal();
-      const button = await within(dialog).findByRole("button", { name: E.create.connectMachine });
-      expect(button.getAttribute("data-variant")).toBe("primary");
-      const first = within(dialog).getByText("npm install -g @capybara-hq/device@next");
-      expect(button.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      await user.click(button);
-      expect(connect).toHaveBeenCalledWith({ orgId: "o1" });
-      // connected resolves into the wait-for-new-device path: the dialog stays, waiting
-      expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
-    });
-
-    it("an existing connection into this org still offers 连接本机 (device@2 adds one)", async () => {
-      installShell({
-        status: vi.fn().mockResolvedValue({
-          connections: [
-            {
-              deviceId: "d7",
-              orgId: "o1",
-              mode: "os",
-              connection: "online",
-              serviceInstalled: true,
-              keepAwake: { mode: "while-busy", held: false },
-            },
-          ],
-        }),
-        connect: vi.fn(),
-      });
-      const { dialog } = await openLocal();
-      expect(
-        await within(dialog).findByRole("button", { name: E.create.connectMachine }),
-      ).toBeTruthy();
-      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
-    });
-
-    it("cancelled leaves the dialog as it was", async () => {
-      const connect = vi.fn().mockResolvedValue("cancelled");
-      installShell({ connect });
-      const { user, dialog } = await openLocal();
-      await user.click(
-        await within(dialog).findByRole("button", { name: E.create.connectMachine }),
-      );
-      await vi.waitFor(() => expect(connect).toHaveBeenCalled());
-      await settle();
-      expect(within(dialog).queryByRole("alert")).toBeNull();
-      expect(within(dialog).getByRole("button", { name: E.create.connectMachine })).toBeTruthy();
-      expect(router.push).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ["a rejected connect", vi.fn().mockRejectedValue({ code: "failed" })],
-      ["a connect answering an error", vi.fn().mockResolvedValue({ error: "login failed" })],
-    ])("%s shows an error", async (_name, connect) => {
-      installShell({ connect });
-      const { user, dialog } = await openLocal();
-      await user.click(
-        await within(dialog).findByRole("button", { name: E.create.connectMachine }),
-      );
-      expect((await within(dialog).findByRole("alert")).textContent).toContain(
-        E.create.connectFailed,
-      );
-    });
-
-    it("in a browser nothing is offered", async () => {
-      const { dialog } = await openLocal();
-      expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
-    });
-  });
-
-  it("新建设备 → 本地设备 also stops waiting when a login again replaces a known machine", async () => {
+  it("a login again that replaces a known machine opens its device", async () => {
     let replaced = false;
-    stubApi({
-      [`GET ${BASE}`]: () =>
-        json(
-          200,
-          list([
-            env("e1", null),
-            device("d7", "grant-mbp", replaced ? { machine: { ...MACHINE, id: "m2" } } : {}),
-          ]),
-        ),
-    });
-    await renderList();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: E.new }));
-    const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
+    const { dialog } = await openLocal(() => [
+      env("e1", null),
+      device("d7", "grant-mbp", replaced ? { machine: { ...MACHINE, id: "m2" } } : {}),
+    ]);
+    await within(dialog).findByText(LOCAL_GUIDE_TEXT);
     await settle();
     expect(router.push).not.toHaveBeenCalled();
     replaced = true;
@@ -809,97 +753,118 @@ describe("local devices (environments spec §6, §9)", () => {
     });
   });
 
-  it("device page shows the machine and revokes it", async () => {
-    let revoked = false;
-    const calls = stubApi({
-      [`GET ${BASE}`]: () => json(200, list([device("e1", "Laptop")])),
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: device("e1", "Laptop", revoked ? { machine: null, online: false } : {}),
-        }),
-      [`DELETE ${BASE}/e1/machine`]: () => {
-        revoked = true;
-        return new Response(null, { status: 204 });
-      },
+  describe("the shell-action block (连接本机)", () => {
+    function installShell(device: Record<string, unknown>) {
+      (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
+        version: 1,
+        capabilities: { "device@2": device },
+        on: () => () => {},
+      };
+    }
+    afterEach(() => Reflect.deleteProperty(window, "capybaraShell"));
+    const shellDevice = (connect: unknown, connections: unknown[] = []) => ({
+      status: vi.fn().mockResolvedValue({ connections }),
+      onStatus: () => () => {},
+      connect,
     });
-    const { client } = await renderDetail();
-    client.setQueryData(["org", "o1", "devices"], list([device("e1", "Laptop")]));
-    const user = await openSettings();
-    expect(await screen.findByText(E.machine.title)).toBeTruthy();
-    // origin and state are the nameplate's alone
-    expect(screen.getByText(E.source.local)).toBeTruthy();
-    expect(screen.getByText(E.state.online)).toBeTruthy();
-    expect(screen.getByText("v0.1.0")).toBeTruthy();
-    // the machine's name is the device's name, and the nameplate carries its mode: neither is
-    // repeated in the machine block, which keeps 系统 and 断开
-    expect(screen.queryByText("grant-mbp")).toBeNull();
-    // the cloud facts do not apply to a machine
-    expect(screen.queryByText(E.detail.filesAndSuspendNote)).toBeNull();
-    await user.click(screen.getByRole("button", { name: E.machine.revoke }));
-    const dialog = await screen.findByRole("dialog");
-    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: E.machine.revokeSubmit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
-    // no machine left: the settings tab no longer offers 断开, and the overview has no 机器 block
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("button", { name: E.machine.revoke })).toBeNull(),
-    );
-    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
+
+    it("in the shell it is a primary button that calls connect({ orgId })", async () => {
+      const connect = vi.fn().mockResolvedValue("connected");
+      installShell(shellDevice(connect));
+      const { user, dialog } = await openLocal([env("e1", null)]);
+      const button = await within(dialog).findByRole("button", { name: "Connect this machine" });
+      expect(button.getAttribute("data-variant")).toBe("primary");
+      await user.click(button);
+      expect(connect).toHaveBeenCalledWith({ orgId: "o1" });
+    });
+
+    it("an existing connection into this org still offers it (device@2 adds one)", async () => {
+      const connection = {
+        deviceId: "d7",
+        orgId: "o1",
+        mode: "os",
+        connection: "online",
+        serviceInstalled: true,
+        keepAwake: { mode: "while-busy", held: false },
+      };
+      installShell(shellDevice(vi.fn(), [connection]));
+      const { dialog } = await openLocal([env("e1", null), device("d7", "grant-mbp")]);
+      expect(
+        await within(dialog).findByRole("button", { name: "Connect this machine" }),
+      ).toBeTruthy();
+    });
+
+    it("cancelled leaves the dialog as it was; a failure shows an error", async () => {
+      const connect = vi.fn().mockResolvedValue("cancelled");
+      installShell(shellDevice(connect));
+      const { user, dialog } = await openLocal([env("e1", null)]);
+      await user.click(await within(dialog).findByRole("button", { name: "Connect this machine" }));
+      await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+      await settle();
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      expect(router.push).not.toHaveBeenCalled();
+      connect.mockRejectedValue({ code: "failed" });
+      await user.click(within(dialog).getByRole("button", { name: "Connect this machine" }));
+      expect((await within(dialog).findByRole("alert")).textContent).toContain(
+        E.create.connectFailed,
+      );
+    });
+
+    it("a connect answering an error shows an error, never the shell's text", async () => {
+      installShell(shellDevice(vi.fn().mockResolvedValue({ error: "login failed" })));
+      const { user, dialog } = await openLocal([env("e1", null)]);
+      await user.click(await within(dialog).findByRole("button", { name: "Connect this machine" }));
+      const alert = await within(dialog).findByRole("alert");
+      expect(alert.textContent).toContain(E.create.connectFailed);
+      expect(alert.textContent).not.toContain("login failed");
+    });
+
+    it("in a browser the block renders nothing", async () => {
+      const { dialog } = await openLocal([env("e1", null)]);
+      await within(dialog).findByText(LOCAL_GUIDE_TEXT);
+      expect(within(dialog).queryByRole("button", { name: "Connect this machine" })).toBeNull();
+    });
   });
 
-  it("a local device that lost its files says to log out and in again and offers no 重建文件", async () => {
+  it("a dial-in device's page names its provider and its machine's version, with no machine block", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, list([device("e1", "Laptop")])),
+      ...NO_PROJECTS,
+      [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }),
+    });
+    await renderDetail();
+    const plate = (await screen.findByText("v0.1.0")).closest(
+      '[data-part="device-nameplate"]',
+    ) as HTMLElement;
+    expect(plate.textContent).toContain(LOCAL.displayName.en);
+    expect(plate.textContent).toContain(E.state.online);
+    // the machine's name is the device's name: never repeated, and no disconnect on the page
+    expect(screen.queryByText("grant-mbp")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Disconnect/ })).toBeNull();
+    // the same files note as every other device
+    expect(screen.getByText(E.detail.filesAndSuspendNote)).toBeTruthy();
+  });
+
+  it("a local device that lost its files offers 重建文件 when its provider's report allows it", async () => {
     stubApi({
       ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop", { filesLost: true }) }),
     });
     await renderDetail();
-    expect(await screen.findByText(E.detail.localFilesLostNote)).toBeTruthy();
-    expect(E.detail.localFilesLostNote).toContain(
-      "capybara-device logout, then capybara-device login",
-    );
-    expect(screen.queryByText(E.detail.filesLostNote)).toBeNull();
-    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
+    expect(await screen.findByText(E.detail.filesLostNote)).toBeTruthy();
+    expect(screen.queryByText(/capybara-device/)).toBeNull();
+    expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 
-  it("deleting a local device says the files on the machine stay", async () => {
+  it("deleting a local device has the same hint as any other", async () => {
     stubApi({
       ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(E.detail.deleteLocalHint.replace("{name}", "Laptop"));
-  });
-});
-
-describe("a dial-in machine's allowlist (read only)", () => {
-  it("lists the hosts on 概览 and offers no way to change them from the page", async () => {
-    const calls = stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: env("e1", "Laptop", {
-            dialIn: true,
-            provider: "@local",
-            online: true,
-            machine: {
-              id: "m1",
-              name: "grant-mbp",
-              os: "darwin",
-              programVersion: "0.1.0",
-              lastSeenAt: T,
-            },
-            sandbox: { ...SANDBOX, network: "allowlist", hosts: ["files.example.com"] },
-          }),
-        }),
-    });
-    await renderDetail();
-    expect(await screen.findByText("files.example.com")).toBeTruthy();
-    await openSettings();
-    expect(screen.queryByRole("button", { name: /files\.example\.com/ })).toBeNull();
-    expect(calls.some((c) => c.url.endsWith("/policy"))).toBe(false);
+    expect(dialog.textContent).toContain(E.detail.deleteHint.replace("{name}", "Laptop"));
   });
 });

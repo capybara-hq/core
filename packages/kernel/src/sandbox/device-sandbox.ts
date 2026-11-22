@@ -326,6 +326,40 @@ export function hostGrantRefusal(
     : `${host} is outside the platform's host list; a super admin adds the host`;
 }
 
+/**
+ * Why `host` cannot be added to this device's own network list, naming who can make it possible,
+ * or null when it can. The device's list only narrows the org's effective hosts
+ * ({@link effectiveDeviceSandbox}, {@link orgHostsOf}), so a host is addable only when the network
+ * is not closed and either an org extra kept in those hosts covers it, or a kept platform entry
+ * covers it and no org exclusion (a pattern, as for a per-call grant) does. Exclusions drop
+ * platform entries only: never an extra, and nothing under `base: none`. Otherwise the refusal
+ * names the org admin (removing the exclusion, or adding the host when the org may extend the
+ * platform's list or the platform's list covers it), else the super admin.
+ */
+export function deviceListAddRefusal(
+  host: string,
+  box: Pick<DeviceSandbox, "networkMode" | "networkCeiling" | "layer">,
+  platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
+  org: DeviceSandboxOrgLayer,
+): string | null {
+  if (box.networkMode === "none" || box.networkCeiling === "none" || platform.egress === "none")
+    return "network access is turned off for this device's sandbox";
+  const h = host.toLowerCase();
+  const covers = (list: readonly string[]) => list.some((p) => coversHost(p.toLowerCase(), h));
+  const kept = orgHostsOf(platform, org);
+  const extras = new Set(org.deviceNetwork?.extraHosts ?? []);
+  if (covers(kept.filter((e) => extras.has(e)))) return null;
+  const fromPlatform = org.deviceNetwork?.base === "none" ? [] : kept.filter((e) => !extras.has(e));
+  const excluded =
+    org.deviceNetwork?.base !== "none" && covers(org.deviceNetwork?.excludedHosts ?? []);
+  if (!excluded && covers(fromPlatform)) return null;
+  if (excluded && covers(platform.allowHosts))
+    return `the organization excludes ${host}; an organization admin removes the exclusion`;
+  return platform.orgHosts === "extend" || covers(platform.allowHosts)
+    ? `an organization admin adds ${host} to the organization's device network list`
+    : `${host} is outside the platform's host list; a super admin adds the host`;
+}
+
 const MODE_RANK = { none: 0, allowlist: 1, open: 2 } as const;
 
 /**

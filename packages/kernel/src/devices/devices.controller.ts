@@ -34,11 +34,12 @@ import {
  * Phase 1 has personal cloud devices only, each visible to its owner alone: another member
  * gets 404 `device.not_found`.
  * - `GET /` → `{ items, defaultId, lastUsedId, providers, defaultProvider }` (`providers`: the
- *   device providers on in the org, `{ plugin, displayName }`; `defaultProvider`: the one a device
+ *   device providers on in the org, `{ plugin, displayName, description, dialIn, guide }`; `defaultProvider`: the one a device
  *   gets when none is named, null when none serves the org);
  * - `POST / { name, provider? }` → 201 `{ device }`, bound for life to `provider` (one of
  *   `providers`, else 400 `validation_failed` at `provider`) or the default provider (none: 400
- *   `device.provider_required`); `GET /:id` → `{ device }`;
+ *   `device.provider_required`; a dial-in provider: 409 `device.provider_dial_in`, its devices are
+ *   made by the machine); `GET /:id` → `{ device }`;
  * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets its sandbox network
  *   (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design, "Settings
  *   model") within its org's and the platform's ceilings (400 `device.network_not_allowed` above
@@ -47,8 +48,6 @@ import {
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
  * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
  *   starts empty; 409 `device.files_on_device` when its provider's report offers no reset);
- * - `DELETE /:id/machine` → 204: a dial-in device's machine is disconnected (its credential
- *   revoked; it must sign in again);
  * - a device's projects (project root design §4.1, §4.2), owner only (anyone else:
  *   `device.not_found`): `GET /:id/projects` → the ones its current mode can read;
  *   `GET /:id/projects/candidates` → the device's suggestions under its base;
@@ -69,7 +68,7 @@ export class DevicesController {
     @CurrentOrg() org: OrgContext,
   ): Promise<DeviceList> {
     const p = requireUser(principal);
-    return this.devices.list(org.orgId, p.account.id);
+    return this.devices.list(org.orgId, p.account.id, org.role);
   }
 
   @Post()
@@ -149,18 +148,6 @@ export class DevicesController {
   ): Promise<void> {
     const p = requireUser(principal);
     await this.devices.resetFiles(org.orgId, p.account.id, params.id, patTokenId(p));
-  }
-
-  @Delete(":id/machine")
-  @HttpCode(204)
-  @OrgAction("agents.use")
-  async revokeMachine(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @ZParam(DeviceParamsDto) params: z.infer<typeof DeviceParams>,
-  ): Promise<void> {
-    const p = requireUser(principal);
-    await this.devices.revokeMachine(org.orgId, p.account.id, params.id, patTokenId(p));
   }
 
   @Get(":id/projects")

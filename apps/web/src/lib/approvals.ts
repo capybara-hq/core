@@ -31,11 +31,10 @@ export interface NetworkApprovalDetail {
   description: string | null;
   /** The hosts the decision allowed (the checked subset). */
   grantedHosts?: string[];
-  /**
-   * A network ask is granted for this run only (an ask never adds a host to the device's own
-   * network list; only its owner's network setting does).
-   */
-  outcome?: "once";
+  /** When an "always" (add to the device's list) takes effect. */
+  appliesAt?: "next-command" | "next-use" | "files-reset";
+  /** Set once decided: this run only, or the hosts were added to the device's list. */
+  outcome?: "once" | "always";
 }
 
 /**

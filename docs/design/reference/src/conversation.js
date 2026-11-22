@@ -416,8 +416,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   // The network ask (spec §6.16.11, network ask spec §6.5): hosts, the refused command, the
-  // checked hosts, "allow this time" (primary) with its hint, "deny", the machine command line (device
-  // protocol 4 never widens a device from the deployment), and its decided lines.
+  // checked hosts, "allow this time" (primary) with its hint, "add to this device's list" with
+  // when it applies (alone, as the primary, on a device without per-operation hosts), "deny",
+  // and its decided lines.
   const registrable = (h) => h.split(".").slice(-2).join(".");
   const netHost = (h) =>
     `<span class="r-net-host"><strong>${esc(registrable(h))}</strong><code class="r-code">${esc(h)}</code></span>`;
@@ -426,6 +427,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const W = H.decided;
     const decided = {
       "network-allowed": ["check", "已允许（这次）", W.who, "", W.approved.at],
+      "network-added": ["check", "已加入此设备的列表", W.who, "", W.approved.at],
       "network-denied": ["x", "已拒绝", W.who, `「${W.denied.reason}」`, W.denied.at],
       "network-skipped": ["x", "已跳过", W.who, "", W.denied.at],
     }[o.state];
@@ -450,9 +452,15 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       : `<div class="r-net-hosts">${netHost(N.host)}</div>`;
     const choice = (label, variant, hint) =>
       `<span class="r-choice">${btn(label, variant)}<span class="r-muted r-small" data-part="scope-hint">${hint}</span></span>`;
-    const actions = `<div class="r-card-actions" data-hints>${choice("这次允许", "primary", "到智能体这次回复结束为止有效")}${btn("拒绝", "default")}</div>`;
-    const onMachine = `<div class="r-muted r-small" data-part="network-on-machine">要让这台设备一直允许，请在设备上运行 <code class="r-code">capybara-device policy add allowedDomains ${esc(many ? "<host>" : N.host)}</code></div>`;
-    return `<div class="r-card" data-pending role="group"><div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>${title}</strong></div><div>${body}</div><pre class="r-net-cmd">${esc(N.command)}</pre>${hosts}${actions}${onMachine}</div>`;
+    const once = choice("这次允许", "primary", "到智能体这次回复结束为止有效");
+    const choices =
+      o.state === "network-always"
+        ? `${once}${choice("加入此设备的列表", "default", "从下一条命令起生效")}`
+        : o.state === "network-list-only"
+          ? choice("加入此设备的列表", "primary", "下次使用这台设备时生效")
+          : once;
+    const actions = `<div class="r-card-actions" data-hints>${choices}${btn("拒绝", "default")}</div>`;
+    return `<div class="r-card" data-pending role="group"><div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>${title}</strong></div><div>${body}</div><pre class="r-net-cmd">${esc(N.command)}</pre>${hosts}${actions}</div>`;
   }
 
   // Network facts (spec §6.16.11a): the org and address layers, one info callout each.

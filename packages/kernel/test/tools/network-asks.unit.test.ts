@@ -12,12 +12,17 @@ import {
   NETWORK_ASK_CANCELLED_NOTE,
 } from "../../src/tools/approvals.service.js";
 import {
+  addedToDeviceNote,
   addressEscalationHint,
   allowedOnceNote,
   clipKept,
   deniedNote,
+  deviceAskTerms,
   NETWORK_ASK_CLIPPED_NOTE,
   NETWORK_ASK_KEPT_MAX_BYTES,
+  type NetworkAskOffer,
+  networkAskOffer,
+  onListNote,
   planNetworkAsk,
   settledNetworkNotes,
   withNetworkNotes,
@@ -35,8 +40,11 @@ const run = (over: Partial<NetworkRunState> = {}): NetworkRunState => ({
   pending: false,
   ...over,
 });
-/** An attended run on a device whose provider enforces an allowlist. */
-const attended = { allowlist: true, unattended: null };
+/** What a per-operation device offers for a host it cannot add to its own list. */
+const OFFER: NetworkAskOffer = { scopes: ["once"], appliesAt: "next-command" };
+const RUN = null;
+/** An attended run on a device with something to offer. */
+const attended = { offer: () => OFFER, unattended: null };
 const unattended = (mode: "fail" | "wait", trial = false): UnattendedRun => ({
   taskId: "t",
   taskRunId: "tr",
@@ -59,6 +67,208 @@ describe("note texts (spec §6.6, §8.3)", () => {
     expect(allowedOnceNote(["a.com", "b.com"])).toBe(
       "[network] a.com, b.com were blocked by this device's network policy. The user allowed them for the rest of this task. Run the command again.",
     );
+  });
+});
+
+describe("networkAskOffer (device-provider spec §6.3)", () => {
+  it("per-operation hosts: once and always, applies from the next command", () => {
+    expect(networkAskOffer({ perOperationHosts: true }, undefined, true)).toEqual({
+      scopes: ["once", "always"],
+      appliesAt: "next-command",
+    });
+    expect(networkAskOffer({ perOperationHosts: true }, undefined, false)).toEqual({
+      scopes: ["once"],
+      appliesAt: "next-command",
+    });
+    // the provider's limitsApplyAt never matters with per-operation hosts
+    expect(networkAskOffer({ perOperationHosts: true }, "fileSystem", true)).toEqual({
+      scopes: ["once", "always"],
+      appliesAt: "next-command",
+    });
+  });
+
+  it("instance boundary: always only, next use or files reset; nothing when not addable", () => {
+    expect(networkAskOffer({ perOperationHosts: false }, "instance", true)).toEqual({
+      scopes: ["always"],
+      appliesAt: "next-use",
+    });
+    expect(networkAskOffer({ perOperationHosts: false }, undefined, true)).toEqual({
+      scopes: ["always"],
+      appliesAt: "next-use",
+    });
+    expect(networkAskOffer({ perOperationHosts: false }, "fileSystem", true)).toEqual({
+      scopes: ["always"],
+      appliesAt: "files-reset",
+    });
+    expect(networkAskOffer({ perOperationHosts: false }, "instance", false)).toBeNull();
+  });
+});
+
+describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
+  const outsideOrg = "an organization admin adds x.dev to the organization's device network list";
+  const facts = (over: Partial<Parameters<typeof deviceAskTerms>[0]> = {}) => ({
+    refusal: () => null,
+    // x.dev is outside the org's effective hosts: never on the device's own list
+    listAddRefusal: (h: string) => (h === "x.dev" ? outsideOrg : null),
+    box: { perCallHosts: false, hosts: ["a.dev", "*.added.dev"] },
+    ownList: true,
+    ownHosts: ["a.dev", "*.added.dev"],
+    limitsApplyAt: "fileSystem" as const,
+    ...over,
+  });
+
+  it("a host outside the org's effective hosts is never offered add to this device's list", () => {
+    // list-only: the host is unavailable (its note names who adds it), never asked
+    const listOnly = planNetworkAsk([dev("x.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(facts()),
+    });
+    expect(listOnly.ask).toEqual([{ host: "b.dev", port: 443 }]);
+    expect(listOnly.offer).toEqual({ scopes: ["always"], appliesAt: "files-reset" });
+    expect(listOnly.notes).toEqual([
+      `[network] x.dev was blocked by this device's network policy and cannot be allowed from this conversation: ${outsideOrg}. Continue without it or tell the user.`,
+    ]);
+    // per-operation hosts: a run grant for it, never the device's list
+    const perOp = planNetworkAsk([dev("x.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(facts({ box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } })),
+    });
+    expect(perOp.ask.map((a) => a.host)).toEqual(["x.dev", "b.dev"]);
+    expect(perOp.offer).toEqual({ scopes: ["once"], appliesAt: "next-command" });
+    expect(
+      deviceAskTerms(facts({ box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } })).offer(
+        ["b.dev"],
+      ),
+    ).toEqual({
+      scopes: ["once", "always"],
+      appliesAt: "next-command",
+    });
+  });
+
+  it("no list of its own: never always (a per-operation device keeps once, a list-only one nothing)", () => {
+    expect(
+      deviceAskTerms(
+        facts({ ownList: false, box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } }),
+      ).offer(["b.dev"]),
+    ).toEqual({ scopes: ["once"], appliesAt: "next-command" });
+    expect(deviceAskTerms(facts({ ownList: false })).offer(["b.dev"])).toBeNull();
+    // an instance provider applies at the next use
+    expect(deviceAskTerms(facts({ limitsApplyAt: "instance" })).offer(["b.dev"])).toEqual({
+      scopes: ["always"],
+      appliesAt: "next-use",
+    });
+  });
+
+  it("a host already on the device's own list is not asked again: a note says when it applies", () => {
+    const p = planNetworkAsk([dev("a.dev"), dev("x.added.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(facts()),
+    });
+    expect(p.ask).toEqual([{ host: "b.dev", port: 443 }]);
+    expect(p.notes).toEqual([
+      "[network] a.dev, x.added.dev were blocked by this device's network policy. This device's network settings already allow them, but its sandbox has not applied them yet; they apply after the files are rebuilt. Continue without them until then or tell the user.",
+    ]);
+    expect(onListNote(["a.dev"], "next-use")).toBe(
+      "[network] a.dev was blocked by this device's network policy. This device's network settings already allow it, but its sandbox has not applied them yet; they apply the next time the device is used. Continue without it until then or tell the user.",
+    );
+    expect(deviceAskTerms(facts({ limitsApplyAt: "instance" })).onList("a.dev")).toBe("next-use");
+    // a device following its org's hosts: its effective hosts allow it, applying the same way
+    expect(
+      deviceAskTerms(facts({ ownList: false, ownHosts: [], limitsApplyAt: "instance" })).onList(
+        "a.dev",
+      ),
+    ).toBe("next-use");
+    expect(
+      deviceAskTerms(
+        facts({ ownList: false, ownHosts: [], box: { perCallHosts: false, hosts: [] } }),
+      ).onList("a.dev"),
+    ).toBeNull();
+    expect(deviceAskTerms(facts()).onList("added.dev")).toBeNull();
+    // the host is matched case-insensitively, as the list's refusal is
+    expect(deviceAskTerms(facts()).onList("A.DEV")).toBe("files-reset");
+  });
+
+  it("a listed host outside the org's hosts gets the unavailable note, never 'it applies'", () => {
+    // x.dev is on the device's own list, but the org dropped it since: in effect nowhere
+    const f = facts({ ownHosts: ["a.dev", "x.dev"] });
+    expect(deviceAskTerms(f).onList("x.dev")).toBeNull();
+    const p = planNetworkAsk([dev("x.dev")], run(), { unattended: null, ...deviceAskTerms(f) });
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      `[network] x.dev was blocked by this device's network policy and cannot be allowed from this conversation: ${outsideOrg}. Continue without it or tell the user.`,
+    ]);
+    // with per-operation hosts, a per-call refusal of a listed host is shown too
+    const grant = "an organization admin adds a.dev to the organization's device network list";
+    const perOp = facts({
+      box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] },
+      refusal: (h) => (h === "a.dev" ? grant : null),
+    });
+    expect(deviceAskTerms(perOp).onList("a.dev")).toBeNull();
+    expect(
+      planNetworkAsk([dev("a.dev")], run(), { unattended: null, ...deviceAskTerms(perOp) }).notes,
+    ).toEqual([
+      `[network] a.dev was blocked by this device's network policy and cannot be allowed from this conversation: ${grant}. Continue without it or tell the user.`,
+    ]);
+  });
+
+  it("per-operation hosts: an allowed host the device still refused is the device's own block", () => {
+    const perOp = facts({ box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } });
+    // every operation carries the list: nothing is pending, so never "it applies"
+    expect(deviceAskTerms(perOp).onList("a.dev")).toBeNull();
+    expect(deviceAskTerms(perOp).deviceBlocks("A.dev")).toBe(true);
+    expect(deviceAskTerms(perOp).deviceBlocks("b.dev")).toBe(false);
+    const p = planNetworkAsk([dev("a.dev"), dev("x.added.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(perOp),
+    });
+    expect(p.ask).toEqual([{ host: "b.dev", port: 443 }]);
+    expect(p.notes).toEqual([
+      "[network] a.dev, x.added.dev were blocked by this device's network policy. This device's network settings allow them and every command carries them, so the block comes from the device itself (such as its owner's local network policy on the machine); it cannot be allowed from this conversation. Continue without them or tell the user.",
+    ]);
+    // a device following its org's hosts keeps the ask (a run grant names the exact host)
+    const following = facts({
+      ownList: false,
+      ownHosts: [],
+      box: { perCallHosts: true, hosts: ["a.dev"] },
+    });
+    expect(deviceAskTerms(following).deviceBlocks("a.dev")).toBe(false);
+    // without per-operation hosts the device has not applied its settings yet: never its own block
+    expect(deviceAskTerms(facts()).deviceBlocks("a.dev")).toBe(false);
+  });
+
+  it("a device following its org's hosts: an allowed host not yet applied says when it applies", () => {
+    const following = facts({
+      ownList: false,
+      ownHosts: [],
+      box: { perCallHosts: false, hosts: ["a.dev", "*.org.dev"] },
+      limitsApplyAt: "instance",
+    });
+    const p = planNetworkAsk([dev("x.org.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(following),
+    });
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      "[network] x.org.dev was blocked by this device's network policy. This device's network settings already allow it, but its sandbox has not applied them yet; they apply the next time the device is used. Continue without it until then or tell the user.",
+      "[network] b.dev was blocked by this device's network policy and cannot be allowed from this conversation: the device's owner changes the device's network on its page. Continue without it or tell the user.",
+    ]);
+    // a provider fixing limits at its file system: after the files are rebuilt
+    expect(deviceAskTerms({ ...following, limitsApplyAt: "fileSystem" }).onList("x.org.dev")).toBe(
+      "files-reset",
+    );
+  });
+
+  it("a per-call grant refusal decides with per-operation hosts; the list refusal without", () => {
+    const grant = "an organization admin adds b.dev to the organization's device network list";
+    const f = facts({ refusal: (h) => (h === "b.dev" ? grant : null) });
+    expect(
+      deviceAskTerms({
+        ...f,
+        box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] },
+      }).refusal("b.dev"),
+    ).toBe(grant);
+    expect(deviceAskTerms(f).refusal("b.dev")).toBeNull();
+    expect(deviceAskTerms(f).refusal("x.dev")).toBe(outsideOrg);
   });
 });
 
@@ -133,7 +343,7 @@ describe("planNetworkAsk", () => {
     // an unattended run cannot escalate: the plain note
     expect(
       planNetworkAsk(blocked, run(), {
-        allowlist: true,
+        offer: () => OFFER,
         unattended: unattended("wait"),
         escalation: true,
       }).notes,
@@ -191,15 +401,41 @@ describe("planNetworkAsk", () => {
     ).toEqual([{ host: "a.com", port: 443 }]);
   });
 
-  it("a provider that enforces no allowlist is never asked about a device-layer host", () => {
-    for (const allowlist of [false, undefined]) {
-      const p = planNetworkAsk([dev("a.com")], run(), {
-        ...(allowlist !== undefined && { allowlist }),
-        unattended: null,
-      });
-      expect(p).toMatchObject({ ask: [], notes: [] });
-    }
-    expect(planNetworkAsk([dev("a.com")], null, { unattended: null }).notes).toEqual([]);
+  it("a device-layer block is asked without any machine feature", () => {
+    const plan = planNetworkAsk([{ host: "a.dev", port: 443, layer: "device" }], RUN, {
+      offer: () => OFFER,
+      unattended: null,
+    });
+    expect(plan.ask).toEqual([{ host: "a.dev", port: 443 }]);
+    expect(plan.offer).toEqual(OFFER);
+  });
+
+  it("the offer is computed for the hosts asked, after the unavailable ones left", () => {
+    const seen: string[][] = [];
+    const p = planNetworkAsk([dev("a.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      refusal: (h) => (h === "a.dev" ? "an organization admin adds a.dev" : null),
+      offer: (hosts) => {
+        seen.push(hosts);
+        return OFFER;
+      },
+    });
+    expect(seen).toEqual([["b.dev"]]);
+    expect(p.ask).toEqual([{ host: "b.dev", port: 443 }]);
+  });
+
+  it("nothing to offer (a list-only device with no own list): an unavailable note, no ask", () => {
+    const p = planNetworkAsk([dev("a.dev")], run(), { unattended: null, offer: () => null });
+    expect(p.ask).toEqual([]);
+    expect(p).not.toHaveProperty("offer");
+    expect(p.notes).toEqual([
+      "[network] a.dev was blocked by this device's network policy and cannot be allowed from this conversation: the device's owner changes the device's network on its page. Continue without it or tell the user.",
+    ]);
+    // without an offer (no device sandbox known) a device-layer host is left to the trailer
+    expect(planNetworkAsk([dev("a.dev")], null, { unattended: null })).toMatchObject({
+      ask: [],
+      notes: [],
+    });
   });
 
   it("refused before → denied note; another ask pending; the run's cap", () => {
@@ -219,7 +455,7 @@ describe("planNetworkAsk", () => {
     const p = planNetworkAsk(
       [dev("files.slack.com"), { host: "api.foo.com", port: 443, layer: "org" }],
       run(),
-      { allowlist: true, unattended: unattended("fail") },
+      { offer: () => OFFER, unattended: unattended("fail") },
     );
     expect(p.ask).toEqual([]);
     expect(p.notes[0]).toBe(
@@ -229,13 +465,13 @@ describe("planNetworkAsk", () => {
     // wait mode and trial runs ask
     expect(
       planNetworkAsk([dev("a.com")], run(), {
-        allowlist: true,
+        offer: () => OFFER,
         unattended: unattended("wait"),
       }).ask,
     ).toHaveLength(1);
     expect(
       planNetworkAsk([dev("a.com")], run(), {
-        allowlist: true,
+        offer: () => OFFER,
         unattended: unattended("fail", true),
       }).ask,
     ).toHaveLength(1);
@@ -254,6 +490,7 @@ const rec = (over: Partial<ApprovalRecord>): ApprovalRecord =>
       ],
       command: "curl",
       description: null,
+      appliesAt: "next-command",
       result: { content: "out", isError: false },
     },
     ...over,
@@ -276,6 +513,26 @@ describe("settledNetworkNotes", () => {
         24,
       ),
     ).toEqual([allowedOnceNote(["a.com", "b.com"])]);
+    // "add to this device's list": the hosts were added, said when they apply; never run again
+    expect(
+      settledNetworkNotes(
+        rec({
+          status: "approved",
+          scope: "always",
+          detail: { ...d, appliesAt: "files-reset", grantedHosts: ["a.com"], outcome: "always" },
+        }),
+        24,
+      ),
+    ).toEqual([addedToDeviceNote(["a.com"], "files-reset"), deniedNote(["b.com"])]);
+    expect(addedToDeviceNote(["a.com"], "files-reset")).toBe(
+      "[network] a.com was blocked by this device's network policy. The person added a.com to this device's network list; it applies after the files are rebuilt. This command is not run again.",
+    );
+    expect(addedToDeviceNote(["a.com", "b.com"], "next-command")).toBe(
+      "[network] a.com, b.com were blocked by this device's network policy. The person added a.com, b.com to this device's network list; it applies from the next command. This command is not run again.",
+    );
+    expect(addedToDeviceNote(["a.com"], "next-use")).toMatch(
+      /it applies the next time the device is used\. This command is not run again\.$/,
+    );
     expect(settledNetworkNotes(rec({ status: "denied", denyReason: "no" }), 24)).toEqual([
       deniedNote(["a.com", "b.com"], "no"),
     ]);

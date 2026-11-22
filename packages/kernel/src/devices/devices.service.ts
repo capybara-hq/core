@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type {
-  DeviceReport,
-  LocalizedName,
-  SandboxBrowseScope,
-  SandboxLimits,
-  SandboxOperationScope,
+import {
+  type DeviceReport,
+  type LocalizedName,
+  pluginDescription,
+  type SandboxBrowseScope,
+  type SandboxLimits,
+  type SandboxOperationScope,
+  validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
@@ -14,17 +16,20 @@ import { DialInMachines } from "../dial-in/machines.js";
 import { DialInRelay } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
+import { PluginGuides, type SetupGuideRef } from "../extensions/plugin-guides.js";
 import { avatarColumns, type PersonRef, personAvatarUrl } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
   assertNotSharedAdmission,
+  currentStore,
   TransactionHost,
   withOrderedLocks,
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import type { OrgRole } from "../orgs/roles.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { DeviceReports } from "../sandbox/device-reports.js";
 import type {
@@ -35,6 +40,7 @@ import type {
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
+import { assertAuthorityHeld } from "../sandbox/permission-authority-lock.js";
 import {
   hostsNarrowed,
   needsOpenNetwork,
@@ -42,9 +48,10 @@ import {
 } from "../sandbox/permission-ceiling-writes.js";
 import { ownNetwork, PermissionFacts } from "../sandbox/permission-facts.js";
 import { type DeviceProviderEntry, DeviceProviders, servesDialIn } from "../sandbox/providers.js";
-import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DeviceProviderSelection } from "./device-provider-selection.js";
+import { deviceNotFound } from "./errors.js";
 
 /** A device as its owner sees it (`GET /orgs/:orgId/devices`). */
 export interface DeviceView {
@@ -55,6 +62,11 @@ export interface DeviceView {
   ownerKind: "personal";
   /** The provider it is bound to for life (`devices.provider`). */
   provider: string | null;
+  /**
+   * The provider's extension display name (`ExtensionDisplayNames`), also while the provider is
+   * off or not loaded when the name is known; null otherwise.
+   */
+  providerDisplayName: LocalizedName | null;
   /**
    * Its provider serves its devices over the dial-in channel (a machine signs in to the device);
    * false while the provider is not loaded here.
@@ -128,47 +140,24 @@ export interface DeviceSandboxView {
 export const RECENT_POLICY_CHANGES = 10;
 
 /**
- * One setting change of a device, as its owner sees it on the device page:
- * - `policy` (`device.policy_changed`): hosts removed from a local machine's allowlist by the
- *   platform (`web`, `im`), or added or removed on the machine by its owner (`device`,
- *   `capybara-device policy ...`); one sent whose answer never came (`device.policy_unknown`) or
- *   that failed (`device.policy_failed`) too;
- * - `ceiling` (`device.owner_ceiling_changed`): a machine's owner ceiling changed, narrowed from the
- *   device page (`web`) or on the machine (`device`);
- * - `network` (`device.network_changed`): a cloud device's sandbox network changed on its device
- *   page (`web`), through an API token (`token`), or by an agent's Platform tool call (`agent`).
+ * One setting change of a device, as its owner sees it on the device page: its sandbox network
+ * changed (`device.network_changed`), whatever its provider.
  */
 export interface DeviceSettingChangeView {
   at: string;
-  kind: "policy" | "ceiling" | "network";
-  /** Hosts added to / removed from the local allowlist (`policy` only; else empty). */
-  add: string[];
-  remove: string[];
-  /** The owner ceiling change (`ceiling` only; else null). `from` is null when the row does not say. */
-  ceiling: { from: DeviceCeilingFacts | null; to: DeviceCeilingFacts } | null;
-  /** The cloud network change (`network` only; else null). */
-  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
+  kind: "network";
+  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting };
   /** The deciding account (null when the account is gone). */
   by: PersonRef | null;
   /**
-   * `device`: made or reported on the machine itself; `token`: through an API token; `agent`: an
-   * agent's Platform tool call.
+   * Where it was decided: `web` on the device page or a network approval there, `im` a network
+   * approval on an IM card, `token` through an API token, `agent` an agent's Platform tool call.
    */
-  via: "web" | "im" | "device" | "token" | "agent";
-  /**
-   * What became of a `policy` change sent to the machine: `applied` (also every change made or
-   * reported on the machine, and every other row); `unknown`, its answer never came, `failed`, the
-   * machine refused it, never received it or stopped while applying it.
-   */
-  outcome: "applied" | "unknown" | "failed";
+  via: DeviceNetworkChangeVia;
 }
 
-/** One side of a {@link DeviceSettingChangeView.ceiling} change. */
-export interface DeviceCeilingFacts {
-  outsideSandbox: boolean;
-  restrictedProjectReach?: "workspace" | "os-user";
-  network?: "open" | "allowlist";
-}
+/** Where a device's network change was decided ({@link DeviceSettingChangeView.via}). */
+export type DeviceNetworkChangeVia = "web" | "im" | "token" | "agent";
 
 /** A device's stored network setting: `mode` null follows its org. */
 export interface DeviceNetworkSetting {
@@ -213,6 +202,12 @@ export interface DeviceProviderOption {
   plugin: string;
   /** The extension's display name; null when it has none. */
   displayName: LocalizedName | null;
+  /** The catalog item's description (`{ en, zh? }`); null when the item has none. */
+  description: { en: string; zh?: string } | null;
+  /** The provider declares `permissions.dialIn`: its devices are made by the machine signing in. */
+  dialIn: boolean;
+  /** Its device-connection setup guide, when the org's catalog shows it; null otherwise. */
+  guide: SetupGuideRef | null;
 }
 
 const isUniqueViolation = (e: unknown, constraint: string): boolean =>
@@ -239,6 +234,13 @@ const providerNotOn = (provider: string, on: DeviceProviderEntry[]): ApiError =>
   const message = `Device provider ${provider} is not on in this organization; choose one of: ${providerChoices(on)}`;
   return new ApiError("validation_failed", message, [{ path: "provider", message }]);
 };
+
+/** A new device is created on a dial-in provider: its devices are made by the machine (409). */
+const providerDialIn = (provider: string): ApiError =>
+  new ApiError(
+    "device.provider_dial_in",
+    `Devices of provider ${provider} are connected from the machine: follow its guide in New device (新建设备) instead of creating one here`,
+  );
 
 /** A device sign-in names a provider that is no dial-in provider on in the org (403). */
 export const dialInProviderUnavailable = (provider: string): ApiError =>
@@ -281,7 +283,7 @@ export class DevicesService {
     /** Each device's provider (whether it serves its devices over the dial-in channel). */
     @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(DialInMachines)
-    private readonly machines: Pick<DialInMachines, "revoke" | "revokeActive">,
+    private readonly machines: Pick<DialInMachines, "revokeActive">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "deviceSandbox" | "deviceSandboxFacts">,
@@ -291,20 +293,33 @@ export class DevicesService {
     @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "read">,
     /** The dial-in providers on in an org (a device signed in from a machine). */
     @Inject(DialInHandlers) private readonly dialIn: Pick<DialInHandlers, "onInOrg">,
+    /** The providers' device-connection guides. */
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "deviceGuides">,
   ) {}
 
   /**
    * The person's live devices in the org, the default first, then by creation, with the device
    * providers on in the org and its default one. With a default provider serving the org the
    * default device is created first if missing (its first need, spec §4.2 item 7; an existing one
-   * is only read, whatever its provider's state).
+   * is only read, whatever its provider's state). `role` is the caller's role in the org: it
+   * decides which setup guides the org's catalog shows them (none without it).
    */
-  async list(orgId: string, accountId: string): Promise<DeviceList> {
+  async list(orgId: string, accountId: string, role?: OrgRole): Promise<DeviceList> {
     const on = await this.selection.onInOrg(orgId);
-    const names = await this.displayNames.many(on.map((e) => e.plugin));
+    const plugins = on.map((e) => e.plugin);
+    const [names, descriptions, guides] = await Promise.all([
+      this.displayNames.many(plugins),
+      this.catalogDescriptions(plugins),
+      role === undefined
+        ? new Map<string, SetupGuideRef>()
+        : this.guides.deviceGuides(plugins, { orgId, role }),
+    ]);
     const providers = on.map((e) => ({
       plugin: e.plugin,
       displayName: names.get(e.plugin) ?? null,
+      description: descriptions.get(e.plugin) ?? null,
+      dialIn: servesDialIn(e),
+      guide: guides.get(e.plugin) ?? null,
     }));
     const defaultProvider = (await this.selection.defaultFor(orgId))?.plugin ?? null;
     const defaultId = await this.ensureDefault(orgId, accountId);
@@ -329,6 +344,30 @@ export class DevicesService {
       providers,
       defaultProvider,
     };
+  }
+
+  /** The latest catalog descriptions of `names` (one query); an item without one is absent. */
+  private async catalogDescriptions(
+    names: string[],
+  ): Promise<Map<string, { en: string; zh?: string }>> {
+    const out = new Map<string, { en: string; zh?: string }>();
+    if (names.length === 0) return out;
+    const rows = await this.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j.onRef("v.item_id", "=", "i.id").onRef("v.version", "=", "i.latest_version"),
+      )
+      .select(["i.name", "v.manifest"])
+      .where("i.name", "in", names)
+      .where("i.deleted_at", "is", null)
+      .execute();
+    for (const r of rows) {
+      const d = (r.manifest as { description?: unknown } | null)?.description;
+      if (typeof d !== "string" && (typeof d !== "object" || d === null)) continue;
+      const text = pluginDescription(d as string | { en: string; zh?: string });
+      if (text.en !== "" && !out.has(r.name)) out.set(r.name, text);
+    }
+    return out;
   }
 
   /** One of the person's live devices; anyone else's (or a missing one) → `not_found`. */
@@ -367,11 +406,14 @@ export class DevicesService {
   private async providerFor(orgId: string, named: string | undefined): Promise<string> {
     const on = await this.selection.onInOrg(orgId);
     if (named !== undefined) {
-      if (on.some((e) => e.plugin === named)) return named;
-      throw providerNotOn(named, on);
+      const entry = on.find((e) => e.plugin === named);
+      if (!entry) throw providerNotOn(named, on);
+      if (servesDialIn(entry)) throw providerDialIn(named);
+      return named;
     }
     const fallback = await this.selection.defaultFor(orgId);
     if (!fallback) throw providerRequired(on);
+    if (servesDialIn(fallback)) throw providerDialIn(fallback.plugin);
     return fallback.plugin;
   }
 
@@ -708,7 +750,8 @@ export class DevicesService {
    * transaction: a narrowing bumps the device epoch and revokes the admitted or started work it
    * takes ({@link networkNarrowingRevokes}; the revocations are owed through the outbox) and keeps
    * Full consent; a widening resets Full consent with a `permission_profile_changed` event.
-   * Audited `device.network_changed` (`via`: `web`, `token` for an API token, or the agent's).
+   * Audited `device.network_changed` (`via`: `opts.via` (a network approval's), else `web`,
+   * `token` for an API token, or the agent's in `auditDetail`).
    */
   private async networkLocked(
     orgId: string,
@@ -716,7 +759,11 @@ export class DevicesService {
     id: string,
     want: NonNullable<DevicePatch["network"]>,
     actorTokenId: string | undefined,
-    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
+    opts: {
+      narrowOnly?: boolean;
+      auditDetail?: Record<string, unknown>;
+      via?: DeviceNetworkChangeVia;
+    },
   ): Promise<void> {
     await this.ceilings.lock({ orgId, deviceId: id }, "device");
     const plan = await this.planNetwork(orgId, id, want, opts.narrowOnly === true);
@@ -747,10 +794,115 @@ export class DevicesService {
         from,
         to,
         by: accountId,
-        via: actorTokenId !== undefined ? "token" : "web",
+        via: opts.via ?? (actorTokenId !== undefined ? "token" : "web"),
         ...opts.auditDetail,
       },
     });
+  }
+
+  /**
+   * The ordered prelude of {@link addNetworkHostsIn} in a caller's transaction: the person's
+   * membership, the device row and the device's permission write lock (authority levels platform,
+   * org shared, device exclusive). A caller that adds hosts inside its own transaction (a network
+   * approval's decision) runs this in its own `withOrderedLocks` prelude, after its org row and
+   * before any conversation, approval or run row, the place of the authority locks in the global
+   * lock order; refuses `device.not_found` for anyone else's or a deleted device.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async lockNetworkAddSubject(orgId: string, accountId: string, deviceId: string): Promise<void> {
+    await this.lockNetworkSubject(orgId, accountId, deviceId);
+  }
+
+  /**
+   * Adds `hosts` to one of the person's devices' own network list: a network approval decided
+   * "add to this device's list" (`via`: where it was decided). In a caller's transaction (the
+   * approval decision's) it joins it and requires the device's permission write lock already held
+   * there ({@link lockNetworkAddSubject} in the caller's ordered prelude; else it throws before
+   * writing); with no transaction it takes that prelude itself ({@link withOrderedLocks}). It
+   * takes no distributed lock. The write is a network change like `PATCH` ({@link networkLocked}:
+   * audited `device.network_changed` from → to, listed as a recent change, the device epoch bumped
+   * and the instance marked for its next use). Refuses with `device.network_not_allowed`, writing
+   * nothing, unless the stored network is `allowlist` with a host list of its own (a device
+   * following its org's hosts already allows every host its list could name) and every host may
+   * join that list (`deviceListAddRefusal`). Hosts its list already covers change nothing; own
+   * hosts the org's hosts no longer cover (in effect nowhere) leave the list with the addition.
+   */
+  async addNetworkHostsIn(
+    orgId: string,
+    accountId: string,
+    deviceId: string,
+    hosts: string[],
+    via: "web" | "im",
+  ): Promise<void> {
+    if (currentStore() !== undefined) {
+      assertAuthorityHeld("device", deviceId, true);
+      await this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via);
+      return;
+    }
+    await withOrderedLocks(
+      () => this.lockNetworkSubject(orgId, accountId, deviceId),
+      () => this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via),
+    );
+  }
+
+  /** {@link addNetworkHostsIn} under the locks of its prelude (naming them again re-checks). */
+  @Transactional()
+  private async addNetworkHostsLocked(
+    orgId: string,
+    accountId: string,
+    id: string,
+    hosts: string[],
+    via: "web" | "im",
+  ): Promise<void> {
+    await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["network_mode", "network_hosts"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    const own = ownNetwork(row);
+    if (own.networkMode === "none")
+      throw new ApiError(
+        "device.network_not_allowed",
+        "Network access is turned off for this device's sandbox; its owner changes that on the device page",
+      );
+    if (own.networkMode !== "allowlist" || own.networkHosts.length === 0)
+      throw new ApiError(
+        "device.network_not_allowed",
+        "This device has no host list of its own: it follows its organization's hosts, which already include every host its list could name; an organization admin adds another host to the organization's device network list",
+      );
+    const wanted = [...new Set(hosts.map((h) => h.toLowerCase()))];
+    for (const host of wanted) {
+      const invalid = validateAllowHost(host);
+      if (invalid.length > 0)
+        throw new ApiError("validation_failed", `${host}: ${invalid.join("; ")}`, [
+          { path: "hosts", message: `${host}: ${invalid.join("; ")}` },
+        ]);
+    }
+    const facts = await this.facts.deviceSandboxFacts(orgId, id);
+    for (const host of wanted) {
+      const why = facts.listAddRefusal(host);
+      if (why !== null)
+        throw new ApiError(
+          "device.network_not_allowed",
+          `${host} cannot be added to this device's network list: ${why}`,
+        );
+    }
+    const covers = (list: readonly string[], h: string) =>
+      list.some((p) => coversHost(p.toLowerCase(), h));
+    // own hosts the org dropped since are in effect nowhere: they would refuse the new list
+    const kept = own.networkHosts.filter((h) => covers(facts.orgHosts, h.toLowerCase()));
+    const added = wanted.filter((h) => !covers(kept, h));
+    if (added.length === 0) return;
+    await this.networkLocked(
+      orgId,
+      accountId,
+      id,
+      { mode: "allowlist", hosts: [...kept, ...added] },
+      undefined,
+      { via },
+    );
   }
 
   /**
@@ -891,19 +1043,6 @@ export class DevicesService {
   }
 
   /**
-   * Disconnects the machine of one of the person's own dial-in devices (it must sign in
-   * again); see {@link DialInMachines.revoke}.
-   */
-  async revokeMachine(
-    orgId: string,
-    accountId: string,
-    id: string,
-    actorTokenId?: string,
-  ): Promise<void> {
-    await this.machines.revoke(orgId, accountId, id, actorTokenId);
-  }
-
-  /**
    * Starts one of the person's devices over with empty files (after
    * `device.files_lost`): records the request (audit), then, after the commit, enqueues the
    * `sandbox-reset-files` job (deterministic id per device), whose worker waits for running
@@ -948,8 +1087,9 @@ export class DevicesService {
    * The person's default device in the org: the live one if any, whatever its provider's state
    * (a default whose provider is off stays the default, unavailable, never demoted or replaced),
    * else a new default (named by the UI, `name` NULL) bound to the org's default provider
-   * ({@link DeviceProviderSelection.defaultFor}), else null (no default provider on in the org).
-   * An existing one is read without locking.
+   * ({@link DeviceProviderSelection.defaultFor}), else null: no default provider on in the org, or
+   * a dial-in one (a machine must sign in to make its device, so nothing is created for the person;
+   * spec §6.4). An existing one is read without locking.
    *
    * Creating one first takes the person's membership row (`FOR SHARE`, after the org row), so an
    * offboarding that removes them cannot leave a live default behind; not a member (any more) →
@@ -961,7 +1101,7 @@ export class DevicesService {
     const live = await this.defaultOf(orgId, accountId);
     if (live) return live.id;
     const provider = await this.selection.defaultFor(orgId);
-    if (!provider) return null;
+    if (!provider || servesDialIn(provider)) return null;
     return this.insertDefault(orgId, accountId, provider.plugin);
   }
 
@@ -1109,6 +1249,7 @@ export class DevicesService {
         providerNames.map(async (p) => [p, await this.selection.isOnInOrg(orgId, p)] as const),
       ),
     );
+    const providerNamesOf = await this.displayNames.many(providerNames);
     // each device's sandbox, limits, its instance's pending change and its stored report
     const perDevice = new Map(
       await Promise.all(
@@ -1141,6 +1282,7 @@ export class DevicesService {
         isDefault: r.is_default,
         ownerKind: "personal",
         provider,
+        providerDisplayName: provider === null ? null : (providerNamesOf.get(provider) ?? null),
         dialIn: dialIn.has(r.id),
         // an instance row of another provider (never written by this kernel) is refused on use
         available:
@@ -1188,8 +1330,8 @@ export class DevicesService {
   }
 
   /**
-   * The last {@link RECENT_POLICY_CHANGES} setting changes of each device in the org (audit rows
-   * {@link SETTING_CHANGE_ACTIONS}), newest first, with the deciding account's display name.
+   * The last {@link RECENT_POLICY_CHANGES} setting changes of each device in the org (its
+   * `device.network_changed` audit rows), newest first, with the deciding account's display name.
    */
   private async recentChanges(
     orgId: string,
@@ -1201,7 +1343,6 @@ export class DevicesService {
       .selectFrom("audit_events as a")
       .select([
         "a.target",
-        "a.action",
         "a.at",
         "a.detail",
         "a.actor_account_id",
@@ -1210,14 +1351,13 @@ export class DevicesService {
         ),
       ])
       .where("a.org_id", "=", orgId)
-      .where("a.action", "in", [...SETTING_CHANGE_ACTIONS])
+      .where("a.action", "=", "device.network_changed")
       .where("a.target", "in", deviceIds);
     const rows = await this.db
       .selectFrom(ranked.as("r"))
       .leftJoin("accounts as ac", "ac.id", "r.actor_account_id")
       .select((eb) => [
         "r.target",
-        "r.action",
         "r.at",
         "r.detail",
         "r.actor_account_id",
@@ -1232,7 +1372,6 @@ export class DevicesService {
       const list = out.get(r.target) ?? [];
       list.push(
         settingChangeOf(
-          r.action,
           r.at,
           (r.detail ?? {}) as Record<string, unknown>,
           r.actor_account_id === null || r.display_name === null
@@ -1363,7 +1502,7 @@ function networkWidens(
 const STORED_RANK = { none: 0, allowlist: 1, open: 2 } as const;
 
 /**
- * Whether a cloud device's stored network setting widens from `a` to `b`, whatever the network in
+ * Whether a device's stored network setting widens from `a` to `b`, whatever the network in
  * effect now (a stored widening takes effect when a ceiling opens later): a wider mode, where
  * following the org (null) counts as wider than any explicit mode; or an explicit host list
  * replaced by none of its own (follow the org's hosts) or gaining a host.
@@ -1377,7 +1516,7 @@ export function storedNetworkWidens(a: DeviceNetworkSetting, b: DeviceNetworkSet
 }
 
 /**
- * What a cloud device's new network takes from admitted or started work (`next`: its sandbox
+ * What a device's new network takes from admitted or started work (`next`: its sandbox
  * after the change): open-network work once it is no longer open, and allowlist work naming a host
  * its new hosts no longer cover, unless an independent grant the new per-call ceiling still allows
  * holds it (`hostsNarrowed`).
@@ -1408,31 +1547,7 @@ function networkLayerText(layer: DeviceSandboxLayer | null): string {
   }
 }
 
-/** The audit actions a device's recent setting changes list. */
-const SETTING_CHANGE_ACTIONS = [
-  "device.policy_changed",
-  "device.policy_unknown",
-  "device.policy_failed",
-  "device.owner_ceiling_changed",
-  "device.network_changed",
-] as const;
-
-/** One side of an audited ceiling change; null when the row does not carry a readable one. */
-function ceilingFactsOf(v: unknown): DeviceCeilingFacts | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o = v as Record<string, unknown>;
-  // rows written before the rename carry the same fact as `fullAccess`
-  const outside = typeof o.outsideSandbox === "boolean" ? o.outsideSandbox : o.fullAccess;
-  if (typeof outside !== "boolean") return null;
-  const reach = o.restrictedProjectReach;
-  return {
-    outsideSandbox: outside,
-    ...((reach === "workspace" || reach === "os-user") && { restrictedProjectReach: reach }),
-    ...((o.network === "open" || o.network === "allowlist") && { network: o.network }),
-  };
-}
-
-/** One side of an audited cloud network change. */
+/** One side of an audited network change. */
 function networkSettingOf(v: unknown): DeviceNetworkSetting {
   const o = (typeof v === "object" && v !== null ? v : {}) as Record<string, unknown>;
   const mode = o.mode;
@@ -1442,53 +1557,20 @@ function networkSettingOf(v: unknown): DeviceNetworkSetting {
   };
 }
 
-/** One audit row of {@link SETTING_CHANGE_ACTIONS} as a {@link DeviceSettingChangeView}. */
+/** One `device.network_changed` audit row as a {@link DeviceSettingChangeView}. */
 function settingChangeOf(
-  action: string,
   at: Date,
   d: Record<string, unknown>,
   by: PersonRef | null,
 ): DeviceSettingChangeView {
-  const hosts = (v: unknown) =>
-    Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
-  const via: DeviceSettingChangeView["via"] =
-    d.via === "im"
-      ? "im"
-      : d.via === "device"
-        ? "device"
-        : d.via === "token"
-          ? "token"
-          : d.via === "agent"
-            ? "agent"
-            : "web";
-  const base = { at: at.toISOString(), add: [], remove: [], ceiling: null, network: null, by, via };
-  if (action === "device.owner_ceiling_changed") {
-    const to = ceilingFactsOf(d.to);
-    return {
-      ...base,
-      kind: "ceiling",
-      ceiling: to === null ? null : { from: ceilingFactsOf(d.from), to },
-      outcome: "applied",
-    };
-  }
-  if (action === "device.network_changed")
-    return {
-      ...base,
-      kind: "network",
-      network: { from: networkSettingOf(d.from), to: networkSettingOf(d.to) },
-      outcome: "applied",
-    };
+  const via: DeviceNetworkChangeVia =
+    d.via === "im" || d.via === "token" || d.via === "agent" ? d.via : "web";
   return {
-    ...base,
-    kind: "policy",
-    add: hosts(d.add),
-    remove: hosts(d.remove),
-    outcome:
-      action === "device.policy_unknown"
-        ? "unknown"
-        : action === "device.policy_failed"
-          ? "failed"
-          : "applied",
+    at: at.toISOString(),
+    kind: "network",
+    network: { from: networkSettingOf(d.from), to: networkSettingOf(d.to) },
+    by,
+    via,
   };
 }
 

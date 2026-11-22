@@ -134,6 +134,7 @@ import {
   addressEscalationHint,
   blockedEventHosts,
   clipKept,
+  deviceAskTerms,
   NETWORK_ASK_KEPT_MAX_BYTES,
   networkBlockedIdemKey,
   planNetworkAsk,
@@ -2817,9 +2818,9 @@ export class ToolPipeline {
       ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
     const limits = this.config.get().sandbox.limits;
-    // the per-call host ceiling decides what is worth asking: a host a per-call grant cannot
-    // reach on this device (its provider, the org's or the platform's allowlist ceiling) is
-    // unavailable, never asked about
+    // the ask offers what the device's provider enforces (device-provider spec §6.3): a run grant
+    // only with per-operation hosts, "add to this device's list" only for hosts its own list can
+    // take; a host neither reaches is unavailable, never asked about
     const sandbox = await network.sandbox?.hostRefusal({
       orgId: ctx.orgId,
       deviceId: report.deviceId,
@@ -2828,8 +2829,7 @@ export class ToolPipeline {
       unattended: ctx.unattended,
       outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
       ...(sandbox !== undefined && {
-        allowlist: sandbox.allowlist,
-        refusal: sandbox.refusal,
+        ...deviceAskTerms(sandbox),
         // the hint follows admission's verdict for this call (never a recomputation), and only
         // the open network makes a private address the one thing escalation adds
         escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
@@ -2841,7 +2841,9 @@ export class ToolPipeline {
         await appendMissingGrant(this.deps.db, ctx.unattended.taskRunId, key);
       }
     }
-    if (plan.ask.length === 0) return { kind: "write", event, notes: plan.notes };
+    const offer = plan.offer;
+    if (plan.ask.length === 0 || offer === undefined)
+      return { kind: "write", event, notes: plan.notes };
     // the device's owner is the only person who may decide (spec §5.2)
     const owner = await this.deps.db
       .selectFrom("devices")
@@ -2900,9 +2902,10 @@ export class ToolPipeline {
         hosts: plan.ask,
         command: typeof given.command === "string" ? clipText(given.command, 2000) : "",
         description: typeof given.description === "string" ? given.description : null,
+        appliesAt: offer.appliesAt,
         result: kept,
       },
-      scopes: ["once"],
+      scopes: offer.scopes,
     });
     return { kind: "wait", wait: approvalWait(ask), content: kept.content };
   }

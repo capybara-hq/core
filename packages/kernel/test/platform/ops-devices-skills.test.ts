@@ -198,6 +198,30 @@ describe("devices", () => {
     ]);
   });
 
+  it("devices.create takes a provider; devices.list returns the providers and the device its name", async () => {
+    const ctx = ctxOf(ownerId);
+    const created = (await run(
+      "devices.create",
+      { name: "On a provider", provider: "device-fake" },
+      ctx,
+    )) as { device: { provider: string } };
+    expect(created.device.provider).toBe("device-fake");
+    const l = (await run("devices.list", {}, ctx)) as {
+      providers: { plugin: string; dialIn: boolean }[];
+    };
+    expect(l.providers).toContainEqual(
+      expect.objectContaining({ plugin: "device-fake", dialIn: false }),
+    );
+    const got = (await run(
+      "devices.get",
+      { deviceId: (created.device as { id?: string }).id },
+      ctx,
+    )) as {
+      device: { providerDisplayName: unknown };
+    };
+    expect(got.device).toHaveProperty("providerDisplayName");
+  });
+
   it("only devices.set-network changes a device's network, and only narrowing it", async () => {
     const rename = op("devices.rename").input;
     const deviceId = "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20";

@@ -130,7 +130,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list",
         description:
-          "List your own devices in this org: one compact row each (name, state, whether it is the default, provider, whether it is a dial-in device signed in from a machine, whether that machine is online and which it is, last use), plus the default and last used ids, the device providers on in this org (a new device may name one) and the default provider (null: a new device must name one). The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
+          "List your own devices in this org: one compact row each (name, state, whether it is the default, provider, whether it is a dial-in device signed in from a machine, whether that machine is online and which it is, last use), plus the default and last used ids, the device providers on in this org (a new device may name one; each has its name, description and whether it is a dial-in provider) and the default provider (null: a new device must name one). A dial-in provider's devices are made on the machine, not created here. The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -142,7 +142,7 @@ export class DevicesOperations implements OnModuleInit {
             items: l.items.map(row),
             defaultId: l.defaultId,
             lastUsedId: l.lastUsedId,
-            providers: l.providers,
+            providers: l.providers.map(({ guide: _guide, ...p }) => p),
             defaultProvider: l.defaultProvider,
           };
         },
@@ -176,7 +176,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.create",
         description:
-          "Create a personal cloud device with a name (1-64 characters, unique among yours, case-insensitive) on a device provider: provider is one of the providers devices.list returns; omit it for the org's default provider. The device stays on that provider for life. It is ready at once; its instance and files are made on first use. Devices are limited per person.",
+          "Create a personal cloud device with a name (1-64 characters, unique among yours, case-insensitive) on a device provider: provider is one of the providers devices.list returns that is not a dial-in provider (a dial-in provider's device is created on the machine by following its guide on the web); omit it for the org's default provider. The device stays on that provider for life. It is ready at once; its instance and files are made on first use. Devices are limited per person.",
         input: DeviceCreateBody,
         example: { name: "Data analysis" },
         authz: { orgAction: "agents.use" },
@@ -205,6 +205,10 @@ export class DevicesOperations implements OnModuleInit {
               member:
                 "Call again naming one of the providers in the message as provider; with none listed, ask an org admin to switch one on.",
             },
+          },
+          {
+            code: "device.provider_dial_in",
+            next: "That provider's devices are made on the machine: tell the person to follow its guide in 新建设备 on the web, or name a provider whose dialIn is false.",
           },
           {
             code: "validation_failed",
@@ -466,7 +470,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list-projects",
         description:
-          "List the projects of one of your devices that its current mode can read (name and absolute path), plus the mode, the base a new project's path is relative to (the workspace in sandbox mode and on a cloud device, your home directory in auto mode), how many stored projects the mode hides, and whether the device offers projects at all. Takes the id from devices.list.",
+          "List every project of one of your devices (name and absolute path), plus the base a new project's path is relative to (the home directory the device reports, else its workspace) and whether the device offers projects at all. Takes the id from devices.list.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -507,7 +511,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.add-project",
         description:
-          "Add a project to one of your devices: path is relative to the device's base (see devices.list-projects; empty for the base itself), never absolute, and must stay inside what the device reads in its current mode; name defaults to the directory's name (1-64 characters, no /, unique on the device). The device is asked first, so a missing directory, a file or an unreadable path is refused. At most 100 projects per device. Takes the id from devices.list.",
+          "Add a project to one of your devices: path is relative to the device's base (see devices.list-projects; empty for the base itself), never absolute, and never above the owner's home; name defaults to the directory's name (1-64 characters, no /, unique on the device). The device is asked first, so a missing directory, a file, an unreadable path or one the device refuses (with its reason) is refused. At most 100 projects per device. Takes the id from devices.list.",
         input: DeviceId.extend(DeviceProjectAddBody.shape).strict(),
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20", path: "src/capybara" },
         authz: { orgAction: "agents.use" },
@@ -529,7 +533,7 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.project_outside_mode",
-            next: "Pick a directory inside the device's workspace, or ask the person to switch the device to auto mode on its machine.",
+            next: "The device does not let a project reach this directory: pick one inside its base (see devices.list-projects).",
           },
           {
             code: "device.project_path_missing",
@@ -545,7 +549,7 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.project_refused",
-            next: "The device's provider refused this directory (its reason is in the message): pick another directory.",
+            next: "The device refused the path: the reason says why; pick another directory.",
           },
           {
             code: "device.projects_unsupported",

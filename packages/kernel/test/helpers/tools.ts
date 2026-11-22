@@ -119,6 +119,15 @@ export function approvalsFor(
         throw new Error("no sealed person inputs in a hand-built approvals service");
       },
     },
+    // no network ask is added to a device's list here
+    {
+      lockNetworkAddSubject: async () => {
+        throw new Error("no device list in a hand-built approvals service");
+      },
+      addNetworkHostsIn: async () => {
+        throw new Error("no device list in a hand-built approvals service");
+      },
+    },
   );
 }
 

@@ -10,7 +10,7 @@ import {
 /**
  * The devices routes the Platform operations mirror (`check:platform-ops` keys). `PATCH /devices/:id`
  * ({@link DevicePatchBody}) is mirrored by `devices.rename` (the name) and `devices.set-network`
- * (a cloud device's network, narrow only).
+ * (a device's network, narrow only).
  */
 export const DEVICE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/devices" },

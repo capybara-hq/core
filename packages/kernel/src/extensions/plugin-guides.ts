@@ -504,14 +504,42 @@ export class PluginGuides {
     names: string[],
     org: { orgId: string; role: OrgRole },
   ): Promise<Map<string, SetupGuideRef & { guide: PluginSetupGuide; row: ItemRow }>> {
+    return this.guidesByPlace("channel-connection", names, org);
+  }
+
+  /**
+   * Plugin name -> its device-connection guide ref, for device provider plugins whose item the
+   * org's catalog shows (`GET /devices`); others are absent.
+   */
+  async deviceGuides(
+    names: string[],
+    org: { orgId: string; role: OrgRole },
+  ): Promise<Map<string, SetupGuideRef>> {
+    const out = new Map<string, SetupGuideRef>();
+    for (const [name, { itemId, guideId, version }] of await this.guidesByPlace(
+      "device-connection",
+      names,
+      org,
+    )) {
+      out.set(name, { itemId, guideId, version });
+    }
+    return out;
+  }
+
+  /** Plugin name -> its guide of a place, for plugins whose item the org's catalog shows. */
+  private async guidesByPlace(
+    place: SetupGuidePlace,
+    names: string[],
+    org: { orgId: string; role: OrgRole },
+  ): Promise<Map<string, SetupGuideRef & { guide: PluginSetupGuide; row: ItemRow }>> {
     const out = new Map<string, SetupGuideRef & { guide: PluginSetupGuide; row: ItemRow }>();
     if (names.length === 0) return out;
     const rows = (await this.latest("name", names)).filter(
-      (r) => guideFor(r.manifest, "channel-connection") !== undefined,
+      (r) => guideFor(r.manifest, place) !== undefined,
     );
     const visible = await orgVisibleItems(this.db, rows, org.orgId, roleAtLeast(org.role, "admin"));
     for (const r of visible) {
-      const guide = guideFor(r.manifest, "channel-connection") as PluginSetupGuide;
+      const guide = guideFor(r.manifest, place) as PluginSetupGuide;
       out.set(r.name, {
         itemId: r.id,
         guideId: guide.id,
