@@ -375,7 +375,6 @@ export interface ScopePending {
 
 /** Pages that still hand a Segmented / Tabs to `filters`; a ratchet like `BOX_PENDING`. */
 export const SCOPE_PENDING: readonly ScopePending[] = [
-  { path: "app/(app)/agents/view.tsx", fix: "the scope Segmented becomes ScopeChips" },
   {
     path: "app/(app)/admin/agents/templates/view.tsx",
     fix: "useOwnerFilter's owner Tabs become ScopeChips",
