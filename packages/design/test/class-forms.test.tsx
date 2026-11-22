@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
+import { useId } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClassForms, DesignProvider, useClassForm } from "../src/index";
@@ -109,15 +110,58 @@ describe("ClassForms", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it("a fractional width between 599 and 600 (zoom) still picks one copy, never marking it inert", () => {
+    const mm = matchMediaFor(599.5);
+    window.matchMedia = mm.matchMedia;
+    const ui = <DesignProvider locale="zh">{forms}</DesignProvider>;
+    const container = document.createElement("div");
+    document.body.append(container);
+    container.innerHTML = renderToString(ui);
+    const compact = container.querySelector('[data-class-form="compact"]') as HTMLElement;
+    const wide = container.querySelector('[data-class-form="wide"]') as HTMLElement;
+    render(ui, { container, hydrate: true });
+    expect(copies(container)).toEqual(["compact"]);
+    expect(compact.isConnected).toBe(true);
+    expect(compact.hasAttribute("inert")).toBe(false);
+    expect(wide.hasAttribute("inert")).toBe(true);
+    expect(wide.isConnected).toBe(false);
+  });
+
+  it("ids from useId are unique per copy and the shown copy keeps its id through the prune", () => {
+    function Labelled({ text }: { text: string }) {
+      const id = useId();
+      return <span id={id}>{text}</span>;
+    }
+    const idForms = (
+      <ClassForms compact={<Labelled text="compact" />} wide={<Labelled text="wide" />} />
+    );
+    window.matchMedia = matchMediaFor(1440).matchMedia;
+    const ui = <DesignProvider locale="zh">{idForms}</DesignProvider>;
+    const container = document.createElement("div");
+    document.body.append(container);
+    container.innerHTML = renderToString(ui);
+    const ids = [...container.querySelectorAll("span")].map((e) => e.id);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe("");
+    expect(new Set(ids).size).toBe(2);
+    const wideId = (container.querySelector('[data-class-form="wide"] span') as HTMLElement).id;
+    render(ui, { container, hydrate: true });
+    const after = [...container.querySelectorAll("span")];
+    expect(after).toHaveLength(1);
+    expect(after[0]?.id).toBe(wideId);
+  });
+
   it("a client-only mount draws only the matching copy", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const { container } = render(<DesignProvider locale="zh">{forms}</DesignProvider>);
     expect(copies(container)).toEqual(["compact"]);
   });
 
-  it("the stylesheet hides the other copy at 599 / 600", () => {
+  it("the stylesheet hides each copy on the complement of (min-width: 600px)", () => {
     const css = readFileSync(resolve(__dirname, "../src/styles/class-forms.css"), "utf8");
-    expect(css).toMatch(/@media \(max-width: 599px\)\s*\{[^}]*\[data-class-form="wide"\]/);
+    expect(css).toMatch(
+      /@media not all and \(min-width: 600px\)\s*\{[^}]*\[data-class-form="wide"\]/,
+    );
     expect(css).toMatch(/@media \(min-width: 600px\)\s*\{[^}]*\[data-class-form="compact"\]/);
     const index = readFileSync(resolve(__dirname, "../src/styles/index.css"), "utf8");
     expect(index).toContain('@import "./class-forms.css" layer(design);');

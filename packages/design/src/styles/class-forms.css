@@ -1,10 +1,12 @@
 /* ClassForms (responsive spec §5.2 mechanism A): before hydration both copies are in the DOM and
    the window width shows one; after hydration only the matching copy is mounted. The wrappers
-   take no box of their own. */
+   take no box of their own. Compact is the complement of (min-width: 600px), not
+   (max-width: 599px), so a fractional width between the two (browser zoom) still shows one copy;
+   class-forms.tsx derives the form from the same query. */
 .cb-class-form {
   display: contents;
 }
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-class-form[data-class-form="wide"] {
     display: none;
   }
