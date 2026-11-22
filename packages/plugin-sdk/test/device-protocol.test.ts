@@ -11,6 +11,7 @@ import {
   DEVICE_PROTOCOL_VERSION,
   DeviceProtocolError,
   isDeviceBootId,
+  MAX_DEVICE_SHARED_PROJECT_ROOTS,
   MAX_NETWORK_BLOCKED_HOSTS,
   parseDeviceFrame,
   parseOpResult,
@@ -312,6 +313,41 @@ describe("device protocol value guards", () => {
       expect(event({ ...summary, projects: [{ name: "core", path: "/w/core" }] }).policy).toEqual(
         summary,
       );
+    });
+  });
+
+  describe("the summary's shared project directories", () => {
+    const summary = { allowedDomains: ["a.com"] };
+    const event = (policy: unknown) =>
+      parseDeviceFrame({ type: "policy", policy, ownerCeiling: hello.ownerCeiling }, "event");
+
+    it("keeps valid absolute roots in the hello and the policy event", () => {
+      const policy = { ...summary, sharedProjectRoots: ["/Users/ann/core", "/srv/app"] };
+      expect(parseHello({ ...hello, policy }).policy).toEqual(policy);
+      expect(event(policy).policy).toEqual(policy);
+      const most = Array.from({ length: MAX_DEVICE_SHARED_PROJECT_ROOTS }, (_, i) => `/p/${i}`);
+      expect(event({ ...summary, sharedProjectRoots: most }).policy?.sharedProjectRoots).toEqual(
+        most,
+      );
+    });
+
+    it("drops a relative, malformed or oversized value and keeps the rest of the summary", () => {
+      const tooMany = Array.from(
+        { length: MAX_DEVICE_SHARED_PROJECT_ROOTS + 1 },
+        (_, i) => `/p/${i}`,
+      );
+      for (const sharedProjectRoots of [
+        ["relative/dir"],
+        ["/a/../b"],
+        ["/ok", 3],
+        "/ok",
+        null,
+        tooMany,
+      ]) {
+        const policy = { ...summary, sharedProjectRoots };
+        expect(parseHello({ ...hello, policy }).policy, JSON.stringify(policy)).toEqual(summary);
+        expect(event(policy).policy).toEqual(summary);
+      }
     });
   });
 

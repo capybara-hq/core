@@ -1,6 +1,7 @@
 import {
   type ConnectionInfo,
   connectionLine,
+  machineDirOfConnection,
   resolveConnection,
   scanConnections,
 } from "../connections.js";
@@ -8,6 +9,7 @@ import { queryControl } from "../control/client.js";
 import { controlSocketPath, type LiveStatus } from "../control/protocol.js";
 import { controlUnavailableReason } from "../control/server.js";
 import { type ProcessChecks, readRunningPid } from "../pid.js";
+import { sharedProjectRoots } from "../project-roots.js";
 import { hasLoginService } from "../service/installed.js";
 
 /** How long `status` waits for the running program to answer on its control socket. */
@@ -70,11 +72,32 @@ export type ConnectionStatusJson = {
   serviceInstalled: boolean;
   /** Absolute path of this connection's control socket; clients read it only from here. */
   controlSocket: string;
+  /**
+   * This connection's project directories another connection on this machine also uses (never
+   * which connection).
+   */
+  sharedProjects: string[];
 } & Control;
 
 export interface MachineStatusJson {
   connections: ConnectionStatusJson[];
   unreadable: Array<{ deviceId: string; reason: string }>;
+}
+
+/** This connection's shared project directories; none when they cannot be read. */
+function sharedProjects(c: ConnectionInfo): string[] {
+  try {
+    return sharedProjectRoots(machineDirOfConnection(c.stateDir), c.deviceId);
+  } catch {
+    return [];
+  }
+}
+
+/** The mark of a connection whose project directories another connection also uses; "" for none. */
+export function sharedProjectsMark(n: number): string {
+  if (n === 0) return "";
+  const what = n === 1 ? "project directory" : "project directories";
+  return `${n} ${what} also used by another connection on this machine`;
 }
 
 async function connectionStatus(
@@ -90,6 +113,7 @@ async function connectionStatus(
     host: c.host,
     mode: c.mode,
     dir: c.workDir,
+    sharedProjects: sharedProjects(c),
   };
   try {
     const control = await controlState(c.stateDir, opts);
@@ -153,6 +177,9 @@ export async function status(
           `  mode:         ${c.mode}`,
           `  service:      ${s.serviceInstalled ? "installed" : "not installed"}`,
           `  running:      ${runningLine(s)}`,
+          ...(s.sharedProjects.length > 0
+            ? [`  projects:     ${sharedProjectsMark(s.sharedProjects.length)}`]
+            : []),
         ].join("\n"),
       );
     }
@@ -179,7 +206,9 @@ export async function status(
     out(JSON.stringify({ connections, unreadable } satisfies MachineStatusJson));
   } else {
     readable.forEach((c, i) => {
-      out(`${connectionLine(c)} · ${stateWord(connections[i] as ConnectionStatusJson)}`);
+      const s = connections[i] as ConnectionStatusJson;
+      const mark = sharedProjectsMark(s.sharedProjects.length);
+      out(`${connectionLine(c)} · ${stateWord(s)}${mark === "" ? "" : ` (${mark})`}`);
     });
     for (const u of unreadable) out(`${u.deviceId}: unreadable (${u.reason})`);
   }

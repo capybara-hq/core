@@ -34,25 +34,25 @@ describe("CommandLog", () => {
 });
 
 describe("the policy summary", () => {
-  it("reports the sandbox allowlist only, on the machine and in a container", () => {
+  it("reports the sandbox allowlist and the shared project directories, on the machine and in a container", () => {
     expect(
       policySummary(
         {
           ...FULL_POLICY,
           ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "machine" },
         },
-        { mode: "os" },
+        { mode: "os", sharedProjectRoots: ["/p/shared"] },
       ),
-    ).toEqual({ allowedDomains: [] });
+    ).toEqual({ allowedDomains: [], sharedProjectRoots: ["/p/shared"] });
     expect(
       policySummary(
         {
           ...FULL_POLICY,
           ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "workspace" },
         },
-        { mode: "docker" },
+        { mode: "docker", sharedProjectRoots: [] },
       ),
-    ).toEqual({ allowedDomains: [] });
+    ).toEqual({ allowedDomains: [], sharedProjectRoots: [] });
   });
 });
 
