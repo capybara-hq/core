@@ -549,9 +549,12 @@
     height: max(var(--cb-shell-band), var(--cb-shell-row));
   }
 }
-/* While an overlay is open (a menu, a popover, a tooltip, a toast, a dialog, a sheet, the palette,
-   a drawer) no filler drags: an overlay that lands over one (the org switcher's menu, the title
-   menu) stays clickable and hoverable everywhere, and the window does not move under a modal. */
+/* While a modal overlay is open (one that holds the pointer or closes on an outside click: a menu,
+   a popover, a dialog, a sheet, the palette, a drawer) no filler drags: an overlay that lands over
+   one (the org switcher's menu, the title menu) stays clickable and hoverable everywhere, and the
+   window does not move under a modal. A toast or a tooltip is no modal: the window keeps dragging
+   by its top row while one shows (their own roots never drag, below, so a toast stays clickable
+   wherever it lies). */
 :root[data-shell="desktop"]:has(
   :is(
       .cb-scrim,
@@ -561,8 +564,6 @@
       .cb-menu,
       .cb-popover,
       .cb-cmenu,
-      .cb-tooltip,
-      .cb-toast,
       .cb-palette,
       .cb-viewer,
       .cb-conv-sheet,

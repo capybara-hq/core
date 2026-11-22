@@ -251,8 +251,8 @@ describe("sticky parts inside the one scroller", () => {
       (r) => r.selector === '.cb-settings-nav[data-sticky="true"]',
     );
     expect(rule?.decls.position).toBe("sticky");
-    // under the floating row: the scroller starts at the row's top
-    expect(rule?.decls.top).toBe("var(--cb-float-row, 0px)");
+    // under the floating row: the scroller's padding-top is the row, and the offset counts from it
+    expect(rule?.decls.top).toBe("0");
   });
 
   it("ActionRows stay sticky at the bottom", () => {

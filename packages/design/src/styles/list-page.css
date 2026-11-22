@@ -10,7 +10,7 @@
 
 /* Compact (below 600; the ClassForms query): the search, the head's tabs and the scope chips are
    one quick-return bar, a direct child of the template's one scroller. It sticks under the
-   floating row (`--cb-float-row`; 0 outside a compact shell) and slides away under it while the
+   floating row and slides away under it (`--cb-float-row`; 0 outside a compact shell) while the
    frame reports `barHidden` (`data-bar-hidden` on the root), back on the next upward scroll, over
    motion.overlay. A transform moves it, never its box, so hiding never changes the scroll height
    (a short list cannot start a hide-show loop). */
@@ -24,9 +24,13 @@
   .cb-template[data-compact-bar="true"] .cb-template-head {
     padding-bottom: var(--cb-space-2);
   }
+  /* A sticky offset counts from the scroller's padding edge, and the scroller's padding-top is
+     already the floating row (shell.css): `top: 0` docks the bar right under the row. An offset of
+     the row's height again left a row-high gap above the returned bar with the list showing
+     through it (issue #642). */
   .cb-list-compact-bar {
     position: sticky;
-    top: var(--cb-float-row, 0px);
+    top: 0;
     z-index: 1;
     display: flex;
     flex: none;

@@ -215,10 +215,16 @@ conversation's title menu items (#572).
   changes, `light` on send and attach, `success` on an approval, `warning` on a destructive
   confirmation (today's set) plus `light` when a long press opens an action sheet, and
   `selection` when pull to refresh triggers.
-- **Toasts on phones** (D2): **bottom**, above the composer / FAB / ActionRow and the bottom
-  inset, full width minus 16 gutters, one at a time (today they sit at the top, under the floating
-  row and the notch). Swipe down or wait to dismiss; an undo action in the toast where the action
-  is reversible (archive) instead of a confirmation.
+- **Toasts on phones** (D2, amended by maintainer decision 2026-11-23): **top**, docked under the
+  top row: below the safe-area top inset (or a mobile shell's band) and the floating row, or the
+  flat title bar inside the desktop shell, with a `space.2` gap, so they never cover the row's
+  controls; full width minus 16 gutters, inside the side insets; one at a time (errors first,
+  then first in first shown). They slide down into place (`motion.overlay`; none under reduced
+  motion). Swipe up (back toward the edge they came from), the close button or the timer dismisses
+  them; an undo action in the toast where the action is reversible (archive) instead of a
+  confirmation. A toast is no modal: inside the desktop shell the top row keeps dragging the
+  window while one shows, and the toast area itself is never a drag region. (The 2026-11-22 form
+  put them at the bottom, above the composer / FAB / ActionRow; the top is easier to see.)
 - **Destructive confirmation**: a sheet (§2.4); reversible actions prefer undo over confirm.
 - **Pending navigation**: the link pending mark (kept) plus the push animation starts only when
   the next page is ready (no blank pushed page).
@@ -335,7 +341,7 @@ web calls `set` on route and primary changes.
   web action sheets (with links) as above, inside the content width.
 - **Keyboard**: the composer and sticky ActionRows stay clear of the strip (the strip side's `--cb-inset-*`)
   and above `--cb-keyboard-inset`; the strip does not move with the keyboard.
-- **Toasts** (bottom, §7): within the content width, clear of the strip.
+- **Toasts** (top, under the top row, §7): within the content width, clear of the strip.
 
 ### 10.5 Outer and inner display
 
@@ -416,7 +422,7 @@ Design spec section numbers after these merges: §6.59 bottom sheet, §6.60 Conv
 | T0b.1 | `Dialog` / `DangerConfirm` compact sheet form on the §6.59 sheet (§2.2, §2.4; D1) | — (#591 merged) |
 | T0b.2 | `Select` compact picker sheet, searchable over ~10 options (§2.5) | — |
 | T0b.3 | Infinite scroll for ObjectList / CardGrid / DataTable compact forms, generalising `ConversationList`'s end (§6.60) into `useListSentinel`; `web-ui-load-more` guard (§3; D6) | phase 0 T0.8–T0.10 |
-| T0b.4 | Toasts at the bottom on compact, above composer / FAB / ActionRow (§7; D2) | — |
+| T0b.4 | Toasts on compact (§7; D2): at the bottom first, back at the top under the top row by maintainer decision 2026-11-23 | — |
 | T0b.5 | Scroll-to-input under the mobile query (§5) | — (#575 merged) |
 | T0b.6 | Pull to refresh in a native shell for inbox / conversations / recents (§3; D4) | — (#596 merged) |
 | T0b.7 | Guards `web-ui-overlay-primitive`, `design-sheet-parts`, `useNative` in `web-ui-size-branch` (§9) | T0.4 |
@@ -435,7 +441,10 @@ time groups and infinite scroll shipped in #596. The plan file is updated in thi
 All sixteen open questions of the review draft were answered as recommended:
 
 - **D1** Every desktop Dialog is a bottom sheet on compact (one modal form on phones).
-- **D2** Toasts sit at the bottom on phones, above the composer / FAB / ActionRow.
+- **D2** ~~Toasts sit at the bottom on phones, above the composer / FAB / ActionRow.~~ Amended by
+  maintainer decision 2026-11-23: toasts sit at the **top** on phones, docked under the top row
+  (below the safe-area inset and the floating row or flat title bar), full width minus the
+  gutters, sliding down; swipe up dismisses; the top is easier to see (§7).
 - **D3** No swipe actions on rows for now; long press covers them.
 - **D4** Pull to refresh only in the native mobile shell, on the inbox, the conversations page and
   the drawer's recents; the browser keeps its own pull-to-reload.

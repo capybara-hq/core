@@ -301,26 +301,41 @@
   translate: -50% 0;
   pointer-events: auto;
 }
-/* On compact (interaction spec §7, D2) the region moves to the bottom: above the keyboard and the
-   home indicator, and above a one-line composer with its chip row (the region is not inside the
-   page, so it cannot read the measured `--cb-composer-h`; a FAB or ActionRow is no taller). Full
-   width between the 16 gutters, inside the side insets (so clear of a Duo strip, §10.4); one toast
-   at a time (errors first, then first in first shown); swiping down dismisses it (toast.tsx). */
+/* On compact (interaction spec §7, D2 as amended by the maintainer decision of 2026-11-23) the
+   region sits at the top, docked under the top row: below the shell's band (the safe-area top
+   inset, or a mobile shell's controls) and the row itself, the floating row (space.2 + touch.float
+   + space.2; touch.float is the row's size at every pointer below 600, touch.css) or, inside the
+   desktop shell with reported controls, the flat title bar (`--cb-shell-row` high), then a space.2
+   gap, so it never covers the row's controls. The region lives outside the shell and cannot read
+   the shell's `--cb-float-row`, so it repeats that geometry from the root's properties (a page
+   without the shell has no row). Full width between the 16 gutters, inside the side insets (clear
+   of a Duo strip, §10.4); one toast at a time (errors first, then first in first shown); it slides
+   down into place and a swipe up dismisses it (toast.tsx). */
 @media not all and (min-width: 600px) {
   .cb-toast-region {
-    top: auto;
-    bottom: calc(
-      var(--cb-inset-bottom) +
-      var(--cb-keyboard-inset, 0px) +
-      var(--cb-touch-composer) +
-      var(--cb-touch-hit) +
-      2 *
-      var(--cb-space-3)
-    );
+    --cb-toast-row: calc(var(--cb-space-2) + var(--cb-touch-float) + var(--cb-space-2));
+    top: calc(var(--cb-shell-band, var(--cb-inset-top)) + var(--cb-toast-row) + var(--cb-space-2));
     left: calc(var(--cb-inset-left) + var(--cb-space-4));
     right: calc(var(--cb-inset-right) + var(--cb-space-4));
     width: auto;
     translate: none;
+  }
+  /* The flat title bar where the desktop shell reports controls (a step: the floating row's
+     height when `--cb-shell-row` is 0). */
+  :root[data-shell="desktop"] .cb-toast-region {
+    --cb-toast-row: max(
+      var(--cb-shell-row),
+      calc(
+        var(--cb-space-2) +
+        var(--cb-touch-float) +
+        var(--cb-space-2) -
+        var(--cb-shell-row) *
+        100000
+      )
+    );
+  }
+  :root:not(:has(.cb-shell)) .cb-toast-region {
+    --cb-toast-row: 0px;
   }
   /* The shown one is the oldest error, else the oldest other toast (toast.tsx marks the rest
      `data-queued`); a queued toast's timer starts only once it is shown. */
@@ -330,9 +345,21 @@
   .cb-toast-group:not(:has(> .cb-toast:not([data-queued="true"]))) {
     display: none;
   }
-  /* A vertical drag is the dismiss swipe, not a page pan (toast.tsx follows the finger). */
+  /* A vertical drag is the dismiss swipe, not a page pan (toast.tsx follows the finger); a toast
+     slides down from just above its place, over motion.overlay. */
   .cb-toast {
     touch-action: pan-x;
+    animation: cb-toast-down var(--cb-motion-overlay) ease-out;
+  }
+}
+@keyframes cb-toast-down {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--cb-space-2)));
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 .cb-toast-group {

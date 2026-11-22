@@ -4,7 +4,8 @@ import { DesignProvider, ToastProvider, useToast } from "../src/index";
 import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
-// Toasts on phones (interaction spec §7, D2): at the bottom, above the composer and the keyboard.
+// Toasts on phones (interaction spec §7, D2 as amended by the maintainer decision 2026-11-23): at
+// the top, docked under the top row, full width between the gutters, sliding down into place.
 
 const realMatchMedia = window.matchMedia;
 afterEach(() => {
@@ -17,22 +18,57 @@ const COMPACT = "not all and (min-width: 600px)";
 const rules = parseCss(css("overlays.css"));
 const decls = (at: string | null, selector: string) =>
   rules.find((r) => r.at === at && r.selector === selector)?.decls;
+/** A value with the line breaks the formatter puts inside a long `calc()` / `max()` taken out. */
+const flat = (v: string | undefined) => v?.replace(/\(\s+/g, "(").replace(/\s+\)/g, ")");
 
 describe("the toast region on compact", () => {
-  it("sits at the bottom above the keyboard and the home indicator, off the top", () => {
+  it("sits at the top under the band and the top row, never at the bottom", () => {
     const d = decls(COMPACT, ".cb-toast-region");
-    expect(d?.top).toBe("auto");
-    expect(d?.bottom).toContain("var(--cb-inset-bottom)");
-    expect(d?.bottom).toContain("var(--cb-keyboard-inset");
+    expect(d?.bottom).toBeUndefined();
+    // the band (the safe-area inset, or a mobile shell's controls), the row, then a space.2 gap
+    expect(flat(d?.top)).toBe(
+      "calc(var(--cb-shell-band, var(--cb-inset-top)) + var(--cb-toast-row) + var(--cb-space-2))",
+    );
+    // the floating row as the shell draws it below 600: space.2 + touch.float + space.2
+    expect(d?.["--cb-toast-row"]).toBe(
+      "calc(var(--cb-space-2) + var(--cb-touch-float) + var(--cb-space-2))",
+    );
   });
 
-  it("clears the composer and spans the width minus gutters, inside the side insets", () => {
+  it("clears the desktop shell's flat title bar, and needs no row where there is no shell", () => {
+    const row = flat(
+      decls(COMPACT, ':root[data-shell="desktop"] .cb-toast-region')?.["--cb-toast-row"],
+    );
+    expect(row).toMatch(/^max\(var\(--cb-shell-row\),/);
+    expect(row).toContain("var(--cb-touch-float)");
+    expect(decls(COMPACT, ":root:not(:has(.cb-shell)) .cb-toast-region")?.["--cb-toast-row"]).toBe(
+      "0px",
+    );
+  });
+
+  it("spans the width minus gutters, inside the side insets", () => {
     const d = decls(COMPACT, ".cb-toast-region");
-    expect(d?.bottom).toContain("var(--cb-touch-composer)");
     expect(d?.left).toBe("calc(var(--cb-inset-left) + var(--cb-space-4))");
     expect(d?.right).toBe("calc(var(--cb-inset-right) + var(--cb-space-4))");
     expect(d?.width).toBe("auto");
     expect(d?.translate).toBe("none");
+  });
+
+  it("slides down into place over motion.overlay, and not under reduced motion", () => {
+    expect(decls(COMPACT, ".cb-toast")?.animation).toBe(
+      "cb-toast-down var(--cb-motion-overlay) ease-out",
+    );
+    expect(css("overlays.css")).toMatch(
+      /@keyframes cb-toast-down \{\s*from \{\s*opacity: 0;\s*transform: translateY\(calc\(-1 \* var\(--cb-space-2\)\)\);/,
+    );
+    const reduced = rules.filter((r) => r.at === "(prefers-reduced-motion: reduce)");
+    expect(
+      reduced.some(
+        (r) =>
+          r.selector.split(",").some((x) => x.trim() === ".cb-toast") &&
+          r.decls.animation === "none",
+      ),
+    ).toBe(true);
   });
 
   it("shows one toast at a time: the queued ones are hidden", () => {
@@ -45,7 +81,7 @@ describe("the toast region on compact", () => {
 
   it("keeps the desktop rule at the top center", () => {
     const d = decls(null, ".cb-toast-region");
-    expect(d?.top).toBe("var(--cb-space-4)");
+    expect(flat(d?.top)).toBe("var(--cb-space-4)");
     expect(d?.left).toBe("50%");
   });
 });
@@ -59,8 +95,8 @@ function Fire() {
   );
 }
 
-describe("swipe down to dismiss", () => {
-  it("closes the toast when dragged down past the threshold", () => {
+describe("swipe up to dismiss", () => {
+  it("closes the toast when dragged up past the threshold", () => {
     render(
       <DesignProvider locale="en">
         <ToastProvider>
@@ -70,9 +106,9 @@ describe("swipe down to dismiss", () => {
     );
     fireEvent.click(screen.getByText("go"));
     const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
-    fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
+    fireEvent.pointerDown(toast, { clientY: 160, pointerType: "touch" });
     act(() => {
-      fireEvent.pointerUp(toast, { clientY: 160, pointerType: "touch" });
+      fireEvent.pointerUp(toast, { clientY: 100, pointerType: "touch" });
     });
     expect(screen.queryByText("Saved")).toBeNull();
   });
@@ -88,17 +124,20 @@ describe("swipe down to dismiss", () => {
     fireEvent.click(screen.getByText("go"));
     const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
     fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
-    fireEvent.pointerMove(toast, { clientY: 120, pointerType: "touch" });
-    expect(toast.style.transform).toBe("translateY(20px)");
+    fireEvent.pointerMove(toast, { clientY: 80, pointerType: "touch" });
+    expect(toast.style.transform).toBe("translateY(-20px)");
+    // a drag down does not move it: the swipe goes back toward the top edge only
+    fireEvent.pointerMove(toast, { clientY: 130, pointerType: "touch" });
+    expect(toast.style.transform).toBe("translateY(0px)");
     fireEvent.pointerCancel(toast);
     expect(toast.style.transform).toBe("");
     const close = toast.querySelector("button") as HTMLElement;
-    fireEvent.pointerDown(close, { clientY: 100, pointerType: "touch" });
-    fireEvent.pointerUp(close, { clientY: 200, pointerType: "touch" });
+    fireEvent.pointerDown(close, { clientY: 200, pointerType: "touch" });
+    fireEvent.pointerUp(close, { clientY: 100, pointerType: "touch" });
     expect(screen.queryByText("Saved")).not.toBeNull();
   });
 
-  it("keeps it on a short drag", () => {
+  it("keeps it on a short drag up and on a drag down", () => {
     render(
       <DesignProvider locale="en">
         <ToastProvider>
@@ -108,8 +147,11 @@ describe("swipe down to dismiss", () => {
     );
     fireEvent.click(screen.getByText("go"));
     const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
+    fireEvent.pointerDown(toast, { clientY: 110, pointerType: "touch" });
+    fireEvent.pointerUp(toast, { clientY: 100, pointerType: "touch" });
+    expect(screen.queryByText("Saved")).not.toBeNull();
     fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
-    fireEvent.pointerUp(toast, { clientY: 110, pointerType: "touch" });
+    fireEvent.pointerUp(toast, { clientY: 200, pointerType: "touch" });
     expect(screen.queryByText("Saved")).not.toBeNull();
   });
 });

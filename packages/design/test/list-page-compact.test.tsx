@@ -308,7 +308,8 @@ describe("ListPage at 390", () => {
       rules.find((x) => x.at === "not all and (min-width: 600px)" && x.selector === sel)?.decls;
     const b = compact(".cb-list-compact-bar");
     expect(b?.position).toBe("sticky");
-    expect(b?.top).toBe("var(--cb-float-row, 0px)");
+    // 0: the offset counts from the scroller's padding edge, already the row's bottom (#642)
+    expect(b?.top).toBe("0");
     expect(b?.transition).toContain("var(--cb-motion-overlay)");
     expect(b?.flex).toBe("none");
     const hidden = compact('.cb-template[data-bar-hidden="true"] .cb-list-compact-bar');

@@ -3,7 +3,7 @@
 // control inside one cannot be used. So only dedicated, empty filler elements drag: the flex
 // spacers the templates draw in the top row (`.cb-drag-fill`) and the shell's controls area
 // (`.cb-shell-band`), never a container that holds controls; and every filler stops dragging
-// while an overlay is open.
+// while a modal overlay is open (a toast or a tooltip is none: the window keeps dragging).
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, render, within } from "@testing-library/react";
@@ -81,14 +81,19 @@ describe("drag regions in the design CSS", () => {
     expect(bad).toEqual([]);
   });
 
-  it("every filler stops dragging while an overlay is open", () => {
-    const off = parseCss(css("shell-environment.css")).filter(
+  /** The rules that switch the fillers off while something is open (`:root:has(...)`). */
+  const overlayOff = () =>
+    parseCss(css("shell-environment.css")).filter(
       (r) =>
         r.selector.includes(":has(") &&
         r.decls["-webkit-app-region"] === "no-drag" &&
         r.decls["app-region"] === "no-drag",
     );
-    const selector = off.map((r) => r.selector).join(" ");
+
+  it("every filler stops dragging while a modal overlay is open", () => {
+    const selector = overlayOff()
+      .map((r) => r.selector)
+      .join(" ");
     for (const cls of [
       "cb-drag-fill",
       "cb-shell-band",
@@ -97,13 +102,32 @@ describe("drag regions in the design CSS", () => {
       "cb-cmenu",
       "cb-dialog",
       "cb-sheet",
-      "cb-tooltip",
-      "cb-toast",
       "cb-palette",
       "cb-drawer",
     ]) {
       expect(selector, cls).toMatch(new RegExp(`\\.${cls}(?![\\w-])`));
     }
+  });
+
+  it("a toast or a tooltip leaves the fillers dragging, and the toast area itself never drags", () => {
+    // a toast is no modal: while one shows the window still drags by its top row (#642)
+    const has = overlayOff().map((r) => /:has\(([\s\S]*)\)\s+:is\(/.exec(r.selector)?.[1] ?? "");
+    expect(has.length).toBeGreaterThan(0);
+    for (const inner of has) {
+      expect(inner).not.toMatch(/\.cb-toast(?![\w-])/);
+      expect(inner).not.toMatch(/\.cb-toast-region(?![\w-])/);
+      expect(inner).not.toMatch(/\.cb-tooltip(?![\w-])/);
+    }
+    // the region is a no-drag root (a later no-drag region cuts it out of any filler under it)
+    const roots = parseCss(css("shell-environment.css")).filter(
+      (r) =>
+        !r.selector.includes(":has(") &&
+        r.decls["-webkit-app-region"] === "no-drag" &&
+        r.decls["app-region"] === "no-drag",
+    );
+    expect(roots.flatMap((r) => selectors(r.selector).flatMap(subjects))).toContain(
+      ".cb-toast-region",
+    );
   });
 });
 
