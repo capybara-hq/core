@@ -75,7 +75,7 @@ describe("connector card actions are on the connector's page", () => {
       const card = await findCard(en.connectors.title, name);
       const shown = status === "connected" ? en.connections.connected : en.connections.missing;
       await within(card).findByText(shown);
-      // not connected: the one button (连接); connected: the primary and the ⋯ items
+      // not connected: the one button (connect); connected: the primary and the ⋯ items
       await vi.waitFor(() =>
         expect(footControls(card)).toContain(
           status === "connected" ? MORE.en : en.connections.oauthConnect,

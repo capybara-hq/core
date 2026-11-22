@@ -701,9 +701,9 @@ function CredentialsTab({
 
 /**
  * The viewer's own connection actions, the ones the connector's card has in its button and ⋯ menu
- * (connect, 权限, 如何连接, 重新连接, 更新凭据, 断开连接 / 清除凭据): every action of a card stays
- * reachable on the object's detail page (responsive spec D3). The org admin's 修改配置 is this
- * page's own tabs.
+ * (connect, permissions, how to connect, reconnect, update credential, disconnect / clear): every action of a card stays
+ * reachable on the object's detail page (responsive spec D3). The org admin's edit-config item is
+ * this page's own tabs.
  */
 function PersonalConnectionActions({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
   const guides = useMemberGuides(orgId, [app]);
