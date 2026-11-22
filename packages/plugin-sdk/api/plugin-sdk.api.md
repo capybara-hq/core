@@ -2332,6 +2332,9 @@ export type MarketplaceSource = {
 };
 
 // @public
+export const MAX_DEVICE_LIST_ENTRIES = 1000;
+
+// @public
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
 // @public

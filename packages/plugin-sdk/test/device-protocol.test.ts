@@ -1,6 +1,7 @@
 import {
   DEFAULT_SANDBOX_ROOTS,
   isDeviceProjectName,
+  MAX_DEVICE_LIST_ENTRIES,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
   MAX_DEVICE_SCAN_RESULTS,
   rootsOf,
@@ -9,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   DeviceProtocolError,
   isDeviceBootId,
-  MAX_DEVICE_LIST_ENTRIES,
   MAX_NETWORK_BLOCKED_HOSTS,
   parseDeviceFrame,
   parseOpResult,

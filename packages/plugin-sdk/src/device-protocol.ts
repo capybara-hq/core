@@ -17,6 +17,7 @@ import {
 import {
   type ExecResult,
   isDeviceProjectName,
+  MAX_DEVICE_LIST_ENTRIES,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
   MAX_DEVICE_SCAN_DEPTH,
   MAX_DEVICE_SCAN_RESULTS,
@@ -61,9 +62,6 @@ export type DeviceOp =
  */
 export type DeviceFeature = "networkReport" | "projects";
 const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "projects"];
-
-/** The most entries a `list` op may ask for and its result may carry. */
-export const MAX_DEVICE_LIST_ENTRIES = 1000;
 
 /**
  * What a device knows of its local policy and reports (in the hello or a `policy` event). The owner

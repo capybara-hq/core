@@ -3,10 +3,10 @@ import {
   isFileSystemGoneError,
   isProjectPathRefusedError,
   isSandboxGoneError,
+  MAX_DEVICE_LIST_ENTRIES,
   parseSkillMd,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
-import { MAX_DEVICE_LIST_ENTRIES } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { EventPayload } from "../../conversations/events.js";
 import { PROJECT_SKILLS_DIR } from "../../sandbox/kernel-read.js";
 import type { SandboxMode } from "../../sandbox/modes.js";

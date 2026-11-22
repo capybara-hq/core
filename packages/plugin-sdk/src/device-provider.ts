@@ -565,6 +565,12 @@ export interface DeviceProvider {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be blocked
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
+/**
+ * The most entries a `list` may ask for and its result may carry ({@link DeviceProvider.list}):
+ * part of the provider contract, which the device protocol's `list` op also honors.
+ */
+export const MAX_DEVICE_LIST_ENTRIES = 1000;
+
 /** The longest project name, in UTF-16 code units. */
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
