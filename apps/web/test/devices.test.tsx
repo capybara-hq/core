@@ -6,6 +6,7 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
+import { stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -625,6 +626,32 @@ describe("local devices (environments spec §6, §9)", () => {
     expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
     expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
     connected = true;
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
+      timeout: 6000,
+    });
+  });
+
+  it("a machine that connects after the window crossed 600 is still detected as new", async () => {
+    const win = stubWindowWidth(390);
+    let connected = false;
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
+    await screen.findByText(E.create.waiting);
+    // the snapshot (no local device yet) is taken; the machine connects, then the window rotates
+    connected = true;
+    win.setWidth(1440);
+    await screen.findByText(E.create.waiting);
+    win.setWidth(390);
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
       timeout: 6000,
     });

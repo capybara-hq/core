@@ -97,6 +97,10 @@ export function DeviceCreateDialog({
     router.push(`/devices/${encodeURIComponent(e.id)}`);
   };
 
+  // The wait lives here, not in the steps: the dialog body remounts when the window crosses 600,
+  // and the snapshot of known devices is taken once per dialog open.
+  useWatchNewDevice(orgId, kind === "local", connected);
+
   return (
     <Dialog
       open
@@ -168,7 +172,6 @@ export function DeviceCreateDialog({
         ) : (
           <LocalSteps
             orgId={orgId}
-            onConnected={connected}
             onOpen={(id) => {
               onClose();
               router.push(`/devices/${encodeURIComponent(id)}`);
@@ -181,20 +184,40 @@ export function DeviceCreateDialog({
 }
 
 /**
- * The commands that connect a machine, then the wait: the devices are read every few
- * seconds, and the first local device that was not there when the steps opened, or whose
- * machine changed since (a login again into an existing device replaces its machine), is
- * the newly connected machine.
+ * The wait for a machine to connect, owned by the dialog (one per open): while `enabled` the devices
+ * are read every few seconds, and the first local device that was not there when the wait began, or
+ * whose machine changed since (a login again into an existing device replaces its machine), is the
+ * newly connected machine.
  */
-function LocalSteps({
-  orgId,
-  onConnected,
-  onOpen,
-}: {
-  orgId: string;
-  onConnected(e: Device): void;
-  onOpen(deviceId: string): void;
-}) {
+function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Device) => void) {
+  const list = useQuery({
+    ...devicesQuery(orgId),
+    enabled,
+    refetchInterval: WAIT_POLL_MS,
+  });
+  // local device id -> its machine id when the wait began (null: none connected)
+  const known = useRef<Map<string, string | null> | null>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    if (!enabled || list.data === undefined || done.current) return;
+    const locals = list.data.items.filter((e) => e.source === "local");
+    if (known.current === null) {
+      known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
+      return;
+    }
+    const seen = known.current;
+    const fresh = locals.find(
+      (e) => !seen.has(e.id) || (e.machine !== null && e.machine.id !== (seen.get(e.id) ?? null)),
+    );
+    if (fresh !== undefined) {
+      done.current = true;
+      onConnected(fresh);
+    }
+  }, [enabled, list.data, onConnected]);
+}
+
+/** The commands that connect a machine, shown while the dialog waits (`useWatchNewDevice`). */
+function LocalSteps({ orgId, onOpen }: { orgId: string; onOpen(deviceId: string): void }) {
   const t = useTranslations("devices.create");
   const { cap, status } = useThisMachine();
   const [connectError, setConnectError] = useState<string>();
@@ -219,26 +242,6 @@ function LocalSteps({
   // The deployment's address, read after mount (a server render has no window).
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
-  const list = useQuery({ ...devicesQuery(orgId), refetchInterval: WAIT_POLL_MS });
-  // local device id -> its machine id when the steps opened (null: none connected)
-  const known = useRef<Map<string, string | null> | null>(null);
-  const done = useRef(false);
-  useEffect(() => {
-    if (list.data === undefined || done.current) return;
-    const locals = list.data.items.filter((e) => e.source === "local");
-    if (known.current === null) {
-      known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
-      return;
-    }
-    const seen = known.current;
-    const fresh = locals.find(
-      (e) => !seen.has(e.id) || (e.machine !== null && e.machine.id !== (seen.get(e.id) ?? null)),
-    );
-    if (fresh !== undefined) {
-      done.current = true;
-      onConnected(fresh);
-    }
-  }, [list.data, onConnected]);
   if (status?.state === "connected" && status.orgId === orgId) {
     return (
       <Stack gap={12}>
