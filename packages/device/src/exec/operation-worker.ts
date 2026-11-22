@@ -2,8 +2,10 @@ import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
+  chmod,
   type FileHandle,
   lstat,
+  mkdir,
   mkdtemp,
   open,
   readdir,
@@ -30,7 +32,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
-import { macReadAllows } from "./mac-read-policy.js";
+import { macReadConfig } from "./mac-read-policy.js";
 import {
   ci,
   type MacWriteRegexRule,
@@ -44,8 +46,9 @@ import {
   runNativeHelper,
 } from "./native-helper-client.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
-import { withCanonicalForms } from "./operation-types.js";
+import { withCanonicalForms, within } from "./operation-types.js";
 import { onDisk, protectedChain } from "./protected-targets.js";
+import { privateTempParentName } from "./read-model.js";
 import {
   acquireSealedRuntime,
   type SealedRuntime,
@@ -567,15 +570,46 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
     child.once("error", error);
   });
 }
-const PRIVATE_TMP_PREFIX = "capybara-op-";
 /**
- * Removes the private temporary directories of device processes that are gone (named with the
- * owning process id; this process removes its own when each operation ends). Best effort.
+ * This device's private temporary parent in the user's temporary directory
+ * (`capybara-op-<deviceId>`, {@link privateTempParentName}), ready for an operation's own temp:
+ * created private (0700) when missing; an existing one must be a directory of this user, never a
+ * link, and is narrowed back to 0700 when its mode is wider. Anything else is refused: a parent
+ * another process controls could redirect or expose every temp of this device. Every other
+ * connection's parent is denied to this device's commands (the owner ceiling), this one is not.
  */
-async function sweepPrivateTemps(base: string): Promise<void> {
+async function privateTempParent(base: string, deviceId: string): Promise<string> {
+  const parent = join(base, privateTempParentName(deviceId));
   try {
-    for (const name of await readdir(base)) {
-      const pid = Number(/^capybara-op-(\d+)-[^/]+$/.exec(name)?.[1]);
+    await mkdir(parent, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const refuse = (why: string) =>
+    new SandboxScopeDeniedError(
+      `The device's private temporary parent ${parent} ${why}; remove it and run the command again`,
+    );
+  let info = await lstat(parent);
+  if (info.isSymbolicLink()) throw refuse("is a symbolic link");
+  if (!info.isDirectory()) throw refuse("is not a directory");
+  if (process.getuid && info.uid !== process.getuid()) throw refuse("is not owned by this user");
+  if ((info.mode & 0o777) !== 0o700) {
+    await chmod(parent, 0o700);
+    info = await lstat(parent);
+    if (info.isSymbolicLink() || !info.isDirectory() || (info.mode & 0o777) !== 0o700)
+      throw refuse("cannot be made private (0700)");
+  }
+  return parent;
+}
+/**
+ * Removes the private temporary directories (`op-<pid>-…`) in this device's own parent whose
+ * device process is gone (this process removes its own when each operation ends). Nothing outside
+ * the parent is touched: another device's temps are its own. Best effort.
+ */
+async function sweepPrivateTemps(parent: string): Promise<void> {
+  try {
+    for (const name of await readdir(parent)) {
+      const pid = Number(/^op-(\d+)-[^/]+$/.exec(name)?.[1]);
       if (!pid || pid === process.pid) continue;
       try {
         process.kill(pid, 0);
@@ -583,7 +617,7 @@ async function sweepPrivateTemps(base: string): Promise<void> {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
       }
-      await rm(join(base, name), { recursive: true, force: true });
+      await rm(join(parent, name), { recursive: true, force: true });
     }
   } catch {
     // a failed sweep only leaves empty scratch directories behind
@@ -758,14 +792,21 @@ export async function startMacOperationWorker(
             )
           : undefined;
       // A restricted command's own temporary directory (TMPDIR, TMP, TEMP): created empty for
-      // this operation alone, private (0700) under the user's temporary directory, writable and
-      // readable only inside the sandbox's grant, and removed once the operation's processes are
-      // gone (a crashed device leaves it behind: the next launch removes it). The runtime's default (`/tmp/claude`) is shared by every command, so it is denied
-      // (implicitWritePaths), and the user's temporary directory itself stays out of reach.
+      // this operation alone in this device's private parent under the user's temporary
+      // directory (`capybara-op-<deviceId>/op-<pid>-…`, 0700), writable only inside the sandbox's
+      // grant, and removed once the operation's processes are gone (a crashed device leaves it
+      // behind: the next launch of this device removes it). The runtime's default
+      // (`/tmp/claude`) is shared by every command, so it is denied (implicitWritePaths); every
+      // other connection's parent is a denied read root (the owner ceiling).
       if (request.kind === "exec" && !request.grant.full) {
         const base = macUserTempDir() ?? (await realpath(tmpdir()));
-        await sweepPrivateTemps(base);
-        privateTmp = await mkdtemp(join(base, `${PRIVATE_TMP_PREFIX}${process.pid}-`));
+        const parent = await privateTempParent(base, request.scope.deviceId);
+        if (request.grant.deniedReadRoots.some((d) => within(parent, d) || within(d, parent)))
+          throw new SandboxScopeDeniedError(
+            `The device's private temporary parent ${parent} is, or contains, a denied path`,
+          );
+        await sweepPrivateTemps(parent);
+        privateTmp = await mkdtemp(join(parent, `op-${process.pid}-`));
       }
       let wrap = async (script: string) => script;
       {
@@ -784,10 +825,11 @@ export async function startMacOperationWorker(
         const runtimeRoots = roots.length
           ? roots.map((r) => r.path)
           : [...request.grant.readRoots, ...request.grant.writeRoots];
-        // Every read is denied from `/` down; only the grant, the system roots, the staged
-        // helper and agent and the tool homes come back (mac-read-policy.ts). Ancestors get no
-        // read rule: directory metadata is all traversal needs, and a subtree rule on one would
-        // expose everything beneath it.
+        // machine reach (a read root `/`): every read but the denied roots; otherwise every read
+        // is denied from `/` down and only the grant, the system roots, the staged helper and
+        // agent and the tool homes come back (mac-read-policy.ts). Ancestors get no read rule:
+        // directory metadata is all traversal needs, and a subtree rule on one would expose
+        // everything beneath it.
         // A native root pinned at an existing ancestor names the missing directories between
         // them: the fixed helper opens each one it creates or meets, so those are read exactly.
         const pinnedComponents = roots.flatMap((r) => {
@@ -796,13 +838,15 @@ export async function startMacOperationWorker(
             dirs.push(p);
           return dirs;
         });
-        const reads = macReadAllows({
-          roots: [
+        const reads = macReadConfig({
+          readRoots: [
             ...runtimeRoots,
             ...(privateTmp ? [privateTmp] : []),
             ...(sandboxHome ? [sandboxHome] : []),
             ...(toolHomes?.readRoots ?? []),
           ],
+          // the staged helper and Java agent live in the denied state directory: under machine
+          // reach these exact paths are all that comes back inside a denied root
           exact: [
             ...pinnedComponents,
             ...(helper ? [helper] : []),
@@ -853,7 +897,7 @@ export async function startMacOperationWorker(
         });
         const config = {
           filesystem: {
-            denyRead: ["/", ...request.grant.deniedReadRoots],
+            denyRead: reads.denyRead,
             allowRead: reads.allowRead,
             // patched runtime: exact `(literal …)` read allows, never the subtree below them
             allowReadExact: reads.allowReadExact,

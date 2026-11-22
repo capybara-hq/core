@@ -46,11 +46,13 @@ async function until(what: string, check: () => boolean): Promise<void> {
   }
   throw new Error(`timed out waiting for ${what}`);
 }
+const DEVICE_ID = "test-mac-abort-escape";
 /** This process's private temporary directories of restricted operations still on disk. */
 async function privateTemps(): Promise<string[]> {
   const base = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" });
-  const names = await readdir(await realpath(base.stdout.trim()));
-  return names.filter((n) => n.startsWith(`capybara-op-${process.pid}-`));
+  const parent = join(await realpath(base.stdout.trim()), `capybara-op-${DEVICE_ID}`);
+  const names = await readdir(parent).catch(() => []);
+  return names.filter((n) => n.startsWith(`op-${process.pid}-`));
 }
 const readPid = (dir: string, name: string) => Number(readFileSync(join(dir, name), "utf8"));
 const waitFile = (dir: string, name: string) =>
@@ -77,7 +79,7 @@ async function launch(
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: { operationId: name, tag: name } as never,
+      scope: { operationId: name, tag: name, deviceId: DEVICE_ID } as never,
       grant: {
         full: false,
         readRoots: [project],

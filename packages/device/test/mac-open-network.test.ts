@@ -80,7 +80,9 @@ async function run(
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: extra.scope ?? ({ operationId: "open", tag: "open" } as never),
+      scope:
+        extra.scope ??
+        ({ operationId: "open", tag: "open", deviceId: "test-mac-open-network" } as never),
       grant: {
         full: false,
         openNetwork: true,

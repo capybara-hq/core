@@ -1,8 +1,9 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
@@ -21,18 +22,34 @@ afterAll(async () => {
   await workspace.cleanup();
   if (root) await rm(root, { recursive: true, force: true });
   if (unrelated) await rm(unrelated, { recursive: true, force: true });
+  for (const parent of parents) await rm(parent, { recursive: true, force: true });
 });
+
+const DEVICE_ID = `read-scope-${randomUUID()}`;
+/** The user's temporary directory, where the worker puts each device's private temp parent. */
+const userTemp = () =>
+  realpathSync(
+    execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" }).trim(),
+  );
+/** Private temp parents this file created (one per device id), removed after the file. */
+const parents = new Set<string>();
 
 async function restrictedExec(
   command: string,
   home: string | undefined,
   project: string,
   state: string,
+  options: {
+    deviceId?: string;
+    grant?: Partial<{ readRoots: string[]; writeRoots: string[]; deniedReadRoots: string[] }>;
+  } = {},
 ) {
+  const deviceId = options.deviceId ?? DEVICE_ID;
+  parents.add(join(userTemp(), `capybara-op-${deviceId}`));
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: { operationId: "read-scope", tag: "read-scope" } as never,
+      scope: { operationId: "read-scope", tag: "read-scope", deviceId } as never,
       grant: {
         full: false,
         readRoots: [project],
@@ -40,6 +57,7 @@ async function restrictedExec(
         hosts: [],
         deniedReadRoots: [state],
         revision: "r",
+        ...options.grant,
       },
       args: { command, cwd: project, timeoutMs: 60_000, maxOutputBytes: 1 << 16 },
       stateDir: state,
@@ -261,31 +279,146 @@ it.runIf(process.platform === "darwin")(
 );
 
 // A device that crashed mid-operation leaves its private temporary directory behind: the next
-// restricted launch removes those of processes that are gone, never one of a live process.
+// restricted launch of the same device removes those of processes that are gone, never one of a
+// live process, and never anything outside its own parent (another device's temps included).
 it.runIf(process.platform === "darwin")(
-  "a restricted macOS launch removes the private temp dirs of device processes that are gone",
+  "a restricted macOS launch removes its own device's private temp dirs of processes that are gone",
   async () => {
     const project = join(root, "sweep");
     const state = join(root, "sweep-state");
     await mkdir(project);
     await mkdir(state, { mode: 0o700 });
-    // where the worker puts them: the user's temporary directory
-    const base = await realpath(
-      execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" }).trim(),
-    );
+    const deviceId = `sweep-${randomUUID()}`;
+    const parent = join(userTemp(), `capybara-op-${deviceId}`);
+    parents.add(parent);
+    await mkdir(parent, { mode: 0o700 });
     const gone = spawnSync("/usr/bin/true").pid as number;
-    const dead = join(base, `capybara-op-${gone}-test${Date.now()}`);
-    const live = join(base, `capybara-op-${process.ppid}-test${Date.now()}`);
+    const dead = join(parent, `op-${gone}-test${Date.now()}`);
+    const live = join(parent, `op-${process.ppid}-test${Date.now()}`);
+    // a flat name of the old layout, whose pid prefix could be a numeric device id: untouched
+    const flat = join(userTemp(), `capybara-op-${gone}-test${Date.now()}`);
     await mkdir(join(dead, "nested"), { recursive: true });
     await mkdir(live);
+    await mkdir(flat);
     try {
-      const result = await restrictedExec("true", undefined, project, state);
+      const result = await restrictedExec("true", undefined, project, state, { deviceId });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(existsSync(dead)).toBe(false);
       expect(existsSync(live)).toBe(true);
+      expect(existsSync(flat)).toBe(true);
     } finally {
       await rm(dead, { recursive: true, force: true });
       await rm(live, { recursive: true, force: true });
+      await rm(flat, { recursive: true, force: true });
+    }
+  },
+);
+
+it.runIf(process.platform === "darwin")(
+  "a private temp lives under this device's own parent",
+  async () => {
+    const project = join(root, "own-parent");
+    const state = join(root, "own-parent-state");
+    await mkdir(project);
+    await mkdir(state, { mode: 0o700 });
+    const deviceId = `own-${randomUUID()}`;
+    const parent = join(userTemp(), `capybara-op-${deviceId}`);
+    parents.add(parent);
+    // an existing parent with a wider mode is narrowed back to the owner
+    await mkdir(parent, { mode: 0o755 });
+    await chmod(parent, 0o755);
+    const result = await restrictedExec(
+      'printf %s "$TMPDIR" > tmp-env',
+      undefined,
+      project,
+      state,
+      {
+        deviceId,
+      },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    const tmp = readFileSync(join(project, "tmp-env"), "utf8");
+    expect(tmp.startsWith(`${parent}/op-`), tmp).toBe(true);
+    expect(dirname(tmp)).toBe(parent);
+    expect(statSync(parent).mode & 0o777).toBe(0o700);
+  },
+);
+
+it.runIf(process.platform === "darwin")(
+  "a private temp parent that is a symbolic link is refused, and nothing runs",
+  async () => {
+    const project = join(root, "link-parent");
+    const state = join(root, "link-parent-state");
+    const target = join(root, "link-parent-target");
+    await mkdir(project);
+    await mkdir(state, { mode: 0o700 });
+    await mkdir(target, { mode: 0o700 });
+    const deviceId = `link-${randomUUID()}`;
+    const parent = join(userTemp(), `capybara-op-${deviceId}`);
+    parents.add(parent);
+    await symlink(target, parent);
+    await expect(
+      restrictedExec(": > ran", undefined, project, state, { deviceId }),
+    ).rejects.toThrow(/temporary/);
+    expect(existsSync(join(project, "ran"))).toBe(false);
+  },
+);
+
+// machine reach: the whole machine reads, minus the deny list (the program's state, another
+// connection's working directory), spelled directly, through a link, or in another letter case.
+it.runIf(process.platform === "darwin")(
+  "machine reach reads an unrelated file but not another connection's directory or state",
+  async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-machine-")));
+    try {
+      const A = join(base, "own");
+      const B = join(base, "otherwork");
+      const S = join(base, "state");
+      const U = join(base, "unrelated");
+      for (const dir of [A, B, U]) await mkdir(dir);
+      await mkdir(join(S, "connections", "a"), { recursive: true, mode: 0o700 });
+      await mkdir(join(S, "connections", "b"), { recursive: true, mode: 0o700 });
+      await writeFile(join(B, "secret"), "other connection");
+      await writeFile(join(S, "connections", "b", "credential.json"), "{}");
+      await writeFile(join(U, "file"), "unrelated");
+      await symlink(B, join(A, "link"));
+      const caseVariant = join(dirname(B), basename(B).toUpperCase());
+      // the precondition of the case probe: this volume resolves the variant outside the sandbox
+      const caseInsensitive = existsSync(join(caseVariant, "secret"));
+      const q = (s: string) => JSON.stringify(s);
+      const probe = (name: string, cmd: string) =>
+        `if ${cmd} >/dev/null 2>&1; then echo ${name} >> got; fi`;
+      const result = await restrictedExec(
+        [
+          probe("unrelated", `cat ${q(join(U, "file"))}`),
+          probe("other-secret", `cat ${q(join(B, "secret"))}`),
+          probe("link-secret", `cat ${q(join(A, "link", "secret"))}`),
+          probe("case-secret", `cat ${q(join(caseVariant, "secret"))}`),
+          probe("state", `cat ${q(join(S, "connections", "b", "credential.json"))}`),
+          probe("other-listing", `ls ${q(B)}`),
+          probe("unrelated-write", `: > ${q(join(U, "new"))}`),
+          "true",
+        ].join("; "),
+        undefined,
+        A,
+        join(S, "connections", "a"),
+        { grant: { readRoots: ["/"], writeRoots: [A], deniedReadRoots: [S, B] } },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      const got = existsSync(join(A, "got"))
+        ? readFileSync(join(A, "got"), "utf8").trim().split("\n")
+        : [];
+      expect(got, "the positive control").toContain("unrelated");
+      expect(got).not.toContain("other-secret");
+      expect(got).not.toContain("link-secret");
+      expect(got).not.toContain("state");
+      expect(got).not.toContain("other-listing");
+      expect(got).not.toContain("unrelated-write");
+      expect(existsSync(join(U, "new"))).toBe(false);
+      expect(caseInsensitive, "the case probe needs a case-insensitive volume").toBe(true);
+      expect(got).not.toContain("case-secret");
+    } finally {
+      await rm(base, { recursive: true, force: true });
     }
   },
 );

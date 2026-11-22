@@ -3,6 +3,7 @@ import {
   MAC_SYSTEM_READ_EXACT,
   MAC_SYSTEM_READ_ROOTS,
   macReadAllows,
+  macReadConfig,
 } from "../src/exec/mac-read-policy.js";
 
 describe("macReadAllows", () => {
@@ -61,5 +62,50 @@ describe("macReadAllows", () => {
       expect(p.startsWith("/private/var/folders")).toBe(false);
       expect(["/Library", "/private", "/private/var", "/Applications", "/opt"]).not.toContain(p);
     }
+  });
+});
+
+describe("macReadConfig", () => {
+  const H = "/nonexistent-cap/state/runtime/helper.py";
+  const S = "/nonexistent-cap/state";
+  const B = "/nonexistent-cap/other/work";
+  const P = "/nonexistent-cap/src/app";
+
+  it("machine reach denies only the denied roots and re-allows nothing inside them but the staged files", () => {
+    expect(
+      macReadConfig({
+        readRoots: ["/"],
+        exact: [H],
+        deniedReadRoots: [S, B],
+        isSymlink: () => false,
+      }),
+    ).toEqual({ denyRead: [S, B], allowRead: [], allowReadExact: [H] });
+  });
+
+  it("machine reach denies the canonical form of a denied root spelled through a link", () => {
+    // /tmp is a link to /private/tmp on macOS; elsewhere the canonical form is the path itself
+    const { denyRead } = macReadConfig({
+      readRoots: ["/"],
+      exact: [],
+      deniedReadRoots: ["/tmp/cap-denied-missing"],
+    });
+    expect(denyRead).toContain("/tmp/cap-denied-missing");
+    if (process.platform === "darwin")
+      expect(denyRead).toContain("/private/tmp/cap-denied-missing");
+  });
+
+  it("other reaches keep the deny-from-root model", () => {
+    const config = macReadConfig({
+      readRoots: [P],
+      exact: [H],
+      deniedReadRoots: [S, B],
+      isSymlink: () => false,
+    });
+    expect(config.denyRead[0]).toBe("/");
+    expect(config.denyRead).toEqual(["/", S, B]);
+    expect(config.allowRead).toContain(P);
+    expect(config.allowRead).toContain("/usr");
+    expect(config.allowReadExact).toContain(H);
+    expect(config.allowReadExact).toContain("/dev/null");
   });
 });

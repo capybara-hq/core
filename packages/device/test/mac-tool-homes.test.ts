@@ -41,7 +41,11 @@ it.runIf(process.platform === "darwin")(
     const worker = await startMacOperationWorker(
       {
         kind: "exec",
-        scope: { operationId: "tool-homes", tag: "tool-homes" } as never,
+        scope: {
+          operationId: "tool-homes",
+          tag: "tool-homes",
+          deviceId: "test-mac-tool-homes",
+        } as never,
         grant: {
           full: false,
           readRoots: [project],
@@ -112,7 +116,11 @@ it.runIf(process.platform === "darwin")(
       const worker = await startMacOperationWorker(
         {
           kind: "exec",
-          scope: { operationId: "sandbox-home", tag: "sandbox-home" } as never,
+          scope: {
+            operationId: "sandbox-home",
+            tag: "sandbox-home",
+            deviceId: "test-mac-tool-homes",
+          } as never,
           grant: {
             full: false,
             readRoots: [project],

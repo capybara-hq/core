@@ -42,7 +42,7 @@ it.runIf(process.platform === "darwin")(
     const worker = await startMacOperationWorker(
       {
         kind: "exec",
-        scope: { operationId: "deny", tag: "deny" } as never,
+        scope: { operationId: "deny", tag: "deny", deviceId: "test-mac-write-denies" } as never,
         grant: {
           full: false,
           readRoots: [project],
@@ -118,7 +118,7 @@ async function restrictedRun(writeRoot: string, command: string): Promise<ExecRe
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: { operationId: "deny", tag: "deny" } as never,
+      scope: { operationId: "deny", tag: "deny", deviceId: "test-mac-write-denies" } as never,
       grant: {
         full: false,
         readRoots: [writeRoot],
@@ -360,7 +360,7 @@ async function restrictedRunDenied(
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: { operationId: "deny", tag: "deny" } as never,
+      scope: { operationId: "deny", tag: "deny", deviceId: "test-mac-write-denies" } as never,
       grant: {
         full: false,
         readRoots: [writeRoot],
