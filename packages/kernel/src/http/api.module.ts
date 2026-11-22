@@ -58,6 +58,7 @@ import { DevicesController } from "../devices/devices.controller.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { DialInAuthController } from "../dial-in/auth.controller.js";
 import { DialInAuthModule } from "../dial-in/auth.module.js";
+import { DialInModule } from "../dial-in/dial-in.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -261,6 +262,8 @@ const CONTROLLERS: Type[] = [
     BackgroundModule,
     DevicesModule,
     DialInAuthModule,
+    // the loaded dial-in providers GET /api/v1/meta reports (MetaController)
+    DialInModule,
     RuntimeModule,
     ChannelsModule,
     EvalsModule,

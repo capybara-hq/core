@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
 import {
   FAKE_DIAL_IN_PROTOCOL,
   FakeDialInMachine,
@@ -19,6 +20,7 @@ import {
   USER_CODE_ALPHABET,
 } from "../../src/dial-in/auth.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -48,6 +50,11 @@ import { TestHolder } from "../helpers/test-holder.js";
 /** The second dial-in fixture provider: on in the org, speaking another protocol. */
 const OTHER_DIAL_IN = "fake-dial-in-b";
 const OTHER_PROTOCOL = "fake-other/1";
+/**
+ * A third fixture provider, loaded but on in no org, declaring the SDK's `capybara-device`
+ * protocol: it stands in for device-local in `GET /api/v1/meta` (the last describe unloads it).
+ */
+const LOCAL_DIAL_IN = "fake-local";
 
 const PUBLIC_URL = "https://cap.example.com";
 
@@ -75,6 +82,10 @@ beforeAll(async () => {
       bytes: await fakeDialInPkg({ name: OTHER_DIAL_IN, protocol: OTHER_PROTOCOL }),
       required: false,
     },
+    {
+      bytes: await fakeDialInPkg({ name: LOCAL_DIAL_IN, protocol: DEVICE_DIAL_IN_PROTOCOL }),
+      required: false,
+    },
   ]);
   k = await startKernel(
     runConfig(
@@ -95,6 +106,7 @@ beforeAll(async () => {
   await enableExtensions(raw, orgId, "fake-dial-in", OTHER_DIAL_IN);
   await waitFor(async () => k.app.get(DeviceProviders).forDevice(OTHER_DIAL_IN) ?? null);
   await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice(LOCAL_DIAL_IN) ?? null);
 });
 
 afterAll(async () => {
@@ -854,6 +866,74 @@ describe("the sign-in chooses a dial-in provider", () => {
     expect(errCode(await token(fake.deviceCode))).toBe("device_sign_in.authorization_pending");
   });
 
+  it("a person in two orgs sees, per org, that org's providers and their own devices there", async () => {
+    const m = await memberWithCookie();
+    // a second org where m is a member too and only fake-dial-in is on
+    const org2 = await createOrg(owner, "Two orgs");
+    await testMembers(db).add(org2, m.id, "member", ownerId);
+    await enableExtensions(raw, org2, "fake-dial-in");
+    const inA = await signInFakeMachine(k, {
+      orgId,
+      session: m.cookie,
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+      name: "In A",
+    });
+    const inB = await signInFakeMachine(k, {
+      orgId: org2,
+      session: m.cookie,
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+      name: "In B",
+    });
+    const otherInA = await login(m.req, "Other in A", true);
+
+    const fake = await authorize({ ...MACHINE, protocol: FAKE_DIAL_IN_PROTOCOL });
+    const list = async (org: string, userCode: string) => {
+      const res = await providers(m.req, { orgId: org, userCode });
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { providers: Choice[] }).providers;
+    };
+    // the same code: each org lists only the person's devices in that org
+    expect(await list(orgId, fake.userCode)).toEqual([
+      {
+        plugin: "fake-dial-in",
+        displayName: expect.any(Object),
+        devices: [{ id: inA.deviceId, name: "In A" }],
+      },
+    ]);
+    expect(await list(org2, fake.userCode)).toEqual([
+      {
+        plugin: "fake-dial-in",
+        displayName: expect.any(Object),
+        devices: [{ id: inB.deviceId, name: "In B" }],
+      },
+    ]);
+    // the other provider is on only in the first org: the second lists nothing for its protocol
+    const b = await authorize({ ...MACHINE, protocol: OTHER_PROTOCOL });
+    expect(await list(orgId, b.userCode)).toEqual([
+      {
+        plugin: OTHER_DIAL_IN,
+        displayName: expect.any(Object),
+        devices: [{ id: otherInA.deviceId, name: "Other in A" }],
+      },
+    ]);
+    expect(await list(org2, b.userCode)).toEqual([]);
+    // confirming in the second org into the first org's device is refused
+    const cross = await m.req({
+      method: "POST",
+      url: "/api/v1/device/confirm",
+      payload: {
+        userCode: fake.userCode,
+        orgId: org2,
+        provider: "fake-dial-in",
+        deviceId: inA.deviceId,
+      },
+    });
+    expect(cross.statusCode, cross.body).toBe(404);
+    expect(errCode(cross)).toBe("device.not_found");
+  });
+
   it("confirm with a provider off in the org answers device.provider_unavailable", async () => {
     const m = await member();
     const a = await authorize({ ...MACHINE, protocol: FAKE_DIAL_IN_PROTOCOL });
@@ -937,5 +1017,26 @@ describe("the sign-in chooses a dial-in provider", () => {
       deviceId: first.deviceId,
     });
     expect(errCode(reuse)).toBe("device_sign_in.code_invalid");
+  });
+});
+
+// Last: unloads the capybara-device stand-in.
+describe("GET /api/v1/meta local devices", () => {
+  it("is on while a capybara-device provider is loaded (in no org), its declared major as the range", async () => {
+    const meta = async () => {
+      const res = await k.http.inject({ method: "GET", url: "/api/v1/meta" });
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json() as {
+        protocols: { device: { min: number; max: number } };
+        features: { localDevices: boolean };
+      };
+    };
+    const major = Number(DEVICE_DIAL_IN_PROTOCOL.split("/")[1]);
+    const on = await meta();
+    expect(on.features.localDevices).toBe(true);
+    expect(on.protocols.device).toEqual({ min: major, max: major });
+    // fake-dial-in and fake-dial-in-b stay loaded but speak other protocols: no local devices
+    await k.app.get(ExtensionHost).unload(LOCAL_DIAL_IN);
+    expect((await meta()).features.localDevices).toBe(false);
   });
 });

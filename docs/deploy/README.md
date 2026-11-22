@@ -398,10 +398,12 @@ restart.
 **Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
 `object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512,
 as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
-`deepseek`, `bailian`, `ark`, `connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo`. They are installed and
-enabled on the deployment, but each organization gets them off until an org admin switches them on
-(catalog scope `optional`), and a super admin may disable or uninstall them; an uninstalled one
-is not reinstalled by later bootstrap runs.
+`deepseek`, `bailian`, `ark`, `connector-mcp`, `connector-openapi`, `jina`, `device-docker`,
+`device-local` and `todo`. They are installed and enabled on the deployment, but each organization
+gets them off until an org admin switches them on (catalog scope `optional`), except `device-local`
+(local devices), which the manifest gives `scope: "all"`: on in every organization, and an org
+admin may switch it off. A super admin may disable or uninstall any of them, and owns its scope
+after the first import; an uninstalled one is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
 
@@ -745,7 +747,12 @@ Residual risks the design accepts (spec `docs/superpowers/specs/2026-11-18-file-
 ## Connected devices
 
 People can connect their own laptop or server as a local device with `@capybara-hq/device`
-(`capybara-device`, see [its README](../../packages/device/README.md)). The program opens one
+(`capybara-device`, see [its README](../../packages/device/README.md)). Local devices are the
+`device-local` plugin's (a bootstrap preinstall, on in every organization; an org admin may switch it
+off), served over the kernel's dial-in channel (config `devices.dialIn`,
+`CAPYBARA_DEVICES__DIAL_IN__*`). Upgrade `capybara-device` together with the kernel: the program and
+`device-local` speak one device protocol major, and `GET /api/v1/meta` reports `features.localDevices`
+and the protocol range only while `device-local` is loaded. The program opens one
 long-lived WebSocket connection to the kernel's `gateway` role.
 
 - **Route and origin.** The program connects to `wss://<http.publicUrl host>/device/connect`

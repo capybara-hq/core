@@ -134,6 +134,21 @@ describe("checkBootstrap", () => {
       }),
     ).toEqual([]);
   });
+
+  it("the repository's bootstrap.json pins device-local as an optional preinstall with scope all", async () => {
+    const m = JSON.parse(
+      await readFile(join(repoRoot, "packages/kernel/bootstrap.json"), "utf8"),
+    ) as { plugins: Record<string, unknown>[] };
+    const entry = m.plugins.find((p) => p.name === "device-local");
+    // on in every org, switchable by an org admin: neither required nor builtin
+    expect(entry).toMatchObject({
+      source: "npm",
+      npm: "@capybara-hq/plugin-device-local",
+      required: false,
+      scope: "all",
+    });
+    expect(entry).not.toHaveProperty("builtin");
+  });
 });
 
 describe("checkBootstrap: compose builds from the plugins repository (bootstrap-compose-ref)", () => {
