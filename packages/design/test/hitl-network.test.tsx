@@ -246,12 +246,12 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
   });
 
   it("speaks English", () => {
-    wrap(<ApprovalBlock {...ask({ network: many })} />, "en");
+    wrap(<ApprovalBlock {...ask({ network: many, scopes: ["once", "always"] })} />, "en");
     expect(
       screen.getByRole("group", { name: "The agent wants to reach 2 domains. Allow?" }),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Allow this time" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Add to this device's list" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add to this device's list" })).toBeTruthy();
     expect(screen.getByText("Until the agent finishes this reply")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
   });

@@ -97,7 +97,12 @@ const routes = (device: unknown, list: unknown = projectList()) => ({
   [`GET ${BASE}/e1`]: () => json(200, { device }),
   [`GET ${PROJECTS}`]: () => json(200, list),
 });
-const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+// Drains the effects and promise callbacks already queued: a fetch a render starts is issued
+// synchronously, so "nothing was fetched" needs no timer, only the queue emptied.
+const settle = async () => {
+  await act(async () => {});
+  await act(async () => {});
+};
 const renderDetail = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 /** The device page's 项目 tab. */

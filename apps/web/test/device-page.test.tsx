@@ -128,7 +128,12 @@ const factRow = (key: string) =>
     (r) => r.querySelector("dt")?.textContent === key,
   ) as HTMLElement | undefined;
 const plate = () => document.querySelector('[data-part="device-nameplate"]') as HTMLElement;
-const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+// Drains the effects and promise callbacks already queued: a fetch a render starts is issued
+// synchronously, so "nothing was fetched" needs no timer, only the queue emptied.
+const settle = async () => {
+  await act(async () => {});
+  await act(async () => {});
+};
 const radio = (name: string) =>
   screen.getByRole("radio", {
     name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),

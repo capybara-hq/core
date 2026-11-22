@@ -39,19 +39,11 @@ export interface DeviceNetworkSetting {
 export interface DeviceSettingChange {
   at: string;
   kind: "network";
-  add: string[];
-  remove: string[];
-  /** The network change; else null. */
-  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
+  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting };
   /** The deciding account (null once the account is gone). */
   by: { id: string; name: string; avatarUrl: string | null } | null;
   /** `agent`: an agent's Platform tool call; `token`: an API token. */
   via: "web" | "im" | "agent" | "token";
-  /**
-   * What became of a change: `unknown`, its answer never came; `failed`, it did not take effect.
-   * Every other row is `applied`.
-   */
-  outcome: "applied" | "unknown" | "failed";
 }
 
 /** A device sandbox network: the open internet (private networks blocked), an allowlist or closed. */

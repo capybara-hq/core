@@ -234,8 +234,8 @@ export function useDecide(orgId: string) {
  * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
  * hosts, the refused command, "allow this time" / "add to this device's list" / "deny" and the
  * checked hosts in the decision. The scopes are the view's own; "always" adds the hosts to the
- * device's list and `appliesAt` says when that takes effect. Decided, it still reads the approval: the granted hosts are only
- * there.
+ * device's list and `appliesAt` says when that takes effect. Decided, it still reads the approval:
+ * the granted hosts are only there.
  */
 export function ApprovalCard({
   orgId,

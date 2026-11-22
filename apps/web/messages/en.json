@@ -386,7 +386,8 @@
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
       "provider_unavailable": "This device's provider is off in this organization, not installed, or takes no machines. Ask an org admin to switch it on.",
-      "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on."
+      "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on.",
+      "provider_dial_in": "Devices of this type are created when the computer signs in: follow the guide in New device."
     },
     "app_auth": {
       "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the {product} app.",

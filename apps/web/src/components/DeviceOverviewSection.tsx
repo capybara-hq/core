@@ -70,7 +70,7 @@ function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
   const t = useTranslations("devices.recent");
   const tn = useTranslations("devices.network");
   const zone = useTimeZone();
-  const changes = recent.filter((c) => c.kind === "network" && c.network != null);
+  const changes = recent.filter((c) => c.kind === "network");
   if (changes.length === 0) return null;
   const mode = (m: DeviceNetworkMode) => tn(m);
   const setting = (n: DeviceNetworkSetting) =>
@@ -83,7 +83,7 @@ function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
     <ContentSection title={t("title")}>
       <ItemList label={t("title")}>
         {changes.map((c, i) => {
-          const network = c.network as NonNullable<DeviceSettingChange["network"]>;
+          const network = c.network;
           return (
             <ItemListItem
               // biome-ignore lint/suspicious/noArrayIndexKey: the changes have no id; the list is positional
