@@ -37,7 +37,11 @@ const SUCCESS_MS = 4000;
 /** How long a success toast carrying an action (Undo) stays (spec §6.7). */
 const UNDO_MS = 8000;
 const SEGMENTS = 10;
-/** A touch drag down by this many px dismisses a toast (spec §7). */
+/**
+ * A touch drag up by this many px dismisses a toast: toasts sit at the top in every class, so the
+ * swipe sends one back toward the edge it came from (interaction spec §7, D2 as amended
+ * 2026-11-23). The close button and the timer stay the ways that need no gesture.
+ */
 const SWIPE_DISMISS_PX = 40;
 const TOAST_ICON = {
   success: "circle-check",
@@ -67,7 +71,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const close = useCallback((id: number) => setItems((l) => l.filter((x) => x.id !== id)), []);
 
-  // On compact one toast shows at a time (interaction spec §7, D2): the oldest error, else the
+  // On compact one toast shows at a time (interaction spec §7): the oldest error, else the
   // oldest other toast, first in first shown; the rest wait (`data-queued`, hidden by CSS there).
   const shownOnCompact = (items.find((x) => x.kind === "error") ?? items[0])?.id;
   const visible = useCallback(
@@ -151,13 +155,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       onPointerMove={(e) => {
         const from = swipeStart.current;
         if (from === null || prefersReducedMotion()) return;
-        e.currentTarget.style.transform = `translateY(${Math.max(0, e.clientY - from)}px)`;
+        e.currentTarget.style.transform = `translateY(${Math.min(0, e.clientY - from)}px)`;
       }}
       onPointerUp={(e) => {
         const from = swipeStart.current;
         swipeStart.current = null;
         e.currentTarget.style.transform = "";
-        if (from !== null && e.clientY - from >= SWIPE_DISMISS_PX) close(it.id);
+        if (from !== null && from - e.clientY >= SWIPE_DISMISS_PX) close(it.id);
       }}
       onPointerCancel={(e) => {
         swipeStart.current = null;

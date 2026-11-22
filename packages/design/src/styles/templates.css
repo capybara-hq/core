@@ -95,10 +95,11 @@
     height: auto;
   }
   /* The settings sub-nav stays sticky (decision 2026-11-09), right under the floating row: the
-     scroller starts at the row's top (`--cb-float-row`; 0 outside a compact shell). */
+     scroller starts at the row's top and pads its content down by the row (shell.css), and a
+     sticky offset counts from that padding edge, so `top: 0` is the row's bottom. */
   .cb-settings-nav[data-sticky="true"] {
     position: sticky;
-    top: var(--cb-float-row, 0px);
+    top: 0;
   }
 }
 

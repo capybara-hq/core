@@ -510,9 +510,17 @@ the most capable model (focus, history and the typed-name confirmation in a shee
 - [ ] Tests: `sentinel in view calls onLoadMore once`; `no call while loading or without more`;
   `error shows an inline retry row`; desktop keeps the page's own load-more. Commit.
 
-### Task T0b.4: Toasts at the bottom on compact
+### Task T0b.4: Toasts on compact
 **Files:** `packages/design/src/overlays/toast.tsx`, `overlays.css`; test (CSS rule): the 599 block
 puts `.cb-toast-region` at `bottom: calc(var(--cb-inset-bottom) + …)` above `--cb-keyboard-inset`. Commit.
+
+**Amended by maintainer decision 2026-11-23 (interaction model D2):** the 599 block puts the region
+at the top, `top: calc(var(--cb-shell-band, var(--cb-inset-top)) + var(--cb-toast-row) +
+var(--cb-space-2))`, where `--cb-toast-row` is the floating row (space.2 + touch.float + space.2),
+the desktop shell's flat title bar (`--cb-shell-row`) where controls are reported, or 0 without a
+shell; toasts slide down (`cb-toast-down`, none under reduced motion) and a swipe up dismisses
+them; the drag-region rule no longer switches the fillers off for a toast or a tooltip
+(`toast-compact.test.tsx`, `drag-regions.test.tsx`, `visual/quick-return.interaction.spec.ts`).
 
 ### Task T0b.5: Scroll to input under the mobile query
 **Files:** `packages/design/src/controls/inputs.tsx`, `shell/app-shell.tsx` (an inset-settled event); test `scroll-to-input.test.tsx`: `focus inside a scroller scrolls the field into view after the inset changes`; `no call on a fine pointer at 1440`. Commit.
