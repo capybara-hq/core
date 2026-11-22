@@ -19,11 +19,11 @@ import {
 
 /*
  * The value guards of the device protocol (per-operation arguments and results, the hello's
- * optional fields), exercised through the protocol 5 bodies (`parseDeviceFrame`) that use them.
+ * optional fields), exercised through the protocol 6 bodies (`parseDeviceFrame`) that use them.
  */
 
 const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
-/** A protocol 5 hello body of a bound instance. */
+/** A protocol 6 hello body of a bound instance. */
 const hello = {
   mode: "os",
   roots,

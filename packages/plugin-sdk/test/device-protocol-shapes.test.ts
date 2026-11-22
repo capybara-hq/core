@@ -186,7 +186,7 @@ describe("host lists are read once", () => {
   });
 });
 
-describe("protocol 5 bodies", () => {
+describe("protocol 6 bodies", () => {
   it("parseDeviceFrame rejects a body with a policy op: the deployment changes no machine policy", () => {
     const source = { accountId: "a", accountName: "A", via: "web" };
     for (const body of [

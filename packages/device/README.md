@@ -62,7 +62,7 @@ and the platform rebuilds the device on its next use.
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
 `status [--json]`, `start`, `stop`,
 `drain [--wait] [--timeout <seconds>]`,
-`ceiling show | ceiling set [--outside-sandbox on|off] [--network open|allowlist] [--project-reach workspace|os-user] [--yes]`,
+`ceiling show | ceiling set [--outside-sandbox on|off] [--network open|allowlist] [--project-reach machine|paths|workspace] [--yes]`,
 `policy [show | set <key> <value> | add|remove <key> <value>]` and
 `service install|uninstall|start|stop|restart|status`.
 `ceiling set` is the only way to change the owner ceiling (`policy set mode` points there); a
@@ -94,37 +94,69 @@ scope against the **owner ceiling** in `policy.json`, which only you widen, on t
 - **Network** `open|allowlist`: the sandbox network. `open` is the public internet (private, local
   and metadata addresses closed, below); `allowlist` is only the hosts in `allowedDomains` that the
   organization also allows, and the list is then this machine's ceiling for per-call host grants.
-- **Project reach** `workspace|os-user`: whether sandboxed work and project browsing may read
-  projects outside the device's `workspace/`.
+- **Project reach** `machine|paths|workspace` (a setting of each connection): what sandboxed work
+  and project browsing may read besides the device's own directories. `machine` is the whole
+  machine minus the deny list (below); `paths` is only the `projectPaths` you list (`capybara-device
+  policy add projectPaths <dir>`), the device's roots and the tool directories; `workspace` is the
+  device's roots (`workspace/`, `skills/`, `tmp/`, `home/`) and the tool directories. A project the
+  reach does not cover is refused with a reason (`project_refused`: another connection's directory,
+  outside the reach, or a denied path), never shown as missing.
 
 A new login starts with outside-the-sandbox off, the open network and `workspace` reach. `login`
-prints the ceiling and how to widen it; a widening prints the risk text and needs `--yes` or a `y`
-at the prompt. The organization and the platform have their own settings; the narrowest wins. An
-older `policy.json` (protocol 3, `fullAccess`) is converted once on start, never wider: allowed
-becomes outside-the-sandbox on with the open network, denied keeps the allowlist (and `start` prints
-`capybara-device ceiling set --network open`). A logged-in machine without `policy.json` (set up
-before rc.58) ran with no reachable host and keeps that: `start` writes outside-the-sandbox off and
-the allowlist with no host, and prints the same command; a missing file never reads as open.
+prints the ceiling and how to widen it; a widening (including a wider reach) prints the risk text
+and needs `--yes` or a `y` at the prompt. The organization and the platform have their own
+settings; the narrowest wins.
+
+**Upgrading from policy format 3.** This program reads only `policy.json` format 4. A format 3 file
+(the one with `restrictedProjectReach`) is refused when `start` runs, with a message naming the
+file. `capybara-device ceiling set ...` rewrites it from the closed policy (workspace reach,
+allowlist network, nothing outside the sandbox, keep-awake off) and prints what was reset. The
+allowed domains, credentials, resource limits and keep-awake setting are not carried over: set them
+again with `capybara-device policy` and `capybara-device keep-awake`. Nothing is converted
+silently, and a missing or broken file never reads as open.
 
 ```bash
 capybara-device ceiling show                    # the owner ceiling, network, revision
 capybara-device ceiling show --json             # {"outsideSandbox":…,"network":…,"allowedDomains":[…],"projectReach":…,"revision":…}  (revision: string | null)
 capybara-device ceiling set --outside-sandbox off --network allowlist --project-reach workspace  # narrow
+capybara-device ceiling set --project-reach machine --yes                                        # read the whole machine minus the deny list
 capybara-device ceiling set --outside-sandbox on --network open --yes                            # widen
 capybara-device policy add allowedDomains files.slack.com
 capybara-device policy remove allowedDomains files.slack.com
+capybara-device policy add projectPaths ~/code/app      # a directory the paths reach reads
+capybara-device policy remove projectPaths ~/code/app
 capybara-device policy show
 ```
 
 **Sandboxed work** (every operation but an escalated call) runs each operation in its own sandbox: macOS uses
 `@anthropic-ai/sandbox-runtime` (Seatbelt); Linux and Docker mode use the SDK's restricted Linux
-runtime (Landlock plus a seccomp broker). Writes stay in the scope's roots; reads stay in them too,
-plus the system and developer tool directories (on macOS `/System`, `/usr`, `/bin`, `/sbin`,
+runtime (Landlock plus a seccomp broker). Writes stay in the scope's roots (the project and the workspace). Reads follow the project reach
+of the connection: under `machine` a sandboxed command reads the whole machine except the deny
+list; under `paths` and `workspace` it reads the scope's roots, the listed `projectPaths` (`paths`
+only), the system and developer tool directories (on macOS `/System`, `/usr`, `/bin`, `/sbin`,
 `/private/etc`, Homebrew, Xcode and the Command Line Tools, `/Library/Apple`, `/Library/Frameworks`,
-installed JDKs) and the data of the version managers your home uses, read only; other files of the
-machine, such as the rest of your home, are not readable. Secret paths (`~/.ssh`, cloud CLI
-credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this program's state directory) stay
-unreadable even inside those. Commands get a minimal environment (`PATH`, `LANG`,
+installed JDKs) and the data of the version managers your home uses, read only. The deny list is
+never readable, whatever the reach: secret paths (`~/.ssh`, cloud CLI credentials, `~/.netrc`,
+`~/.gnupg`, browser profiles), this program's state directory, every other connection's state and
+working directory on this machine, and the private temporary directories of other connections
+(`<userTemp>/capybara-op-<deviceId>/`; this connection's own operations use their own such
+directory). An escalated call runs outside the sandbox and reads everything you can, and the owner
+report is unaffected by what follows.
+
+If another connection's state cannot be read (a broken or half-removed credential), this
+connection's sandboxed work is refused with a message naming it and
+`capybara-device logout -c <id>`, because the deny list could not be built; escalated calls and the
+owner report keep working.
+
+Linux residuals of the deny list, stated plainly. Landlock grants directories, so a denied path is
+carved out of the whole machine by granting its siblings: files directly inside a directory on the
+path to a denied one are unreadable, and such a directory cannot be listed (for example `~/.bashrc`
+and `~/.gitconfig` when `~/.ssh` is denied, unless a tool home grants them). A bind mount or second
+mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
+4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. macOS
+Seatbelt denies the paths directly and has none of these.
+
+Commands get a minimal environment (`PATH`, `LANG`,
 `HOME` and the XDG base directories set to the device's own home `<dir>/home`, a private temp
 directory, the tool homes, the proxy variables), never this program's. `<dir>/home` is kept across
 commands and writable inside the sandbox, so per-user state (a package manager's store, caches,
@@ -164,10 +196,9 @@ exactly when the operation ends, is cancelled or its task is stopped; it never k
 
 ### Changes from the deployment
 
-The deployment changes the local policy only by narrowing it: it may remove `allowedDomains`,
-switch the network to `allowlist` and turn outside-the-sandbox off. It can never widen it: a
-`policy` request that adds hosts or carries a `mode` is refused and writes nothing (an approval's
-host grant lasts for its run instead). Every change is written under `policy.json.lock`.
+The deployment never changes the local policy: it cannot widen it or add hosts, and the owner
+ceiling is changed only by `capybara-device ceiling set` and `policy` on this machine. An
+approval's host grant lasts for its run instead.
 
 ### The command log
 
@@ -331,8 +362,11 @@ times. On Linux, installing again restarts the unit so the new file applies.
 
 ## Operation backend
 
-The program speaks device protocol 5 only; the kernel and this program upgrade together (a
-protocol 5 program facing an older deployment says the deployment must be upgraded). It binds each instance generation the deployment creates
+The program speaks device protocol 6 only; the kernel and this program upgrade together (a
+protocol 6 program facing an older deployment says the deployment must be upgraded). Protocol 6
+adds `projectReach` (`machine`, `paths` or `workspace`) to the owner report, answers a browse of a
+refused project path with `project_refused` and a `refusal` code, and drops the deployment's
+narrowing of the ceiling. It binds each instance generation the deployment creates
 to a verified, sealed runtime and reports restricted support only once a self-check on that runtime
 passed (macOS: a write in its root goes through, while a write outside it, reads of a denied secret
 and of an ordinary file it was never granted, and a local connection are refused) or the runtime's

@@ -567,7 +567,7 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
 // ---- Protocol 5: scope-bearing operations ----
 
 /**
- * The operations the kernel asks a protocol 5 device to run: every user operation carries its
+ * The operations the kernel asks a protocol 6 device to run: every user operation carries its
  * admitted scope; there is no broad kill (`killTagged` / `killAll`) and no deployment-side change
  * of the machine's policy: the owner changes it on the machine and the device reports the change
  * ({@link DevicePolicyChanged}).
@@ -597,7 +597,7 @@ export type DeviceProjectRefusal = "other-connection" | "outside-reach" | "denie
 /** The sandbox network of a device: the open public internet or an allowlist. */
 export type DeviceNetworkMode = "open" | "allowlist";
 /**
- * The owner ceiling of protocol 4 (approval-only profiles design, "Settings model"): the device
+ * The owner ceiling of protocol 6 (approval-only profiles design, "Settings model"): the device
  * sandbox for every profile. `outsideSandbox` is whether a call may be granted escalation outside
  * the sandbox; `network` and `allowedDomains` are the sandbox network.
  */
@@ -717,7 +717,7 @@ export type DeviceResponseBody =
     };
 /** A response as the device produces it: its body with the envelope's `id`. */
 export type DeviceResponse = { type: "res"; id: string } & DeviceResponseBody;
-/** The bodies of protocol 5, by the envelope frame that carries them. */
+/** The bodies of protocol 6, by the envelope frame that carries them. */
 export interface DeviceBodies {
   hello: DeviceHello;
   req: DeviceRequestBody;
@@ -755,7 +755,7 @@ function freeze<T>(value: T): T {
   return value;
 }
 /**
- * A strict copy of a wire object for the protocol 4 shapes: a plain object of own data properties
+ * A strict copy of a wire object for the protocol shapes: a plain object of own data properties
  * only (no accessor is ever invoked, so a value cannot change between check and use), each key in
  * `allowed`. Nested values are copied by the caller's own checks.
  */
@@ -877,7 +877,7 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
 }
 
 /**
- * Strictly parses one authenticated owner-ceiling report of protocol 4 and returns a frozen copy;
+ * Strictly parses one authenticated owner-ceiling report of protocol 6 and returns a frozen copy;
  * throws {@link DeviceProtocolError}. Unknown fields (the protocol 3 `fullAccess` and
  * `restrictedAllowedDomains` among them) are refused.
  */
@@ -1151,7 +1151,7 @@ function eventBody(value: unknown): DevicePolicyChanged {
 }
 
 /**
- * Strictly parses one protocol 5 body, as carried by the dial-in envelope frame of type `kind`
+ * Strictly parses one protocol 6 body, as carried by the dial-in envelope frame of type `kind`
  * (`hello`, `event` and `res` from the device, `req` from the kernel), and returns a frozen copy;
  * throws {@link DeviceProtocolError}. The envelope (its ids, deadline and size bound) is checked
  * before: `parseDialInMachineFrame` on the kernel, `parseDialInKernelFrame` on the machine.

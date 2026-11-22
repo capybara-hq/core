@@ -100,7 +100,7 @@ Who sets the sandbox (each layer can only narrow the one above):
   `base`, `extraHosts`, `excludedHosts`). Only a person widens them in the web, never an API token
   or the Platform tool. An org that needs egress control sets `deviceNetwork.ceiling: allowlist`.
 - **Device owner (local)**: the owner ceiling on the machine, `capybara-device ceiling set
-  [--outside-sandbox on|off] [--network open|allowlist] [--project-reach workspace|os-user]`, and
+  [--outside-sandbox on|off] [--network open|allowlist] [--project-reach machine|paths|workspace]`, and
   the owner's allowlist (`capybara-device policy add allowedDomains <host>`). With the allowlist
   network the owner's list is the machine's ceiling: a per-call host grant counts only where it
   covers the host. A new install starts with outside-sandbox off and the open network. The
@@ -168,7 +168,7 @@ directory. A conversation without a project is in **free mode** (自由模式), 
   prefix, and an optional name (default: the directory's name; 1-64 characters, not `.` or `..`, no
   `/` or control characters, no leading or trailing spaces, unique on the device). The base follows
   the device's project reach: the owner's home directory for a local device whose owner ceiling
-  allows `os-user` reach (reported by `capybara-device` when it connects), else the device's
+  has `machine` reach (reported by `capybara-device` when it connects), else the device's
   workspace, and always the workspace on a cloud device. The device is asked whether
   the directory exists and can be read before it is saved, so a typo fails at the form. The
   directory need not hold `.git` or `AGENTS.md` yet. A directory that holds the owner's home (`/`,
@@ -179,8 +179,8 @@ directory. A conversation without a project is in **free mode** (自由模式), 
   directories up to two levels below it that hold `.git` or `AGENTS.md` (hidden directories,
   `node_modules` and symbolic links skipped; at most 50, at most 500 directories read).
 - **What the reach allows**: a device offers what it can read within its project reach. With
-  `workspace` reach, and on a cloud device, that is only the workspace; with `os-user` reach on a
-  local device, any directory the owner can read outside the protected paths. A project the
+  `workspace` reach, and on a cloud device, that is only the workspace; with `machine` reach on a
+  local device, any directory outside the deny list, and with `paths` reach, the listed project paths. A project the
   current reach cannot read is hidden (the section says how many), not deleted, and comes back when
   the reach does. The device enforces its ceiling on every access anyway, so a saved path grants
   nothing by itself.
