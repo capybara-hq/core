@@ -427,7 +427,7 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
       // Plain text only (skip reason, refused tools, the error's first line): it is the compact
       // rows' subtitle, where the interactive `ErrorDetail` below is not drawn
       key: "reason",
-      header: t("columns.detail"),
+      header: t("columns.reason"),
       compact: "subtitle",
       wrap: true,
       tone: "muted",
