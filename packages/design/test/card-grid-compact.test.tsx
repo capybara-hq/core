@@ -295,6 +295,22 @@ describe("compact CSS (below 600)", () => {
     expect(r["-webkit-touch-callout"]).toBe("none");
   });
 
+  it("the text column fits the 40 lead, so name + one line + padding is exactly 64", () => {
+    // spec §6.34 size table: object-card narrow height 64 (fidelity measures it at 390 under the
+    // compact type scale, whose body / prose-small lines are 24 / 22 and would make it 70)
+    const half = "calc(var(--cb-grouped-lead) / 2)";
+    expect(at(".cb-object-card .cb-object-card-name")["line-height"]).toBe(half);
+    expect(at(".cb-object-card-desc")["line-height"]).toBe(half);
+    expect(at(".cb-object-card-meta")["line-height"]).toBe(half);
+    expect(at(".cb-object-card").padding).toBe("var(--cb-grouped-pad)");
+    const base = css("base.css");
+    expect(base).toMatch(/--cb-grouped-lead: 40px;/);
+    expect(base).toMatch(/--cb-grouped-pad: var\(--cb-space-3\) var\(--cb-space-4\);/);
+    expect(css("tokens.css")).toMatch(/--cb-space-3: 12px;/);
+    // 2 × (40 / 2) + 2 × 12 = 64; no other part of the row is taller than the lead
+    expect(at(".cb-object-card-chevron")["line-height"]).toBe("0");
+  });
+
   it("the name is 500 and the description one muted line, the meta only without a description", () => {
     expect(at(".cb-object-card .cb-object-card-link")["font-weight"]).toBe("500");
     expect(at(".cb-object-card-desc")["-webkit-line-clamp"]).toBe("1");

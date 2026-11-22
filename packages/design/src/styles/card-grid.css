@@ -227,14 +227,23 @@
   .cb-object-card-name[data-static="true"] {
     font-weight: 500;
   }
+  /* The text column fits the lead, so the row is exactly 64 (the 40 lead and space.3 twice, spec
+     §6.34 size table): the name and the muted line take half the lead each (20 + 20), whatever
+     the compact type scale's own line heights (body 24, prose-small 22) would add. */
+  .cb-object-card .cb-object-card-name {
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
   .cb-object-card-desc {
     grid-column: 2;
     grid-row: 2;
     -webkit-line-clamp: 1;
+    font-size: var(--cb-type-small-size);
+    line-height: calc(var(--cb-grouped-lead) / 2);
   }
   .cb-object-card-meta {
     grid-column: 2;
     grid-row: 2;
+    line-height: calc(var(--cb-grouped-lead) / 2);
   }
   .cb-object-card-desc ~ .cb-object-card-foot .cb-object-card-meta {
     display: none;
