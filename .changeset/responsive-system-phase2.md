@@ -1,6 +1,7 @@
 ---
 "@capybara-hq/capybara": patch
 "@capybara-hq/kernel": patch
+"@capybara-hq/design": patch
 ---
 
 The org admin pages (settings members, tokens, schedules and audit, extensions, trajectories, evals)

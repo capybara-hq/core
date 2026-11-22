@@ -385,6 +385,11 @@ function ScheduleForm({
 function RunHistory({ runs }: { runs: TaskRun[] | null }) {
   const t = useTranslations("schedules.runs");
   const router = useRouter();
+  const skipOrMissing = (r: TaskRun) => {
+    if (r.skipReason !== null) return t(`skip.${r.skipReason}`);
+    if (r.missingGrants.length > 0) return t("missing", { tools: r.missingGrants.join(", ") });
+    return null;
+  };
   const columns: Column<TaskRun>[] = [
     {
       key: "at",
@@ -425,25 +430,24 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
     },
     {
       // Plain text only (skip reason, refused tools, the error's first line): it is the compact
-      // rows' subtitle, where the interactive `ErrorDetail` below is not drawn
+      // rows' subtitle only (`compactOnly`); the wide table's `detail` column shows it instead
       key: "reason",
       header: t("columns.reason"),
       compact: "subtitle",
+      compactOnly: true,
       wrap: true,
       tone: "muted",
-      cell: (r) => {
-        if (r.skipReason !== null) return t(`skip.${r.skipReason}`);
-        if (r.missingGrants.length > 0) return t("missing", { tools: r.missingGrants.join(", ") });
-        return r.error?.split("\n")[0] ?? null;
-      },
+      cell: (r) => skipOrMissing(r) ?? r.error?.split("\n")[0] ?? null,
     },
     {
-      // The full error, expandable: wide tables only
+      // The wide table's one reason: the skip or refused-tools text, else the full error,
+      // expandable
       key: "detail",
       header: t("columns.detail"),
       compact: "hidden",
       cell: (r) =>
-        r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null,
+        skipOrMissing(r) ??
+        (r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null),
     },
   ];
   return (

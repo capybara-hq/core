@@ -124,7 +124,9 @@ export function DataTable<T>({
   // A table whose columns declare compact roles draws grouped rows below 600 (a different DOM:
   // spec §5.1 reason 1); selection and the bulk bar are not mounted there (decision D5).
   const mapped = declaresCompact(columns);
-  if (mapped) assertCompactColumns(columns);
+  if (mapped || columns.some((c) => c.compactOnly)) assertCompactColumns(columns);
+  // A `compactOnly` column is drawn by the grouped rows alone, never by the wide table.
+  const wideColumns = columns.filter((c) => !c.compactOnly);
   const classForm = useClassForm();
   const mappedCompact = mapped && classForm === "compact";
   const [sheetKey, setSheetKey] = useState<string | null>(null);
@@ -210,7 +212,7 @@ export function DataTable<T>({
   }, [hasSelection]);
 
   const bulk = selection && selected.size > 0 && !mappedCompact;
-  const colCount = columns.length + (selection ? 1 : 0) + (rowMenu ? 1 : 0);
+  const colCount = wideColumns.length + (selection ? 1 : 0) + (rowMenu ? 1 : 0);
 
   // Explicit roles throughout ({@link ROLE}).
   const head = (
@@ -228,7 +230,7 @@ export function DataTable<T>({
             )}
           </th>
         ) : null}
-        {columns.map((c) => {
+        {wideColumns.map((c) => {
           const current = sort?.key === c.key ? sort : undefined;
           const sortable = c.sortable && sort && !narrow;
           return (
@@ -285,7 +287,7 @@ export function DataTable<T>({
   const sortOptions =
     sort === undefined
       ? []
-      : columns
+      : wideColumns
           .filter((c) => c.sortable)
           .flatMap((c) => [
             { value: `${c.key}:asc`, label: t("table.sortAsc").replace("{column}", c.header) },
@@ -343,7 +345,7 @@ export function DataTable<T>({
               ]
                 .filter(Boolean)
                 .join(" ");
-              const first = columns[0]?.cell(row);
+              const first = wideColumns[0]?.cell(row);
               const rowName = rowLabel?.(row) ?? rowNameOf(first) ?? key;
               const extra = expand?.(row);
               const menuItems = rowMenu?.(row);
@@ -380,7 +382,7 @@ export function DataTable<T>({
                         />
                       </td>
                     ) : null}
-                    {columns.map((c, ci) => {
+                    {wideColumns.map((c, ci) => {
                       const content = c.cell(row);
                       // Below 600 the rows stack (spec §6.6): the first cell is the card's
                       // title line, every other cell is labelled with its column header.
