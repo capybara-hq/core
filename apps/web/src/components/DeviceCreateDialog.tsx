@@ -198,8 +198,18 @@ function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Dev
   // local device id -> its machine id when the wait began (null: none connected)
   const known = useRef<Map<string, string | null> | null>(null);
   const done = useRef(false);
+  // A wait that begins again (local, cloud, local) snapshots afresh, from a read made after it
+  // began; the first wait may snapshot what the page already holds.
+  const since = useRef(0);
+  const waited = useRef(false);
+  useEffect(() => {
+    if (known.current !== null) waited.current = true;
+    known.current = null;
+    since.current = enabled && waited.current ? Date.now() : 0;
+  }, [enabled]);
   useEffect(() => {
     if (!enabled || list.data === undefined || done.current) return;
+    if (list.dataUpdatedAt < since.current) return;
     const locals = list.data.items.filter((e) => e.source === "local");
     if (known.current === null) {
       known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
@@ -213,7 +223,7 @@ function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Dev
       done.current = true;
       onConnected(fresh);
     }
-  }, [enabled, list.data, onConnected]);
+  }, [enabled, list.data, list.dataUpdatedAt, onConnected]);
 }
 
 /** The commands that connect a machine, shown while the dialog waits (`useWatchNewDevice`). */

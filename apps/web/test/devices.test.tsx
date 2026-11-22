@@ -657,6 +657,33 @@ describe("local devices (environments spec §6, §9)", () => {
     });
   });
 
+  it("a machine that connected while the cloud choice was shown is not taken as new", async () => {
+    let connected = false;
+    const calls = stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
+    await screen.findByText(E.create.waiting);
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.cloud) }));
+    connected = true;
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
+    // the wait begins again: the device that is already there is not the new one
+    await screen.findByText(E.create.waiting);
+    // a poll after the switch back has read the list that holds d7
+    const reads = () => calls.filter((c) => c.method === "GET" && c.url === BASE).length;
+    const before = reads();
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before), { timeout: 4500 });
+    expect(router.push).not.toHaveBeenCalledWith("/devices/d7");
+  });
+
   describe("连接本机 in the desktop shell (desktop client spec §5)", () => {
     const CONNECTED = {
       state: "connected",

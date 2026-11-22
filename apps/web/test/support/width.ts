@@ -1,7 +1,10 @@
 import { act } from "@testing-library/react";
 import { vi } from "vitest";
 
-/** Whether media query `q` matches a window `width` px wide (min-/max-width, `not all and`). */
+/**
+ * Whether media query `q` matches a window `width` px wide (min-/max-width, `not all and`). Other
+ * features (pointer, hover, orientation, ...) are ignored: a part with none of them never matches.
+ */
 const matchesAt = (q: string, width: number) => {
   const plain = (s: string) => {
     const features = [...s.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
