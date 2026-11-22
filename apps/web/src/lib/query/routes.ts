@@ -927,7 +927,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/conversations",
-    // My conversations by time (the drawer's recent list reads the same first page) and the
+    // My conversations by time (the first page with its total) and the
     // sidebar's groups, whose agents name the rows and the chips (the layout prefetches them too).
     queries: ({ orgId }) =>
       orgId === null ? [] : [q(conversationListQuery(orgId)), q(conversationGroupsQuery(orgId))],

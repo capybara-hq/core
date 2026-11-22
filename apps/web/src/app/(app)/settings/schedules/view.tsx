@@ -2,6 +2,7 @@
 
 import {
   Callout,
+  type Column,
   DataTable,
   Field,
   FormSection,
@@ -21,6 +22,7 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { Person } from "../../../../components/Person";
 import {
   DeleteScheduleDialog,
+  type ScheduleColumnKey,
   scheduleColumns,
   useScheduleActions,
   useScheduleWords,
@@ -295,6 +297,19 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   );
 }
 
+/**
+ * Compact rows (below 600): the task leads, its owner under it, the agent after, the state at
+ * the end.
+ */
+const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
+  name: "title",
+  agent: "meta",
+  status: "trailing",
+  schedule: "hidden",
+  next: "hidden",
+  last: "hidden",
+};
+
 /** Every task of the org (a flush section holding the table), with the creator. */
 function AllTasks({ orgId }: { orgId: string }) {
   const t = useTranslations("scheduleSettings");
@@ -313,16 +328,17 @@ function AllTasks({ orgId }: { orgId: string }) {
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   const refs = names.kind === "ready" ? names.refs : {};
-  const base = scheduleColumns(ts, when, agentName);
-  const columns = [
-    ...base.slice(0, 1),
-    {
-      key: "creator",
-      header: ts("columns.creator"),
-      cell: (s: ScheduledTaskListItem) => <Person person={refs[s.accountId] ?? null} size={16} />,
-    },
-    ...base.slice(1),
-  ];
+  const base = scheduleColumns(ts, when, agentName).map((c) => ({
+    ...c,
+    compact: COMPACT[c.key],
+  }));
+  const creator: Column<ScheduledTaskListItem> = {
+    key: "creator",
+    header: ts("columns.creator"),
+    compact: "subtitle",
+    cell: (s) => <Person person={refs[s.accountId] ?? null} size={16} />,
+  };
+  const columns: Column<ScheduledTaskListItem>[] = [...base.slice(0, 1), creator, ...base.slice(1)];
   const act = async (p: Promise<unknown>, done: string) => {
     try {
       await p;

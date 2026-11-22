@@ -23,6 +23,11 @@ export const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   /** Only this agent's conversations (the sidebar's per-group "More"). */
   agentId: z.string().min(1).max(100).optional(),
+  /**
+   * `true`: the first page (no `after`) also returns `total`, the count of every match. Absent or
+   * `false`: no count is selected (the count costs O(matches); a polled list never asks for it).
+   */
+  withTotal: z.enum(["true", "false"]).optional(),
   ...searchFields,
 });
 

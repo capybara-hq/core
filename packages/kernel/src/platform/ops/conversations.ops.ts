@@ -102,8 +102,8 @@ export class ConversationsOperations implements OnModuleInit {
         example: { q: "report" },
         authz: { orgAction: "agents.use" },
         mirrors: ["GET /api/v1/orgs/:orgId/conversations"],
-        // the page size is fixed at 50
-        omits: ["limit"],
+        // the page size is fixed at 50; the first page always carries its total
+        omits: ["limit", "withTotal"],
         confirm: "read",
         run: async (input, ctx) => {
           const { conversations: rows, total } = await this.conversations.listMine(

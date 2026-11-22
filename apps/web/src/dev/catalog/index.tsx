@@ -2,12 +2,14 @@
 
 import { applyTheme, Button, Card, Stack, Text, useDesignLink } from "@capybara-hq/design";
 import { lazy, Suspense } from "react";
+import { AdminPageCatalog } from "./admin-pages";
 import { BrandFixtureCatalog } from "./brand-blocks";
 import { ComponentsCatalog } from "./components";
 import { MemberPageCatalog } from "./member-pages";
 import { OverlayCatalog } from "./overlays";
 import { ReferenceCatalog } from "./reference";
 import {
+  type AdminPage,
   CATALOG_ROUTES,
   isOverlayRoute,
   isPageRoute,
@@ -43,6 +45,8 @@ export function Catalog({ route }: { route: string }) {
   if (route === "pages/schedules-calendar-admin") return <SchedulesPageCatalog variant="admin" />;
   if (route.startsWith("pages/member-") && isPageRoute(route))
     return <MemberPageCatalog page={route.slice("pages/member-".length) as MemberPage} />;
+  if (route.startsWith("pages/org-") && isPageRoute(route))
+    return <AdminPageCatalog page={route.slice("pages/org-".length) as AdminPage} />;
   if (isPageRoute(route)) {
     return (
       <Suspense fallback={null}>

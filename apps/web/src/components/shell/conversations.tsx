@@ -25,7 +25,7 @@ import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import {
   conversationGroupsQuery,
-  conversationListQuery,
+  drawerRecentQuery,
   groupsViewKey,
   moreConversationsQuery,
   moreGroupsQuery,
@@ -423,8 +423,8 @@ export function useConversationGroups(
 
 /**
  * The compact drawer's recent conversations (design spec §6.54, maintainer decision 2026-11-22):
- * my newest conversations by time (`GET …/conversations`, the conversations page's first page, so
- * the two share one read), each row carrying its agent. Read only on a compact
+ * my newest conversations by time (`GET …/conversations`, without the count the conversations
+ * page asks for), each row carrying its agent. Read only on a compact
  * window, where the drawer exists, and then again every 30 s for the state dots; a row's actions
  * invalidate every view of my conversations.
  */
@@ -434,7 +434,7 @@ export function useDrawerRecent(
   options: ConversationGroupsOptions = {},
 ): DrawerRecent {
   const compact = useSizeClass() === "compact";
-  const query = conversationListQuery(orgId);
+  const query = drawerRecentQuery(orgId);
   const q = useQuery({
     ...query,
     enabled: compact,

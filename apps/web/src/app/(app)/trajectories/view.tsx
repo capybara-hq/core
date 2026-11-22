@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Button,
   type Column,
   DataTable,
   DateTime,
@@ -98,6 +97,27 @@ function Trajectories({
   if (agentId !== "" && !agentOptions.some((o) => o.value === agentId)) {
     agentOptions.push({ value: agentId, label: agentId });
   }
+  const filterFields = (
+    <Stack direction="row" gap={12} align="end">
+      <Field label={t("filters.agent")}>
+        <Select
+          value={agentId}
+          onChange={(e) => navigate({ agentId: e.target.value, status })}
+          options={agentOptions}
+        />
+      </Field>
+      <Field label={t("filters.status")}>
+        <Select
+          value={status}
+          onChange={(e) => navigate({ agentId, status: e.target.value as RunStatus | "" })}
+          options={[
+            { value: "", label: t("filters.allStatuses") },
+            ...RUN_STATUSES.map((s) => ({ value: s, label: t(`status.${s}`) })),
+          ]}
+        />
+      </Field>
+    </Stack>
+  );
   return (
     <ListPage
       header={{
@@ -106,36 +126,17 @@ function Trajectories({
           ? { title: t("title"), tabs: evalsTabs(t), activeTab: "runs" }
           : { title: t("tabs.runs") }),
       }}
+      filters={filterFields}
+      filterCount={(agentId !== "" ? 1 : 0) + (status !== "" ? 1 : 0)}
     >
-      <Stack gap={12}>
-        <Stack direction="row" gap={12} align="end">
-          <Field label={t("filters.agent")}>
-            <Select
-              value={agentId}
-              onChange={(e) => navigate({ agentId: e.target.value, status })}
-              options={agentOptions}
-            />
-          </Field>
-          <Field label={t("filters.status")}>
-            <Select
-              value={status}
-              onChange={(e) => navigate({ agentId, status: e.target.value as RunStatus | "" })}
-              options={[
-                { value: "", label: t("filters.allStatuses") },
-                ...RUN_STATUSES.map((s) => ({ value: s, label: t(`status.${s}`) })),
-              ]}
-            />
-          </Field>
-        </Stack>
-        <TrajectoryTable
-          // A new set of filters starts over (its own pages)
-          key={hrefOf(filters)}
-          orgId={orgId}
-          filters={filters}
-          first={first.kind === "ready" ? first.data : null}
-          onClear={() => navigate({ agentId: "", status: "" })}
-        />
-      </Stack>
+      <TrajectoryTable
+        // A new set of filters starts over (its own pages)
+        key={hrefOf(filters)}
+        orgId={orgId}
+        filters={filters}
+        first={first.kind === "ready" ? first.data : null}
+        onClear={() => navigate({ agentId: "", status: "" })}
+      />
     </ListPage>
   );
 }
@@ -190,16 +191,23 @@ function TrajectoryTable({
     {
       key: "title",
       header: t("columns.title"),
+      compact: "title",
       cell: (r) => (
         <Text truncate tone={r.title === null ? "muted" : "ink"}>
           {r.title ?? t("untitled")}
         </Text>
       ),
     },
-    { key: "agent", header: t("columns.agent"), cell: (r) => r.agentName || r.agentId },
+    {
+      key: "agent",
+      header: t("columns.agent"),
+      compact: "subtitle",
+      cell: (r) => r.agentName || r.agentId,
+    },
     {
       key: "status",
       header: t("columns.status"),
+      compact: "trailing",
       cell: (r) =>
         r.lastRun === null ? (
           <Text tone="muted">{t("noRun")}</Text>
@@ -213,6 +221,7 @@ function TrajectoryTable({
     {
       key: "updated",
       header: t("columns.updated"),
+      compact: "meta",
       tone: "muted",
       cell: (r) => <DateTime value={r.updatedAt} />,
     },
@@ -220,26 +229,20 @@ function TrajectoryTable({
 
   if (first !== null && rows.length === 0 && !filtered) return <EmptyState text={t("empty")} />;
   return (
-    <Stack gap={12}>
-      <DataTable<TrajectoryListItem>
-        label={t("title")}
-        columns={columns}
-        rows={rows}
-        rowKey={(r) => r.conversationId}
-        rowLabel={(r) => r.title ?? t("untitled")}
-        state={first === null ? "loading" : "ready"}
-        empty={{ title: t("empty"), hint: t("emptyHint") }}
-        {...(filtered && { noResults: { description: t("noMatch"), onClear } })}
-        onOpen={(r) => router.push(`/trajectories/${encodeURIComponent(r.conversationId)}`)}
-      />
-      {next !== null ? (
-        <Stack direction="row" gap={8} align="center">
-          <Button variant="default" onClick={() => void loadMore()} loading={loadingMore}>
-            {t("loadMore")}
-          </Button>
-          {moreError !== null ? <Text tone="fail">{moreError}</Text> : null}
-        </Stack>
-      ) : null}
-    </Stack>
+    <DataTable<TrajectoryListItem>
+      label={t("title")}
+      columns={columns}
+      rows={rows}
+      rowKey={(r) => r.conversationId}
+      rowLabel={(r) => r.title ?? t("untitled")}
+      state={first === null ? "loading" : "ready"}
+      empty={{ title: t("empty"), hint: t("emptyHint") }}
+      {...(filtered && { noResults: { description: t("noMatch"), onClear } })}
+      onOpen={(r) => router.push(`/trajectories/${encodeURIComponent(r.conversationId)}`)}
+      onLoadMore={() => void loadMore()}
+      hasMore={next !== null}
+      loadingMore={loadingMore}
+      loadMoreError={moreError}
+    />
   );
 }

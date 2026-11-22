@@ -85,6 +85,18 @@ describe("listConversations", () => {
     await listConversations("o1");
     expect(urls).toEqual(["GET /api/v1/orgs/o1/conversations"]);
   });
+
+  it("withTotal asks the first page for the count, never a later one", async () => {
+    const urls = stubFetch({ conversations: [], next: null, total: 0 });
+    await listConversations("o1", { limit: 30, withTotal: true });
+    await listConversations("o1", { limit: 30, withTotal: true, after: "c9" });
+    await listConversations("o1", { limit: 30, withTotal: false });
+    expect(urls).toEqual([
+      "GET /api/v1/orgs/o1/conversations?limit=30&withTotal=true",
+      "GET /api/v1/orgs/o1/conversations?after=c9&limit=30",
+      "GET /api/v1/orgs/o1/conversations?limit=30",
+    ]);
+  });
 });
 
 describe("search, state and the archived list", () => {

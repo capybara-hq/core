@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Column, DataTable, DesignProvider, type NativeHandlers } from "../src/index";
 import { css, parseCss } from "./css-rules";
@@ -413,5 +414,69 @@ describe("DataTable compact rows with a lead are exactly 64", () => {
       expect(rule?.selector).toContain(`.cb-table-compact-${part}`);
     }
     expect(rule?.decls["line-height"]).toBe(half);
+  });
+});
+
+describe("DataTable compactOnly columns", () => {
+  const cols: Column<Row>[] = [
+    col("name", "Name", "title"),
+    { ...col("role", "Role", "subtitle"), compactOnly: true, sortable: true },
+    col("email", "Email", "meta"),
+  ];
+
+  it("the wide table draws no header, cell or sort entry for it", () => {
+    const { container } = renderAtClass(
+      1280,
+      <DataTable {...base} columns={cols} sort={{ key: "name", dir: "asc", onChange: () => {} }} />,
+    );
+    const headers = [...container.querySelectorAll("th")].map((h) => h.textContent);
+    expect(headers).toEqual(["Name", "Email"]);
+    expect(container.textContent).not.toContain("Owner");
+  });
+
+  it("a sortable compactOnly column is not in the compact sort select", async () => {
+    const sortable: Column<Row>[] = [
+      { ...col("name", "Name", "title"), sortable: true },
+      { ...col("role", "Role", "subtitle"), compactOnly: true, sortable: true },
+      col("email", "Email", "meta"),
+    ];
+    const { container } = renderAtClass(
+      390,
+      <DataTable
+        {...base}
+        columns={sortable}
+        sort={{ key: "name", dir: "asc", onChange: () => {} }}
+      />,
+    );
+    const bar = container.querySelector<HTMLElement>('[data-part="table-narrow-bar"]');
+    expect(bar).not.toBeNull();
+    await userEvent.click(within(bar as HTMLElement).getByRole("combobox"));
+    const sheet = await screen.findByRole("dialog");
+    expect(
+      within(sheet)
+        .getAllByRole("radio")
+        .map((r) => (r as HTMLInputElement).value),
+    ).toEqual(["name:asc", "name:desc"]);
+  });
+
+  it("the grouped rows draw it in its role", () => {
+    const { container } = renderAtClass(390, <DataTable {...base} columns={cols} />);
+    const row = container.querySelector<HTMLElement>('[data-row-key="a"]');
+    expect(row?.querySelector("[data-part=compact-subtitle]")?.textContent).toBe("Owner");
+  });
+
+  it("requires a compact role other than hidden", () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = (compact?: Column<Row>["compact"]): Column<Row>[] => [
+      col("name", "Name", "title"),
+      { ...col("role", "Role", compact), compactOnly: true },
+    ];
+    expect(() => renderAtClass(1280, <DataTable {...base} columns={bad("hidden")} />)).toThrow(
+      /compactOnly/,
+    );
+    expect(() => renderAtClass(1280, <DataTable {...base} columns={bad()} />)).toThrow(
+      /compactOnly/,
+    );
+    quiet.mockRestore();
   });
 });

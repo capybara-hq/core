@@ -64,11 +64,11 @@ describe("/settings/audit (org admins)", () => {
     // the nav marks Audit log
     expect(screen.getByRole("link", { name: zh.connections.nav.audit })).toBeTruthy();
     const calls = stubApi(routes);
-    await userEvent.setup().click(screen.getByRole("button", { name: zh.orgAudit.loadMore }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "加载更多" }));
     expect(await within(table).findByText("Alice")).toBeTruthy();
     expect(within(table).getByText(A.actions.extensionEnabled)).toBeTruthy();
     expect(within(table).getByText("Grant")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.orgAudit.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
     expect(calls.map((c) => c.url)).toContain(`${O}/audit?limit=20&after=8`);
   });
 
@@ -76,7 +76,7 @@ describe("/settings/audit (org admins)", () => {
     stubApi({ [`GET ${O}/audit`]: () => json(200, { events: [], next: null }) });
     await renderRouteWithCache("/settings/audit", lastStubRoutes(), { locale: "en" });
     expect(await screen.findByText(en.orgAudit.empty)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.orgAudit.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
   it("a member gets no access and reads no audit page", async () => {

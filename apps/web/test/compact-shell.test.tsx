@@ -11,6 +11,7 @@ import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { membersQuery } from "../src/lib/query/members";
+import { conversationListQuery } from "../src/lib/query/shell";
 import { stubApi } from "./support/api";
 import { pathname as currentPath, resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
@@ -181,7 +182,18 @@ describe("the drawer from the menu button", () => {
       (t) => t.textContent,
     );
     expect(titles).toEqual(["部署失败排查", "周报"]);
-    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/conversations?limit=30");
+    // the drawer's 30 s poll asks for no count (only the conversations page shows one)
+    const lists = calls.filter((c) => c.url.startsWith("/api/v1/orgs/o1/conversations?"));
+    expect(lists.map((c) => c.url)).toContain("/api/v1/orgs/o1/conversations?limit=30");
+    for (const c of lists) expect(c.url).not.toContain("withTotal");
+    // the conversations page asks for the count: its first request differs from the drawer's
+    const pageQuery = conversationListQuery("o1");
+    await (pageQuery.queryFn as (c: { signal: AbortSignal }) => Promise<unknown>)({
+      signal: new AbortController().signal,
+    }).catch(() => {});
+    const page = calls.filter((c) => c.url.includes("withTotal=true"));
+    expect(page).toHaveLength(1);
+    expect(page[0]?.url).not.toBe("/api/v1/orgs/o1/conversations?limit=30");
   });
 
   it("the account row opens the account sheet: the profile row, the org, status, sign out", async () => {

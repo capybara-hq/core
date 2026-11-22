@@ -240,11 +240,13 @@ const caseChangeKeys = (orgId: string, setId: string) => [
 const caseColumns = (t: ReturnType<typeof useTranslations<"evals.set">>): Column<EvalCase>[] => [
   {
     key: "title",
+    compact: "title",
     header: t("caseColumns.title"),
     cell: (c) => <Text truncate>{c.title}</Text>,
   },
   {
     key: "version",
+    compact: "subtitle",
     header: t("caseColumns.version"),
     width: 110,
     tone: "muted",
@@ -252,6 +254,7 @@ const caseColumns = (t: ReturnType<typeof useTranslations<"evals.set">>): Column
   },
   {
     key: "steps",
+    compact: "meta",
     header: t("caseColumns.steps"),
     width: 120,
     align: "right",
@@ -259,6 +262,7 @@ const caseColumns = (t: ReturnType<typeof useTranslations<"evals.set">>): Column
   },
   {
     key: "created",
+    compact: "meta",
     header: t("caseColumns.created"),
     width: 170,
     tone: "muted",
@@ -321,18 +325,26 @@ function RunsTab({
   const columns: Column<EvalRun>[] = [
     {
       key: "created",
+      compact: "title",
       header: t("set.runColumns.created"),
       width: 170,
       cell: (r) => <DateTime value={r.createdAt} />,
     },
-    { key: "mode", header: t("set.runColumns.mode"), cell: (r) => t(`mode.${r.mode}`) },
+    {
+      key: "mode",
+      compact: "subtitle",
+      header: t("set.runColumns.mode"),
+      cell: (r) => t(`mode.${r.mode}`),
+    },
     {
       key: "status",
+      compact: "trailing",
       header: t("set.runColumns.status"),
       cell: (r) => <StatusMark status={evalRunMark(r.status)} label={t(`runStatus.${r.status}`)} />,
     },
     {
       key: "progress",
+      compact: "meta",
       header: t("set.runColumns.progress"),
       align: "right",
       width: 90,
@@ -340,6 +352,7 @@ function RunsTab({
     },
     {
       key: "tokens",
+      compact: "hidden",
       header: t("set.runColumns.tokens"),
       align: "right",
       tone: "muted",

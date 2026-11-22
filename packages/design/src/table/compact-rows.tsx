@@ -13,10 +13,17 @@ export function declaresCompact<T>(columns: readonly Column<T>[]): boolean {
 
 /** At most one trailing column (design spec §6.6). Throws in development and tests. */
 export function assertCompactColumns<T>(columns: readonly Column<T>[]): void {
-  if (columns.filter((c) => c.compact === "trailing").length <= 1) return;
-  const msg = "DataTable: at most one column may declare compact: 'trailing'";
-  if (process.env.NODE_ENV === "production") console.error(msg);
-  else throw new Error(msg);
+  const fail = (msg: string) => {
+    if (process.env.NODE_ENV === "production") console.error(msg);
+    else throw new Error(msg);
+  };
+  if (columns.filter((c) => c.compact === "trailing").length > 1)
+    fail("DataTable: at most one column may declare compact: 'trailing'");
+  const bad = columns.find(
+    (c) => c.compactOnly && (c.compact === undefined || c.compact === "hidden"),
+  );
+  if (bad)
+    fail(`DataTable: compactOnly column '${bad.key}' needs a compact role other than 'hidden'`);
 }
 
 /**

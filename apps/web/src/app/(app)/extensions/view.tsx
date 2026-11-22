@@ -201,6 +201,7 @@ function ExtensionList({
       header: tc("name"),
       // wide enough for "connector-openapi · v0.1.0-rc.0"; the wrapping capabilities take the rest
       width: 280,
+      compact: "title",
       cell: (r) => (
         <CellTitle
           title={r.label}
@@ -219,6 +220,7 @@ function ExtensionList({
       header: tc("capabilities"),
       wrap: true,
       tone: "muted",
+      compact: "subtitle",
       cell: (r) => {
         const caps = capabilitiesIn(capabilityGroups(r.ext), tab).map(capabilityLabel);
         return caps.length > 0 ? caps : "—";
@@ -229,6 +231,8 @@ function ExtensionList({
       header: tc("state"),
       // "已启用 · 平台默认" whole; the wrapping capabilities give way
       fit: true,
+      // One trailing cell only: an org admin's is the switch, so the state drops to the meta line
+      compact: canEdit ? "meta" : "trailing",
       cell: (r) => <Text tone={r.state.tone}>{r.state.label}</Text>,
     },
     ...(canEdit
@@ -237,6 +241,7 @@ function ExtensionList({
             key: "switch",
             header: tc("switch"),
             interactive: true,
+            compact: "trailing",
             fit: true,
             cell: (r: Row) => (
               <Switch

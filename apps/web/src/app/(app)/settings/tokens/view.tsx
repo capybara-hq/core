@@ -68,21 +68,24 @@ function Tokens({ orgId, actor }: { orgId: string; actor: OrgRole }) {
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   const rows = read.kind === "ready" ? read.data.tokens : [];
   const columns: Column<ServiceToken>[] = [
-    { key: "name", header: t("columns.name"), cell: (r) => r.name },
+    { key: "name", header: t("columns.name"), compact: "title", cell: (r) => r.name },
     {
       key: "role",
       header: t("columns.role"),
+      compact: "subtitle",
       cell: (r) => (r.role === null ? "—" : tr(r.role)),
     },
     {
       key: "created",
       header: t("columns.created"),
+      compact: "hidden",
       tone: "muted",
       cell: (r) => <DateTime value={r.createdAt} />,
     },
     {
       key: "expires",
       header: t("columns.expires"),
+      compact: "trailing",
       tone: "muted",
       cell: (r) =>
         r.expiresAt === null ? (
@@ -96,6 +99,7 @@ function Tokens({ orgId, actor }: { orgId: string; actor: OrgRole }) {
     {
       key: "lastUsed",
       header: t("columns.lastUsed"),
+      compact: "meta",
       tone: "muted",
       cell: (r) => (r.lastUsedAt === null ? t("neverUsed") : <DateTime value={r.lastUsedAt} />),
     },

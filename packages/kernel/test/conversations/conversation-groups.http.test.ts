@@ -436,7 +436,7 @@ describe("GET /conversations?agentId=", () => {
       url: `/api/v1/orgs/${orgId}/conversations?agentId=${agent}`,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ conversations: [], next: null, total: 0 });
+    expect(res.json()).toEqual({ conversations: [], next: null });
   });
 });
 
@@ -476,27 +476,42 @@ describe("GET /conversations: each row's agent and the total", () => {
     for (const c of res.conversations) expect(c.agentId).toBe(c.agent?.id);
   });
 
-  it("total counts every match on the first page only, and follows q and agentId", async () => {
+  it("returns no total unless asked (withTotal absent or false)", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    await threeAgents(req, orgId);
+    const plain = await list(req, orgId, "?limit=3");
+    expect(plain.conversations).toHaveLength(3);
+    expect("total" in plain).toBe(false);
+    expect("total" in (await list(req, orgId, "?limit=3&withTotal=false"))).toBe(false);
+    const bad = await req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations?withTotal=yes`,
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("withTotal counts every match on the first page only, and follows q and agentId", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const { a, aConvs } = await threeAgents(req, orgId);
-    const p1 = await list(req, orgId, "?limit=3");
+    const p1 = await list(req, orgId, "?limit=3&withTotal=true");
     expect(p1.total).toBe(10);
     expect(p1.next).not.toBeNull();
-    const p2 = await list(req, orgId, `?limit=3&after=${p1.next}`);
+    const p2 = await list(req, orgId, `?limit=3&withTotal=true&after=${p1.next}`);
     expect(p2.conversations).toHaveLength(3);
     expect("total" in p2).toBe(false);
-    expect((await list(req, orgId, `?agentId=${a}&limit=2`)).total).toBe(7);
+    expect((await list(req, orgId, `?agentId=${a}&limit=2&withTotal=true`)).total).toBe(7);
     const renamed = await req({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/conversations/${aConvs[0]}`,
       payload: { title: "Quarterly report" },
     });
     expect(renamed.statusCode).toBe(200);
-    expect((await list(req, orgId, "?q=report")).total).toBe(1);
-    expect((await list(req, orgId, `?q=report&agentId=${a}`)).total).toBe(1);
-    expect((await list(req, orgId, "?q=nomatch")).total).toBe(0);
-    expect((await list(req, orgId, "?archived=1")).total).toBe(0);
+    expect((await list(req, orgId, "?q=report&withTotal=true")).total).toBe(1);
+    expect((await list(req, orgId, `?q=report&agentId=${a}&withTotal=true`)).total).toBe(1);
+    expect((await list(req, orgId, "?q=nomatch&withTotal=true")).total).toBe(0);
+    expect((await list(req, orgId, "?archived=1&withTotal=true")).total).toBe(0);
   });
 
   it("a hidden or deleted agent's conversations are neither listed nor counted", async () => {
@@ -507,14 +522,14 @@ describe("GET /conversations: each row's agent and the total", () => {
     const kept = await createAgent(ownerReq, orgId, "Kept");
     const m = await memberSession(orgId, "mem", "member");
     for (const agent of [priv, gone, kept]) await createConv(m.req, orgId, agent);
-    expect((await list(m.req, orgId)).total).toBe(3);
+    expect((await list(m.req, orgId, "?withTotal=true")).total).toBe(3);
     await ownerReq({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/agents/${priv}`,
       payload: { visibility: "private" },
     });
     await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${gone}` });
-    const res = await list(m.req, orgId);
+    const res = await list(m.req, orgId, "?withTotal=true");
     expect(res.total).toBe(1);
     expect(res.conversations.map((c) => c.agent?.id)).toEqual([kept]);
   });
@@ -540,7 +555,7 @@ describe("GET /conversations: each row's agent and the total", () => {
         source: "web",
       })
       .execute();
-    const res = await list(req, org1);
+    const res = await list(req, org1, "?withTotal=true");
     expect(res.conversations.map((c) => c.id)).toEqual([c1]);
     expect(res.total).toBe(1);
     expect(JSON.stringify(res)).not.toContain(a2);

@@ -36,6 +36,12 @@ export type Column<T> = {
    * stacked rows.
    */
   compact?: "title" | "subtitle" | "meta" | "trailing" | "hidden";
+  /**
+   * The column exists only in the grouped rows below 600 (design spec §6.6): it needs a `compact`
+   * role other than `hidden`, and the wide table draws no header, no cells and no sort entry for
+   * it (a plain-text line that a richer wide column already shows).
+   */
+  compactOnly?: true;
 };
 
 export type SortDir = "asc" | "desc";

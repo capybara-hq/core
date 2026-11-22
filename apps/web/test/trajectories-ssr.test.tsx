@@ -277,7 +277,7 @@ describe("/trajectories", () => {
       [`GET ${O}/trajectories`]: () => json(200, { items: [ITEM("c1", "Clean up")], next: "c1" }),
     });
     expect(browser).toEqual([]);
-    await userEvent.setup().click(screen.getByRole("button", { name: en.trajectories.loadMore }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Load more" }));
     expect(await screen.findByText("Third")).toBeTruthy();
     expect(browser.map((c) => c.url)).toEqual([`${O}/trajectories?limit=50&before=c1`]);
   });
