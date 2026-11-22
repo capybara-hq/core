@@ -127,7 +127,7 @@ describe("the file panel", () => {
       [`GET ${BASE}/files/f1/previews/office/docx`]: () =>
         json(200, { view: { blocks: [{ type: "heading", text: "Quarterly report" }] } }),
     });
-    openAt("#file=f1");
+    await openAt("#file=f1");
     const panel = await screen.findByRole("complementary", { name: "report.docx" });
     expect(await within(panel).findByText("Quarterly report")).toBeTruthy();
   });
@@ -154,7 +154,7 @@ describe("the file panel", () => {
           expiresIn: 300,
         }),
     });
-    openAt("#file=f1");
+    await openAt("#file=f1");
     const panel = await screen.findByRole("complementary", { name: "report.docx" });
     const frame = await within(panel).findByTitle("Word");
     expect(frame.tagName).toBe("IFRAME");
@@ -167,7 +167,7 @@ describe("the file panel", () => {
 
   it("a .docx without a previewer shows the file card and Download", async () => {
     api();
-    openAt("#file=f1");
+    await openAt("#file=f1");
     const panel = await screen.findByRole("complementary", { name: "report.docx" });
     expect(await within(panel).findByText(/No preview available/)).toBeTruthy();
     expect(within(panel).getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
@@ -175,7 +175,7 @@ describe("the file panel", () => {
 
   it("a .csv renders a table; the header switches between the conversation's files", async () => {
     api();
-    openAt("#file=f2");
+    await openAt("#file=f2");
     const panel = await screen.findByRole("complementary", { name: "diff.csv" });
     expect(await within(panel).findByRole("table")).toBeTruthy();
     expect(within(panel).getByText("-109.51")).toBeTruthy();
@@ -203,7 +203,7 @@ describe("the file panel", () => {
       [`GET ${BASE}/files/f2-v1/content`]: () =>
         new Response("a,b\n1,2\n", { status: 200, headers: { "content-type": "text/plain" } }),
     });
-    openAt("#file=f2-v1");
+    await openAt("#file=f2-v1");
     const panel = await screen.findByRole("complementary", { name: "diff.csv" });
     const user = userEvent.setup();
     await user.click(within(panel).getByRole("button", { name: /diff\.csv/ }));
@@ -222,7 +222,7 @@ describe("the file panel", () => {
           ? json(500, { error: { code: "internal", message: "x" } })
           : new Response("a,b\n1,2\n", { status: 200 }),
     });
-    openAt("#file=f2");
+    await openAt("#file=f2");
     const panel = await screen.findByRole("complementary", { name: "diff.csv" });
     expect(await within(panel).findByText(/failed to load/)).toBeTruthy();
     expect(within(panel).getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
@@ -234,7 +234,7 @@ describe("the file panel", () => {
 
   it("a removed file shows the removed card", async () => {
     api();
-    openAt("#file=f4");
+    await openAt("#file=f4");
     const panel = await screen.findByRole("complementary", { name: "old.txt" });
     expect(within(panel).getByText("No longer available")).toBeTruthy();
   });
@@ -254,7 +254,7 @@ describe("the file panel", () => {
       [`GET ${BASE}/files/a1/previewers`]: () => json(200, { previewers: [] }),
       [`GET ${BASE}/files/a2/previewers`]: () => json(200, { previewers: [] }),
     });
-    openAt("#file=a1");
+    await openAt("#file=a1");
     const panel = await screen.findByRole("complementary", { name: "brief.docx" });
     expect(await within(panel).findByText(/No preview available/)).toBeTruthy();
     const user = userEvent.setup();
@@ -286,7 +286,7 @@ describe("the file panel", () => {
       }),
     );
     api();
-    openAt("#file=f3");
+    await openAt("#file=f3");
     const panel = await screen.findByRole("complementary", { name: "chart.png" });
     const user = userEvent.setup();
     await within(panel).findByRole("img", { name: "chart.png" });
@@ -340,7 +340,7 @@ describe("the file panel", () => {
         json(200, { files: [{ ...SENT, name: "brief.pdf" }, CSV], next: null }),
       [`GET ${BASE}/files/a1/previewers`]: () => json(200, { previewers: [] }),
     });
-    openAt("");
+    await openAt("");
     const user = userEvent.setup();
     const log = await screen.findByRole("log");
     // listed: the right panel opens it
@@ -359,7 +359,7 @@ describe("the file panel", () => {
 
   it("a path in prose that names a file output is a chip opening the panel", async () => {
     api();
-    openAt("");
+    await openAt("");
     const chip = await screen.findByRole("button", { name: "/w/diff.csv" });
     await userEvent.setup().click(chip);
     expect(await screen.findByRole("complementary", { name: "diff.csv" })).toBeTruthy();
@@ -393,7 +393,7 @@ describe("the file panel: HTML and Share", () => {
 
   it("an HTML file renders the document frame at the minted path, ahead of extensions", async () => {
     const calls = htmlApi();
-    openAt("#file=h1");
+    await openAt("#file=h1");
     const panel = await screen.findByRole("complementary", { name: "report.html" });
     const frame = await within(panel).findByTitle("report.html");
     expect(frame.tagName).toBe("IFRAME");
@@ -406,7 +406,7 @@ describe("the file panel: HTML and Share", () => {
 
   it("the Source option shows the text built-in", async () => {
     htmlApi();
-    openAt("#file=h1");
+    await openAt("#file=h1");
     const panel = await screen.findByRole("complementary", { name: "report.html" });
     await within(panel).findByTitle("report.html");
     const user = userEvent.setup();
@@ -421,7 +421,7 @@ describe("the file panel: HTML and Share", () => {
     const calls = htmlApi({
       [`GET ${BASE}/files`]: () => json(200, { files: [big], next: null }),
     });
-    openAt("#file=h1");
+    await openAt("#file=h1");
     const panel = await screen.findByRole("complementary", { name: "report.html" });
     expect(await within(panel).findByText(/larger than 20 MiB are not rendered/)).toBeTruthy();
     expect(within(panel).getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
@@ -434,16 +434,16 @@ describe("the file panel: HTML and Share", () => {
       [`GET ${BASE}/files`]: () =>
         json(200, { files: [HTML, { ...CSV, shared: true }, GONE], next: null }),
     });
-    openAt("#file=h1");
+    await openAt("#file=h1");
     let panel = await screen.findByRole("complementary", { name: "report.html" });
     expect(within(panel).getByRole("button", { name: "Share" })).toBeTruthy();
     cleanup();
-    openAt("#file=f2");
+    await openAt("#file=f2");
     panel = await screen.findByRole("complementary", { name: "diff.csv" });
     expect(within(panel).getByRole("button", { name: "Shared" })).toBeTruthy();
     expect(panel.querySelector("[data-part='share-marker']")).not.toBeNull();
     cleanup();
-    openAt("#file=f4");
+    await openAt("#file=f4");
     panel = await screen.findByRole("complementary", { name: "old.txt" });
     expect(within(panel).queryByRole("button", { name: /^Share/ })).toBeNull();
   });
