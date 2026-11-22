@@ -29,6 +29,7 @@ import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
+  addedToDeviceNote,
   addressLayerNote,
   allowedOnceNote,
   deniedNote,
@@ -393,19 +394,65 @@ describe("the ask and its outcomes", () => {
       expect(grantedHosts(exec.args as ExecBody)).not.toContain("files.example.com");
   });
 
-  // the deployment never adds a host to a device's own list, so an ask offers a run grant only
-  // and "Always allow" is refused, nothing sent to the device
-  it("Always allow is not offered: refused, nothing is sent to the device", async () => {
+  // a device following its org's hosts has no list of its own to add to: "this run" only
+  it("no list of its own: only once is offered; always is refused, nothing is written", async () => {
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
+    expect(ask.scopes).toEqual(["once"]);
+    expect(ask.detail).toMatchObject({ appliesAt: "next-command" });
     const res = await decide(ask.id, { decision: "approve", scope: "always" });
     expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe(
+      "approval.scope_not_allowed",
+    );
     expect(s.machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
     expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
     expect(r?.content.endsWith(`\n\n${allowedOnceNote(["files.example.com"])}`)).toBe(true);
     expect(curlExecs()).toHaveLength(1);
+  });
+
+  // device-provider spec §6.3: per-operation hosts offer both; "add to this device's list" adds
+  // the host (from the next command), writes no run grant and never runs the command again
+  it("a list of its own: once and always; always adds the host from the next command, no rerun", async () => {
+    const own = await s.req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/devices/${s.deviceId}`,
+      payload: { network: { mode: "allowlist", hosts: ["api.example.com"] } },
+    });
+    expect(own.statusCode, own.body).toBe(200);
+    await post([curl(["files.example.com"]), curl(["files.example.com"])]);
+    const ask = await nextAsk();
+    expect(ask.scopes).toEqual(["once", "always"]);
+    expect(ask.detail).toMatchObject({ appliesAt: "next-command" });
+    const res = await decide(ask.id, { decision: "approve", scope: "always" });
+    expect(res.statusCode, res.body).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const device = await s.req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/devices/${s.deviceId}`,
+    });
+    expect(
+      (device.json() as { device: { sandbox: { allowedDomains: string[] } } }).device.sandbox
+        .allowedDomains,
+    ).toEqual(["api.example.com", "files.example.com"]);
+    const [first, second] = await results();
+    expect(
+      first?.content.endsWith(`\n\n${addedToDeviceNote(["files.example.com"], "next-command")}`),
+    ).toBe(true);
+    // the asking command never ran again; the next one reached the host through the device's list
+    const execs = curlExecs();
+    expect(execs).toHaveLength(2);
+    expect(second?.content).toContain("fetched");
+    // no run grant was written for it
+    expect(
+      await db
+        .selectFrom("approvals")
+        .select("scope")
+        .where("id", "=", ask.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ scope: "always" });
   });
 
   it("deny with a reason: the denied note with the reason; the host is not asked again in the run", async () => {

@@ -8,7 +8,11 @@ import {
   unattendedFails,
   unattendedRules,
 } from "../schedules/unattended.js";
-import { type ApprovalRecord, NETWORK_ASK_CANCELLED_NOTE } from "./approvals.service.js";
+import {
+  type ApprovalRecord,
+  NETWORK_ASK_CANCELLED_NOTE,
+  type NetworkAppliesAt,
+} from "./approvals.service.js";
 
 /**
  * Network asks in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3): what a
@@ -39,11 +43,89 @@ const blockedLead = (hosts: readonly string[]) =>
   `[network] ${list(hosts)} ${one(hosts) ? "was" : "were"} blocked by this device's network policy.`;
 
 /**
- * Asked, allowed this time (a run grant, the only offer: an ask never adds a host to the device's
- * own network list, only its owner's network setting does).
+ * What a network ask offers (device-provider spec §6.3): only what the device's provider enforces.
+ * `once` (a run grant) needs per-operation hosts; `always` adds the hosts to the device's own
+ * network list, which takes effect at `appliesAt`.
  */
+export interface NetworkAskOffer {
+  scopes: ("once" | "always")[];
+  appliesAt: NetworkAppliesAt;
+}
+
+/**
+ * The offer of a network ask on a device (device-provider spec §6.3): with per-operation hosts
+ * (`support.perOperationHosts`, an operation boundary) `once`, plus `always` when every asked host
+ * may join the device's own list (`listAddable`), applying from the next command; otherwise
+ * `always` only, applying the next time the device is used, or after the files are rebuilt when
+ * its provider fixes limits at its file system (`limitsApplyAt: "fileSystem"`). Null: nothing to
+ * offer (no per-operation hosts and not addable), so the host is never asked about.
+ */
+export function networkAskOffer(
+  support: { perOperationHosts: boolean },
+  limitsApplyAt: "instance" | "fileSystem" | undefined,
+  listAddable: boolean,
+): NetworkAskOffer | null {
+  if (support.perOperationHosts)
+    return { scopes: listAddable ? ["once", "always"] : ["once"], appliesAt: "next-command" };
+  if (!listAddable) return null;
+  return {
+    scopes: ["always"],
+    appliesAt: limitsApplyAt === "fileSystem" ? "files-reset" : "next-use",
+  };
+}
+
+/** What a device's sandbox says about what a network ask may offer (`SandboxService.hostRefusal`). */
+export interface DeviceAskFacts {
+  /** Why a per-call grant for a host is unavailable (`hostGrantRefusal`), or null. */
+  refusal: (host: string) => string | null;
+  /** Why a host cannot join the device's own network list (`deviceListAddRefusal`), or null. */
+  listAddRefusal: (host: string) => string | null;
+  /** `perCallHosts`: the provider gives each operation its own hosts (an operation boundary). */
+  box: { perCallHosts: boolean };
+  /** The device's network is an allowlist with a host list of its own. */
+  ownList: boolean;
+  limitsApplyAt: "instance" | "fileSystem" | undefined;
+}
+
+/**
+ * The plan's `refusal` and `offer` on a device (device-provider spec §6.3). With per-operation
+ * hosts a host is offered unless a per-call grant is unavailable; without, unless it cannot join
+ * the device's own list (so a host outside the org's effective hosts is never offered). `always`
+ * is offered only when the device has a list of its own and every asked host may join it (what
+ * `addNetworkHostsIn` accepts), so an offered decision does not fail for that.
+ */
+export function deviceAskTerms(
+  f: DeviceAskFacts,
+): Required<Pick<NetworkPlanContext, "refusal" | "offer">> {
+  const perOperationHosts = f.box.perCallHosts;
+  return {
+    refusal: perOperationHosts ? f.refusal : f.listAddRefusal,
+    offer: (hosts) =>
+      networkAskOffer(
+        { perOperationHosts },
+        f.limitsApplyAt,
+        f.ownList && hosts.length > 0 && hosts.every((h) => f.listAddRefusal(h) === null),
+      ),
+  };
+}
+
+/** When a host added to the device's list applies, as the model reads it. */
+const APPLIES_TEXT: Record<NetworkAppliesAt, string> = {
+  "next-command": "from the next command",
+  "next-use": "the next time the device is used",
+  "files-reset": "after the files are rebuilt",
+};
+
+/** Asked, allowed this time (a run grant: "once"). */
 export const allowedOnceNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts)} The user allowed ${pron(hosts)} for the rest of this task. Run the command again.`;
+
+/**
+ * Asked, added to the device's own network list ("always", device-provider spec §6.3): the hosts
+ * apply at `appliesAt`, never to the command that asked, which is not run again.
+ */
+export const addedToDeviceNote = (hosts: readonly string[], appliesAt: NetworkAppliesAt) =>
+  `${blockedLead(hosts)} The person added ${list(hosts)} to this device's network list; it applies ${APPLIES_TEXT[appliesAt]}. This command is not run again.`;
 
 /** Asked and declined (also the unchecked hosts of a partial decision, and a host refused earlier in the run). */
 export const deniedNote = (hosts: readonly string[], reason?: string | null) =>
@@ -143,10 +225,11 @@ export const unattendedNetworkNote = (hosts: readonly string[]) =>
 /** What the pipeline knows when a command reported refused hosts. */
 export interface NetworkPlanContext {
   /**
-   * The device's provider enforces a sandbox allowlist (its permission support): only then is a
-   * device-layer host asked about (absent: never).
+   * What an ask about `hosts` would offer on the device ({@link networkAskOffer}); null: nothing,
+   * so those hosts get an unavailable note. Absent (no device sandbox known): a device-layer host
+   * is never asked about.
    */
-  allowlist?: boolean;
+  offer?: (hosts: string[]) => NetworkAskOffer | null;
   /** The scheduled task run the run serves (null / undefined: attended). */
   unattended: UnattendedRun | null | undefined;
   /**
@@ -155,8 +238,10 @@ export interface NetworkPlanContext {
    */
   outsideCeiling?: (host: string) => boolean;
   /**
-   * Why a per-call grant for a host is unavailable on the device (`hostGrantRefusal`), or null when
-   * one may be granted: an unavailable host is never asked about, its note names who adds it.
+   * Why a host cannot be offered on the device, or null when it may: with per-operation hosts why
+   * a per-call grant is unavailable (`hostGrantRefusal`), else why it cannot join the device's own
+   * list (`deviceListAddRefusal`). An unavailable host is never asked about; its note names who
+   * adds it.
    */
   refusal?: (host: string) => string | null;
   /**
@@ -173,11 +258,10 @@ export interface NetworkPlanContext {
 
 /** What to do with a command's refused hosts. */
 export interface NetworkPlan {
-  /**
-   * The device-layer hosts to ask the device owner about (empty: no ask). The ask offers a run
-   * grant only; the owner adds a host to the device's own list on its page.
-   */
+  /** The device-layer hosts to ask the device owner about (empty: no ask). */
   ask: { host: string; port: number }[];
+  /** What the ask offers (present exactly when `ask` is not empty). */
+  offer?: NetworkAskOffer;
   /** Notes written now, after the command output (one line per outcome). */
   notes: string[];
   /** `missing_grants` keys of an unattended run (`network:<host>`). */
@@ -212,16 +296,17 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  *   an `address` host under the open network on a device that allows running outside the sandbox
  *   gets the escalation hint; an `org` host whose grant is unavailable names who adds it;
  *   `unknown`: nothing (the device's trailer explains);
- * - a `device` host whose per-call grant is unavailable (`ctx.refusal`: a provider without
- *   per-operation hosts, or beyond the org's or platform's allowlist ceiling): a note naming who
- *   adds it, never an ask;
- * - `device` layer on a provider that enforces no allowlist: nothing (no ask);
+ * - a `device` host that cannot be offered (`ctx.refusal`: beyond the org's or platform's
+ *   allowlist ceiling, or on a device without per-operation hosts one its own list cannot take):
+ *   a note naming who adds it, never an ask;
+ * - `device` layer with no device sandbox known (no `ctx.offer`): nothing (no ask);
  * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
  * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
  *   and a missing grant;
- * - the rest is asked, unless another ask of the run tree is pending or the run made
- *   {@link MAX_NETWORK_ASKS_PER_RUN} asks (a note each).
+ * - the rest is asked with `ctx.offer`'s offer (none: an unavailable note each), unless another
+ *   ask of the run tree is pending or the run made {@link MAX_NETWORK_ASKS_PER_RUN} asks (a note
+ *   each).
  */
 export function planNetworkAsk(
   blocked: readonly NetworkBlockedHost[],
@@ -237,8 +322,6 @@ export function planNetworkAsk(
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
   const unavailable: string[] = [];
-  // only a provider that enforces an allowlist blocks a host at the device layer
-  const canAsk = ctx.allowlist === true;
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
@@ -248,7 +331,7 @@ export function planNetworkAsk(
       else org.push(b.host);
       if (unattendedRules(ctx.unattended)) missingGrants.push(networkGrantKey(b.host));
     } else if (b.layer === "device") {
-      if (!canAsk) continue;
+      if (ctx.offer === undefined) continue;
       const why = ctx.refusal?.(b.host) ?? null;
       // relayer already made an invalid name an address; a wildcard is never asked
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
@@ -267,11 +350,16 @@ export function planNetworkAsk(
   if (taskIgnored.length > 0) notes.push(taskGrantIgnoredNote(taskIgnored));
   if (unattended.length > 0) notes.push(unattendedNetworkNote(unattended));
   let ask: { host: string; port: number }[] = [];
+  let offer: NetworkAskOffer | null = null;
   if (candidates.length > 0) {
+    const asked = candidates.slice(0, NETWORK_ASK_MAX_HOSTS);
     const names = candidates.map((c) => c.host);
-    if (run?.pending === true) notes.push(otherAskPendingNote(names));
+    offer = ctx.offer?.(asked.map((c) => c.host)) ?? null;
+    if (offer === null)
+      for (const h of names) unavailable.push(unavailableHostNote(h, NO_OFFER_WHY));
+    else if (run?.pending === true) notes.push(otherAskPendingNote(names));
     else if ((run?.asks ?? 0) >= MAX_NETWORK_ASKS_PER_RUN) notes.push(tooManyNote(names));
-    else ask = candidates.slice(0, NETWORK_ASK_MAX_HOSTS);
+    else ask = asked;
   }
   notes.push(...unavailable);
   if (org.length > 0) notes.push(orgLayerNote(org));
@@ -285,13 +373,17 @@ export function planNetworkAsk(
             ctx.unattended != null ? ESCALATION_UNATTENDED_WHY : ctx.escalationRefusal,
           ),
     );
-  return { ask, notes, missingGrants };
+  return { ask, ...(ask.length > 0 && offer !== null && { offer }), notes, missingGrants };
 }
+
+/** Why a host is not asked about where nothing can be offered (a device with no own list). */
+const NO_OFFER_WHY = "the device's owner changes the device's network on its page";
 
 /**
  * The note of a settled network ask (spec §6.6): one line per outcome. An approval allows
- * `detail.grantedHosts` for the run and declines the hosts
- * left unchecked; `hours` is the ask's own wait (created to expiry). Null while it is pending.
+ * `detail.grantedHosts` for the run (`once`) or added them to the device's own list (`always`,
+ * applying at `detail.appliesAt`) and declines the hosts left unchecked; `hours` is the ask's own
+ * wait (created to expiry). Null while it is pending.
  */
 export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] | null {
   const asked = (a.detail?.hosts ?? []).map((h) => h.host);
@@ -301,7 +393,11 @@ export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] 
       const rest = asked.filter((h) => !granted.includes(h));
       const notes: string[] = [];
       if (granted.length > 0) {
-        notes.push(allowedOnceNote(granted));
+        notes.push(
+          a.scope === "always"
+            ? addedToDeviceNote(granted, a.detail?.appliesAt ?? "next-use")
+            : allowedOnceNote(granted),
+        );
       }
       if (rest.length > 0) notes.push(deniedNote(rest));
       return notes;

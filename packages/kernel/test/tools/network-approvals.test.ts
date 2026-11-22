@@ -1,28 +1,40 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { DevicesService } from "../../src/devices/devices.service.js";
-import { deviceLeaseKey } from "../../src/dial-in/keys.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { NetworkGrants } from "../../src/sandbox/network-grants.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   type ApprovalRecord,
   ApprovalsService,
   NETWORK_ASK_CANCELLED_NOTE,
   type NetworkAskInput,
 } from "../../src/tools/approvals.service.js";
+import {
+  deviceAskTerms,
+  settledNetworkNotes,
+  withNetworkNotes,
+} from "../../src/tools/network-asks.js";
+import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
+  FAKE_PERMISSION_SUPPORT,
+} from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
@@ -39,12 +51,13 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Network asks (network ask-to-allow spec §5.2, §6.1–§6.8, P1.6): approvals of kind `network`
- * the device owner decides. "Allow once" is a run grant and the only offer: under device protocol 4
- * the deployment never adds a host to a local device, so "Always allow" is not offered and is
- * refused (no `policy` op is sent). A reply skips the ask, expiry and abort settle it, and the
- * call's tool approvals are left alone; a pending op is still settled in lock order with fenced
- * device writers.
+ * Network asks (network ask-to-allow spec §5.2, §6.1–§6.8, P1.6; device-provider spec §6.3):
+ * approvals of kind `network` the device owner decides, offering what the device's provider
+ * enforces. "Allow this time" is a run grant, offered only with per-operation hosts; "Add to this
+ * device's list" adds the hosts to the device's own network list (no run grant, the command is
+ * not run again), applying from the next command, the next use, or after the files are rebuilt
+ * (a `device-fake` with `limitsApplyAt: "fileSystem"` here). A reply skips the ask, expiry and
+ * abort settle it, and the call's tool approvals are left alone.
  */
 
 let pgc: TestContainer;
@@ -55,8 +68,11 @@ let redis: Redis;
 let k: TestKernel;
 let ownerId: string;
 let orgId: string;
+let owner: Req;
+let sandboxRoot: string;
 
 beforeAll(async () => {
+  sandboxRoot = await mkdtemp(join(tmpdir(), "cap-network-approvals-"));
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
@@ -67,13 +83,27 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "gateway"],
+        // limits fixed at the file system: a host added to a device's list waits for a files reset
+        extensions: [
+          MODEL_FAKE,
+          fileURLToPath(new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url)),
+        ],
+        extensionConfig: { "device-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
         devices: { dialIn: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
-  orgId = await createOrgWithProviders(k, await session(k, "owner"));
+  owner = await session(k, "owner");
+  orgId = await createOrgWithProviders(k, owner);
+  // the org's effective hosts take a.dev and b.dev; x.dev stays outside them
+  const res = await owner({
+    method: "PATCH",
+    url: `/api/v1/orgs/${orgId}/settings`,
+    payload: { deviceNetwork: { extraHosts: ["a.dev", "b.dev"] } },
+  });
+  expect(res.statusCode, res.body).toBe(200);
 });
 
 afterAll(async () => {
@@ -81,6 +111,7 @@ afterAll(async () => {
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
 const approvals = () => k.app.get(ApprovalsService);
@@ -151,6 +182,7 @@ function ask(over: Partial<NetworkAskInput> = {}): Promise<ApprovalRecord> {
       ],
       command: "curl https://files.slack.com/x",
       description: "Download the file",
+      appliesAt: "next-command",
       result: KEPT,
     },
     scopes: ["once"],
@@ -288,19 +320,6 @@ describe("decide", () => {
     await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
   });
 
-  // the platform never widens a device's own network list, so an ask offers a run grant only;
-  // "Always allow" is refused
-  it("an ask offers once only; always → 409 approval.scope_not_allowed", async () => {
-    const a = await ask();
-    expect(a.scopes).toEqual(["once"]);
-    const res = await decide(a.id, { decision: "approve", scope: "always" });
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as { error: { code: string } }).error.code).toBe(
-      "approval.scope_not_allowed",
-    );
-    expect((await row(a.id)).status).toBe("pending");
-  });
-
   it("deny: a reason, device.network_denied, nothing granted, the hosts refused in the run", async () => {
     const a = await ask();
     const res = await decide(a.id, { decision: "deny", reason: "Not this one" });
@@ -323,6 +342,178 @@ describe("decide", () => {
         }),
       },
     ]);
+  });
+});
+
+/**
+ * A device of the setup's member on `device-fake` with a host list of its own (a.dev) and the
+ * provider support stored with its report: `FAKE_INSTANCE_PERMISSION_SUPPORT` is list-only (an
+ * instance boundary), `FAKE_PERMISSION_SUPPORT` gives per-operation hosts.
+ */
+async function ownListDevice(support: SandboxPermissionSupport): Promise<string> {
+  const id = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id,
+      org_id: orgId,
+      owner_kind: "personal",
+      owner_account_id: s.accountId,
+      name: `Box ${id.slice(0, 4)}`,
+      provider: "device-fake",
+      network_mode: "allowlist",
+      network_hosts: JSON.stringify(["a.dev"]),
+      report: JSON.stringify({ support }),
+    })
+    .execute();
+  return id;
+}
+
+/**
+ * A network ask about `hosts` on `deviceId`, offering what the pipeline offers there (the device's
+ * sandbox facts through `deviceAskTerms`, as `networkBlocked` reads them).
+ */
+async function blockedAsk(deviceId: string, hosts: string[]): Promise<ApprovalRecord> {
+  const terms = deviceAskTerms(await k.app.get(SandboxService).hostRefusal({ orgId, deviceId }));
+  for (const h of hosts) expect(terms.refusal(h)).toBeNull();
+  const offer = terms.offer(hosts);
+  if (offer === null) throw new Error(`nothing to offer for ${hosts.join(", ")}`);
+  return ask({
+    detail: {
+      deviceId,
+      hosts: hosts.map((host) => ({ host, port: 443 })),
+      command: `curl ${hosts.join(" ")}`,
+      description: null,
+      appliesAt: offer.appliesAt,
+      result: KEPT,
+    },
+    scopes: offer.scopes,
+  });
+}
+
+const deviceView = async (deviceId: string) =>
+  (
+    (await s.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices/${deviceId}` })).json() as {
+      device: {
+        sandbox: { allowedDomains: string[]; recent: { via?: string }[] };
+      };
+    }
+  ).device;
+
+const runGrantsOf = async (runId: string, deviceId: string) => [
+  ...((await k.app.get(NetworkGrants).forExec({ orgId, runId, deviceId }))?.hosts ?? []),
+];
+
+/** The kept result the resumed run writes for the decided ask (the pipeline's settle note). */
+const keptResultOf = async (a: ApprovalRecord) =>
+  withNetworkNotes(
+    KEPT.content,
+    settledNetworkNotes(
+      (await approvals().get(orgId, a.id, s.accountId)) as unknown as ApprovalRecord,
+      24,
+    ) ?? [],
+  );
+
+const errCode = (res: { json(): unknown }) =>
+  (res.json() as { error: { code: string } }).error.code;
+
+describe("what an ask offers (device-provider spec §6.3)", () => {
+  it("always on a fileSystem provider: appliesAt files-reset, hosts stored, no run grant", async () => {
+    const device = await ownListDevice(FAKE_INSTANCE_PERMISSION_SUPPORT);
+    const a = await blockedAsk(device, ["b.dev"]);
+    expect(a.scopes).toEqual(["always"]);
+    expect(a.detail?.appliesAt).toBe("files-reset");
+    const res = await decide(a.id, { decision: "approve", scope: "always" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { approval: Record<string, unknown> }).approval).toMatchObject({
+      status: "approved",
+      scope: "always",
+      detail: { appliesAt: "files-reset", outcome: "always", grantedHosts: ["b.dev"] },
+    });
+    const d = await deviceView(device);
+    expect(d.sandbox.allowedDomains).toEqual(["a.dev", "b.dev"]);
+    // no run grant: the command that asked never gets the host, and is not run again
+    expect(await runGrantsOf(a.runId, device)).toEqual([]);
+    expect(await keptResultOf(a)).toMatch(
+      /added b\.dev to this device's network list.*after the files are rebuilt\. This command is not run again\.$/i,
+    );
+    expect(await networkAudits(device)).toEqual([
+      {
+        action: "device.network_allowed",
+        actor_account_id: s.accountId,
+        detail: expect.objectContaining({ hosts: ["b.dev"], scope: "always", outcome: "always" }),
+      },
+    ]);
+    await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
+  });
+
+  it("once on a list-only device → 409 approval.scope_not_allowed", async () => {
+    const device = await ownListDevice(FAKE_INSTANCE_PERMISSION_SUPPORT);
+    const a = await blockedAsk(device, ["b.dev"]);
+    for (const payload of [{ decision: "approve", scope: "once" }, { decision: "approve" }]) {
+      const res = await decide(a.id, payload);
+      expect(res.statusCode).toBe(409);
+      expect(errCode(res)).toBe("approval.scope_not_allowed");
+    }
+    expect((await row(a.id)).status).toBe("pending");
+    expect((await deviceView(device)).sandbox.allowedDomains).toEqual(["a.dev"]);
+  });
+
+  it("always on a per-operation device adds the host and the run grant is not written", async () => {
+    const dialInDevice = await ownListDevice(FAKE_PERMISSION_SUPPORT);
+    const a = await blockedAsk(dialInDevice, ["b.dev"]);
+    expect(a.scopes).toEqual(["once", "always"]);
+    expect(a.detail?.appliesAt).toBe("next-command");
+    // decided from IM: the device's change says so
+    await approvals().decide(
+      orgId,
+      a.id,
+      s.accountId,
+      { decision: "approve", scope: "always" },
+      undefined,
+      "im",
+    );
+    const d = await deviceView(dialInDevice);
+    expect(d.sandbox.allowedDomains).toEqual(["a.dev", "b.dev"]);
+    expect(d.sandbox.recent[0]).toMatchObject({ via: "im" });
+    expect(await runGrantsOf(a.runId, dialInDevice)).toEqual([]);
+    expect(await keptResultOf(a)).toMatch(/it applies from the next command\./);
+  });
+
+  it("a host outside the org's effective hosts is never offered add to this device's list", async () => {
+    const list = deviceAskTerms(
+      await k.app.get(SandboxService).hostRefusal({
+        orgId,
+        deviceId: await ownListDevice(FAKE_INSTANCE_PERMISSION_SUPPORT),
+      }),
+    );
+    expect(list.refusal("x.dev")).toContain("an organization admin adds x.dev");
+    const perOp = deviceAskTerms(
+      await k.app.get(SandboxService).hostRefusal({
+        orgId,
+        deviceId: await ownListDevice(FAKE_PERMISSION_SUPPORT),
+      }),
+    );
+    expect(perOp.offer(["x.dev"])?.scopes ?? []).not.toContain("always");
+    expect(perOp.offer(["b.dev", "x.dev"])?.scopes ?? []).not.toContain("always");
+  });
+
+  it("a device following its org's hosts offers no always; a list-only one has nothing to offer", async () => {
+    const device = await ownListDevice(FAKE_PERMISSION_SUPPORT);
+    await sql`UPDATE capybara.devices SET network_mode = NULL, network_hosts = '[]'::jsonb
+      WHERE id = ${device}`.execute(raw);
+    const terms = deviceAskTerms(
+      await k.app.get(SandboxService).hostRefusal({ orgId, deviceId: device }),
+    );
+    expect(terms.offer(["b.dev"])?.scopes).toEqual(["once"]);
+    const listOnly = await ownListDevice(FAKE_INSTANCE_PERMISSION_SUPPORT);
+    await sql`UPDATE capybara.devices SET network_mode = NULL, network_hosts = '[]'::jsonb
+      WHERE id = ${listOnly}`.execute(raw);
+    expect(
+      deviceAskTerms(
+        await k.app.get(SandboxService).hostRefusal({ orgId, deviceId: listOnly }),
+      ).offer(["b.dev"]),
+    ).toBeNull();
   });
 });
 

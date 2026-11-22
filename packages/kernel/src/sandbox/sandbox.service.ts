@@ -857,17 +857,27 @@ export class SandboxService {
   }
 
   /**
-   * Why a per-call host grant for each host is unavailable on the device, naming who can add it
-   * (`hostGrantRefusal`; null: grantable): a network ask is made only for a grantable host, and
-   * only on a device whose provider enforces an allowlist (`allowlist`, from its support).
+   * What a network ask may offer on the device (device-provider spec §6.3): why a per-call host
+   * grant is unavailable (`hostGrantRefusal`; null: grantable), why a host cannot join the
+   * device's own list (`deviceListAddRefusal`), whether it has a list of its own (`ownList`),
+   * where its provider applies new limits (`limitsApplyAt`) and its sandbox (`box.perCallHosts`:
+   * the provider's per-operation hosts).
    */
   async hostRefusal(device: { orgId: string; deviceId: string }): Promise<{
     refusal: (host: string) => string | null;
+    listAddRefusal: (host: string) => string | null;
     box: DeviceSandbox;
-    allowlist: boolean;
+    ownList: boolean;
+    limitsApplyAt: "instance" | "fileSystem" | undefined;
   }> {
     const facts = await this.facts.deviceSandboxFacts(device.orgId, device.deviceId);
-    return { refusal: facts.refusal, box: facts.box, allowlist: facts.allowlist };
+    return {
+      refusal: facts.refusal,
+      listAddRefusal: facts.listAddRefusal,
+      box: facts.box,
+      ownList: facts.ownList,
+      limitsApplyAt: facts.limitsApplyAt,
+    };
   }
 
   /**

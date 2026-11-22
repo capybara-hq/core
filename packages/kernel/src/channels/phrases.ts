@@ -96,9 +96,19 @@ export const CHANNEL_PHRASES = {
     zh: "这个决定对以上所有域名生效",
     en: "This decision applies to all the domains above",
   },
-  /** A network ask's 「once」 button. */
+  /** A network ask's 「once」 button: a run grant (only with per-operation hosts). */
   networkAllowOnce: { zh: "这次允许", en: "Allow this time" },
-  /** A network ask's 「always」 button. */
+  /** A network ask's 「always」 button: the hosts join the device's own network list. */
+  networkAddToDevice: { zh: "加入此设备的列表", en: "Add to this device's list" },
+  /** The preview line saying when 「always」 applies (`{label}`, `{applies}`). */
+  networkAppliesLine: { zh: "{label}：{applies}", en: "{label}: {applies}" },
+  /** When hosts added to the device's list apply (device-provider spec §6.3), as the web says. */
+  "networkApplies.next-command": { zh: "从下一条命令起生效", en: "Applies from the next command" },
+  "networkApplies.next-use": {
+    zh: "下次使用这台设备时生效",
+    en: "Applies the next time the device is used",
+  },
+  "networkApplies.files-reset": { zh: "重建文件后生效", en: "Applies after the files are rebuilt" },
   /** A git push ask's card title (`{repo}`; sandbox git credentials spec §7). */
   gitTitle: {
     zh: "智能体想推送到 {repo}，允许吗？",

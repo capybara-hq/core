@@ -23,6 +23,7 @@ import {
 import { ConversationLeakCheck } from "../conversations/leak-check.js";
 import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
+import { DevicesService } from "../devices/devices.service.js";
 import { ApiError } from "../errors.js";
 import { clipText } from "../extensions/hooks.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
@@ -32,6 +33,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
   TransactionHost,
+  withOrderedLocks,
   withTransactionFencePrelude,
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -114,24 +116,34 @@ export interface KeptToolResult {
 }
 
 /**
+ * When hosts added to a device's own network list take effect (device-provider spec §6.3): from
+ * the next command (per-operation hosts), the next time the device is used (an instance boundary),
+ * or after its files are rebuilt (a provider that fixes limits at its file system).
+ */
+export type NetworkAppliesAt = "next-command" | "next-use" | "files-reset";
+
+/**
  * A network ask's `detail` (network ask-to-allow spec §6.1, P-D2): the device, the refused hosts,
  * the command and its kept `tool_result` (written with a note when the ask settles; the command is
- * never run again), and once approved what took effect.
+ * never run again), when "add to this device's list" would apply, and once approved what took
+ * effect.
  */
 export interface NetworkAskDetail {
   deviceId: string;
   hosts: { host: string; port: number }[];
   command: string;
   description: string | null;
+  /** When hosts added to the device's own list apply ({@link NetworkAppliesAt}). */
+  appliesAt: NetworkAppliesAt;
   /** The formatted `tool_result` of the command and its display-only fields. */
   result: KeptToolResult;
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
   /**
-   * What took effect: a run grant (`once`, the only decision: an ask never adds a host to the
-   * device's own network list, only its owner's network setting does).
+   * What took effect: a run grant (`once`), or the hosts added to the device's own network list
+   * (`always`, applying at `appliesAt`; no run grant).
    */
-  outcome?: "once";
+  outcome?: "once" | "always";
 }
 
 /** A network ask's detail as the API shows it: without the kept command result. */
@@ -489,10 +501,11 @@ export interface NetworkAskInput {
   requestedFor: string;
   detail: Omit<NetworkAskDetail, "grantedHosts" | "outcome">;
   /**
-   * Always `["once"]`: a run grant (approval-only profiles design). An ask never adds a host to the
-   * device's own network list (only its owner's network setting does), so "always" is never offered.
+   * What the device's provider enforces (device-provider spec §6.3, `networkAskOffer`): `once` (a
+   * run grant) only with per-operation hosts, `always` (add to the device's own list) only when
+   * every asked host may join it.
    */
-  scopes: "once"[];
+  scopes: ("once" | "always")[];
 }
 
 /** What a network ask's decision took effect as, passed to the decision's transaction. */
@@ -502,9 +515,15 @@ interface NetworkDecision {
   /** The hosts allowed (empty when denied or refused by the device). */
   granted: string[];
   /** Null when denied. */
-  outcome: "once" | null;
+  outcome: "once" | "always" | null;
   via: DecisionVia;
 }
+
+const NETWORK_APPLIES_AT: ReadonlySet<NetworkAppliesAt> = new Set([
+  "next-command",
+  "next-use",
+  "files-reset",
+]);
 
 /** The tool key a network ask is recorded under (the command ran in `Bash`). */
 export const NETWORK_ASK_TOOL_KEY = "Bash";
@@ -680,6 +699,10 @@ export class ApprovalsService {
     @Optional()
     @Inject(PermissionCallGrants)
     private readonly permissionGrants?: PermissionCallGrants,
+    /** A network ask's "add to this device's list" writes the device's own network list. */
+    @Optional()
+    @Inject(DevicesService)
+    private readonly devices?: Pick<DevicesService, "lockNetworkAddSubject" | "addNetworkHostsIn">,
   ) {}
 
   /**
@@ -872,8 +895,16 @@ export class ApprovalsService {
     if (hosts.some((h) => h.host.length === 0 || h.host.length > NETWORK_HOST_MAX_CHARS)) {
       throw new Error("a network ask's host is 1 to 255 characters");
     }
-    if (input.scopes.length !== 1 || input.scopes[0] !== "once") {
-      throw new Error('a network ask offers exactly "once"');
+    const scopes = new Set(input.scopes);
+    if (
+      scopes.size === 0 ||
+      scopes.size !== input.scopes.length ||
+      [...scopes].some((k) => k !== "once" && k !== "always")
+    ) {
+      throw new Error('a network ask offers "once", "always" or both, each once');
+    }
+    if (!NETWORK_APPLIES_AT.has(input.detail.appliesAt)) {
+      throw new Error(`a network ask's appliesAt is one of ${[...NETWORK_APPLIES_AT].join(", ")}`);
     }
     const { record, toSeq } = await this.requestNetworkIn(input);
     if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
@@ -1344,9 +1375,14 @@ export class ApprovalsService {
    * A network ask's decision (network ask-to-allow spec §5.2), one at a time per ask across
    * replicas: only the device owner (`requested_for`) decides, in a signed-in session (a personal
    * access token is refused; the route already refuses service and embed tokens); the allowed
-   * hosts are a subset of those asked. The decision is a run grant only (`once`): an ask never adds
-   * a host to the device's own network list, so `always` is refused. Every
-   * decision resumes the run in its transaction and is announced after the commit.
+   * hosts are a subset of those asked, and the scope one the ask offers (device-provider spec
+   * §6.3). `once` is a run grant (the row itself); `always` adds the hosts to the device's own
+   * network list in the decision's transaction (`DevicesService.addNetworkHostsIn`, no run grant;
+   * the command that asked is not run again and the hosts apply at the ask's `appliesAt`). For
+   * `always` the transaction opens with the device's ordered prelude (`lockNetworkAddSubject`: the
+   * owner's membership, the device row, its permission write lock) before the conversation,
+   * approval and run rows; this method's distributed lock stays outside it. Every decision
+   * resumes the run in its transaction and is announced after the commit.
    */
   @WithLock({ key: "network-ask-#{1}", ttl: 60_000, waitTimeout: 45_000 })
   private async decideNetwork(
@@ -1401,13 +1437,11 @@ export class ApprovalsService {
     let network: NetworkDecision;
     if (body.decision === "approve") {
       const scope = body.scope ?? "once";
-      // a run grant only (approval-only profiles): an ask never widens the device's own network
-      // list (its owner's setting does), so `always` is refused, also for an ask made before that
-      // still listing it
-      if (scope !== "once" || !ask.scopes.includes(scope)) {
+      // only what the ask offers: what the device's provider enforces (device-provider spec §6.3)
+      if ((scope !== "once" && scope !== "always") || !ask.scopes.includes(scope)) {
         throw new ApiError(
           "approval.scope_not_allowed",
-          `Scope "${scope}" is not allowed for this approval; allowed: once`,
+          `Scope "${scope}" is not allowed for this approval; allowed: ${ask.scopes.join(", ")}`,
         );
       }
       const unknown = (body.hosts ?? []).filter((h) => !asked.includes(h));
@@ -1425,7 +1459,7 @@ export class ApprovalsService {
           { path: "hosts", message: "Choose at least one host" },
         ]);
       }
-      network = { wanted: granted, granted, outcome: "once", via };
+      network = { wanted: granted, granted, outcome: scope, via };
     } else {
       if (body.hosts !== undefined) {
         throw new ApiError("validation_failed", "hosts are only given when allowing", [
@@ -1434,7 +1468,18 @@ export class ApprovalsService {
       }
       network = { wanted: [], granted: [], outcome: null, via };
     }
-    const decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, network);
+    const decide = () => this.decideIn(orgId, id, accountId, body, actorTokenId, network);
+    let decided: Awaited<ReturnType<typeof decide>>;
+    if (network.outcome === "always") {
+      const devices = this.devices;
+      if (devices === undefined) throw new Error("Devices are unavailable");
+      // the decider is the device's owner (checked above; the prelude checks it again under the
+      // device row's lock): the device's permission write lock precedes the conversation rows
+      decided = await withOrderedLocks(
+        () => devices.lockNetworkAddSubject(orgId, accountId, detail.deviceId),
+        decide,
+      );
+    } else decided = await decide();
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
   }
@@ -1798,7 +1843,7 @@ export class ApprovalsService {
           ? (command.scope ?? "once")
           : network === undefined
             ? (body.scope ?? "once")
-            : "once";
+            : (network.outcome ?? "once");
     // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
     if (scope !== null && scope !== "once" && before.requestedFor === null) {
       throw new ApiError(
@@ -1825,6 +1870,19 @@ export class ApprovalsService {
       throw new ApiError(
         "approval.scope_not_allowed",
         'Scope "session" is not allowed for a command with no concrete rule',
+      );
+    }
+    // "add to this device's list": the hosts join the device's own network list in this
+    // transaction (refused, writing nothing, if the device can no longer take them); the device's
+    // permission write lock was taken in the decision's ordered prelude
+    if (network?.outcome === "always" && before.detail !== null) {
+      if (this.devices === undefined) throw new Error("Devices are unavailable");
+      await this.devices.addNetworkHostsIn(
+        orgId,
+        accountId,
+        before.detail.deviceId,
+        network.granted,
+        network.via,
       );
     }
     const updated = await t
@@ -1864,7 +1922,8 @@ export class ApprovalsService {
     const hash = before.specHash;
     const connectorId = before.connectorId;
     if (network !== undefined) {
-      // a network ask grants nothing of the tool kind: its run grant is the row itself
+      // a network ask grants nothing of the tool kind: its run grant is the row itself (`once`);
+      // `always` added the hosts to the device's list above
     } else if (git !== undefined) {
       // a git ask's run grant is the row itself; `always` is the actor's standing allow for the
       // repository on the connector (a row the connector's deletion removes with it)
