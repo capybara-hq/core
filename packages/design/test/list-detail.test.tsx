@@ -179,7 +179,9 @@ describe("the compact forms of the templates", () => {
     );
     expect(part("action-secondary")?.textContent).toBe("放弃");
     expect(part("action-primary")?.textContent).toBe("保存");
-    const rules = parseCss(css("templates.css")).filter((r) => r.at === "(max-width: 599px)");
+    const rules = parseCss(css("templates.css")).filter(
+      (r) => r.at === "not all and (min-width: 600px)",
+    );
     const decl = (selector: string, prop: string) =>
       rules.find((r) => r.selector === selector)?.decls[prop];
     expect(decl(".cb-actionrow", "position")).toBe("sticky");
@@ -435,7 +437,9 @@ describe("ReferenceScreen (the reference set's compact frame)", () => {
 
 describe("the compact ActionRow fills the row (spec §4.4)", () => {
   it("reserves no scrollbar gutter and drops the empty status line", () => {
-    const compact = parseCss(css("templates.css")).filter((r) => r.at === "(max-width: 599px)");
+    const compact = parseCss(css("templates.css")).filter(
+      (r) => r.at === "not all and (min-width: 600px)",
+    );
     expect(compact.find((r) => r.selector === ".cb-actionrow")?.decls["scrollbar-gutter"]).toBe(
       "auto",
     );

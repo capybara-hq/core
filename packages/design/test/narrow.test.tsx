@@ -139,7 +139,7 @@ describe("PageHeader below 600", () => {
 
 describe("SettingsPage sub-nav below 640", () => {
   it("is a sticky row on the page ground with its hairline, over the scrolling content", () => {
-    const nav = decls(media(css("templates.css")), ".cb-settings-nav");
+    const nav = decls(media(css("templates.css"), COMPACT), ".cb-settings-nav");
     expect(nav).toContain("position: sticky;");
     expect(nav).toContain("top: 0;");
     expect(nav).toMatch(/z-index: \d+;/);

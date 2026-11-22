@@ -24,8 +24,11 @@ import { type Column, DataTable } from "../table/index";
 type TemplateScroll = { setTitle(el: HTMLElement | null): void; barHidden: boolean };
 const TemplateScrollContext = createContext<TemplateScroll | null>(null);
 
-/** The element whose bottom is "the large title": the title line (or a title-less head's row). */
-const TITLE = ".cb-pageheader-titleline, .cb-pageheader-titleless";
+/**
+ * The element whose bottom is "the large title": the head's title line. A title-less head (the
+ * band form) has none: its name is the page's band, which the template passes as `title`.
+ */
+const TITLE = ".cb-pageheader-titleline";
 
 /**
  * The root of a pushed template (`.cb-template`) and its compact one scroller (responsive system
@@ -41,24 +44,37 @@ const TITLE = ".cb-pageheader-titleline, .cb-pageheader-titleless";
  * direct child of the scroller), kept by the template in state through a callback ref; while it
  * is scrolled away the root carries `data-bar-hidden="true"` (for the bar's CSS) and
  * {@link useTemplateScroll} reports `barHidden` to the frame's children. `rootRef` reaches the
- * root element too (FormPage focuses its first field through it). Other `data-*` attributes go on
- * the root as they are.
+ * root element too (FormPage focuses its first field through it). `title` overrides the head's
+ * report with the element that is the page's visible name (a band DetailPage's name band; `null`
+ * while there is none, so the title is never away). Other `data-*` attributes go on the root as
+ * they are.
+ *
+ * Every frame registers `{ titleAway }` on layer 0, also `false` and also on medium and expanded:
+ * the shell merges registrations field by field and keeps the title layer's `titleAway`, so a
+ * frame nested in another frame's page registers too and the later registration (the outer frame,
+ * whose layout effect runs after its children's) wins.
  */
 export function TemplateFrame({
   template,
   bar,
   rootRef,
+  title: titleOverride,
   children,
   ...data
 }: {
   template: string;
   bar?: HTMLElement | null;
+  title?: HTMLElement | null;
   rootRef?: Ref<HTMLDivElement>;
   children?: ReactNode;
 } & { [attr: `data-${string}`]: string | undefined }) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [title, setTitle] = useState<HTMLElement | null>(null);
-  const { titleAway, barHidden } = useCompactScroll(scroller, title, bar);
+  const { titleAway, barHidden } = useCompactScroll(
+    scroller,
+    titleOverride !== undefined ? titleOverride : title,
+    bar,
+  );
   useRegisterScrolledTitle(titleAway);
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
@@ -142,11 +158,11 @@ export function TemplateHead({
   const withTabs = tabs !== undefined || hasTabRow(header);
   const scroll = useContext(TemplateScrollContext);
   const [head, setHead] = useState<HTMLDivElement | null>(null);
-  // Every render: a loading head that turns loaded (or title-less) may swap the title's row; the
-  // frame's state ignores a report of the same element.
+  // Every render: a loading head that turns loaded may swap the title's row; the frame's state
+  // ignores a report of the same element. A title-less head reports none (never its row).
   const setTitle = scroll?.setTitle;
   useLayoutEffect(() => {
-    setTitle?.(head?.querySelector<HTMLElement>(TITLE) ?? head);
+    setTitle?.(head?.querySelector<HTMLElement>(TITLE) ?? null);
   });
   useLayoutEffect(() => () => setTitle?.(null), [setTitle]);
   return (

@@ -123,9 +123,9 @@ const inShell = (register: ReturnType<typeof shellStub>["register"], ui: ReactEl
  * Makes the template's root the scroller under test: 600 high, 2000 of content, the title's
  * bottom 120 below its top; the rectangles follow `scrollTop`. Returns a person's scroll.
  */
-function rig(container: HTMLElement) {
+function rig(container: HTMLElement, titleSelector = ".cb-pageheader-titleline") {
   const scroller = container.querySelector<HTMLElement>(".cb-template");
-  const title = container.querySelector<HTMLElement>(".cb-pageheader-titleline");
+  const title = container.querySelector<HTMLElement>(titleSelector);
   if (!scroller || !title) throw new Error("no scroller or title");
   let top = 0;
   Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => top });
@@ -257,7 +257,7 @@ describe("sticky parts inside the one scroller", () => {
 
   it("ActionRows stay sticky at the bottom", () => {
     const rule = parseCss(css("templates.css")).find(
-      (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-actionrow",
+      (r) => r.at === "not all and (min-width: 600px)" && r.selector === ".cb-actionrow",
     );
     expect(rule?.decls.position).toBe("sticky");
     expect(rule?.decls.bottom).toBe("0");
@@ -272,6 +272,18 @@ describe("the one scroller's CSS", () => {
     const rules = compact("templates.css");
     const root = rules.find((r) => r.selector === '.cb-template[data-scroll="one"]');
     expect(root?.decls["overflow-y"]).toBe("auto");
+    // a flex column: the body fills the room between the head and the ActionRow, so a short form
+    // keeps its sticky ActionRow at the bottom (spec §4.4), not right under its content
+    expect(root?.decls.display).toBe("flex");
+    expect(root?.decls["flex-direction"]).toBe("column");
+    const flex = (selector: string) =>
+      rules.find(
+        (r) =>
+          r.decls.flex !== undefined && r.selector.split(",").some((x) => x.trim() === selector),
+      )?.decls.flex;
+    expect(flex('.cb-template[data-scroll="one"] .cb-body')).toBe("1 0 auto");
+    expect(flex('.cb-template[data-scroll="one"] .cb-template-head')).toBe("none");
+    expect(flex('.cb-template[data-scroll="one"] .cb-actionrow')).toBe("none");
     const inner = rules.find((r) =>
       r.selector.startsWith('.cb-template[data-scroll="one"] .cb-body-content'),
     );
@@ -314,13 +326,69 @@ describe("Status and Onboarding stack their actions", () => {
   it("a stacked action is full width on compact", () => {
     const rule = parseCss(css("templates.css")).find(
       (r) =>
-        r.at === "not all and (min-width: 600px)" && r.selector === '[data-stack="true"] .cb-btn',
+        r.at === "not all and (min-width: 600px)" &&
+        r.selector ===
+          '.cb-status-page-action[data-stack="true"] .cb-btn, .cb-onboarding-steps[data-stack="true"] .cb-btn',
     );
     expect(rule?.decls.width).toBe("100%");
+    // scoped to the two stacks: no bare [data-stack] rule reaches other buttons
+    expect(
+      parseCss(css("templates.css")).filter((r) => r.selector.startsWith("[data-stack")),
+    ).toEqual([]);
+  });
+});
+
+describe("a band DetailPage's scrolled title", () => {
+  const band = (facts?: ReactElement) => (
+    <DetailPage header={{ ...header, titleHidden: true }} tabs={tabs} facts={facts}>
+      x
+    </DetailPage>
+  );
+
+  it("title registered away after scroll: the band's name, not the title-less row", () => {
+    const shell = shellStub();
+    const { container } = renderAtClass(390, inShell(shell.register, band(<div>名牌</div>)));
+    const scrollTo = rig(container, ".cb-detail-band-facts");
+    scrollTo(0);
+    expect(shell.titleAway()).toBe(false);
+    scrollTo(200);
+    expect(shell.titleAway()).toBe(true);
+  });
+
+  it("a band page without its band never reports the title away", () => {
+    const shell = shellStub();
+    const { container } = renderAtClass(390, inShell(shell.register, band()));
+    const scroller = container.querySelector<HTMLElement>(".cb-template") as HTMLElement;
+    // the title-less row is zero high on compact: it would be "away" at once
+    const row = container.querySelector<HTMLElement>(".cb-pageheader-titleless") as HTMLElement;
+    row.getBoundingClientRect = () => ({ top: 0, bottom: 0 }) as DOMRect;
+    scroller.dispatchEvent(new Event("scroll"));
+    flushFrames();
+    expect(shell.titleAway()).toBe(false);
   });
 });
 
 describe("InboxPage rows (D6)", () => {
+  it("the list rows are one grouped card on compact (§2.3's look)", () => {
+    const rules = parseCss(css("templates.css")).filter(
+      (r) => r.at === "not all and (min-width: 600px)",
+    );
+    const at = (selector: string) => rules.find((r) => r.selector === selector)?.decls;
+    expect(at(".cb-inbox-rail .cb-ld-list")).toMatchObject({
+      border: "var(--cb-grouped-line)",
+      "border-radius": "var(--cb-radius-md)",
+      background: "var(--cb-panel)",
+    });
+    expect(at(".cb-inbox-rail .cb-ld-list > li > .cb-ld-row")).toMatchObject({
+      padding: "var(--cb-grouped-pad)",
+      "min-height": "var(--cb-grouped-row-lead)",
+      "border-top": "0",
+    });
+    expect(at(".cb-inbox-rail .cb-ld-list > li + li > .cb-ld-row")?.["background-size"]).toBe(
+      "calc(100% - var(--cb-grouped-inset)) 1px",
+    );
+  });
+
   it("inbox row has no contextmenu handler", () => {
     const { container } = renderAtClass(
       390,

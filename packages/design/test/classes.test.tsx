@@ -35,7 +35,8 @@ describe("template forms per size class", () => {
         "cb-body (max-width: 751px)",
       ),
     ).toBe("minmax(0, 1fr)");
-    const compact = "(max-width: 599px)";
+    // the compact query is ClassForms' (the complement of min-width 600)
+    const compact = "not all and (min-width: 600px)";
     expect(decl("templates.css", ".cb-settings-nav", "position", compact)).toBe("sticky");
     expect(decl("templates.css", ".cb-settings-nav", "flex-direction", compact)).toBe("row");
     expect(decl("templates.css", ".cb-settings-nav", "overflow-x", compact)).toBe("auto");

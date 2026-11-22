@@ -55,13 +55,17 @@
 }
 /* One scroller on compact (responsive system spec §2.6, D7; design spec §6.65): the template root
    (TemplateFrame, `data-scroll="one"`) is the page's only scroller, head included, so the head
-   scrolls away with the content instead of keeping its height on screen. The body's boxes stop
-   filling and scrolling on their own: each is as high as its content. The settings sub-nav and the
-   ActionRow stay sticky inside it (their own rules); the shell pulls the root up under its floating
-   row (shell.css). Medium and expanded keep the fixed head over the body's scroller. */
+   scrolls away with the content instead of keeping its height on screen. It stays a flex column:
+   the head and the ActionRow keep their height, the body takes at least the room left between
+   them (`flex: 1 0 auto`), so a short form still has its sticky ActionRow at the bottom above the
+   inset (spec §4.4), and grows with its content past that. Inside the body the boxes stop filling
+   and scrolling on their own. The settings sub-nav and the ActionRow stay sticky inside it (their
+   own rules); the shell pulls the root up under its floating row (shell.css). Medium and expanded
+   keep the fixed head over the body's scroller. */
 @media not all and (min-width: 600px) {
   .cb-template[data-scroll="one"] {
-    display: block;
+    display: flex;
+    flex-direction: column;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior-y: contain;
@@ -74,6 +78,13 @@
   .cb-template[data-scroll="one"] .cb-body[data-layout="centered"] {
     overflow: visible;
     scrollbar-gutter: auto;
+  }
+  .cb-template[data-scroll="one"] .cb-body {
+    flex: 1 0 auto;
+  }
+  .cb-template[data-scroll="one"] .cb-template-head,
+  .cb-template[data-scroll="one"] .cb-actionrow {
+    flex: none;
   }
   .cb-template[data-scroll="one"] .cb-body-row,
   .cb-template[data-scroll="one"] .cb-body > .cb-body-content,
@@ -243,7 +254,7 @@
    (right under the fixed head) on the page ground with its hairline, so the sections stay one tap
    away and the row never slides out half clipped (maintainer decision 2026-11-09). In the one
    scroller of the compact page it sticks under the floating row (below). */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-settings-nav {
     position: sticky;
     top: 0;
@@ -474,16 +485,19 @@
     flex-direction: column;
     gap: var(--cb-space-2);
   }
-  [data-stack="true"] .cb-checklist-item[data-state="todo"] {
+  .cb-onboarding-steps[data-stack="true"] .cb-checklist-item[data-state="todo"] {
     flex-wrap: wrap;
   }
-  [data-stack="true"] .cb-checklist-item[data-state="todo"] > .cb-checklist-end {
+  .cb-onboarding-steps[data-stack="true"]
+    .cb-checklist-item[data-state="todo"]
+    > .cb-checklist-end {
     flex-basis: 100%;
   }
-  [data-stack="true"] .cb-checklist-end > * {
+  .cb-onboarding-steps[data-stack="true"] .cb-checklist-end > * {
     flex: 1;
   }
-  [data-stack="true"] .cb-btn {
+  .cb-status-page-action[data-stack="true"] .cb-btn,
+  .cb-onboarding-steps[data-stack="true"] .cb-btn {
     width: 100%;
   }
 }
@@ -1463,7 +1477,7 @@ a.cb-object-name:hover {
    and the keyboard (at the bottom of the template's one scroller, D7); the primary fills the bottom
    line, the other actions share the line above it in equal widths, every button 40 high, the row
    growing to fit. */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-actionrow {
     position: sticky;
     bottom: 0;
@@ -1899,6 +1913,31 @@ li:first-child > .cb-ld-row {
   min-width: 0;
   max-width: var(--cb-layout-content);
   margin: 0 auto;
+}
+/* InboxPage list rows on compact (responsive system spec §3.6, §2.3; design spec §6.47): the rows
+   of the inbox's list are one grouped card from the shared --cb-grouped-* values (as ObjectList,
+   CardGrid and DataTable): the panel ground, a 1px line-soft frame, radius md, rows padded
+   grouped-pad, at least 64 high (the title over its meta line), hairlines inset space.4. No long
+   press and no context menu (D6): the rows only open the item. */
+@media not all and (min-width: 600px) {
+  .cb-inbox-rail .cb-ld-list {
+    overflow: hidden;
+    border: var(--cb-grouped-line);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
+  }
+  .cb-inbox-rail .cb-ld-list > li > .cb-ld-row {
+    height: auto;
+    min-height: var(--cb-grouped-row-lead);
+    padding: var(--cb-grouped-pad);
+    border-top: 0;
+  }
+  .cb-inbox-rail .cb-ld-list > li + li > .cb-ld-row {
+    background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+    background-repeat: no-repeat;
+    background-position: right top;
+    background-size: calc(100% - var(--cb-grouped-inset)) 1px;
+  }
 }
 /* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */
 .cb-trace-back {

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { SkeletonBox, SkeletonGroup, Tabs, type TabsProps } from "../display/index";
 import { useDesignT } from "../provider";
 import { Body, type PageHeaderProps } from "../shell/index";
@@ -66,6 +66,8 @@ export function DetailPage({
   // The band form (spec §4.2, §5.2): the page's first block is its own name band, so the band is
   // the head's last row and the tab row follows it — the template head carries no tabs then.
   const band = header.titleHidden === true;
+  // The band is the page's visible name: the one scroller's title (design spec §6.65).
+  const [bandName, setBandName] = useState<HTMLDivElement | null>(null);
   const shape = loading?.facts;
   const factsNode = loading?.band ? (
     <div className="cb-detail-band-skeleton" data-part="detail-band-skeleton" aria-hidden="true">
@@ -111,7 +113,7 @@ export function DetailPage({
       {band ? (
         <div className="cb-detail-band" data-tabs={tabs !== undefined ? "true" : undefined}>
           {factsNode != null && factsNode !== false ? (
-            <div className="cb-detail-band-facts" data-part="detail-facts">
+            <div ref={setBandName} className="cb-detail-band-facts" data-part="detail-facts">
               {factsNode}
             </div>
           ) : null}
@@ -133,7 +135,7 @@ export function DetailPage({
     </Body>
   );
   return (
-    <TemplateFrame template="DetailPage">
+    <TemplateFrame template="DetailPage" {...(band ? { title: bandName } : {})}>
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{body}</SkeletonGroup>
       ) : (
