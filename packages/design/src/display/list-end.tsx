@@ -16,7 +16,11 @@ export type ListMoreProps = {
   onLoadMore?: (() => void) | undefined;
   /** There are more pages after the last row. */
   hasMore?: boolean | undefined;
-  /** The next page is being read. */
+  /**
+   * The next page is being read. Required with `onLoadMore` in practice: the compact end asks
+   * once and arms again only after `loadingMore` went true and back (or `hasMore` came back), so a
+   * list that never reports its loading reads one page by scrolling and no more.
+   */
   loadingMore?: boolean | undefined;
   /** The last read failed: its localized message, shown with Retry until the next try. */
   loadMoreError?: string | null | undefined;
@@ -25,6 +29,7 @@ export type ListMoreProps = {
 /** Explicit table roles, spread because a linter only sees the elements (DataTable's ROLE). */
 const ROW = { role: "row" } as const;
 const CELL = { role: "cell" } as const;
+const NONE = { role: "none" } as const;
 
 /**
  * The compact end of a list (inside its grouped card): the sentinel, the list's own skeleton row
@@ -52,7 +57,13 @@ export function ListEnd({
   });
   if (form !== "compact" || onLoadMore === undefined || !hasMore) return null;
   const state = failed ? "error" : loadingMore ? "loading" : "idle";
-  const content =
+  // Always mounted while the end is, so the loading announcement is heard; filled only then.
+  const live = (
+    <span className="cb-sr-only" role="status">
+      {state === "loading" ? t("table.loading") : ""}
+    </span>
+  );
+  const failure =
     state === "error" ? (
       <>
         <span className="cb-list-end-error">{loadMoreError}</span>
@@ -60,36 +71,36 @@ export function ListEnd({
           {t("table.retry")}
         </Button>
       </>
-    ) : state === "loading" ? (
-      <span className="cb-sr-only" role="status">
-        {t("table.loading")}
-      </span>
     ) : null;
   const attrs = {
     className: "cb-list-end",
     "data-part": "list-end",
     "data-state": state,
-    "aria-hidden": state === "idle" ? true : undefined,
   } as const;
+  // Idle and loading, the end is no row to assistive tech (role none), only its live region.
+  const none = state === "error" ? {} : NONE;
   return (
     <>
       {state === "loading" ? skeleton : null}
       {as === "li" ? (
-        <li ref={sentinel} {...attrs}>
-          {content}
+        <li ref={sentinel} {...attrs} {...none}>
+          {live}
+          {failure}
         </li>
       ) : as === "row" ? (
         // The table's roles are explicit (spread, as DataTable's ROLE): a row of one cell.
-        <div ref={sentinel} {...ROW} {...attrs}>
-          {content === null ? null : (
+        <div ref={sentinel} {...attrs} {...(state === "error" ? ROW : NONE)}>
+          {live}
+          {failure === null ? null : (
             <span {...CELL} className="cb-list-end-cell">
-              {content}
+              {failure}
             </span>
           )}
         </div>
       ) : (
         <div ref={sentinel} {...attrs}>
-          {content}
+          {live}
+          {failure}
         </div>
       )}
     </>

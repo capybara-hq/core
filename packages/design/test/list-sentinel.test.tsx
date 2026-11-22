@@ -283,3 +283,86 @@ describe("ConversationList's end (on the shared sentinel)", () => {
     expect(onMore).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the list end's live region", () => {
+  it("stays mounted from idle to loading and back, filled only while loading", () => {
+    const onLoadMore = vi.fn();
+    const { container, rerender } = renderAtClass(390, objectList({ onLoadMore, hasMore: true }));
+    const region = () =>
+      container.querySelector('[data-part="list-end"] [role="status"]') as HTMLElement | null;
+    const idle = region();
+    expect(idle).not.toBeNull();
+    expect(idle?.textContent).toBe("");
+    expect(container.querySelector('[data-part="list-end"]')?.getAttribute("aria-hidden")).toBe(
+      null,
+    );
+    rerender(
+      <DesignProvider locale="zh">
+        {objectList({ onLoadMore, hasMore: true, loadingMore: true })}
+      </DesignProvider>,
+    );
+    expect(region()).toBe(idle);
+    expect(region()?.textContent).toBe("正在加载");
+    rerender(
+      <DesignProvider locale="zh">{objectList({ onLoadMore, hasMore: true })}</DesignProvider>,
+    );
+    expect(region()).toBe(idle);
+    expect(region()?.textContent).toBe("");
+  });
+});
+
+describe("DataTable without a compact mapping (stacked rows)", () => {
+  const unmapped = (more: More) => (
+    <DataTable<Row>
+      label="账号"
+      columns={[{ key: "name", header: "名称", cell: (r) => r.name }]}
+      rows={[0, 1, 2].map((i) => ({ id: String(i), name: `账号 ${i}` }))}
+      rowKey={(r) => r.id}
+      {...more}
+    />
+  );
+
+  it("reads the next page at the panel's end on compact, with a skeleton while loading", () => {
+    const onLoadMore = vi.fn();
+    const { container, rerender } = renderAtClass(390, unmapped({ onLoadMore, hasMore: true }));
+    const end = container.querySelector('[data-part="table"] > [data-part="list-end"]');
+    expect(end).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
+    scrollToEnd();
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    rerender(
+      <DesignProvider locale="zh">
+        {unmapped({ onLoadMore, hasMore: true, loadingMore: true })}
+      </DesignProvider>,
+    );
+    expect(container.querySelector('[data-part="table"] [data-end="skeleton"]')).not.toBeNull();
+  });
+});
+
+describe("DataTable's Load more button from 600 up", () => {
+  const table = (state: "loading" | "error" | undefined, n: number) => (
+    <DataTable<Row>
+      label="账号"
+      columns={columns}
+      rows={Array.from({ length: n }, (_, i) => ({ id: String(i), name: `账号 ${i}` }))}
+      rowKey={(r) => r.id}
+      {...(state ? { state } : {})}
+      onLoadMore={vi.fn()}
+      hasMore
+    />
+  );
+
+  it.each([
+    ["loading", table("loading", 0)],
+    ["error", table("error", 0)],
+    ["empty", table(undefined, 0)],
+  ])("is not drawn in the %s state", (_, ui) => {
+    renderAtClass(1280, ui);
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
+  });
+
+  it("is drawn under the rows", () => {
+    renderAtClass(1280, table(undefined, 2));
+    expect(screen.getByRole("button", { name: "加载更多" })).not.toBeNull();
+  });
+});

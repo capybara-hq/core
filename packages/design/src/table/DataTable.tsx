@@ -588,7 +588,8 @@ export function DataTable<T>({
         )}
       </div>
       {pagination ? <Pagination {...pagination} /> : null}
-      <ListMoreButton more={more} />
+      {/* only under rows: a loading, failed or empty table has no next page to offer */}
+      {kind === null ? <ListMoreButton more={more} /> : null}
       {rowMenu && (mappedCompact || sheetRow !== undefined) ? (
         // Mounted while its row is chosen, so leaving compact with a sheet up does not drop it.
         <ActionSheet
