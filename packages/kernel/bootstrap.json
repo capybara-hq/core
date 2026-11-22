@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "895bfc11d7ed76726b20e2e6140764b7fadc6598"
+    "commit": "ae3c41845e672ece6210d202a325056b6e784c08"
   },
   "plugins": [
     {
@@ -84,6 +84,14 @@
       "npm": "@capybara-hq/plugin-jina",
       "version": "0.1.0-rc.9",
       "integrity": "sha512-c0DFvKKQrO3qDkwAEBoBbFhDDfktucjWCIPyh+wRWGAbrXLwz69zX8C0f6MHI0YmlM68EW+NxVM3f1w8bDHOQg==",
+      "required": false
+    },
+    {
+      "name": "device-docker",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-device-docker",
+      "version": "0.1.0-rc.22",
+      "integrity": "sha512-cbxrv0s9YfMT8rw4TygcRYxrb6x0JPVF2WwtdQtT13lHsQmyOSxIT1GJAHxs5GxUZeRIwrt38AaIGXL/NIqvJA==",
       "required": false
     },
     {
