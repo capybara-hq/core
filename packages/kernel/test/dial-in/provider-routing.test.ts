@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
-import { DEVICE_CLOSE } from "../../src/dial-in/gateway.js";
+import { DEVICE_CLOSE, MAX_EVENTS_IN_FLIGHT } from "../../src/dial-in/gateway.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
@@ -69,7 +69,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker", "gateway"],
-        devices: { local: { reconnectGraceSeconds: GRACE_SECONDS } },
+        devices: { maxPersonal: 50, local: { reconnectGraceSeconds: GRACE_SECONDS } },
       },
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
@@ -140,6 +140,8 @@ describe("GET /device/connect routes by the device's provider", () => {
       hello: { revision: "r1", outsideSandbox: false },
     });
     expect(machine.connectionId).toEqual(expect.any(String));
+    // ready carries the effective capacity: the 1 MiB announced, under the kernel's 16 MiB default
+    expect(machine.maxFrameBytes).toBe(1024 * 1024);
     // the provider accepted the body; the kernel recorded the envelope's program facts
     expect(JSON.parse((await kv(`hello:${d.deviceId}`)) ?? "{}")).toEqual({
       revision: "r1",
@@ -205,6 +207,7 @@ describe("GET /device/connect routes by the device's provider", () => {
       hello: { revision: "r1" },
       maxFrameBytes: 2048,
     });
+    expect(machine.maxFrameBytes).toBe(2048);
     // within the negotiated capacity: handed to the provider
     await machine.send({ revision: "r2" });
     await waitFor(() => kv(`frame:${d.deviceId}`));
@@ -215,7 +218,7 @@ describe("GET /device/connect routes by the device's provider", () => {
     expect(await kv(`frame:${d.deviceId}`)).toBeNull();
   });
 
-  it("onClose receives replaced when the device connects again from another machine", async () => {
+  it("onClose receives replaced when a newer connection of the same credential takes over", async () => {
     const d = await device();
     const first = await FakeDialInMachine.connect({
       url,
@@ -233,9 +236,60 @@ describe("GET /device/connect routes by the device's provider", () => {
     await k.app
       .get(TransactionHost)
       .run(() => k.app.get(DialInMachines).revokeActive(d.deviceId, "deleted"));
-    expect((await second.closed).code).toBe(DEVICE_CLOSE.revoked);
+    const deleted = await second.closed;
+    expect(deleted.code).toBe(DEVICE_CLOSE.revoked);
+    expect(deleted.reason).toBe("the device was deleted");
     expect(second.stops).toEqual(["stop"]);
     await waitFor(async () => ((await kv(`closed:${d.deviceId}`)) === "deleted" ? true : null));
+  });
+  it("onClose receives replaced when the device signs in from another machine", async () => {
+    const d = await device();
+    const first = await FakeDialInMachine.connect({
+      url,
+      credential: d.credential,
+      hello: { revision: "r1" },
+    });
+    // a second sign-in into the same device: a new machine credential, the first one revoked
+    const second = await k.app.get(TransactionHost).run(() =>
+      k.app.get(DialInMachines).issue({
+        orgId,
+        deviceId: d.deviceId,
+        accountId: ownerId,
+        name: "other",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.0.0",
+      }),
+    );
+    expect((await first.closed).code).toBe(DEVICE_CLOSE.replaced);
+    // no stop reaches the replaced machine (it could reach the replacement instead)
+    expect(first.stops).toEqual([]);
+    await waitFor(async () => ((await kv(`closed:${d.deviceId}`)) === "replaced" ? true : null));
+    const next = await FakeDialInMachine.connect({
+      url,
+      credential: second.credential,
+      hello: { revision: "r2" },
+    });
+    expect(await k.app.get(DialInRelay).online(d.deviceId)).toBe(true);
+    await next.close();
+  });
+
+  it("closes 4400 when a machine has more events in flight than the gateway keeps", async () => {
+    const d = await device();
+    const machine = await FakeDialInMachine.connect({
+      url,
+      credential: d.credential,
+      hello: { revision: "r1" },
+    });
+    // the provider never finishes the first event: the rest wait, up to the cap
+    await machine.send({ hang: true });
+    for (let i = 0; i < MAX_EVENTS_IN_FLIGHT; i++) {
+      if ((await Promise.race([machine.closed, Promise.resolve(null)])) !== null) break;
+      await machine.send({ revision: `r${i}` }).catch(() => {});
+    }
+    const closed = await machine.closed;
+    expect(closed.code).toBe(DEVICE_CLOSE.protocol);
+    expect(closed.reason).toContain("too many events in flight");
   });
 });
 
@@ -277,6 +331,21 @@ describe("ctx.dialIn", () => {
     expect(isDeviceOfflineError(e)).toBe(true);
     // one lease check (at most a poll) plus the grace, far from the request's own deadline
     expect(Date.now() - t0).toBeLessThan(5000 + GRACE_SECONDS * 1000 + 5000);
+  });
+
+  it("ctx.dialIn.request for its own device is refused while the provider is off in the org", async () => {
+    const d = await device();
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false
+      WHERE plugin = 'fake-dial-in' AND org_id = ${orgId}`.execute(raw);
+    try {
+      const e = await rejection(
+        provider().stat({ id: d.deviceId }, "/w/a", AbortSignal.timeout(10_000)),
+      );
+      expect(e).toBeInstanceOf(ExtensionPermissionError);
+      expect((e as Error).message).toBe(`device ${d.deviceId} is not served by fake-dial-in`);
+    } finally {
+      await enableExtensions(raw, orgId, "fake-dial-in");
+    }
   });
 
   it("ctx.dialIn.request for a device of another provider throws ExtensionPermissionError", async () => {

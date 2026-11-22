@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   DIAL_IN_PROTOCOL_RE,
+  type DialInKernelFrame,
   type DialInMachineFrame,
   type ExtensionContext,
   parseDialInMachineFrame,
@@ -67,6 +68,12 @@ const TOUCH_EVERY_MS = 30_000;
  * transport key lives three pings, so two misses still leave it readable).
  */
 const MAX_PUBLISH_FAILURES = 3;
+/**
+ * The most `event` frames a connection may have waiting for the provider (received, not yet
+ * handled): a machine sending faster than its provider handles them is closed (4400) instead of
+ * growing the gateway's memory.
+ */
+export const MAX_EVENTS_IN_FLIGHT = 32;
 /** How often a held connection re-checks its credential (membership, org, device). */
 const REAUTH_EVERY_MS = 60_000;
 
@@ -155,6 +162,8 @@ class DeviceConnection {
   private readonly ended = new AbortController();
   /** The provider whose `onHello` accepted this connection: it gets `onClose`. */
   private accepted: DialInServing | undefined;
+  /** `event` frames received and not yet handled ({@link MAX_EVENTS_IN_FLIGHT}). */
+  private eventsInFlight = 0;
   /** Why the connection closed, for the provider's `onClose` (offline unless set). */
   private closeReason: CloseReason = "offline";
 
@@ -276,9 +285,21 @@ class DeviceConnection {
         this.close(DEVICE_CLOSE.protocol, "hello expected");
         return;
       }
+      if (this.eventsInFlight >= MAX_EVENTS_IN_FLIGHT) {
+        this.gw.log.warn("device sent more events than its provider handles", {
+          deviceId: this.deviceId,
+        });
+        this.close(DEVICE_CLOSE.protocol, "too many events in flight; slow down and reconnect");
+        return;
+      }
+      this.eventsInFlight++;
       // after the hello and the earlier events, in the order they came
       const body = frame.body;
-      this.handled = this.handled.then(() => this.dispatchEvent(body));
+      this.handled = this.handled
+        .then(() => this.dispatchEvent(body))
+        .finally(() => {
+          this.eventsInFlight--;
+        });
       await this.handled;
       return;
     }
@@ -489,11 +510,23 @@ class DeviceConnection {
       await this.subscribe(deviceRevokedTopic(env), (p) => {
         const message = p as Partial<MachineRevokedMessage> | null;
         if (message?.machineId !== this.identity.machineId) return;
-        this.closeReason = message.reason === "deleted" ? "deleted" : "revoked";
+        // the device signed in from another machine: replaced (the program exits as replaced)
+        if (message.reason === "replaced") {
+          this.closeReason = "replaced";
+          this.chain = this.chain.then(() =>
+            this.close(DEVICE_CLOSE.replaced, "the device signed in from another machine"),
+          );
+          return;
+        }
+        const deleted = message.reason === "deleted";
+        this.closeReason = deleted ? "deleted" : "revoked";
         // one more drain first: a stop frame whose nudge was lost still goes out before the close
         this.drain();
         this.chain = this.chain.then(() =>
-          this.close(DEVICE_CLOSE.revoked, "the machine was disconnected"),
+          this.close(
+            DEVICE_CLOSE.revoked,
+            deleted ? "the device was deleted" : "the machine was disconnected",
+          ),
         );
       });
       return this.state === "holding";
@@ -509,7 +542,13 @@ class DeviceConnection {
 
   /** Publishes the capacity, sends `ready` and drains what was queued meanwhile. */
   private async sendReady(): Promise<void> {
-    const raw = JSON.stringify({ type: "ready", connectionId: this.connectionId });
+    // the effective capacity: the smaller of the machine's announced limit and the kernel's
+    const ready: DialInKernelFrame = {
+      type: "ready",
+      connectionId: this.connectionId,
+      maxFrameBytes: this.effectiveCap ?? 0,
+    };
+    const raw = JSON.stringify(ready);
     if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
       throw new Error("Check frame limits: ready cannot fit");
     // published before ready: a reader that sees the machine ready also finds its capacity

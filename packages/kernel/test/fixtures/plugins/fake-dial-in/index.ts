@@ -20,7 +20,8 @@ import {
  * (`hello:<deviceId>`, one hour) and `report()` is built from it; an `event` frame
  * `{ revision }` replaces the revision. Both tell the kernel through `ctx.devices.reportChanged`
  * (skipped while the kernel denies `ctx.devices`). Every event body is kept as `frame:<deviceId>`
- * and the reason of the last close as `closed:<deviceId>` (one hour), for the tests to read.
+ * and the reason of the last close as `closed:<deviceId>` (one hour), for the tests to read; an
+ * event `{ hang: true }` is never finished.
  *
  * Handles are the device id: the device's file system and its instance are both named
  * `cap-device-<deviceId>`, so every operation can address its machine.
@@ -109,6 +110,8 @@ export default defineExtension({
           await ctx.kv.set(`frame:${deviceId}`, JSON.stringify(frame), {
             ttlSeconds: HELLO_TTL_SECONDS,
           });
+          // a provider that never finishes handling (the gateway bounds the backlog)
+          if (isRecord(frame) && frame.hang === true) await new Promise(() => {});
           if (!isRecord(frame) || typeof frame.revision !== "string") return;
           const hello = await readHello(deviceId);
           await writeHello(deviceId, {

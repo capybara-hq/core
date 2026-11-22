@@ -572,7 +572,7 @@ describe("device authorization", () => {
       // machine connecting next would drain it)
       await waitFor(async () => revoked.length > 0);
       expect(holder.frames.filter((f) => f.type === "stop")).toEqual([]);
-      expect(revoked[0]).toEqual({ machineId: old?.id, reason: null });
+      expect(revoked[0]).toEqual({ machineId: old?.id, reason: "replaced" });
       expect((await machines.activeFor(first.deviceId))?.name).toBe("desk-2");
     } finally {
       await unsub();

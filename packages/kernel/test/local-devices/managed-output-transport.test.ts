@@ -189,7 +189,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const connect = async (cap = clientCap, waitReady = true) => {
     socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
     await once(socket, "open");
-    let ready: { connectionId: string } | undefined;
+    let ready: { connectionId: string; maxFrameBytes: number } | undefined;
     const activeSocket = socket;
     socket.on("message", async (raw) => {
       const envelope = parseDialInKernelFrame(raw.toString(), cap);
@@ -339,6 +339,8 @@ it.each([
   async (client, server) => {
     const f = await fixture(client, server);
     expect((await f.targets.transport(f.deviceId))?.maxFrameBytes).toBe(69632);
+    // ready tells the machine the same effective capacity
+    expect(f.session.ready()?.maxFrameBytes).toBe(69632);
     const data = Buffer.alloc(180000, 65);
     await f.emit(data);
     const probe = await f.read(0, 0);

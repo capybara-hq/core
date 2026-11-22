@@ -36,7 +36,7 @@ describe("FakeDialInMachine", () => {
       seen.headers = req.headers;
       sock.once("message", (data) => {
         seen.hello = parseDialInMachineFrame(data.toString(), 1024 * 1024);
-        sock.send(JSON.stringify({ type: "ready", connectionId: "c1" }));
+        sock.send(JSON.stringify({ type: "ready", connectionId: "c1", maxFrameBytes: 65536 }));
       });
     });
     const m = await FakeDialInMachine.connect({
@@ -79,7 +79,7 @@ describe("FakeDialInMachine", () => {
     const { wss, url } = await kernel();
     wss.on("connection", (sock) => {
       sock.once("message", () => {
-        sock.send(JSON.stringify({ type: "ready", connectionId: "c2" }));
+        sock.send(JSON.stringify({ type: "ready", connectionId: "c2", maxFrameBytes: 65536 }));
         sock.close(4002, "replaced");
       });
     });

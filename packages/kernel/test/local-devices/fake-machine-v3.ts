@@ -117,7 +117,7 @@ export class FakeMachineV3 implements FakeMachineApi {
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly opened: Promise<void>;
   /** Resolves with the kernel's `ready` frame (its connection id). */
-  readonly ready: Promise<{ type: "ready"; connectionId: string }>;
+  readonly ready: Promise<{ type: "ready"; connectionId: string; maxFrameBytes: number }>;
   private waiters: {
     pred: (f: KernelFrame) => boolean;
     resolve: (f: KernelFrame) => void;
@@ -147,7 +147,7 @@ export class FakeMachineV3 implements FakeMachineApi {
       });
       this.ws.on("error", reject);
     });
-    let onReady!: (r: { type: "ready"; connectionId: string }) => void;
+    let onReady!: (r: { type: "ready"; connectionId: string; maxFrameBytes: number }) => void;
     this.ready = new Promise((resolve) => {
       onReady = resolve;
     });
@@ -159,9 +159,14 @@ export class FakeMachineV3 implements FakeMachineApi {
         body?: { op?: string; args?: unknown };
         reason?: "drain" | "stop";
         connectionId?: string;
+        maxFrameBytes?: number;
       };
       if (f.type === "ready") {
-        onReady({ type: "ready", connectionId: String(f.connectionId) });
+        onReady({
+          type: "ready",
+          connectionId: String(f.connectionId),
+          maxFrameBytes: Number(f.maxFrameBytes),
+        });
         return;
       }
       let frame: KernelFrame;

@@ -33,6 +33,8 @@ export class FakeDialInMachine {
   readonly closed: Promise<{ code: number; reason: string }>;
   /** The kernel's id of this connection (from `ready`). */
   readonly connectionId: string;
+  /** The connection's effective frame capacity (from `ready`): at most the announced one. */
+  readonly maxFrameBytes: number;
   /** The bodies of the `req` frames received, in order. */
   readonly requests: unknown[] = [];
   /** The ids of the `cancel` frames received, in order. */
@@ -47,10 +49,11 @@ export class FakeDialInMachine {
 
   private constructor(
     private readonly ws: WebSocket,
-    connectionId: string,
+    ready: { connectionId: string; maxFrameBytes: number },
     closed: Promise<{ code: number; reason: string }>,
   ) {
-    this.connectionId = connectionId;
+    this.connectionId = ready.connectionId;
+    this.maxFrameBytes = ready.maxFrameBytes;
     this.closed = closed;
     // the connect promise's listener is gone once settled: an error later must not go unhandled
     ws.on("error", (e) => this.errors.push(e));
@@ -102,7 +105,7 @@ export class FakeDialInMachine {
           }),
         );
         ws.once("message", (data) => {
-          let frame: { type?: unknown; connectionId?: unknown };
+          let frame: { type?: unknown; connectionId?: unknown; maxFrameBytes?: unknown };
           try {
             frame = JSON.parse(data.toString());
           } catch {
@@ -110,12 +113,22 @@ export class FakeDialInMachine {
             reject(new Error("the kernel's first frame is not JSON"));
             return;
           }
-          if (frame.type !== "ready" || typeof frame.connectionId !== "string") {
+          if (
+            frame.type !== "ready" ||
+            typeof frame.connectionId !== "string" ||
+            typeof frame.maxFrameBytes !== "number"
+          ) {
             ws.terminate();
             reject(new Error(`expected a ready frame, got ${data.toString()}`));
             return;
           }
-          resolve(new FakeDialInMachine(ws, frame.connectionId, closed));
+          resolve(
+            new FakeDialInMachine(
+              ws,
+              { connectionId: frame.connectionId, maxFrameBytes: frame.maxFrameBytes },
+              closed,
+            ),
+          );
         });
       });
     });

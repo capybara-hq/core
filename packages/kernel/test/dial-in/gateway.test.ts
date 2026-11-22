@@ -566,6 +566,8 @@ describe("GET /device/connect", () => {
     );
     await machine.opened;
     expect(await held(m.deviceId)).toBeTruthy();
+    // the machine announced 69632 bytes: ready carries the kernel's smaller limit
+    expect((await (machine as FakeMachineV3).ready).maxFrameBytes).toBe(MAX_FRAME_BYTES);
     const r = await localCall(relay)(m.deviceId, "exec", execArgs(m.deviceId), {
       deadlineMs: 6000,
       signal: AbortSignal.timeout(20_000),
@@ -654,7 +656,9 @@ describe("GET /device/connect", () => {
     await machines.revoke(orgId, m.accountId, m.deviceId);
     // the stop frame goes out before the close
     expect(await machine.next((f) => f.type === "stop")).toEqual({ type: "stop", reason: "stop" });
-    expect((await machine.closed).code).toBe(4003);
+    const closed = await machine.closed;
+    expect(closed.code).toBe(4003);
+    expect(closed.reason).toBe("the machine was disconnected");
     const again = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
       "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,

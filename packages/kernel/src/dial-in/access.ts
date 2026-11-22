@@ -17,7 +17,9 @@ export class DialInAccess {
 
   /**
    * Whether `deviceId` is a live device (in a live org) whose `devices.provider` is `plugin`, and
-   * `plugin` is on in the device's org. Read from PG at every call.
+   * `plugin` is enabled in the device's org. Read from PG at every call. The full availability
+   * check (valid org and effective config, `DeviceProviderSelection.isOnInOrg`) runs at the
+   * machine's hello; this one stays below the extension host's module.
    */
   async serves(plugin: string, deviceId: string): Promise<boolean> {
     const row = await this.kdb.db

@@ -27,11 +27,13 @@ export const MACHINE_CREDENTIAL_PREFIX = "cap_dev_";
 const CREDENTIAL_RE = /^cap_dev_[A-Za-z0-9_-]{43}$/;
 
 /**
- * Why a machine was revoked, for the machine (`stop`) and for the provider (`onClose`): `revoked`
- * (disconnected, signed out) or `deleted` (its device was deleted); null when a replacement or a
- * failed sign-in revoked it (no stop: it could reach the replacement instead).
+ * Why a machine was revoked, for the machine and for the provider (`onClose`): `revoked`
+ * (disconnected, signed out, or a sign-in whose credential never reached its program) or `deleted`
+ * (its device was deleted), both told to stop first; `replaced` (the device signed in from
+ * another machine): no stop, which could reach the replacement instead, and its connection
+ * closes as replaced (4002).
  */
-export type MachineRevocationReason = "revoked" | "deleted" | null;
+export type MachineRevocationReason = "revoked" | "deleted" | "replaced";
 
 /** The payload of `device.revoked.<deviceId>`. */
 export interface MachineRevokedMessage {
@@ -116,7 +118,7 @@ export class DialInMachines {
     // another machine has other files (maintainer decision 2026-11-08)
     const moved = prev !== undefined && !sameMachine(prev, input);
     // no stop frame: it would wait on the list and could reach the replacement machine instead
-    await this.revokeActive(input.deviceId, null);
+    await this.revokeActive(input.deviceId, "replaced");
     await this.resetInstance(input.deviceId, moved);
     const credential = MACHINE_CREDENTIAL_PREFIX + randomBytes(32).toString("base64url");
     const row = await this.db
@@ -286,9 +288,9 @@ export class DialInMachines {
 
   /**
    * Revokes the device's active machine, if any, in the caller's transaction, and after the
-   * commit tells it to stop for `reason` (none: only its connection is closed) and closes its
-   * connection. Returns the revoked machine's id. Used by {@link issue} (replaced: no stop),
-   * {@link revoke} and the device's deletion (`deleted`).
+   * commit tells it to stop (not when `replaced`) and closes its connection for `reason`. Returns
+   * the revoked machine's id. Used by {@link issue} (`replaced`), {@link revoke} (`revoked`) and
+   * the device's deletion (`deleted`).
    */
   @Transactional()
   async revokeActive(deviceId: string, reason: MachineRevocationReason): Promise<string | null> {
@@ -340,7 +342,7 @@ export class DialInMachines {
       .executeTakeFirst();
     if (!row) return false;
     const deviceId = row.device_id;
-    afterCommit(() => this.disconnect(deviceId, machineId, null));
+    afterCommit(() => this.disconnect(deviceId, machineId, "revoked", { stop: false }));
     return true;
   }
 
@@ -390,10 +392,12 @@ export class DialInMachines {
     deviceId: string,
     machineId: string,
     reason: MachineRevocationReason,
+    opts: { stop?: boolean } = {},
   ): Promise<void> {
     try {
       // fenced to this machine; queued only while a replica holds its connection
-      if (reason !== null) await this.relay.stop(deviceId, "stop", { machineId });
+      if (reason !== "replaced" && opts.stop !== false)
+        await this.relay.stop(deviceId, "stop", { machineId });
     } catch (err) {
       this.log.warn("could not tell a revoked machine to stop", { deviceId, machineId, err });
     }

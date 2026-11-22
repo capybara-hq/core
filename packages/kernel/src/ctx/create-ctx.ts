@@ -526,8 +526,10 @@ export function createExtensionContext(
           },
         }
       : undefined;
-  // ctx.dialIn: only with permissions.dialIn, and each call only for a device this extension serves
-  // (`devices.provider` is this extension and it is on in the device's org, read per call)
+  // ctx.dialIn: only with permissions.dialIn, and each call only for a device this extension serves:
+  // `devices.provider` is this extension and the extension is enabled in the device's org (read
+  // per call). The full availability check (valid org and effective config) runs at the machine's
+  // hello (`DialInHandlers`), so a machine of a provider that is not available never connects.
   const dialInApi: DialInChannel | undefined = perms.dialIn
     ? (() => {
         const access = deps.dialIn;
