@@ -1086,8 +1086,9 @@ export class DevicesService {
    * The person's default device in the org: the live one if any, whatever its provider's state
    * (a default whose provider is off stays the default, unavailable, never demoted or replaced),
    * else a new default (named by the UI, `name` NULL) bound to the org's default provider
-   * ({@link DeviceProviderSelection.defaultFor}), else null (no default provider on in the org).
-   * An existing one is read without locking.
+   * ({@link DeviceProviderSelection.defaultFor}), else null: no default provider on in the org, or
+   * a dial-in one (a machine must sign in to make its device, so nothing is created for the person;
+   * spec §6.4). An existing one is read without locking.
    *
    * Creating one first takes the person's membership row (`FOR SHARE`, after the org row), so an
    * offboarding that removes them cannot leave a live default behind; not a member (any more) →
@@ -1099,7 +1100,7 @@ export class DevicesService {
     const live = await this.defaultOf(orgId, accountId);
     if (live) return live.id;
     const provider = await this.selection.defaultFor(orgId);
-    if (!provider) return null;
+    if (!provider || servesDialIn(provider)) return null;
     return this.insertDefault(orgId, accountId, provider.plugin);
   }
 

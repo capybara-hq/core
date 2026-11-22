@@ -9,6 +9,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationDevices, NO_DEVICE } from "../../src/devices/conversation-devices.js";
 import type { DeviceList, DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
@@ -740,6 +741,36 @@ describe("device providers (device-provider spec §6.1)", () => {
       ).toBe("device.provider_dial_in");
       expect(await countDevices(m.id)).toBe(before);
     } finally {
+      await setEnabled("fake-dial-in", false);
+    }
+  });
+
+  it("a dial-in default provider makes no default device: defaultId null, conversations find none", async () => {
+    const m = await member();
+    await setEnabled("fake-dial-in", true);
+    await setDefaultProvider("fake-dial-in");
+    try {
+      const l = await list(m.req);
+      expect(l.defaultProvider).toBe("fake-dial-in");
+      expect(l.defaultId).toBeNull();
+      expect(await countDevices(m.id)).toBe(0);
+      // a conversation resolves its default device as with no default provider
+      const devices = k.app.get(ConversationDevices);
+      expect(await devices.forNew(orgId, m.id)).toBeNull();
+      const agentId = randomUUID();
+      await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+        VALUES (${agentId}, ${orgId}, ${m.id}, 'org', 1)`.execute(raw);
+      const conv = randomUUID();
+      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+        VALUES (${conv}, ${orgId}, ${agentId}, ${m.id}, NULL)`.execute(raw);
+      expect(await devices.unusableReason(orgId, conv)).toBe("no-device");
+      const err = await devices.forTool(orgId, conv).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("sandbox.unavailable");
+      expect((err as ApiError).details).toEqual([{ reason: NO_DEVICE }]);
+      expect(await countDevices(m.id)).toBe(0);
+    } finally {
+      await setDefaultProvider("device-fake");
       await setEnabled("fake-dial-in", false);
     }
   });

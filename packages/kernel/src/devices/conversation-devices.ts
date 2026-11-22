@@ -10,6 +10,7 @@ import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { PermissionFacts, type WorkingFacts } from "../sandbox/permission-facts.js";
+import { servesDialIn } from "../sandbox/providers.js";
 import { homeOf } from "../sandbox/review/rules.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
@@ -276,7 +277,7 @@ export class ConversationDevices {
    * it can (no binding, no access check): `provider-off` when the device the conversation is bound
    * to (an unbound IM thread: its owner's IM default; any unbound one: its owner's default device)
    * has its provider off in the org or not installed (its files are kept); `no-device` when there
-   * is no device and no default provider to make one while device providers are on in the org;
+   * is no device and no default provider to make one (a dial-in default makes none) while device providers are on in the org;
    * `none` when no device provider is on in the org at all. A forbidden or gone device still counts as usable: the call
    * then says why.
    */
@@ -316,7 +317,9 @@ export class ConversationDevices {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (own) return onOrOff(own.id);
-    if ((await this.selection.defaultFor(orgId)) !== undefined) return null;
+    // a dial-in default provider makes no default device (DevicesService.ensureDefault)
+    const fallback = await this.selection.defaultFor(orgId);
+    if (fallback !== undefined && !servesDialIn(fallback)) return null;
     return (await this.selection.onInOrg(orgId)).length > 0 ? "no-device" : "none";
   }
 
