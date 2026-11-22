@@ -153,6 +153,23 @@ function useStableItems(items: MenuItem[]): MenuItem[] {
 }
 
 /**
+ * The head's search field (spec §4.2 row 4): its label is its accessible name and placeholder.
+ * The one field the PageHeader's tab row and a compact ListPage's quick-return bar both draw.
+ */
+export function HeadSearch({ search }: { search: NonNullable<PageHeaderProps["search"]> }) {
+  return (
+    <Input
+      type="search"
+      aria-label={search.label}
+      placeholder={search.label}
+      value={search.value}
+      onChange={(e) => search.onChange(e.target.value)}
+      prefix={<Icon name="search" size={14} />}
+    />
+  );
+}
+
+/**
  * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
  * description, actions on the right. No line, no ground. Compact (below 600; responsive system
  * spec §2.1, design spec §4.2 "Compact head") draws no path row, puts the count beside the large
@@ -458,14 +475,7 @@ export function PageHeader(p: PageHeaderProps) {
           ) : null}
           {p.search ? (
             <div className="cb-pageheader-search" data-part="page-header-search">
-              <Input
-                type="search"
-                aria-label={p.search.label}
-                placeholder={p.search.label}
-                value={p.search.value}
-                onChange={(e) => p.search?.onChange(e.target.value)}
-                prefix={<Icon name="search" size={14} />}
-              />
+              <HeadSearch search={p.search} />
             </div>
           ) : null}
         </div>

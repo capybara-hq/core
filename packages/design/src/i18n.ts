@@ -207,6 +207,7 @@ const zh = {
   "shell.navCount": "{label}，{n} 项待处理",
   "shell.errors": "{n} 个错误",
   "shell.filter": "筛选",
+  "shell.filterActive": "已启用 {n} 项",
   "settings.nav": "设置导航",
   "shell.skipToContent": "跳到主要内容",
   "safeMode.message": "安全模式：插件界面代码已停用，只显示内置界面。",
@@ -849,6 +850,7 @@ const en: Record<DesignKey, string> = {
   "shell.navCount": "{label}, {n} pending",
   "shell.errors": "{n} errors",
   "shell.filter": "Filters",
+  "shell.filterActive": "{n} active",
   "settings.nav": "Settings navigation",
   "shell.skipToContent": "Skip to main content",
   "safeMode.message":

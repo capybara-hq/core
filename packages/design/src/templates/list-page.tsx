@@ -1,13 +1,4 @@
-import {
-  Children,
-  isValidElement,
-  type ReactNode,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import { Input } from "../controls/index";
+import { Children, isValidElement, type ReactNode, useState } from "react";
 import {
   Callout,
   type CalloutProps,
@@ -23,7 +14,6 @@ import {
   SkeletonText,
   Tabs,
 } from "../display/index";
-import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import {
   ActionRow,
@@ -33,6 +23,7 @@ import {
   type PageHeaderProps,
   useClassForm,
 } from "../shell/index";
+import { HeadSearch } from "../shell/page-header";
 import { type Column, DataTable } from "../table/index";
 import {
   LoadingStats,
@@ -42,6 +33,7 @@ import {
   TemplateHead,
   WithStats,
 } from "./frame";
+import { useScrollRestore } from "./list-scroll";
 
 /**
  * What `ListPage.loading` takes besides `true`: `rows` (objects: the row count, default 3; cards:
@@ -71,8 +63,8 @@ export type ListLoading =
 /**
  * The list's view choice (responsive system spec §2.2 level 2, §4): a subset of the set the head's
  * tabs choose. Compact draws it as scope chips in the quick-return bar; medium and expanded as a
- * Segmented above the list while it has {@link SEGMENTED_MAX} options or fewer and none carries an
- * avatar, else as chips.
+ * Segmented above the list while it has {@link SEGMENTED_MAX} options or fewer, a secondary Tabs
+ * row for more, and chips whenever an option carries an avatar.
  */
 export type ListScope = {
   label: string;
@@ -84,122 +76,26 @@ export type ListScope = {
 /** The most options a wide `scope` draws as a Segmented (responsive system spec §2.2). */
 const SEGMENTED_MAX = 5;
 
-/** Whether a node holds a `Segmented` anywhere in its element tree (props.children). */
-function holdsSegmented(node: ReactNode): boolean {
+/**
+ * Whether a node holds a view choice (a `Segmented` or `Tabs`) in its element tree, read through
+ * `props.children` only: one drawn inside another component's own render is not seen.
+ */
+function holdsViewChoice(node: ReactNode): boolean {
   return Children.toArray(node).some(
     (n) =>
       isValidElement<{ children?: ReactNode }>(n) &&
-      (n.type === Segmented || holdsSegmented(n.props.children)),
+      (n.type === Segmented || n.type === Tabs || holdsViewChoice(n.props.children)),
   );
 }
 
-/** A view choice is `scope`, never also a Segmented in `filters` (design spec §5.1 "Filters"). */
+/** A view choice is `scope`, never also a Segmented / Tabs in `filters` (design spec §5.1). */
 function assertScope(scope: ListScope | undefined, filters: ReactNode): void {
   if (process.env.NODE_ENV === "production" || scope === undefined) return;
-  if (!holdsSegmented(filters)) return;
+  if (!holdsViewChoice(filters)) return;
   throw new Error(
-    "ListPage: `scope` and a Segmented passed through `filters` are not both given; " +
+    "ListPage: `scope` and a Segmented or Tabs passed through `filters` are not both given; " +
       "the view choice is `scope`, `filters` holds field filters",
   );
-}
-
-/** The session key of a list's scroll position at a location (path and query). */
-const SCROLL_KEY = "cb-list-scroll:";
-const here = () => `${window.location.pathname}${window.location.search}`;
-/**
- * The location a back or forward traversal landed on, until a ListPage mounting there takes it.
- * Only a traversal restores a scroll position: a fresh visit (a link) starts at the top, and the
- * first click after a traversal drops what no list took.
- */
-let traversedTo: string | null = null;
-let listening = false;
-function listenForTraversals(): void {
-  if (listening) return;
-  listening = true;
-  window.addEventListener("popstate", () => {
-    traversedTo = here();
-  });
-  window.addEventListener(
-    "click",
-    () => {
-      traversedTo = null;
-    },
-    { capture: true, passive: true },
-  );
-}
-function readScroll(key: string): number | null {
-  try {
-    const raw = window.sessionStorage.getItem(SCROLL_KEY + key);
-    const v = raw === null ? Number.NaN : Number(raw);
-    return Number.isFinite(v) && v > 0 ? v : null;
-  } catch {
-    return null;
-  }
-}
-function writeScroll(key: string, top: number): void {
-  try {
-    window.sessionStorage.setItem(SCROLL_KEY + key, String(Math.round(top)));
-  } catch {
-    // storage blocked (a private window): the list simply starts at the top on back
-  }
-}
-
-/**
- * Scroll restoration of the list's one scroller (responsive system spec §2.6): every scroll stores
- * the position for the current location in the session (per animation frame), and a list that
- * mounts on a back or forward traversal to that location gets it back in the scroller's ref,
- * before the frame's first read, so the scrolled title and the position come back together and
- * nothing paints at the top first. A list still loading takes it once it has loaded. Returns the
- * ref for the template root.
- */
-function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) => void {
-  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
-  const pending = useRef<number | null>(null);
-  const ready = useRef(loaded);
-  ready.current = loaded;
-  const ref = useCallback((el: HTMLDivElement | null) => {
-    setScroller(el);
-    if (el === null) return;
-    listenForTraversals();
-    const key = here();
-    if (traversedTo === key) {
-      traversedTo = null;
-      pending.current = readScroll(key);
-    }
-    if (pending.current !== null && ready.current) {
-      el.scrollTop = pending.current;
-      pending.current = null;
-    }
-  }, []);
-  useLayoutEffect(() => {
-    if (!scroller || !loaded || pending.current === null) return;
-    scroller.scrollTop = pending.current;
-    pending.current = null;
-  }, [scroller, loaded]);
-  useLayoutEffect(() => {
-    if (!scroller) return;
-    let frame = 0;
-    let key = "";
-    const save = () => writeScroll(key, scroller.scrollTop);
-    const onScroll = () => {
-      // the location now: a later write after the page has gone must not land on the next one
-      key = here();
-      if (frame !== 0) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        save();
-      });
-    };
-    scroller.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      scroller.removeEventListener("scroll", onScroll);
-      if (frame !== 0) {
-        cancelAnimationFrame(frame);
-        save();
-      }
-    };
-  }, [scroller]);
-  return ref;
 }
 
 /**
@@ -229,7 +125,7 @@ function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) => void 
  * tab row. The field `filters` join the rail in the Body's Filter bottom sheet. Medium and
  * expanded keep the search and tabs in the head's tab row, the scope as a Segmented and the
  * filters inline above the list. A list that mounts on a back traversal gets its scroll position
- * back (see `useScrollRestore`).
+ * back (see `useScrollRestore`, list-scroll.ts).
  */
 export function ListPage({
   header,
@@ -312,14 +208,7 @@ export function ListPage({
     <div ref={setBar} className="cb-list-compact-bar" data-part="list-compact-bar">
       {search ? (
         <div className="cb-list-compact-search" data-part="list-compact-search">
-          <Input
-            type="search"
-            aria-label={search.label}
-            placeholder={search.label}
-            value={search.value}
-            onChange={(e) => search.onChange(e.target.value)}
-            prefix={<Icon name="search" size={14} />}
-          />
+          <HeadSearch search={search} />
         </div>
       ) : null}
       {tabItems.length > 0 ? (
@@ -364,28 +253,38 @@ export function ListPage({
   };
   const shownHead = form === "compact" && hasBar ? compactHead() : head;
 
-  // A Segmented draws text only: a scope whose chips carry avatars (the conversations' agents)
-  // stays chips on wide too.
-  const wideScope = scope ? (
-    scope.options.length <= SEGMENTED_MAX && scope.options.every((o) => o.avatar === undefined) ? (
-      <Segmented
-        label={scope.label}
-        value={scope.value}
-        onChange={scope.onChange}
-        options={scope.options.map((o) => ({
-          value: o.value,
-          label: o.count !== undefined ? `${o.label} ${o.count}` : o.label,
-        }))}
-      />
-    ) : (
-      <ScopeChips
-        label={scope.label}
-        value={scope.value}
-        options={scope.options}
-        onChange={scope.onChange}
-      />
-    )
-  ) : null;
+  // Wide (spec §2.2 level 2): a Segmented for five options or fewer, a secondary Tabs row for
+  // more; a scope whose chips carry avatars (the conversations' agents) stays chips, since
+  // neither draws an avatar (§6.63).
+  const wideScope = !scope ? null : scope.options.some((o) => o.avatar !== undefined) ? (
+    <ScopeChips
+      label={scope.label}
+      value={scope.value}
+      options={scope.options}
+      onChange={scope.onChange}
+    />
+  ) : scope.options.length <= SEGMENTED_MAX ? (
+    <Segmented
+      label={scope.label}
+      value={scope.value}
+      onChange={scope.onChange}
+      options={scope.options.map((o) => ({
+        value: o.value,
+        label: o.count !== undefined ? `${o.label} ${o.count}` : o.label,
+      }))}
+    />
+  ) : (
+    <Tabs
+      label={scope.label}
+      value={scope.value}
+      onChange={scope.onChange}
+      items={scope.options.map((o) => ({
+        id: o.value,
+        label: o.label,
+        ...(o.count !== undefined ? { count: o.count } : {}),
+      }))}
+    />
+  );
 
   const loadingList =
     variant === "objects" ? (

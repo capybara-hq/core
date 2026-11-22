@@ -88,7 +88,10 @@ export function Body({
       {t("shell.filter")}
       {hasFilters && (filterCount ?? 0) > 0 ? (
         <span className="cb-body-tool-count" data-part="filter-count">
-          {filterCount}
+          <span aria-hidden="true">{filterCount}</span>
+          <span className="cb-sr-only">
+            {` ${t("shell.filterActive").replace("{n}", String(filterCount))}`}
+          </span>
         </span>
       ) : null}
     </Button>

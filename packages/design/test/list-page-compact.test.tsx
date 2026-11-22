@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, screen, within } from "@testing-library/react"
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DesignProvider,
   Input,
   ListPage,
   type ListScope,
@@ -9,6 +10,7 @@ import {
   type ObjectCardProps,
   type PageHeaderProps,
   Segmented,
+  Tabs,
 } from "../src/index";
 import { type ShellPage, ShellPageContext } from "../src/shell/shell-page";
 import { css, parseCss } from "./css-rules";
@@ -248,8 +250,11 @@ describe("ListPage at 390", () => {
     expect(container.querySelector(".cb-list-filters")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "所有者" })).toBeNull();
     // the Filter button shows the active-filter count and opens the bottom sheet
-    const button = screen.getByRole("button", { name: /筛选/ });
-    expect(button.textContent).toBe("筛选2");
+    const button = screen.getByRole("button", { name: /^筛选\s*已启用 2 项$/ });
+    // the count is drawn as the bare number; its words are for assistive tech only
+    expect(
+      button.querySelector('[data-part="filter-count"] [aria-hidden="true"]')?.textContent,
+    ).toBe("2");
     fireEvent.click(button);
     const sheet = document.querySelector<HTMLElement>(".cb-bsheet") as HTMLElement;
     expect(sheet).not.toBeNull();
@@ -273,6 +278,15 @@ describe("ListPage at 390", () => {
     const { container } = renderAtClass(390, agents());
     const scrollTo = rig(container, 600);
     for (const v of [0, 10, 300, 500, 20, 400]) {
+      scrollTo(v);
+      expect(root(container)?.getAttribute("data-bar-hidden")).toBeNull();
+    }
+  });
+
+  it("a slightly longer list (700 of content): no jitter, the bar never hides", () => {
+    const { container } = renderAtClass(390, agents());
+    const scrollTo = rig(container, 700);
+    for (const v of [0, 40, 100, 60, 100, 0, 100]) {
       scrollTo(v);
       expect(root(container)?.getAttribute("data-bar-hidden")).toBeNull();
     }
@@ -329,14 +343,16 @@ describe("ListPage at 768 and 1440", () => {
     expect(seg.closest(".cb-list-filters")).not.toBeNull();
   });
 
-  it("a scope of more than five options stays chips on wide", () => {
+  it("a scope of more than five options is a secondary Tabs row on wide", () => {
     const many: ListScope = {
       ...scope,
       options: ["a", "b", "c", "d", "e", "f"].map((v) => ({ value: v, label: v })),
       value: "a",
     };
     renderAtClass(1440, agents({ scope: many }));
-    expect(screen.getByRole("radiogroup", { name: "范围" }).className).toContain("cb-scope-chips");
+    const row = screen.getByRole("tablist", { name: "范围" });
+    expect(row.closest('[data-part="list-scope"]')).not.toBeNull();
+    expect(within(row).getAllByRole("tab")).toHaveLength(6);
   });
 });
 
@@ -361,80 +377,185 @@ describe("scope and filters", () => {
       <Segmented label="x" value="a" options={[{ value: "a", label: "A" }]} onChange={() => {}} />
     );
     expect(() => renderAtClass(1440, agents({ filters: <div>{seg}</div> }))).toThrow(
-      /scope.*Segmented/,
+      /scope.*Segmented or Tabs/,
+    );
+  });
+
+  it("scope and a Tabs passed through filters are not both given (development)", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const tabs = <Tabs label="x" value="a" items={[{ id: "a", label: "A" }]} />;
+    expect(() => renderAtClass(1440, agents({ filters: <div>{tabs}</div> }))).toThrow(
+      /scope.*Segmented or Tabs/,
     );
   });
 });
 
+/**
+ * The geometry of every element, as a laid-out page has it before the list mounts: the scroller
+ * is 600 high with `content` px of content, the title's bottom 120 below its top, rectangles
+ * follow the one `scrollTop`. `restore()` puts jsdom's prototypes back.
+ */
+function geometry(content = 2000) {
+  const g = { top: 0, content };
+  const proto = HTMLElement.prototype;
+  const rect = proto.getBoundingClientRect;
+  Object.defineProperty(proto, "scrollTop", {
+    configurable: true,
+    get: () => g.top,
+    set: (v: number) => {
+      g.top = Math.min(Math.max(v, 0), Math.max(g.content - 600, 0));
+    },
+  });
+  Object.defineProperty(proto, "scrollHeight", { configurable: true, get: () => g.content });
+  Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => 600 });
+  proto.getBoundingClientRect = function (this: HTMLElement) {
+    if (this.classList.contains("cb-pageheader-titleline"))
+      return { top: 80 - g.top, bottom: 120 - g.top } as DOMRect;
+    return { top: 0, bottom: 600 } as DOMRect;
+  };
+  return {
+    g,
+    /** A person's scroll of the list's scroller. */
+    scroll(container: HTMLElement, v: number) {
+      const el = root(container) as HTMLElement;
+      el.dispatchEvent(new Event("wheel"));
+      g.top = v;
+      el.dispatchEvent(new Event("scroll"));
+      flushFrames();
+    },
+    restore() {
+      proto.getBoundingClientRect = rect;
+      delete (proto as { scrollTop?: number }).scrollTop;
+      delete (proto as { scrollHeight?: number }).scrollHeight;
+      delete (proto as { clientHeight?: number }).clientHeight;
+    },
+  };
+}
+
+const inShell = (register: ReturnType<typeof shellStub>["register"], ui: ReactElement) => (
+  <ShellPageContext.Provider value={register}>{ui}</ShellPageContext.Provider>
+);
+
+/** Leaves the list: it unmounts as a pushed detail page replaces it. */
+function leave(view: { unmount(): void }) {
+  view.unmount();
+  document.body.innerHTML = "";
+}
+
+/** Re-renders a `renderAtClass` view with new props, inside the provider it was rendered in. */
+const rerender = (view: { rerender(ui: ReactElement): void }, ui: ReactElement) =>
+  view.rerender(<DesignProvider locale="zh">{ui}</DesignProvider>);
+
+const popstate = () =>
+  act(() => {
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+
 describe("scroll restoration", () => {
+  let geo: ReturnType<typeof geometry>;
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/agents");
+    geo = geometry();
+  });
+  afterEach(() => {
+    geo.restore();
+    window.history.replaceState(null, "", "/");
+  });
+
+  /** Scrolls a list at the current location to `v` and leaves it. */
+  function scrolledAway(v: number) {
+    const view = renderAtClass(390, agents());
+    geo.scroll(view.container, 10);
+    geo.scroll(view.container, v);
+    leave(view);
+    geo.g.top = 0;
+  }
+
   it("back from a detail to a scrolled list: scroll position and the scrolled title together", () => {
-    const shell = shellStub();
-    const ui = (
-      <ShellPageContext.Provider value={shell.register}>{agents()}</ShellPageContext.Provider>
-    );
-    const first = renderAtClass(390, ui);
-    const scrollTo = rig(first.container);
-    scrollTo(10);
-    scrollTo(400);
-    expect(shell.titleAway()).toBe(true);
-    // leave for the detail page (the list unmounts), then come back with the browser's back
-    first.unmount();
-    document.body.innerHTML = "";
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-    // the scroller's geometry exists before the list mounts, as a laid-out page's does
-    let top = 0;
-    const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
-    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
-      configurable: true,
-      get: () => top,
-      set: (v: number) => {
-        top = v;
-      },
-    });
-    const rect = HTMLElement.prototype.getBoundingClientRect;
-    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
-      if (this.classList.contains("cb-pageheader-titleline"))
-        return { top: 80 - top, bottom: 120 - top } as DOMRect;
-      return { top: 0, bottom: 600 } as DOMRect;
+    scrolledAway(400);
+    popstate();
+    const back = shellStub();
+    const view = renderAtClass(390, inShell(back.register, agents()));
+    // restored before the frame's first read: no frame had to run for the title to be away
+    expect(root(view.container)?.scrollTop).toBe(400);
+    expect(back.titleAway()).toBe(true);
+    expect(root(view.container)?.getAttribute("data-bar-hidden")).toBeNull();
+  });
+
+  it("a router that renders the traversal eagerly, inside popstate, before the design listener", () => {
+    scrolledAway(400);
+    const back = shellStub();
+    let view: ReturnType<typeof renderAtClass> | null = null;
+    // a capture listener on window runs before the design's; stopping the event keeps the
+    // design's listener from ever recording the traversal
+    const router = (e: Event) => {
+      e.stopImmediatePropagation();
+      view = renderAtClass(390, inShell(back.register, agents()));
     };
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-      configurable: true,
-      get: () => 2000,
-    });
-    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
-      configurable: true,
-      get: () => 600,
-    });
+    window.addEventListener("popstate", router, { capture: true });
     try {
-      const back = shellStub();
-      const second = renderAtClass(
-        390,
-        <ShellPageContext.Provider value={back.register}>{agents()}</ShellPageContext.Provider>,
-      );
-      // restored before the frame's first read: no frame had to run for the title to be away
-      expect(root(second.container)?.scrollTop).toBe(400);
-      expect(back.titleAway()).toBe(true);
-      // and the bar starts shown
-      expect(root(second.container)?.getAttribute("data-bar-hidden")).toBeNull();
+      // not inside act: the router's render flushes inside the event, as React does eagerly
+      window.dispatchEvent(new PopStateEvent("popstate"));
     } finally {
-      HTMLElement.prototype.getBoundingClientRect = rect;
-      delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
-      delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
-      delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
-      if (scrollTop) Object.defineProperty(Element.prototype, "scrollTop", scrollTop);
+      window.removeEventListener("popstate", router, { capture: true });
     }
+    expect(root((view as unknown as { container: HTMLElement }).container)?.scrollTop).toBe(400);
+    expect(back.titleAway()).toBe(true);
   });
 
   it("a fresh visit to the same list starts at the top", () => {
-    const first = renderAtClass(390, agents());
-    const scrollTo = rig(first.container);
-    scrollTo(10);
-    scrollTo(400);
-    first.unmount();
-    document.body.innerHTML = "";
-    const second = renderAtClass(390, agents());
-    expect(root(second.container)?.scrollTop).toBe(0);
+    scrolledAway(400);
+    const view = renderAtClass(390, agents());
+    expect(root(view.container)?.scrollTop).toBe(0);
+  });
+
+  it("a traversal no list took never restores a later fresh visit", () => {
+    scrolledAway(400);
+    // back lands here, but no list mounts for it (another page renders), then a push to the list
+    popstate();
+    window.history.pushState(null, "", "/agents");
+    const view = renderAtClass(390, agents());
+    expect(root(view.container)?.scrollTop).toBe(0);
+  });
+
+  it("back / forward that changes only the query restores the kept list", () => {
+    const view = renderAtClass(390, agents());
+    geo.scroll(view.container, 10);
+    geo.scroll(view.container, 400);
+    // a tab pushed as a query: the same ListPage stays mounted
+    window.history.pushState(null, "", "/agents?tab=templates");
+    rerender(view, agents({ header: header({ activeTab: "templates" }) }));
+    geo.scroll(view.container, 50);
+    // back to the first tab
+    window.history.replaceState(null, "", "/agents");
+    popstate();
+    rerender(view, agents({ header: header({ activeTab: "agents" }) }));
+    expect(root(view.container)?.scrollTop).toBe(400);
+  });
+
+  it("content shorter than the owed position: nothing overwritten, restored once it grows", () => {
+    scrolledAway(1200);
+    geo.g.content = 700;
+    popstate();
+    const view = renderAtClass(390, agents({ loading: { rows: 3 } }));
+    // the clamped position is not stored over the owed one
+    root(view.container)?.dispatchEvent(new Event("scroll"));
+    flushFrames();
+    expect(sessionStorage.getItem("cb-list-scroll:/agents")).toBe("1200");
+    geo.g.content = 2000;
+    rerender(view, agents());
+    expect(root(view.container)?.scrollTop).toBe(1200);
+  });
+
+  it("keeps at most 50 stored locations", () => {
+    const view = renderAtClass(390, agents());
+    for (let i = 0; i < 55; i++) {
+      window.history.replaceState(null, "", `/agents?page=${i}`);
+      geo.scroll(view.container, 100 + i);
+    }
+    const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("cb-list-scroll:"));
+    expect(keys).toHaveLength(50);
+    expect(sessionStorage.getItem("cb-list-scroll:/agents?page=0")).toBeNull();
+    expect(sessionStorage.getItem("cb-list-scroll:/agents?page=54")).toBe("154");
   });
 });
