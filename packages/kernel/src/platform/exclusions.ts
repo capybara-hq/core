@@ -281,6 +281,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Shows the machine behind a code the person read off their own machine",
   },
   {
+    route: "GET /api/v1/device/providers",
+    category: "human-only",
+    reason:
+      "Lists the providers that may take the machine behind a code the person read off their own machine, for the confirmation page",
+  },
+  {
     route: "POST /api/v1/device/confirm",
     category: "human-only",
     reason:

@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
+import {
+  FAKE_DIAL_IN_PROTOCOL,
+  FakeDialInMachine,
+  signInFakeMachine,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -13,11 +21,14 @@ import {
 } from "../../src/dial-in/auth.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createOrg,
+  enableExtensions,
   PW,
   type Req,
   runConfig,
@@ -29,9 +40,15 @@ import {
 import { TestHolder } from "../local-devices/test-holder.js";
 
 /**
- * Device authorization (environments spec §6.2, §13.2-13.3): the RFC 8628 shape, from
- * `capybara-device login` to a per-machine credential that only the device connection accepts.
+ * Device authorization (environments spec §6.2, §13.2-13.3; device provider spec §5): the
+ * RFC 8628 shape, from `capybara-device login` to a per-machine credential that only the device
+ * connection accepts. The person chooses the dial-in provider that takes the machine: one on in the org that
+ * speaks the program's protocol (`fake-dial-in`, and `fake-dial-in-b` speaking another one).
  */
+
+/** The second dial-in fixture provider: on in the org, speaking another protocol. */
+const OTHER_DIAL_IN = "fake-dial-in-b";
+const OTHER_PROTOCOL = "fake-other/1";
 
 const PUBLIC_URL = "https://cap.example.com";
 
@@ -41,6 +58,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 let machines: DialInMachines;
 let ownerId: string;
 let owner: Req;
@@ -51,23 +69,40 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
+  // optional preinstalls: loaded on the deployment, on only in the orgs that switch them on
+  bootstrap = await bootstrapFixture([
+    { bytes: await fakeDialInPkg(), required: false },
+    {
+      bytes: await fakeDialInPkg({ name: OTHER_DIAL_IN, protocol: OTHER_PROTOCOL }),
+      required: false,
+    },
+  ]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api", "worker"], http: { port: 0, publicUrl: `${PUBLIC_URL}/` } },
+      {
+        roles: ["api", "worker", "gateway"],
+        http: { port: 0, publicUrl: `${PUBLIC_URL}/` },
+        devices: { maxPersonal: 50 },
+      },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   machines = k.app.get(DialInMachines);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
+  await enableExtensions(raw, orgId, "fake-dial-in", OTHER_DIAL_IN);
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice(OTHER_DIAL_IN) ?? null);
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
 });
 
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
@@ -102,7 +137,13 @@ const machineRows = (accountId: string) =>
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
-const MACHINE = { name: "grant-mbp", os: "darwin", arch: "arm64", programVersion: "0.1.0" };
+const MACHINE = {
+  name: "grant-mbp",
+  os: "darwin",
+  arch: "arm64",
+  programVersion: "0.1.0",
+  protocol: DEVICE_DIAL_IN_PROTOCOL,
+};
 
 interface Authorized {
   deviceCode: string;
@@ -143,7 +184,11 @@ async function confirm(
   req: Req,
   body: Record<string, unknown>,
 ): Promise<{ statusCode: number; body: string; json(): unknown }> {
-  return req({ method: "POST", url: "/api/v1/device/confirm", payload: { orgId, ...body } });
+  return req({
+    method: "POST",
+    url: "/api/v1/device/confirm",
+    payload: { orgId, provider: "@local", ...body },
+  });
 }
 
 interface Granted {
@@ -210,6 +255,8 @@ describe("device authorization", () => {
       { ...MACHINE, name: "x".repeat(65) },
       { ...MACHINE, os: "win32" },
       { ...MACHINE, extra: 1 },
+      { ...MACHINE, protocol: "Capybara/5" },
+      { ...MACHINE, protocol: "capybara-device" },
     ]) {
       const res = await publicPost("/api/v1/device/authorize", bad);
       expect(res.statusCode, JSON.stringify(bad)).toBe(400);
@@ -631,5 +678,267 @@ describe("device authorization", () => {
     } finally {
       await holder.disconnect();
     }
+  });
+});
+
+/** The `Cookie` header of a fresh web session of `login` (what `signInFakeMachine` takes). */
+async function sessionCookie(login: string): Promise<string> {
+  const res = await k.http.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    headers: { "x-capybara-csrf": "1" },
+    payload: { login, password: PW },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  const set = res.headers["set-cookie"];
+  return (Array.isArray(set) ? set : [String(set)]).map((c) => c.split(";")[0]).join("; ");
+}
+
+/** A new member of the org with a session and its cookie. */
+async function memberWithCookie(): Promise<{ id: string; req: Req; cookie: string }> {
+  const login = `m-${randomUUID().slice(0, 8)}`;
+  const id = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+  await testMembers(db).add(orgId, id, "member", ownerId);
+  return { id, req: await session(k, login), cookie: await sessionCookie(login) };
+}
+
+const HELLO = { revision: "r1", outsideSandbox: false };
+const connectUrl = () => `ws://127.0.0.1:${k.port}/device/connect`;
+
+async function providers(req: Req, query: { orgId: string; userCode: string }) {
+  return req({
+    method: "GET",
+    url: `/api/v1/device/providers?orgId=${query.orgId}&userCode=${query.userCode}`,
+  });
+}
+
+type Choice = { plugin: string; displayName: { en: string }; devices: { id: string }[] };
+
+describe("the sign-in chooses a dial-in provider", () => {
+  it("a fake machine signs in to fake-dial-in end to end and connects", async () => {
+    const m = await memberWithCookie();
+    const signed = await signInFakeMachine(k, {
+      orgId,
+      session: m.cookie,
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+      name: "Fake box",
+    });
+    expect(signed.connectUrl).toBe("wss://cap.example.com/device/connect");
+    // confirm creates the device bound to the chosen provider
+    const row = await db
+      .selectFrom("devices")
+      .select(["provider", "source", "owner_account_id", "org_id", "name"])
+      .where("id", "=", signed.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({
+      provider: "fake-dial-in",
+      source: "local",
+      owner_account_id: m.id,
+      org_id: orgId,
+      name: "Fake box",
+    });
+    const connected = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("target", "=", signed.deviceId)
+      .where("action", "=", "device.machine_connected")
+      .executeTakeFirstOrThrow();
+    expect(connected.detail).toMatchObject({
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+    });
+    // the credential opens the dial-in channel of that provider
+    const machine = await FakeDialInMachine.connect({
+      url: connectUrl(),
+      credential: signed.credential,
+      hello: HELLO,
+    });
+    try {
+      expect(machine.connectionId).toEqual(expect.any(String));
+    } finally {
+      await machine.close();
+    }
+  });
+
+  it("authorize without protocol answers 400", async () => {
+    const { protocol: _, ...noProtocol } = MACHINE;
+    const res = await publicPost("/api/v1/device/authorize", noProtocol);
+    expect(res.statusCode, res.body).toBe(400);
+    expect(errCode(res)).toBe("validation_failed");
+  });
+
+  it("lists only providers on in the org that declare the machine's protocol", async () => {
+    const m = await memberWithCookie();
+    const fake = await authorize({ ...MACHINE, protocol: FAKE_DIAL_IN_PROTOCOL });
+    const listed = await providers(m.req, { orgId, userCode: fake.userCode });
+    expect(listed.statusCode, listed.body).toBe(200);
+    const choices = (listed.json() as { providers: Choice[] }).providers;
+    expect(choices).toEqual([
+      {
+        plugin: "fake-dial-in",
+        displayName: expect.objectContaining({ en: expect.any(String) }),
+        devices: [],
+      },
+    ]);
+
+    // the person's own devices of that provider are offered; another person's never
+    const mine = await signInFakeMachine(k, {
+      orgId,
+      session: m.cookie,
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+      name: "Mine",
+    });
+    const other = await memberWithCookie();
+    await signInFakeMachine(k, {
+      orgId,
+      session: other.cookie,
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+      name: "Theirs",
+    });
+    const local = await login(m.req, "Local box");
+    const again = (
+      (await providers(m.req, { orgId, userCode: fake.userCode })).json() as {
+        providers: Choice[];
+      }
+    ).providers;
+    expect(again).toEqual([
+      {
+        plugin: "fake-dial-in",
+        displayName: expect.any(Object),
+        devices: [{ id: mine.deviceId, name: "Mine" }],
+      },
+    ]);
+
+    // capybara-device's protocol: the interim local provider only, with the local devices
+    const dev = await authorize();
+    const forDevice = (
+      (await providers(m.req, { orgId, userCode: dev.userCode })).json() as {
+        providers: Choice[];
+      }
+    ).providers;
+    expect(forDevice).toEqual([
+      {
+        plugin: "@local",
+        displayName: { en: "Local device", zh: "本地设备" },
+        devices: [{ id: local.deviceId, name: "Local box" }],
+      },
+    ]);
+    // the other protocol: only the provider speaking it
+    const b = await authorize({ ...MACHINE, protocol: OTHER_PROTOCOL });
+    const forB = (
+      (await providers(m.req, { orgId, userCode: b.userCode })).json() as { providers: Choice[] }
+    ).providers;
+    expect(forB.map((c) => c.plugin)).toEqual([OTHER_DIAL_IN]);
+    // a protocol nobody speaks: none
+    const none = await authorize({ ...MACHINE, protocol: "nobody/1" });
+    expect(
+      (
+        (await providers(m.req, { orgId, userCode: none.userCode })).json() as {
+          providers: Choice[];
+        }
+      ).providers,
+    ).toEqual([]);
+
+    // an org where fake-dial-in is off lists nothing for it
+    const org2 = await createOrg(owner, "Beta");
+    const off = await providers(owner, { orgId: org2, userCode: fake.userCode });
+    expect(off.statusCode, off.body).toBe(200);
+    expect((off.json() as { providers: Choice[] }).providers).toEqual([]);
+    // not a member of the org → org.not_found; an unknown code → code_invalid
+    const outsider = await providers(m.req, { orgId: org2, userCode: fake.userCode });
+    expect(outsider.statusCode).toBe(404);
+    expect(errCode(outsider)).toBe("org.not_found");
+    const unknown = await providers(m.req, { orgId, userCode: "BCDF-GHJK" });
+    expect(errCode(unknown)).toBe("device_sign_in.code_invalid");
+    // listing does not use the code up
+    expect(errCode(await token(fake.deviceCode))).toBe("device_sign_in.authorization_pending");
+  });
+
+  it("confirm with a provider off in the org answers device.provider_unavailable", async () => {
+    const m = await member();
+    const a = await authorize({ ...MACHINE, protocol: FAKE_DIAL_IN_PROTOCOL });
+    const org2 = await createOrg(owner, "Gamma");
+    const off = await owner({
+      method: "POST",
+      url: "/api/v1/device/confirm",
+      payload: { userCode: a.userCode, orgId: org2, provider: "fake-dial-in", name: "Off" },
+    });
+    expect(off.statusCode, off.body).toBe(403);
+    expect(errCode(off)).toBe("device.provider_unavailable");
+    // a provider speaking another protocol, an unknown one, and @local for a fake machine
+    for (const provider of [OTHER_DIAL_IN, "no-such-provider", "@local"]) {
+      const c = await confirm(m.req, { userCode: a.userCode, provider, name: "Wrong" });
+      expect(c.statusCode, provider).toBe(403);
+      expect(errCode(c), provider).toBe("device.provider_unavailable");
+    }
+    // nothing was written and the code stays pending for another try
+    expect(await machineRows(m.id)).toEqual([]);
+    expect(errCode(await token(a.deviceCode))).toBe("device_sign_in.authorization_pending");
+    const ok = await confirm(m.req, { userCode: a.userCode, provider: "fake-dial-in", name: "Ok" });
+    expect(ok.statusCode, ok.body).toBe(200);
+  });
+
+  it("an existing device must be the person's own of the chosen provider", async () => {
+    const m = await member();
+    const local = await login(m.req, "Local only");
+    const a = await authorize({ ...MACHINE, protocol: FAKE_DIAL_IN_PROTOCOL });
+    // the person's own device, but of another provider
+    const c = await confirm(m.req, {
+      userCode: a.userCode,
+      provider: "fake-dial-in",
+      deviceId: local.deviceId,
+    });
+    expect(c.statusCode).toBe(404);
+    expect(errCode(c)).toBe("device.not_found");
+    expect(await machines.authenticate(local.credential)).not.toBeNull();
+    expect(errCode(await token(a.deviceCode))).toBe("device_sign_in.authorization_pending");
+  });
+
+  it("confirm into an existing device of the provider replaces its machine", async () => {
+    const m = await memberWithCookie();
+    const first = await signInFakeMachine(k, {
+      orgId,
+      session: m.cookie,
+      provider: "fake-dial-in",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
+      name: "Replaced",
+    });
+    const old = await FakeDialInMachine.connect({
+      url: connectUrl(),
+      credential: first.credential,
+      hello: HELLO,
+    });
+    const a = await authorize({ ...MACHINE, name: "fake-2", protocol: FAKE_DIAL_IN_PROTOCOL });
+    const c = await confirm(m.req, {
+      userCode: a.userCode,
+      provider: "fake-dial-in",
+      deviceId: first.deviceId,
+    });
+    expect(c.statusCode, c.body).toBe(200);
+    expect((c.json() as { deviceId: string }).deviceId).toBe(first.deviceId);
+    // the old credential is revoked and its socket closes as replaced
+    expect(await machines.authenticate(first.credential)).toBeNull();
+    expect((await old.closed).code).toBe(4002);
+    const t = await token(a.deviceCode);
+    expect(t.statusCode, t.body).toBe(200);
+    const second = t.json() as Granted;
+    expect(second.deviceId).toBe(first.deviceId);
+    const next = await FakeDialInMachine.connect({
+      url: connectUrl(),
+      credential: second.credential,
+      hello: HELLO,
+    });
+    await next.close();
+    // single use: the code cannot be confirmed or polled again
+    expect(errCode(await token(a.deviceCode))).toBe("device_sign_in.expired");
+    const reuse = await confirm(m.req, {
+      userCode: a.userCode,
+      provider: "fake-dial-in",
+      deviceId: first.deviceId,
+    });
+    expect(errCode(reuse)).toBe("device_sign_in.code_invalid");
   });
 });

@@ -203,6 +203,16 @@ export class DialInMachines {
       : null;
   }
 
+  /** Whether the device is deleted (soft-deleted, or gone): why its credential stopped working. */
+  async isDeviceDeleted(deviceId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("devices")
+      .select("deleted_at")
+      .where("id", "=", deviceId)
+      .executeTakeFirst();
+    return row === undefined || row.deleted_at !== null;
+  }
+
   /**
    * What a machine's hello envelope says about its program, recorded once the connection holds the
    * device's lease (before the provider's `onHello`): its version, OS and architecture, and the

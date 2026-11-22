@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
+import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import { DevicesService } from "../devices/devices.service.js";
+import { DevicesService, dialInProviderUnavailable } from "../devices/devices.service.js";
 import { ApiError } from "../errors.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import type { UserPrincipal } from "../identity/principal.js";
@@ -17,6 +19,7 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import { allowedDeviceMode, readDeploymentDevicePolicy } from "../sandbox/modes.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
+import { DialInHandlers } from "./handlers.js";
 import { DialInMachines } from "./machines.js";
 
 /** The 20 consonants a user code is made of (no vowels: no words; no look-alike letters). */
@@ -86,6 +89,18 @@ export interface DeviceMachineInfo {
   os: "darwin" | "linux";
   arch: string;
   programVersion: string;
+  /** The dial-in protocol the program speaks: only providers declaring it may take the machine. */
+  protocol: string;
+}
+
+/** The interim kernel-internal `@local` provider's name on the sign-in page (no catalog item). */
+const LOCAL_DISPLAY_NAME: LocalizedName = { en: "Local device", zh: "本地设备" };
+
+/** A dial-in provider a pending code may choose, with the person's devices of it. */
+export interface DialInProviderChoice {
+  plugin: string;
+  displayName: LocalizedName;
+  devices: { id: string; name: string }[];
 }
 
 interface CodeInfo {
@@ -182,7 +197,10 @@ export class DialInAuthService {
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(DevicesService)
-    private readonly devices: Pick<DevicesService, "createLocal">,
+    private readonly devices: Pick<DevicesService, "createDialIn">,
+    @Inject(DialInHandlers) private readonly dialIn: Pick<DialInHandlers, "onInOrg">,
+    @Inject(ExtensionDisplayNames)
+    private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
     @Inject(DialInMachines)
     private readonly machines: Pick<DialInMachines, "issue" | "revokeMachine">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
@@ -289,20 +307,67 @@ export class DialInAuthService {
   }
 
   /**
-   * The person confirms a user code: in an org where they may use agents (`agents.use`), into
-   * one of their own live local devices or a new one named `name` (` 2`, ` 3`, … appended
-   * while the name is taken). One transaction creates the device if needed, issues the
-   * machine (revoking the device's previous one) and audits
-   * `device.machine_connected` (retried once when a concurrent confirmation took the new
-   * name); after the commit the credential is parked for the poll ({@link park}). The code is
-   * claimed first, so two confirmations of one code cannot both issue a machine; a confirmation
-   * that fails before the commit leaves it pending.
+   * The dial-in providers a pending code may choose in `orgId` (the person may use agents there,
+   * `agents.use`): the ones on in the org whose protocol is the program's
+   * ({@link DialInHandlers.onInOrg}), each with the person's own live devices of it there.
+   */
+  async providers(
+    principal: UserPrincipal,
+    input: { orgId: string; userCode: string },
+  ): Promise<{ providers: DialInProviderChoice[] }> {
+    await authorizeOrgAction(this.db.db, principal, input.orgId, "agents.use");
+    const { info } = await this.lookup(input.userCode, "pending");
+    const served = (await this.dialIn.onInOrg(input.orgId)).filter(
+      (p) => p.protocol === info.machine.protocol,
+    );
+    if (served.length === 0) return { providers: [] };
+    const plugins = served.map((p) => p.plugin);
+    const [names, rows] = await Promise.all([
+      this.displayNames.many(plugins.filter((p) => p !== LOCAL_PROVIDER)),
+      this.db
+        .selectFrom("devices")
+        .select(["id", "name", "provider"])
+        .where("org_id", "=", input.orgId)
+        .where("owner_kind", "=", "personal")
+        .where("owner_account_id", "=", principal.account.id)
+        .where("source", "=", "local")
+        .where("provider", "in", plugins)
+        .where("deleted_at", "is", null)
+        .orderBy("created_at")
+        .orderBy("id")
+        .execute(),
+    ]);
+    return {
+      providers: plugins.map((plugin) => ({
+        plugin,
+        displayName:
+          plugin === LOCAL_PROVIDER
+            ? LOCAL_DISPLAY_NAME
+            : (names.get(plugin) ?? { en: plugin, zh: plugin }),
+        devices: rows
+          .filter((r) => r.provider === plugin)
+          .map((r) => ({ id: r.id, name: r.name ?? "" })),
+      })),
+    };
+  }
+
+  /**
+   * The person confirms a user code: in an org where they may use agents (`agents.use`), with a
+   * dial-in provider on in that org that speaks the program's protocol (else
+   * `device.provider_unavailable`), into one of their own live devices of that provider there or
+   * a new one named `name` (` 2`, ` 3`, … appended while the name is taken). One transaction
+   * creates the device if needed, issues the machine (revoking the device's previous one) and
+   * audits `device.machine_connected` with the provider (retried once when a concurrent
+   * confirmation took the new name); after the commit the credential is parked for the poll
+   * ({@link park}). The code is claimed first, so two confirmations of one code cannot both issue
+   * a machine; a confirmation that fails before the commit leaves it pending.
    */
   async confirm(
     principal: UserPrincipal,
     input: {
       userCode: string;
       orgId: string;
+      provider: string;
       deviceId?: string | undefined;
       name?: string | undefined;
     },
@@ -386,14 +451,25 @@ export class DialInAuthService {
   @Transactional()
   private async confirmIn(
     accountId: string,
-    input: { orgId: string; deviceId?: string | undefined; name?: string | undefined },
+    input: {
+      orgId: string;
+      provider: string;
+      deviceId?: string | undefined;
+      name?: string | undefined;
+    },
     info: CodeInfo,
   ): Promise<Issued> {
-    const { orgId } = input;
+    const { orgId, provider } = input;
+    const { machine } = info;
+    // the provider takes machines in this org and speaks this program's protocol
+    const served = (await this.dialIn.onInOrg(orgId)).find((p) => p.plugin === provider);
+    if (served === undefined || served.protocol !== machine.protocol) {
+      throw dialInProviderUnavailable(provider);
+    }
     let deviceId: string;
     if (input.name !== undefined) {
       const name = await this.freeName(orgId, accountId, input.name);
-      deviceId = (await this.devices.createLocal(orgId, accountId, name)).id;
+      deviceId = (await this.devices.createDialIn(orgId, accountId, provider, name)).id;
     } else {
       const env = await this.db
         .selectFrom("devices")
@@ -403,26 +479,28 @@ export class DialInAuthService {
         .where("owner_kind", "=", "personal")
         .where("owner_account_id", "=", accountId)
         .where("source", "=", "local")
-        .where("provider", "=", LOCAL_PROVIDER)
+        .where("provider", "=", provider)
         .where("deleted_at", "is", null)
         .forNoKeyUpdate()
         .executeTakeFirst();
       if (!env) throw deviceNotFound();
       deviceId = env.id;
     }
-    const { machine } = info;
     const { machineId, credential } = await this.machines.issue({
       orgId,
       deviceId,
       accountId,
-      ...machine,
+      name: machine.name,
+      os: machine.os,
+      arch: machine.arch,
+      programVersion: machine.programVersion,
     });
     await audit(this.db.db, {
       actorAccountId: accountId,
       orgId,
       action: "device.machine_connected",
       target: deviceId,
-      detail: { machineId, ...machine },
+      detail: { machineId, provider, ...machine },
     });
     return {
       deviceId,

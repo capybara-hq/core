@@ -10,6 +10,7 @@ import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk/device-pr
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
+import { DialInHandlers } from "../dial-in/handlers.js";
 import { deviceLeaseKey } from "../dial-in/keys.js";
 import { DialInMachines } from "../dial-in/machines.js";
 import { ApiError } from "../errors.js";
@@ -296,6 +297,13 @@ const providerNotOn = (provider: string, on: DeviceProviderEntry[]): ApiError =>
   return new ApiError("validation_failed", message, [{ path: "provider", message }]);
 };
 
+/** A device sign-in names a provider that is no dial-in provider on in the org (403). */
+export const dialInProviderUnavailable = (provider: string): ApiError =>
+  new ApiError(
+    "device.provider_unavailable",
+    `Device provider ${provider} cannot take a machine in this organization; choose one of the providers listed on the sign-in page`,
+  );
+
 const nameTaken = (): ApiError =>
   new ApiError("device.name_taken", "You already have a device with this name");
 
@@ -336,6 +344,8 @@ export class DevicesService {
     private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
     /** Each device's stored provider report (read only; never asks the provider). */
     @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "read">,
+    /** The dial-in providers on in an org (a device signed in from a machine). */
+    @Inject(DialInHandlers) private readonly dialIn: Pick<DialInHandlers, "onInOrg">,
   ) {}
 
   /**
@@ -441,14 +451,24 @@ export class DevicesService {
   }
 
   /**
-   * A new personal local device for a machine being connected (provider `@local`; the
-   * machine row is the caller's). Joins the caller's transaction (the device authorization's).
+   * A new personal device for a machine being signed in (the device sign-in; the machine row is
+   * the caller's), bound for life to the dial-in provider `provider`: one that serves the org now
+   * and declares `permissions.dialIn` ({@link DialInHandlers.onInOrg}), else
+   * `device.provider_unavailable`. Joins the caller's transaction (the device authorization's).
    * Counted against `devices.maxPersonal` (`device.limit_reached`); a live name of the
-   * person's → `device.name_taken`. Needs no device provider on in the org.
+   * person's → `device.name_taken`. Its `source` stays `local` (the credential check reads it).
    */
   @Transactional()
-  async createLocal(orgId: string, accountId: string, name: string): Promise<{ id: string }> {
-    const id = await this.insertNamed(orgId, accountId, name, "local", LOCAL_PROVIDER, undefined, {
+  async createDialIn(
+    orgId: string,
+    accountId: string,
+    provider: string,
+    name: string,
+  ): Promise<{ id: string }> {
+    if (!(await this.dialIn.onInOrg(orgId)).some((p) => p.plugin === provider)) {
+      throw dialInProviderUnavailable(provider);
+    }
+    const id = await this.insertNamed(orgId, accountId, name, "local", provider, undefined, {
       source: "local",
     });
     return { id };

@@ -945,7 +945,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
 
     const local = await k.app
       .get(TransactionHost)
-      .run(() => k.app.get(DevicesService).createLocal(orgId, me.id, "Laptop"));
+      .run(() => k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "Laptop"));
     const res = await patch(me.req, local.id, { network: { mode: "allowlist" } });
     expect(res.statusCode, res.body).toBe(409);
     expect(errCode(res)).toBe("device.ceiling_on_machine");

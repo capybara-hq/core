@@ -255,7 +255,7 @@ describe("every path records a v2 permission context and replies", () => {
   it("a local device on protocol 3: the command reaches the machine by its operation scope, the context is local and supported", async () => {
     const m = await member("local-member");
     const { deviceId, credential } = await k.app.get(TransactionHost).run(async () => {
-      const { id } = await k.app.get(DevicesService).createLocal(orgId, m.id, "Box");
+      const { id } = await k.app.get(DevicesService).createDialIn(orgId, m.id, "@local", "Box");
       const issued = await k.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,

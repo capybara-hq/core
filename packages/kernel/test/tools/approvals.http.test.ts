@@ -774,7 +774,10 @@ describe("network asks: only the device owner decides, in a signed-in session", 
   const deviceOf = (accountId: string) =>
     ka.app
       .get(TransactionHost)
-      .run(async () => (await ka.app.get(DevicesService).createLocal(orgId, accountId, "Box")).id);
+      .run(
+        async () =>
+          (await ka.app.get(DevicesService).createDialIn(orgId, accountId, "@local", "Box")).id,
+      );
 
   /** A network ask about a device of `deviceOwner` (default: the run's initiator). */
   const ask = async (scopes: "once"[] = ["once"], deviceOwner: string = initiator.account.id) =>

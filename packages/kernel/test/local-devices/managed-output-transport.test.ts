@@ -122,6 +122,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
           : null,
       recordConnect: async () => {},
       touch: async () => {},
+      isDeviceDeleted: async () => false,
     },
     localHandlers(),
     locks,

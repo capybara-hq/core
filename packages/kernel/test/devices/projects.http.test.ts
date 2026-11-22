@@ -154,7 +154,7 @@ async function owned() {
   ).id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   const d = await txHost.run(async () => {
-    const { id: deviceId } = await devices.createLocal(orgId, accountId, "Box");
+    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "@local", "Box");
     const issued = await machines.issue({
       orgId,
       deviceId,

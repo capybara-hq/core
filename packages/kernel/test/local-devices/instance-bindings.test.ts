@@ -1030,6 +1030,7 @@ it("binds through the real relay and the gateway with a staged fake machine answ
           : null,
       recordConnect: async () => {},
       touch: async () => {},
+      isDeviceDeleted: async () => false,
     },
     localHandlers(),
     k.app.get(LockService),

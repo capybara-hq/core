@@ -59,6 +59,7 @@ async function fixture() {
         : null,
     recordConnect: vi.fn(async () => {}),
     touch: async () => {},
+    isDeviceDeleted: async () => false,
   };
   const handler = {
     kernelInternal: true as const,

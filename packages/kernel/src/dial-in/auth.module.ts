@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { DevicesModule } from "../devices/devices.module.js";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { DialInAuthService } from "./auth.service.js";
 import { DialInModule } from "./dial-in.module.js";
 
@@ -9,7 +10,8 @@ import { DialInModule } from "./dial-in.module.js";
  * (through the local devices: deleting a device revokes its machine), while sign-in needs both.
  */
 @Module({
-  imports: [DialInModule, DevicesModule],
+  // ExtensionsModule: the providers' display names on the sign-in page
+  imports: [DialInModule, DevicesModule, ExtensionsModule],
   providers: [DialInAuthService],
   exports: [DialInAuthService],
 })

@@ -2209,7 +2209,7 @@ describe("reconstructRequest：基线零漂移", () => {
   it("a command refused a domain on a device: the network ask and its kept result + note: zero drift, network_blocked and the ask's hosts not in requests", async () => {
     reset();
     const { deviceId, credential, machineId } = await k.app.get(TransactionHost).run(async () => {
-      const { id } = await k.app.get(DevicesService).createLocal(orgId, ownerId, "Box");
+      const { id } = await k.app.get(DevicesService).createDialIn(orgId, ownerId, "@local", "Box");
       const issued = await k.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,

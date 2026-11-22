@@ -493,7 +493,7 @@ async function localDevice(
 ): Promise<string> {
   const { id } = await k.app
     .get(DevicesService)
-    .createLocal(orgId, accountId, `box-${randomUUID().slice(0, 8)}`);
+    .createDialIn(orgId, accountId, "@local", `box-${randomUUID().slice(0, 8)}`);
   const features = opts.features ?? ALL_FEATURES;
   const policy = JSON.stringify({ allowedDomains: [] });
   const auto = (opts.mode ?? "auto") === "auto";

@@ -676,19 +676,26 @@ class DeviceConnection {
       );
       this.drain();
     }
-    if (this.state === "holding" && Date.now() - this.lastAuth >= REAUTH_EVERY_MS) {
+    if (this.state === "holding" && Date.now() - this.lastAuth >= this.gw.reauthEveryMs) {
       this.lastAuth = Date.now();
       void this.reauthenticate();
     }
   }
 
-  /** The credential still stands (membership, org and device are read live). */
+  /**
+   * The credential still stands (membership, org and device are read live); a deleted device
+   * closes as deleted, like its revocation does.
+   */
   private async reauthenticate(): Promise<void> {
     try {
       const id = await this.gw.machines.authenticate(this.credential);
       if (id === null || id.machineId !== this.identity.machineId) {
-        this.closeReason = "revoked";
-        this.close(DEVICE_CLOSE.revoked, "the machine was disconnected");
+        const deleted = await this.gw.machines.isDeviceDeleted(this.deviceId);
+        this.closeReason = deleted ? "deleted" : "revoked";
+        this.close(
+          DEVICE_CLOSE.revoked,
+          deleted ? "the device was deleted" : "the machine was disconnected",
+        );
       }
     } catch (e) {
       this.gw.log.warn("could not re-check a device credential", {
@@ -812,10 +819,15 @@ export class DialInGateway {
   private stopping = false;
   /** How often connections are pinged ({@link PING_INTERVAL_MS}; a test seam). */
   pingIntervalMs = PING_INTERVAL_MS;
+  /** How often a held connection re-checks its credential ({@link REAUTH_EVERY_MS}; test seam). */
+  reauthEveryMs = REAUTH_EVERY_MS;
 
   constructor(
     @Inject(DialInMachines)
-    readonly machines: Pick<DialInMachines, "authenticate" | "recordConnect" | "touch">,
+    readonly machines: Pick<
+      DialInMachines,
+      "authenticate" | "isDeviceDeleted" | "recordConnect" | "touch"
+    >,
     @Inject(DialInHandlers) readonly handlers: Pick<DialInHandlers, "forDevice">,
     @Inject(LockService) readonly locks: Pick<LockService, "hold">,
     @Inject(KERNEL_BUS) readonly bus: ExtensionContext["bus"],

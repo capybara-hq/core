@@ -232,7 +232,9 @@ async function member() {
   const accountId = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
     .id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
-  const { id: deviceId } = await txHost.run(() => devices.createLocal(orgId, accountId, "Box"));
+  const { id: deviceId } = await txHost.run(() =>
+    devices.createDialIn(orgId, accountId, "@local", "Box"),
+  );
   const agentId = randomUUID();
   const conversationId = randomUUID();
   await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)

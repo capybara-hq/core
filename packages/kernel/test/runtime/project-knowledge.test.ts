@@ -222,7 +222,7 @@ async function localDevice(
   const deviceId = await k.app.get(TransactionHost).run(async () => {
     const { id } = await k.app
       .get(DevicesService)
-      .createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 8)}`);
+      .createDialIn(orgId, ownerId, "@local", `Box ${randomUUID().slice(0, 8)}`);
     await k.app.get(DialInMachines).issue({
       orgId,
       deviceId: id,

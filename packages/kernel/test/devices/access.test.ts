@@ -283,20 +283,23 @@ describe("device access", () => {
 describe("local devices", () => {
   /** A member of the org with a fresh login (their own devices only). */
   const member = () => newMember("dv");
+  // keeps the kernel's own dial-in handler: a device sign-in needs @local to take machines
   const deviceEntry = (): DeviceProviderEntry => ({
     plugin: LOCAL_PROVIDER,
     version: "1.0.0",
-    impl: createFakeSandbox(join(root, "device")),
+    impl: Object.assign(createFakeSandbox(join(root, "device")), {
+      dialIn: k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER)?.impl.dialIn,
+    }),
   });
   // the kernel serves @local for every test here (LocalDevicesModule does this on init, Task 4)
   beforeAll(() => {
     k.app.get(DeviceProviders).register(deviceEntry());
   });
 
-  it("createLocal records source device on @local, counted against maxPersonal", async () => {
+  it("createDialIn on @local records a local source device, counted against maxPersonal", async () => {
     const service = k.app.get(DevicesService);
     const me = await member();
-    const { id } = await service.createLocal(orgId, me.id, "laptop");
+    const { id } = await service.createDialIn(orgId, me.id, "@local", "laptop");
     const row = await db
       .selectFrom("devices")
       .select(["source", "provider", "is_default", "name"])
@@ -308,10 +311,18 @@ describe("local devices", () => {
       is_default: false,
       name: "laptop",
     });
-    expect(await codeOf(service.createLocal(orgId, me.id, "LAPTOP"))).toBe("device.name_taken");
+    expect(await codeOf(service.createDialIn(orgId, me.id, "@local", "LAPTOP"))).toBe(
+      "device.name_taken",
+    );
+    // device-fake is on in the org but takes no machines (no permissions.dialIn); unknown is none
+    for (const provider of ["device-fake", "no-such-provider"]) {
+      expect(await codeOf(service.createDialIn(orgId, me.id, provider, "other"))).toBe(
+        "device.provider_unavailable",
+      );
+    }
     const max = k.app.get(KernelConfigService).get().devices.maxPersonal;
-    for (let i = 1; i < max; i++) await service.createLocal(orgId, me.id, `m${i}`);
-    expect(await codeOf(service.createLocal(orgId, me.id, "one-too-many"))).toBe(
+    for (let i = 1; i < max; i++) await service.createDialIn(orgId, me.id, "@local", `m${i}`);
+    expect(await codeOf(service.createDialIn(orgId, me.id, "@local", "one-too-many"))).toBe(
       "device.limit_reached",
     );
   });
@@ -320,7 +331,7 @@ describe("local devices", () => {
     const service = k.app.get(DevicesService);
     const access = k.app.get(DeviceAccess);
     const me = await member();
-    const { id } = await service.createLocal(orgId, me.id, "box");
+    const { id } = await service.createDialIn(orgId, me.id, "@local", "box");
     // a kernel that does not serve @local (device-fake is still on)
     const unserved = new DeviceAccess(k.app.get(KernelDb), selectionOf(["device-fake"]));
     const err = await unserved.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
@@ -340,7 +351,7 @@ describe("local devices", () => {
   it("list shows source, online null for cloud; a local device's online and machine", async () => {
     const service = k.app.get(DevicesService);
     const me = await member();
-    const { id } = await service.createLocal(orgId, me.id, "workstation");
+    const { id } = await service.createDialIn(orgId, me.id, "@local", "workstation");
     const list = async () => {
       const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
       expect(res.statusCode, res.body).toBe(200);
@@ -394,7 +405,7 @@ describe("local devices", () => {
 
   it("a conversation bound to a local device needs no extension provider on", async () => {
     const me = await member();
-    const { id } = await k.app.get(DevicesService).createLocal(orgId, me.id, "rig");
+    const { id } = await k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "rig");
     const kdb = k.app.get(KernelDb);
     const localOnly = selectionOf([LOCAL_PROVIDER]);
     const access = new DeviceAccess(kdb, localOnly);
@@ -433,7 +444,7 @@ describe("local devices", () => {
 
   it("usableNow: the listing gate follows the conversation's device (ruling R8)", async () => {
     const me = await member();
-    const { id } = await k.app.get(DevicesService).createLocal(orgId, me.id, "rig-2");
+    const { id } = await k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "rig-2");
     const kdb = k.app.get(KernelDb);
     const make = (selection: ReturnType<typeof selectionOf>) =>
       new ConversationDevices(

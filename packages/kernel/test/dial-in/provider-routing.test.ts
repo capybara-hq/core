@@ -92,16 +92,16 @@ afterAll(async () => {
 
 /**
  * A device of `provider` with a signed-in machine (the machine row issued directly: signing in by
- * provider is the sign-in's own task). `fake-dial-in` devices keep `source = local`, which the
- * credential check reads until the local semantics leave the kernel.
+ * provider is the sign-in's own task, `auth.test.ts`).
  */
 async function device(provider = "fake-dial-in") {
   const { id: deviceId } = await k.app
     .get(TransactionHost)
     .run(() =>
-      k.app.get(DevicesService).createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 8)}`),
+      k.app
+        .get(DevicesService)
+        .createDialIn(orgId, ownerId, provider, `Box ${randomUUID().slice(0, 8)}`),
     );
-  await sql`UPDATE capybara.devices SET provider = ${provider} WHERE id = ${deviceId}`.execute(raw);
   const issued = await k.app.get(TransactionHost).run(() =>
     k.app.get(DialInMachines).issue({
       orgId,

@@ -10,18 +10,21 @@ import {
 } from "../identity/principal.js";
 import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { Throttled } from "../infra/throttler/throttler.guard.js";
-import { ZBody, ZParam } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import {
   type DeviceAuthorization,
   type DeviceGrant,
   type DeviceMachineInfo,
   DialInAuthService,
+  type DialInProviderChoice,
 } from "./auth.service.js";
 import {
   type DeviceAuthorizeBody,
   DeviceAuthorizeBodyDto,
   type DeviceConfirmBody,
   DeviceConfirmBodyDto,
+  type DeviceProvidersQuery,
+  DeviceProvidersQueryDto,
   type DeviceTokenBody,
   DeviceTokenBodyDto,
   type DeviceUserCodeBody,
@@ -38,7 +41,7 @@ const CODE_THROTTLER = ["device-code-account"] as const;
  *
  * The program's routes are public (it has no credential yet); like every public unsafe route
  * they need `X-Capybara-Csrf: 1`, which `capybara-device` sends:
- * - `POST /authorize { name, os, arch, programVersion }` → `{ deviceCode, userCode,
+ * - `POST /authorize { name, os, arch, programVersion, protocol }` → `{ deviceCode, userCode,
  *   verificationUri, verificationUriComplete, interval, expiresIn }` (`device-authorize-ip`);
  * - `POST /token { deviceCode }` → `{ credential, orgId, deviceId, connectUrl,
  *   reconnectGraceSeconds, maxFrameBytes, outsideSandbox }` once, else `device_sign_in.authorization_pending` / `device_sign_in.slow_down` /
@@ -47,7 +50,10 @@ const CODE_THROTTLER = ["device-code-account"] as const;
  * The person's routes need a web session (the confirmation page `/device`); each try of a user
  * code counts on `device-code-account` (refunded on success):
  * - `GET /pending/:userCode` → `{ machine, expiresAt }`;
- * - `POST /confirm { userCode, orgId, deviceId | name }` → `{ deviceId }`
+ * - `GET /providers?orgId&userCode` → `{ providers: [{ plugin, displayName, devices }] }`: the
+ *   dial-in providers on in the org that speak the program's protocol, each with the person's
+ *   devices of it (`agents.use` in the org);
+ * - `POST /confirm { userCode, orgId, provider, deviceId | name }` → `{ deviceId }`
  *   (`device_sign_in.expired` / `device_sign_in.unavailable` when the credential could not be handed over: the
  *   machine is revoked again and the person runs login again);
  * - `POST /deny { userCode }` → 204.
@@ -89,6 +95,18 @@ export class DialInAuthController {
   ): Promise<{ machine: DeviceMachineInfo; expiresAt: string }> {
     requireUser(principal);
     return this.counted(req, reply, () => this.auth.pending(params.userCode));
+  }
+
+  @Get("providers")
+  @SessionOnly()
+  async providers(
+    @CurrentPrincipal() principal: Principal,
+    @ZQuery(DeviceProvidersQueryDto) query: z.infer<typeof DeviceProvidersQuery>,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ providers: DialInProviderChoice[] }> {
+    const p = requireUser(principal);
+    return this.counted(req, reply, () => this.auth.providers(p, query));
   }
 
   @Post("confirm")

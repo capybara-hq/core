@@ -295,6 +295,7 @@ async function gatewayFor(
         c === device.credential ? { ...identity, machineId: "machine" } : null,
       recordConnect: async () => {},
       touch: async () => {},
+      isDeviceDeleted: async () => false,
     },
     localHandlers(),
     locks,

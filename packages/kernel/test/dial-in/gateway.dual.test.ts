@@ -116,12 +116,14 @@ async function setup() {
     os: "linux",
     arch: "x64",
     programVersion: "0.1.0",
+    protocol: "capybara-device/5",
   });
   expect(a.status, JSON.stringify(a.json)).toBe(200);
   const c = await call("POST", "/api/v1/device/confirm", {
     userCode: a.json.userCode,
     orgId,
     name: "Box",
+    provider: "@local",
   });
   expect(c.status, JSON.stringify(c.json)).toBe(200);
   const t = await call("POST", "/api/v1/device/token", { deviceCode: a.json.deviceCode });

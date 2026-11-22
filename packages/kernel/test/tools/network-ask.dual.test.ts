@@ -86,11 +86,13 @@ describe("network ask (dual replica)", () => {
         os: "linux",
         arch: "x64",
         programVersion: "0.1.0",
+        protocol: "capybara-device/5",
       });
       await call(0, "POST", "/api/v1/device/confirm", {
         userCode: a.json.userCode,
         orgId,
         name: "Box",
+        provider: "@local",
       });
       const t = await call(0, "POST", "/api/v1/device/token", { deviceCode: a.json.deviceCode });
       expect(t.status, JSON.stringify(t.json)).toBe(200);

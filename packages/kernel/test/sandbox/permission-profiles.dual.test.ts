@@ -554,7 +554,7 @@ describe("a local device's project outside its fixed workspace", () => {
     answer: (req: KernelReq) => Answer,
   ): Promise<{ deviceId: string; machine: FakeMachineV3; conv: string; credential: string }> {
     const { deviceId, credential } = await kA.app.get(TransactionHost).run(async () => {
-      const { id } = await kA.app.get(DevicesService).createLocal(orgId, ownerId, label);
+      const { id } = await kA.app.get(DevicesService).createDialIn(orgId, ownerId, "@local", label);
       const issued = await kA.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,

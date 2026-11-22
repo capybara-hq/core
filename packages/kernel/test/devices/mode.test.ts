@@ -105,7 +105,12 @@ const SUMMARY = (p: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySu
  */
 async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<string> {
   const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
-    const { id } = await devices.createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 6)}`);
+    const { id } = await devices.createDialIn(
+      orgId,
+      ownerId,
+      "@local",
+      `Box ${randomUUID().slice(0, 6)}`,
+    );
     const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId: id,
@@ -130,7 +135,12 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
 /** A local device whose machine said hello without an authenticated owner report. */
 async function unreportedLocalDevice(): Promise<string> {
   const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
-    const { id } = await devices.createLocal(orgId, ownerId, `Old ${randomUUID().slice(0, 6)}`);
+    const { id } = await devices.createDialIn(
+      orgId,
+      ownerId,
+      "@local",
+      `Old ${randomUUID().slice(0, 6)}`,
+    );
     const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId: id,

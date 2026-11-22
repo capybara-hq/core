@@ -499,14 +499,20 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
   const authorized = await owner({
     method: "POST",
     url: "/api/v1/device/authorize",
-    payload: { name: "accept-box", os: "linux", arch: "x64", programVersion: "0.1.0" },
+    payload: {
+      name: "accept-box",
+      os: "linux",
+      arch: "x64",
+      programVersion: "0.1.0",
+      protocol: "capybara-device/5",
+    },
   });
   expect(authorized.statusCode, authorized.body).toBe(200);
   const { userCode, deviceCode } = authorized.json() as { userCode: string; deviceCode: string };
   const confirmed = await owner({
     method: "POST",
     url: "/api/v1/device/confirm",
-    payload: { userCode, orgId: orgAuto, name: "Accept box" },
+    payload: { userCode, orgId: orgAuto, provider: "@local", name: "Accept box" },
   });
   expect(confirmed.statusCode, confirmed.body).toBe(200);
   const issued = await owner({

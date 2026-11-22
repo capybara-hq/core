@@ -93,7 +93,9 @@ async function connected() {
     .id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   return k.app.get(TransactionHost).run(async () => {
-    const { id: deviceId } = await k.app.get(DevicesService).createLocal(orgId, accountId, "Box");
+    const { id: deviceId } = await k.app
+      .get(DevicesService)
+      .createDialIn(orgId, accountId, "@local", "Box");
     const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,

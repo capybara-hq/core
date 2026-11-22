@@ -78,9 +78,10 @@ async function member(org = orgId): Promise<string> {
 /** A local device of `accountId` with a machine; returns the ids and the credential. */
 async function connected(accountId: string, org = orgId) {
   return txHost.run(async () => {
-    const { id: deviceId } = await devices.createLocal(
+    const { id: deviceId } = await devices.createDialIn(
       org,
       accountId,
+      "@local",
       `Box ${randomUUID().slice(0, 6)}`,
     );
     const issued = await machines.issue({

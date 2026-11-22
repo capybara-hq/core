@@ -533,16 +533,29 @@ const FAKE_DIAL_IN_SRC = fileURLToPath(
  * Test dial-in `device-provider@1` plugin `fake-dial-in` (`test/fixtures/plugins/fake-dial-in`,
  * `permissions.dialIn = { protocol: "fake-dial-in/1" }`) as a plugin package: the entry is its
  * source with types stripped (it imports only the SDK). Machines are `FakeDialInMachine`.
+ * `opts` renames the plugin and changes its protocol (a second dial-in provider).
  */
-export async function fakeDialInPkg(): Promise<Uint8Array> {
+export async function fakeDialInPkg(
+  opts: { name?: string; protocol?: string } = {},
+): Promise<Uint8Array> {
   const { stripTypeScriptTypes } = await import("node:module");
   const mod = (await import(FAKE_DIAL_IN_SRC)) as { default: ExtensionManifest };
+  const name = opts.name ?? mod.default.name;
+  const protocol = opts.protocol ?? mod.default.permissions?.dialIn?.protocol;
+  const source = (await readFile(FAKE_DIAL_IN_SRC, "utf8"))
+    .replace(`name: ${JSON.stringify(mod.default.name)},`, `name: ${JSON.stringify(name)},`)
+    .replace(/^const PROTOCOL = ".*";$/m, `const PROTOCOL = ${JSON.stringify(protocol)};`);
+  const manifest = staticManifestOf(mod.default) as unknown as Record<string, unknown>;
   return pluginTgz({
-    manifest: { name: mod.default.name, version: mod.default.version },
-    packageName: `@test/plugin-${mod.default.name}`,
+    manifest: { name, version: mod.default.version },
+    packageName: `@test/plugin-${name}`,
     extension: {
-      manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
-      entry: stripTypeScriptTypes(await readFile(FAKE_DIAL_IN_SRC, "utf8"), { mode: "strip" }),
+      manifest: {
+        ...manifest,
+        name,
+        permissions: { ...(manifest.permissions as object), dialIn: { protocol } },
+      },
+      entry: stripTypeScriptTypes(source, { mode: "strip" }),
     },
   });
 }

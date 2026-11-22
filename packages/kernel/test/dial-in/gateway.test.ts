@@ -135,7 +135,7 @@ async function connected() {
     .id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   const m = await txHost.run(async () => {
-    const { id: deviceId } = await devices.createLocal(orgId, accountId, "Box");
+    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "@local", "Box");
     const issued = await machines.issue({
       orgId,
       deviceId,
@@ -216,7 +216,7 @@ async function bootDevice() {
     .id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   return txHost.run(async () => {
-    const { id: deviceId } = await devices.createLocal(orgId, accountId, "Box");
+    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "@local", "Box");
     const issued = await machines.issue({
       orgId,
       deviceId,
@@ -664,6 +664,50 @@ describe("GET /device/connect", () => {
       "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
     });
     expect(again?.status).toBe(401);
+  });
+
+  it("a held connection whose device was deleted meanwhile closes as deleted at its re-check", async () => {
+    const gw = k.app.get(DialInGateway);
+    // a connection reads the ping interval when it schedules its next ping
+    gw.pingIntervalMs = 100;
+    gw.reauthEveryMs = 0;
+    try {
+      const m = await connected();
+      const machine = new FakeMachine(url, m.credential);
+      await machine.opened;
+      await held(m.deviceId);
+      await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${m.deviceId}`.execute(
+        raw,
+      );
+      const closed = await machine.closed;
+      expect(closed.code).toBe(4003);
+      expect(closed.reason).toBe("the device was deleted");
+    } finally {
+      gw.pingIntervalMs = 20_000;
+      gw.reauthEveryMs = 60_000;
+    }
+  });
+
+  it("a held connection whose machine was revoked meanwhile closes as disconnected at its re-check", async () => {
+    const gw = k.app.get(DialInGateway);
+    // a connection reads the ping interval when it schedules its next ping
+    gw.pingIntervalMs = 100;
+    gw.reauthEveryMs = 0;
+    try {
+      const m = await connected();
+      const machine = new FakeMachine(url, m.credential);
+      await machine.opened;
+      await held(m.deviceId);
+      await sql`UPDATE capybara.device_machines SET revoked_at = now() WHERE id = ${m.machineId}`.execute(
+        raw,
+      );
+      const closed = await machine.closed;
+      expect(closed.code).toBe(4003);
+      expect(closed.reason).toBe("the machine was disconnected");
+    } finally {
+      gw.pingIntervalMs = 20_000;
+      gw.reauthEveryMs = 60_000;
+    }
   });
 
   it("a newer connection of the same device replaces the older one (4002)", async () => {
