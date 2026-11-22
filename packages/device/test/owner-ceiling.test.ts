@@ -16,7 +16,12 @@ import {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
-import { CEILING_WIDENING_TEXT } from "../src/commands/ceiling.js";
+import {
+  CEILING_NEEDS_YES,
+  CEILING_OTHER_CONNECTIONS_TEXT,
+  CEILING_WIDENING_TEXT,
+} from "../src/commands/ceiling.js";
+import { connectionsDir } from "../src/connections.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { readStrictOwnerCeiling } from "../src/exec/operation-types.js";
 import { issueOwnerReport, ownerReportPath } from "../src/owner-report.js";
@@ -492,6 +497,85 @@ describe("capybara-device ceiling", () => {
     expect(readFileSync(join(state, "commands.log"), "utf8")).toMatch(
       /ceiling set outsideSandbox on, network open, projectReach machine/,
     );
+  });
+  it("widening the reach needs --yes; narrowing it does not", async () => {
+    for (const [from, to] of [
+      ["workspace", "paths"],
+      ["paths", "machine"],
+    ] as const) {
+      writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW, projectReach: from } });
+      const r = await cli(["ceiling", "set", "--project-reach", to]);
+      expect(r.code, `${from} -> ${to}`).toBe(2);
+      expect(r.err).toContain(CEILING_NEEDS_YES);
+      expect(readPolicyFile(state).policy.ownerCeiling.projectReach).toBe(from);
+    }
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW, projectReach: "machine" } });
+    const narrowed = await cli(["ceiling", "set", "--project-reach", "workspace"]);
+    expect(narrowed.code).toBe(0);
+    expect(narrowed.out).toMatch(/Project reach: workspace/);
+    expect(readPolicyFile(state).policy.ownerCeiling.projectReach).toBe("workspace");
+    // the paths reach names how many paths it lists, and how to add one when none is listed
+    const paths = await cli(["ceiling", "set", "--project-reach", "paths", "--yes"]);
+    expect(paths.code).toBe(0);
+    expect(paths.out).toMatch(/Project reach: paths \(0 listed\)/);
+    expect(paths.out).toContain(
+      "No project paths are listed yet: capybara-device policy add projectPaths <dir>",
+    );
+    writePolicy(state, {
+      ...FULL_POLICY,
+      ownerCeiling: { ...NARROW, projectReach: "paths" },
+      projectPaths: ["/srv/a", "/srv/b"],
+    });
+    const shown = await cli(["ceiling", "show"]);
+    expect(shown.out).toMatch(/Project reach: paths \(2 listed\)/);
+    expect(shown.out).not.toMatch(/No project paths are listed yet/);
+    // the widening text explains the machine and paths reaches; os-user is gone
+    expect(CEILING_WIDENING_TEXT).toContain(
+      "The machine reach lets sandboxed work read the whole machine except secrets, this " +
+        "program's state and other connections; the paths reach only the listed project paths.",
+    );
+    expect(CEILING_WIDENING_TEXT).not.toMatch(/os-user/);
+  });
+
+  it("outside the sandbox on names the other connections when there are some", async () => {
+    const connect = (id: string) =>
+      writeCredential(join(connectionsDir(state), id), {
+        url: `https://${id}.test`,
+        connectUrl: `wss://${id}.test/device/connect`,
+        credential: "c",
+        orgId: "o",
+        deviceId: id,
+        dir: join(root, `work-${id}`),
+        mode: "os",
+        reconnectGraceSeconds: 120,
+        maxFrameBytes: 1048576,
+      });
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    connect("one");
+    const single = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
+    expect(single.code).toBe(0);
+    expect(single.out).toContain(CEILING_WIDENING_TEXT);
+    expect(single.out).not.toContain(CEILING_OTHER_CONNECTIONS_TEXT);
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    connect("two");
+    const two = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
+    expect(two.code).toBe(0);
+    const lines = two.out.split("\n");
+    expect(lines.indexOf(CEILING_OTHER_CONNECTIONS_TEXT)).toBe(
+      lines.indexOf(CEILING_WIDENING_TEXT) + 1,
+    );
+    // an unreadable connection counts too
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    rmSync(join(connectionsDir(state), "two"), { recursive: true });
+    mkdirSync(join(connectionsDir(state), "broken"), { recursive: true });
+    writeFileSync(join(connectionsDir(state), "broken", "credential.json"), "{", { mode: 0o600 });
+    const broken = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
+    expect(broken.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
+    // a widening that leaves outside the sandbox off does not name them
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    const net = await cli(["ceiling", "set", "--network", "open", "--yes"]);
+    expect(net.code).toBe(0);
+    expect(net.out).not.toContain(CEILING_OTHER_CONNECTIONS_TEXT);
   });
 });
 

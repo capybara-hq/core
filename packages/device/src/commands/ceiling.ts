@@ -1,11 +1,13 @@
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
+import { scanConnections } from "../connections.js";
 import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
 import { reachWidens } from "../exec/read-model.js";
 import { PolicyStore } from "../policy-store.js";
 import {
   type OwnerCeilingPolicy,
   POLICY_VERSION,
+  type Policy,
   PolicyVersionError,
   policyFormatName,
   policyPath,
@@ -29,9 +31,14 @@ export const CEILING_WIDENING_TEXT =
   "lets one approved call run as you, with your files, credentials and any network: the person, " +
   "the review model, or a Full access auto-grant approves each such call, and each one is " +
   "recorded. The open network lets sandboxed commands reach the public internet (private, local " +
-  "and metadata addresses stay closed). The os-user project reach lets sandboxed work and " +
-  "project browsing read projects outside the device's workspace. Conversations need fresh Full " +
-  "access consent either way.";
+  "and metadata addresses stay closed). The machine reach lets sandboxed work read the whole " +
+  "machine except secrets, this program's state and other connections; the paths reach only the " +
+  "listed project paths. Conversations need fresh Full access consent either way.";
+
+/** Printed after {@link CEILING_WIDENING_TEXT} when outside the sandbox turns on beside others. */
+export const CEILING_OTHER_CONNECTIONS_TEXT =
+  "Other connections exist on this machine: a call outside the sandbox runs as you and can read " +
+  "their working directories and state.";
 
 export const CEILING_NEEDS_YES =
   "Nothing changed. To widen the owner ceiling, add --yes (or answer y at the prompt).";
@@ -70,11 +77,21 @@ function strictRevision(stateDir: string, stateRoot: string, home: string): stri
 /** Thrown inside the locked update when the policy now on disk makes the target a widening. */
 class WideningNeedsConfirmation extends Error {}
 
-const describe = (c: OwnerCeilingPolicy): string[] => [
-  `Outside the sandbox: ${c.outsideSandbox ? "on" : "off"}`,
-  `Network: ${c.network}`,
-  `Project reach: ${c.projectReach}`,
+const describe = (p: Policy): string[] => [
+  `Outside the sandbox: ${p.ownerCeiling.outsideSandbox ? "on" : "off"}`,
+  `Network: ${p.ownerCeiling.network}`,
+  `Project reach: ${
+    p.ownerCeiling.projectReach === "paths"
+      ? `paths (${p.projectPaths.length} listed)`
+      : p.ownerCeiling.projectReach
+  }`,
 ];
+
+/** True when this machine has connections besides one, readable or not. */
+function otherConnectionsExist(stateRoot: string): boolean {
+  const { readable, unreadable } = scanConnections(stateRoot);
+  return readable.length + unreadable.length > 1;
+}
 
 /** True when `next` allows anything `cur` does not. */
 export function widens(cur: OwnerCeilingPolicy, next: OwnerCeilingPolicy): boolean {
@@ -129,6 +146,7 @@ export async function ceilingCommand(
         network: cur.ownerCeiling.network,
         allowedDomains: cur.allowedDomains,
         projectReach: cur.ownerCeiling.projectReach,
+        projectPaths: cur.projectPaths,
         // the strict reader's digest of the policy generation; null while logged out
         revision: strictRevision(stateDir, deps.stateRoot, deps.home),
       }),
@@ -136,7 +154,7 @@ export async function ceilingCommand(
     return 0;
   }
   if (cmd.action === "show") {
-    for (const line of describe(cur.ownerCeiling)) out(line);
+    for (const line of describe(cur)) out(line);
     out(
       `Sandbox allowlist: ${cur.allowedDomains.length > 0 ? cur.allowedDomains.join(", ") : "none"}` +
         (cur.ownerCeiling.network === "open" ? " (used while the network is an allowlist)" : ""),
@@ -169,8 +187,15 @@ export async function ceilingCommand(
     return 0;
   }
   let confirmed = cmd.yes === true;
-  if (widens(cur.ownerCeiling, target(cmd, cur.ownerCeiling))) {
+  const wanted = target(cmd, cur.ownerCeiling);
+  if (widens(cur.ownerCeiling, wanted)) {
     out(CEILING_WIDENING_TEXT);
+    if (
+      !cur.ownerCeiling.outsideSandbox &&
+      wanted.outsideSandbox &&
+      otherConnectionsExist(deps.stateRoot)
+    )
+      out(CEILING_OTHER_CONNECTIONS_TEXT);
     if (!confirmed) {
       if (deps.ask === undefined) {
         err(CEILING_NEEDS_YES);
@@ -185,7 +210,7 @@ export async function ceilingCommand(
     }
   }
   deps.beforeWrite?.();
-  let written: OwnerCeilingPolicy;
+  let written: Policy;
   let replaced: PolicyVersionError | undefined;
   try {
     // decided again on the policy under the lock: a narrowing that landed since the read above
@@ -201,7 +226,7 @@ export async function ceilingCommand(
           replaced = e;
         },
       },
-    ).ownerCeiling;
+    );
   } catch (e) {
     if (e instanceof WideningNeedsConfirmation) {
       out(CEILING_WIDENING_TEXT);
@@ -211,20 +236,23 @@ export async function ceilingCommand(
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
+  const ceiling = written.ownerCeiling;
   noteCliPolicyChange(
     stateDir,
-    `ceiling set outsideSandbox ${written.outsideSandbox ? "on" : "off"}, network ` +
-      `${written.network}, projectReach ${written.projectReach}`,
+    `ceiling set outsideSandbox ${ceiling.outsideSandbox ? "on" : "off"}, network ` +
+      `${ceiling.network}, projectReach ${ceiling.projectReach}`,
   );
   if (replaced !== undefined) out(policyReplacedNotice(replaced));
   out("This machine's owner ceiling is now:");
   for (const line of describe(written)) out(line);
-  if (written.network === "allowlist")
+  if (ceiling.network === "allowlist")
     out(
       "Sandboxed commands reach only the sandbox allowlist (capybara-device policy add " +
         "allowedDomains <host>).",
     );
-  if (written.projectReach !== "workspace")
+  if (ceiling.projectReach !== "workspace")
     out("Sandboxed work may reach selected projects outside the device's workspace.");
+  if (ceiling.projectReach === "paths" && written.projectPaths.length === 0)
+    out("No project paths are listed yet: capybara-device policy add projectPaths <dir>");
   return 0;
 }

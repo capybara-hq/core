@@ -13,6 +13,7 @@ beforeEach(() => {
   writePolicy(state, {
     ...DEFAULT_POLICY,
     ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "machine" },
+    projectPaths: ["/srv/a", "/srv/b"],
   });
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -30,6 +31,19 @@ const show = async () => {
 };
 
 describe("ceiling show --json", () => {
+  it("prints each project reach and the project paths", async () => {
+    for (const projectReach of ["machine", "paths", "workspace"] as const) {
+      writePolicy(state, {
+        ...DEFAULT_POLICY,
+        ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach },
+        projectPaths: ["/srv/a"],
+      });
+      const { code, out } = await show();
+      expect(code).toBe(0);
+      expect(JSON.parse(out[0] ?? "")).toMatchObject({ projectReach, projectPaths: ["/srv/a"] });
+    }
+  });
+
   it("prints one object with the ceiling; revision is null while logged out", async () => {
     const { code, out } = await show();
     expect(code).toBe(0);
@@ -39,6 +53,7 @@ describe("ceiling show --json", () => {
       network: "open",
       allowedDomains: [],
       projectReach: "machine",
+      projectPaths: ["/srv/a", "/srv/b"],
       revision: null,
     });
   });

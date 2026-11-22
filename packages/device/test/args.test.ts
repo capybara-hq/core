@@ -12,6 +12,24 @@ describe("parseCommandLine", () => {
     });
   });
 
+  it("ceiling set takes --project-reach machine|paths|workspace", () => {
+    for (const reach of ["machine", "paths", "workspace"] as const)
+      expect(parseCommandLine(["ceiling", "set", "--project-reach", reach])).toEqual({
+        command: "ceiling",
+        action: "set",
+        projectReach: reach,
+      });
+    let thrown: unknown;
+    try {
+      parseCommandLine(["ceiling", "set", "--project-reach", "os-user"]);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(UsageError);
+    expect((thrown as Error).message).toMatch(/--project-reach machine\|paths\|workspace/);
+    expect((thrown as Error).message).not.toMatch(/os-user/);
+  });
+
   it("parses --json for ceiling show and service status only", () => {
     expect(parseCommandLine(["ceiling", "show", "--json"])).toEqual({
       command: "ceiling",
@@ -141,6 +159,8 @@ describe("parseCommandLine", () => {
       parseCommandLine(["ceiling", "set", "--full-access", "allow", "--project-reach", "machine"]),
     ).toThrow(/--full-access is gone.*--outside-sandbox/);
     expect(USAGE).toMatch(/--outside-sandbox on\|off/);
+    expect(USAGE).toMatch(/--project-reach machine\|paths\|workspace/);
+    expect(USAGE).not.toMatch(/os-user/);
     expect(USAGE).toMatch(/--network open\|allowlist/);
     // the daily mode command is gone: the owner ceiling replaced it
     for (const argv of [["mode"], ["mode", "auto"], ["mode", "sandbox", "-y"]])

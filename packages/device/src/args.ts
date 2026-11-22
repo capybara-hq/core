@@ -42,7 +42,7 @@ export type Command =
       outsideSandbox?: boolean;
       /** `--network open|allowlist`; absent keeps the current value. */
       network?: DeviceNetworkMode;
-      /** `--project-reach workspace|os-user`; absent keeps the current value. */
+      /** `--project-reach machine|paths|workspace`; absent keeps the current value. */
       projectReach?: ProjectReach;
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
@@ -79,7 +79,7 @@ export const USAGE = `Usage:
                                   Show this machine's owner ceiling (outside the sandbox, network,
                                   project reach)
   capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-                              [--project-reach workspace|os-user] [--yes]
+                              [--project-reach machine|paths|workspace] [--yes]
                                   Change the owner ceiling (at least one field; the others stay);
                                   widening needs --yes or a y at the prompt
   capybara-device keep-awake [show | off | while-busy | connected] [--yes] [--json]
@@ -199,7 +199,7 @@ export function parseCommandLine(argv: string[]): Command {
       const [action, ...extra] = positionals;
       const usage =
         "usage: ceiling show | ceiling set [--outside-sandbox on|off] [--network open|allowlist] " +
-        "[--project-reach workspace|os-user] [--yes]";
+        "[--project-reach machine|paths|workspace] [--yes]";
       if (values["full-access"] !== undefined)
         throw new UsageError(
           `--full-access is gone: Full access always runs in the sandbox now; use --outside-sandbox on|off. ${usage}`,
