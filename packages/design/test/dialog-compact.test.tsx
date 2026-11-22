@@ -21,7 +21,9 @@ import { renderAtClass } from "./width";
 
 type Win = { width: number; coarse: boolean };
 /** A `matchMedia` stand-in for a window `width` wide with a coarse or a fine pointer. */
-function stubWindow(w: Win) {
+function stubWindow(start: Win) {
+  const w = { ...start };
+  const listeners = new Set<() => void>();
   vi.stubGlobal("matchMedia", (q: string) => {
     const one = (s: string) => {
       const t = s.trim();
@@ -36,8 +38,20 @@ function stubWindow(w: Win) {
     };
     // "a, b and (not c)": the touch query; evaluate its three features by hand.
     const matches = q.includes("not (any-pointer: fine)") ? w.coarse : q.split(",").some(one);
-    return { matches, media: q, addEventListener() {}, removeEventListener() {} };
+    return {
+      matches,
+      media: q,
+      addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+      removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+    };
   });
+  return {
+    /** Resizes the window and notifies every query's listeners. */
+    resize(width: number) {
+      w.width = width;
+      for (const fn of [...listeners]) fn();
+    },
+  };
 }
 
 const markerOf = () => (history.state as Record<string, unknown> | null)?.[OVERLAY_HISTORY_MARKER];
@@ -47,8 +61,9 @@ const markerIn = (call: unknown[] | undefined) =>
 const settled = () => new Promise<void>((r) => setTimeout(r, 0));
 const sheet = () => document.querySelector<HTMLElement>('[data-part="dialog-sheet"]');
 
+let win: ReturnType<typeof stubWindow>;
 beforeEach(() => {
-  stubWindow({ width: 390, coarse: true });
+  win = stubWindow({ width: 390, coarse: true });
   history.replaceState(null, "", "/");
 });
 afterEach(() => {
@@ -118,34 +133,51 @@ describe("Dialog on compact (390)", () => {
     );
     expect(s?.querySelector('[data-part="sheet-handle"]')).not.toBeNull();
     expect(screen.getByRole("dialog", { name: "重命名" })).toBe(s);
-    // the body and the footer lie in the sheet's body
+    // the body scrolls in the sheet's body; the footer stays under it, outside the scroller
     const body = s?.querySelector('[data-part="bsheet-body"]');
     expect(body?.textContent).toContain("正文");
-    expect(body?.querySelector(".cb-dialog-sheet-foot")?.textContent).toContain("保存");
+    expect(body?.textContent).not.toContain("保存");
+    const foot = s?.querySelector('[data-part="bsheet-foot"]');
+    expect(foot?.previousElementSibling).toBe(body);
+    // drawn primary first, so the tab order is the visual order (primary on top)
+    expect(Array.from(foot?.querySelectorAll("button") ?? []).map((b) => b.textContent)).toEqual([
+      "保存",
+      "取消",
+    ]);
   });
 
-  it("starts on its first field, quietly after a pointer, and hands focus back on close", async () => {
+  it("starts on the close even with a field, quietly after a pointer, and hands focus back", async () => {
     render(<Rename withField />);
     const trigger = screen.getByText("open");
     await userEvent.click(trigger);
-    const field = screen.getByLabelText("名称");
-    await waitFor(() => expect(document.activeElement).toBe(field));
-    expect(field.getAttribute("data-quiet-focus")).toBe("true");
+    const close = screen.getByRole("button", { name: "关闭" });
+    await waitFor(() => expect(document.activeElement).toBe(close));
+    expect(close.getAttribute("data-quiet-focus")).toBe("true");
     await userEvent.click(screen.getByText("取消"));
     await waitFor(() => expect(sheet()).toBeNull());
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("starts on the primary when it asks for no input", async () => {
+  it("starts on the close when it asks for no input", async () => {
     render(<Rename />);
     await userEvent.click(screen.getByText("open"));
-    await waitFor(() => expect(document.activeElement?.textContent).toBe("保存"));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "关闭" })),
+    );
   });
 
-  it("stacks the footer's buttons full width, the primary on top (CSS)", () => {
+  it("stacks the footer's buttons full width in a non-scrolling foot (CSS)", () => {
     const rules = parseCss(css("overlays.css"));
     const foot = rules.find((r) => r.at === null && r.selector === ".cb-dialog-sheet-foot");
-    expect(foot?.decls["flex-direction"]).toBe("column-reverse");
+    expect(foot?.decls["flex-direction"]).toBe("column");
+    const sheetRules = parseCss(css("conversation-page.css"));
+    const bfoot = sheetRules.find((r) => r.at === null && r.selector === ".cb-bsheet-foot");
+    expect(bfoot?.decls.flex).toBe("none");
+    expect(bfoot?.decls.padding).toContain("var(--cb-inset-bottom)");
+    const bodyAbove = sheetRules.find(
+      (r) => r.at === null && r.selector === ".cb-bsheet-body:has(+ .cb-bsheet-foot)",
+    );
+    expect(bodyAbove?.decls["padding-bottom"]).toBe("var(--cb-space-2)");
     const btn = rules.find(
       (r) => r.at === null && r.selector === ".cb-dialog-sheet-foot > .cb-btn",
     );
@@ -153,7 +185,7 @@ describe("Dialog on compact (390)", () => {
   });
 });
 
-/** A row whose action sheet's 删除 opens the confirmation. */
+/** A row whose action sheet's delete item opens the confirmation. */
 function Row() {
   const [actions, setActions] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -193,10 +225,10 @@ describe("DangerConfirm on compact (390)", () => {
       b.textContent,
       b.getAttribute("data-variant"),
     ]);
-    // DOM order cancel, confirm; column-reverse draws the destructive one on top (CSS above)
+    // the destructive one first (on top), then cancel: DOM order is the visual order
     expect(buttons).toEqual([
-      ["取消", "ghost"],
       ["删除", "danger"],
+      ["取消", "ghost"],
     ]);
     // one sentence of consequence, named as the sheet's description
     const desc = screen.getByText("删除后无法恢复。");
@@ -292,6 +324,34 @@ describe("DangerConfirm on compact (390)", () => {
     vi.mocked(history.back).mockRestore();
     act(() => history.back());
     await waitFor(() => expect(sheet()).toBeNull());
+  });
+});
+
+describe("Dialog across 600 while open", () => {
+  it("swaps forms with the caller's state, one history entry and focus inside", async () => {
+    render(<Delete />);
+    await userEvent.click(screen.getByText("open"));
+    await userEvent.type(screen.getByRole("textbox"), "研究");
+    expect(typeof markerOf()).toBe("string");
+    // to 1440: the centred dialog, the sheet's entry popped
+    act(() => win.resize(1440));
+    await waitFor(() => expect(document.querySelector(".cb-dialog")).not.toBeNull());
+    expect(sheet()).toBeNull();
+    await waitFor(() => expect(markerOf()).toBeUndefined());
+    await waitFor(() =>
+      expect(document.querySelector(".cb-dialog")?.contains(document.activeElement)).toBe(true),
+    );
+    expect(screen.getByRole<HTMLInputElement>("textbox").value).toBe("研究");
+    // back to 390: the sheet again, holding one entry
+    act(() => win.resize(390));
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    await waitFor(() => expect(typeof markerOf()).toBe("string"));
+    await waitFor(() => expect(sheet()?.contains(document.activeElement)).toBe(true));
+    expect(screen.getByRole<HTMLInputElement>("textbox").value).toBe("研究");
+    act(() => history.back());
+    await waitFor(() => expect(sheet()).toBeNull());
+    await settled();
+    expect(markerOf()).toBeUndefined();
   });
 });
 

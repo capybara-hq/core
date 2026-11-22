@@ -1,5 +1,14 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  Children,
+  Fragment,
+  isValidElement,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { FIELDS } from "../controls/a11y";
 import { Button, IconButton } from "../controls/index";
 import { Input } from "../controls/inputs";
@@ -19,8 +28,9 @@ export type DialogProps = {
   size?: 480 | 640 | 760 | 1060;
   footer: ReactNode;
   /**
-   * Where focus starts: by default the first field of the body when the dialog asks for input,
-   * else the primary action; `cancel` (a dangerous dialog) always starts on Cancel.
+   * Where focus starts: from 600 up by default the first field of the body when the dialog asks
+   * for input, else the primary action; below 600 the sheet's close (§6.59); `cancel` (a dangerous
+   * dialog) always starts on Cancel.
    */
   initialFocus?: "primary" | "cancel" | undefined;
   /**
@@ -28,8 +38,13 @@ export type DialogProps = {
    * title stay ordinary, only its destructive button is red (spec §6.7).
    */
   danger?: boolean;
-  /** 描述正文的元素 id，作为对话框的 aria-describedby。 */
+  /** The id of the element that describes the dialog (its `aria-describedby`). */
   describedBy?: string | undefined;
+  /**
+   * The body. The dialog is drawn anew when the window crosses 600 while it is open (a rotation:
+   * the sheet becomes the centred dialog), so the body and the footer keep no state of their own
+   * (an uncontrolled field's text would be lost): it lives with the caller (responsive spec §5.3).
+   */
   children?: ReactNode;
 };
 
@@ -62,6 +77,10 @@ function focusTarget(
  * model spec §2.2, D1; design spec §6.59): the sheet's handle and head (the centred title, the
  * round close), the body, then the footer's buttons full width, the primary on top. The two forms
  * differ in interaction (a drag, the system back), so each class draws its own (`ClassForms`).
+ *
+ * Both forms portal their content out of ClassForms' wrappers, so the `inert` it sets on the hidden
+ * copy before the prune does not reach it. Accepted: a portal draws nothing until it has mounted,
+ * after hydration, by which time only the matching copy is left (one dialog, one focus trap).
  */
 export function Dialog(props: DialogProps) {
   return <ClassForms compact={<DialogSheet {...props} />} wide={<CentredDialog {...props} />} />;
@@ -127,10 +146,23 @@ function CentredDialog({
 }
 
 /**
- * The compact form: a bottom sheet (§6.59) holding the dialog's body and footer. Focus starts
- * where the centred dialog's does, quietly after a pointer (§2.5), and returns to the opener; the
- * sheet holds one history entry on a compact touch window, so the system back closes it. The size
- * does not apply: a sheet spans the window.
+ * A footer's items drawn last first (a fragment's or an array's children), so the compact stack
+ * puts the primary on top with the tab order matching; `null` when the footer is one element.
+ */
+function reversedItems(footer: ReactNode): ReactNode[] | null {
+  if (Array.isArray(footer)) return Children.toArray(footer).reverse();
+  if (isValidElement<{ children?: ReactNode }>(footer) && footer.type === Fragment) {
+    return Children.toArray(footer.props.children).reverse();
+  }
+  return null;
+}
+
+/**
+ * The compact form: a bottom sheet (§6.59) with the dialog's body in its scrolling body and the
+ * footer's buttons, primary first, in its footer under it. Focus starts on the sheet's close
+ * (§6.59: no keyboard jumps up for a field), on Cancel for a dangerous dialog, quietly after a
+ * pointer (§2.5), and returns to the opener; the sheet holds one history entry on a compact touch
+ * window, so the system back closes it. The size does not apply: a sheet spans the window.
  */
 function DialogSheet({
   open,
@@ -143,7 +175,7 @@ function DialogSheet({
   children,
 }: DialogProps) {
   const footerRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const reversed = reversedItems(footer);
   return (
     <BottomSheet
       open={open}
@@ -151,21 +183,26 @@ function DialogSheet({
       title={title}
       part="dialog-sheet"
       describedBy={describedBy}
-      initialFocus={() => focusTarget(bodyRef.current, footerRef.current, initialFocus)}
+      initialFocus={() => {
+        if (initialFocus !== "cancel") return undefined;
+        const buttons = Array.from(
+          footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ?? [],
+        );
+        // Cancel comes first in the footer as given, so last once it is drawn reversed
+        return reversed ? buttons[buttons.length - 1] : buttons[0];
+      }}
+      footer={
+        <div className="cb-dialog-sheet-foot" ref={footerRef}>
+          {reversed ?? footer}
+        </div>
+      }
     >
       <div
         className="cb-dialog-sheet"
         data-cap-part="dialog"
         data-danger={danger ? "true" : undefined}
       >
-        <BoxScope kind="dialog">
-          <div className="cb-dialog-sheet-body" ref={bodyRef}>
-            {children}
-          </div>
-          <div className="cb-dialog-sheet-foot" ref={footerRef}>
-            {footer}
-          </div>
-        </BoxScope>
+        <BoxScope kind="dialog">{children}</BoxScope>
       </div>
     </BottomSheet>
   );

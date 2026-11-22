@@ -69,6 +69,10 @@ function whenSettled(push: () => void) {
   waiting.push(push);
   waitTimer ??= setTimeout(() => {
     waitTimer = null;
+    // The pops never landed: they are no longer counted as ours, or they would swallow the next
+    // real back (as the bound of popOverlaysThen does); a pick still waiting runs now.
+    selfPops = 0;
+    if (afterPop !== null) runAfterPop();
     runWaiting();
   }, POP_SETTLE_LIMIT_MS);
 }

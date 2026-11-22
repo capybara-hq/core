@@ -860,6 +860,16 @@ span.cb-title-btn {
   padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
     calc(var(--cb-space-4) + var(--cb-inset-bottom));
 }
+/* A sheet's footer (a dialog's buttons, §6.7): under the body, outside its scroll, over the
+   bottom inset; the body above it then keeps only a small gap. */
+.cb-bsheet-body:has(+ .cb-bsheet-foot) {
+  padding-bottom: var(--cb-space-2);
+}
+.cb-bsheet-foot {
+  flex: none;
+  padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
+    calc(var(--cb-space-4) + var(--cb-inset-bottom));
+}
 /* A Filter sheet's single-choice options (§6.7). */
 .cb-sheet-option {
   display: flex;

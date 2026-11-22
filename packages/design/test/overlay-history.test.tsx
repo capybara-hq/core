@@ -9,6 +9,7 @@ import {
   OVERLAY_HISTORY_MARKER,
   useOverlayHistory,
 } from "../src/index";
+import { POP_SETTLE_LIMIT_MS } from "../src/overlays/use-overlay-history";
 
 // Decision 25: opening an overlay on a compact touch window pushes one marked history entry; the
 // system back closes the top overlay; any other close pops the entry once.
@@ -380,5 +381,75 @@ describe("useOverlayHistory", () => {
     await userEvent.click(screen.getByText("open-drawer"));
     act(() => history.back());
     await waitFor(() => expect(hasDrawer()).toBe(false));
+  });
+});
+
+// A push while a pop of the module's own is in flight waits for it to land (an overlay that
+// replaces another, as a confirmation opened from an action sheet's pick): a browser runs back()
+// later, and a push made meanwhile would be the entry that back pops.
+describe("useOverlayHistory: a push waits for an in-flight pop", () => {
+  function Probe({ open, onClose }: { open: boolean; onClose: () => void }) {
+    useOverlayHistory(open, onClose);
+    return null;
+  }
+  function Two({ a, b, closeB = () => {} }: { a: boolean; b: boolean; closeB?: () => void }) {
+    return (
+      <>
+        <Probe open={a} onClose={() => {}} />
+        <Probe open={b} onClose={closeB} />
+      </>
+    );
+  }
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the bound pushes it when the pop's popstate never lands, and the next back still closes", async () => {
+    const closeB = vi.fn();
+    const { rerender } = render(<Two a b={false} closeB={closeB} />);
+    const back = vi.spyOn(history, "back").mockImplementation(() => {});
+    const push = vi.spyOn(history, "pushState");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await act(async () => rerender(<Two a={false} b closeB={closeB} />));
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(POP_SETTLE_LIMIT_MS - 1));
+    expect(push).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(push).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    back.mockRestore();
+    // the lost pop is no longer counted as ours: this back closes B
+    act(() => history.back());
+    await waitFor(() => expect(closeB).toHaveBeenCalledTimes(1));
+  });
+
+  it("an overlay closed before its deferred push pushes nothing", async () => {
+    const { rerender } = render(<Two a b={false} />);
+    const realBack = history.back.bind(history);
+    const held: (() => void)[] = [];
+    vi.spyOn(history, "back").mockImplementation(() => held.push(realBack));
+    const push = vi.spyOn(history, "pushState");
+    await act(async () => rerender(<Two a={false} b />));
+    await act(async () => rerender(<Two a={false} b={false} />));
+    expect(held).toHaveLength(1);
+    act(() => held[0]?.());
+    await waitFor(() => expect(markerOf()).toBeUndefined());
+    await settled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("a release that pops nothing (the page moved on) releases the waiting push at once", async () => {
+    const { rerender } = render(<Two a b={false} />);
+    const back = vi.spyOn(history, "back");
+    const push = vi.spyOn(history, "pushState");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await act(async () => {
+      history.replaceState(null, "", "/other");
+      rerender(<Two a={false} b />);
+    });
+    expect(back).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(typeof markerOf()).toBe("string");
   });
 });

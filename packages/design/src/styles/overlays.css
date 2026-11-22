@@ -123,14 +123,13 @@
   font-family: var(--cb-font-code);
   font-weight: 600;
 }
-/* A Dialog below 600 (interaction model spec §2.2, D1; §6.59): its body and footer lie in the
-   bottom sheet's body; the footer's buttons run full width, stacked with the primary (the last
-   one, a DangerConfirm's destructive button) on top and Cancel under it (§2.4). */
+/* A Dialog below 600 (interaction model spec §2.2, D1; §6.59): its body in the bottom sheet's
+   body, its footer in the sheet's footer; the buttons run full width, stacked, drawn primary first
+   (a DangerConfirm's destructive button) so Cancel lies under it (§2.4). */
 .cb-dialog-sheet-foot {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: var(--cb-space-2);
-  margin-top: var(--cb-space-4);
 }
 .cb-dialog-sheet-foot > .cb-btn {
   width: 100%;
