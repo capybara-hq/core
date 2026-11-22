@@ -295,6 +295,32 @@ describe("PageHeader compact form", () => {
     expect(doc.querySelector('[data-class-form] [data-head-primary="true"]')).toBeNull();
   });
 
+  it("in a shell the first paint keeps the head ⋯ until hydration hands the secondaries to the shell", () => {
+    // without JavaScript the shell's "…" cannot learn the actions, so the server render and the
+    // first client render draw the head menu in the compact copy (coordinator ruling 2026-11-22)
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const shell = shellStub();
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <ShellPageContext.Provider value={shell.register}>{head()}</ShellPageContext.Provider>
+      </DesignProvider>,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const actions = doc.querySelector('[data-part="page-header-actions"]') as Element;
+    expect(
+      actions.querySelector('[data-class-form="compact"] [aria-label="更多操作"]'),
+    ).not.toBeNull();
+    expect(actions.querySelector('[data-class-form="compact"]')?.textContent).not.toContain("新建");
+    // hydrated: the head's ⋯ is gone and the shell holds the actions
+    renderAtClass(
+      390,
+      <ShellPageContext.Provider value={shell.register}>{head()}</ShellPageContext.Provider>,
+    );
+    const header = screen.getByRole("banner");
+    expect(within(header).queryByRole("button", { name: "更多操作" })).toBeNull();
+    expect(shell.actions().map((a) => (a === "separator" ? a : a.label))).toEqual(["导入"]);
+  });
+
   it("a resize across 600 moves the secondaries", () => {
     const r = renderAtClass(1440, head());
     expect(screen.getByRole("button", { name: "导入" })).toBeTruthy();

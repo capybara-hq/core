@@ -327,13 +327,19 @@ export function PageHeader(p: PageHeaderProps) {
       {renderAction(a, true)}
     </span>
   );
-  // The secondaries per class (spec §5.4, D1, D9): wide draws them as buttons; compact sends them
-  // all to the shell's "…" or, outside a shell, folds them all into the head's ⋯ (also one).
+  // The secondaries per class (spec §5.4, D1, D9): wide draws them as buttons; compact folds them
+  // all into the head's ⋯ (also one), which a hydrated page in a shell drops because the shell's
+  // "…" holds them then. The server render and the first client render (`form` null) keep the
+  // head ⋯, so a page without JavaScript still reaches them (coordinator ruling 2026-11-22).
   const secondaries: ReactNode =
     rest.length === 0 ? null : (
       <ClassForms
         key="secondaries"
-        compact={hasShell ? null : renderAction({ label: t("shell.moreActions"), menu: folded })}
+        compact={
+          hasShell && form !== null
+            ? null
+            : renderAction({ label: t("shell.moreActions"), menu: folded })
+        }
         wide={rest.map((a) => renderAction(a))}
       />
     );
