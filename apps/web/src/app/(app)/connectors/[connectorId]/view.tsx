@@ -13,6 +13,7 @@ import {
   Icon,
   Input,
   KeyValue,
+  LinkButton,
   ObjectMark,
   Select,
   Stack,
@@ -29,6 +30,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { usePersonalConnections } from "../../../../components/ConnectionActions";
 import {
   buildCredential,
   buildOAuthClient,
@@ -37,6 +39,7 @@ import {
   EMPTY_OAUTH_CLIENT,
   OAuthClientFields,
 } from "../../../../components/ConnectorForm";
+import { useMemberGuides } from "../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../components/SetupGuideSection";
@@ -600,6 +603,7 @@ function CredentialsTab({
         <Text variant="prose" tone="muted">
           {t("credential.personalHint")}
         </Text>
+        <PersonalConnectionActions orgId={orgId} app={app} />
         <Stack direction="row">
           <Button onClick={() => router.push("/account/connections")}>
             {t("credential.openConnections")}
@@ -691,6 +695,61 @@ function CredentialsTab({
         )}
       </Stack>
     </Card>
+  );
+}
+
+/**
+ * The viewer's own connection actions, the ones the connector's card has in its button and ⋯ menu
+ * (connect, 权限, 如何连接, 重新连接, 更新凭据, 断开连接 / 清除凭据): every action of a card stays
+ * reachable on the object's detail page (responsive spec D3). The org admin's 修改配置 is this
+ * page's own tabs.
+ */
+function PersonalConnectionActions({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
+  const guides = useMemberGuides(orgId, [app]);
+  const connection = usePersonalConnections({
+    orgId,
+    admin: false,
+    page: "account",
+    connectors: [app],
+    guides,
+  });
+  const parts = connection.parts(app);
+  if (parts === null) return null;
+  type Item = {
+    label: string;
+    href?: string | undefined;
+    onSelect?: (() => void) | undefined;
+    loading?: boolean | undefined;
+    danger?: boolean | undefined;
+    disabled?: boolean | undefined;
+  };
+  const items: Item[] = [
+    ...(parts.primary !== undefined ? [parts.primary as Item] : []),
+    ...(parts.menu ?? []).flatMap((m) => (m === "separator" ? [] : [m as Item])),
+  ];
+  return (
+    <>
+      <Stack direction="row" wrap>
+        {items.map((item) =>
+          item.href !== undefined ? (
+            <LinkButton key={item.label} href={item.href}>
+              {item.label}
+            </LinkButton>
+          ) : (
+            <Button
+              key={item.label}
+              {...(item.loading === true ? { loading: true } : {})}
+              {...(item.danger === true ? { variant: "danger" as const } : {})}
+              disabled={item.disabled === true}
+              onClick={() => item.onSelect?.()}
+            >
+              {item.label}
+            </Button>
+          ),
+        )}
+      </Stack>
+      {connection.overlays}
+    </>
   );
 }
 
