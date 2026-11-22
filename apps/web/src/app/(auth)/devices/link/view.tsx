@@ -89,8 +89,8 @@ function Disclosure() {
  * `/devices/link`: confirm a machine's `capybara-device login` (AuthPage; environments spec §6.2,
  * §13.3). The code stands out for comparison with the terminal, then the machine (name, system,
  * program version), the org, the dial-in provider (hidden when the org has exactly one), the
- * device (新建设备 named after the machine by default, or one of the person's devices of that
- * provider in that org) and the disclosure; 确认连接 or 拒绝.
+ * device (a new device named after the machine by default, or one of the person's devices of that
+ * provider in that org) and the disclosure; then confirm or decline.
  * Without a code the page asks for the one the terminal shows.
  */
 export default function DeviceLinkView({

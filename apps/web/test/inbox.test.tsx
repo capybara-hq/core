@@ -506,8 +506,7 @@ describe("inbox: an approval that takes a file (platform web parity spec §5)", 
 describe("inbox: exact permission scope and superseded asks (Task 10D)", () => {
   const LONG = `/outside/${"very-long-directory-name-".repeat(12)}end`;
   const SCOPE = {
-    readDirectories: ["/outside/reports", LONG],
-    writeDirectories: ["/outside/reports"],
+    writeDirectories: ["/outside/reports", LONG],
     hosts: ["api.example.com", "files.example.org"],
   };
   const scoped = (over: Record<string, unknown> = {}) =>
@@ -542,8 +541,9 @@ describe("inbox: exact permission scope and superseded asks (Task 10D)", () => {
   it("shows the same exact directories, hosts and separate target file as the conversation", async () => {
     const { container } = await renderInbox({ [LIST]: () => json(200, inbox([scoped()])) });
     expect(await screen.findByText(en.approval.command.titleWrite)).toBeTruthy();
-    expect(values(container, "write")).toEqual(["/outside/reports"]);
-    expect(values(container, "read")).toEqual(["/outside/reports", LONG]);
+    expect(values(container, "write")).toEqual(["/outside/reports", LONG]);
+    // reads are never granted: no read list
+    expect(values(container, "read")).toEqual([]);
     expect(values(container, "hosts")).toEqual(["api.example.com", "files.example.org"]);
     expect(values(container, "target")).toEqual(["/outside/reports/report.txt"]);
     expect(screen.getByRole("button", { name: en.approval.approve })).toBeTruthy();

@@ -480,7 +480,8 @@ describe("staged connection (W3-M)", () => {
       programRunId: PROGRAM_RUN_ID,
       program: {
         version: "9.9.9",
-        os: process.platform === "darwin" ? "darwin" : "linux",
+        // the staged device's platform (the fixture defaults to darwin), not the test host's
+        os: "darwin",
         arch: process.arch,
         bootId: "boot-1",
       },

@@ -625,11 +625,7 @@ export function commandLeadOf(
   if (reach !== undefined) {
     if (from.kind === "read") return crossing("read");
     if (from.kind === "write") return crossing("write");
-    return crossing(
-      reach.readDirectories.length === 0 && reach.writeDirectories.length === 0
-        ? "host"
-        : "directory",
-    );
+    return crossing(reach.writeDirectories.length === 0 ? "host" : "directory");
   }
   return from.rule === null
     ? { key: "reviewModel", values: {}, detail: true }
@@ -720,7 +716,6 @@ function useCardDetails(
     const { permissionScope: reach, targetPath } = scope;
     const facts: ApprovalFact[] = [
       { label: t("permissionScope.write"), values: reach.writeDirectories },
-      { label: t("permissionScope.read"), values: reach.readDirectories },
       { label: t("permissionScope.hosts"), values: reach.hosts },
       ...(targetPath !== undefined && targetPath !== shownPath
         ? [{ label: t("permissionScope.target"), values: [targetPath] }]

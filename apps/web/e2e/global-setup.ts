@@ -24,7 +24,8 @@
  * test fixture `device-fake` (a real /bin/sh, instance directories under a temp dir, for tests
  * only; no bootstrap plugin provides devices), the platform's default device provider
  * (`devices.defaultProvider`); like every provider it serves only the orgs that switch it on,
- * which `signIn` does.
+ * which `signIn` does. The dial-in provider is the kernel test fixture `fake-dial-in` (protocol
+ * `fake-dial-in/1`), which device-connect.spec.ts switches on in the org for its sign-in.
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
  * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package
@@ -113,6 +114,8 @@ const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 const testingFixturesModule = join(repoRoot, "packages/testing/src/fixtures.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const deviceFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/device-fake/index.ts");
+/** Kernel test fixture `fake-dial-in`: a dial-in device provider, for the device sign-in case. */
+const fakeDialIn = join(repoRoot, "packages/kernel/test/fixtures/plugins/fake-dial-in/index.ts");
 /**
  * Kernel test fixture `hooks-probe` (policy hooks on model.request / tool.preExecute, configured
  * per org through its own route), for the hook-denial case of conversation-capabilities.spec.ts;
@@ -662,6 +665,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeWeb2,
         fakeConfigForm,
         deviceFake,
+        fakeDialIn,
         hooksProbe,
       ],
       extensionConfig: {

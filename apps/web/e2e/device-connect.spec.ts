@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { currentOrg } from "./support/chat";
 import { hydrated } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
@@ -14,7 +15,8 @@ const CSRF = { "X-Capybara-Csrf": "1" };
  * Connecting a machine (environments spec §13.3): the program's side (`authorize`, then `token`)
  * is driven over the public API like `capybara-device login` does; the person confirms the code on
  * `/devices/link`; the machine then shows on the 设备 page as a local device (offline: nothing
- * holds its connection in this spec), and is deleted again.
+ * holds its connection in this spec), and is deleted again. The dial-in provider is the kernel
+ * fixture `fake-dial-in` (the e2e stack loads it), switched on in the org for this case only.
  */
 test("connect a machine: authorize → confirm on /devices/link → token → the device page", async ({
   page,
@@ -22,6 +24,14 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
   baseURL,
 }) => {
   await signIn(page);
+  const orgId = await currentOrg(page);
+  const dialIn = (enabled: boolean) =>
+    page.request.put(`/api/v1/orgs/${orgId}/extensions/fake-dial-in`, {
+      headers: CSRF,
+      data: { enabled },
+    });
+  const on = await dialIn(true);
+  expect(on.status(), await on.text()).toBe(200);
   const run = Date.now().toString(36);
   const machine = `e2e-${run}`;
   // the program has no session: a context without the browser's cookies
@@ -35,7 +45,7 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
         os: "linux",
         arch: "x64",
         programVersion: "0.1.0",
-        protocol: "capybara-device/5",
+        protocol: "fake-dial-in/1",
       },
     });
     expect(authorize.status(), await authorize.text()).toBe(200);
@@ -103,5 +113,6 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
     await expect(page).toHaveURL(/\/devices$/);
   } finally {
     await program.dispose();
+    await dialIn(false);
   }
 });

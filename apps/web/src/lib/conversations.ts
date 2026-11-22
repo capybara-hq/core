@@ -97,11 +97,11 @@ export interface ReviewRecord {
 }
 
 /**
- * The exact reach a permission approval grants (permission profiles, Task 7): each directory with
- * its descendants (write directories may also be read) and each host. Shown whole, never clipped.
+ * The exact reach a permission approval grants (permission profiles, Task 7): each write directory
+ * with its descendants and each host. Reads are never granted (they are the device provider's
+ * rule). Shown whole, never clipped.
  */
 export interface PermissionScope {
-  readDirectories: string[];
   writeDirectories: string[];
   hosts: string[];
 }
