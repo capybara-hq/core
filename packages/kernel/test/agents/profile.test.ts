@@ -4,7 +4,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PRESET_IDS } from "../../src/agents/profile.js";
+import { PRESET_IDS, PresetAvatarSchema } from "../../src/agents/profile.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -182,6 +182,37 @@ describe("agent profile", () => {
       },
     });
     expect(ok.statusCode).toBe(200);
+  });
+
+  it("a preset id outside the built-ins and the key pattern is 400", async () => {
+    const { req, url, agent } = await setup();
+    for (const id of [
+      "dragon",
+      "brand/brand-grid",
+      "Brand/brand-grid/mascot",
+      "brand/brand-grid/mascot/extra",
+      "brand/brand-grid/-mascot",
+      `brand/brand-grid/${"m".repeat(33)}`,
+      "brand//mascot",
+    ]) {
+      const res = await req({
+        method: "PATCH",
+        url: `${url}/profile`,
+        payload: { avatar: { kind: "preset", id }, expectedUpdatedAt: agent.profile.updatedAt },
+      });
+      expect(res.statusCode, id).toBe(400);
+      expect(errCode(res), id).toBe("validation_failed");
+    }
+    // the shared input schema takes a built-in id or a theme preset key
+    // (`<plugin>/<theme file id>/<preset id>`); whether the key is offered is the service's check
+    for (const id of ["owl", "brand/brand-grid/mascot", "a/b/c-1"]) {
+      expect(PresetAvatarSchema.safeParse({ kind: "preset", id }).success, id).toBe(true);
+    }
+    // a stored theme avatar is never client input
+    expect(
+      PresetAvatarSchema.safeParse({ kind: "theme", themeId: "t", version: "1", preset: "m" })
+        .success,
+    ).toBe(false);
   });
 
   it("a stale expectedUpdatedAt is 409 agent.profile_conflict", async () => {

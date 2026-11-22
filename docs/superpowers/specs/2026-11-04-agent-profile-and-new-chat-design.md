@@ -80,6 +80,15 @@ The profile has three fields: `avatar`, `description` and `quickActions`.
   - The design spec §3 gains a rule: agent avatars may use the animal palettes. Nothing else in
     the UI may.
   - The palettes enter `tokens.json` with contrast checked on both themes.
+  - **Theme presets** (theme brand coverage design §4): the org's effective default theme may hide
+    built-ins (`hidden`) and add presets of its own. The picker shows the visible built-ins, then
+    the theme's; `GET /orgs/:orgId/themes` carries both as `avatars`.
+  - A theme preset is chosen by its key `<plugin>/<theme id>/<preset id>` and stored pinned as
+    `{ kind: "theme", themeId, version, preset, file }`, so it survives a later theme upgrade or
+    removal; reads return it with a `url`. A key the org's theme does not offer is refused with
+    `400 agent.avatar_unavailable`. A built-in id is always accepted, even when hidden.
+  - The random default on create is drawn over the visible built-ins plus the theme's presets,
+    and is `null` when none is offered. Existing agents are not rewritten.
 - **Upload**:
   - Formats: png, jpg or webp, at most 2 MB.
   - It is cropped to a square in the browser before upload.

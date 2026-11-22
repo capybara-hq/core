@@ -227,7 +227,7 @@ one year); a browser without them gets the built-in tokens (the stylesheet link 
 stylesheet already applies), no empty-state art (a failed mask image draws nothing) and the pixel
 capybara (§3 `Logo` fallback). Nothing renders broken.
 
-The root layout's `generateMetadata` applies the cookie's favicon as the parent icon, and the two
+The root layout's `generateMetadata` applies the favicon of `outsideTheme()` (the cookie's, else the platform default's; amended in PR 4 so the root 404 without a cookie shows the theme it draws) as the parent icon, and the two
 route-group layouts always set `icon` explicitly from their resolved theme (the theme's favicon, or
 the platform / built-in one), so a stale cookie never outlives a themed document's own answer.
 

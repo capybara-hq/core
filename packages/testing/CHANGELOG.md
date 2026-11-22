@@ -1,5 +1,23 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.32
+
+### Patch Changes
+
+- e612c53: startFakeOAuthServer: OIDC mode (ID tokens, JWKS, queued claims, tampering) and refreshTokenOnlyWith.
+- 52d631e: The fake-theme fixture gains a brand-complete theme (brand-kit): illustration, app icons, avatars.
+- Updated dependencies [9c46c28]
+- Updated dependencies [8ef62d6]
+- Updated dependencies [19d5e1a]
+- Updated dependencies [4f3c400]
+- Updated dependencies [bfb0fc0]
+- Updated dependencies [f32b8a2]
+- Updated dependencies [151ad3d]
+- Updated dependencies [ada3723]
+  - @capybara-hq/kernel@0.1.0-rc.66
+  - @capybara-hq/plugin-sdk@0.1.0-rc.50
+  - @capybara-hq/plugin-tools@0.1.0-rc.19
+
 ## 0.1.0-rc.31
 
 ### Minor Changes

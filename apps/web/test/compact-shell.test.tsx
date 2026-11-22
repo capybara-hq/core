@@ -122,7 +122,7 @@ describe("the drawer from the menu button", () => {
     // no management entry anywhere in the drawer
     for (const label of ["插件", "扩展", "渠道", "评测与运行", "组织设置", "管理后台"])
       expect(within(panel).queryByRole("link", { name: label })).toBeNull();
-    await userEvent.click(within(panel).getByRole("button", { name: "技能、连接器、设备…" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "更多" }));
     const level = document.querySelector('[data-part="drawer-level"]') as HTMLElement;
     expect(
       within(level)
@@ -131,12 +131,64 @@ describe("the drawer from the menu button", () => {
     ).toEqual(["/skills", "/connectors", "/devices"]);
   });
 
-  it("the account row opens the account sheet: 个人设置, appearance, status, sign out", async () => {
+  it("最近会话 reads my newest conversations by time, each with its agent and state", async () => {
+    const now = new Date().toISOString();
+    const row = (id: string, agentId: string, title: string, activity: string | null) => ({
+      id,
+      orgId: "o1",
+      agentId,
+      title,
+      titleSource: null,
+      deviceId: null,
+      activity,
+      lastSeq: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations": () =>
+        new Response(
+          JSON.stringify({
+            conversations: [
+              row("c2", "ag2", "部署失败排查", "waiting"),
+              row("c1", "ag1", "周报", null),
+            ],
+            next: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+    const agent = (id: string, name: string) => ({
+      agent: { id, name, profile: { avatar: null, updatedAt: now } },
+      latestAt: now,
+      conversations: [],
+      more: false,
+    });
+    renderFrame(
+      shellOf(ME, {
+        ...pending,
+        groups: { groups: [agent("ag2", "运维助手"), agent("ag1", "写作助手")], next: null },
+      }),
+    );
+    await userEvent.click(menuButton() as HTMLElement);
+    const panel = drawerEl() as HTMLElement;
+    const first = await within(panel).findByRole("link", { name: /部署失败排查/ });
+    expect(first.textContent).toContain("运维助手");
+    expect(first.querySelector('[data-part="convlist-state"]')?.textContent).toBe("等你处理");
+    const titles = [...panel.querySelectorAll('[data-part="convlist-title"]')].map(
+      (t) => t.textContent,
+    );
+    expect(titles).toEqual(["部署失败排查", "周报"]);
+    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/conversations?limit=30");
+  });
+
+  it("the account row opens the account sheet: the profile row, the org, status, sign out", async () => {
     renderFrame(shellOf(ME, pending));
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
     const sheet = document.querySelector('[data-part="account-sheet"]') as HTMLElement;
-    expect(within(sheet).getByRole("link", { name: "个人设置" }).getAttribute("href")).toBe(
+    // the profile row opens Personal settings (maintainer decision 2026-11-22)
+    expect(within(sheet).getByRole("link", { name: /Grant/ }).getAttribute("href")).toBe(
       "/account/profile",
     );
     expect(within(sheet).getByText("Acme")).toBeTruthy();
@@ -152,7 +204,8 @@ describe("the drawer from the menu button", () => {
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
     const sheet = document.querySelector('[data-part="account-sheet"]') as HTMLElement;
     const line = sheet.querySelector('[data-part="account-language"]') as HTMLElement;
-    await userEvent.click(within(line).getByRole("button", { name: /中文/ }));
+    expect(line.textContent).toContain("中文");
+    await userEvent.click(line);
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "English" }));
     await waitFor(() => expect(document.cookie).toContain("NEXT_LOCALE=en"));
     await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
@@ -167,7 +220,7 @@ describe("the drawer from the menu button", () => {
     renderFrame(shellOf(two, pending));
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
-    await userEvent.click(screen.getByRole("button", { name: "切换组织" }));
+    await userEvent.click(screen.getByRole("button", { name: /组织/ }));
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
     await waitFor(() => expect(drawerEl()).toBeNull());

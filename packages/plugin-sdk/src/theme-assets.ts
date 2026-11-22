@@ -1,12 +1,13 @@
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { isSafePackagePath } from "./plugin-package.js";
-import { type ParsedTheme, THEME_LIMITS } from "./theme.js";
+import { type ParsedTheme, THEME_LIMITS, type ThemeLogo } from "./theme.js";
 
 /**
- * Checks of a theme's asset files (themes spec §4.2-§4.4): woff2 fonts, PNG logos and the SVG
- * sanitizer. The sanitized SVG is served to every browser, so {@link sanitizeThemeSvg} is a trust
- * boundary: the output is re-serialized from the parsed tree (never the input bytes), elements are
- * allowlisted, every attribute value and text node is escaped on output.
+ * Checks of a theme's asset files (themes spec §4.2-§4.4, theme brand coverage spec §1): woff2
+ * fonts, PNG logos, app icons and avatars, and the SVG sanitizer. The sanitized SVG is served to
+ * every browser, so {@link sanitizeThemeSvg} is a trust boundary: the output is re-serialized from
+ * the parsed tree (never the input bytes), elements are allowlisted, every attribute value and text
+ * node is escaped on output.
  */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -351,17 +352,21 @@ export function checkWoff2(bytes: Uint8Array): string | undefined {
 
 /**
  * A PNG logo: the PNG signature, an `IHDR` first chunk with a height of at least
- * {@link THEME_LIMITS}`.pngMinHeight` pixels, and at most {@link THEME_LIMITS}`.pngBytes`.
+ * {@link THEME_LIMITS}`.pngMinHeight` pixels, and at most `maxBytes` (default
+ * {@link THEME_LIMITS}`.pngBytes`; an app icon allows {@link THEME_LIMITS}`.appIconBytes`).
  */
-export function checkPng(bytes: Uint8Array): string | undefined {
-  const r = readPng(bytes);
+export function checkPng(
+  bytes: Uint8Array,
+  maxBytes: number = THEME_LIMITS.pngBytes,
+): string | undefined {
+  const r = readPng(bytes, maxBytes);
   return typeof r === "string" ? r : undefined;
 }
 
 /** {@link checkPng}, returning the IHDR size when the PNG passes. */
-function readPng(bytes: Uint8Array): { width: number; height: number } | string {
-  if (bytes.length > THEME_LIMITS.pngBytes) {
-    return `PNG is larger than ${THEME_LIMITS.pngBytes} bytes`;
+function readPng(bytes: Uint8Array, maxBytes: number): { width: number; height: number } | string {
+  if (bytes.length > maxBytes) {
+    return `PNG is larger than ${maxBytes} bytes`;
   }
   if (!startsWith(bytes, PNG_SIG)) return "image is not a PNG file (no PNG signature)";
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -378,13 +383,56 @@ function readPng(bytes: Uint8Array): { width: number; height: number } | string 
 }
 
 /**
- * Resolves and checks the asset files of a parsed theme: each `fonts[].file` ({@link checkWoff2})
- * and `logo.mark` / `logo.favicon` (`.svg` through {@link sanitizeThemeSvg}, `.png` through
- * {@link checkPng}); the favicon must be square (SVG viewBox or PNG width = height). `files` holds the plugin's files keyed by their path without a leading
- * `./`; the returned `assets` (the sanitized SVG bytes, the other files unchanged) use the same
- * keys. Errors are `<field>: <reason>`, English; the total input size of the theme's distinct
- * assets must stay within {@link THEME_LIMITS}`.assetsBytes`. That limit is per plugin, so a
- * caller reading several themes also checks the sum over all of them (distinct paths).
+ * Every asset a parsed theme names, in order: `fonts.<i>.file`, `logo.mark`, `logo.favicon`,
+ * `logo.illustration`, `logo.appIcon`, `logo.appIconMaskable`, `avatars.<i>.file`. `ref` is the
+ * path as written (an optional leading `./`). The one list every reader of theme assets uses (the
+ * checks, packing, the catalog and delivery), so a file the theme does not name is never read or
+ * served.
+ */
+export function themeAssetRefs(theme: ParsedTheme): { field: string; ref: string }[] {
+  return refsWithKind(theme).map(({ field, ref }) => ({ field, ref }));
+}
+
+/** How a field's file is checked. */
+type AssetKind = "font" | "image" | "favicon" | "appIcon" | "avatar";
+
+/** The kind each logo field is checked as, in {@link themeAssetRefs} order. */
+const LOGO_ASSETS = [
+  ["mark", "image"],
+  ["favicon", "favicon"],
+  ["illustration", "image"],
+  ["appIcon", "appIcon"],
+  ["appIconMaskable", "appIcon"],
+] as const satisfies readonly (readonly [keyof ThemeLogo, AssetKind])[];
+
+/** {@link themeAssetRefs} with the kind each file is checked as. */
+function refsWithKind(theme: ParsedTheme): { field: string; ref: string; kind: AssetKind }[] {
+  const refs: { field: string; ref: string; kind: AssetKind }[] = [];
+  theme.fonts?.forEach((f, i) => {
+    refs.push({ field: `fonts.${i}.file`, ref: f.file, kind: "font" });
+  });
+  for (const [key, kind] of LOGO_ASSETS) {
+    const ref = theme.logo?.[key];
+    if (ref !== undefined) refs.push({ field: `logo.${key}`, ref, kind });
+  }
+  theme.avatars?.forEach((a, i) => {
+    refs.push({ field: `avatars.${i}.file`, ref: a.file, kind: "avatar" });
+  });
+  return refs;
+}
+
+/**
+ * Resolves and checks the asset files of a parsed theme ({@link themeAssetRefs}), each by its
+ * kind: `fonts[].file` ({@link checkWoff2}); `logo.mark` and `logo.illustration` (`.svg` through
+ * {@link sanitizeThemeSvg}, `.png` through {@link checkPng}); `logo.favicon` and `avatars[].file`
+ * likewise and square (SVG viewBox or PNG width = height); `logo.appIcon` and
+ * `logo.appIconMaskable` PNG only, square, at least {@link THEME_LIMITS}`.appIconMinSize` px and at
+ * most {@link THEME_LIMITS}`.appIconBytes`. `files` holds the plugin's files keyed by their path
+ * without a leading `./`; the returned `assets` (the sanitized SVG bytes, the other files
+ * unchanged) use the same keys. Errors are `<field>: <reason>`, English; the total input size of
+ * the theme's distinct assets must stay within {@link THEME_LIMITS}`.assetsBytes`. That limit is
+ * per plugin, so a caller reading several themes also checks the sum over all of them (distinct
+ * paths).
  */
 export function validateThemeAssets(
   theme: ParsedTheme,
@@ -415,26 +463,44 @@ export function validateThemeAssets(
   };
 
   const font = (b: Uint8Array) => checkWoff2(b) ?? b;
-  const image = (ref: string, square: boolean) => (b: Uint8Array) => {
-    const notSquare = (w: number, h: number) => `favicon must be square, not ${w} x ${h}`;
+  const notSquare = (what: string, w: number, h: number) =>
+    `${what} must be square, not ${w} x ${h}`;
+  /** A logo image (`mark` rules); `square` names what must be square, or is undefined. */
+  const image = (ref: string, square: string | undefined) => (b: Uint8Array) => {
     if (/\.png$/i.test(ref)) {
-      const r = readPng(b);
+      const r = readPng(b, THEME_LIMITS.pngBytes);
       if (typeof r === "string") return r;
-      return square && r.width !== r.height ? notSquare(r.width, r.height) : b;
+      return square !== undefined && r.width !== r.height
+        ? notSquare(square, r.width, r.height)
+        : b;
     }
     if (!/\.svg$/i.test(ref)) return "must be a .svg or .png file";
     const r = sanitize(b);
     if ("error" in r) return r.error;
     const [, , w, h] = r.viewBox;
-    return square && w !== h ? notSquare(w, h) : new TextEncoder().encode(r.svg);
+    return square !== undefined && w !== h
+      ? notSquare(square, w, h)
+      : new TextEncoder().encode(r.svg);
+  };
+  const appIcon = (ref: string) => (b: Uint8Array) => {
+    if (!/\.png$/i.test(ref)) return "must be a .png file";
+    const r = readPng(b, THEME_LIMITS.appIconBytes);
+    if (typeof r === "string") return r;
+    if (r.width !== r.height) return notSquare("app icon", r.width, r.height);
+    if (r.width < THEME_LIMITS.appIconMinSize) {
+      return `app icon must be at least ${THEME_LIMITS.appIconMinSize} px, not ${r.width}`;
+    }
+    return b;
   };
 
-  theme.fonts?.forEach((f, i) => {
-    resolve(`fonts.${i}.file`, f.file, font);
-  });
-  for (const key of ["mark", "favicon"] as const) {
-    const ref = theme.logo?.[key];
-    if (ref !== undefined) resolve(`logo.${key}`, ref, image(ref, key === "favicon"));
+  for (const { field, ref, kind } of refsWithKind(theme)) {
+    const check =
+      kind === "font"
+        ? font
+        : kind === "appIcon"
+          ? appIcon(ref)
+          : image(ref, kind === "favicon" ? "favicon" : kind === "avatar" ? "avatar" : undefined);
+    resolve(field, ref, check);
   }
 
   let total = 0;

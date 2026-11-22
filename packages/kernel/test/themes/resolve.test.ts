@@ -1,7 +1,9 @@
+import { THEME_TOKENS } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { THEME_CSS_REVISION } from "../../src/themes/theme-state.js";
 import { ThemesService } from "../../src/themes/themes.service.js";
-import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { pluginTgz } from "../helpers/plugin-packages.js";
 import {
   clearThemeLevels,
   importTheme,
@@ -64,7 +66,12 @@ describe("theme resolution", () => {
         markUrl: `/api/v1/themes/${a}/1/assets/brand%2Flogo.svg`,
         wordmark: "NEON GRID",
         faviconUrl: null,
+        illustrationUrl: null,
+        appIconUrl: null,
+        appIconMaskableUrl: null,
       },
+      decoration: "dither",
+      background: { dark: "#05070D" },
       cssUrl: `/api/v1/themes/${a}/1/r${THEME_CSS_REVISION}/theme.css`,
     });
   });
@@ -128,6 +135,58 @@ describe("theme resolution", () => {
     expect(boss.json().resolved).toMatchObject({ id: a });
   });
 
+  it("GET /orgs/:orgId/themes and GET /platform/theme carry decoration and background", async () => {
+    // A two-scheme theme that turns the decoration off and overrides only the dark bg
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: { name: "plain" },
+        files: {
+          "themes/plain.json": JSON.stringify({
+            name: { en: "Plain", zh: "素" },
+            schemes: { dark: { color: { bg: "#101010" } }, light: { radius: { md: 4 } } },
+            decoration: "none",
+          }),
+        },
+      }),
+    );
+    const d = (
+      await env.db
+        .selectFrom("platform_themes")
+        .select("id")
+        .where("catalog_item_id", "=", itemId)
+        .executeTakeFirstOrThrow()
+    ).id;
+    await setThemeScope(env, d, "all");
+    await writeUiTheme(env, d);
+
+    const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/themes` });
+    expect(r.statusCode, r.body).toBe(200);
+    const listed = (
+      r.json() as { themes: { id: string; decoration: string; background: object }[] }
+    ).themes;
+    const of = (id: string) => listed.find((t) => t.id === id);
+    // a: dark only with its own bg; b: both schemes, no bg override (the built-in values)
+    expect(of(a)).toMatchObject({ decoration: "dither", background: { dark: "#05070D" } });
+    expect(of(a)?.background).not.toHaveProperty("light");
+    expect(of(b)).toMatchObject({
+      decoration: "dither",
+      background: { dark: THEME_TOKENS.color.bg.dark, light: THEME_TOKENS.color.bg.light },
+    });
+    expect(of(d)).toMatchObject({
+      decoration: "none",
+      background: { dark: "#101010", light: THEME_TOKENS.color.bg.light },
+    });
+
+    const p = await env.k.http.inject({ method: "GET", url: "/api/v1/platform/theme" });
+    expect(p.statusCode, p.body).toBe(200);
+    expect(p.json()).toMatchObject({
+      id: d,
+      decoration: "none",
+      background: { dark: "#101010", light: THEME_TOKENS.color.bg.light },
+    });
+  });
+
   it("the platform default for anonymous pages, only while it is eligible", async () => {
     await writeUiTheme(env, c);
     expect((await themes.platformDefault())?.id).toBe(c);
@@ -151,5 +210,162 @@ describe("ThemeRef.key", () => {
     expect((await themes.listForOrg(env.orgId)).map((t) => t.key)).toEqual(["neon/neon-grid"]);
     expect((await themes.platformDefault())?.key).toBe("neon/neon-grid");
     expect((await themes.resolve(env.orgId, env.memId))?.key).toBe("neon/neon-grid");
+  });
+});
+
+describe("theme avatar presets", () => {
+  const SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
+
+  /**
+   * Imports plugin `plugin` with theme `themeId`: two avatar presets and two hidden built-ins
+   * (listed out of the built-in order). Returns the theme's `platform_themes` id, scope `all`.
+   */
+  async function importAvatarTheme(plugin: string, themeId: string): Promise<string> {
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: { name: plugin },
+        files: {
+          [`themes/${themeId}.json`]: JSON.stringify({
+            name: { en: `${themeId} en`, zh: `${themeId} zh` },
+            schemes: { dark: { radius: { sm: 2 } } },
+            avatars: [
+              { id: "mascot", name: { en: "Mascot", zh: "吉祥物" }, file: "./avatars/mascot.svg" },
+              { id: "robot-2", name: { en: "Robot" }, file: "avatars/robot.svg" },
+            ],
+            hideAvatarPresets: ["panda", "capybara"],
+          }),
+          "avatars/mascot.svg": SVG,
+          "avatars/robot.svg": SVG,
+        },
+      }),
+    );
+    const { id } = await env.db
+      .selectFrom("platform_themes")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    await setThemeScope(env, id, "all");
+    return id;
+  }
+
+  let a: string;
+  let b: string;
+
+  beforeEach(async () => {
+    await resetOrgCatalog(env);
+    await clearThemeLevels(env);
+    await writeUiTheme(env, null);
+    a = await importAvatarTheme("brand", "brand-grid");
+    b = await importAvatarTheme("other", "other-paper");
+  });
+
+  const keys = (r: { presets: { key: string }[] }) => r.presets.map((p) => p.key);
+
+  it("avatars come from the org default, not the viewer's pick", async () => {
+    await env.db.updateTable("accounts").set({ theme: b }).where("id", "=", env.memId).execute();
+    await writeOrgTheme(env, env.orgId, { id: a, personal: "allowed" });
+    // the viewer resolves to their own pick, but the avatars are the org default's
+    expect((await themes.resolve(env.orgId, env.memId))?.id).toBe(b);
+    expect((await themes.orgDefault(env.orgId))?.id).toBe(a);
+    expect(keys(await themes.avatarPresets(env.orgId))).toEqual([
+      "brand/brand-grid/mascot",
+      "brand/brand-grid/robot-2",
+    ]);
+    const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/themes` });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { resolved: { id: string }; avatars: { presets: { key: string }[] } };
+    expect(body.resolved.id).toBe(b);
+    expect(keys(body.avatars)).toEqual(["brand/brand-grid/mascot", "brand/brand-grid/robot-2"]);
+  });
+
+  it("the platform default applies when the org follows it", async () => {
+    await writeUiTheme(env, b);
+    expect((await themes.orgDefault(env.orgId))?.id).toBe(b);
+    expect(keys(await themes.avatarPresets(env.orgId))).toEqual([
+      "other/other-paper/mascot",
+      "other/other-paper/robot-2",
+    ]);
+  });
+
+  it("a default theme that is off in the org gives no presets and hides nothing", async () => {
+    await writeOrgTheme(env, env.orgId, { id: a, personal: "allowed" });
+    await writeUiTheme(env, b);
+    await setThemeSwitch(env, env.orgId, a, false);
+    await setThemeSwitch(env, env.orgId, b, false);
+    expect(await themes.orgDefault(env.orgId)).toBeNull();
+    expect(await themes.avatarPresets(env.orgId)).toEqual({ hidden: [], presets: [] });
+    expect((await themes.forOrg(env.orgId, env.memId)).avatars).toEqual({
+      hidden: [],
+      presets: [],
+    });
+    // the platform default takes over once the org's default is off but the platform's is on
+    await setThemeSwitch(env, env.orgId, b, true);
+    expect((await themes.orgDefault(env.orgId))?.id).toBe(b);
+  });
+
+  it("keys are plugin/theme/preset and urls are delivery URLs", async () => {
+    await writeOrgTheme(env, env.orgId, { id: a, personal: "locked" });
+    expect(await themes.avatarPresets(env.orgId)).toEqual({
+      // in the built-in order, not the theme file's
+      hidden: ["capybara", "panda"],
+      presets: [
+        {
+          key: "brand/brand-grid/mascot",
+          name: { en: "Mascot", zh: "吉祥物" },
+          url: `/api/v1/themes/${a}/1/assets/avatars%2Fmascot.svg`,
+          themeId: a,
+          version: "1",
+          preset: "mascot",
+          file: "./avatars/mascot.svg",
+        },
+        {
+          key: "brand/brand-grid/robot-2",
+          // no zh: readers fall back to en
+          name: { en: "Robot", zh: "Robot" },
+          url: `/api/v1/themes/${a}/1/assets/avatars%2Frobot.svg`,
+          themeId: a,
+          version: "1",
+          preset: "robot-2",
+          file: "avatars/robot.svg",
+        },
+      ],
+    });
+    // the public listing carries only key, name and url
+    expect((await themes.forOrg(env.orgId, null)).avatars).toEqual({
+      hidden: ["capybara", "panda"],
+      presets: [
+        {
+          key: "brand/brand-grid/mascot",
+          name: { en: "Mascot", zh: "吉祥物" },
+          url: `/api/v1/themes/${a}/1/assets/avatars%2Fmascot.svg`,
+        },
+        {
+          key: "brand/brand-grid/robot-2",
+          name: { en: "Robot", zh: "Robot" },
+          url: `/api/v1/themes/${a}/1/assets/avatars%2Frobot.svg`,
+        },
+      ],
+    });
+    // the delivery route serves the file at that URL
+    const f = await env.mem({
+      method: "GET",
+      url: `/api/v1/themes/${a}/1/assets/avatars%2Fmascot.svg`,
+    });
+    expect(f.statusCode, f.body).toBe(200);
+  });
+
+  it("a theme row without provenance offers no presets but still hides built-ins", async () => {
+    await env.db
+      .updateTable("platform_themes")
+      .set({ plugin_name: null })
+      .where("id", "=", a)
+      .execute();
+    await writeOrgTheme(env, env.orgId, { id: a, personal: "allowed" });
+    expect(await themes.avatarPresets(env.orgId)).toEqual({
+      hidden: ["capybara", "panda"],
+      presets: [],
+    });
   });
 });

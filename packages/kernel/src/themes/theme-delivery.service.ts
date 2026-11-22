@@ -1,4 +1,4 @@
-import { isThemeAssetPath, type ParsedTheme } from "@capybara-hq/plugin-sdk";
+import { isThemeAssetPath, type ParsedTheme, themeAssetRefs } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -14,12 +14,32 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VERSION_RE = /^[1-9]\d{0,9}$/;
 const INT4_MAX = 2_147_483_647;
 
-/** The content type of each asset kind a theme names (fonts and logos). */
+/** The content type of each asset kind a theme names (fonts, logo and avatar files). */
 const ASSET_TYPES: readonly [RegExp, string][] = [
   [/\.woff2$/i, "font/woff2"],
   [/\.svg$/i, "image/svg+xml"],
   [/\.png$/i, "image/png"],
 ];
+
+/**
+ * The asset paths a stored definition names ({@link themeAssetRefs}: fonts, logo files, avatar
+ * files), read defensively: the row is not re-parsed, so a field of the wrong shape names nothing
+ * rather than failing the request.
+ */
+export function storedAssetRefs(def: ParsedTheme): string[] {
+  const isObject = (v: unknown): boolean => v !== null && typeof v === "object";
+  if (!isObject(def)) return [];
+  const { fonts, logo, avatars, ...rest } = def;
+  const shaped: ParsedTheme = {
+    ...rest,
+    ...(Array.isArray(fonts) && { fonts: fonts.filter(isObject) }),
+    ...(isObject(logo) && { logo }),
+    ...(Array.isArray(avatars) && { avatars: avatars.filter(isObject) }),
+  };
+  return themeAssetRefs(shaped)
+    .map((r) => r.ref)
+    .filter((p): p is string => typeof p === "string");
+}
 
 /** A theme asset's bytes and content type. */
 export interface ThemeAsset {
@@ -92,19 +112,14 @@ export class ThemeDeliveryService {
 
   /**
    * Asset `file` (a path inside the plugin, as stored: `fonts/MiSans.woff2`) of version `version`
-   * of theme `id`: only a font or logo the version's definition names. Unknown theme, version or
-   * file: 404 `theme.not_found`.
+   * of theme `id`: only a file the version's definition names ({@link themeAssetRefs}: fonts, logo
+   * files, avatar files), matched exactly against the stored path; never another file of the
+   * stored package. Unknown theme, version or file: 404 `theme.not_found`.
    */
   async asset(id: string, version: string, file: string): Promise<ThemeAsset> {
     const v = await this.version(id, version);
     const def = v.definition;
-    const named = [
-      ...(Array.isArray(def.fonts) ? def.fonts.map((f) => f?.file) : []),
-      def.logo?.mark,
-      def.logo?.favicon,
-    ]
-      .filter((p): p is string => typeof p === "string")
-      .map(packagePath);
+    const named = storedAssetRefs(def).map(packagePath);
     const type = ASSET_TYPES.find(([re]) => re.test(file))?.[1];
     if (
       v.objectPrefix === null ||

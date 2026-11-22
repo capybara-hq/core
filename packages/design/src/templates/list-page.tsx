@@ -6,6 +6,8 @@ import {
   EmptyState,
   type EmptyStateProps,
   ObjectList,
+  type ScopeChipOption,
+  ScopeChips,
   Skeleton,
   SkeletonGroup,
 } from "../display/index";
@@ -40,6 +42,18 @@ export type ListLoading =
     };
 
 /**
+ * The list's view choice (responsive system spec §2.2 level 2, §4): a subset of the set the head's
+ * tabs choose, drawn as a row of scope chips (the minimal form this line needs; phase 0 draws it as
+ * a Segmented on wider windows when it has few options).
+ */
+export type ListScope = {
+  label: string;
+  value: string;
+  options: ScopeChipOption[];
+  onChange(value: string): void;
+};
+
+/**
  * T2 List: Rail + Content (Single without a rail), list width; StatCards from `metrics`.
  * `variant="objects"` wraps the children (ObjectRows) in one ObjectList panel; `cards` lays the
  * children (ObjectCards) out in one CardGrid on the page ground (spec §6.34); `records` (default)
@@ -53,7 +67,8 @@ export type ListLoading =
  * busy announcement.
  *
  * One primary per screen (spec §5.2): while `empty` is drawn with a primary action, the head's
- * primary is left out and the empty state carries it.
+ * primary is left out and the empty state carries it. Below 600 the head's primary is restyled as
+ * the floating action button (responsive system spec §2.5; CSS only, the same element).
  */
 export function ListPage({
   header,
@@ -65,6 +80,7 @@ export function ListPage({
   empty,
   loading: loadingProp = false,
   filters,
+  scope,
   children,
 }: {
   header: PageHeaderProps;
@@ -82,6 +98,8 @@ export function ListPage({
    * views (the marketplace entries' sources). Kept while loading.
    */
   filters?: ReactNode;
+  /** The view choice (level 2): scope chips above the list. Kept while loading. */
+  scope?: ListScope;
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -111,6 +129,9 @@ export function ListPage({
           actions: withTabs.actions.filter((a) => !("variant" in a && a.variant === "primary")),
         }
       : withTabs;
+  // Below 600 the head's primary is restyled as the floating action button (responsive system
+  // spec §2.5, §5.4): CSS only, keyed on `data-fab`, so nothing differs between renders.
+  const fab = (onePrimary.actions ?? []).some((a) => "variant" in a && a.variant === "primary");
   const head = callout ? { ...onePrimary, notice: <Callout {...callout} /> } : onePrimary;
   const loadingList =
     variant === "objects" ? (
@@ -153,6 +174,16 @@ export function ListPage({
         <WithStats header={header}>
           <LoadingStats count={slots} />
           {filters ? <div className="cb-list-filters">{filters}</div> : null}
+          {scope ? (
+            <div className="cb-list-scope" data-part="list-scope">
+              <ScopeChips
+                label={scope.label}
+                value={scope.value}
+                options={scope.options}
+                onChange={scope.onChange}
+              />
+            </div>
+          ) : null}
           {content}
         </WithStats>
       </Body>
@@ -160,7 +191,12 @@ export function ListPage({
     </>
   );
   return (
-    <div className="cb-template" data-template="ListPage" data-width="content">
+    <div
+      className="cb-template"
+      data-template="ListPage"
+      data-width="content"
+      data-fab={fab ? "true" : undefined}
+    >
       <SkeletonGroup label={header.title || t("table.loading")} active={loading}>
         {page}
       </SkeletonGroup>

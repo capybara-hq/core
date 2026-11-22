@@ -19,7 +19,7 @@ import { AgentDefinitionSchema, type ModelRef } from "../../agents/definition.js
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
-import { PresetAvatarSchema, type ProfilePatch } from "../../agents/profile.js";
+import { isBuiltinPresetId, PresetAvatarSchema, type ProfilePatch } from "../../agents/profile.js";
 import { ReadinessService } from "../../agents/readiness.service.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import {
@@ -30,6 +30,7 @@ import {
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { ConnectorsService } from "../../tools/connectors.service.js";
 import { FileRefSchema } from "../file-ref.js";
 import {
@@ -41,7 +42,7 @@ import {
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { roleOf } from "./role.js";
-import { named, orElse } from "./summary.js";
+import { localized, named, orElse } from "./summary.js";
 
 const AgentId = AgentPathParams.shape.agentId.max(100);
 /** The request's definition (create form): the operations tighten its fields, never redeclare them. */
@@ -94,13 +95,17 @@ const PresetAvatar = PresetAvatarSchema;
  */
 const FileAvatar = z.object({ kind: z.literal("file"), file: FileRefSchema }).strict();
 
-/** One change of `agents.update-profile` as the card says it. */
+/**
+ * One change of `agents.update-profile` as the card says it. `presetName`: a theme preset's name
+ * (the card names it rather than its key); a built-in or unknown preset shows its id.
+ */
 function profileChanges(
   i: {
     avatar?: { kind: "preset"; id: string } | { kind: "file" } | null | undefined;
     quickActions?: { title: string }[] | undefined;
   },
   fileName?: string,
+  presetName?: { zh: string; en: string },
 ): { zh: string[]; en: string[] } {
   const zh: string[] = [];
   const en: string[] = [];
@@ -113,8 +118,8 @@ function profileChanges(
     zh.push(`头像设为图片「${n}」`);
     en.push(`set the avatar to the image "${n}"`);
   } else if (i.avatar !== undefined) {
-    zh.push(`头像设为预设「${i.avatar.id}」`);
-    en.push(`set the avatar to preset "${i.avatar.id}"`);
+    zh.push(`头像设为预设「${presetName?.zh ?? i.avatar.id}」`);
+    en.push(`set the avatar to preset "${presetName?.en ?? i.avatar.id}"`);
   }
   if (i.quickActions !== undefined && i.quickActions.length === 0) {
     zh.push("清空快捷操作");
@@ -158,6 +163,8 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(ReadinessService) private readonly readiness: ReadinessService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
+    /** The org's theme avatar presets: the card names a theme preset by its name. */
+    @Inject(ThemesService) private readonly themes: Pick<ThemesService, "avatarPresets">,
   ) {}
 
   /**
@@ -399,7 +406,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update-profile",
         description:
-          'Change how an agent you may edit looks to people: its avatar (one of the preset animals; an image of this conversation as { kind: "file", file: { fileId } }, e.g. a generated image, an attachment or a delivered file, PNG, JPEG or WebP up to 2 MiB, which the person sees on the card; or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A change to your own private agent may be remembered by the person (never one that takes an image); a change to a shared agent is confirmed every time.',
+          'Change how an agent you may edit looks to people: its avatar (a preset: one of the built-in animals by id, or a theme preset by the key that themes.list returns under avatars.presets[].key, offered only while that theme is the default theme of the org; an image of this conversation as { kind: "file", file: { fileId } }, e.g. a generated image, an attachment or a delivered file, PNG, JPEG or WebP up to 2 MiB, which the person sees on the card; or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A change to your own private agent may be remembered by the person (never one that takes an image); a change to a shared agent is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
@@ -450,6 +457,10 @@ export class AgentsOperations implements OnModuleInit {
             next: "Someone changed the profile while you were waiting: read it again with agents.get, then call again.",
           },
           {
+            code: "agent.avatar_unavailable",
+            next: "Choose one of the presets the picker shows: a built-in animal id, or a key from themes.list avatars.presets[].key of the org's current default theme.",
+          },
+          {
             code: "attachment.too_many_pending",
             next: "Too many avatar images are stored and not used yet; wait a day for them to expire, or save one of them.",
           },
@@ -460,7 +471,10 @@ export class AgentsOperations implements OnModuleInit {
         ],
         precheck: async (i, ctx) => {
           const { agent: _a, ...check } = await this.editCheck(i.agentId, ctx);
-          return check;
+          if (!check.ok || i.avatar?.kind !== "preset") return check;
+          // a theme preset key the org's default theme does not offer: refused before the card
+          const avatar = i.avatar;
+          return precheckBy(() => this.agents.resolveAvatarInput(ctx.orgId, avatar));
         },
         fileRef: (i) =>
           i.avatar?.kind === "file"
@@ -478,7 +492,16 @@ export class AgentsOperations implements OnModuleInit {
             null,
           );
           const n = named(a?.definition.name ?? i.agentId);
-          const c = profileChanges(i, ctx.file?.name);
+          let presetName: { zh: string; en: string } | undefined;
+          if (i.avatar?.kind === "preset" && !isBuiltinPresetId(i.avatar.id)) {
+            const key = i.avatar.id;
+            // a summary never fails on a name: a read failure shows the key
+            const offered = await orElse(() => this.themes.avatarPresets(ctx.orgId), null);
+            const p = offered?.presets.find((x) => x.key === key);
+            // the name in both languages (a missing zh already reads as en), else the key
+            if (p !== undefined) presetName = localized(p.name, key);
+          }
+          const c = profileChanges(i, ctx.file?.name, presetName);
           return a?.visibility === "private"
             ? {
                 zh: `修改私有智能体「${n}」的资料：${c.zh.join("；")}`,

@@ -136,13 +136,17 @@ describe("PageHeader loading", () => {
     const shell = css("shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
     // Every rule of the phone block, read as a plain rule list (the openers dropped).
     const phone = shell.slice(shell.indexOf(".cb-pageheader-tabs .cb-pageheader-tab-slots"));
-    const loadedTab = declared(phone, ".cb-pageheader-tabs .cb-tab", "min-height");
-    expect(loadedTab).toBe("40px");
+    // the mobile size tab (display.css, under MOBILE_SIZE_QUERY) is touch.hit high
+    const display = css("display.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const opener = display.indexOf("@media (max-width: 599px), (pointer: coarse)");
+    const mobile = display.slice(display.indexOf("{", opener) + 1);
+    const loadedTab = declared(mobile, ".cb-tab", "height");
+    expect(loadedTab).toBe("var(--cb-touch-hit)");
     expect(declared(phone, ".cb-pageheader-tabs .cb-pageheader-tab-slots", "height")).toBe(
       loadedTab,
     );
-    // The head's actions keep their default height on phones (a 40 px ring makes the tap
-    // target), so their placeholders keep the default control block too: no phone override.
+    // The head's actions keep the control height (44 under the mobile sizes), so their
+    // placeholders keep the default control block too: no phone override.
     expect(declared(phone, ".cb-pageheader-actions .cb-skeleton-box", "height")).toBeUndefined();
     expect(declared(phone, ".cb-pageheader-actions .cb-btn", "min-height")).toBeUndefined();
   });

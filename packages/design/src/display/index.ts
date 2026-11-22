@@ -20,6 +20,8 @@ export {
   AVATAR_SIZES,
   AVATAR_UPLOAD_ACCEPT,
   Avatar,
+  type AvatarChoice,
+  type AvatarExtraPreset,
   AvatarPicker,
   type AvatarPickerProps,
   type AvatarPreset,
@@ -27,8 +29,10 @@ export {
   type AvatarSize,
   type AvatarValue,
   type PresetId,
+  visibleAvatarChoices,
 } from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
+export { type BrandMark, brandArtStyle, cssUrlValue, useBrandMark } from "./brand-art";
 export { Callout, type CalloutAction, type CalloutProps } from "./callout";
 export {
   CardGrid,
@@ -63,7 +67,16 @@ export { ContentSection, type ContentSectionProps } from "./content-section";
 export { CopyCode, type CopyCodeProps, type CopyCodeState } from "./copy-code";
 export { CopyField, type CopyFieldProps } from "./copy-field";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
-export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
+export {
+  DateTime,
+  type DayBucket,
+  dayBucket,
+  daysAgo,
+  formatDateTime,
+  formatListTime,
+  formatRelative,
+  versionLabel,
+} from "./date-time";
 export {
   DeviceNameplate,
   type DeviceNameplateOrigin,
@@ -124,6 +137,11 @@ export {
   type ScheduleCalendarProps,
   type ScheduleCalendarState,
 } from "./schedule-calendar";
+export {
+  type ScopeChipOption,
+  ScopeChips,
+  type ScopeChipsProps,
+} from "./scope-chips";
 export { SecretReveal, type SecretRevealProps } from "./secret-reveal";
 export {
   SkeletonBox,

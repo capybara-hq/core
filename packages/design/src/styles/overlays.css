@@ -515,3 +515,9 @@
     animation: none;
   }
 }
+
+/* ActionSheet (§6.61): its rows are the bottom sheet's SheetGroup / SheetRow (§6.59); a link row's
+   wrapper takes no box of its own. */
+.cb-action-sheet-link {
+  display: contents;
+}

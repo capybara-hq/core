@@ -47,6 +47,8 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
     [`GET ${ORG}/model-purposes/available`]: ok({ purposes: [] }),
     [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),
+    // the avatar picker's choices (the org's default theme hides and adds none)
+    [`GET ${ORG}/themes`]: ok(orgThemesBody()),
     [`GET ${ORG}/attachments/limits`]: ok({
       types: ["image/png"],
       maxBytes: 1,
@@ -58,6 +60,23 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     }),
   };
 }
+
+/** A theme avatar preset of the org's default theme, as `GET …/themes` lists it. */
+export const themePreset = (preset: string, en: string, zh?: string) => ({
+  key: `theme-brand/brand/${preset}`,
+  name: { en, ...(zh === undefined ? {} : { zh }) },
+  url: `/api/v1/themes/th1/1.0.0/assets/avatars%2F${preset}.png`,
+});
+
+/** `GET …/themes` with the avatar choices of the org's default theme (none hidden or added). */
+export const orgThemesBody = (
+  avatars: { hidden?: string[]; presets?: ReturnType<typeof themePreset>[] } = {},
+) => ({
+  themes: [],
+  resolved: null,
+  org: { id: null, personal: "allowed" },
+  avatars: { hidden: avatars.hidden ?? [], presets: avatars.presets ?? [] },
+});
 
 type Opts = Parameters<typeof renderRouteWithCache>[2] & { routes?: Routes };
 

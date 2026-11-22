@@ -1,11 +1,12 @@
-// `/conversations` (the compact class's Conversations tab) reads from the query cache the layout prefetched
-// (web query cache spec §3): first paint complete without a browser read, the loading state on an
-// empty cache, Load more through the groups cursor, the group's own More row and the new action.
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+// `/conversations` (All conversations, maintainer decision 2026-11-22): my conversations by time from the query
+// cache the layout prefetched (web query cache spec §3), sectioned by day, a chip per agent, the
+// next page read as the list's end nears (no Load more row), the new conversation as the head's
+// primary and the compact FAB, and a row's actions in an action sheet on a long press / right click.
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { json, stubApi } from "./support/api";
+import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
@@ -21,13 +22,24 @@ vi.mock("next/navigation", () => ({
 }));
 
 const O = "/api/v1/orgs/o1";
-const T = "2026-10-20T06:32:00.000Z";
 const C = en.conversations;
+
+// Local calendar days relative to now: the sections follow the viewer's day.
+const at = (daysBack: number, hour: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - daysBack);
+  d.setHours(hour, daysBack === 0 ? 0 : 30, 0, 0);
+  return d.toISOString();
+};
+const TODAY = at(0, 0);
+const YESTERDAY = at(1, 12);
+const OLD = at(12, 9);
 
 const conv = (
   id: string,
   agentId: string,
   title: string | null,
+  updatedAt: string,
   activity: string | null = null,
 ) => ({
   id,
@@ -38,56 +50,89 @@ const conv = (
   deviceId: null,
   activity,
   lastSeq: 1,
-  createdAt: T,
-  updatedAt: T,
+  createdAt: updatedAt,
+  updatedAt,
 });
-const group = (agentId: string, name: string, convs: ReturnType<typeof conv>[], more = false) => ({
-  agent: { id: agentId, name, profile: { avatar: null, updatedAt: T } },
-  latestAt: T,
-  conversations: convs,
-  more,
+const group = (agentId: string, name: string) => ({
+  agent: { id: agentId, name, profile: { avatar: null, updatedAt: TODAY } },
+  latestAt: TODAY,
+  conversations: [],
+  more: false,
 });
-const FIRST = {
-  groups: [
-    group(
-      "ag1",
-      "Researcher",
-      [conv("c1", "ag1", "Industry reports", "running"), conv("c2", "ag1", null)],
-      true,
-    ),
-    group("ag2", "Writer", [conv("c3", "ag2", "Weekly digest", "waiting")]),
-  ],
-  next: "ag2",
+const GROUPS = {
+  groups: [group("ag1", "Researcher"), group("ag2", "Writer")],
+  next: null,
   archivedCount: 0,
 };
+const FIRST = {
+  conversations: [
+    conv("c1", "ag1", "Industry reports", TODAY, "running"),
+    conv("c2", "ag2", "Weekly digest", YESTERDAY, "waiting"),
+    conv("c3", "ag1", null, OLD),
+  ],
+  next: "c3",
+};
+const SECOND = { conversations: [conv("c4", "ag2", "Older research", OLD)], next: null };
 const ROUTES: Routes = {
-  [`GET ${O}/conversations/groups`]: (call) =>
-    call.url.includes("after=ag2")
-      ? json(200, { groups: [group("ag3", "Planner", [conv("c4", "ag3", "Roadmap")])], next: null })
-      : json(200, FIRST),
-  [`GET ${O}/conversations`]: () =>
-    json(200, { conversations: [conv("c5", "ag1", "Older research")], next: null }),
+  [`GET ${O}/conversations/groups`]: () => json(200, GROUPS),
+  [`GET ${O}/conversations`]: (call) =>
+    call.url.includes("after=c3")
+      ? json(200, SECOND)
+      : call.url.includes("agentId=ag2")
+        ? json(200, { conversations: [FIRST.conversations[1]], next: null })
+        : json(200, FIRST),
 };
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
-beforeEach(() => resetNavigation("/conversations"));
+/** IntersectionObserver whose targets the test brings into view. */
+let observed: { cb: IntersectionObserverCallback; el: Element }[] = [];
+class FakeObserver {
+  constructor(private readonly cb: IntersectionObserverCallback) {}
+  observe(el: Element) {
+    observed.push({ cb: this.cb, el });
+  }
+  disconnect() {
+    observed = observed.filter((o) => o.cb !== this.cb);
+  }
+  unobserve() {}
+  takeRecords() {
+    return [];
+  }
+}
+const scrollToEnd = () =>
+  act(() => {
+    for (const o of observed) {
+      o.cb(
+        [{ target: o.el, isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+    }
+  });
+
+beforeEach(() => {
+  resetNavigation("/conversations");
+  observed = [];
+  vi.stubGlobal("IntersectionObserver", FakeObserver);
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
+const list = () => screen.getByRole("region", { name: C.list });
+
 describe("/conversations", () => {
   it("a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/conversations", ROUTES);
-    const list = screen.getByRole("list", { name: C.list });
-    expect(within(list).getByRole("link", { name: "Industry reports" }).getAttribute("href")).toBe(
-      "/chat/c1",
-    );
-    expect(within(list).getByRole("link", { name: "Weekly digest" })).toBeTruthy();
+    expect(
+      within(list())
+        .getByRole("link", { name: /Industry reports/ })
+        .getAttribute("href"),
+    ).toBe("/chat/c1");
     // an untitled conversation reads its start time
-    expect(within(list).getByRole("link", { name: /^Untitled conversation · / })).toBeTruthy();
+    expect(within(list()).getByRole("link", { name: /Untitled conversation · / })).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -97,11 +142,11 @@ describe("/conversations", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const answer = ROUTES[`GET ${O}/conversations/groups`];
+    const answer = ROUTES[`GET ${O}/conversations`];
     if (answer === undefined) throw new Error("no route");
     await renderRouteEmptyCache("/conversations", {
       ...ROUTES,
-      [`GET ${O}/conversations/groups`]: async (c) => {
+      [`GET ${O}/conversations`]: async (c) => {
         await gate;
         return answer(c);
       },
@@ -115,32 +160,105 @@ describe("/conversations", () => {
     expect(await screen.findByText("Industry reports")).toBeTruthy();
   });
 
-  it("marks what runs and what waits, and the primary action starts a new conversation", async () => {
+  it("lists by time in day sections, each row with its agent, state and time", async () => {
     await renderRouteWithCache("/conversations", ROUTES);
-    expect(screen.getByText("Running")).toBeTruthy();
-    expect(screen.getByText("Waiting for you")).toBeTruthy();
-    const primary = screen.getByRole("link", { name: C.new });
-    expect(primary.getAttribute("href")).toBe("/");
+    const labels = [...list().querySelectorAll('[data-part="convlist-section-label"]')].map(
+      (h) => h.textContent,
+    );
+    expect(labels).toEqual(["Today", "Yesterday", "Earlier"]);
+    const today = within(list()).getByRole("region", { name: "Today" });
+    const row = within(today).getByRole("link", { name: /Industry reports/ });
+    expect(row.textContent).toContain("Researcher");
+    expect(row.querySelector('[data-part="convlist-state"]')?.textContent).toBe("Running");
+    expect(row.querySelector('[data-part="convlist-time"]')?.textContent).toBe("00:00");
+    const waiting = within(list()).getByRole("link", { name: /Weekly digest/ });
+    expect(waiting.querySelector('[data-part="convlist-state"]')?.getAttribute("data-tone")).toBe(
+      "warn",
+    );
+    expect(waiting.querySelector('[data-part="convlist-time"]')?.textContent).toBe("Yesterday");
   });
 
-  it("Load more reads the next groups through the cursor; a group's own row reads its older rows", async () => {
+  it("the head: the title with a count, no description; the search and a chip per agent", async () => {
     await renderRouteWithCache("/conversations", ROUTES);
+    const head = document.querySelector('[data-part="page-header"]') as HTMLElement;
+    expect(within(head).getByRole("heading", { level: 1 }).textContent).toBe(C.title);
+    // more pages to come: the loaded rows and a "+"
+    expect(head.querySelector(".cb-pageheader-count")?.textContent).toBe("3+");
+    expect(head.querySelector('[data-part="page-header-description"]')).toBeNull();
+    expect(within(head).getByRole("searchbox", { name: C.search })).toBeTruthy();
+    const chips = screen.getByRole("radiogroup", { name: C.byAgent });
+    const chipLabel = (r: HTMLElement) => r.querySelector(".cb-scope-chip-label")?.textContent;
+    expect(within(chips).getAllByRole("radio").map(chipLabel)).toEqual([
+      C.all,
+      "Researcher",
+      "Writer",
+    ]);
     const calls = stubApi(ROUTES);
-    const user = userEvent.setup();
-    const rowOf = (name: string) =>
-      screen
-        .getAllByRole("listitem")
-        .find((li) => li.querySelector(".cb-object-name")?.textContent === name) as HTMLElement;
-    await user.click(within(rowOf(C.loadMore)).getByRole("button", { name: C.loadMore }));
-    expect(await screen.findByRole("link", { name: "Roadmap" })).toBeTruthy();
-    expect(calls.map((c) => c.url)).toEqual([`${O}/conversations/groups?after=ag2`]);
-    await user.click(
-      within(rowOf("More with Researcher")).getByRole("button", { name: C.loadMore }),
+    await userEvent.click(within(chips).getByRole("radio", { name: "Writer" }));
+    await waitFor(() => expect(within(list()).queryByText("Industry reports")).toBeNull());
+    expect(calls.map((c) => c.url)).toContain(`${O}/conversations?agentId=ag2&limit=30`);
+  });
+
+  it("reads the next page as the end comes near, with no Load more row", async () => {
+    await renderRouteWithCache("/conversations", ROUTES);
+    expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
+    const calls = stubApi(ROUTES);
+    await scrollToEnd();
+    expect(await within(list()).findByRole("link", { name: /Older research/ })).toBeTruthy();
+    expect(calls.map((c) => c.url)).toEqual([`${O}/conversations?after=c3&limit=30`]);
+    // the last page: the count is the total
+    expect(document.querySelector(".cb-pageheader-count")?.textContent).toBe("4");
+  });
+
+  it("the primary starts a new conversation: the head's button, restyled as the compact FAB", async () => {
+    await renderRouteWithCache("/conversations", ROUTES);
+    const links = screen.getAllByRole("link", { name: C.new });
+    expect(links).toHaveLength(1);
+    expect(links[0]?.getAttribute("href")).toBe("/");
+    expect(links[0]?.closest('[data-head-primary="true"]')).not.toBeNull();
+    expect(document.querySelector('[data-template="ListPage"]')?.getAttribute("data-fab")).toBe(
+      "true",
     );
+  });
+
+  it("a right click (or long press) opens the row's actions in an action sheet", async () => {
+    await renderRouteWithCache("/conversations", ROUTES);
+    const calls = stubApi({
+      ...ROUTES,
+      [`PATCH ${O}/conversations/c1`]: () => json(200, { conversation: FIRST.conversations[0] }),
+      [`DELETE ${O}/conversations/c1`]: () => noContent(),
+    });
+    const row = within(list()).getByRole("link", { name: /Industry reports/ });
+    fireEvent.contextMenu(row);
+    const sheet = (await waitFor(() => {
+      const el = document.querySelector('[data-part="action-sheet"]');
+      if (el === null) throw new Error("no sheet");
+      return el;
+    })) as HTMLElement;
+    expect(within(sheet).getByRole("heading").textContent).toBe("Industry reports");
+    const items = within(sheet)
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("data-part") === "action-sheet-item");
+    expect(items.map((b) => b.textContent)).toEqual(["Rename", "Archive", "Delete"]);
+    expect(items[2]?.getAttribute("data-danger")).toBe("true");
+    await userEvent.click(items[1] as HTMLElement);
     await waitFor(() =>
-      expect(screen.queryByRole("link", { name: "Older research" })).not.toBeNull(),
+      expect(calls.find((c) => c.method === "PATCH")?.url).toBe(`${O}/conversations/c1`),
     );
-    // the group has no more rows: its row is gone
-    expect(rowOf("More with Researcher")).toBeUndefined();
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ archived: true });
+    expect(document.querySelector('[data-part="action-sheet"]')).toBeNull();
+  });
+
+  it("a wide window keeps each row's ⋯ menu with the same actions", async () => {
+    await renderRouteWithCache("/conversations", ROUTES);
+    const row = within(list())
+      .getByRole("link", { name: /Industry reports/ })
+      .closest("li");
+    const menu = within(row as HTMLElement).getByRole("button", {
+      name: "Conversation actions: Industry reports",
+    });
+    await userEvent.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
   });
 });

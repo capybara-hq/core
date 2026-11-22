@@ -168,6 +168,35 @@ the "carries nothing" check counts them.
 - `logo.favicon`: optional square SVG or PNG for the browser tab icon; omitted keeps today's.
   Squareness is checked (SVG `viewBox` width = height, PNG IHDR width = height). The favicon is
   emitted through Next metadata (`icons`) by both the workspace and the auth layouts.
+- `logo.illustration`: optional empty-state art, the `mark` rules (SVG ≤ 128 KB sanitized, or PNG
+  ≤ 256 KB, ≥ 64 px high); omitted keeps the built-in art (drawn by the web from the graphics PR on).
+- `logo.appIcon`, `logo.appIconMaskable`: optional app icons (apple-touch and the manifest `any` and
+  `maskable` icons). PNG only, square, ≥ 512 px, ≤ 1 MiB; `appIconMaskable` requires `appIcon`.
+- All three use the same asset path rules and checks as the other logo files; the design is in the
+  [theme brand coverage spec](2026-11-22-theme-brand-coverage-design.md) §1.
+
+### 4.3a Decoration and avatar presets
+
+Three optional top-level fields (see the [theme brand coverage spec](2026-11-22-theme-brand-coverage-design.md) §1 for the design):
+
+- `decoration`: `"dither"` (default when omitted) or `"none"`, the background decoration of the
+  sign-in pages (the dither columns).
+- `avatars`: at most 12 extra agent avatar presets, `{ id, name, file }`. `id` matches
+  `^[a-z0-9][a-z0-9-]{0,31}$`, is unique in the theme and is not a built-in preset id; `name` is a
+  localized name (≤ 24 characters per language, the wordmark's character rules); `file` is a square
+  SVG (sanitized) or a PNG ≥ 64 px, with the `logo.mark` size limits.
+- `hideAvatarPresets`: built-in preset ids (`BUILTIN_AVATAR_PRESET_IDS` in the SDK) the theme does
+  not offer; hiding every built-in preset requires at least one `avatars` entry.
+
+The kernel checks, stores and serves these fields from the contract PR on; the web draws them in
+later #451 PRs (the avatar picker and pinned theme avatars with the avatars PR, the sign-in
+decoration with the graphics PR, the app icons in the manifest and apple-touch icon with the pages
+outside the theme PR).
+
+The assets count toward the 16 MB theme asset limit (§4.4). `themeAssetRefs` (SDK) is the one list of
+every file a theme names (fonts, `logo.mark`, `favicon`, `illustration`, `appIcon`,
+`appIconMaskable`, `avatars[].file`): `capybara-plugin check` and `pack`, the kernel's import review
+and the delivery route all read it, so a file the theme does not name is never read or served.
 
 ### 4.4 Limits
 
@@ -267,8 +296,11 @@ Three levels, most specific first:
 - The person's pick is one value for the person, across all their orgs, not one per org
   **(decided, 2026-11-08)**; in an org where it is not on (or that locks), the org's default
   applies.
-- **Before sign-in** (auth pages, `/invite`, the org chooser): the platform default. The root
-  error and not-found pages sit outside both layouts and draw the built-in theme.
+- **Before sign-in** (auth pages, `/invite`, the org chooser): the platform default. The pages
+  outside both layouts (the kernel-starting frame, the root error pages, the root 404) draw
+  `outsideTheme()` (amended by the [theme brand coverage spec](2026-11-22-theme-brand-coverage-design.md)
+  §5): the brand cookie (the theme this browser last drew), else the platform default when the
+  kernel answers, else the built-in theme.
   Only platform-owned `all` themes can be the platform default, so nothing org-specific leaks to
   an anonymous page.
 - The platform default can only be a platform-owned theme whose scope is `all` **(decided,
@@ -299,8 +331,9 @@ Three levels, most specific first:
   `@font-face` rules and the font stacks. A single-scheme theme writes its one scheme under both
   selectors and pins `color-scheme`, so it needs nothing from the root layout (which owns
   `<html data-theme>` from the `cb-theme` cookie and cannot see the workspace's data).
-  Asset routes `GET /api/v1/themes/:id/:version/assets/:file` serve the re-serialized logo and the
-  fonts. Both are immutable per version (`Cache-Control: public, max-age=31536000, immutable`)
+  Asset routes `GET /api/v1/themes/:id/:version/assets/:file` serve every file the version names
+  through `themeAssetRefs` (fonts, logo mark and favicon re-serialized when SVG, illustration, app
+  icons, avatar files). Both are immutable per version (`Cache-Control: public, max-age=31536000, immutable`)
   and identical on every replica (rendered from PG / object storage; no process state).
 - **Rendering re-validates**: stored values are checked again when the stylesheet is rendered; a
   failing value (a tampered row, a token core no longer knows) is left out and logged. The stored
@@ -335,6 +368,16 @@ Three levels, most specific first:
   context (`DesignProvider`, a new `brand` value set by the web's `design-root`); `Logo` keeps its
   props (`wordmark` stays the boolean "draw the wordmark") and reads the brand from the context.
   Without a brand, the pixel capybara and `CAPYBARA` as today.
+- **The brand cookie** (theme brand coverage spec §5): `ThemeRoot` writes `cb-brand` in the
+  browser after each commit whose drawn theme changes and on every themed document (base64url
+  JSON with `v: 1`, ≤ 1 KB, `Path=/`, `SameSite=Lax`, `Secure` on https, 30 days; deleted under
+  the built-in theme; nothing while the theme read has no answer): the drawn theme's `cssUrl`,
+  `markUrl`, `wordmark`, `illustrationUrl`, `faviconUrl`, `decoration` and `background`. One codec
+  (`apps/web/src/lib/brand-cookie.ts`) reads it on the server and in the browser: every URL must
+  match the delivery grammar above (same origin, no query, no `..`), the wordmark and colours the
+  SDK's rules, else the whole cookie is discarded. A hint only, never an input to access or to a
+  kernel call. `StaticTheme` links and brands a page from such a reference without a query; when
+  the kernel is down the immutable CSS and assets come from the browser's cache.
 
 ## 9. APIs and the `Platform` tool
 
@@ -348,7 +391,11 @@ Three levels, most specific first:
 | `GET /api/v1/themes/:id/:version/:revision/theme.css`, `…/assets/:file` | public | delivery |
 
 - `ThemeRef` = `{ id, version, name, schemes, singleScheme, logo: { markUrl, wordmark,
-  faviconUrl } | null, cssUrl }`; `id` is the `platform_themes` UUID.
+  faviconUrl, illustrationUrl, appIconUrl, appIconMaskableUrl } | null, decoration, background,
+  cssUrl }`; `id` is the `platform_themes` UUID. Each logo URL is null when the theme does not name
+  that file; `decoration` is `"dither" | "none"` (default `dither`); `background` is the merged
+  `color.bg` of each scheme the theme defines (`{ dark?, light? }`, computed at read). Avatar files
+  are not in `ThemeRef` (see the brand coverage spec §2).
 - The settings already have `Platform` operations (`platform.set-preferences`,
   `org-settings.update`, `admin.update-settings`); they gain the fields, so an agent can switch a
   person's or an org's theme on request ("change my theme to Neon Grid"); the org and platform
@@ -441,8 +488,10 @@ mark (§4.3); every theme's CSS and assets are public (§8).
 
 Recorded at the final branch review (2026-11-09); none blocks the merge.
 
-- **Visual suite under a theme** (review M2): add one page rendered under the fixture theme to the
-  visual suite with the next `visual-update`.
+- ~~**Visual suite under a theme** (review M2)~~: closed by the theme brand coverage work (#451):
+  the catalog's `brand/fixture` route draws the fixture brand (empty states, greeting, working
+  line, sign-in without decoration, avatar presets, the 404 page) in the visual suite, and the
+  fixture theme's tokens stay covered by the computed-style checks in `apps/web/e2e/themes.spec.ts`.
 - **Embeds under a single-scheme theme** (M4): `<html data-theme>` keeps the cookie's scheme, and
   embeds receive it through the embed bridge, so a light embed can render inside a dark
   single-scheme page. The L1 slot spec decides what an embed is told.

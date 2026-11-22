@@ -1,33 +1,36 @@
 import * as RD from "@radix-ui/react-dialog";
 import type { MouseEvent, ReactNode } from "react";
 import { Avatar, type AvatarValue } from "../display/avatar";
-import { NavRow } from "../display/nav-row";
+import { Segmented } from "../display/tabs";
 import { BottomSheetContent } from "../overlays/bottom-sheet";
 import { picksAway } from "../overlays/drawer";
+import { Menu, type MenuItem } from "../overlays/menus";
+import { SheetFootnote, SheetGroup, SheetRow } from "../overlays/sheet-parts";
 import { popOverlaysThen, useOverlayHistory } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
+import type { PreferenceBarProps } from "./preference-bar";
 
-/**
- * A control in the sheet: a node, or a function given `done`, which closes the sheet and the
- * drawer under it (call it once the control has done its work: an org switch, a language pick).
- */
-export type AccountSheetSlot = ReactNode | ((done: () => void) => ReactNode);
+/** The theme switch's data (the wide preference bar's `theme`): light and dark. */
+export type AccountSheetTheme = NonNullable<PreferenceBarProps["theme"]>;
 
-/** What the drawer's account row opens (design spec §6.54). */
+/** What the drawer's account row opens (design spec §6.55). */
 export interface AccountSheetData {
   name: string;
   /** The current org's name; null outside an org (the platform console). */
   orgName: string | null;
   /** The person's avatar (a circle: an image or the initial). */
   avatar?: AvatarValue;
-  /** The org switcher (apps/web's own control); absent with one org. */
-  orgSwitcher?: AccountSheetSlot;
-  /** The language control (on a phone the only way to switch it). */
-  language?: AccountSheetSlot;
+  /**
+   * The org switcher's items (the orgs, creating one); absent with one org: the Organization row
+   * is the org's name, not a control. A pick closes the sheet and the drawer under it.
+   */
+  orgMenu?: MenuItem[];
+  /** The language choice (on a phone the only way to switch it): the current one's name, the items. */
+  language?: { value: string; label: string; items: MenuItem[] };
   personalSettingsHref: string;
-  /** The theme control (the light / dark switch). */
-  theme: ReactNode;
-  /** The system status line (what the StatusBar shows on wider windows). */
+  /** The theme switch; null when the UI theme defines one scheme only. */
+  theme: AccountSheetTheme | null;
+  /** The system status line (what the StatusBar shows on wider windows): the footnote. */
   status: ReactNode;
   /** The PWA install hint, while the app is not installed. */
   installHint?: ReactNode;
@@ -44,18 +47,34 @@ export type AccountSheetProps = {
   onDone?: () => void;
 };
 
+/** `items` with `after` run once an item's own action has (a pick closes the sheet and drawer). */
+function closingAfter(items: MenuItem[], after: () => void): MenuItem[] {
+  return items.map((i) =>
+    i === "separator" || i.onSelect === undefined
+      ? i
+      : {
+          ...i,
+          onSelect: () => {
+            i.onSelect?.();
+            after();
+          },
+        },
+  );
+}
+
 /**
- * The account sheet (design spec §6.54): a bottom sheet from the drawer's account row with the
- * person and org, the org switcher, Personal settings, the theme, the system status, the install hint,
- * Switch platform (a native shell only) and sign out. It holds its own history entry on a compact touch
- * window, so the system back closes it before the drawer under it (Decision 25); a row that goes
- * somewhere leaves the entry (the navigation is pending) and also closes the drawer.
+ * The account sheet (design spec §6.55, maintainer decision 2026-11-22): grouped rows on the
+ * bottom sheet (§6.59). The profile row (avatar, name, "Profile and preferences") opens Personal
+ * settings; Organization (the current org; a menu of the orgs when there are several) and Switch
+ * platform (a native shell only); Language and Appearance; sign out alone in its group; the status line as the footnote. It holds
+ * its own history entry on a compact touch window, so the system back closes it before the drawer
+ * under it (Decision 25); a row that goes somewhere leaves the entry (the navigation is pending)
+ * and also closes the drawer.
  */
 export function AccountSheet({ open, onOpenChange, data, onDone }: AccountSheetProps) {
   const t = useDesignT();
   const history = useOverlayHistory(open, () => onOpenChange(false));
   const done = onDone ?? (() => onOpenChange(false));
-  const slot = (s: AccountSheetSlot) => (typeof s === "function" ? s(done) : s);
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
     const pick = (e.target as HTMLElement).closest<HTMLElement>("[data-drawer-pick]");
     if (pick === null) return;
@@ -67,6 +86,30 @@ export function AccountSheet({ open, onOpenChange, data, onDone }: AccountSheetP
   const signOut = () => {
     if (!popOverlaysThen(data.onSignOut)) data.onSignOut();
   };
+  const orgRow =
+    data.orgName === null ? null : data.orgMenu && data.orgMenu.length > 0 ? (
+      <Menu
+        items={closingAfter(data.orgMenu, done)}
+        label={t("account.org")}
+        trigger={
+          <SheetRow
+            icon="building"
+            label={t("account.org")}
+            value={data.orgName}
+            chevron
+            part="account-org"
+          />
+        }
+      />
+    ) : (
+      <SheetRow
+        static
+        icon="building"
+        label={t("account.org")}
+        value={data.orgName}
+        part="account-org"
+      />
+    );
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <BottomSheetContent
@@ -77,44 +120,81 @@ export function AccountSheet({ open, onOpenChange, data, onDone }: AccountSheetP
         {/* biome-ignore lint/a11y/noStaticElementInteractions: the rows inside are the controls; this only observes their clicks */}
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: a row's Enter fires the same click */}
         <div className="cb-account" data-part="account-body" onClick={onClick}>
-          <div className="cb-account-who" data-part="account-who">
-            <Avatar value={data.avatar ?? null} name={data.name} size={40} shape="circle" />
-            <span className="cb-account-names">
-              <span className="cb-account-name">{data.name}</span>
-              {data.orgName === null ? null : (
-                <span className="cb-account-org">{data.orgName}</span>
-              )}
-            </span>
-          </div>
-          {data.orgSwitcher ? (
-            <div className="cb-account-slot">{slot(data.orgSwitcher)}</div>
-          ) : null}
-          <NavRow icon="user" label={t("account.settings")} href={data.personalSettingsHref} />
-          {data.language ? (
-            <div className="cb-account-line" data-part="account-language">
-              <span className="cb-account-label">{t("account.language")}</span>
-              {slot(data.language)}
-            </div>
-          ) : null}
-          <div className="cb-account-line" data-part="account-theme">
-            <span className="cb-account-label">{t("account.theme")}</span>
-            {data.theme}
-          </div>
-          <div className="cb-account-line" data-part="account-status">
-            <span className="cb-account-label">{t("account.status")}</span>
-            <span className="cb-account-status">{data.status}</span>
-          </div>
-          {data.installHint ? <div className="cb-account-slot">{data.installHint}</div> : null}
-          {data.onSwitchProfile ? (
-            // the native switcher opens inside the click (user activation) and keeps the page
-            <NavRow
-              stay
-              icon="arrow-up-down"
-              label={t("account.switchProfile")}
-              onSelect={data.onSwitchProfile}
+          <SheetGroup part="account-profile-group">
+            <SheetRow
+              href={data.personalSettingsHref}
+              lead={
+                <Avatar value={data.avatar ?? null} name={data.name} size={40} shape="circle" />
+              }
+              label={data.name}
+              description={t("account.profileHint")}
+              chevron
+              part="account-profile"
             />
+          </SheetGroup>
+          {orgRow !== null || data.onSwitchProfile ? (
+            <SheetGroup part="account-org-group">
+              {orgRow}
+              {data.onSwitchProfile ? (
+                // the native switcher opens inside the click (user activation) and keeps the page
+                <SheetRow
+                  stay
+                  icon="arrow-up-down"
+                  label={t("account.switchProfile")}
+                  onSelect={data.onSwitchProfile}
+                  part="account-switch-profile"
+                />
+              ) : null}
+            </SheetGroup>
           ) : null}
-          <NavRow icon="log-out" label={t("account.signOut")} onSelect={signOut} />
+          {data.language || data.theme ? (
+            <SheetGroup part="account-preferences">
+              {data.language ? (
+                <Menu
+                  items={closingAfter(data.language.items, done)}
+                  label={data.language.label}
+                  trigger={
+                    <SheetRow
+                      icon="languages"
+                      label={t("account.language")}
+                      value={data.language.value}
+                      chevron
+                      part="account-language"
+                    />
+                  }
+                />
+              ) : null}
+              {data.theme ? (
+                <SheetRow
+                  icon="sun"
+                  label={t("account.theme")}
+                  part="account-theme"
+                  control={
+                    <Segmented
+                      label={data.theme.label}
+                      value={data.theme.value}
+                      options={[
+                        { value: "light", label: data.theme.lightLabel },
+                        { value: "dark", label: data.theme.darkLabel },
+                      ]}
+                      onChange={(v) => data.theme?.onChange(v === "light" ? "light" : "dark")}
+                    />
+                  }
+                />
+              ) : null}
+            </SheetGroup>
+          ) : null}
+          {data.installHint ? <div className="cb-account-slot">{data.installHint}</div> : null}
+          <SheetGroup part="account-sign-out-group">
+            <SheetRow
+              centered
+              danger
+              label={t("account.signOut")}
+              onSelect={signOut}
+              part="account-sign-out"
+            />
+          </SheetGroup>
+          {data.status ? <SheetFootnote part="account-status">{data.status}</SheetFootnote> : null}
         </div>
       </BottomSheetContent>
     </RD.Root>

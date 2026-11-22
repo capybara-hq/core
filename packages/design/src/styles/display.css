@@ -169,6 +169,51 @@
   flex: 1 1 0;
 }
 
+/* Mobile sizes (spec §2.5 "Mobile sizes", §6.4; MOBILE_SIZE_QUERY; maintainer decision 2026-11-22):
+   a tab is a touch.hit (44) target padded 16 at the sides. The segmented group is control.default
+   high (44 here), level with the fields and buttons of its row: the group drops its inset, each
+   segment fills the whole group (over the group's 1 px border too, so its hit area is the full
+   44), padded 16 at the sides and never narrower than it is tall, and the selected (or hovered)
+   ground is drawn inset by the old 2 px gap plus the border, on a ::before, instead of shrinking
+   the segment. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-tab {
+    height: var(--cb-touch-hit);
+    padding: 0 var(--cb-space-4);
+  }
+  .cb-segmented,
+  .cb-segmented[data-density="dense"],
+  .cb-segmented[data-density="prominent"] {
+    height: var(--cb-control-default);
+    padding: 0;
+    gap: 0;
+  }
+  .cb-seg {
+    position: relative;
+    isolation: isolate;
+    min-width: var(--cb-touch-hit);
+    margin: -1px 0;
+    padding: 0 var(--cb-space-4);
+  }
+  .cb-seg:hover:not([data-state="selected"]),
+  .cb-seg[data-state="selected"] {
+    background: transparent;
+  }
+  .cb-seg::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 3px;
+    border-radius: calc(var(--cb-radius-sm) - 3px);
+  }
+  .cb-seg:hover:not([data-state="selected"])::before {
+    background: var(--cb-hover);
+  }
+  .cb-seg[data-state="selected"]::before {
+    background: var(--cb-selected);
+  }
+}
+
 /* Pagination (the signed reference: summary left, icon buttons right) */
 .cb-pagination {
   display: flex;
@@ -1062,8 +1107,9 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-/* Touch (spec §4.3): the copy button is a 44px target; the block grows to hold it. */
-@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+/* Mobile sizes (spec §2.5, §4.3; MOBILE_SIZE_QUERY): the copy button is a 44px target; the block
+   grows to hold it. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-copy-code-line > .cb-copy-code-copy {
     min-width: var(--cb-touch-hit);
     min-height: var(--cb-touch-hit);
@@ -2176,4 +2222,50 @@ a.cb-attachment:hover {
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
+}
+
+/* ScopeChips (responsive system spec §2.2 level 2): pills in one row that scrolls sideways; the
+   selected one an ink fill with page-ground text. control.default high (44 under the mobile sizes). */
+.cb-scope-chips {
+  display: flex;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cb-scope-chips::-webkit-scrollbar {
+  display: none;
+}
+.cb-scope-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-control-default);
+  padding: 0 var(--cb-space-4);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-pill);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cb-scope-chip:has(> .cb-avatar) {
+  padding-inline-start: var(--cb-space-3);
+}
+.cb-scope-chip[data-state="selected"] {
+  border-color: var(--cb-ink);
+  background: var(--cb-ink);
+  color: var(--cb-bg);
+}
+.cb-scope-chip:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-scope-chip-count {
+  color: inherit;
+  font-family: var(--cb-font-code);
+  opacity: 0.7;
 }

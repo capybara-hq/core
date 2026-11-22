@@ -3,6 +3,9 @@
 // transaction's connection when there is one): the settings writers (deployment, org, person) and
 // `ThemesService` decide with the same predicates.
 import {
+  BUILTIN_AVATAR_PRESET_IDS,
+  type BuiltinAvatarPresetId,
+  isThemeAssetPath,
   type LocalizedName,
   mergeThemeSchemes,
   type ParsedTheme,
@@ -21,6 +24,7 @@ import {
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { packagePath } from "../packages/tgz.js";
+import { THEME_PRESET_KEY_RE } from "./avatar-preset-key.js";
 
 /** The schemes in the order they are listed. */
 const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];
@@ -41,8 +45,25 @@ export interface ThemeRef {
   schemes: ThemeScheme[];
   /** The only scheme of a single-scheme theme, else null. */
   singleScheme: ThemeScheme | null;
-  /** null: the theme has no logo (the built-in mark and wordmark). */
-  logo: { markUrl: string | null; wordmark: string | null; faviconUrl: string | null } | null;
+  /**
+   * null: the theme has no logo (the built-in mark and wordmark). Each URL is the asset's delivery
+   * URL ({@link themeUrl}), null when the theme does not name that file.
+   */
+  logo: {
+    markUrl: string | null;
+    wordmark: string | null;
+    faviconUrl: string | null;
+    illustrationUrl: string | null;
+    appIconUrl: string | null;
+    appIconMaskableUrl: string | null;
+  } | null;
+  /** The background decoration of the sign-in pages (the theme file's `decoration`, default `dither`). */
+  decoration: "dither" | "none";
+  /**
+   * The merged `color.bg` of each scheme the theme defines (the theme's override, else the built-in
+   * value; canonical `#RRGGBB` / `rgba()`), computed at read from the stored definition.
+   */
+  background: Partial<Record<ThemeScheme, string>>;
   /** `/api/v1/themes/<id>/<version>/r<THEME_CSS_REVISION>/theme.css`. */
   cssUrl: string;
 }
@@ -82,6 +103,69 @@ export function themeUrl(id: string, version: string, asset?: string): string {
     : `${base}/assets/${encodeURIComponent(packagePath(asset))}`;
 }
 
+/** A theme avatar preset an org offers (theme brand coverage spec §4). */
+export interface OrgAvatarPreset {
+  /** `<plugin>/<theme file id>/<preset id>` ({@link THEME_PRESET_KEY_RE}): what a client sends. */
+  key: string;
+  /** The theme file's name; a missing `zh` reads as `en`. */
+  name: LocalizedName;
+  /** The file's delivery URL ({@link themeUrl}; immutable, served after the theme changes). */
+  url: string;
+  /** What a stored `{ kind: "theme" }` avatar pins: theme, version, preset id and file path. */
+  themeId: string;
+  version: string;
+  preset: string;
+  file: string;
+}
+
+/** The avatar presets of an org's effective default theme: built-ins it hides, presets it adds. */
+export interface OrgAvatars {
+  /** In the built-in order. */
+  hidden: BuiltinAvatarPresetId[];
+  /** In the theme file's order. */
+  presets: OrgAvatarPreset[];
+}
+
+/**
+ * The avatar presets of version `version` of theme `id` (spec §4). A stored definition is not
+ * re-parsed: entries outside the grammar (a preset whose file is not a theme asset path, an id
+ * that would not form a key, an unknown hidden id) are skipped. A row without provenance
+ * (`plugin` null) cannot form a key: it offers no presets, but its hidden list still applies.
+ */
+export function themeAvatarPresets(
+  id: string,
+  version: string,
+  def: ParsedTheme,
+  plugin: string | null,
+): OrgAvatars {
+  const hide: unknown = def.hideAvatarPresets;
+  const hiddenSet = new Set(Array.isArray(hide) ? hide : []);
+  const hidden = BUILTIN_AVATAR_PRESET_IDS.filter((p) => hiddenSet.has(p));
+  const avatars: unknown = def.avatars;
+  const presets: OrgAvatarPreset[] = [];
+  if (plugin !== null && Array.isArray(avatars)) {
+    for (const a of avatars as unknown[]) {
+      if (a === null || typeof a !== "object") continue;
+      const { id: preset, name, file } = a as Record<string, unknown>;
+      if (typeof preset !== "string" || !isThemeAssetPath(file)) continue;
+      const key = `${plugin}/${def.id}/${preset}`;
+      if (!THEME_PRESET_KEY_RE.test(key) || name === null || typeof name !== "object") continue;
+      const { en, zh } = name as Record<string, unknown>;
+      if (typeof en !== "string") continue;
+      presets.push({
+        key,
+        name: { en, zh: typeof zh === "string" ? zh : en },
+        url: themeUrl(id, version, file),
+        themeId: id,
+        version,
+        preset,
+        file,
+      });
+    }
+  }
+  return { hidden, presets };
+}
+
 /**
  * The {@link ThemeRef} of version `version` of theme `id` of plugin `plugin` (null only for a row
  * without provenance: the key is then the file id alone).
@@ -92,7 +176,9 @@ export function themeRefOf(
   def: ParsedTheme,
   plugin: string | null,
 ): ThemeRef {
-  const url = (ref: string | undefined) => (ref === undefined ? null : themeUrl(id, version, ref));
+  // A stored definition is not re-parsed: a ref that is not a theme asset path gets no URL
+  const url = (ref: unknown) => (isThemeAssetPath(ref) ? themeUrl(id, version, ref) : null);
+  const logo: unknown = def.logo;
   return {
     id,
     key: plugin === null ? def.id : `${plugin}/${def.id}`,
@@ -101,15 +187,31 @@ export function themeRefOf(
     schemes: SCHEMES.filter((s) => def.schemes[s] !== undefined),
     singleScheme: def.singleScheme,
     logo:
-      def.logo === undefined
+      def.logo === undefined || logo === null || typeof logo !== "object"
         ? null
         : {
             markUrl: url(def.logo.mark),
-            wordmark: def.logo.wordmark ?? null,
+            wordmark: typeof def.logo.wordmark === "string" ? def.logo.wordmark : null,
             faviconUrl: url(def.logo.favicon),
+            illustrationUrl: url(def.logo.illustration),
+            appIconUrl: url(def.logo.appIcon),
+            appIconMaskableUrl: url(def.logo.appIconMaskable),
           },
+    decoration: def.decoration === "none" ? "none" : "dither",
+    background: themeBackground(def),
     cssUrl: themeUrl(id, version),
   };
+}
+
+/** The merged `color.bg` of each scheme the theme defines ({@link ThemeRef.background}). */
+function themeBackground(def: ParsedTheme): Partial<Record<ThemeScheme, string>> {
+  const out: Partial<Record<ThemeScheme, string>> = {};
+  const merged = mergeThemeSchemes(def);
+  for (const s of SCHEMES) {
+    const bg = merged[s]?.color.bg;
+    if (def.schemes[s] !== undefined && bg !== undefined) out[s] = bg;
+  }
+  return out;
 }
 
 /**

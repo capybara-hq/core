@@ -1,4 +1,5 @@
 import { type JSX, useEffect, useState } from "react";
+import { useBrandMark } from "../display/brand-art";
 import { bitmapCells, CAPYBARA_BITMAP } from "../display/logo";
 import type { DesignKey } from "../i18n";
 import { useDesignT } from "../provider";
@@ -56,6 +57,7 @@ export function WorkingLine({ still, active = true }: WorkingLineProps): JSX.Ele
 
 function WorkingLineBody({ still }: { still: boolean }): JSX.Element {
   const t = useDesignT();
+  const mark = useBrandMark();
   return (
     <div
       className="cb-tool-line cb-working-line"
@@ -63,20 +65,37 @@ function WorkingLineBody({ still }: { still: boolean }): JSX.Element {
       aria-hidden="true"
       data-still={still ? "true" : undefined}
     >
-      <span className="cb-working-mark" data-part="working-mark" aria-hidden="true">
-        <svg
-          width={14 * UNIT}
+      {mark && !mark.failed ? (
+        // A theme's mark (theme brand coverage §3): it pulses instead of walking; a failed load
+        // (also before hydration: the ref) falls back to the walking capybara for this mount.
+        // biome-ignore lint/performance/noImgElement: the mark is a theme asset of any size
+        <img
+          key={mark.src}
+          className="cb-working-mark-img"
+          data-part="working-mark"
+          data-motion={still ? undefined : "pulse"}
+          src={mark.src}
           height={10 * UNIT}
-          viewBox={`0 0 ${14 * UNIT} ${10 * UNIT}`}
-          shapeRendering="crispEdges"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path d={BODY} />
-          <path d={FRAME_1} data-frame="1" />
-          <path d={FRAME_2} data-frame="2" />
-        </svg>
-      </span>
+          alt=""
+          onError={mark.onError}
+          ref={mark.ref}
+        />
+      ) : (
+        <span className="cb-working-mark" data-part="working-mark" aria-hidden="true">
+          <svg
+            width={14 * UNIT}
+            height={10 * UNIT}
+            viewBox={`0 0 ${14 * UNIT} ${10 * UNIT}`}
+            shapeRendering="crispEdges"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d={BODY} />
+            <path d={FRAME_1} data-frame="1" />
+            <path d={FRAME_2} data-frame="2" />
+          </svg>
+        </span>
+      )}
       <span
         className="cb-tool-label cb-working-caption"
         data-part="working-caption"

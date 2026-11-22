@@ -105,7 +105,8 @@ describe("the conversation page (ConversationPage)", () => {
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=2`]);
     expect(container.querySelector('[data-template="ConversationPage"]')).not.toBeNull();
     expect(screen.getByText("hi")).toBeTruthy();
-    expect(screen.getByText(/^未命名会话 · /)).toBeTruthy();
+    // (the title button; the flat title bar's plain copy of the title is drawn beside it)
+    expect(container.querySelector('[data-part="title"]')?.textContent).toMatch(/^未命名会话 · /);
     expect(screen.getByText(zh.chat.status.running)).toBeTruthy();
     expect(screen.getByText(/第 1 轮 · 已用/)).toBeTruthy();
     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");

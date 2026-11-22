@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,7 +25,7 @@ import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { popOverlaysThen } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
-import { backTarget, FloatingBar, type FloatingLead } from "./floating-bar";
+import { backTarget, FloatingBar, type FloatingLead, routeCommitted } from "./floating-bar";
 import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
@@ -285,16 +286,27 @@ export function AppShell({
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+  // The new route is in the DOM: a floating back waiting for it settles (its view transition then
+  // captures the new page; `goBack` in floating-bar.tsx).
+  useLayoutEffect(() => {
+    routeCommitted(pathname);
+  }, [pathname]);
   useEffect(() => {
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
     lastRoute.current = { pathname, root };
+    // A view transition already animates this move (the back button: `data-cb-transition` on
+    // `<html>`, view-transition.ts): a CSS slide as well would run again once it ends, when the
+    // `animation: none` that holds it during the transition lifts (the page slid in twice).
     const animated =
-      uaTransition.current === window.location.href || instantRoute.current === pathname;
+      uaTransition.current === window.location.href ||
+      instantRoute.current === pathname ||
+      document.documentElement.dataset.cbTransition !== undefined;
     uaTransition.current = null;
     instantRoute.current = null;
     // A pushed page slides in from the end edge and the way back to a chat surface slides back; a
-    // move between chat surfaces and a move the browser animated do not.
+    // move between chat surfaces and a move already animated (by the browser or a view
+    // transition) do not.
     setSlide((prev) =>
       animated || (root && last.root)
         ? null

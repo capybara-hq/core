@@ -3,8 +3,9 @@ import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
+import { avatarView } from "../agents/avatar-view.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
-import type { AgentAvatar } from "../agents/profile.js";
+import type { AgentAvatar, AgentAvatarView } from "../agents/profile.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import {
@@ -162,7 +163,7 @@ export interface ConversationGroup {
    * The agent's name and the avatar half of its profile, in the agents API's shape (the sidebar
    * draws the group title from it without reading the agents list).
    */
-  agent: { id: string; name: string; profile: { avatar: AgentAvatar; updatedAt: string } };
+  agent: { id: string; name: string; profile: { avatar: AgentAvatarView; updatedAt: string } };
   /** max(updated_at) of the group's conversations. */
   latestAt: Date;
   /** At most `perGroup`, updated_at DESC, id DESC. */
@@ -1154,7 +1155,7 @@ export class ConversationsService {
             id: r.agent_id,
             name: r.agent_name ?? "",
             profile: {
-              avatar: r.profile_avatar,
+              avatar: avatarView(r.profile_avatar),
               updatedAt: r.profile_updated_at.toISOString(),
             },
           },

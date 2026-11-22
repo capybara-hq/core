@@ -21,6 +21,13 @@ export type SizeStep = number | [number, number];
 /** The touch media query the overrides sit in (`packages/design/src/shell/touch.ts`, the same text). */
 export const TOUCH_QUERY = "(pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))";
 
+/**
+ * Where the size overrides apply (`MOBILE_SIZE_QUERY` in touch.ts, the same text): a compact window
+ * whatever the pointer, or a touch device at any width (design spec §2.5, maintainer decision
+ * 2026-11-22). The font overrides stay under `TOUCH_QUERY`.
+ */
+export const MOBILE_SIZE_QUERY = `(max-width: 599px), ${TOUCH_QUERY}`;
+
 /** The size groups a touch override may replace, and the smallest touch type size (px). */
 const TOUCH_GROUPS = ["type", "control", "row", "radius"] as const;
 const TOUCH_MIN_TYPE = 13;
@@ -41,8 +48,9 @@ export type DesignTokens = {
     touch?: Record<string, number>;
   };
   /**
-   * What replaces a base value under `TOUCH_QUERY`: font stacks and steps of the type, control, row
-   * and radius scales; each name must exist at its base. Optional.
+   * What replaces a base value on mobile: font stacks under `TOUCH_QUERY`, and steps of the type,
+   * control, row and radius scales under `MOBILE_SIZE_QUERY`; each name must exist at its base.
+   * Optional.
    */
   touch?: {
     font?: Partial<Record<"mono" | "prose", string>>;
@@ -474,25 +482,32 @@ export function renderTokensCss(t: DesignTokens): string {
   ].join("");
 }
 
-/** The `@media TOUCH_QUERY` block: the touch overrides, as one `:root` rule. */
+/**
+ * The mobile override blocks, one `:root` rule each: the font stacks under `@media TOUCH_QUERY`, the
+ * size steps under `@media MOBILE_SIZE_QUERY` (a compact window or a touch device).
+ */
 function renderTouchBlock(t: DesignTokens): string {
   if (t.touch === undefined) return "";
-  const lines: string[] = [];
-  if (t.touch.font?.mono !== undefined) lines.push(`--cb-font: ${t.touch.font.mono};`);
-  if (t.touch.font?.prose !== undefined) lines.push(`--cb-font-prose: ${t.touch.font.prose};`);
+  const fonts: string[] = [];
+  if (t.touch.font?.mono !== undefined) fonts.push(`--cb-font: ${t.touch.font.mono};`);
+  if (t.touch.font?.prose !== undefined) fonts.push(`--cb-font-prose: ${t.touch.font.prose};`);
+  const sizes: string[] = [];
   for (const group of TOUCH_GROUPS) {
     const pair = SIZE_GROUPS[group];
     for (const [step, v] of Object.entries(t.touch.size?.[group] ?? {})) {
-      if (pair === undefined) lines.push(`--cb-${group}-${step}: ${px(v as number)};`);
+      if (pair === undefined) sizes.push(`--cb-${group}-${step}: ${px(v as number)};`);
       else {
         const [a, b] = v as [number, number];
-        lines.push(`--cb-${group}-${step}-${pair[0]}: ${px(a)};`);
-        lines.push(`--cb-${group}-${step}-${pair[1]}: ${px(b)};`);
+        sizes.push(`--cb-${group}-${step}-${pair[0]}: ${px(a)};`);
+        sizes.push(`--cb-${group}-${step}-${pair[1]}: ${px(b)};`);
       }
     }
   }
-  if (lines.length === 0) return "";
-  return `@media ${TOUCH_QUERY} {\n  :root {\n${lines.map((l) => `    ${l}`).join("\n")}\n  }\n}\n`;
+  const media = (query: string, lines: string[]) =>
+    lines.length === 0
+      ? []
+      : [`@media ${query} {\n  :root {\n${lines.map((l) => `    ${l}`).join("\n")}\n  }\n}\n`];
+  return [...media(TOUCH_QUERY, fonts), ...media(MOBILE_SIZE_QUERY, sizes)].join("\n");
 }
 
 const WIDTH = 100;

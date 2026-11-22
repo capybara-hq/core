@@ -10,7 +10,11 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   timeout: 180_000,
   expect: { timeout: 30_000 },
-  fullyParallel: false,
+  // Shard by test, not by file (`--shard` cuts the test list into equal counts): the specs still
+  // run one at a time (one worker), since they share one stack, the `admin` account, the org Acme
+  // and platform state. A file whose tests depend on each other marks itself serial
+  // (`test.describe.serial` / `describe.configure({ mode: "serial" })`), which keeps it in one shard.
+  fullyParallel: true,
   workers: 1,
   retries: 0,
   forbidOnly: !!process.env.CI,

@@ -133,6 +133,7 @@
   "storage/storage.service.test.ts",
   "text.test.ts",
   "themes/render-css.test.ts",
+  "themes/theme-ref.test.ts",
   "tools/builtin-names.test.ts",
   "tools/current-time.test.ts",
   "tools/delivery-scope.unit.test.ts",

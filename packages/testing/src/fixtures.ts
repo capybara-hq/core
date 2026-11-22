@@ -57,7 +57,7 @@ export const FAKE_EXTENSIONS = [
  *
  * | name | provides / covers |
  * |---|---|
- * | `fake-theme` | themes `neon-grid` (dark only, wordmark, font `FakeSans`, logo) and `paper` (light and dark); passes `capybara-plugin check` |
+ * | `fake-theme` | themes `neon-grid` (dark only, wordmark, font `FakeSans`, logo) and `paper` (light and dark), and `brand-kit` (dark and light, every brand asset: logo, illustration, app icons, avatars `bot` and `cat`; `brand/unnamed.svg` is in the directory but named by no theme); passes `capybara-plugin check` |
  */
 export const FAKE_PLUGINS = ["fake-theme"] as const;
 

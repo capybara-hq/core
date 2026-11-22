@@ -17,8 +17,23 @@ export interface ThemeRef {
   schemes: ThemeScheme[];
   /** The only scheme of a single-scheme theme (the scheme toggle is hidden), else null. */
   singleScheme: ThemeScheme | null;
-  /** null: the built-in mark and wordmark. */
-  logo: { markUrl: string | null; wordmark: string | null; faviconUrl: string | null } | null;
+  /**
+   * null: the built-in mark and wordmark. Each URL is the asset's delivery URL (public, immutable),
+   * null when the theme does not name that file.
+   */
+  logo: {
+    markUrl: string | null;
+    wordmark: string | null;
+    faviconUrl: string | null;
+    /** The empty state's art (theme brand coverage §3); without it the mark serves. */
+    illustrationUrl: string | null;
+    appIconUrl: string | null;
+    appIconMaskableUrl: string | null;
+  } | null;
+  /** The sign-in pages' background decoration (`none`: no dither columns). */
+  decoration: "dither" | "none";
+  /** The merged background colour of each scheme the theme defines (canonical CSS colour). */
+  background: Partial<Record<ThemeScheme, string>>;
   /**
    * `/api/v1/themes/<id>/<version>/r<revision>/theme.css` (public, immutable per version and render
    * revision); opaque here.
@@ -45,6 +60,14 @@ export interface OrgThemes {
   resolved: ThemeRef | null;
   /** The org's setting as stored: its default (null: follow the platform) and the personal lock. */
   org: { id: string | null; personal: "allowed" | "locked" };
+  /**
+   * The avatar presets of the org's effective default theme (theme brand coverage spec §4): the
+   * built-in ids it hides and its own presets (`key` is what an avatar input sends).
+   */
+  avatars: {
+    hidden: string[];
+    presets: { key: string; name: { en: string; zh?: string }; url: string }[];
+  };
 }
 
 /** A theme's name in the UI locale (its English name when it has none in Chinese). */

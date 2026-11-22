@@ -139,9 +139,34 @@ span.cb-title-btn {
   margin: 0 var(--cb-space-1);
   background: var(--cb-line);
 }
-/* The compact form's one overflow button (below): drawn always, shown only there. */
-.cb-title-overflow {
+/* The compact form's one overflow button (below): drawn always, shown only there. The flat
+   title bar's plain title and its own overflow (desktop shell with window controls, compact;
+   shell-environment.css) are drawn always too and shown only there. */
+.cb-title-overflow,
+.cb-title-plain {
   display: none;
+}
+.cb-title-plain {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  align-items: center;
+  min-width: 0;
+  padding: 0 var(--cb-space-2);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-title-plain[data-untitled="true"] {
+  color: var(--cb-muted);
+}
+.cb-title-plain[data-loading="true"] > .cb-title-text {
+  flex: 0 1 30%;
+}
+/* The filler lies over the whole title: the title drags the window, the text stays readable. */
+.cb-title-plain > .cb-drag-fill {
+  position: absolute;
+  inset: 0;
 }
 /* Inside the chat-first compact shell (§6.16.1, spec §4.6): the title bar joins the floating row
    after the shell's menu button: the title is the centre pill (no path) and every icon folds into
@@ -162,6 +187,10 @@ span.cb-title-btn {
   .cb-shell .cb-title-bar > * {
     pointer-events: auto;
   }
+  /* (a pushed surface pads the main column down by the row, shell.css: the bar stays in the row) */
+  .cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar {
+    top: calc(var(--cb-float-top) - var(--cb-float-row));
+  }
   .cb-shell .cb-title-bar[data-new="true"],
   .cb-shell .cb-title-bar > .cb-drag-fill,
   .cb-shell .cb-title-bar > .cb-title-path,
@@ -180,13 +209,17 @@ span.cb-title-btn {
     box-shadow: var(--cb-shadow-float-touch);
     font-weight: 500;
   }
-  .cb-shell .cb-title-overflow {
+  .cb-shell .cb-title-overflow[data-form="float"] {
     display: contents;
   }
+  /* The same size as the menu button and the pill: the row's float size, never the title bar's
+     40 px tap-target floor (maintainer decision 2026-11-22). */
   .cb-shell .cb-title-overflow > .cb-icon-btn {
     flex: none;
     width: var(--cb-float-size);
     height: var(--cb-float-size);
+    min-width: var(--cb-float-size);
+    min-height: var(--cb-float-size);
     border: 1px solid var(--cb-float-line);
     border-radius: var(--cb-radius-pill);
     background: var(--cb-float-ground);
@@ -705,16 +738,17 @@ span.cb-title-btn {
 .cb-bsheet[data-drag="dragging"] .cb-bsheet-handle {
   background: var(--cb-muted);
 }
+/* The head (§6.59, maintainer decision 2026-11-22): `touch.row` high, no hairline, the title
+   centred over the sheet and the round close on the end, its edge `touch.sheet-inset` from the
+   sheet's, where the body's groups end. */
 .cb-bsheet-head {
   flex: none;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--cb-touch-sheet-close) minmax(0, 1fr) var(--cb-touch-sheet-close);
   align-items: center;
   gap: var(--cb-space-2);
-  height: var(--cb-row-roomy);
-  /* the title on the body's text column (space.4), the close button's box on its rows' edge
-     (space.2, the body's padding), as the rows' grounds and their checks below it */
-  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
-  border-bottom: 1px solid var(--cb-line-soft);
+  height: var(--cb-touch-row);
+  padding: 0 var(--cb-touch-sheet-inset);
   touch-action: none;
 }
 /* Dragging follows the finger with no transition; a release travels over motion.expand (§6.7). */
@@ -768,16 +802,52 @@ span.cb-title-btn {
   flex: 1;
   min-width: 0;
 }
-.cb-bsheet-head .cb-icon-btn {
-  min-width: 40px;
-  min-height: 40px;
-}
 .cb-bsheet-title {
+  grid-column: 2;
   margin: 0;
+  overflow: hidden;
   color: var(--cb-ink);
-  font-size: var(--cb-type-body-size);
+  font-size: var(--cb-touch-sheet-title);
   line-height: var(--cb-type-body-line);
+  /* 600 draws the bold face (§2.2: never above 600) */
   font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The close: a `touch.sheet-close` circle on the `hover` ground with a `touch.sheet-close-icon`
+   glyph; the ground never changes (no hover, press or focus ground, so nothing paints on open),
+   the hit area is `touch.hit` through an invisible ring, the keyboard ring the base one. */
+.cb-bsheet-head .cb-btn.cb-bsheet-close,
+.cb-bsheet-head .cb-btn.cb-bsheet-close:hover:not(:disabled),
+.cb-bsheet-head .cb-btn.cb-bsheet-close:active:not(:disabled) {
+  background: var(--cb-hover);
+}
+.cb-bsheet-head .cb-btn.cb-bsheet-close {
+  position: relative;
+  grid-column: 3;
+  justify-self: end;
+  width: var(--cb-touch-sheet-close);
+  min-width: 0;
+  height: var(--cb-touch-sheet-close);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-pill);
+  color: var(--cb-muted);
+}
+.cb-bsheet-head .cb-btn.cb-bsheet-close:hover:not(:disabled) {
+  color: var(--cb-ink);
+}
+.cb-bsheet-close::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--cb-touch-sheet-close) - var(--cb-touch-hit)) / 2);
+}
+.cb-bsheet-close > .cb-icon {
+  width: var(--cb-touch-sheet-close-icon);
+  height: var(--cb-touch-sheet-close-icon);
+  stroke-width: 2.2;
 }
 .cb-bsheet-body {
   flex: 1 1 auto;
@@ -786,7 +856,9 @@ span.cb-title-btn {
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--cb-scroll-thumb) transparent;
-  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-bottom));
+  /* the body's content (the groups, the option rows' grounds) `touch.sheet-inset` from the edges */
+  padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
+    calc(var(--cb-space-4) + var(--cb-inset-bottom));
 }
 /* A Filter sheet's single-choice options (§6.7). */
 .cb-sheet-option {
@@ -1489,11 +1561,11 @@ button.cb-property-row {
     padding-right: calc(var(--cb-space-1) + var(--cb-inset-right));
   }
   .cb-title-bar .cb-icon-btn {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: var(--cb-touch-hit);
+    min-height: var(--cb-touch-hit);
   }
   .cb-title-btn {
-    height: 40px;
+    height: var(--cb-touch-hit);
   }
   /* The new conversation (§5.4, maintainer decision 2026-11-09): the greeting and the agents row
      at the top, the quick actions listed under them, the composer pinned at the bottom. */
@@ -1674,6 +1746,12 @@ button.cb-property-row {
 .cb-panel-tab:focus-visible {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
+}
+/* Mobile sizes (spec §2.5; MOBILE_SIZE_QUERY): a panel tab is a touch.hit (44) high target. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-panel-tab {
+    min-height: var(--cb-touch-hit);
+  }
 }
 
 .cb-rpanel-body[data-pad][data-state="failed"] {
@@ -1873,16 +1951,18 @@ button.cb-property-row {
 }
 
 /*
- * Touch (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments). Only
- * under the touch query: the composer is a floating pill (attach, input, send) with the settings
- * chip above it, the thread runs under it, the user's bubble sits at the end edge and the
- * approval card's buttons are 48 high. Desktop and mouse layouts above are untouched.
+ * The touch form (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments),
+ * under MOBILE_SIZE_QUERY: a compact window whatever the pointer, or a touch device at any width
+ * (maintainer decision 2026-11-22: mobile sizes and styles follow the width, same components).
+ * The composer is a floating pill (attach, input, send) with the settings chip above it, the
+ * thread runs under it, the user's bubble sits at the end edge and the approval card's buttons
+ * are 48 high. Medium and expanded with a fine pointer keep the layouts above.
  *
  * The frame turns into a grid of three columns; the pill itself is the frame's ::before in row 4,
  * and the controls sit on it. Rows: 1 token warning, 2 attachments, 3 chip and agent picker,
  * 4 the pill, 5 quick actions, 6 the agents chip.
  */
-@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-composer {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;

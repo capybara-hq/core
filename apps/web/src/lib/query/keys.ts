@@ -287,6 +287,16 @@ export const keys = {
         kind,
         params,
       ],
+      /**
+       * A page of my conversations by time (the drawer's recent list, the conversations page):
+       * under the groups prefix, so every write that invalidates the sidebar refreshes it too.
+       */
+      conversationList: (params: string): readonly unknown[] => [
+        ...all,
+        "conversationGroups",
+        "list",
+        params,
+      ],
       /** My inbox (its items). */
       inbox: (): readonly unknown[] => [...all, "inbox"],
       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],

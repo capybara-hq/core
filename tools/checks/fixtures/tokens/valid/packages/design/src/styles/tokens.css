@@ -58,6 +58,11 @@
 @media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   :root {
     --cb-font: system-ui, sans-serif;
+  }
+}
+
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  :root {
     --cb-type-body-size: 17px;
     --cb-type-body-line: 24px;
     --cb-control-dense: 44px;

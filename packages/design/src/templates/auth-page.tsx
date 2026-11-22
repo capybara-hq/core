@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Dither, Logo } from "../display/index";
 import { SkeletonBox, SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { Card, Stack, Text } from "../layout/index";
-import { useDesignT } from "../provider";
+import { useBrand, useDesignT } from "../provider";
 import { PreferenceBar, type PreferenceBarProps } from "../shell/preference-bar";
 import { type FieldShape, LoadingFields } from "./frame";
 
@@ -45,10 +45,13 @@ export function AuthPage({
   children?: ReactNode;
 }) {
   const t = useDesignT();
+  // A theme may turn the dither columns off (theme brand coverage §3): the columns stay as empty
+  // spacers, so the card keeps its place and width and the preferences keep their corner.
+  const dither = useBrand()?.decoration !== "none";
   const page = (
     <>
       <div className="cb-auth-side" data-side="left">
-        <Dither side="left" />
+        {dither ? <Dither side="left" /> : null}
       </div>
       <main className="cb-auth-main">
         <div className="cb-auth-logo">
@@ -99,12 +102,16 @@ export function AuthPage({
         </div>
       ) : null}
       <div className="cb-auth-side" data-side="right">
-        <Dither side="right" seed={2} />
+        {dither ? <Dither side="right" seed={2} /> : null}
       </div>
     </>
   );
   return (
-    <div className="cb-template cb-auth" data-template="AuthPage">
+    <div
+      className="cb-template cb-auth"
+      data-template="AuthPage"
+      data-decoration={dither ? undefined : "none"}
+    >
       {loading ? <SkeletonGroup label={title || t("table.loading")}>{page}</SkeletonGroup> : page}
     </div>
   );

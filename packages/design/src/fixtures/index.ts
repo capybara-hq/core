@@ -666,6 +666,7 @@ export const SELECT_PERSON_FIXTURE = {
   value: "grace",
 };
 
+export * from "./brand";
 export * from "./conversation";
 
 /**
@@ -687,6 +688,23 @@ export const PERSON_FIXTURE = { name: "Ada Lovelace", avatarUrl: null as string 
  */
 export const PERSON_AVATAR_FIXTURE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='gray'/%3E%3Ccircle cx='12' cy='9' r='4' fill='silver'/%3E%3Cpath d='M4 24c0-5 4-8 8-8s8 3 8 8z' fill='silver'/%3E%3C/svg%3E";
+
+/**
+ * A theme's own avatar presets for the catalog and the reference set (theme brand coverage spec
+ * §4): two flat data-URI pictures standing in for the org's theme preset URLs.
+ */
+export const THEME_AVATAR_FIXTURES = [
+  {
+    key: "theme-cyberpunk/neon/ghost",
+    name: "幽灵",
+    src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='teal'/%3E%3Ccircle cx='12' cy='12' r='6' fill='silver'/%3E%3C/svg%3E",
+  },
+  {
+    key: "theme-cyberpunk/neon/drone",
+    name: "无人机",
+    src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='purple'/%3E%3Crect x='6' y='10' width='12' height='4' fill='silver'/%3E%3C/svg%3E",
+  },
+] as const;
 
 /**
  * The overview section's reference blocks (spec §5.6 "OverviewSection"): a section of the admin

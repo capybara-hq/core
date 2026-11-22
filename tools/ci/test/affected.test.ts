@@ -193,10 +193,13 @@ describe("planFromFiles: by diff", () => {
   it("docker: the images' inputs (CLI and web closures) and the plugin the smoke test installs", () => {
     for (const f of [
       "apps/capybara/src/cli.ts",
-      "apps/web/src/app/page.tsx",
+      "apps/web/server.mjs",
+      "apps/web/next.config.mjs",
+      "apps/web/package.json",
+      "apps/web/public/favicon.ico",
+      "packages/design/package.json",
       "packages/kernel/src/kernel.ts",
       "packages/sdk/src/index.ts",
-      "packages/design/src/button.tsx",
       "plugins/model-fake/src/index.ts",
     ]) {
       expect(plan(f).docker, f).toBe(true);
@@ -209,6 +212,23 @@ describe("planFromFiles: by diff", () => {
     ]) {
       expect(plan(f).docker, f).toBe(false);
     }
+  });
+
+  it("docker: web and design sources reach the image only through next build, which web runs", () => {
+    for (const f of [
+      "apps/web/src/app/page.tsx",
+      "apps/web/messages/zh.json",
+      "apps/web/e2e/chat.spec.ts",
+      "apps/web/visual/sidebar.interaction.spec.ts",
+      "apps/web/playwright.config.ts",
+      "packages/design/src/button.tsx",
+      "packages/design/test/button.test.tsx",
+      "docs/design/tokens.json",
+    ]) {
+      expect(plan(f), f).toMatchObject({ web: true, docker: false });
+    }
+    // the kernel is also in the CLI image: a mixed diff still builds
+    expect(plan("apps/web/src/app/page.tsx", "packages/kernel/src/kernel.ts").docker).toBe(true);
   });
 
   it("bootstrap.json (npm pins): the CLI tests, e2e and docker, explicitly", () => {
@@ -395,14 +415,16 @@ describe("the real workspace", () => {
   it("docker runs for every directory the images or the compose smoke test are built from (P-12)", () => {
     for (const dir of [
       "apps/capybara",
-      "apps/web",
       "packages/kernel",
       "packages/plugin-sdk",
-      "packages/design",
       "plugins/model-fake",
       "packages/plugin-tools",
     ]) {
       expect(planFromFiles([`${dir}/src/x.ts`], real).docker, dir).toBe(true);
+    }
+    for (const dir of ["apps/web", "packages/design"]) {
+      expect(planFromFiles([`${dir}/src/x.ts`], real).docker, dir).toBe(false);
+      expect(planFromFiles([`${dir}/package.json`], real).docker, dir).toBe(true);
     }
     expect(planFromFiles(["tools/worktree/src/x.ts"], real).docker).toBe(false);
   });

@@ -130,4 +130,41 @@ describe("Markdown (design spec §6.16.4)", () => {
     const { container } = wrap(<Markdown text={deep} />);
     expect(container.textContent).toContain("x");
   });
+  // CommonMark's flanking rules refuse `**` between a CJK letter and CJK punctuation; the renderer
+  // parses with the CJK-friendly amendment (micromark-extension-cjk-friendly).
+  it.each([
+    ["我按 **「构建 AI Agent 的框架/运行时 SDK」** 来调研", "「构建 AI Agent 的框架/运行时 SDK」"],
+    ["按**「框架」**来", "「框架」"],
+    ["**（注意）**这里", "（注意）"],
+    ["这是**重点**。", "重点"],
+    ['**"引号"**测试', '"引号"'],
+    ["**“引号”**测试", "“引号”"],
+    ["《**书名**》", "书名"],
+  ])("renders %s with strong text next to CJK punctuation", (text, strong) => {
+    const { container } = wrap(<Markdown text={text} />);
+    expect(container.querySelector("strong")?.textContent).toBe(strong);
+    expect(container.textContent).not.toContain("*");
+  });
+
+  it("renders strikethrough next to CJK punctuation", () => {
+    const { container } = wrap(<Markdown text="按~~「旧」~~来" />);
+    expect(container.querySelector("del")?.textContent).toBe("「旧」");
+  });
+
+  it("keeps CommonMark's literal cases literal and code untouched", () => {
+    // Delimiters surrounded by spaces never flank, CJK or not.
+    const spaced = wrap(<Markdown text="a ** b ** c" />).container;
+    expect(spaced.querySelector("strong")).toBeNull();
+    expect(spaced.textContent).toBe("a ** b ** c");
+    cleanup();
+    const code = wrap(<Markdown text={"`**x**` and\n\n```\n按**「框架」**来\n```"} />).container;
+    expect(code.querySelector("strong")).toBeNull();
+    expect(code.querySelector("code")?.textContent).toBe("**x**");
+    expect(code.textContent).toContain("按**「框架」**来");
+    cleanup();
+    // Between alphanumerics `**` both opens and closes (plain CommonMark too): 2<strong>3</strong>4.
+    const digits = wrap(<Markdown text="2**3**4" />).container;
+    expect(digits.querySelector("strong")?.textContent).toBe("3");
+    expect(digits.textContent).toBe("234");
+  });
 });

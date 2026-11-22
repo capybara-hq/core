@@ -341,19 +341,22 @@ describe("rendering", () => {
     expect(renderThemeTokensTs(tokens)).toBe(readFileSync(join(root, SDK_PATH), "utf8"));
   });
 
-  it("renderTokensCss writes the touch overrides in one media block after the scheme blocks", () => {
+  it("renderTokensCss writes the touch fonts and the mobile sizes in two media blocks after the scheme blocks", () => {
     const root = fixture("valid");
     const { tokens } = parseTokens(readFileSync(join(root, JSON_PATH), "utf8"), "tokens.json");
     if (!tokens) throw new Error("valid fixture must parse");
     const out = renderTokensCss(tokens);
-    const media = out.match(/@media ([^{]*)\{\n([\s\S]*?)\n\}\n/);
-    expect(media?.[1]?.trim()).toBe(
+    const media = [...out.matchAll(/@media ([^{]*)\{\n([\s\S]*?)\n\}\n/g)];
+    expect(media.map((m) => m[1]?.trim())).toEqual([
       "(pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))",
+      "(max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))",
+    ]);
+    expect(media[0]?.[2]).toBe(
+      ["  :root {", "    --cb-font: system-ui, sans-serif;", "  }"].join("\n"),
     );
-    expect(media?.[2]).toBe(
+    expect(media[1]?.[2]).toBe(
       [
         "  :root {",
-        "    --cb-font: system-ui, sans-serif;",
         "    --cb-type-body-size: 17px;",
         "    --cb-type-body-line: 24px;",
         "    --cb-control-dense: 44px;",

@@ -18,6 +18,7 @@ import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { PW } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
+import { clearThemeLevels, importAvatarTheme, writeOrgTheme } from "../themes/theme-env.js";
 
 /**
  * Task 5 of the Platform tool: the skills, agents and agent-template operations against PG with
@@ -596,6 +597,69 @@ describe("agent profile", () => {
     expect(await precheck("agents.update-profile", input, c)).toEqual({ ok: true });
     const out = (await run("agents.update-profile", input, c)) as { profile: { avatar: unknown } };
     expect(out.profile.avatar).toEqual({ kind: "preset", id: "fox" });
+  });
+
+  it("Platform agents.update-profile with a theme key: stored pinned; with an unavailable key: the error's next step", async () => {
+    await clearThemeLevels(env);
+    const { id: themeId } = await importAvatarTheme(env, "brand", "brand-grid", {
+      presets: ["mascot"],
+    });
+    await writeOrgTheme(env, env.orgId, { id: themeId, personal: "allowed" });
+    const id = await agentOf(env.memId, "private", "Mine");
+    const c = ctxOf(env.memId, id);
+    const good = { agentId: id, avatar: { kind: "preset", id: "brand/brand-grid/mascot" } };
+    expect(await precheck("agents.update-profile", good, c)).toEqual({ ok: true });
+    // the card names the theme preset, not its key; an unknown key shows as given
+    expect(await summarize("agents.update-profile", good, c)).toEqual({
+      zh: "修改私有智能体「Mine」的资料：头像设为预设「mascot zh」",
+      en: 'Update the profile of private agent "Mine": set the avatar to preset "mascot en"',
+    });
+    expect(
+      await summarize(
+        "agents.update-profile",
+        { agentId: id, avatar: { kind: "preset", id: "other/other-paper/mascot" } },
+        c,
+      ),
+    ).toMatchObject({
+      en: 'Update the profile of private agent "Mine": set the avatar to preset "other/other-paper/mascot"',
+    });
+    const out = (await run("agents.update-profile", good, c)) as { profile: { avatar: unknown } };
+    const pin = {
+      kind: "theme",
+      themeId,
+      version: "1",
+      preset: "mascot",
+      file: "./avatars/mascot.svg",
+    };
+    expect(out.profile.avatar).toEqual({
+      ...pin,
+      url: `/api/v1/themes/${themeId}/1/assets/avatars%2Fmascot.svg`,
+    });
+    const row = await env.db
+      .selectFrom("agents")
+      .select("profile_avatar")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.profile_avatar).toEqual(pin);
+    // a key the org's default theme does not offer: refused before the card, with the next step
+    const bad = { agentId: id, avatar: { kind: "preset", id: "other/other-paper/mascot" } };
+    expect(await precheck("agents.update-profile", bad, c)).toMatchObject({
+      ok: false,
+      code: "agent.avatar_unavailable",
+    });
+    const next = nextStepFor(
+      op("agents.update-profile").errors,
+      "agent.avatar_unavailable",
+      "member",
+    );
+    expect(next).toContain("themes.list");
+    await expect(run("agents.update-profile", bad, c)).rejects.toThrow(
+      /^agent\.avatar_unavailable:/,
+    );
+    await expect(run("agents.update-profile", bad, c)).rejects.toThrow(/themes\.list/);
+    // the description names where the keys come from
+    expect(op("agents.update-profile").description).toContain("themes.list");
+    await clearThemeLevels(env);
   });
 });
 

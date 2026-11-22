@@ -241,6 +241,7 @@ describe("界面位置 on /admin/settings", () => {
   it("the super admin sets the platform default and the PUT carries only that slot", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           orgCreation: "anyone",

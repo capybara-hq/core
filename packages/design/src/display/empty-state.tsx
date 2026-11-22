@@ -1,8 +1,9 @@
-import { isValidElement, type ReactElement } from "react";
+import { type CSSProperties, isValidElement, type ReactElement } from "react";
 import { Button } from "../controls/button";
 import { Icon } from "../icons/icon";
-import { useDesignLink } from "../provider";
+import { useBrand, useDesignLink } from "../provider";
 import type { HeaderAction } from "../shell/page-header";
+import { brandArtStyle } from "./brand-art";
 import { LogoLine } from "./logo";
 
 export type EmptyStateProps = {
@@ -38,9 +39,26 @@ export function EmptyState({ text, hint, action, size = "page" }: EmptyStateProp
   const Link = useDesignLink();
   const compact = size === "compact";
   const dense = size !== "page";
+  // A theme's illustration, else its mark, replaces the line-art capybara (theme brand coverage
+  // §3): a mask filled with `faint` in a fixed box, so any file reads as quiet line art.
+  const brand = useBrand();
+  const artUrl = brand?.illustrationUrl || brand?.markUrl || null;
   return (
     <div className="cb-empty-state" data-part="empty-state" data-size={size}>
-      {compact ? null : (
+      {compact ? null : artUrl ? (
+        <span
+          className="cb-empty-state-art"
+          data-part="empty-illustration"
+          data-art="brand"
+          aria-hidden="true"
+        >
+          <span
+            className="cb-empty-state-brand-art"
+            data-part="empty-brand-art"
+            style={brandArtStyle(artUrl) as CSSProperties}
+          />
+        </span>
+      ) : (
         <span className="cb-empty-state-art" data-part="empty-illustration" aria-hidden="true">
           <LogoLine scale={size === "panel" ? 4 : 6} />
         </span>

@@ -4,13 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+    # the default three, plus ready_for_review: a draft runs nothing until it is marked ready
+    types: [opened, synchronize, reopened, ready_for_review]
   # The merge queue tests each PR merged onto the current main before it lands.
   merge_group:
 
-# A new push to a PR cancels its older run; runs on main are never cancelled.
+# A new push cancels the older run on the same ref, on PRs and on main alike (tools/ci/README.md).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # No default token permissions: each job asks for what it needs (only `contents: read` to check out;
 # artifacts and the Actions cache use the runner's own token, not GITHUB_TOKEN).
@@ -27,6 +29,8 @@ permissions: {}
 # release.yml (push to main and workflow_dispatch only, never on PRs).
 jobs:
   changes:
+    # Drafts run nothing (every job needs this one; ci-ok is skipped too, and a draft cannot merge).
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -186,26 +190,28 @@ jobs:
       - run: pnpm --filter @capybara-hq/web build
 
   e2e:
-    name: e2e (${{ matrix.shard }}/5)
+    name: e2e (${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Measured locally, the e2e run itself takes about 10s (including Testcontainers startup); CI also
-    # needs dependency install, Playwright and image pulls. Chromium is cached under
+    # The e2e step of a shard takes about 10 to 13 minutes on CI (run 44941206240, five shards: about
+    # 45 minutes of specs in all, plus 45 to 65 s of stack startup and the setup project per shard);
+    # the job also needs dependency install, Playwright and image pulls. Chromium is cached under
     # ~/.cache/ms-playwright by the @playwright/test version in the lockfile; on a hit only the system
     # dependencies are installed (install-deps still goes through apt). With a slow apt mirror that alone
     # can take several minutes (run 39890548962 was cancelled at the 10 minute mark although the tests
     # had all passed), hence the 20 minute limit.
     timeout-minutes: 20
-    # The specs run one at a time against one stack (workers: 1, they share its state), about 10
-    # minutes in all. Five jobs each start their own stack and run a fifth of the spec files;
-    # Playwright runs the `setup` project, which the others depend on, in every shard.
+    # The specs run one at a time against one stack (workers: 1, they share its state). Four jobs
+    # each start their own stack and run a quarter of the tests (fullyParallel: Playwright shards by
+    # test, a serial file stays whole); it runs the `setup` project, which the others depend on, in
+    # every shard.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -252,7 +258,7 @@ jobs:
       # apt wrote the cached directory as root; the cache action saves it as the runner user
       - run: sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
       - name: End-to-end tests (Testcontainers starts PG / Valkey, kernel + model-fake, web tier)
-        run: pnpm --filter @capybara-hq/web e2e --shard=${{ matrix.shard }}/5
+        run: pnpm --filter @capybara-hq/web e2e --shard=${{ matrix.shard }}/4
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -374,7 +380,7 @@ jobs:
   # when the plan says it runs, and may be skipped only when the plan says it doesn't. always():
   # report failure when an upstream job failed instead of being skipped (skipped = passed).
   ci-ok:
-    if: always()
+    if: ${{ always() && !github.event.pull_request.draft }}
     needs: [changes, ci, test, web, e2e, visual, docker]
     runs-on: ubuntu-latest
     permissions: {}

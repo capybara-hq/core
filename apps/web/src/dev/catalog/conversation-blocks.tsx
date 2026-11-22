@@ -61,6 +61,7 @@ import {
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { FixtureBrand } from "./brand-blocks";
 import { useChartImage } from "./chart-image";
 import { RefBlock, RefPending } from "./ref-block";
 
@@ -277,6 +278,11 @@ function workingLineBlocks(): ReactNode {
       <Block id="working-line-reduced-motion">
         <WorkingLine still />
       </Block>
+      <FixtureBrand>
+        <Block id="working-line-branded">
+          <WorkingLine still />
+        </Block>
+      </FixtureBrand>
     </>
   );
 }
@@ -302,6 +308,11 @@ function greetingBlocks(): ReactNode {
       <Block id="greeting-placeholder">
         <Greeting />
       </Block>
+      <FixtureBrand>
+        <Block id="greeting-branded">
+          <Greeting text={NC.greeting} still />
+        </Block>
+      </FixtureBrand>
     </>
   );
 }

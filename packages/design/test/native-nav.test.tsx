@@ -39,18 +39,7 @@ afterEach(() => {
 });
 
 const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
-const conversations = {
-  state: "ready" as const,
-  groups: [],
-  moreGroups: false,
-  onMoreGroups() {},
-  onRetry() {},
-  filter: { q: "", state: "all" as const, onChange() {} },
-  archived: { count: 0, open: false, onOpenChange() {} },
-  onRename: async () => {},
-  onArchive: async () => {},
-  onDelete: async () => {},
-};
+const conversations = { state: "ready" as const, items: [], onRetry() {} };
 
 function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
   return {
@@ -207,7 +196,7 @@ describe("the native strip (nav@1)", () => {
     );
     expect(rows).toEqual(expect.arrayContaining(["inbox", "agents", "schedules"]));
     // the "Skills, connectors, devices…" row stays
-    expect(screen.getByText("技能、连接器、设备…").closest("[data-nav-section]")).toBeNull();
+    expect(screen.getByText("更多").closest("[data-nav-section]")).toBeNull();
   });
 
   it("the sidebar marks its sections and its other entries; the account menu gains 更多", async () => {

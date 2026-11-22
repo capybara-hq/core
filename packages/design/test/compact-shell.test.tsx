@@ -11,6 +11,7 @@ import {
   AppShell,
   DesignProvider,
   type DrawerNavData,
+  type DrawerRecent,
   type LinkComponent,
   PageHeader,
   useRegisterShellPage,
@@ -35,34 +36,20 @@ const sidebar = {
 };
 const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
 
-const conversations = {
-  state: "ready" as const,
-  groups: [
+const conversations: DrawerRecent = {
+  state: "ready",
+  items: [
     {
-      agentId: "a1",
-      agentName: "Claude",
-      conversations: [
-        {
-          id: "c1",
-          title: "沙箱内 pnpm 安装失败",
-          startedAt: new Date("2026-11-20T10:00:00Z"),
-          href: "/chat/c1",
-          activity: null,
-        },
-      ],
-      more: false,
-      onMore() {},
-      onNew() {},
+      id: "c1",
+      title: "沙箱内 pnpm 安装失败",
+      startedAt: new Date("2026-11-20T10:00:00Z"),
+      updatedAt: "2026-11-20T10:00:00Z",
+      href: "/chat/c1",
+      agent: { name: "Claude" },
+      activity: null,
     },
   ],
-  moreGroups: false,
-  onMoreGroups() {},
   onRetry() {},
-  filter: { q: "", state: "all" as const, onChange() {} },
-  archived: { count: 0, open: false, onOpenChange() {} },
-  onRename: async () => {},
-  onArchive: async () => {},
-  onDelete: async () => {},
 };
 
 function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
@@ -86,7 +73,7 @@ function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
       name: "Grant",
       orgName: "Meta1",
       personalSettingsHref: "/account/profile",
-      theme: <span>主题开关</span>,
+      theme: null,
       status: <span>正常</span>,
       onSignOut: () => {},
     },
@@ -401,14 +388,14 @@ describe("the drawer from the menu button", () => {
       "schedules",
     ]);
     expect(sections[0]?.querySelector('[data-part="navrow-badge"]')?.textContent).toBe("3");
-    expect(within(panel).getByRole("link", { name: "沙箱内 pnpm 安装失败" })).toBeTruthy();
+    expect(within(panel).getByRole("link", { name: /沙箱内 pnpm 安装失败/ })).toBeTruthy();
     expect(within(panel).getByRole("link", { name: "全部会话" }).getAttribute("href")).toBe(
       "/conversations",
     );
     expect(within(panel).getByRole("button", { name: /Grant/ })).toBeTruthy();
     expect(within(panel).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/");
     // the more row opens its level inside the same drawer
-    await userEvent.click(within(panel).getByRole("button", { name: "技能、连接器、设备…" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "更多" }));
     const level = document.querySelector('[data-part="drawer-level"]') as HTMLElement;
     expect(
       within(level)
@@ -419,21 +406,18 @@ describe("the drawer from the menu button", () => {
     expect(document.querySelector('[data-part="drawer-level"]')).toBeNull();
   });
 
-  it("done() from an account-sheet slot closes the sheet and the drawer (T28 review)", async () => {
+  it("an org pick in the account sheet closes the sheet and the drawer (T28 review)", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const data = drawerData();
     const account = {
       ...data.account,
-      orgSwitcher: (done: () => void) => (
-        <button type="button" onClick={done}>
-          切到 Beta
-        </button>
-      ),
+      orgMenu: [{ label: "Beta", checked: false, onSelect: () => {} }],
     };
     render(shell({ drawer: { ...data, account } }));
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
-    await userEvent.click(screen.getByRole("button", { name: "切到 Beta" }));
+    await userEvent.click(screen.getByRole("button", { name: /组织/ }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
     await waitFor(() => expect(drawerEl()).toBeNull());
   });
@@ -456,7 +440,7 @@ describe("the drawer from the menu button", () => {
     expect(visits).toEqual(["/inbox"]);
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(
-      within(drawerEl() as HTMLElement).getByRole("link", { name: "沙箱内 pnpm 安装失败" }),
+      within(drawerEl() as HTMLElement).getByRole("link", { name: /沙箱内 pnpm 安装失败/ }),
     );
     await waitFor(() => expect(drawerEl()).toBeNull());
     expect(visits).toEqual(["/inbox", "/chat/c1"]);

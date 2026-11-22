@@ -18,7 +18,7 @@ import { type PersonLike, PersonName } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
-import { useTouch } from "../shell/touch";
+import { useMobileSizes } from "../shell/touch";
 import { PersonFieldRow } from "./person-field";
 import { registrableDomain } from "./registrable";
 import { fillCopy } from "./tool-copy";
@@ -351,7 +351,8 @@ const fullInput = (input: Record<string, unknown>): string => {
  * (the first scope) last, at the thumb's end of the row.
  */
 function useActionOrder() {
-  const touch = useTouch() === true;
+  // the mobile order follows the mobile sizes (compact or touch, design spec §2.5)
+  const touch = useMobileSizes() === true;
   return (approve: ReactNode[], deny: ReactNode, touchDeny: ReactNode): ReactNode[] =>
     touch ? [touchDeny, ...approve.slice(1), ...approve.slice(0, 1)] : [...approve, deny];
 }

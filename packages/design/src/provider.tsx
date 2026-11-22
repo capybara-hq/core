@@ -35,12 +35,21 @@ const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
 );
 
 /**
- * What a theme replaces of the brand (spec §3): the logo mark as an image URL and the wordmark
- * text; a null part keeps the built-in pixel capybara or `CAPYBARA`.
+ * What a theme replaces of the brand (spec §3; theme brand coverage spec §3): a null part keeps
+ * the built-in graphic or text.
  */
 export type Brand = {
+  /** The logo mark's image URL; null keeps the pixel capybara. */
   markUrl: string | null;
+  /** The wordmark text; null keeps `CAPYBARA`. */
   wordmark: string | null;
+  /**
+   * The empty states' illustration URL (drawn as a mask in `faint`); null falls back to
+   * `markUrl`, and with both null the empty state draws the capybara line art.
+   */
+  illustrationUrl: string | null;
+  /** The decorative dither columns (`AuthPage`): `"dither"` draws them, `"none"` leaves them out. */
+  decoration: "dither" | "none";
   /** The product name (the deployment's `platform.name`, else the built-in one): the mark's `alt`. */
   productName: string | null;
 };

@@ -166,7 +166,21 @@ export function PageHeader(p: PageHeaderProps) {
   // Before hydration both the inline actions and the fold menu are drawn and CSS media queries
   // show one (m6), so the first paint below 600 never lays every action out in one row.
   const pre = !useHydrated();
-  const renderAction = (a: HeaderAction) => {
+  const content = (a: Extract<HeaderAction, { variant: string }>, primary: boolean) =>
+    primary ? (
+      <>
+        <span className="cb-pageheader-primary-icon" data-implicit={a.icon ? undefined : "true"}>
+          <Icon name={a.icon ?? "plus"} size={14} />
+        </span>
+        <span className="cb-pageheader-primary-label">{a.label}</span>
+      </>
+    ) : (
+      <>
+        {a.icon ? <Icon name={a.icon} size={14} /> : null}
+        {a.label}
+      </>
+    );
+  const renderAction = (a: HeaderAction, primary = false) => {
     if ("menu" in a) {
       return (
         <Menu
@@ -192,8 +206,7 @@ export function PageHeader(p: PageHeaderProps) {
           density="default"
           {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
         >
-          {a.icon ? <Icon name={a.icon} size={14} /> : null}
-          {a.label}
+          {content(a, primary)}
         </LinkButton>
       );
     }
@@ -207,13 +220,20 @@ export function PageHeader(p: PageHeaderProps) {
         {...(a.disabled ? { disabled: true } : {})}
         {...(a.onSelect ? { onClick: a.onSelect } : {})}
       >
-        {a.icon ? <Icon name={a.icon} size={14} /> : null}
-        {a.label}
+        {content(a, primary)}
       </Button>
     );
   };
+  // The primary in a wrapper of no box of its own. A ListPage restyles this very button as its
+  // floating action button below 600 (responsive system spec §2.5, §5.4: one DOM, CSS only), so
+  // its icon (default `plus`, drawn only there when the action has none) and label are parts.
+  const renderPrimary = (a: HeaderAction) => (
+    <span key={`primary-${a.label}`} className="cb-pageheader-primary" data-head-primary="true">
+      {renderAction(a, true)}
+    </span>
+  );
   const drawn: ReactNode[] = !more
-    ? actions.map(renderAction)
+    ? [...rest.map((a) => renderAction(a)), ...primaries.map(renderPrimary)]
     : pre
       ? [
           ...rest.map((a) => (
@@ -226,11 +246,11 @@ export function PageHeader(p: PageHeaderProps) {
               {renderAction(more)}
             </span>
           ) : null,
-          ...primaries.map(renderAction),
+          ...primaries.map(renderPrimary),
         ]
       : narrow
-        ? [more ? renderAction(more) : null, ...primaries.map(renderAction)]
-        : actions.map(renderAction);
+        ? [more ? renderAction(more) : null, ...primaries.map(renderPrimary)]
+        : [...rest.map((a) => renderAction(a)), ...primaries.map(renderPrimary)];
   const loading = p.loading;
   const actionSlots = actions.length === 0 ? (loading?.actions ?? 0) : 0;
   const tabSlots = tabItems.length === 0 ? (loading?.tabs ?? 0) : 0;

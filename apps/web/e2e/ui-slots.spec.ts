@@ -12,11 +12,12 @@ const hideSwitch = (page: Page, slot: string, title: string) =>
   });
 
 /**
- * The UI slot cases share one file on purpose: hiding contributions writes the org's and the
- * platform's arrangement on the shared stack, which the slot cases below read (Acme's
- * `agent.detail.section` / `org.settings.section`, the platform's `platform.page`). Tests of one
- * file run in one worker, one after the other, so a hide never lands while another case looks for
- * the entry it hides (with `--workers=2` the files ran side by side and raced).
+ * Hiding contributions writes the org's and the platform's arrangement on the shared stack, which
+ * the slot cases below read (Acme's `agent.detail.section` / `org.settings.section`, the platform's
+ * `platform.page`). The suite runs one test at a time (`workers: 1`), so a hide never lands while
+ * another case looks for the entry it hides (with `--workers=2` the cases ran side by side and
+ * raced); each case clears what it hid and sets up what it reads, so a shard may run any of them
+ * alone.
  */
 
 /**

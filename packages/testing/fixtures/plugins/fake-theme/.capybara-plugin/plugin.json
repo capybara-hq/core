@@ -3,5 +3,5 @@
   "name": "fake-theme",
   "version": "0.1.0",
   "publisher": "Capybara",
-  "description": "Fixture: a declarative plugin with two themes and no extension"
+  "description": "Fixture: a declarative plugin with themes and no extension"
 }

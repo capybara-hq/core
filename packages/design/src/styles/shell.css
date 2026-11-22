@@ -194,7 +194,8 @@
    in a row both run; a pop brings the page back from the parallax and dim it left at (-30%,
    brightness 0.9). A browser with view transitions animates the back button instead
    (view-transition.ts): the top page leaves over the page underneath. A pop the browser animated
-   itself (a back gesture) carries no data-nav (app-shell.tsx), and reduced motion has none. */
+   itself (a back gesture) or a view transition animates carries no data-nav (app-shell.tsx), so
+   it never slides again once the transition ends, and reduced motion has none. */
 @media (max-width: 599px) and (prefers-reduced-motion: no-preference) {
   .cb-shell-main[data-nav="push-0"] {
     animation: cb-push-0 var(--cb-motion-push) var(--cb-ease-push);
@@ -319,11 +320,11 @@
   max-width: 100%;
 }
 /* Phones (below 600): the search takes its own full-width line above the tabs, and the tabs
-   scroll on theirs; the tabs are 40 px tap targets. */
+   scroll on theirs (the mobile size tabs are touch.hit targets, display.css). */
 @media (max-width: 599px) {
-  /* The placeholders follow the loaded parts' phone sizes (40 px tabs), so nothing moves. */
+  /* The placeholders follow the loaded parts' phone sizes (44 px tabs), so nothing moves. */
   .cb-pageheader-tabs .cb-pageheader-tab-slots {
-    height: 40px;
+    height: var(--cb-touch-hit);
   }
   .cb-pageheader-tabs {
     flex-wrap: wrap;
@@ -336,9 +337,13 @@
     width: 100%;
     margin-left: 0;
   }
-  .cb-pageheader-tabs .cb-tab {
-    min-width: 40px;
-    min-height: 40px;
+  .cb-pageheader-tabs .cb-tabs {
+    flex: 1 1 100%;
+  }
+  /* The phone's search field (responsive system spec §0 item 2): filled ground, no border. */
+  .cb-pageheader-search .cb-input {
+    border-color: transparent;
+    background: var(--cb-selected);
   }
 }
 
@@ -516,8 +521,8 @@ a.cb-pageheader-path-seg:hover {
 }
 /* Phones (below 600, spec §4.2, §4.3): the title and the description take the full width (the
    description wraps), and the actions go under them, start-aligned: the primary as a button, the
-   others folded into ⋯ when there are several. The buttons keep their default height and reach a
-   40 px tap target through an invisible ring around them. */
+   others folded into ⋯ when there are several. The buttons are the mobile size controls (44,
+   spec §2.5). */
 @media (max-width: 599px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
@@ -544,16 +549,6 @@ a.cb-pageheader-path-seg:hover {
   }
   .cb-pageheader-actions {
     flex: 1 1 100%;
-  }
-  .cb-pageheader-actions .cb-btn {
-    position: relative;
-  }
-  .cb-pageheader-actions .cb-btn::after {
-    content: "";
-    position: absolute;
-    inset: calc((var(--cb-control-default) - 40px) / 2) min(0px, calc((100% - 40px) / 2));
-    min-height: 40px;
-    min-width: 40px;
   }
 }
 @media (min-width: 600px) {
@@ -942,15 +937,18 @@ a.cb-stat-card:focus-visible {
 }
 
 /* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
-   whatever the width; the PageHeader drops its path row on compact only, where the floating row carries
-   back (medium and expanded have no floating row: the path row is their way up). The query is the first
-   paint's; the attribute follows it after hydration for plugin CSS. */
+   whatever the width. The query is the first paint's; the attribute follows it after hydration for
+   plugin CSS. */
 @media (max-height: 479px) {
   .cb-statusbar {
     display: none;
   }
 }
-@media (max-width: 599px) and (max-height: 479px) {
+/* Compact (spec §4.2, maintainer decision 2026-11-22): the PageHeader draws no path row at any
+   height, in a browser and in every shell: the floating row's back button and the h1 are enough
+   (medium and expanded have no floating row: the path row is their way up, and stays). A
+   title-less head keeps its actions. */
+@media (max-width: 599px) {
   .cb-pageheader-path {
     display: none;
   }
@@ -972,4 +970,16 @@ a.cb-stat-card:focus-visible {
   [data-native-nav] [data-nav-other] {
     display: none;
   }
+}
+
+/* The head's primary sits in a wrapper of no box of its own (a ListPage with a FAB hides it below
+   600, templates.css). */
+.cb-pageheader-primary,
+.cb-pageheader-primary-icon,
+.cb-pageheader-primary-label {
+  display: contents;
+}
+/* the default plus is the floating action button's alone (templates.css) */
+.cb-pageheader-primary-icon[data-implicit="true"] {
+  display: none;
 }

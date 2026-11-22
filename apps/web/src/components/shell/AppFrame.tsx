@@ -2,19 +2,17 @@
 
 import {
   AppShell,
-  Button,
   type DesktopOnlyNoticeProps,
   type DrawerNavData,
+  type DrawerRecent,
   initialOf,
   Logo,
-  Menu,
   type MenuItem,
   OverviewPage,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
-  ThemeToggle,
   useToast,
   useTouch,
 } from "@capybara-hq/design";
@@ -65,7 +63,7 @@ import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
 import { ACCOUNT_HOME } from "../settings-nav";
 import { useResolvedTheme } from "../theme-root";
-import { noOrgConversations, useConversationGroups } from "./conversations";
+import { noOrgConversations, useConversationGroups, useDrawerRecent } from "./conversations";
 import {
   activeAdminOf,
   activeNavOf,
@@ -91,21 +89,6 @@ import {
   setupRouteOf,
   useSetupSteps,
 } from "./setup";
-
-/** `items` with `after` run once an item's own action has (the account sheet's `done`). */
-function closingAfter(items: MenuItem[], after: () => void): MenuItem[] {
-  return items.map((i) =>
-    i === "separator" || i.onSelect === undefined
-      ? i
-      : {
-          ...i,
-          onSelect: () => {
-            i.onSelect?.();
-            after();
-          },
-        },
-  );
-}
 
 /** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the status bar's right side, spec §4.4). */
 function timeZoneLabel(): string {
@@ -286,6 +269,8 @@ function Frame({ version, children }: { version: string; children: ReactNode }) 
 /** The sidebar's sections of the current org, each read from its own query. */
 type Sections = {
   conversations: SidebarConversations;
+  /** The compact drawer's recent conversations, by time. */
+  recent: DrawerRecent;
   pending: { count: number; more: boolean; refresh(): void };
   extensions: ExtensionNavItem[];
 };
@@ -313,10 +298,10 @@ function OrgFrame({
   // A failed readiness read draws the shell (as the server's `null` did).
   const readiness =
     useQuery({ ...readinessQ, retryOnMount: retryOnMountOf(readinessQ.queryKey) }).data ?? null;
-  const conversations = useConversationGroups(orgId, pathname, {
-    onError: (e) =>
-      toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
-  });
+  const onSectionError = (e: unknown) =>
+    toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e));
+  const conversations = useConversationGroups(orgId, pathname, { onError: onSectionError });
+  const recent = useDrawerRecent(orgId, pathname, { onError: onSectionError });
   const pending = usePendingApprovals(orgId);
   const extensions = useExtensions(orgId, locale);
   // native notifications for new inbox items, in the desktop shell only
@@ -336,7 +321,7 @@ function OrgFrame({
       me={me}
       org={org}
       readiness={readiness}
-      sections={{ conversations, pending, extensions }}
+      sections={{ conversations, recent, pending, extensions }}
       version={version}
     >
       {children}
@@ -345,6 +330,8 @@ function OrgFrame({
 }
 
 const NO_PENDING: Sections["pending"] = { count: 0, more: false, refresh: () => {} };
+/** The drawer of an account without a current org: no conversations to read. */
+const NO_RECENT: DrawerRecent = { state: "ready", items: [], onRetry: () => {} };
 
 function ShellFrame({
   me,
@@ -660,38 +647,23 @@ function ShellFrame({
   const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
   const drawer: DrawerNavData = {
     ...drawerNav,
-    recent: conversations,
+    recent: sections?.recent ?? NO_RECENT,
     account: {
       name: me.account.displayName,
       orgName: currentOrg?.name ?? null,
       avatar: me.account.avatarUrl ? { kind: "image", src: me.account.avatarUrl } : null,
-      // A pick in either menu closes the sheet and the drawer (`done`): an org switch replaces the
-      // page anyway, a language pick re-renders it, and an org dialog opens over the page.
-      ...(currentOrg !== null && multiOrg
-        ? {
-            orgSwitcher: (done: () => void) => (
-              <Menu
-                items={closingAfter(orgItems, done)}
-                label={t("drawer.switchOrg")}
-                trigger={<Button variant="ghost">{t("drawer.switchOrg")}</Button>}
-              />
-            ),
-          }
-        : {}),
-      language: (done: () => void) => (
-        <Menu
-          items={closingAfter(languageMenu.submenu ?? [], done)}
-          label={preferences.language.label}
-          trigger={
-            <Button variant="ghost">
-              {preferences.language.options.find((o) => o.value === preferences.language.value)
-                ?.label ?? preferences.language.value}
-            </Button>
-          }
-        />
-      ),
+      // The sheet closes itself and the drawer after a pick in either menu: an org switch
+      // replaces the page anyway, a language pick re-renders it, and an org dialog opens over it.
+      ...(currentOrg !== null && multiOrg ? { orgMenu: orgItems } : {}),
+      language: {
+        value:
+          preferences.language.options.find((o) => o.value === preferences.language.value)?.label ??
+          preferences.language.value,
+        label: preferences.language.label,
+        items: languageMenu.submenu ?? [],
+      },
       personalSettingsHref: ACCOUNT_HOME,
-      theme: preferences.theme ? <ThemeToggle {...preferences.theme} /> : null,
+      theme: preferences.theme ?? null,
       status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),
       ...(switchProfile ? { onSwitchProfile: switchProfile } : {}),
       onSignOut: () => void onLogout(),

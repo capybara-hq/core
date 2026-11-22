@@ -175,9 +175,9 @@ export const deleteAdminConnector = (id: string) =>
   apiFetch<void>(connectorPath(id), { method: "DELETE" });
 
 /**
- * The avatar the admin console draws for an agent of any org: a preset as itself, a migrated
- * external URL as the image; an upload is served only from the org's own route (members only),
- * so it falls back to the name's initial.
+ * The avatar the admin console draws for an agent of any org: a preset as itself, a theme preset
+ * (its public asset URL) and a migrated external URL as the image; an upload is served only from
+ * the org's own route (members only), so it falls back to the name's initial.
  */
 export function adminAvatarValue(avatar: AgentAvatar): AvatarValue {
   if (avatar === null || avatar.kind === "upload") return null;

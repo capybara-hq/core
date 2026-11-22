@@ -1,4 +1,10 @@
 export {
+  ActionSheet,
+  type ActionSheetProps,
+  actionSheetItems,
+  type ObjectActions,
+} from "./action-sheet";
+export {
   BottomSheet,
   BottomSheetContent,
   type BottomSheetContentProps,
@@ -25,8 +31,15 @@ export {
   type DrawerLevelProps,
   type DrawerProps,
 } from "./drawer";
+export {
+  LONG_PRESS_MS,
+  LONG_PRESS_SLOP,
+  type LongPressHandlers,
+  useLongPress,
+} from "./long-press";
 export { Menu, type MenuItem, menuActions, menuLone, Popover } from "./menus";
 export { type CommandGroup, type CommandItem, CommandPalette, commandScore } from "./palette";
 export { Sheet, type SheetProps } from "./sheet";
+export { SheetFootnote, SheetGroup, SheetRow } from "./sheet-parts";
 export { type ToastApi, ToastProvider, useToast } from "./toast";
 export { OVERLAY_HISTORY_MARKER, useOverlayHistory } from "./use-overlay-history";

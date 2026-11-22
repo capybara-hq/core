@@ -33,6 +33,7 @@ import {
 } from "@capybara-hq/design";
 import { LIST_PAGE_FIXTURE, PAGE_HEADER_FIXTURE } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { FixtureBrand } from "./brand-blocks";
 import { AGENT_CARDS } from "./card-grid-blocks";
 import { TRACE_SPANS } from "./fixtures";
 import { RefBlock } from "./ref-block";
@@ -559,6 +560,12 @@ function authBlocks(): ReactNode {
       <RefBlock id="template-auth-loading" width={W} height={H}>
         <AuthPage title="登录" subtitle="示例组织" loading={{ fields: 2 }} />
       </RefBlock>
+      {/* the loading frame with the fixture brand: the reference draws its columns empty too */}
+      <FixtureBrand>
+        <RefBlock id="template-auth-no-decoration" width={W} height={H}>
+          <AuthPage title="登录" subtitle="示例组织" loading={{ fields: 2 }} />
+        </RefBlock>
+      </FixtureBrand>
     </>
   );
 }

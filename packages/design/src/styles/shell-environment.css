@@ -12,6 +12,13 @@
   inherits: true;
   initial-value: 0px;
 }
+/* The compact flat title bar's height (below): the top row's height below 600 inside the desktop
+   shell with reported controls, else 0. Registered for the same reason. */
+@property --cb-shell-flat {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
 
 /* The top band the shell's chrome covers. A mobile shell: its top inset, or further down to the
    controls rectangle's bottom edge when the controls reach below it. Sides need no rule: the band
@@ -381,6 +388,93 @@
   }
 }
 
+/* The compact flat title bar (desktop client spec §7.3, design spec §6.16.1, maintainer decision
+   2026-11-22). Below 600 inside the desktop shell with reported controls the floating row is a
+   title bar like the rail's band: one row as high as the controls, on the page ground, a line-soft
+   hairline under it, the content below it. Its buttons are the ghost IconButton at the fine
+   pointer's default size (the menu or back, a page's or the conversation's "…", all one size);
+   the conversation's title is plain text whose whole box drags the window (a filler laid over
+   it), and the title menu's items move into the "…" (title-bar.tsx draws both forms, CSS shows
+   one). Geometry from the reported rectangle alone: `--cb-shell-flat` is 0 without controls, in
+   fullscreen, with a banner and from 600, and the floating form stays. */
+@media (max-width: 599px) {
+  :root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) {
+    --cb-shell-flat: var(--cb-shell-row);
+  }
+}
+@container not style(--cb-shell-flat: 0px) {
+  :root[data-shell="desktop"] .cb-shell-column {
+    --cb-float-size: var(--cb-control-default);
+    --cb-float-top: calc((var(--cb-shell-flat) - var(--cb-float-size)) / 2);
+    --cb-float-row: var(--cb-shell-flat);
+  }
+  :root[data-shell="desktop"] .cb-shell-column::before {
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--cb-line-soft);
+  }
+  :root[data-shell="desktop"] .cb-shell-float .cb-float-btn,
+  :root[data-shell="desktop"] .cb-shell-float .cb-floatbar .cb-icon-btn,
+  :root[data-shell="desktop"] .cb-shell .cb-title-bar .cb-title-overflow > .cb-icon-btn {
+    width: var(--cb-control-default);
+    height: var(--cb-control-default);
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+    border-radius: var(--cb-radius-sm);
+    background: transparent;
+    box-shadow: none;
+    color: var(--cb-muted);
+  }
+  :root[data-shell="desktop"] .cb-shell-float .cb-float-btn:hover,
+  :root[data-shell="desktop"] .cb-shell-float .cb-floatbar .cb-icon-btn:hover,
+  :root[data-shell="desktop"] .cb-shell .cb-title-bar .cb-title-overflow > .cb-icon-btn:hover,
+  :root[data-shell="desktop"]
+    .cb-shell
+    .cb-title-bar
+    .cb-title-overflow
+    > .cb-icon-btn[aria-expanded="true"] {
+    background: var(--cb-hover);
+    color: var(--cb-ink);
+  }
+  :root[data-shell="desktop"] .cb-shell-float .cb-float-btn > .cb-icon {
+    width: 16px;
+    height: 16px;
+  }
+  /* The conversation's bar fills the row from right after the menu button to the window's end
+     edge: the plain title (dragging), the "…", and the bar's own filler as the end margin. */
+  :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-bar {
+    top: 0;
+    left: calc(var(--cb-float-start) + var(--cb-float-size));
+    right: 0;
+    height: var(--cb-shell-flat);
+    gap: 0;
+    padding: 0;
+  }
+  /* The bar sits in the band's own row whatever surface the shell reports: on a pushed surface the
+     main column is padded down by the row (shell.css), and the bar's containing block (the
+     conversation page) starts below that padding, so it lifts back by the same amount. */
+  :root[data-shell="desktop"] .cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar {
+    top: calc(-1 * var(--cb-float-row));
+  }
+  :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-bar > .cb-title-btn,
+  :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-overflow[data-form="float"] {
+    display: none;
+  }
+  :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-bar > .cb-title-plain {
+    display: flex;
+  }
+  :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-overflow[data-form="flat"] {
+    display: contents;
+  }
+  :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-bar > .cb-drag-fill {
+    display: block;
+    order: 1;
+    flex: none;
+    width: var(--cb-float-end);
+    margin: 0;
+  }
+}
+
 /* Window drag regions (desktop client spec §7.3 "The top row"). In Electron a drag region swallows
    every mouse event over it whatever is stacked above it, and a control inside one cannot be used,
    so only dedicated empty fillers drag: the flex spacers the templates draw between a top row's
@@ -415,8 +509,9 @@
    conversation's title pill lies over it. The controls area reaches to just before the row's
    first control, so a window with its controls at the end (Windows) keeps a strip at its start
    edge to drag by. */
+/* (on any surface: a conversation's bar lies over the row wherever it is drawn) */
 :root[data-shell="desktop"]
-  .cb-shell[data-surface="chat"]:has(.cb-title-bar:not([data-new]))
+  .cb-shell:has(.cb-shell-main .cb-title-bar:not([data-new]))
   .cb-floatbar
   > .cb-drag-fill {
   -webkit-app-region: no-drag;

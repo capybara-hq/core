@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesignProvider, NavRow, TOUCH_QUERY } from "../src/index";
+import { DesignProvider, MOBILE_SIZE_QUERY, NavRow } from "../src/index";
 import { findNestedBoxes } from "../src/reference/index";
 import { css, parseCss } from "./css-rules";
 
@@ -59,7 +59,7 @@ describe("NavRow", () => {
       rules.find((r) => r.at === at && r.selector === ".cb-navrow");
     expect(row(null)?.decls["min-height"]).toBe("var(--cb-row-default)");
     expect(row(null)?.decls.border).toBe("0");
-    expect(row(TOUCH_QUERY)?.decls["min-height"]).toBe("var(--cb-touch-row)");
+    expect(row(MOBILE_SIZE_QUERY)?.decls["min-height"]).toBe("var(--cb-touch-row)");
   });
 
   it("keeps the count visible on the current row and the hover ground off touch screens", () => {

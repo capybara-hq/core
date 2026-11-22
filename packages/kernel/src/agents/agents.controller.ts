@@ -220,9 +220,10 @@ export class AgentsController {
   }
 
   /**
-   * The avatar image: 302 to a short-lived presigned URL for an upload avatar, or to the stored
-   * URL of an external avatar when it is https; 404 for presets, no avatar, or an agent the
-   * reader cannot see.
+   * The avatar image: 302 to a short-lived presigned URL for an upload avatar, to the pinned theme
+   * asset URL of a theme avatar (same origin, immutable), or to the stored URL of an external
+   * avatar when it is https; 404 for built-in presets, no avatar, or an agent the reader cannot
+   * see.
    */
   @Get(":agentId/avatar")
   @OrgAction("agents.use")
@@ -237,6 +238,8 @@ export class AgentsController {
     let location: string | null = null;
     if (avatar?.kind === "upload") {
       location = await this.attachments.agentAvatarUrl(org.orgId, agentId, avatar.uploadId);
+    } else if (avatar?.kind === "theme") {
+      location = avatar.url;
     } else if (avatar?.kind === "external") {
       try {
         if (new URL(avatar.url).protocol === "https:") location = avatar.url;

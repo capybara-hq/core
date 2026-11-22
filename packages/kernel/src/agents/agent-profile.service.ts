@@ -8,7 +8,13 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { AgentLookup } from "./agent-lookup.js";
 import { AgentsService } from "./agents.service.js";
-import type { AgentProfile, ProfilePatch } from "./profile.js";
+import type { AgentAvatar, AgentProfile, ProfilePatch, QuickAction } from "./profile.js";
+
+/** A profile patch with its avatar resolved to the stored value. */
+interface StoredProfilePatch {
+  avatar?: AgentAvatar;
+  quickActions?: QuickAction[];
+}
 
 /**
  * Writes an agent's profile (avatar, quick actions): display data stored beside the agent, never
@@ -21,7 +27,8 @@ export class AgentProfileService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AgentLookup) private readonly lookup: AgentLookup,
-    @Inject(AgentsService) private readonly agents: Pick<AgentsService, "lockForWrite">,
+    @Inject(AgentsService)
+    private readonly agents: Pick<AgentsService, "lockForWrite" | "resolveAvatarInput">,
     @Inject(AttachmentsService)
     private readonly attachments: Pick<
       AttachmentsService,
@@ -37,7 +44,10 @@ export class AgentProfileService {
    * token, `agent` for a write through the `Platform` tool (`auditDetail` given), else `web`.
    * An `upload` avatar must be the actor's own upload that no other agent uses (else 404
    * `attachment.not_found`): it is finalized first (outside the transaction, it reads the object
-   * store; 503 `storage.unavailable` without one) and bound to the agent inside it.
+   * store; 503 `storage.unavailable` without one) and bound to the agent inside it. A `preset`
+   * avatar is resolved before the transaction (`AgentsService.resolveAvatarInput`): a built-in id
+   * as given, a theme preset key of the org's effective default theme pinned, any other key 400
+   * `agent.avatar_unavailable`.
    */
   async update(
     orgId: string,
@@ -48,6 +58,11 @@ export class AgentProfileService {
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
   ): Promise<AgentProfile> {
+    // reads before the transaction: a theme key resolves against this org's presets only
+    const avatar =
+      patch.avatar == null
+        ? patch.avatar
+        : await this.agents.resolveAvatarInput(orgId, patch.avatar);
     if (patch.avatar?.kind === "upload") {
       await this.attachments.prepareAgentAvatar(
         orgId,
@@ -56,11 +71,15 @@ export class AgentProfileService {
         agentId,
       );
     }
+    const stored: StoredProfilePatch = {
+      ...(avatar !== undefined && { avatar }),
+      ...(patch.quickActions !== undefined && { quickActions: patch.quickActions }),
+    };
     return this.updateIn(
       orgId,
       agentId,
       actorAccountId,
-      patch,
+      stored,
       expectedUpdatedAt,
       actorTokenId,
       auditDetail,
@@ -72,7 +91,7 @@ export class AgentProfileService {
     orgId: string,
     agentId: string,
     actorAccountId: string,
-    patch: ProfilePatch,
+    patch: StoredProfilePatch,
     expectedUpdatedAt: string,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,

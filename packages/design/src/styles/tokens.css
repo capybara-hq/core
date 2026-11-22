@@ -103,6 +103,10 @@
   --cb-touch-row-roomy: 56px;
   --cb-touch-icon: 22px;
   --cb-touch-icon-float: 24px;
+  --cb-touch-sheet-inset: 14px;
+  --cb-touch-sheet-close: 30px;
+  --cb-touch-sheet-close-icon: 14px;
+  --cb-touch-sheet-title: 15px;
   --cb-builtin-dark-bg: #0A0A0A;
   --cb-builtin-dark-panel: #111110;
   --cb-builtin-dark-ink: #E6E6E3;
@@ -261,6 +265,11 @@
   :root {
     --cb-font: system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
     --cb-font-prose: system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
+  }
+}
+
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  :root {
     --cb-type-body-size: 17px;
     --cb-type-body-line: 24px;
     --cb-type-small-size: 15px;

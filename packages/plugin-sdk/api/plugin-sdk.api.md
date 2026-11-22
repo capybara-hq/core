@@ -295,7 +295,13 @@ export interface BootstrapManifest {
 export const BootstrapManifestSchema: z.ZodType<BootstrapManifest>;
 
 // @public
+export const BUILTIN_AVATAR_PRESET_IDS: readonly ["capybara", "black-bear", "panda", "elephant", "fox", "owl", "penguin", "rabbit", "turtle", "whale"];
+
+// @public
 export const BUILTIN_TOOL_NAME_RE: RegExp;
+
+// @public
+export type BuiltinAvatarPresetId = (typeof BUILTIN_AVATAR_PRESET_IDS)[number];
 
 // @public
 export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
@@ -518,7 +524,7 @@ export function checkEntryImports(specifiers: EntryImport[]): string[];
 export function checkParamValue(schema: ParamSchema, v: unknown): string | undefined;
 
 // @public
-export function checkPng(bytes: Uint8Array): string | undefined;
+export function checkPng(bytes: Uint8Array, maxBytes?: number): string | undefined;
 
 // @public
 export function checkPushResults(registrations: readonly PushTarget[], results: unknown): string | null;
@@ -4018,7 +4024,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.49";
+export const SDK_VERSION = "0.1.0-rc.50";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -4369,7 +4375,13 @@ export interface SuggestedAppearance {
 export function suggestGitUsername(host: string): string | undefined;
 
 // @public
+export const THEME_AVATAR_ID_RE: RegExp;
+
+// @public
 export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];
+
+// @public
+export const THEME_DECORATIONS: readonly ["dither", "none"];
 
 // @public
 export const THEME_FONTS: {
@@ -4388,6 +4400,9 @@ export const THEME_LIMITS: {
     readonly pngBytes: number;
     readonly pngMinHeight: 64;
     readonly wordmark: 24;
+    readonly avatars: 12;
+    readonly appIconBytes: 1048576;
+    readonly appIconMinSize: 512;
 };
 
 // @public
@@ -4686,12 +4701,34 @@ export const THEME_TOKENS: {
 };
 
 // @public
+export function themeAssetRefs(theme: ParsedTheme): {
+    field: string;
+    ref: string;
+}[];
+
+// @public
+export interface ThemeAvatarPreset {
+    file: string;
+    id: string;
+    name: {
+        en: string;
+        zh?: string;
+    };
+}
+
+// @public
+export type ThemeDecoration = (typeof THEME_DECORATIONS)[number];
+
+// @public
 export interface ThemeFile {
+    avatars?: ThemeAvatarPreset[];
+    decoration?: ThemeDecoration;
     description?: {
         en: string;
         zh?: string;
     };
     fonts?: ThemeFont[];
+    hideAvatarPresets?: BuiltinAvatarPresetId[];
     logo?: ThemeLogo;
     name: LocalizedName;
     schemes: Partial<Record<ThemeScheme, ThemeSchemeOverride>>;
@@ -4714,7 +4751,10 @@ export function themeIdOf(path: string): string;
 
 // @public
 export interface ThemeLogo {
+    appIcon?: string;
+    appIconMaskable?: string;
     favicon?: string;
+    illustration?: string;
     mark?: string;
     wordmark?: string;
 }

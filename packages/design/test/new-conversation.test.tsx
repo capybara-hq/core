@@ -9,6 +9,7 @@ import {
   AgentRow,
   type AgentRowItem,
   AgentRowLoading,
+  type Brand,
   ComposerBox,
   ConversationPage,
   DesignProvider,
@@ -592,5 +593,62 @@ describe("AgentRowLoading (spec §6.16.26)", () => {
     expect(container.querySelector('[data-part="real-row"]')).toBeNull();
     expect(container.querySelector('[data-loading="true"][data-part="agent-row"]')).toBeTruthy();
     expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
+  });
+});
+
+const brandOf = (markUrl: string | null): Brand => ({
+  markUrl,
+  wordmark: null,
+  illustrationUrl: null,
+  decoration: "dither",
+  productName: "Acme",
+});
+
+describe("Greeting with a theme mark (theme brand coverage §3)", () => {
+  const draw = (markUrl: string | null) =>
+    render(
+      <DesignProvider locale="en" brand={brandOf(markUrl)}>
+        <Greeting text="Hello" still />
+      </DesignProvider>,
+    ).container;
+
+  it("draws the theme mark 20 px high instead of the bitmap", () => {
+    const c = draw("/m.svg");
+    const img = c.querySelector('img[data-part="greeting-mark"]');
+    expect(img?.getAttribute("src")).toBe("/m.svg");
+    expect(img?.getAttribute("height")).toBe("20");
+    expect(img?.getAttribute("alt")).toBe("");
+    expect(img?.getAttribute("aria-hidden")).toBe("true");
+    expect(c.querySelector('[data-part="greeting-line"] svg')).toBeNull();
+  });
+
+  it("a failing mark falls back to the bitmap", () => {
+    const c = draw("/m.svg");
+    fireEvent.error(c.querySelector("img") as HTMLImageElement);
+    expect(c.querySelector("img")).toBeNull();
+    expect(c.querySelector('[data-part="greeting-mark"] svg path')).not.toBeNull();
+  });
+
+  it("without a brand the DOM equals the markup before theme marks existed", () => {
+    const html = render(
+      <DesignProvider locale="en">
+        <Greeting text="Hello" still />
+      </DesignProvider>,
+    ).container.innerHTML;
+    expect(html).toMatchInlineSnapshot(
+      `"<div class="cb-greeting" data-part="greeting"><div class="cb-greeting-line" data-part="greeting-line"><span class="cb-greeting-mark" data-part="greeting-mark" aria-hidden="true"><svg width="28" height="20" viewBox="0 0 28 20" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><path d="M20 0h2v2h-2zM18 2h2v2h-2zM20 2h2v2h-2zM22 2h2v2h-2zM6 4h2v2h-2zM8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM20 4h2v2h-2zM22 4h2v2h-2zM24 4h2v2h-2zM26 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM24 6h2v2h-2zM26 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM24 8h2v2h-2zM26 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM24 10h2v2h-2zM26 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM24 12h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM22 14h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM12 16h2v2h-2zM18 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM12 18h2v2h-2zM18 18h2v2h-2zM20 18h2v2h-2z"></path></svg></span><h2 class="cb-greeting-text" data-part="greeting-text"><span class="cb-sr-only">Hello</span><span aria-hidden="true" data-part="greeting-typed">Hello</span></h2></div><p class="cb-greeting-sub" data-part="greeting-sub">Pick an agent to start</p></div>"`,
+    );
+  });
+
+  it("without a brand, or with an empty mark, the DOM equals today's", () => {
+    const today = render(
+      <DesignProvider locale="en">
+        <Greeting text="Hello" still />
+      </DesignProvider>,
+    ).container.innerHTML;
+    cleanup();
+    expect(draw(null).innerHTML).toBe(today);
+    cleanup();
+    expect(draw("").innerHTML).toBe(today);
   });
 });

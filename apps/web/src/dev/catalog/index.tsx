@@ -2,6 +2,7 @@
 
 import { applyTheme, Button, Card, Stack, Text, useDesignLink } from "@capybara-hq/design";
 import { lazy, Suspense } from "react";
+import { BrandFixtureCatalog } from "./brand-blocks";
 import { ComponentsCatalog } from "./components";
 import { OverlayCatalog } from "./overlays";
 import { ReferenceCatalog } from "./reference";
@@ -30,6 +31,7 @@ export function Catalog({ route }: { route: string }) {
   if (route === "components") return <ComponentsCatalog />;
   if (route === "table") return <TableCatalog />;
   if (route === "stress") return <StressCatalog />;
+  if (route === "brand/fixture") return <BrandFixtureCatalog />;
   if (isOverlayRoute(route)) return <OverlayCatalog route={route} />;
   if (isTemplateRoute(route)) return <TemplateCatalog route={route} />;
   // Not lazy: the calendar's phone case checks the first paint with JavaScript off, and a lazy

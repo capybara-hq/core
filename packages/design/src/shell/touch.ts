@@ -11,6 +11,17 @@ export const ANY_POINTER_FINE = "(any-pointer: fine)";
  */
 export const TOUCH_QUERY = `${POINTER_COARSE}, ${ANY_POINTER_COARSE} and (not ${ANY_POINTER_FINE})`;
 
+/** The compact size class (design spec §4: a window below 600 wide). */
+export const COMPACT_QUERY = "(max-width: 599px)";
+
+/**
+ * Where controls take the mobile sizes (design spec §2.5, maintainer decision 2026-11-22): a compact
+ * window, whatever the pointer, or a touch device at any width. The same text is the `@media`
+ * condition of the size overrides in the generated tokens.css and of every control rule that goes
+ * with them; the touch font stays under `TOUCH_QUERY` alone.
+ */
+export const MOBILE_SIZE_QUERY = `${COMPACT_QUERY}, ${TOUCH_QUERY}`;
+
 const QUERIES = [POINTER_COARSE, ANY_POINTER_COARSE, ANY_POINTER_FINE] as const;
 
 /** `TOUCH_QUERY` evaluated now; false without `matchMedia` (the server, old test environments). */
@@ -35,4 +46,35 @@ function subscribe(notify: () => void): () => void {
  */
 export function useTouch(): boolean | null {
   return useSyncExternalStore<boolean | null>(subscribe, readTouch, () => null);
+}
+
+/**
+ * `MOBILE_SIZE_QUERY` evaluated now (a compact window or a touch device); false without
+ * `matchMedia`. Read from its parts, as `readTouch` is.
+ */
+export function readMobileSizes(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return readTouch() || window.matchMedia(COMPACT_QUERY).matches;
+}
+
+function subscribeMobile(notify: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const unTouch = subscribe(notify);
+  const compact = window.matchMedia(COMPACT_QUERY);
+  compact.addEventListener("change", notify);
+  return () => {
+    unTouch();
+    compact.removeEventListener("change", notify);
+  };
+}
+
+/**
+ * Whether the mobile sizes and styles apply (`MOBILE_SIZE_QUERY`: compact whatever the pointer, or
+ * touch at any width; maintainer decision 2026-11-22), for the few forms CSS cannot switch (a
+ * different control in a sheet, a different button order). `null` on the server and during
+ * hydration. What is about the pointer itself (no Tab key, a tap that must not focus) keeps
+ * `useTouch` / `isTouchPointer`.
+ */
+export function useMobileSizes(): boolean | null {
+  return useSyncExternalStore<boolean | null>(subscribeMobile, readMobileSizes, () => null);
 }

@@ -40,6 +40,7 @@ import {
   setupGuideDocProblem,
   staticManifestOf,
   THEME_LIMITS,
+  themeAssetRefs,
   themeIdOf,
   validatePluginPackageJsonFor,
   validateSetupGuide,
@@ -48,7 +49,7 @@ import {
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { type BuildOptions, build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
-import { assetRefs, themePathsOf } from "../check/themes.js";
+import { themePathsOf } from "../check/themes.js";
 import { buildClient, hasClientSources, PackRuleError } from "./client.js";
 import { extensionConfigSchemas, formatConfigSchemaProblem } from "./config-schemas.js";
 
@@ -486,7 +487,7 @@ async function contentFiles(
     await addFile(rel, "theme");
     const t = parseThemeFile(themeIdOf(rel), (files.get(rel) as Buffer).toString("utf8"));
     if ("errors" in t) throw new Error(`${label}: ${rel}: ${t.errors.join("; ")}`);
-    for (const ref of assetRefs(t)) {
+    for (const { ref } of themeAssetRefs(t)) {
       const key = stripDot(ref);
       if (themeFiles.has(key)) continue;
       const abs = join(dir, key);

@@ -1,0 +1,24 @@
+{
+  "name": { "en": "Brand Kit", "zh": "品牌套件" },
+  "schemes": {
+    "dark": {
+      "color": { "bg": "#05070D", "panel": "#0A0E18", "accent": "#63B3ED", "on-accent": "#05121F" }
+    },
+    "light": {
+      "color": { "bg": "#F7FAFC", "panel": "#FFFFFF", "accent": "#2B6CB0", "on-accent": "#FFFFFF" }
+    }
+  },
+  "logo": {
+    "mark": "./logo.svg",
+    "wordmark": "BRAND KIT",
+    "illustration": "./brand/illustration.svg",
+    "appIcon": "./brand/app-512.png",
+    "appIconMaskable": "./brand/app-mask-512.png"
+  },
+  "decoration": "none",
+  "avatars": [
+    { "id": "bot", "name": { "en": "Bot", "zh": "机器人" }, "file": "./brand/avatars/bot.svg" },
+    { "id": "cat", "name": { "en": "Cat", "zh": "猫" }, "file": "./brand/avatars/cat.png" }
+  ],
+  "hideAvatarPresets": ["capybara"]
+}

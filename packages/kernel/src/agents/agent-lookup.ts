@@ -3,6 +3,7 @@ import { type Expression, type ExpressionBuilder, sql } from "kysely";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { avatarView } from "./avatar-view.js";
 import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
 import type { AgentAvatar, AgentProfile, QuickAction } from "./profile.js";
 
@@ -230,7 +231,7 @@ export class AgentLookup {
           currentVersion: r.current_version,
           definition: normalizeStoredDefinition(r.definition),
           profile: {
-            avatar: r.profile_avatar as AgentAvatar,
+            avatar: avatarView(r.profile_avatar as AgentAvatar),
             description: r.profile_description,
             quickActions: r.profile_quick_actions as QuickAction[],
             updatedAt: r.profile_updated_at.toISOString(),

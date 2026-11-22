@@ -2,12 +2,18 @@ export {
   AccountSheet,
   type AccountSheetData,
   type AccountSheetProps,
-  type AccountSheetSlot,
+  type AccountSheetTheme,
 } from "./account-sheet";
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
 export { ClassSwap } from "./class-swap";
+export {
+  ConversationList,
+  type ConversationListActions,
+  type ConversationListItem,
+  type ConversationListProps,
+} from "./conversation-list";
 export { DecorationLayer } from "./decoration-layer";
 export {
   backTarget,
@@ -17,7 +23,9 @@ export {
 } from "./floating-bar";
 export { FloatingIconButton, type FloatingIconButtonProps } from "./floating-button";
 export {
+  DRAWER_RECENT_MAX,
   type DrawerNavData,
+  type DrawerRecent,
   type DrawerSectionId,
   NavDrawer,
   type NavDrawerProps,
@@ -73,5 +81,6 @@ export {
   useSizeClass,
 } from "./size-class";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";
-export { TOUCH_QUERY, useTouch } from "./touch";
+export { useThemeColorMeta } from "./theme-color";
+export { COMPACT_QUERY, MOBILE_SIZE_QUERY, TOUCH_QUERY, useMobileSizes, useTouch } from "./touch";
 export { withViewTransition } from "./view-transition";

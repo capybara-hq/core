@@ -8,6 +8,8 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -39,6 +41,7 @@ import {
   session,
   startKernel,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 /**
@@ -429,20 +432,37 @@ describe("replace and clear", () => {
 describe("the object written before its row", () => {
   it("each upload owes a delayed orphan check that keeps an object its row names", async () => {
     const icon = png(512, 512);
+    const jobId = platformIconOrphanJobId("app", sha(icon));
     expect((await put(admin, "app", "image/png", icon)).statusCode).toBe(200);
-    const intent = await db
+    const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
+    // The owed check is its outbox row, or the delayed job the worker's relay (every 2 s) added
+    // from it (it adds rows due later ahead of time and deletes them). The row is read first: a
+    // relay pass adds the job before it commits the row's deletion.
+    const row = await db
       .selectFrom("outbox")
       .select(["job_name", "data", sql<boolean>`run_at > now()`.as("later")])
-      .where("job_id", "=", platformIconOrphanJobId("app", sha(icon)))
-      .executeTakeFirstOrThrow();
-    expect(intent).toMatchObject({
+      .where("job_id", "=", jobId)
+      .executeTakeFirst();
+    const job = row ? undefined : await queue.getJob(jobId);
+    if (!row && !job) throw new Error(`${jobId} is neither owed nor queued`);
+    const owed = row ?? {
+      job_name: job?.name,
+      data: job?.data,
+      later: job !== undefined && (await job.getState()) === "delayed",
+    };
+    expect(owed).toMatchObject({
       job_name: PLATFORM_ICON_DELETE_JOB,
       data: { purpose: "app", objectKey: platformIconKey("app", sha(icon)) },
       later: true,
     });
+    // make it due now: an owed row is brought forward and delivered, an added job promoted
     await sql`UPDATE capybara.outbox SET run_at = now(), next_attempt_at = now()`.execute(raw);
-    await drainOutbox(k.app, { jobId: platformIconOrphanJobId("app", sha(icon)) });
-    // the job ran (its row is gone) and left the object its row names
+    await drainOutbox(k.app, { jobId });
+    const added = await queue.getJob(jobId);
+    if (added && (await added.getState()) === "delayed") await added.promote();
+    // removed on completion and on failure: gone means the job ran
+    await waitFor(async () => (await queue.getJob(jobId)) === undefined, 20_000, `${jobId} done`);
+    // the job ran and left the object its row names
     expect(await deploymentStore().head(platformIconKey("app", sha(icon)))).not.toBeNull();
     expect((await publicGet("/api/v1/platform/icon/app")).statusCode).toBe(200);
   });

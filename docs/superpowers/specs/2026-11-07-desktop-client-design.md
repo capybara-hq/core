@@ -606,7 +606,13 @@ reports it).
   registered length that is 0 without controls, with controls at the end or no wider than the
   rail; the button's placement is a style query on it); without reported controls (a browser,
   Windows / Linux with their system title bar, mobile) nothing changes. Below 600 the floating row
-  is the top row and starts after the lights.
+  is the top row and starts after the lights: with reported controls it is a **flat title bar**
+  (maintainer decision 2026-11-22, design spec §6.16.1): one row as high as the controls on the
+  page ground with a `line-soft` hairline under it, the content below it; the menu (or back) and
+  "…" are ghost desktop-size icon buttons of one size; the conversation title is plain text whose
+  whole box drags the window (double-click zooms, as the native title bar; Electron's drag region),
+  the title menu's items move into "…", and every empty spot of the row drags. Only the two buttons
+  take clicks. Pushed pages and the home draw the same row with no path or title text in it.
 - **The content column's top row** is the conversation title bar (48) or a template head's path
   row (as high as the row, centred on it; the title row follows `layout.head-path` below). Past a
   rail both start after the controls (the title bar at the rectangle's edge plus `space.3`, the

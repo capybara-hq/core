@@ -1192,10 +1192,18 @@ describe("fake-theme (a declarative plugin, no extension)", () => {
           ".capybara-plugin/plugin.json",
           "themes/neon-grid.json",
           "themes/paper.json",
+          "themes/brand-kit.json",
           "fonts/FakeSans.woff2",
           "logo.svg",
+          "brand/illustration.svg",
+          "brand/app-512.png",
+          "brand/app-mask-512.png",
+          "brand/avatars/bot.svg",
+          "brand/avatars/cat.png",
         ]),
       );
+      // pack ships the files a theme names, not the whole brand/ directory
+      expect(list).not.toContain("brand/unnamed.svg");
       expect(list.some((f) => f.startsWith("dist/") || f.startsWith("src/"))).toBe(false);
       const manifest = JSON.parse(
         execFileSync(

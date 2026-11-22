@@ -90,19 +90,10 @@ async function enableFakeConnectors(page: Page, orgId: string): Promise<boolean>
 }
 
 /**
- * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
- * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
- * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
- * current org, switches on model-fake ({@link enableModelFake}), the fake connector extensions
- * ({@link enableFakeConnectors}) and the device provider ({@link enableDeviceFake}) and, with
- * `agent` (the default), makes sure an agent exists ({@link ensureAgent}) and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
- * ({@link hydrated}). Normally the `setup` project
- * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
+ * Signs in through the setup wizard when not set up yet (it creates the org Acme), else the login
+ * page: the UI path {@link signIn} takes with `ui: true` or when the login route refuses.
  */
-export async function signIn(
-  page: Page,
-  { org = true, agent = true }: { org?: boolean; agent?: boolean } = {},
-): Promise<void> {
+async function signInThroughUi(page: Page): Promise<void> {
   // the home: the new conversation
   await page.goto("/");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
@@ -120,6 +111,37 @@ export async function signIn(
     await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
     await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
+}
+
+/**
+ * Idempotent sign-in. By default through the login route (`POST /api/v1/auth/login` on the page's
+ * request context, which shares the browser context's cookies), then a document load of the home:
+ * every test gets a new session of its own, as a sign-in on the login page would, so it starts in
+ * the org last chosen (`last_org_id`) and an org switch in one test never carries into the next.
+ * A saved session (`storageState`) is not shared on purpose: the current org lives on the session.
+ * With `ui: true`, or when the login route refuses (not set up yet: a spec run alone), it fills the
+ * login page or the setup wizard instead ({@link signInThroughUi}); `sign-in.spec.ts` covers the
+ * login page that way. When the org chooser covers the app, open Acme there. With `org` (the
+ * default) it then waits until `/me` names the current org, switches on model-fake
+ * ({@link enableModelFake}), the fake connector extensions ({@link enableFakeConnectors}) and the
+ * device provider ({@link enableDeviceFake}) and, with `agent` (the default), makes sure an agent
+ * exists ({@link ensureAgent}) and that the shell (not the setup layout) is on screen. It returns once the page is hydrated ({@link hydrated}).
+ * Normally the `setup` project (`setup.spec.ts`) has already set up.
+ */
+export async function signIn(
+  page: Page,
+  { org = true, agent = true, ui = false }: { org?: boolean; agent?: boolean; ui?: boolean } = {},
+): Promise<void> {
+  const viaRoute =
+    !ui &&
+    (
+      await page.request.post("/api/v1/auth/login", {
+        headers: CSRF,
+        data: { login: LOGIN, password: PASSWORD },
+      })
+    ).ok();
+  if (viaRoute) await page.goto("/");
+  else await signInThroughUi(page);
   await expect(page).toHaveURL(HOME_URL);
   const chooser = page.getByRole("list", { name: zh.orgChooser.listLabel });
   const home = page.locator('[data-template="ConversationPage"]');

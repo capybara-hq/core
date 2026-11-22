@@ -323,6 +323,11 @@ export const ERROR_CODES = {
   "agent.version_conflict": 409,
   /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */
   "agent.profile_conflict": 409,
+  /**
+   * An avatar input's theme preset key is not a preset of the writing org's effective default
+   * theme (theme brand coverage spec §4): choose one of the presets the picker shows.
+   */
+  "agent.avatar_unavailable": 400,
   "agent.model_unavailable": 400,
   /** A save gave `instructionFiles` and an `instructions` that is not their join. */
   "agent.instructions_mismatch": 400,

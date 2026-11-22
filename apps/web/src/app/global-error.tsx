@@ -8,6 +8,7 @@ import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { DesignRoot } from "../components/design-root";
 import { ErrorFrame } from "../components/ErrorFrame";
+import { StaticTheme } from "../components/static-theme";
 import { withProductName } from "../i18n/product";
 import {
   type AppLocale,
@@ -16,6 +17,7 @@ import {
   negotiateLocale,
   routing,
 } from "../i18n/routing";
+import { useBrandCookie } from "../lib/use-brand-cookie";
 
 const noSubscribe = () => () => {};
 
@@ -37,8 +39,9 @@ const clientTheme = () => parseTheme(cookie(THEME_COOKIE));
 
 /**
  * The root layout itself failed (web-SSR spec §5): this replaces it, so it brings its own document,
- * styles, language, theme and providers, then the same error page as the route groups. It cannot
- * read the platform meta, so a `{product}` in its messages says the built-in name.
+ * styles, language, scheme, theme (the brand cookie, theme brand coverage spec §5) and providers,
+ * then the same error page as the route groups. It cannot read the platform meta, so a `{product}`
+ * in its messages says the built-in name.
  */
 export default function GlobalError({
   reset,
@@ -48,6 +51,7 @@ export default function GlobalError({
 }) {
   const locale = useSyncExternalStore(noSubscribe, clientLocale, () => routing.defaultLocale);
   const theme = useSyncExternalStore(noSubscribe, clientTheme, () => parseTheme(undefined));
+  const brand = useBrandCookie();
   return (
     <html lang={locale} data-theme={theme}>
       <body>
@@ -56,7 +60,9 @@ export default function GlobalError({
           messages={withProductName(locale === "zh" ? zh : en, null)}
         >
           <DesignRoot locale={locale}>
-            <ErrorFrame reset={reset} />
+            <StaticTheme brand={brand}>
+              <ErrorFrame reset={reset} />
+            </StaticTheme>
           </DesignRoot>
         </NextIntlClientProvider>
       </body>

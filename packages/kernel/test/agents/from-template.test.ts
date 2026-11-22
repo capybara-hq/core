@@ -16,6 +16,7 @@ import {
 } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { createOrgWithProviders, enableExtensions, type Req } from "../helpers/runs.js";
+import { clearThemeLevels, importAvatarTheme, writeOrgTheme } from "../themes/theme-env.js";
 
 /**
  * Plugin scope phase 4, Task 3: creating an agent from a template (rulings P4-3…P4-6, P4-8). The
@@ -246,6 +247,35 @@ const pick = (p: Preview, kind: string) =>
   p.items.filter((i) => i.kind === kind).map((i) => [i.name, i.state, i.reason ?? null]);
 
 describe("creating an agent from a template", () => {
+  it("create from a template keeps the template's built-in avatar while hidden", async () => {
+    await clearThemeLevels(env);
+    // the org's default theme hides owl and adds one preset
+    const { id: themeId } = await importAvatarTheme(env, "brand", "brand-grid", {
+      presets: ["mascot"],
+      hidden: ["owl"],
+    });
+    await writeOrgTheme(env, env.orgId, { id: themeId, personal: "allowed" });
+    const id = await platformTemplate(tpl());
+    const owl = await createOk(env.boss, id, { avatar: { kind: "preset", id: "owl" } });
+    expect(owl.agent.profile.avatar).toEqual({ kind: "preset", id: "owl" });
+    // a theme key is pinned on this path too; another org's or an unknown one is refused
+    const key = await createOk(env.boss, id, {
+      name: "Branded",
+      avatar: { kind: "preset", id: "brand/brand-grid/mascot" },
+    });
+    expect(key.agent.profile.avatar).toMatchObject({ kind: "theme", themeId, preset: "mascot" });
+    const p = await preview(env.boss, id);
+    const r = await create(env.boss, {
+      templateId: id,
+      name: "Guess",
+      previewHash: p.previewHash,
+      avatar: { kind: "preset", id: "secret/secret-brand/mascot" },
+    });
+    expect(r.statusCode, r.body).toBe(400);
+    expect(errCode(r)).toBe("agent.avatar_unavailable");
+    await clearThemeLevels(env);
+  });
+
   it("carries tools, skills, connectors and sub-agents into buckets (P4-5)", async () => {
     const itemId = await catalogItem("crm");
     const none = await connectorTemplate(itemId, "none");

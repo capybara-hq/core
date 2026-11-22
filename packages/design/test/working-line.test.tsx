@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConversationPage, DesignProvider, WorkingLine } from "../src/index";
+import { type Brand, ConversationPage, DesignProvider, WorkingLine } from "../src/index";
 
 afterEach(() => {
   cleanup();
@@ -153,5 +153,71 @@ describe("ConversationPage working line", () => {
   it("draws no line unless asked", () => {
     const { container } = wrap(<ConversationPage {...base} thread={<div>thread</div>} />);
     expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+  });
+});
+
+const brandOf = (markUrl: string | null): Brand => ({
+  markUrl,
+  wordmark: null,
+  illustrationUrl: null,
+  decoration: "dither",
+  productName: "Acme",
+});
+
+describe("WorkingLine with a theme mark (theme brand coverage §3)", () => {
+  const draw = (ui: React.ReactElement, markUrl: string | null) =>
+    render(
+      <DesignProvider locale="en" brand={brandOf(markUrl)}>
+        {ui}
+      </DesignProvider>,
+    ).container;
+
+  it("draws the theme mark with the pulse attribute and no leg frames", () => {
+    const c = draw(<WorkingLine />, "/m.svg");
+    const img = c.querySelector('img[data-part="working-mark"]');
+    expect(img?.getAttribute("src")).toBe("/m.svg");
+    expect(img?.getAttribute("height")).toBe("20");
+    expect(img?.getAttribute("alt")).toBe("");
+    expect(img?.getAttribute("data-motion")).toBe("pulse");
+    expect(c.querySelector("[data-frame]")).toBeNull();
+    expect(c.querySelector('[data-part="working-line"]')?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("still: no pulse; reduced motion: the pulse runs only under no-preference", () => {
+    const c = draw(<WorkingLine still />, "/m.svg");
+    expect(c.querySelector('img[data-part="working-mark"]')?.hasAttribute("data-motion")).toBe(
+      false,
+    );
+    const pulse = css.indexOf('[data-motion="pulse"]');
+    expect(pulse).toBeGreaterThan(-1);
+    const media = css.lastIndexOf("@media (prefers-reduced-motion: no-preference)", pulse);
+    expect(media).toBeGreaterThan(-1);
+    expect(css.slice(media, pulse)).not.toMatch(/^}/m);
+  });
+
+  it("a failing mark falls back to the walking bitmap", () => {
+    const c = draw(<WorkingLine />, "/m.svg");
+    fireEvent.error(c.querySelector("img") as HTMLImageElement);
+    expect(c.querySelector("img")).toBeNull();
+    expect(c.querySelector('[data-part="working-mark"] svg [data-frame="2"]')).not.toBeNull();
+  });
+
+  it("captions rotate as before", () => {
+    const c = draw(<WorkingLine />, "/m.svg");
+    expect(c.querySelectorAll('[data-part="working-caption"] > span')).toHaveLength(4);
+  });
+
+  it("without a brand the DOM equals the markup before theme marks existed", () => {
+    expect(wrap(<WorkingLine still />, "en").container.innerHTML).toMatchInlineSnapshot(
+      `"<div class="cb-sr-only" role="status" data-part="working-status">Planning…</div><div class="cb-tool-line cb-working-line" data-part="working-line" aria-hidden="true" data-still="true"><span class="cb-working-mark" data-part="working-mark" aria-hidden="true"><svg width="28" height="20" viewBox="0 0 28 20" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><path d="M20 0h2v2h-2zM18 2h2v2h-2zM20 2h2v2h-2zM22 2h2v2h-2zM6 4h2v2h-2zM8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM20 4h2v2h-2zM22 4h2v2h-2zM24 4h2v2h-2zM26 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM24 6h2v2h-2zM26 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM24 8h2v2h-2zM26 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM24 10h2v2h-2zM26 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM24 12h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM22 14h2v2h-2z"></path><path d="M4 16h2v2h-2zM6 16h2v2h-2zM12 16h2v2h-2zM18 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM12 18h2v2h-2zM18 18h2v2h-2zM20 18h2v2h-2z" data-frame="1"></path><path d="M6 16h2v2h-2zM8 16h2v2h-2zM12 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM6 18h2v2h-2zM8 18h2v2h-2zM12 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2z" data-frame="2"></path></svg></span><span class="cb-tool-label cb-working-caption" data-part="working-caption" aria-hidden="true"><span>Planning…</span><span>Working…</span><span>Pondering…</span><span>Composing…</span></span></div>"`,
+    );
+  });
+
+  it("without a brand, or with an empty mark, the DOM equals today's", () => {
+    const today = wrap(<WorkingLine still />, "en").container.innerHTML;
+    cleanup();
+    expect(draw(<WorkingLine still />, null).innerHTML).toBe(today);
+    cleanup();
+    expect(draw(<WorkingLine still />, "").innerHTML).toBe(today);
   });
 });

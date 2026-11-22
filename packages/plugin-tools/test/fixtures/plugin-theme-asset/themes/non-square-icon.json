@@ -1,0 +1,10 @@
+{
+  "name": { "en": "Wide Icon", "zh": "宽图标" },
+  "schemes": {
+    "dark": {
+      "color": { "bg": "#05070D", "panel": "#0A0E18", "accent": "#FCE300", "on-accent": "#141200" },
+      "radius": { "sm": 0, "md": 2 }
+    }
+  },
+  "logo": { "appIcon": "./brand/app-511.png" }
+}

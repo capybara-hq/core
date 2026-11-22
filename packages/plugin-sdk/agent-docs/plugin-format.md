@@ -57,6 +57,9 @@ Rules that the schema cannot show:
 - `agents`: at most 64 templates (see `agent-templates`).
 - `themes`: at most 10 `<id>.json` files; the id is the file's base name. A theme file is checked
   by `parseThemeFile` (schema `https://capybarahq.com/schemas/theme.v1.schema.json`).
+  Besides schemes and `fonts`, it may set `logo` (`mark`, `wordmark`, `favicon`, `illustration`,
+  `appIcon`, `appIconMaskable`), `decoration` (`dither` or `none`), `avatars` (at most 12 presets) and
+  `hideAvatarPresets`; every file it names is checked and packed, and nothing else is served.
 - `setupGuides` (at most 8): `{ id, place, template? }`. Each guide is a Markdown document at
   `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (Chinese, optional), shown where a
   person sets up what the plugin brings. `place` is `channel-connection` (New channel and the channel

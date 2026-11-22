@@ -63,10 +63,10 @@ narrow desktop window gets compact structure and, after that branch, mobile size
 
 | | expanded / medium, fine pointer | compact or touch |
 |---|---|---|
-| Controls (`control.*`) | 24 / 28 / 32 | mobile sizes (44 / 44 / 52 on touch; the compact values as that branch sets them) |
+| Controls (`control.*`) | 24 / 28 / 32 | mobile sizes (44 / 44 / 52, on touch and at compact whatever the pointer) |
 | Padding | as today | inline > block (a 44 control is wider than tall in its padding) |
 | Rows (`row.*`) | 32 / 44 / 56 | 44 / 44 / 56; list rows of the grouped list ≥ 64 |
-| Hit target | — | 44 × 44 on touch, 40 × 40 floor on compact with a pointer |
+| Hit target | — | 44 × 44 on touch and on compact with a fine pointer (maintainer decision 2026-11-22) |
 | Text fields | 13 | ≥ 16 (no iOS zoom) |
 
 Every new part in this doc takes its sizes from these tokens, never literals, so it inherits that
@@ -441,7 +441,7 @@ first task re-derives them with a script (`tools/checks` can list template use p
 | `design-breakpoint` (exists) | unchanged: only 599 / 600 / 840 / 841 / 1280 in width media queries | — |
 | `web-ui-filters-scope` (new) | `ListPage.filters` may not contain a `Segmented` or `Tabs` (use `scope`) | full |
 | jsdom: one copy | `renderAtClass` tests per template at 390 / 768 / 1440: no duplicate accessible names after hydration, compact = no path, FAB present, segmented, chips, rows without buttons, action sheet on long press / contextmenu | by diff |
-| Touch hit size | Playwright at 390 with touch emulation: every interactive part ≥ 44 × 44 (box or `::after` ring); at 390 fine pointer ≥ 40 | visual job |
+| Touch hit size | Playwright at 390 with touch emulation: every interactive part ≥ 44 × 44 (box or `::after` ring); at 390 / 480 fine pointer ≥ 44 too (maintainer decision 2026-11-22; `compact.interaction.spec.ts`, `mobile-sizes.ts`) | visual job |
 | Visual baselines | per template one page at 390 (touch), 768, 1440, light and dark (`visual-update` only) | visual job |
 | Size tables | `narrow` states of `card-grid`, `object-list`, `data-table`, `page-header`, new `action-sheet` and `list-fab` re-measured | fidelity |
 

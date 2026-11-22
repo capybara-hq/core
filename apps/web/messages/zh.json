@@ -152,6 +152,7 @@
       "subagents_invalid": "子智能体设置无法保存：请检查所列的模板、名称、工具、技能与智能体，且智能体类型最多 20 个。",
       "not_found": "智能体不存在或你无权访问。",
       "model_unavailable": "所选模型不可用。",
+      "avatar_unavailable": "这个头像已不在本组织可选范围内。请从选择器显示的预设头像中选择一个。",
       "version_conflict": "你编辑期间有人保存了这个智能体。请刷新页面后重新修改。",
       "profile_conflict": "你编辑期间有人修改了这个智能体的资料。请刷新查看最新内容后重新修改。",
       "instructions_mismatch": "指令与提示词文件不一致。请编辑提示词文件，或刷新后重试。",
@@ -2048,14 +2049,13 @@
   },
   "conversations": {
     "title": "会话",
-    "description": "你的会话，按智能体分组。",
     "list": "会话",
     "new": "新会话",
     "empty": "还没有会话",
-    "loadMore": "加载更多",
-    "moreOf": "与 {agent} 的更多会话",
-    "running": "运行中",
-    "waiting": "等待我"
+    "search": "搜索会话",
+    "byAgent": "按智能体筛选",
+    "all": "全部",
+    "noMatch": "没有匹配的会话"
   },
   "desktopOnly": {
     "title": "请在电脑上管理",
@@ -6607,7 +6607,7 @@
   },
   "appIcon": {
     "title": "应用图标",
-    "description": "整个平台的已安装应用图标和浏览器标签页图标。未上传时使用内置图标。",
+    "description": "整个平台的已安装应用图标和浏览器标签页图标。未上传时，应用图标使用平台默认主题的图标，没有则使用内置图标；浏览器标签页图标跟随页面的主题。",
     "app": {
       "title": "标准图标",
       "hint": "PNG，必须为 512 × 512"
@@ -6622,6 +6622,7 @@
     },
     "default": "默认",
     "custom": "已上传",
+    "fromTheme": "来自主题 {name}",
     "upload": "上传",
     "uploadLabel": "上传{name}",
     "restore": "恢复默认",
