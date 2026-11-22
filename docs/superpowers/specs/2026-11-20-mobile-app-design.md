@@ -253,9 +253,10 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
   the script writes as `data-strip`.
 - **What the web sends** (`set`, §5.2), after hydration and on every change: `items` the
   sections the person sees (guests see no 定时任务) and 搜索, their labels in the page's language and
-  the inbox's pending count; `current` from the route (`/`, `/chat/…` and `/conversations` are
-  `chats`; `/inbox…` `inbox`; `/agents…` `agents`; `/schedules…` `schedules`; anything else
-  `null`, and the shell leaves its selection as it was); `action`, the page's registered primary
+  the inbox's pending count; `current` from the route (`/chat/…` and `/conversations` are
+  `chats`; `/inbox…` `inbox`; `/agents…` `agents`; `/schedules…` `schedules`; the home `/` and
+  anything else `null`, the home being the pill's first item, coordinator ruling 2026-11-22; on
+  `null` the shell leaves its selection as it was); `action`, the page's registered primary
   on compact, else 新会话 (on medium and expanded, the inner display, the head draws the primary
   and the pill keeps 新会话, D14); `account`, the person's name, initial and avatar image. No
   `menu` since 2026-11-22 (D12).

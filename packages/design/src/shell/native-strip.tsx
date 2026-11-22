@@ -268,12 +268,17 @@ function accountOf(
 const under = (pathname: string, href: string) =>
   pathname === href || pathname.startsWith(`${href}/`);
 
-/** The section a route belongs to: chats for a chat surface and the conversations list. */
+/**
+ * The section a route belongs to: chats for a conversation and the conversations list; none on
+ * the home (the new conversation).
+ */
 function currentSection(
   pathname: string | undefined,
   surface: boolean,
   drawer: DrawerNavData,
 ): NativeSectionId | null {
+  // the new-conversation home is the pill's first item, no section (coordinator ruling 2026-11-22)
+  if (pathname === drawer.newConversation.href) return null;
   if (surface) return "chats";
   if (pathname === undefined) return null;
   if (under(pathname, drawer.allConversations.href)) return "chats";
