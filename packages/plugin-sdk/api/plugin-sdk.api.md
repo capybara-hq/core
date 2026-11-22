@@ -748,6 +748,7 @@ export const ConnectorAuthSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         client_secret_post: "client_secret_post";
     }>>;
     tokenTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    authorizationParams: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
 }, z.core.$strict>, z.ZodObject<{
     type: z.ZodLiteral<"oauth_client">;
     ownership: z.ZodLiteral<"org">;
@@ -2951,6 +2952,9 @@ export interface NotifyCapabilityV1 {
 
 // @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
+
+// @public
+export const OAUTH_RESERVED_AUTHORIZATION_PARAMS: readonly ["response_type", "client_id", "redirect_uri", "state", "code_challenge", "code_challenge_method", "scope", "resource", "response_mode", "request", "request_uri", "nonce", "dpop_jkt", "authorization_details", "client_secret", "client_assertion", "client_assertion_type", "code", "code_verifier", "grant_type", "refresh_token"];
 
 // @public
 export const OBJECT_STORE_EXTENSION_POINT = "object-store@1";

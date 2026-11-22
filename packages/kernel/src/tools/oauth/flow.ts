@@ -12,6 +12,7 @@ import { KERNEL_LOGGER, REDIS } from "../../infra/tokens.js";
 import { OrgLock } from "../../orgs/org-lock.js";
 import { ConnectorsService } from "../connectors.service.js";
 import { type ConnectorAuth, Credentials, type OAuthAuth } from "../credentials.js";
+import { appendAuthorizationParams } from "./authorization-params.js";
 import { oauthHttpOptions } from "./discovery.js";
 import {
   callbackUrl,
@@ -161,6 +162,12 @@ export class OAuthFlow {
     if (client.scopes && client.scopes.length > 0)
       url.searchParams.set("scope", client.scopes.join(" "));
     if (client.resource) url.searchParams.set("resource", client.resource);
+    // The connector's extra parameters (authorize request only), after the kernel's own
+    const auth = app.auth as unknown as Extract<OAuthAuth, { type: "oauth_code" }>;
+    const skipped = appendAuthorizationParams(url, auth.authorizationParams);
+    if (skipped.length > 0) {
+      this.log.warn("oauth authorization parameters skipped", { orgId, connectorId, skipped });
+    }
     return { authorizationUrl: url.toString() };
   }
 

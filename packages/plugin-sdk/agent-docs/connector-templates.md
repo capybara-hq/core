@@ -43,6 +43,9 @@ Fields of `template`:
   tenant id). List only what really differs per org.
 - `auth`: the auth method without credentials: `none`, `bearer`, `basic`, `api_key`, `headers`,
   `oauth_code` or `oauth_client`, plus `ownership` (`org` or per member).
+  `oauth_code` may add `authorizationParams`, extra query parameters of the authorize request
+  (e.g. `{ "access_type": "offline", "prompt": "consent" }` for Google): at most 10, lowercase
+  names, plain values, never a secret, none of `OAUTH_RESERVED_AUTHORIZATION_PARAMS`.
 - `defaultToolPolicies`: tool name to `allow`, `ask` or `deny`. When unsure, do not write `allow`.
 
 Credentials and secret config are entered by the person on the `Platform` confirmation card (name

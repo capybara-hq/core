@@ -15,6 +15,7 @@ import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { createLogger } from "../../../src/log.js";
+import { Credentials } from "../../../src/tools/credentials.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -811,6 +812,191 @@ describe("轮换客户端与其他校验", () => {
     expect(c.json()).toMatchObject({
       error: { code: "validation_failed", details: [{ path: "status" }] },
     });
+  });
+});
+
+// Extra authorization parameters on oauth_code (#552, design 2026-11-22): a Google-like
+// authorization server returns a refresh token only when the authorize request carried
+// access_type=offline and prompt=consent.
+const GOOGLE_PARAMS = { access_type: "offline", prompt: "consent" };
+const GOOGLE_CLIENT = { clientId: "manual-client", clientSecret: "manual-secret-0123456789" };
+
+const googleServers = (asOpts: FakeOAuthServerOptions = {}) =>
+  servers({ refreshTokenOnlyWith: GOOGLE_PARAMS, ...asOpts });
+
+const manualAuth = (as: FakeOAuthServer, extra: Record<string, unknown> = {}) => ({
+  type: "oauth_code",
+  ownership: "personal",
+  discovery: "manual",
+  authorizationUrl: `${as.issuer}/authorize`,
+  tokenUrl: `${as.issuer}/token`,
+  client: "manual",
+  ...extra,
+});
+
+async function installAuth(mcp: FakeMcpServer, auth: Record<string, unknown>, credential?: object) {
+  return call({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/connectors`,
+    payload: {
+      name: "Docs",
+      slug: "docs",
+      connector: "fake",
+      endpoint: { url: mcp.url },
+      auth,
+      ...(credential !== undefined && { credential }),
+    },
+  });
+}
+
+async function installAuthOk(
+  mcp: FakeMcpServer,
+  auth: Record<string, unknown>,
+  credential?: object,
+) {
+  const res = await installAuth(mcp, auth, credential);
+  expect(res.statusCode, res.body).toBe(201);
+  return (res.json() as { connector: { id: string } }).connector.id;
+}
+
+const storedTokens = (connectorId: string) =>
+  k.app.get(Credentials).oauthTokens(orgId, connectorId, { kind: "user", accountId: ownerId });
+
+describe("authorizationParams (#552) on the authorize request", () => {
+  it("manual client: both parameters ride on connect, the refresh token is stored, kept across a refresh and re-issued on reconnect", async () => {
+    const { as, mcp } = await googleServers({ clients: [GOOGLE_CLIENT] });
+    const id = await installAuthOk(
+      mcp,
+      manualAuth(as, { authorizationParams: GOOGLE_PARAMS }),
+      GOOGLE_CLIENT,
+    );
+
+    const url = await connect(id);
+    await callback(await approve(url));
+    expect(as.authorizeRequests).toHaveLength(1);
+    const q = as.authorizeRequests[0] as URLSearchParams;
+    expect(q.get("access_type")).toBe("offline");
+    expect(q.get("prompt")).toBe("consent");
+    // still the kernel's own parameters, before the connector's
+    expect(q.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(q.get("code_challenge_method")).toBe("S256");
+    expect(q.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(q.get("client_id")).toBe(GOOGLE_CLIENT.clientId);
+    const keys = [...url.searchParams.keys()];
+    expect(keys.indexOf("access_type")).toBeGreaterThan(keys.indexOf("code_challenge_method"));
+
+    const first = await storedTokens(id);
+    expect(first?.refresh_token).toEqual(expect.any(String));
+
+    // the access token dies: a tool call refreshes and the stored record keeps a refresh token
+    as.revokeAccessTokens();
+    const convId = await createConv(req, orgId, await agentFor(id));
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
+    expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
+    expect(refreshes(as)).toMatchObject([{ status: 200 }]);
+    expect((await storedTokens(id))?.refresh_token).toEqual(expect.any(String));
+
+    // reconnect sends the same parameters and gets a fresh refresh token
+    const beforeReconnect = (await storedTokens(id))?.refresh_token;
+    await connectFully(id);
+    expect(as.authorizeRequests).toHaveLength(2);
+    expect(as.authorizeRequests[1]?.get("access_type")).toBe("offline");
+    expect(as.authorizeRequests[1]?.get("prompt")).toBe("consent");
+    const again = (await storedTokens(id))?.refresh_token;
+    expect(again).toEqual(expect.any(String));
+    expect(again).not.toBe(beforeReconnect);
+
+    // neither the authorize URL nor the parameters are logged
+    expect(logLines.some((l) => l.includes("access_type"))).toBe(false);
+  });
+
+  it("control: without the parameters no refresh token is stored and the dead token asks to reconnect", async () => {
+    const { as, mcp } = await googleServers({ clients: [GOOGLE_CLIENT] });
+    const id = await installAuthOk(mcp, manualAuth(as), GOOGLE_CLIENT);
+    await connectFully(id);
+    expect(as.authorizeRequests[0]?.has("access_type")).toBe(false);
+    expect(as.authorizeRequests[0]?.has("prompt")).toBe(false);
+    expect((await storedTokens(id))?.refresh_token).toBeUndefined();
+
+    as.revokeAccessTokens();
+    const convId = await createConv(req, orgId, await agentFor(id));
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
+    expect(r).toMatchObject({
+      isError: true,
+      content:
+        "The user has not connected Docs. A connect card was shown; ask the user to connect, then retry.",
+    });
+    expect(ofType(await eventsOf(db, convId), "connection_required")).toHaveLength(1);
+    expect(refreshes(as)).toEqual([]);
+  });
+
+  it("discovery mcp + DCR: the parameters ride on the discovered endpoint too", async () => {
+    const { as, mcp } = await googleServers();
+    const id = await installAuthOk(mcp, {
+      type: "oauth_code",
+      ownership: "personal",
+      discovery: "mcp",
+      client: "dcr",
+      authorizationParams: GOOGLE_PARAMS,
+    });
+    await connectFully(id);
+    const q = as.authorizeRequests[0] as URLSearchParams;
+    expect(q.get("access_type")).toBe("offline");
+    expect(q.get("prompt")).toBe("consent");
+    expect(q.get("resource")).toBe(mcp.url);
+    expect((await storedTokens(id))?.refresh_token).toEqual(expect.any(String));
+  });
+});
+
+describe("authorizationParams (#552) reserved names", () => {
+  it("refuses a reserved name in authorizationParams and in a manual authorizationUrl query", async () => {
+    const { as, mcp } = await googleServers({ clients: [GOOGLE_CLIENT] });
+    const params = await installAuth(
+      mcp,
+      manualAuth(as, { authorizationParams: { response_mode: "form_post" } }),
+      GOOGLE_CLIENT,
+    );
+    expect(params.statusCode, params.body).toBe(400);
+    expect(params.json()).toMatchObject({ error: { code: "validation_failed" } });
+    expect(params.body).toContain(
+      '\\"response_mode\\" is set by the kernel and cannot be an authorization parameter',
+    );
+
+    const query = await installAuth(
+      mcp,
+      manualAuth(as, { authorizationUrl: `${as.issuer}/authorize?state=fixed` }),
+      GOOGLE_CLIENT,
+    );
+    expect(query.statusCode, query.body).toBe(400);
+    expect(query.body).toContain(
+      '\\"state\\" is set by the kernel and cannot be an authorization parameter',
+    );
+    expect(await db.selectFrom("connectors").select("id").execute()).toEqual([]);
+  });
+
+  it("a stored row carrying a reserved name cannot override the kernel's parameter", async () => {
+    const { as, mcp } = await googleServers({ clients: [GOOGLE_CLIENT] });
+    const id = await installAuthOk(
+      mcp,
+      manualAuth(as, { authorizationParams: GOOGLE_PARAMS }),
+      GOOGLE_CLIENT,
+    );
+    // a row written by older code or by hand
+    await db
+      .updateTable("connectors")
+      .set({
+        auth: JSON.stringify(
+          manualAuth(as, { authorizationParams: { ...GOOGLE_PARAMS, state: "forged" } }),
+        ),
+      } as never)
+      .where("id", "=", id)
+      .execute();
+    await connectFully(id);
+    const q = as.authorizeRequests[0] as URLSearchParams;
+    expect(q.getAll("state")).toHaveLength(1);
+    expect(q.get("state")).not.toBe("forged");
+    expect(q.get("access_type")).toBe("offline");
+    expect(logLines.some((l) => l.includes("oauth authorization parameters skipped"))).toBe(true);
   });
 });
 
