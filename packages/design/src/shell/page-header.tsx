@@ -119,37 +119,60 @@ export function hasTabRow(p: PageHeaderProps): boolean {
   return (p.tabs?.length ?? 0) > 0 || p.search !== undefined || (p.loading?.tabs ?? 0) > 0;
 }
 
+/** What menu items show: every field but the handlers, submenus included. */
+function shownKey(items: readonly MenuItem[]): unknown[] {
+  return items.map((it) =>
+    it === "separator"
+      ? it
+      : Object.keys(it)
+          .sort()
+          .flatMap((k) => {
+            const v = (it as Record<string, unknown>)[k];
+            if (typeof v === "function") return [];
+            return [[k, k === "submenu" ? shownKey(v as MenuItem[]) : v]];
+          }),
+  );
+}
+
+/** The item at `path` (indices through submenus) in `items`. */
+function itemAt(items: readonly MenuItem[], path: readonly number[]): MenuItem | undefined {
+  let level: readonly MenuItem[] | undefined = items;
+  let found: MenuItem | undefined;
+  for (const i of path) {
+    found = level?.[i];
+    level = found === undefined || found === "separator" ? undefined : found.submenu;
+  }
+  return found;
+}
+
 /**
- * The secondary actions as menu items whose handlers always call the page's latest ones, with an
- * identity that changes only when what the menu shows changes, so registering them with the shell
- * does not re-register on every render.
+ * The secondary actions as menu items whose handlers (in submenus too) always call the page's
+ * latest ones, with an identity that changes only when what the menu shows changes (any field but
+ * a handler), so registering them with the shell does not re-register on every render.
  */
 function useStableItems(items: MenuItem[]): MenuItem[] {
   const latest = useRef(items);
   latest.current = items;
-  const key = JSON.stringify(
-    items.map((it) =>
-      it === "separator"
-        ? it
-        : [it.label, it.href, it.icon, it.disabled, it.danger, it.submenu !== undefined],
-    ),
-  );
+  const key = JSON.stringify(shownKey(items));
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for what the items show
-  return useMemo(
-    () =>
-      latest.current.map((it, i): MenuItem => {
-        if (it === "separator" || it.onSelect === undefined || it.submenu !== undefined) return it;
+  return useMemo(() => {
+    const wrap = (level: readonly MenuItem[], path: readonly number[]): MenuItem[] =>
+      level.map((it, i): MenuItem => {
+        if (it === "separator") return it;
+        const here = [...path, i];
+        if (it.submenu !== undefined) return { ...it, submenu: wrap(it.submenu, here) };
+        if (it.onSelect === undefined) return it;
         const { onSelect: _drop, ...rest } = it;
         return {
           ...rest,
           onSelect: () => {
-            const now = latest.current[i];
+            const now = itemAt(latest.current, here);
             if (now !== undefined && now !== "separator") now.onSelect?.();
           },
         } as MenuItem;
-      }),
-    [key],
-  );
+      });
+    return wrap(latest.current, []);
+  }, [key]);
 }
 
 /**
@@ -176,9 +199,10 @@ export function HeadSearch({ search }: { search: NonNullable<PageHeaderProps["se
  * title (`count`, else the first tab's count), sends every secondary action to the shell's "…"
  * (`ShellPage.actions`; without a shell a `more-horizontal` menu in the head), places the primary
  * by `primaryForm` and draws 2-3 tabs as a segmented control; the per-class structure goes through
- * `ClassForms`, and the primary stays one element in both forms. The vertical rhythm is the head tokens (spec §4.2
- * "Head rhythm"): `layout.head-path` between the path and the title row, `layout.head-description`
- * between the title and the description, `layout.head-tabs` above the notice and the tab row.
+ * `ClassForms`, and the primary stays one element in both forms. The vertical rhythm is the head
+ * tokens (spec §4.2 "Head rhythm"): `layout.head-path` between the path and the title row,
+ * `layout.head-description` between the title and the description, `layout.head-tabs` above the
+ * notice and the tab row.
  */
 export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);

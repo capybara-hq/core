@@ -103,6 +103,67 @@ describe("PageHeader compact form", () => {
     expect(first).not.toHaveBeenCalled();
   });
 
+  it("a change to any shown field of an overflow item, a submenu's too, reaches the shell", () => {
+    const shell = shellStub();
+    const at = (checked: boolean, description: string) => (
+      <ShellPageContext.Provider value={shell.register}>
+        {head({
+          actions: [
+            {
+              label: "更多",
+              menu: [
+                { label: "导入", description, onSelect: () => {} },
+                {
+                  label: "语言",
+                  submenu: [
+                    { label: "中文", checked, onSelect: () => {} },
+                    { label: "English", checked: !checked, onSelect: () => {} },
+                  ],
+                },
+              ],
+            },
+          ],
+        })}
+      </ShellPageContext.Provider>
+    );
+    const r = renderAtClass(390, at(true, "从文件"));
+    r.rerender(<DesignProvider locale="zh">{at(false, "从链接")}</DesignProvider>);
+    const [first, lang] = shell.actions();
+    if (first === "separator" || lang === "separator" || !lang?.submenu) throw new Error("items");
+    expect(first?.description).toBe("从链接");
+    const zh = lang.submenu[0];
+    expect(zh !== "separator" && zh?.checked).toBe(false);
+  });
+
+  it("a submenu item in the shell's overflow runs the page's latest handler", () => {
+    const shell = shellStub();
+    const first = vi.fn();
+    const second = vi.fn();
+    const at = (onSelect: () => void) => (
+      <ShellPageContext.Provider value={shell.register}>
+        {head({
+          actions: [
+            {
+              label: "更多",
+              menu: [
+                { label: "导入", onSelect: () => {} },
+                { label: "语言", submenu: [{ label: "中文", onSelect }] },
+              ],
+            },
+          ],
+        })}
+      </ShellPageContext.Provider>
+    );
+    const r = renderAtClass(390, at(first));
+    r.rerender(<DesignProvider locale="zh">{at(second)}</DesignProvider>);
+    const lang = shell.actions()[1];
+    const zh = lang !== undefined && lang !== "separator" ? lang.submenu?.[0] : undefined;
+    if (zh === undefined || zh === "separator" || !zh.onSelect) throw new Error("no item");
+    zh.onSelect();
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+  });
+
   it("without a shell the secondaries fold into the head's ⋯, also one (D1)", () => {
     renderAtClass(390, head());
     const header = screen.getByRole("banner");
