@@ -9,7 +9,7 @@ import { useListSentinel } from "./list-sentinel";
  * model spec §3 "Infinite scroll", D6). Below 600 the next page is read as the list's end comes
  * into view, with a skeleton row while it loads and an inline retry row on a failure; from 600 up
  * the list draws a Load more button under it. A page passes these and never draws its own
- * 「加载更多」 button (`web-ui-load-more`).
+ * Load more button (`web-ui-load-more`).
  */
 export type ListMoreProps = {
   /** Reads the next page; the retry of a failed read too. Without it the list has no end. */

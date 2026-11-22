@@ -700,7 +700,8 @@ function saysLoadMore(children: Node[]): boolean {
 
 /**
  * `web-ui-load-more` over one parsed file: a `Button` / `LinkButton` whose content is a
- * `loadMore` message or the words 加载更多 / Load more, and the `LoadMore` wrapper, fail.
+ * `loadMore` message or the words 加载更多 / Load more, and the `LoadMore` wrapper, fail
+ * (english-comments-ok: the zh words the rule matches).
  */
 export function loadMoreFindings(p: ParsedFile): Finding[] {
   const out: Finding[] = [];
