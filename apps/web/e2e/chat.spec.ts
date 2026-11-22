@@ -108,7 +108,16 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   // 4. slow 回复进行中插话（↵ 与 ⌘↵ 相同，没有队列）：两条都得到回复，插话排在它被接收的位置，
   // 即第一条回复之后（run input spec D4）
   await send(page, `slow:200:${SECOND_TEXT}`);
-  await expect(draft).toHaveText(/.+/);
+  // Interject only once the first step's model call has read the message: its reply is streaming
+  // or already in. The streaming draft alone lives about a second (7 chunks, 200 ms apart) and a
+  // busy CI browser can render the first reply only after it is complete (#616); either way the
+  // interjection lands after the first reply, which is what the assertions below check.
+  await expect(
+    draft
+      .or(assistants(page).filter({ hasText: SECOND_TEXT }))
+      .filter({ hasText: /.+/ })
+      .first(),
+  ).toBeVisible();
   await expect(page.getByRole("textbox", { name: zh.chat.inputLabel })).toBeEnabled();
   await interject(page, "echo:interject");
   await expect(assistants(page).filter({ hasText: SECOND_TEXT })).toHaveCount(1);
