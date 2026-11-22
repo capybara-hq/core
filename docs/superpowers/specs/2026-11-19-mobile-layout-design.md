@@ -315,6 +315,11 @@ Colors are unchanged: the palette of design spec §2.1, dark `#0A0A0A` / accent 
 - **Large list row**: 52 / 56, a leading icon or avatar, the title and a secondary line, a
   trailing count, action or chevron; rows sit on the page ground with no dividers and no card
   box (a list on touch is rows, not a box of rows).
+  **Amended (maintainer decision 2026-11-22; responsive system spec §2.3):** the grouped list of a **list page** has **one
+  card** (the `panel` ground, 1px `line-soft`, radius `md`; never a box per row) with `line-soft`
+  hairlines inset to the text column and rows at least 64 high; a row that opens something shows
+  no buttons, its actions open as an action sheet on long press, and a chevron ends the row. Lists
+  elsewhere keep the rows straight on the page ground.
 - **Drawer** (§4.2).
 - **Bottom sheet**: the existing sheet (design spec §6.7) in its touch form (radius 20 at the
   top, the handle, rows 52): the conversation settings (model, thinking 低 / 中 / 高, where to
@@ -374,10 +379,10 @@ target.
 
 | Template | compact | medium | expanded |
 |---|---|---|---|
-| `ListPage` (objects / cards / records) | Single column; rows compact (§4.3 today; on touch the large list row of §4.5, decided 2026-11-21), cards one per row, records stacked; facet rail behind a "Filter" button and bottom sheet | Cards two per row once two `layout.card-min` columns fit, else one; facet rail as a Filter sheet | As today (facet rail inline while it fits, §3.3) |
-| `DetailPage` | Pushed; facts first, PageTabs scroll; band head stacks | As today, one column | As today |
-| `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column while it fits, §3.3) |
-| `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today (sub-nav inline while it fits, §3.3) |
+| `ListPage` (objects / cards / records) | Single column; no path, large title with its count, primary as the FAB, secondary in the floating "…", search full width, tabs segmented (2–3), `scope` chips; **grouped rows in one card** (§4.5) with an action sheet instead of row buttons, records by the row mapping (stacked as the fallback); facet rail and field filters in one bottom sheet; one scroller with the quick-return bar (maintainer decision 2026-11-22; responsive system spec §3.1) | Cards two per row once two `layout.card-min` columns fit, else one; facet rail as a Filter sheet | As today (facet rail inline while it fits, §3.3) |
+| `DetailPage` | Pushed; no path, large title, primary a full-width button, secondary in the floating "…"; facts first, PageTabs segmented (2–3) or scrolling; band head stacks; one scroller with the scrolled title (maintainer decision 2026-11-22) | As today, one column | As today |
+| `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area; no path, large title (maintainer decision 2026-11-22) | Labels above fields | As today (label column while it fits, §3.3) |
+| `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept); no path, primary full width under the title, secondary in "…", section tabs segmented, one scroller under the sub-nav (maintainer decision 2026-11-22) | Sub-nav stacked above content (today's < 960 form) | As today (sub-nav inline while it fits, §3.3) |
 | `WizardPage` | Single column, step bar as "2 / 4" text, sticky previous / next | As today | As today |
 | `InboxPage` | **Two-level stack**: the list (a `ListDetailList`, on every class: maintainer to confirm: R24) is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; its facts inline, with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack; the list a `ListDetailList`, the facts inline (R24) | The list (320, a `ListDetailList`, never a DataTable) + the open item, its facts inline (a 400 column from a 1100 frame, else above the content; never a Sheet: maintainer to confirm: R24) and no rail collapse button (maintainer to confirm: R20) |
 | `ConversationPage` | §5.4 | §5.4 | As today |
