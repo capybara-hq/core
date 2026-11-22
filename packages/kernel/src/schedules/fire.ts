@@ -10,19 +10,21 @@ import { ConversationsService } from "../conversations/conversations.service.js"
 import { ConversationQueue } from "../conversations/queue.service.js";
 import { channelSource } from "../conversations/source.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { DialInRelay } from "../dial-in/relay.js";
+import { DialInRelayModule } from "../dial-in/relay.module.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { deviceLeaseKey } from "../local-devices/keys.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
 import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../orgs/settings.service.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
+import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
+import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
 import {
   oweSchedSettle,
@@ -131,8 +133,10 @@ export class ScheduledTaskFirer {
     @Inject(ConversationQueue) private readonly queue: Pick<ConversationQueue, "add">,
     @Inject(ChannelConnections)
     private readonly connections: Pick<ChannelConnections, "row" | "channel">,
-    /** Reads a local device's connection lease (online or not). */
-    @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
+    /** Whether a dial-in device's machine is connected now. */
+    @Inject(DialInRelay) private readonly relay: Pick<DialInRelay, "online">,
+    /** Each device's provider (whether it serves its devices over the dial-in channel). */
+    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "info">,
     /** The claim owes the run's settle check (ruling R26). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
@@ -676,16 +680,21 @@ export class ScheduledTaskFirer {
     return row !== undefined;
   }
 
-  /** The device is gone, or a local device whose machine is not connected now. */
+  /**
+   * The device is gone, or its provider serves it over the dial-in channel and its machine is not
+   * connected now ({@link DialInRelay.online}). A provider not loaded here is not asked: the run's
+   * own sandbox use refuses it (`device.unavailable`).
+   */
   private async deviceOffline(deviceId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("devices")
-      .select(["source", "deleted_at"])
+      .select(["provider", "deleted_at"])
       .where("id", "=", deviceId)
       .executeTakeFirst();
     if (!row || row.deleted_at !== null) return true;
-    if (row.source !== "local") return false;
-    return (await this.locks.holderOf(deviceLeaseKey(deviceId))) === null;
+    const p = this.providers.forDevice(row.provider);
+    if (p === undefined || !servesDialIn(p)) return false;
+    return !(await this.relay.online(deviceId));
   }
 }
 
@@ -703,6 +712,8 @@ export class ScheduledTaskFirer {
     OrgLockModule,
     ScheduledTaskStoreModule,
     ScheduledTaskTrackerModule,
+    DialInRelayModule,
+    SandboxProviderRegistryModule,
   ],
   providers: [ScheduledTaskFirer, ScheduledTaskScanJob],
   exports: [ScheduledTaskFirer],

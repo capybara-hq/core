@@ -127,7 +127,10 @@ export interface NetworkAskDetail {
   result: KeptToolResult;
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
-  /** What took effect: a run grant (`once`, the only decision under device protocol 4). */
+  /**
+   * What took effect: a run grant (`once`, the only decision: an ask never adds a host to the
+   * device's own network list, only its owner's network setting does).
+   */
   outcome?: "once";
 }
 
@@ -486,8 +489,8 @@ export interface NetworkAskInput {
   requestedFor: string;
   detail: Omit<NetworkAskDetail, "grantedHosts" | "outcome">;
   /**
-   * Always `["once"]`: a run grant (approval-only profiles design). The deployment never adds a
-   * host to a local device's own allowlist (device protocol 4), so "always" is never offered.
+   * Always `["once"]`: a run grant (approval-only profiles design). An ask never adds a host to the
+   * device's own network list (only its owner's network setting does), so "always" is never offered.
    */
   scopes: "once"[];
 }
@@ -1341,8 +1344,8 @@ export class ApprovalsService {
    * A network ask's decision (network ask-to-allow spec §5.2), one at a time per ask across
    * replicas: only the device owner (`requested_for`) decides, in a signed-in session (a personal
    * access token is refused; the route already refuses service and embed tokens); the allowed
-   * hosts are a subset of those asked. The decision is a run grant only (`once`): under device
-   * protocol 4 the deployment never adds a host to a local device, so `always` is refused. Every
+   * hosts are a subset of those asked. The decision is a run grant only (`once`): an ask never adds
+   * a host to the device's own network list, so `always` is refused. Every
    * decision resumes the run in its transaction and is announced after the commit.
    */
   @WithLock({ key: "network-ask-#{1}", ttl: 60_000, waitTimeout: 45_000 })
@@ -1398,9 +1401,9 @@ export class ApprovalsService {
     let network: NetworkDecision;
     if (body.decision === "approve") {
       const scope = body.scope ?? "once";
-      // a run grant only (approval-only profiles, device protocol 4): the deployment never widens
-      // a local device's sandbox allowlist, its owner adds hosts on the machine, so `always` is
-      // refused, also for an ask made before that still listing it
+      // a run grant only (approval-only profiles): an ask never widens the device's own network
+      // list (its owner's setting does), so `always` is refused, also for an ask made before that
+      // still listing it
       if (scope !== "once" || !ask.scopes.includes(scope)) {
         throw new ApiError(
           "approval.scope_not_allowed",

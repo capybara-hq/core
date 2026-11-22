@@ -431,7 +431,7 @@ describe("the task output panel", () => {
             error: {
               code: "background_task.output_unavailable",
               message: "suspended",
-              details: [{ reason: "suspended", environment: "cloud" }],
+              details: [{ reason: "suspended", provider: "sandbox-docker" }],
             },
           }),
       },
@@ -456,7 +456,7 @@ describe("the task output panel", () => {
             error: {
               code: "background_task.output_unavailable",
               message: "offline",
-              details: [{ reason: "device_offline", environment: "local" }],
+              details: [{ reason: "device_offline", provider: "device-ssh" }],
             },
           }),
       },
@@ -491,7 +491,7 @@ describe("the task output panel", () => {
             error: {
               code: "background_task.output_unavailable",
               message: "not started",
-              details: [{ reason: "not_started", environment: "local" }],
+              details: [{ reason: "not_started", provider: "device-ssh" }],
             },
           }),
       },

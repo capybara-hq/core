@@ -431,7 +431,6 @@ describe("skills at runtime", () => {
       .at(-1);
     expect(scoped).toEqual({
       kind: "scoped",
-      readDirectories: ["/skills", "/workspace"],
       writeDirectories: ["/workspace"],
     });
 

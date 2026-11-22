@@ -1,11 +1,6 @@
-import {
-  type DeviceFeature,
-  type DeviceLocalPolicySummary,
-  type NetworkBlockedHost,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
+import { type NetworkBlockedHost, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
-import type { NetworkRunState } from "../local-devices/network-grants.js";
+import type { NetworkRunState } from "../sandbox/network-grants.js";
 import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
   networkGrantKey,
@@ -43,7 +38,10 @@ const pron = (hosts: readonly string[]) => (one(hosts) ? "it" : "them");
 const blockedLead = (hosts: readonly string[]) =>
   `[network] ${list(hosts)} ${one(hosts) ? "was" : "were"} blocked by this device's network policy.`;
 
-/** Asked, allowed this time (a run grant, the only offer under device protocol 4). */
+/**
+ * Asked, allowed this time (a run grant, the only offer: an ask never adds a host to the device's
+ * own network list, only its owner's network setting does).
+ */
 export const allowedOnceNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts)} The user allowed ${pron(hosts)} for the rest of this task. Run the command again.`;
 
@@ -70,18 +68,6 @@ export const otherAskPendingNote = (hosts: readonly string[]) =>
 /** Not asked: the run made {@link MAX_NETWORK_ASKS_PER_RUN} asks already (spec §6.8). */
 export const tooManyNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts)} Too many network requests in this task; ask the user to allow the domains on the device page.`;
-
-/** The local command that allows each host (one `policy add` per host). */
-const localAdd = (hosts: readonly string[]) =>
-  hosts.map((h) => `capybara-device policy add allowedDomains ${h}`).join(" and ");
-
-/**
- * Not asked: the device cannot take network changes from the deployment (Docker mode, or a program
- * too old to take them), so a run grant would not reach it; only its owner can
- * allow the host locally.
- */
-export const localOnlyNote = (hosts: readonly string[]) =>
-  `${blockedLead(hosts).slice(0, -1)}, and this device does not accept network changes from the conversation. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)} or tell the user.`;
 
 /** The org layer (spec §6.6): only an org admin can lift it. */
 export const orgLayerNote = (hosts: readonly string[]) =>
@@ -143,12 +129,12 @@ export const unavailableHostNote = (host: string, why: string) =>
   `[network] ${host} was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`;
 
 /**
- * An unattended run (spec §8.1): the task approves the host, yet the device refused it: the device
- * takes no network grants from the deployment (Docker mode, or a program too old for them).
- * Not asked, not a missing grant: only the device's owner can allow it locally.
+ * An unattended run (spec §8.1): the task approves the host, yet the device refused it: its
+ * provider did not apply the task's network grant. Not asked, not a missing grant: the device's
+ * owner adds the host to the device's network list on its page.
  */
 export const taskGrantIgnoredNote = (hosts: readonly string[]) =>
-  `${blockedLead(hosts)} The scheduled task approves ${pron(hosts)}, but this device does not accept the task's network grants. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)}.`;
+  `${blockedLead(hosts)} The scheduled task approves ${pron(hosts)}, but this device did not apply the task's network grant. The device owner can add ${pron(hosts)} to the device's network list on its page. Continue without ${pron(hosts)}.`;
 
 /** An unattended run in `fail` mode (spec §8.3): no ask, the creator can add a task grant. */
 export const unattendedNetworkNote = (hosts: readonly string[]) =>
@@ -156,8 +142,11 @@ export const unattendedNetworkNote = (hosts: readonly string[]) =>
 
 /** What the pipeline knows when a command reported refused hosts. */
 export interface NetworkPlanContext {
-  /** The device's active machine: its features and local policy summary (null: none connected). */
-  device: { features: readonly DeviceFeature[]; policy: DeviceLocalPolicySummary | null } | null;
+  /**
+   * The device's provider enforces a sandbox allowlist (its permission support): only then is a
+   * device-layer host asked about (absent: never).
+   */
+  allowlist?: boolean;
   /** The scheduled task run the run serves (null / undefined: attended). */
   unattended: UnattendedRun | null | undefined;
   /**
@@ -186,7 +175,7 @@ export interface NetworkPlanContext {
 export interface NetworkPlan {
   /**
    * The device-layer hosts to ask the device owner about (empty: no ask). The ask offers a run
-   * grant only: the deployment never adds a host to a local device.
+   * grant only; the owner adds a host to the device's own list on its page.
    */
   ask: { host: string; port: number }[];
   /** Notes written now, after the command output (one line per outcome). */
@@ -223,10 +212,10 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  *   an `address` host under the open network on a device that allows running outside the sandbox
  *   gets the escalation hint; an `org` host whose grant is unavailable names who adds it;
  *   `unknown`: nothing (the device's trailer explains);
- * - a `device` host whose per-call grant is unavailable (`ctx.refusal`: beyond a local owner's
- *   allowlist, or the org's or platform's allowlist ceiling): a note naming who adds it, never an
- *   ask;
- * - `device` layer on a program without `policyOpId`: nothing (no ask, the trailer explains);
+ * - a `device` host whose per-call grant is unavailable (`ctx.refusal`: a provider without
+ *   per-operation hosts, or beyond the org's or platform's allowlist ceiling): a note naming who
+ *   adds it, never an ask;
+ * - `device` layer on a provider that enforces no allowlist: nothing (no ask);
  * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
  * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
@@ -248,10 +237,8 @@ export function planNetworkAsk(
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
   const unavailable: string[] = [];
-  // a machine that reports blocked hosts and logs its ops under ids (Docker mode has no report)
-  const canAsk =
-    ctx.device?.features.includes("networkReport") === true &&
-    ctx.device.features.includes("policyOpId");
+  // only a provider that enforces an allowlist blocks a host at the device layer
+  const canAsk = ctx.allowlist === true;
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {

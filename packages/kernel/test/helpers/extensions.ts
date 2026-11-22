@@ -145,6 +145,10 @@ export function testHost(
     undefined as never,
     undefined as never,
     new OrgNetworkAllowances(h.db, h.txHost, orgLockFor(deps.db)),
+    // no dial-in relay in a hand-built host: ctx.dialIn calls fail
+    undefined as never,
+    // no device reports in a hand-built host: ctx.devices calls fail
+    undefined as never,
   );
 }
 

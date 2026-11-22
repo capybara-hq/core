@@ -109,7 +109,6 @@ async function fixture(
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: accountId,
-      source: "cloud",
       provider: PROVIDER,
       mode: opts.mode ?? null,
     })

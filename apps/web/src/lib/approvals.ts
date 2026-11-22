@@ -31,7 +31,10 @@ export interface NetworkApprovalDetail {
   description: string | null;
   /** The hosts the decision allowed (the checked subset). */
   grantedHosts?: string[];
-  /** A network ask is granted for this run only (device protocol 4 never widens a device). */
+  /**
+   * A network ask is granted for this run only (an ask never adds a host to the device's own
+   * network list; only its owner's network setting does).
+   */
   outcome?: "once";
 }
 

@@ -68,7 +68,7 @@ const STRICT = { mode: "sandbox", network: { kind: "allowlist", hosts: [] } };
 
 /** A device of a fresh org with a conversation on it; `instance` adds a running instance row. */
 async function fixture(
-  opts: { source?: "cloud" | "local"; instance?: unknown; deleted?: boolean } = {},
+  opts: { provider?: string | null; instance?: unknown; deleted?: boolean } = {},
 ) {
   const accountId = randomUUID(),
     orgId = randomUUID(),
@@ -97,7 +97,6 @@ async function fixture(
       current_version: 1,
     })
     .execute();
-  const source = opts.source ?? "cloud";
   await db
     .insertInto("devices")
     .values({
@@ -105,8 +104,7 @@ async function fixture(
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: accountId,
-      source,
-      provider: source === "cloud" ? PROVIDER : null,
+      provider: opts.provider === undefined ? PROVIDER : opts.provider,
       mode: null,
       ...(opts.deleted && { deleted_at: new Date() }),
     })
@@ -214,7 +212,7 @@ it("snapshots every live cloud device; a narrowing publishes once; a rerun publi
   const plain = await fixture();
   const strict = await fixture({ instance: STRICT });
   const unknown = await fixture({ instance: null });
-  const local = await fixture({ source: "local" });
+  const providerless = await fixture({ provider: null });
   const deleted = await fixture({ deleted: true });
 
   const run = await snapshots().snapshotAll();
@@ -222,7 +220,8 @@ it("snapshots every live cloud device; a narrowing publishes once; a rerun publi
   expect(state(plain.deviceId)).toBe("unprobed");
   expect(state(strict.deviceId)).toBe("bound");
   expect(state(unknown.deviceId)).toBe("reconcile-required");
-  expect(state(local.deviceId)).toBeUndefined();
+  // every provider's device is snapshotted alike (no location branch)
+  expect(state(providerless.deviceId)).toBe("unprobed");
   expect(state(deleted.deviceId)).toBeUndefined();
   expect(run.failed).toEqual([]);
   expect(run.pending).toBe(0);
@@ -234,7 +233,6 @@ it("snapshots every live cloud device; a narrowing publishes once; a rerun publi
   expect(await plain.root()).toBe("full-access");
   // the unreconciled device keeps its marker
   expect((await unknown.device()).permission_reconcile_required).toBe(true);
-  expect((await local.device()).owner_full_access).toBeNull();
   expect((await deleted.device()).owner_full_access).toBeNull();
 
   const rerun = await snapshots().snapshotAll();

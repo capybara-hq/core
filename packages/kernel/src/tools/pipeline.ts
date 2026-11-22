@@ -45,8 +45,6 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { DevicePolicyService } from "../local-devices/device-policy.service.js";
-import { NetworkGrants, type NetworkRunState } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
@@ -68,6 +66,7 @@ import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/mess
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
+import { NetworkGrants, type NetworkRunState } from "../sandbox/network-grants.js";
 import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionAutoGrants } from "../sandbox/permission-auto-grants.js";
@@ -526,15 +525,15 @@ interface PipelineDeps {
   readonly devices: Pick<ConversationDevices, "reviewFacts"> | undefined;
   /**
    * What a command's refused network hosts need (network ask-to-allow spec §6.2): the run tree's
-   * network asks and the device's features and policy summary. Without them (hand-built test
-   * pipelines) a report only writes `network_blocked`.
+   * network asks and the device's sandbox (its per-call host ceiling, and whether its provider
+   * enforces an allowlist). Without them (hand-built test pipelines) a report only writes
+   * `network_blocked`.
    */
   readonly network:
     | {
         /** `deviceId` scopes the run tree's asks to the device (ignored by an older provider). */
         grants: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
-        devices: Pick<DevicePolicyService, "summary">;
-        /** The device's per-call host ceiling (absent: every device-layer host is asked about). */
+        /** The device's sandbox (absent: no device-layer host is asked about). */
         sandbox?: Pick<SandboxService, "hostRefusal">;
       }
     | undefined;
@@ -1017,7 +1016,6 @@ export class ToolPipeline {
     @Optional()
     @Inject(NetworkGrants)
     networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> },
-    @Optional() @Inject(DevicePolicyService) devicePolicy?: Pick<DevicePolicyService, "summary">,
     /** The command review (auto mode spec §5.4); absent in hand-built pipelines. */
     @Optional() @Inject(CommandReviewService) review?: CommandReview,
     /** The reviewed call's device facts; absent in hand-built pipelines. */
@@ -1094,14 +1092,12 @@ export class ToolPipeline {
       messages,
       review,
       devices,
-      network:
-        networkGrants && devicePolicy
-          ? {
-              grants: networkGrants,
-              devices: devicePolicy,
-              ...(this.sandboxes !== undefined && { sandbox: this.sandboxes }),
-            }
-          : undefined,
+      network: networkGrants
+        ? {
+            grants: networkGrants,
+            ...(this.sandboxes !== undefined && { sandbox: this.sandboxes }),
+          }
+        : undefined,
     };
     const decide = hooks?.decidePolicy;
     // the default policy reads live, on the context's handle
@@ -2817,22 +2813,22 @@ export class ToolPipeline {
     };
     const network = this.deps.network;
     if (network === undefined) return { kind: "write", event, notes: [] };
-    const device = await network.devices.summary(report.deviceId);
     const run = hosts.some((h) => h.layer === "device")
       ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
     const limits = this.config.get().sandbox.limits;
-    // the per-call host ceiling decides what is worth asking: a host beyond a local owner's
-    // allowlist or the org's or platform's allowlist ceiling is unavailable, never asked about
+    // the per-call host ceiling decides what is worth asking: a host a per-call grant cannot
+    // reach on this device (its provider, the org's or the platform's allowlist ceiling) is
+    // unavailable, never asked about
     const sandbox = await network.sandbox?.hostRefusal({
       orgId: ctx.orgId,
       deviceId: report.deviceId,
     });
     const plan = planNetworkAsk(hosts, run, {
-      device,
       unattended: ctx.unattended,
       outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
       ...(sandbox !== undefined && {
+        allowlist: sandbox.allowlist,
         refusal: sandbox.refusal,
         // the hint follows admission's verdict for this call (never a recomputation), and only
         // the open network makes a private address the one thing escalation adds

@@ -998,7 +998,6 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
         owner_kind: "personal",
         owner_account_id: owner,
         name: `Laptop ${deviceId.slice(0, 4)}`,
-        source: "local",
         provider: "local",
       })
       .execute();

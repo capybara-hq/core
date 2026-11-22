@@ -8,7 +8,7 @@ import type { Kysely } from "kysely";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import type { AppliedLimits } from "../../src/sandbox/modes.js";
+import { type AppliedLimits, readInstanceLimits } from "../../src/sandbox/modes.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
@@ -26,8 +26,9 @@ export const SUPPORTS_BOTH: SandboxPermissionSupport = {
 
 /**
  * Seeds what admission and the recorded permission context need to prove a device's installed
- * environment (B-16): the instance's committed roots, a runtime report of its generation and, for
- * a local device, an installed binding of that generation on the device's active machine. Without
+ * environment (B-16), the same for every provider: the instance's committed roots, recorded
+ * applied limits (what the device's effective policy wants now, when none are recorded) and the
+ * provider's runtime report with the kernel-built identity, as the lifecycle records it. Without
  * it both refuse with the same unprobed reason. The device and its instance row already exist.
  */
 export async function seedInstalledEvidence(
@@ -40,90 +41,41 @@ export async function seedInstalledEvidence(
     version: string;
     report?: SandboxPermissionSupport;
   },
-): Promise<{ generation: string; bindingId: string | null }> {
+): Promise<{ generation: string }> {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const db = kernelDb(raw as Kysely<any>);
   const instance = await db
     .selectFrom("device_instances")
-    .select(["created_at", "handle"])
+    .select(["created_at", "handle", "instance_limits"])
     .where("device_id", "=", input.deviceId)
-    .executeTakeFirstOrThrow();
-  const device = await db
-    .selectFrom("devices")
-    .select("source")
-    .where("id", "=", input.deviceId)
     .executeTakeFirstOrThrow();
   const generation = String(instance.created_at.getTime());
   const roots = (instance.handle as { roots?: SandboxRoots } | null)?.roots;
   if (!roots) throw new Error("The device instance needs a handle with roots");
-  await db
-    .updateTable("device_instances")
-    .set({ permission_roots: JSON.stringify(roots) })
-    .where("device_id", "=", input.deviceId)
-    .execute();
-  // a cloud device records the kernel-built cloud identity its row proves, as the lifecycle does
-  if (device.source !== "local") {
-    await seedCloudEvidence(k, input);
-    return { generation, bindingId: null };
+  if (readInstanceLimits(instance.instance_limits).applied === null) {
+    const policy = await k.app
+      .get(PermissionFacts)
+      .devicePolicy({ orgId: input.orgId, deviceId: input.deviceId });
+    await db
+      .updateTable("device_instances")
+      .set({
+        instance_limits: JSON.stringify({
+          mode: policy.mode,
+          network: { kind: policy.network.kind, hosts: [...policy.network.hosts] },
+        }),
+      })
+      .where("device_id", "=", input.deviceId)
+      .execute();
   }
-  const identity = {
-    runtimeHash: "a".repeat(64),
-    helperHash: "b".repeat(64),
-    imageFingerprint: "c".repeat(64),
-    instanceGeneration: generation,
-  };
-  await k.app.get(TransactionHost).run(async () => {
-    await k.app
-      .get(PermissionAuthorityLock)
-      .acquire(
-        { orgId: input.orgId, deviceId: input.deviceId },
-        { kind: "write", level: "device" },
-      );
-    await k.app
-      .get(PermissionRuntimeReports)
-      .record(
-        input.deviceId,
-        input.provider,
-        input.version,
-        identity,
-        input.report ?? SUPPORTS_BOTH,
-      );
-  });
-  const machine = await db
-    .selectFrom("device_machines")
-    .select("id")
-    .where("device_id", "=", input.deviceId)
-    .where("revoked_at", "is", null)
-    .executeTakeFirstOrThrow();
-  const bindingId = crypto.randomUUID();
-  await db
-    .insertInto("device_instance_bindings")
-    .values({
-      device_id: input.deviceId,
-      instance_generation: generation,
-      binding_id: bindingId,
-      provider: input.provider,
-      status: "installed",
-      machine_id: machine.id,
-      runtime_identity: JSON.stringify(identity),
-    })
-    .onConflict((oc) =>
-      oc.columns(["device_id", "instance_generation"]).doUpdateSet({
-        binding_id: bindingId,
-        provider: input.provider,
-        status: "installed",
-        machine_id: machine.id,
-        runtime_identity: JSON.stringify(identity),
-      }),
-    )
-    .execute();
-  return { generation, bindingId };
+  await seedCloudEvidence(k, input);
+  return { generation };
 }
 
 /**
- * Records a cloud device's current instance evidence (B-15) the way the lifecycle does after create
- * or resume: the provider's support report with the kernel-built identity of the committed row
- * (its handle, generation and recorded applied limits). The instance row already exists.
+ * Records a device's current instance evidence (B-15) the way the lifecycle does after create or
+ * resume: the provider's support report with the kernel-built identity of the committed row (its
+ * handle, generation, recorded applied limits and the device's report revision). The instance row
+ * already exists.
  */
 export async function seedCloudEvidence(
   k: TestKernel,
@@ -157,12 +109,12 @@ export async function seedCloudEvidence(
       .execute();
     await k.app
       .get(PermissionRuntimeReports)
-      .recordCloud(input.deviceId, input.provider, input.version, input.report ?? SUPPORTS_BOTH);
+      .recordSupport(input.deviceId, input.provider, input.version, input.report ?? SUPPORTS_BOTH);
   });
 }
 
 /**
- * Provisions a cloud device's instance as the lifecycle's create does (B-15): a running instance
+ * Provisions a device's instance as the lifecycle's create does (B-15): a running instance
  * on the default roots whose recorded applied limits are `applied` (default: what the device's
  * effective policy wants now), then its cloud evidence. Replaces any instance row it had.
  */

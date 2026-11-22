@@ -35,6 +35,7 @@ import type { Keyring } from "../ctx/secrets.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
+import { DialInAccess } from "../dial-in/access.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
 import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -47,6 +48,7 @@ import { ModelEmbeddings } from "../models/embeddings.js";
 import { ModelImages } from "../models/images.js";
 import { OrgNetworkAllowances } from "../orgs/network-allowances.service.js";
 import { packagePath } from "../packages/tgz.js";
+import { DeviceReports } from "../sandbox/device-reports.js";
 import { ShareLiveness } from "../shares/liveness.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
@@ -691,6 +693,10 @@ export class ExtensionHost {
     @Inject(ModelImages) images: Pick<ModelImages, "generateForExtension" | "describeForExtension">,
     /** `ctx.net`: the internal endpoints each org's extension requests may reach (read per call). */
     @Inject(OrgNetworkAllowances) allowances: OrgNetworkAllowances,
+    /** `ctx.dialIn`: the dial-in relay and the check that a device is the extension's own. */
+    @Inject(DialInAccess) dialIn: DialInAccess,
+    /** `ctx.devices`: the stored device reports, read again when a provider says they changed. */
+    @Inject(DeviceReports) devices: DeviceReports,
     /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
     @Optional() @Inject(EXTENSION_NET_SEAMS) netSeams?: ExtensionNetSeams,
   ) {
@@ -719,6 +725,8 @@ export class ExtensionHost {
       hooks: this.hooks,
       shares,
       net: { config, allowances, ...(netSeams !== undefined && { seams: netSeams }) },
+      dialIn,
+      devices,
       locks,
       runWorkers: c.roles.includes("worker"),
       log,

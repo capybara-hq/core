@@ -17,13 +17,13 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { orgAllows } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR } from "../orgs/settings.service.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
+import { orgAllows } from "../sandbox/network-grants.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { isTimeZone } from "../time-zone.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -113,13 +113,6 @@ export interface ScheduleAttention {
    * can add the host (network ask-to-allow spec §8.3); the creator cannot pre-approve them.
    */
   needsAdmin: string[];
-  /**
-   * `missing` holds `network:` keys and the task's device cannot take network grants from the
-   * deployment (Docker mode, or a program too old to take them): a task grant would not reach it;
-   * its owner allows the domains locally (`capybara-device policy add allowedDomains <host>`). No
-   * device reports this now, so the kernel always sends false; the wire field stays for the web.
-   */
-  deviceRefuses: boolean;
   /** `failed` only: the run's error; else null. */
   error: string | null;
   /** When the pause happened, or when the refused or failed run was due. */
@@ -1007,7 +1000,6 @@ export class ScheduledTasksService {
           missing: [],
           needsRole: [],
           needsAdmin: [],
-          deviceRefuses: false,
           error: null,
           at: task.updatedAt,
         });
@@ -1024,7 +1016,6 @@ export class ScheduledTasksService {
           missing: [],
           needsRole: [],
           needsAdmin: [],
-          deviceRefuses: false,
           error: run.error,
           at: run.fired_at ?? new Date(run.scheduled_for),
         });
@@ -1072,7 +1063,6 @@ export class ScheduledTasksService {
         needsRole,
         needsAdmin,
         // the wire field stays for the web; no network grant is refused by a device now
-        deviceRefuses: false,
         error: null,
         at: run.fired_at ?? new Date(run.scheduled_for),
       });

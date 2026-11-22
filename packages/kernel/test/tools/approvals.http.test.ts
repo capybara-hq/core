@@ -11,6 +11,7 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { type KernelEventMap, KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
@@ -770,11 +771,23 @@ describe("Review Focus 1：两个副本并发处理同一审批", () => {
 describe("network asks: only the device owner decides, in a signed-in session", () => {
   const KEPT = { content: "curl: (56) CONNECT tunnel failed, response 403", isError: true };
 
-  /** A local device of `accountId` in the org. */
-  const deviceOf = (accountId: string) =>
-    ka.app
-      .get(TransactionHost)
-      .run(async () => (await ka.app.get(DevicesService).createLocal(orgId, accountId, "Box")).id);
+  /** A device of `accountId` in the org. */
+  const deviceOf = async (accountId: string) => {
+    const id = randomUUID();
+    await ka.app
+      .get(KernelDb)
+      .db.insertInto("devices")
+      .values({
+        id,
+        org_id: orgId,
+        owner_kind: "personal",
+        owner_account_id: accountId,
+        name: `Box ${id.slice(0, 8)}`,
+        provider: "device-fake",
+      })
+      .execute();
+    return id;
+  };
 
   /** A network ask about a device of `deviceOwner` (default: the run's initiator). */
   const ask = async (scopes: "once"[] = ["once"], deviceOwner: string = initiator.account.id) =>

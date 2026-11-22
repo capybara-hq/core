@@ -562,6 +562,16 @@ export const keys = {
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
        */
       pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
+      /**
+       * The dial-in providers a pending device code may choose in an org, each with the person's
+       * own devices of that provider (`/devices/link`).
+       */
+      deviceProviders: (orgId: string, userCode: string): readonly unknown[] => [
+        ...all,
+        "deviceProviders",
+        orgId,
+        userCode,
+      ],
       /** Every plugin's platform client set (an invalidation prefix: the kill switch). */
       clientExtensionsAll: (): readonly unknown[] => [...all, "clientExtensions"],
       /** One plugin's platform client set (its `/admin/p/<plugin>/<id>` page, §9.6). */

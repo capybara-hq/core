@@ -273,7 +273,7 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
       targetPath: "/tmp/r3df/outside.txt",
       rule: null,
       reason,
-      permissionScope: { readDirectories: ["/tmp/r3df"], writeDirectories: [], hosts: [] },
+      permissionScope: { writeDirectories: [], hosts: [] },
       permissionCandidate: { binding: { profile: "request-approval" as const } },
     };
     stubApi({
@@ -324,7 +324,7 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
             kind: "write",
             command: "Write",
             path: "/outside/a.txt",
-            permissionScope: { readDirectories: [], writeDirectories: ["/outside"], hosts: [] },
+            permissionScope: { writeDirectories: ["/outside"], hosts: [] },
             targetPath: "/outside/a.txt",
             profile: "approve-for-me",
           }),
@@ -397,14 +397,13 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
 /** An outside write's exact reach (permission profiles Task 7 wire): long paths, several hosts. */
 const LONG = `/outside/${"very-long-directory-name-".repeat(12)}end`;
 const SCOPE = {
-  readDirectories: ["/outside/reports", LONG],
-  writeDirectories: ["/outside/reports"],
+  writeDirectories: ["/outside/reports", LONG],
   hosts: ["api.example.com", "files.example.org", "registry.npmjs.org"],
 };
 /** The reach the pending card lists among its facts (design spec §6.16.11), by kind. */
 const scopeOf = (container: HTMLElement) => {
   const card = container.querySelector('[data-part="approval-block"]');
-  const values = (k: "write" | "read" | "hosts" | "target") => {
+  const values = (k: "write" | "hosts" | "target") => {
     const labels = [zh.approval.permissionScope[k], en.approval.permissionScope[k]];
     const fact = [...(card?.querySelectorAll('[data-part="fact"]') ?? [])].find((f) =>
       labels.includes(f.querySelector('[data-part="fact-label"]')?.textContent ?? ""),
@@ -415,7 +414,6 @@ const scopeOf = (container: HTMLElement) => {
   };
   return {
     write: values("write"),
-    read: values("read"),
     hosts: values("hosts"),
     target: values("target"),
   };
@@ -449,8 +447,7 @@ describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () 
       { locale: "en" },
     );
     expect(scopeOf(container)).toEqual({
-      write: ["/outside/reports"],
-      read: ["/outside/reports", LONG],
+      write: ["/outside/reports", LONG],
       hosts: ["api.example.com", "files.example.org", "registry.npmjs.org"],
       // the target is the path the card already shows: not repeated as a fact
       target: [],
@@ -462,7 +459,7 @@ describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () 
     // nothing clipped, nothing inferred (no parent, no root), nothing a link
     expect(container.textContent).toContain(LONG);
     expect(container.querySelector('[data-part="facts"] a')).toBeNull();
-    expect(scopeOf(container).read).not.toContain("/outside");
+    expect(scopeOf(container).write).not.toContain("/outside");
     nothingBelow(container);
   });
 
@@ -581,7 +578,7 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
     command: "npm run dev",
     rule: null,
     reason: `Run this command outside the sandbox for this call only. Justification: ${JUSTIFICATION}`,
-    permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+    permissionScope: { writeDirectories: [], hosts: [] },
     escalation: { justification: JUSTIFICATION },
     workingRoot: "/work/app",
   });
@@ -596,7 +593,7 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
               command: "npm run dev",
               rule: null,
               reason: escalationCommand.reason,
-              permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+              permissionScope: { writeDirectories: [], hosts: [] },
               escalation: { justification: JUSTIFICATION },
               workingRoot: "/work/app",
             },
@@ -647,7 +644,7 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
               command: "npm run dev",
               rule: null,
               reason: escalationCommand.reason,
-              permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+              permissionScope: { writeDirectories: [], hosts: [] },
               escalation: background,
               workingRoot: "/work/app",
             },

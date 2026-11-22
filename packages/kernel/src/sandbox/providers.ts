@@ -3,83 +3,74 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { guardProviderConnection } from "./unreachable.js";
 
-/** The kernel-internal provider of connected machines (local devices). */
-export const LOCAL_PROVIDER = "@local";
-
 /**
- * A kernel-internal provider name: it starts with `@`, which no extension name can
+ * An in-process provider name: it starts with `@`, which no extension name can
  * (`EXTENSION_NAME_RE`), so it never collides with a loaded `device-provider@1` plugin.
  */
-export const isInternalProvider = (name: string): boolean => name.startsWith("@");
+const isInProcessName = (name: string): boolean => name.startsWith("@");
 
 /**
- * Post-commit binding of a committed instance generation (permission runtime cutover B4/B-8).
- * Present only on the staged v3 registration of a kernel-internal provider; protocol 2 has none.
+ * Whether a provider serves its devices over the dial-in channel: it implements
+ * `DeviceProvider.dialIn` (an extension may only when it declares `permissions.dialIn`, checked
+ * when it provides the point). Its devices are online while a gateway replica holds their machine's
+ * connection (`DialInRelay.online`).
  */
-export interface SandboxInstanceBinder {
-  /**
-   * The binding committed for the device's current instance generation: installed, still awaiting
-   * the device, or null when none was committed (an instance from before the staged path).
-   */
-  status(deviceId: string): Promise<"installed" | "awaiting-device" | null>;
-  /**
-   * Sends the committed binding (the same binding id on every retry) and installs the verified
-   * answer; refuses while a legacy retirement obligation is open. Never inside a transaction.
-   */
-  bind(deviceId: string, signal: AbortSignal): Promise<unknown>;
-}
+export const servesDialIn = (entry: Pick<DeviceProviderEntry, "impl">): boolean =>
+  entry.impl.dialIn !== undefined;
 
-/** A device provider: its name (plugin name, or an internal `@…` name) and implementation. */
+/** A device provider: its name (plugin name, or an in-process `@…` name) and implementation. */
 export interface DeviceProviderEntry {
   plugin: string;
-  /** The loaded extension's version; a kernel-internal provider reports the kernel version. */
+  /** The loaded extension's version; an in-process provider reports its own. */
   version: string;
   impl: DeviceProvider;
-  /**
-   * The staged path's instance binder: the exclusive lifecycle holder binds the generation before
-   * it downgrades, and shared use waits for an installed binding. Absent on protocol 2.
-   */
-  binder?: SandboxInstanceBinder;
 }
 
 /**
  * The device providers of this process (a registry: which of them serve an org is
- * `DeviceProviderSelection`). A cloud provider is a loaded `device-provider@1` extension,
- * read from the {@link ExtensionRegistry} at every call (providers are ready only after the
- * extension load, and change with installs). Kernel-internal providers (`@local`) are registered by their
- * module on init, in every replica: they are code, not shared state.
+ * `DeviceProviderSelection`). A provider is a loaded `device-provider@1` extension, read from the
+ * {@link ExtensionRegistry} at every call (providers are ready only after the extension load, and
+ * change with installs). An in-process provider (an `@…` name, {@link register}) is code
+ * registered in every replica, never shared state; the kernel ships none (tests register stubs).
  *
  * Every `device-provider@1` extension is handed out guarded: a network-level failure to reach it is
  * rethrown as `SandboxProviderUnreachableError` (`./unreachable.ts`), so the tools can tell it
- * apart. Internal providers are not: their failures (the device relay's Redis, the machine's
- * connection) are the kernel's own and have their own errors.
+ * apart. In-process providers are not.
  */
 @Injectable()
 export class DeviceProviders {
-  private readonly internal = new Map<string, DeviceProviderEntry>();
+  private readonly inProcess = new Map<string, DeviceProviderEntry>();
 
   constructor(
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
   ) {}
 
-  /** Registers a kernel-internal provider (an `@…` name); a later registration replaces it. */
+  /** Registers an in-process provider (an `@…` name); a later registration replaces it. */
   register(entry: DeviceProviderEntry): void {
-    if (!isInternalProvider(entry.plugin)) {
-      throw new Error(`an internal device provider name starts with @: ${entry.plugin}`);
+    if (!isInProcessName(entry.plugin)) {
+      throw new Error(`an in-process device provider name starts with @: ${entry.plugin}`);
     }
-    this.internal.set(entry.plugin, entry);
+    this.inProcess.set(entry.plugin, entry);
+  }
+
+  /**
+   * Whether `plugin` names a registered in-process provider: no catalog item and no org switch,
+   * so it serves every org of this process (`DeviceProviderSelection.isOnInOrg`).
+   */
+  registered(plugin: string): boolean {
+    return this.inProcess.has(plugin);
   }
 
   /**
    * The provider of a device, from its `devices.provider` (fixed at creation): a registered
-   * internal one (`@local`), else the loaded `device-provider@1` extension of that plugin name,
+   * in-process one, else the loaded `device-provider@1` extension of that plugin name,
    * on in no org in particular (whether it serves the device's org is
    * `DeviceProviderSelection.isOnInOrg`). Undefined when neither exists, or for a device without
    * a provider (`null`). Never another provider in its place.
    */
   forDevice(provider: string | null): DeviceProviderEntry | undefined {
     if (provider === null) return undefined;
-    const own = this.internal.get(provider);
+    const own = this.inProcess.get(provider);
     if (own) return own;
     const e = this.registry
       .list("device-provider")
@@ -87,12 +78,20 @@ export class DeviceProviders {
     return e ? this.guarded(e) : undefined;
   }
 
-  /** Every loaded `device-provider@1` extension (no internal ones), in registry order: the sweeps. */
+  /** Every loaded `device-provider@1` extension (no in-process ones), in registry order. */
   loaded(): DeviceProviderEntry[] {
     return this.registry
       .list("device-provider")
       .filter((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT)
       .map((e) => this.guarded(e));
+  }
+
+  /**
+   * Every provider of this process: the loaded `device-provider@1` extensions in registry order,
+   * then the registered in-process ones (the sweeps go over each provider's own rows).
+   */
+  all(): DeviceProviderEntry[] {
+    return [...this.loaded(), ...this.inProcess.values()];
   }
 
   private guarded(e: { plugin: string; version: string; impl: unknown }): DeviceProviderEntry {

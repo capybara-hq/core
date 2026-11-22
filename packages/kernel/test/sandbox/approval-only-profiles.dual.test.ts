@@ -3,12 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-  DeviceOwnerCeiling,
-  KernelReq,
-  LegacyDeviceHello,
-  SandboxPermissionSupport,
-} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -16,18 +10,23 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import {
   PERMISSION_AUTO_GRANT_HOOKS,
   type PermissionAutoGrantHooks,
 } from "../../src/sandbox/permission-auto-grants.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
-import { setFakeSandboxPermissionSupport } from "../fixtures/plugins/device-fake/index.js";
+import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
+  setFakeSandboxPermissionSupport,
+} from "../fixtures/plugins/device-fake/index.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
+import { type Answer, EnvelopeMachine, type KernelReq } from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createOrgWithProviders,
   eventsOf,
@@ -41,8 +40,6 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { bindAnswer, FakeMachineV3, ownerReportFor } from "../local-devices/fake-machine-v3.js";
-import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Approval-only profiles across two replicas (approval-only profiles design; plan task T12). A
@@ -51,11 +48,11 @@ import type { Answer } from "../local-devices/test-holder.js";
  * gateway, replica B serves the API only: every profile change, approval and ceiling write goes
  * through B and reaches A's runs only through PostgreSQL and Redis.
  *
- * The crossings run on a local device (a protocol 4 fake machine on a real WebSocket; a cloud
- * device has no outside of its sandbox), whose runtime reports the open network and running
- * outside the sandbox. The review model is the `model-script` extension mapped to the `review`
- * purpose, answering what each test scripts. `device-fake` backs the cloud device of the replay
- * context case.
+ * The crossings run on a dial-in device (the operation-boundary `fake-dial-in` provider, its
+ * machine on a real WebSocket; a cloud device has no outside of its sandbox), whose support
+ * reports the open network, running outside the sandbox and background ownership. The review
+ * model is the `model-script` extension mapped to the `review` purpose, answering what each test
+ * scripts. `device-fake` backs the cloud devices of the replay context and first-start cases.
  *
  * Covered elsewhere and taken as given here: the service-level auto-grant race on one binding
  * (permission-approvals.dual), the in-project profile × operation matrix and the cloud escalation
@@ -79,11 +76,6 @@ type Scope = {
 };
 
 const HOME = "/home/me";
-const ROOTS = {
-  workspace: "/home/me/.capybara/box/workspace",
-  skills: "/home/me/.capybara/box/skills",
-  tmp: "/home/me/.capybara/box/tmp",
-};
 /** The host the matrix device's owner allows and the org's lists do not name: a host crossing. */
 const HOST = "api.example.org";
 const JUSTIFICATION = "The build writes the system cache outside the project.";
@@ -93,6 +85,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let sandboxRoot: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 /** Replica A: api, worker and gateway (runs every job and holds the device sockets). */
 let kA: TestKernel;
 /** Replica B: api only. */
@@ -100,7 +93,7 @@ let kB: TestKernel;
 let ownerA: Req;
 let ownerB: Req;
 let ownerId: string;
-const machines: FakeMachineV3[] = [];
+const machines: EnvelopeMachine[] = [];
 /** Armed by the race test: replica A's auto-grant waits here after its precheck. */
 let autoGrantBarrier: (() => Promise<void>) | undefined;
 const autoGrantHooks: PermissionAutoGrantHooks = {
@@ -112,6 +105,7 @@ const autoGrantHooks: PermissionAutoGrantHooks = {
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   sandboxRoot = await mkdtemp(join(tmpdir(), "cap-approval-only-dual-"));
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   const config = (roles: string[]) =>
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -121,13 +115,15 @@ beforeAll(async () => {
         extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
-        devices: { local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
       },
     );
+  const boot = { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest };
   kA = await startKernel(config(["api", "worker", "gateway"]), {
+    ...boot,
     overrides: [{ provide: PERMISSION_AUTO_GRANT_HOOKS, useValue: autoGrantHooks }],
   });
-  kB = await startKernel(config(["api"]));
+  kB = await startKernel(config(["api"]), boot);
   raw = createDb(pgc.url, 4);
   db = kernelDb(raw);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -157,6 +153,7 @@ afterAll(async () => {
   await kA?.close();
   await kB?.close();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
@@ -211,16 +208,16 @@ async function scene(): Promise<Scene> {
 
 interface LocalDevice {
   deviceId: string;
-  machine: FakeMachineV3;
+  machine: EnvelopeMachine;
   /** The requests of `op` the machine received, oldest first. */
   reqs(op: string): KernelReq[];
 }
 
 /**
- * A local device of the owner on a protocol 4 fake machine: its runtime enforces the open network,
- * allowlists, per-call hosts, running outside the sandbox and background tasks; its owner allows
- * running outside the sandbox and broad project reach, with the sandbox network `network`.
- * Commands succeed; background tasks run until the kernel stops or revokes them.
+ * A dial-in device of the owner on a `fake-dial-in` machine: its provider support enforces the
+ * open network, allowlists, per-call hosts, running outside the sandbox and background tasks; the
+ * device's own network choice is `network` (with `allowedDomains`). Commands succeed; background
+ * tasks run until the kernel stops or revokes them.
  */
 async function localDevice(
   s: Scene,
@@ -229,8 +226,8 @@ async function localDevice(
   const { deviceId, credential } = await kA.app.get(TransactionHost).run(async () => {
     const { id } = await kA.app
       .get(DevicesService)
-      .createLocal(s.orgId, ownerId, `Laptop ${randomUUID().slice(0, 6)}`);
-    const issued = await kA.app.get(MachinesService).issue({
+      .createDialIn(s.orgId, ownerId, "fake-dial-in", `Laptop ${randomUUID().slice(0, 6)}`);
+    const issued = await kA.app.get(DialInMachines).issue({
       orgId: s.orgId,
       deviceId: id,
       accountId: ownerId,
@@ -242,97 +239,68 @@ async function localDevice(
     return { deviceId: id, credential: issued.credential };
   });
   const allowedDomains = owner.allowedDomains ?? [];
-  const ceiling: DeviceOwnerCeiling = ownerReportFor(
-    { allowedDomains },
-    { outsideSandbox: true, restrictedProjectReach: "os-user", network: owner.network },
-  );
-  const support: SandboxPermissionSupport = {
-    version: 2,
-    restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-    boundary: "operation",
-    network: { openPublic: true, allowlist: true, perOperationHosts: true },
-    outsideSandbox: true,
-    background: true,
-  };
-  let bound: { instanceId: string; instanceGeneration: string } | undefined;
+  // the device's own network choice, the same setting for every provider
+  await kernelDb(raw)
+    .updateTable("devices")
+    .set({ network_mode: owner.network, network_hosts: JSON.stringify(allowedDomains) })
+    .where("id", "=", deviceId)
+    .execute();
   /** Background executions by operation id; a revoked or stopped one is lost. */
   const executions = new Map<string, { ref: Record<string, string>; state: "running" | "lost" }>();
   const answer = (req: KernelReq): Answer => {
     const a = req.args as Record<string, unknown>;
-    const op = String(req.op).replace(/^(browse|prepare)(\w)/, (_, _p, c: string) =>
-      c.toLowerCase(),
-    );
-    switch (op) {
-      case "create":
-        return { ok: true, result: { roots: ROOTS } };
-      case "bindInstance": {
-        bound = {
-          instanceId: String(a.instanceId),
-          instanceGeneration: String(a.instanceGeneration),
-        };
-        const evidence = bindAnswer(req) as { ok: true; result: Record<string, unknown> };
-        return {
-          ok: true,
-          result: { ...evidence.result, permissionSupport: support, ownerCeiling: ceiling },
-        } as NonNullable<Answer>;
-      }
+    switch (req.op) {
+      case "resume":
+        return "resumed";
       case "exec":
         return {
-          ok: true,
-          result: {
-            exitCode: 0,
-            stdout: `ran: ${String(a.command)}\n`,
-            stderr: "",
-            truncated: false,
-            timedOut: false,
-          },
+          exitCode: 0,
+          stdout: `ran: ${String(a.command)}\n`,
+          stderr: "",
+          truncated: false,
+          timedOut: false,
         };
       case "backgroundStart": {
         const scope = a.scope as Scope;
         const ref = {
           executionId: randomUUID(),
           operationId: scope.operationId,
-          instanceId: bound?.instanceId ?? deviceId,
-          instanceGeneration: bound?.instanceGeneration ?? "test-instance-1",
+          instanceId: deviceId,
+          instanceGeneration: String(a.instanceGeneration ?? "test-instance-1"),
         };
         executions.set(scope.operationId, { ref, state: "running" });
-        return { ok: true, result: ref } as NonNullable<Answer>;
+        return ref;
       }
       case "backgroundStatus": {
         const ref = a.ref as { operationId: string };
-        return {
-          ok: true,
-          result: { state: executions.get(ref.operationId)?.state ?? "lost" },
-        } as NonNullable<Answer>;
+        return { state: executions.get(ref.operationId)?.state ?? "lost" };
       }
       case "backgroundStop": {
         const ref = a.ref as { operationId: string };
         const e = executions.get(ref.operationId);
         if (e) e.state = "lost";
-        return { ok: true, result: { outcome: "stopped" } } as NonNullable<Answer>;
+        return { outcome: "stopped" };
       }
       case "backgroundTail":
-        return { ok: true, result: { dataB64: "", truncated: false } } as NonNullable<Answer>;
+        return { data: "", truncated: false };
       case "backgroundReadOutput": {
         const offset = Number(a.offset ?? 0);
-        return {
-          ok: true,
-          result: { dataB64: "", offset, nextOffset: offset, totalBytes: offset },
-        } as NonNullable<Answer>;
+        return { data: "", offset, nextOffset: offset, totalBytes: offset };
       }
       case "revokeOperation": {
         const ref = a.ref as { operationId: string };
         const e = executions.get(ref.operationId);
         if (e) e.state = "lost";
-        return { ok: true, result: null };
+        return null;
       }
+      case "browseList":
       case "list":
-        return { ok: true, result: { entries: [], truncated: false } };
+        return { entries: [], truncated: false };
       default:
-        return { ok: true, result: null };
+        return null;
     }
   };
-  const machine = new FakeMachineV3(
+  const machine = new EnvelopeMachine(
     `ws://127.0.0.1:${kA.port}/device/connect`,
     credential,
     answer,
@@ -340,26 +308,19 @@ async function localDevice(
   );
   machines.push(machine);
   await machine.opened;
-  const hello: Partial<LegacyDeviceHello> = {
-    roots: ROOTS,
-    home: HOME,
-    features: ["networkReport", "policyOp", "policyOpId", "projects"],
-    policy: { allowedDomains },
-  };
-  machine.hello({ ...hello, ownerCeiling: ceiling });
+  machine.hello({ outsideSandbox: true, openPublic: true, background: true, home: HOME });
   await machine.ready;
   await waitFor(
     async () =>
       (
         await db
-          .selectFrom("device_machines")
-          .select("roots")
-          .where("device_id", "=", deviceId)
-          .where("revoked_at", "is", null)
+          .selectFrom("devices")
+          .select("report")
+          .where("id", "=", deviceId)
           .executeTakeFirst()
-      )?.roots != null,
+      )?.report != null,
     15_000,
-    "hello recorded",
+    "the device report stored",
   );
   return {
     deviceId,
@@ -561,11 +522,15 @@ function expectRanOnce(d: LocalDevice, crossing: Crossing, tag: string): void {
   // every other call keeps the sandbox, Full access included
   expect(scope.filesystem.kind).toBe("scoped");
   expect(scope.network.kind).not.toBe("environment");
+  // the granted host reaches the device in the operation's sandbox allowlist
   if (crossing === "host")
-    expect((exec.args as { grants?: { hosts?: string[] } }).grants?.hosts).toEqual([HOST]);
+    expect(scope.network).toMatchObject({
+      kind: "allowlist",
+      hosts: expect.arrayContaining([HOST]),
+    });
 }
 
-describe("profile × crossing on a local device: approvals through replica B, runs on replica A", () => {
+describe("profile × crossing on a dial-in device: approvals through replica B, runs on replica A", () => {
   /**
    * Runs the four crossings in one conversation under `profile` on a device whose owner network is
    * the allowlist (so a new host is a crossing). Request approval: every crossing asks the person,
@@ -1039,7 +1004,7 @@ describe("a stored version 1 permission context", () => {
     const created = await ownerA({
       method: "POST",
       url: `/api/v1/orgs/${s.orgId}/devices`,
-      payload: { name: `Cloud ${randomUUID().slice(0, 8)}` },
+      payload: { name: `Cloud ${randomUUID().slice(0, 8)}`, provider: "device-fake" },
     });
     expect(created.statusCode, created.body).toBe(201);
     const deviceId = (created.json() as { device: { id: string } }).device.id;
@@ -1064,7 +1029,8 @@ describe("a stored version 1 permission context", () => {
     const recorded = (await contexts()).at(-1);
     if (!recorded) throw new Error("no permission context recorded");
     const v2 = recorded.payload as Record<string, unknown>;
-    expect(v2).toMatchObject({ version: 2, sandbox: { location: "cloud" } });
+    // device-fake reports an operation boundary
+    expect(v2).toMatchObject({ version: 2, sandbox: { boundary: "operation" } });
     const before = (await contexts()).length;
     // an older replica's row: version 1, no sandbox block (the kernel never rewrites the log; the
     // test stands in for the older writer)
@@ -1095,35 +1061,41 @@ describe("a stored version 1 permission context", () => {
 });
 
 describe("Full access chosen before a device's first start", () => {
-  // approval-only profiles design, "Consent fingerprint": a runtime report arriving only narrows
-  // what the consent covers, so the device's first start never resets it
-  it("keeps the consent when the device starts with the roots its machine reported", async () => {
+  // approval-only profiles design, "Consent fingerprint", with the provider's support as the one
+  // layer of the consent and the ceilings: a consent given before any support is known covers no
+  // crossing, so a first start whose support allows one (running outside the sandbox) asks the
+  // person to confirm again; one whose support allows none keeps it
+  it("asks again when a dial-in device starts with a support that runs outside the sandbox", async () => {
     const s = await scene();
     const d = await localDevice(s, { network: "open" });
     const conv = await conversation(s, d.deviceId);
     await setProfile(s, conv, "full-access");
     const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
     expect(first.payload.isError, first.payload.content).toBe(false);
-    expect((await permissions(s, conv)).profile).toBe("full-access");
-    expect(
-      (await eventsOf(db, conv)).filter((e) => e.type === "permission_profile_changed"),
-    ).toHaveLength(1);
+    expect((await permissions(s, conv)).profile).toBe("approve-for-me");
   });
 
-  it("keeps the consent when a cloud device's first instance has the roots the consent covered", async () => {
-    await setFakeSandboxPermissionSupport(sandboxRoot, null);
-    const s = await scene();
-    const created = await ownerA({
-      method: "POST",
-      url: `/api/v1/orgs/${s.orgId}/devices`,
-      payload: { name: `Cloud ${randomUUID().slice(0, 8)}` },
-    });
-    expect(created.statusCode, created.body).toBe(201);
-    const deviceId = (created.json() as { device: { id: string } }).device.id;
-    const conv = await conversation(s, deviceId);
-    await setProfile(s, conv, "full-access");
-    const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
-    expect(first.payload.isError, first.payload.content).toBe(false);
-    expect((await permissions(s, conv)).profile).toBe("full-access");
+  it("keeps the consent when a cloud device's first instance allows no crossing", async () => {
+    await setFakeSandboxPermissionSupport(sandboxRoot, FAKE_INSTANCE_PERMISSION_SUPPORT);
+    try {
+      const s = await scene();
+      const created = await ownerA({
+        method: "POST",
+        url: `/api/v1/orgs/${s.orgId}/devices`,
+        payload: { name: `Cloud ${randomUUID().slice(0, 8)}`, provider: "device-fake" },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      const deviceId = (created.json() as { device: { id: string } }).device.id;
+      const conv = await conversation(s, deviceId);
+      await setProfile(s, conv, "full-access");
+      const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
+      expect(first.payload.isError, first.payload.content).toBe(false);
+      expect((await permissions(s, conv)).profile).toBe("full-access");
+      expect(
+        (await eventsOf(db, conv)).filter((e) => e.type === "permission_profile_changed"),
+      ).toHaveLength(1);
+    } finally {
+      await setFakeSandboxPermissionSupport(sandboxRoot, null);
+    }
   });
 });

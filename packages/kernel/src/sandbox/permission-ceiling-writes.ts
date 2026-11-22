@@ -6,7 +6,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import { machineRootList, outsideMachineRoots } from "../local-devices/owner-report.js";
 import { coversHost } from "./modes.js";
 import {
   isExecutionMethod,
@@ -188,23 +187,6 @@ export class PermissionCeilingWrites {
   }
 }
 /**
- * The active local machines' reported roots by device (one org, or all): what the Full-off writers
- * compare running restricted scopes against (B2 reach narrowing). Cloud devices have none.
- */
-export async function localMachineRoots(
-  db: KernelSchemaDb,
-  orgId?: string,
-): Promise<Map<string, string[]>> {
-  let q = db
-    .selectFrom("device_machines")
-    .select(["device_id", "roots"])
-    .where("revoked_at", "is", null);
-  if (orgId !== undefined) q = q.where("org_id", "=", orgId);
-  const rows = await q.execute();
-  return new Map(rows.map((r) => [r.device_id, machineRootList(r.roots)]));
-}
-
-/**
  * The narrowings a ceiling write publishes (approval-only profiles design, "Ceiling writes"), each
  * bumping its epoch and revoking, in the same transaction, the admitted or started work it takes:
  * - `outside-sandbox-off`: escalated work ({@link needsFullCeiling});
@@ -220,47 +202,29 @@ export type CeilingNarrowing = "outside-sandbox-off" | "network-allowlist" | "ho
 export const needsOpenNetwork = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   usesOpenNetwork(scope);
 
-/**
- * What a platform or org Full ceiling turning off takes away (B2, same split as the owner writer):
- * Full execution, broad browsing, and running restricted work outside the machine's roots, since
- * the effective restricted reach narrows to the workspace.
- */
-export const needsWiderDeviceCeiling = (
-  scope: SandboxOperationScope | SandboxBrowseScope,
-  machineRoots: readonly string[] | undefined,
-): boolean => needsFullCeiling(scope) || outsideMachineRoots(scope, machineRoots);
-
 /** Running outside the sandbox: an escalated call (`outside-sandbox-off` takes it). */
 export const requiresFullExecution = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   isFullExecutionScope(scope);
 /**
- * Broad project reach: owner browsing outside the restricted workspace (B2: decided by the reach
- * and the platform/org device ceiling, never by the owner's Full permission).
- */
-export const requiresBroadProjectReach = (
-  scope: SandboxOperationScope | SandboxBrowseScope,
-): boolean => !("profile" in scope) && scope.readRoots.includes("/");
-/**
- * What a platform or org outside-sandbox ceiling turning off takes away: escalated work and, as
- * before, the wider device ceiling restricted reach depended on.
+ * What a platform or org outside-sandbox ceiling turning off takes away: escalated work (what a
+ * sandboxed operation reaches is its provider's rule, which no kernel ceiling widens).
  */
 export const needsFullCeiling = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
-  requiresFullExecution(scope) || requiresBroadProjectReach(scope);
+  requiresFullExecution(scope);
 
 /**
- * The cloud devices that follow their org's network default (no network choice of their own and
- * no B1 allowlist snapshot), with their org: what narrowing a default (`devices.network.default`
- * or an org's `deviceNetwork.default`, open to allowlist) moves to the allowlist, so their running
- * open-network work is revoked. A local device follows its owner's network, never a default.
+ * The devices that follow their org's network default (no network choice of their own and no B1
+ * allowlist snapshot), with their org, whatever their provider: what narrowing a default
+ * (`devices.network.default` or an org's `deviceNetwork.default`, open to allowlist) moves to the
+ * allowlist, so their running open-network work is revoked.
  */
-export async function cloudDevicesFollowingDefault(
+export async function devicesFollowingDefault(
   db: KernelSchemaDb,
   orgId?: string,
 ): Promise<Map<string, string>> {
   let q = db
     .selectFrom("devices")
     .select(["id", "org_id", "outer_network"])
-    .where("source", "=", "cloud")
     .where("network_mode", "is", null)
     .where("deleted_at", "is", null);
   if (orgId !== undefined) q = q.where("org_id", "=", orgId);

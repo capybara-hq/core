@@ -49,13 +49,9 @@ function directory(value: string): string {
 /** Validate the exact presentation and its union with base authority; never truncate or widen. */
 export function normalizePermissionExpansion(
   value: PermissionExpansion,
-  base: Pick<
-    PermissionReviewSnapshot,
-    "baseReadDirectories" | "baseWriteDirectories" | "baseHosts"
-  >,
+  base: Pick<PermissionReviewSnapshot, "baseWriteDirectories" | "baseHosts">,
 ): PermissionExpansion {
   const writeDirectories = sorted(value.writeDirectories.map(directory));
-  const readDirectories = sorted([...value.readDirectories.map(directory), ...writeDirectories]);
   const hosts = sorted(
     value.hosts.map((host) => {
       const normalized = host.toLowerCase();
@@ -68,19 +64,14 @@ export function normalizePermissionExpansion(
     }),
   );
   if (
-    sorted([
-      ...base.baseReadDirectories,
-      ...base.baseWriteDirectories,
-      ...readDirectories,
-      ...writeDirectories,
-    ]).length > 64 ||
+    sorted([...base.baseWriteDirectories, ...writeDirectories]).length > 64 ||
     sorted([...base.baseHosts, ...hosts]).length > 100
   )
     throw new ApiError(
       "forbidden",
       "Permission expansion exceeds the combined limit of 64 directory roots or 100 hosts",
     );
-  return { readDirectories, writeDirectories, hosts };
+  return { writeDirectories, hosts };
 }
 export function permissionCandidateHash(
   candidate: Omit<PermissionCandidate, "candidateHash">,
@@ -141,34 +132,37 @@ export const ESCALATION_UNATTENDED_WHY =
  * Why an escalation cannot be reviewed because a layer's outside-sandbox setting is off: one text
  * per layer that blocks it (`DeviceSandbox.layer.outsideSandbox`), each naming who lifts it and how.
  */
-export const ESCALATION_DEVICE_OFF_WHY =
-  "running commands outside the sandbox is off on this device; its owner turns it on by running `capybara-device ceiling set --outside-sandbox on` on that machine";
+/**
+ * Why an escalation cannot be reviewed because the device's provider does not allow running
+ * outside its sandbox now, with the provider's own description of the device (its report).
+ */
+export const escalationDeviceOffWhy = (description: string | null): string =>
+  `this device's provider does not allow running outside the sandbox now${description ? `: ${description.replace(/\.$/, "")}` : ""}`;
 export const ESCALATION_ORG_OFF_WHY =
   "running commands outside the sandbox is off in this organization; an organization admin can allow running outside the sandbox";
 export const ESCALATION_PLATFORM_OFF_WHY =
   "running commands outside the sandbox is off on this platform; a super admin can allow running outside the sandbox";
 export const ESCALATION_NO_OUTSIDE_WHY =
-  "this device is a cloud instance that is itself the sandbox, so this device has no outside of its sandbox to run a command in";
+  "this device is an instance that is itself the sandbox, so this device has no outside of its sandbox to run a command in";
 /**
- * The refusal text of an escalation that a layer's outside-sandbox setting blocks. A cloud device
- * or an instance-boundary runtime has no outside at all, whichever layer is off; a local runtime
- * that cannot run outside its sandbox is a runtime limit.
+ * The refusal text of an escalation that a layer's outside-sandbox setting blocks, the same for
+ * every provider: an instance-boundary provider has no outside at all, whichever layer is off;
+ * otherwise the platform or the org names who lifts it, and a provider whose support does not
+ * allow it now says so with its description of the device (`description`, its report's).
  */
 export const escalationCeilingWhy = (input: {
   layer: DeviceSandboxLayer | null;
-  location: "local" | "cloud";
   boundary: "operation" | "instance";
+  description?: string | null;
 }): string => {
-  if (input.location === "cloud" || input.boundary === "instance") return ESCALATION_NO_OUTSIDE_WHY;
+  if (input.boundary === "instance") return ESCALATION_NO_OUTSIDE_WHY;
   switch (input.layer) {
     case "platform":
       return ESCALATION_PLATFORM_OFF_WHY;
     case "org":
       return ESCALATION_ORG_OFF_WHY;
-    case "provider":
-      return escalationRuntimeWhy("This device's runtime cannot run a command outside its sandbox");
     default:
-      return ESCALATION_DEVICE_OFF_WHY;
+      return escalationDeviceOffWhy(input.description ?? null);
   }
 };
 /** Why an escalation cannot be reviewed: the runtime cannot run a command outside its sandbox now. */
@@ -242,12 +236,9 @@ export function crossingOfCandidate(
   candidate: Pick<PermissionCandidate, "scopeKind" | "permissionScope">,
 ): PermissionCrossingKind {
   if (candidate.scopeKind === "sandbox-escalation") return "outside-sandbox";
-  return candidate.permissionScope.readDirectories.length > 0 ||
-    candidate.permissionScope.writeDirectories.length > 0
-    ? "directory"
-    : "host";
+  return candidate.permissionScope.writeDirectories.length > 0 ? "directory" : "host";
 }
-/** The paths a local device never opens to restricted work, relative to `~`. */
+/** The paths a device never opens to restricted work, relative to `~`. */
 const OWNER_DENIED_PATHS = [...DEVICE_DENIED_SECRET_PATHS, DEVICE_DEFAULT_STATE_PATH];
 /**
  * The owner-denied path (as `~/…`) that `target` is at or under for one of `homes`, if any: the
@@ -345,7 +336,7 @@ function bindingOf(
 }
 /**
  * Extract proposals from the actual validated call. Parsing proposes reach; it never grants it.
- * `homes` are the owner's home candidates (the machine's home, the workspace's home prefix): a
+ * `homes` are the owner's home candidates (the provider's reported home, the workspace's home prefix): a
  * call reaching an owner-denied path under one is refused, never proposed.
  */
 export function buildPermissionCandidate(
@@ -408,7 +399,7 @@ export function buildPermissionCandidate(
       };
     const candidate = {
       binding: bindingOf(call, facts),
-      permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+      permissionScope: { writeDirectories: [], hosts: [] },
       scopeKind: "sandbox-escalation" as const,
       escalation: { justification, ...backgroundOf(input, opts.backgroundMaxSeconds) },
     };
@@ -418,20 +409,18 @@ export function buildPermissionCandidate(
     };
   }
   let targetPath: string | undefined;
-  const reads: string[] = [],
-    writes: string[] = [],
+  const writes: string[] = [],
     hosts: string[] = [];
-  const proposeDirectory = (value: string, write: boolean) => {
+  // a write root outside the base write roots is proposed; a read is never proposed (what a
+  // sandboxed operation may read is the device provider's rule, which no approval widens)
+  const proposeWriteDirectory = (value: string) => {
     const normalized = directory(path.posix.resolve(facts.workingRoot, value));
     refuseDenied(normalized);
-    const base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
-    if (!base.some((root) => withinDirectory(normalized, root))) {
-      if (write) {
-        refuseWriteDenied(normalized);
-        const runtime = runtimeWriteRootRefusal(normalized, facts.escalationRefusal);
-        if (runtime) throw new ProtectedPathError(runtime);
-      }
-      (write ? writes : reads).push(normalized);
+    if (!facts.baseWriteDirectories.some((root) => withinDirectory(normalized, root))) {
+      refuseWriteDenied(normalized);
+      const runtime = runtimeWriteRootRefusal(normalized, facts.escalationRefusal);
+      if (runtime) throw new ProtectedPathError(runtime);
+      writes.push(normalized);
     }
   };
   // the paths a file call names: `file_path`, or every path a `GenerateImage` call writes into the
@@ -444,8 +433,7 @@ export function buildPermissionCandidate(
         : [];
   try {
     if (targets.length > 0) {
-      const write = call.toolKey !== "Read",
-        base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
+      const write = call.toolKey !== "Read";
       for (const target of targets)
         if (target.length > 4096 || /[\0*?[\]{}]/.test(target))
           throw new Error("Invalid target path");
@@ -456,10 +444,12 @@ export function buildPermissionCandidate(
       const resolved = targets.map((target) => path.posix.resolve(facts.workingRoot, target));
       // inside the base scope too: the credential consent it would get could never run there
       for (const target of resolved) refuseDenied(target);
+      // a read proposes nothing: the provider's read rule decides it
+      if (!write) return { kind: "in-scope" };
       for (const target of resolved) {
-        if (!base.some((root) => withinDirectory(target, root))) {
-          if (write) refuseWriteDenied(target);
-          proposeDirectory(path.posix.dirname(target), write);
+        if (!facts.baseWriteDirectories.some((root) => withinDirectory(target, root))) {
+          refuseWriteDenied(target);
+          proposeWriteDirectory(path.posix.dirname(target));
         }
       }
       // what the person approves: every path the call writes
@@ -472,7 +462,7 @@ export function buildPermissionCandidate(
       const parsed = parseCommand(input.command);
       for (const command of parsed?.commands ?? []) {
         if (command.argv[0] === "cd" && command.argv.length === 2 && command.argv[1])
-          proposeDirectory(command.argv[1], true);
+          proposeWriteDirectory(command.argv[1]);
         for (const word of command.argv) {
           if (!allowlist || !/^https?:\/\//i.test(word)) continue;
           const url = new URL(word);
@@ -502,20 +492,11 @@ export function buildPermissionCandidate(
     // as admission and the recorded context cut it too (B-15)
     const reachable = hostsWithinOuter(hosts, facts.outerNetwork ?? undefined);
     hosts.splice(0, hosts.length, ...reachable);
-    if (!reads.length && !writes.length && !hosts.length) return { kind: "in-scope" };
+    if (!writes.length && !hosts.length) return { kind: "in-scope" };
     const permissionScope = normalizePermissionExpansion(
-      { readDirectories: reads, writeDirectories: writes, hosts },
+      { writeDirectories: writes, hosts },
       facts,
     );
-    if (!facts.broadProjectReach && (reads.length || writes.length))
-      throw new Error(
-        `This call needs access outside the working directory ${facts.workingRoot} (${[
-          ...writes,
-          ...reads,
-        ].join(
-          ", ",
-        )}), which the device owner's limits do not allow, so it did not run. Keep the call inside ${facts.workingRoot}, or ask the user to have the device's limits widened.`,
-      );
     // a host beyond the per-call host ceiling is never proposed (so never auto-granted): the reply
     // names who can add it
     const refused = hosts.flatMap((host) => {

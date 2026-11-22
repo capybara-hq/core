@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import type { DevicesCtx, DialInChannel } from "./dial-in.js";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { RouteCaller } from "./http-access.js";
@@ -301,6 +302,17 @@ export interface ExtensionContext {
   hooks: {
     on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
   };
+  /**
+   * The dial-in channel to the machines serving this extension's devices (requires
+   * `permissions.dialIn`, see {@link DialInChannel}): every call is refused for a device another
+   * extension serves.
+   */
+  dialIn: DialInChannel;
+  /**
+   * Tells the kernel about this extension's devices (requires `provides` to include
+   * `device-provider@1`, see {@link DevicesCtx}).
+   */
+  devices: DevicesCtx;
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,

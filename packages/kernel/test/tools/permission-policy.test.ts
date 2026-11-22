@@ -18,7 +18,6 @@ import { permissionCheckFailedText, ToolPipeline } from "../../src/tools/pipelin
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -121,7 +120,6 @@ it.each(["Write", "Edit"])(
     const approval = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
     expect(approval?.command).toMatchObject({
       permissionScope: {
-        readDirectories: ["/outside/reports"],
         writeDirectories: ["/outside/reports"],
         hosts: [],
       },
@@ -232,7 +230,6 @@ it("a reused grant records its real source: the person's approval", async () => 
   vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValueOnce({
     id: randomUUID(),
     expansion: {
-      readDirectories: ["/outside/reports"],
       writeDirectories: ["/outside/reports"],
       hosts: [],
     },
@@ -368,59 +365,6 @@ it("legacy production route cannot skip review", async () => {
   expect(result.kind).toBe("suspended");
   expect(f.effects()).toBe(0);
 });
-
-import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
-
-it.each(["full-access", "request-approval"] as const)(
-  "native read/write retain canonical %s scope without an exec grant",
-  async (profile) => {
-    const f = await fixture("Write", { file_path: "/work/a" }, true);
-    const view = await k.app
-      .get(PermissionProfilesService)
-      .get(f.orgId, f.conversationId, f.accountId);
-    await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, f.accountId, {
-      profile,
-      expectedRevision: 0,
-      ...(profile === "full-access" ? { consentScopeRevision: view.scopeRevision! } : {}),
-    });
-    await k.app.get(RunExecution).withClaim(
-      f.claim,
-      () => true,
-      () => k.app.get(ToolPipeline).runStep(f.ctx),
-    );
-    const scope = f.scopes[0]!;
-    // every profile is sandboxed (approval-only profiles): Full access gets the same scoped
-    // filesystem and sandbox network (an allowlist with no hosts here), never the device pair
-    expect(scope.network).toEqual({ kind: "none" });
-    expect(scope.filesystem.kind).toBe("scoped");
-    const forExecution = vi.spyOn(k.app.get(PermissionCallGrants), "forExecution");
-    const sent: Record<string, unknown>[] = [];
-    const adapter = k.app.get(LocalDeviceProvider).stagedOperations({
-      call: async (_id, op, args) => {
-        sent.push(args);
-        return op === "readFile" ? { dataB64: "YQ==", truncated: false } : null;
-      },
-      permissionSupport: async () => ({
-        version: 2,
-        restricted: null,
-        boundary: "operation",
-        network: { openPublic: false, allowlist: false, perOperationHosts: false },
-        outsideSandbox: false,
-        background: false,
-      }),
-    });
-    const operation = await adapter.operation({ id: f.deviceId }, scope, f.ctx.signal);
-    await operation.readFile("/work/a", { maxBytes: 1, signal: f.ctx.signal });
-    await operation.writeFile("/work/a", new Uint8Array([1]), f.ctx.signal);
-    expect(forExecution).not.toHaveBeenCalled();
-    expect(sent).toHaveLength(2);
-    for (const envelope of sent) {
-      expect(envelope.scope).toEqual(scope);
-      expect(envelope.grants).toBeUndefined();
-      expect(envelope.limits).toBeUndefined();
-    }
-  },
-);
 
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 
@@ -580,31 +524,15 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
     rule: null,
     reason: "Exact host approved",
   });
-  const sent: Record<string, unknown>[] = [];
-  const adapter = k.app.get(LocalDeviceProvider).stagedOperations({
-    call: async (_id, _op, args) => {
-      sent.push(args);
-      return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
-    },
-    permissionSupport: async () => ({
-      version: 2,
-      restricted: null,
-      boundary: "operation",
-      network: { openPublic: false, allowlist: false, perOperationHosts: false },
-      outsideSandbox: false,
-      background: false,
-    }),
-  });
-  f.setEffectHook(async (scope, method) => {
+  // what a provider resolves before it runs the exec: the admitted execution's explicit hosts
+  const sent: unknown[] = [];
+  const callGrants = k.app.get(PermissionCallGrants);
+  f.setEffectHook(async (scope, method, input) => {
     expect(method).toBe("exec");
     const exec = async (actual: SandboxOperationScope) =>
-      (await adapter.operation({ id: f.deviceId }, actual, f.ctx.signal)).exec({
-        command: "curl https://api.example.org/data",
-        cwd: "/work",
-        timeoutMs: 1000,
-        maxOutputBytes: 100,
-        signal: f.ctx.signal,
-      });
+      sent.push(
+        await callGrants.forExecution(actual.operationId, f.deviceId, "exec", actual, input),
+      );
     await exec(scope);
     await expect(
       exec({
@@ -625,7 +553,7 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
   expect(f.failures).toEqual([]);
   expect(f.effects()).toBe(1);
   expect(sent).toHaveLength(1);
-  expect(sent[0]?.grants).toEqual({
+  expect(sent[0]).toEqual({
     hosts: ["api.example.org"],
     source: { kind: "run", id: f.runId, accountId: f.accountId },
   });
@@ -748,45 +676,6 @@ it("transition rollback preserves revision, pending decision, audit and outbox",
       .execute(),
   ).toEqual([]);
 });
-it("local current host ceiling refuses an unapproved host before independent review", async () => {
-  const f = await fixture(
-    "Bash",
-    { command: "curl https://not-in-org-ceiling.example/data" },
-    true,
-  );
-  // the local ceiling: the owner's allowlist network (an open owner network adds no narrowing,
-  // and under the org's open ceiling any host would be grantable per call)
-  await f.db
-    .updateTable("device_machines")
-    .set({
-      owner_report: storedOwnerReport({
-        network: "allowlist",
-        allowedDomains: ["registry.npmjs.org"],
-      }),
-    })
-    .where("device_id", "=", f.deviceId)
-    .execute();
-  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
-  await k.app.get(RunExecution).withClaim(
-    f.claim,
-    () => true,
-    () => k.app.get(ToolPipeline).runStep(f.ctx),
-  );
-  expect(review).not.toHaveBeenCalled();
-  expect(f.effects()).toBe(0);
-  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
-  const [refused] = await f.db
-    .selectFrom("conversation_events")
-    .select("payload")
-    .where("type", "=", "tool_result")
-    .where("run_id", "=", f.runId)
-    .execute();
-  // the reply names who adds the host: the machine's owner
-  expect((refused?.payload as { content?: string } | undefined)?.content).toContain(
-    "capybara-device policy add allowedDomains not-in-org-ceiling.example",
-  );
-});
-
 it.each([
   "cat /home/owner/.ssh/id_rsa",
   "sudo true",

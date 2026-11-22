@@ -164,7 +164,15 @@ export interface AdminHealth {
     disabled: number | null;
     error: number | null;
   };
-  devices: { online: number | null; local: number | null };
+  /**
+   * `dialIn`: devices of providers a machine signs in to; `online`: those whose machine a replica
+   * holds now; `byProvider`: live devices per provider (null when the database did not answer).
+   */
+  devices: {
+    online: number | null;
+    dialIn: number | null;
+    byProvider: { provider: string; devices: number }[] | null;
+  };
   sandboxes: {
     running: number;
     suspended: number;

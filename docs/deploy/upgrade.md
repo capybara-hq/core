@@ -104,6 +104,28 @@ Notes for upgrades that need more than the steps above. Before 0.1.0 Capybara ke
 compatibility layers for its earlier builds: the kernel reads only the current formats, and the
 migrations rewrite stored data once where they can.
 
+### Local devices move to the device-local plugin (migration 0177)
+
+The kernel no longer serves local devices itself: its `@local` provider is gone, and a local
+device is served by the `device-local` plugin (`device-provider@1` over the dial-in channel).
+Migration 0177 drops what the kernel kept for local machines (`device_machines.features`,
+`local_policy`, `owner_report`, `pending_policy_ops`, `home`, `roots`, `mode`,
+`session_isolation`, the tables `device_machine_boots` and `device_instance_bindings`) and
+`devices.source`, and removes the `@local` instance rows (the former provider held nothing of its
+own; no provider could ever destroy them). A device stays bound to its provider for life, so an existing local device keeps
+the provider `@local`, which no longer exists: it is unavailable from now on (`device.unavailable`;
+its files stay on the machine) and is never moved to `device-local`. Its owner deletes it on the
+devices page and connects the machine again with a `capybara-device` that signs in to the
+`device-local` provider (installed and on in the org). Upgrade only to a release that pins
+`device-local`. The error codes `device.policy_refused`,
+`device.policy_unsupported` and `device.owner_report_stale` are gone, as are the device page's
+narrowing route (`POST …/devices/:id/policy`) and `device.ceiling_on_machine`: a device's network
+is its own setting for every provider.
+
+The dial-in settings move from `devices.local.*` to `devices.dialIn.*`: rename any of
+`CAPYBARA_DEVICES__LOCAL__*` you set to `CAPYBARA_DEVICES__DIAL_IN__*` (the same field names); the
+old keys are rejected by the config schema.
+
 ### Profiles govern every approval: upgrade the kernel first, then devices
 
 **Behavior change: tool asks under Approve for me and Auto no longer raise person cards.** A
@@ -191,10 +213,10 @@ program writes `{ outsideSandbox: false, network: "allowlist", allowedDomains: [
 to open it (`capybara-device ceiling set --network open`); a missing file never reads as the open
 network. New installs (`login`) get outside-the-sandbox off and the open network. The CLI is now
 `capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-[--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrows a
-local device: `POST …/devices/:id/policy` takes only `remove` and `ownerCeiling` narrowings (`add`
-and `mode` are gone), and a `network` PATCH on a local device is refused with
-`device.ceiling_on_machine`, which names the machine commands.
+[--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrowed a
+local device then: `POST …/devices/:id/policy` took only `remove` and `ownerCeiling` narrowings
+(`add` and `mode` were gone); that route and `device.ceiling_on_machine` were removed later (see
+"Local devices move to the device-local plugin" above).
 
 **Upgrade order.** This is device protocol 4, a paired release with no fallback:
 

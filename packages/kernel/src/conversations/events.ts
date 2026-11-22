@@ -107,16 +107,21 @@ const PermissionReason = z
   .max(1000)
   .refine((value) => value.trim().length > 0);
 const PermissionId = z.string().uuid();
+/**
+ * The scope a recorded context reports. `boundary` is the device provider's (device-provider spec
+ * §6.7): `operation` runs every operation in its own restricted scope in the host environment,
+ * `instance` is a provisioned instance that is itself the sandbox. A scoped filesystem names its
+ * write roots only: what a sandboxed operation may read is the provider's rule.
+ */
 const PermissionScopeSchema = z
   .object({
-    location: z.enum(["local", "cloud"]),
+    boundary: z.enum(["operation", "instance"]),
     workingRoot: PermissionPath,
     filesystem: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("device") }).strict(),
       z
         .object({
           kind: z.literal("scoped"),
-          readDirectories: PermissionDirectories,
           writeDirectories: PermissionDirectories,
         })
         .strict(),
@@ -143,7 +148,6 @@ const PermissionScopeSchema = z
 export const PermissionContextSandboxSchema = z
   .object({
     boundary: z.enum(["operation", "instance"]),
-    location: z.enum(["local", "cloud"]),
     workingRoot: z.string().min(1).max(4096),
     network: z
       .object({
@@ -264,39 +268,32 @@ export const PermissionContextV2Schema = z
       reject("A sandboxed context requires scoped filesystem and restricted networking");
     if (p.sandbox !== null) {
       const box = p.sandbox;
-      if (box.location !== s.location || box.workingRoot !== s.workingRoot)
-        reject("The sandbox must match the scope's location and working root");
+      if (box.boundary !== s.boundary || box.workingRoot !== s.workingRoot)
+        reject("The sandbox must match the scope's boundary and working root");
       if (canonicalOuter(box.outerNetwork) !== canonicalOuter(s.outerNetwork))
         reject("The sandbox must match the scope's outer network");
       // one canonical form: a scope without hosts is `none` in the block too
       const hosts = s.network.kind === "allowlist" ? s.network.hosts.length : 0;
       if (box.network.kind !== s.network.kind || box.network.hostsCount !== hosts)
         reject("The sandbox network must match the scope's network");
-      if (box.boundary === "instance" && box.location !== "cloud")
-        reject("An instance boundary is a cloud device's");
-      // a cloud device has no outside: the provider's instance is the outermost boundary
-      if (box.location === "cloud" && box.outsideSandbox)
-        reject("A cloud device cannot run outside its sandbox");
+      // an instance boundary has no outside: the provider's instance is the outermost boundary
+      if (box.boundary === "instance" && box.outsideSandbox)
+        reject("An instance boundary cannot run outside its sandbox");
     }
     if (s.filesystem.kind === "scoped") {
-      const { readDirectories, writeDirectories } = s.filesystem;
-      if (
-        !readDirectories.includes(s.workingRoot) ||
-        !writeDirectories.includes(s.workingRoot) ||
-        writeDirectories.some((p) => !readDirectories.includes(p))
-      )
-        reject("Writable roots must be readable and both must include the working root");
-      if (new Set([...readDirectories, ...writeDirectories]).size > 64)
-        reject("At most 64 combined roots are allowed");
+      const { writeDirectories } = s.filesystem;
+      if (!writeDirectories.includes(s.workingRoot))
+        reject("Writable roots must include the working root");
+      if (new Set(writeDirectories).size > 64) reject("At most 64 roots are allowed");
     }
-    if ((s.location === "local") !== (s.outerNetwork.kind === "host-environment"))
-      reject("Outer boundary must match the device location");
+    if ((s.boundary === "operation") !== (s.outerNetwork.kind === "host-environment"))
+      reject("Outer boundary must match the provider's boundary");
     if (
       s.network.kind === "open-public" &&
       (s.outerNetwork.kind === "none" || s.outerNetwork.kind === "allowlist")
     )
       reject("An open network exceeds a disabled or allowlisted outer boundary");
-    if (s.location === "cloud" && s.network.kind === "allowlist") {
+    if (s.boundary === "instance" && s.network.kind === "allowlist") {
       if (s.outerNetwork.kind === "none")
         reject("Network hosts exceed the disabled outer boundary");
       if (s.outerNetwork.kind === "allowlist") {
@@ -311,18 +308,34 @@ export type PermissionContextV2 = z.infer<typeof PermissionContextV2Schema>;
 /**
  * Reads a recorded payload as version 2. Stored v1 rows exist on deployments and the log is never
  * rewritten: a v1 payload (`version: 1`, never a `sandbox` key) reads as v2 with `sandbox: null`,
- * which v2 accepts under exactly v1's rules. Anything else is left for the v2 schema to judge.
+ * which v2 accepts under exactly v1's rules. A payload recorded before device providers reported
+ * their boundary (a `location` of `local` / `cloud`, read roots in a scoped filesystem) reads with
+ * the boundary that location had (`operation` / `instance`) and without its read roots. Anything
+ * else is left for the v2 schema to judge.
  */
 export function upconvertPermissionContext(payload: unknown): unknown {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload) &&
-    (payload as { version?: unknown }).version === 1 &&
-    !Object.hasOwn(payload, "sandbox")
-  )
-    return { ...payload, version: 2, sandbox: null };
-  return payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return payload;
+  let p = payload as Record<string, unknown>;
+  if (p.version === 1 && !Object.hasOwn(p, "sandbox")) p = { ...p, version: 2, sandbox: null };
+  const boundaryOf = (location: unknown) =>
+    location === "local" ? "operation" : location === "cloud" ? "instance" : location;
+  const scope = p.scope as Record<string, unknown> | null | undefined;
+  if (scope && typeof scope === "object" && Object.hasOwn(scope, "location")) {
+    const { location, ...rest } = scope;
+    const fs = rest.filesystem as Record<string, unknown> | undefined;
+    let filesystem: unknown = fs;
+    if (fs && typeof fs === "object" && Object.hasOwn(fs, "readDirectories")) {
+      const { readDirectories: _reads, ...kept } = fs;
+      filesystem = kept;
+    }
+    p = { ...p, scope: { boundary: boundaryOf(location), ...rest, filesystem } };
+  }
+  const box = p.sandbox as Record<string, unknown> | null | undefined;
+  if (box && typeof box === "object" && Object.hasOwn(box, "location")) {
+    const { location: _location, ...kept } = box;
+    p = { ...p, sandbox: kept };
+  }
+  return p;
 }
 /** A recorded `permission_context` payload as every reader parses it (v1 up-converted). */
 export const RecordedPermissionContextSchema = z.preprocess(
@@ -422,13 +435,22 @@ export const COMMAND_ASK_MAX_CHARS = 32 * 1024;
  * `commandHash` is the SHA-256 of the command text the approval holds in full, so an audit can
  * match a record to what ran.
  */
-export const PermissionExpansionSchema = z
-  .object({
-    readDirectories: z.array(z.string().max(4096)).max(64),
-    writeDirectories: z.array(z.string().max(4096)).max(64),
-    hosts: z.array(z.string().max(253)).max(100),
-  })
-  .strict();
+export const PermissionExpansionSchema = z.preprocess(
+  // a scope recorded before read roots left the kernel (reads are the device provider's rule)
+  // carried `readDirectories`: read without it, as nothing grants a read any more
+  (value) => {
+    if (typeof value !== "object" || value === null || !Object.hasOwn(value, "readDirectories"))
+      return value;
+    const { readDirectories: _reads, ...rest } = value as Record<string, unknown>;
+    return rest;
+  },
+  z
+    .object({
+      writeDirectories: z.array(z.string().max(4096)).max(64),
+      hosts: z.array(z.string().max(253)).max(100),
+    })
+    .strict(),
+);
 export const PermissionCallBindingSchema = z
   .object({
     orgId: z.string(),

@@ -201,7 +201,6 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         fire: async (id) => void calls.push(["sched-fire", id]),
         settle: async (d) => void calls.push(["sched-settle", d]),
       },
-      { resolve: async (d) => void calls.push(["device-op-resolve", d]) },
       {
         runNow: async (name) => {
           if (name !== "sandbox-suspend-idle") return false;
@@ -231,7 +230,6 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
     await processor.process(job("sched-fire", { taskRunId: "tr1" }));
     await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
-    await processor.process(job("device-op-resolve", { machineId: "m1", opId: "op1" }));
     const shareObject = { orgId: "o", shareId: "s1", generation: 1, objectKey: "shares/s1/1" };
     await processor.process(job("share-object-delete", shareObject));
     const iconObject = { purpose: "app", objectKey: `platform-icons/app-${"a".repeat(64)}.png` };
@@ -257,7 +255,6 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],
       ["sched-settle", { taskRunId: "tr1", check: 2 }],
-      ["device-op-resolve", { machineId: "m1", opId: "op1" }],
       ["share-object-delete", shareObject],
       ["platform-icon-delete", iconObject],
       ["periodic", "sandbox-suspend-idle"],

@@ -10,11 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import {
-  type DeviceOwnerCeiling,
-  type KernelRequest,
-  SandboxScopeDeniedError,
-} from "@capybara-hq/plugin-sdk";
+import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
+import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.js";
 import { CommandLog } from "../src/command-log.js";
@@ -278,11 +275,10 @@ describe("the log files", () => {
 });
 
 describe("policy changes in the command log", () => {
-  const source = { accountId: "acc_1", accountName: "Ada", via: "web", approvalId: "apr_1" };
-
-  it("audits a cloud policy change and a refused one, with the deciding account", async () => {
+  it("a policy request from the deployment is refused and changes nothing on the machine", async () => {
     const o = owner();
-    await serveOperationV3(
+    const source = { accountId: "acc_1", accountName: "Ada", via: "web" };
+    const res = await serveOperationV3(
       {} as MacOperationBackend,
       { id: "d" },
       request("policy", { opId: "op_1", remove: ["files.slack.com"], source }),
@@ -290,80 +286,8 @@ describe("policy changes in the command log", () => {
       undefined,
       o,
     );
-    await serveOperationV3(
-      {} as MacOperationBackend,
-      { id: "d" },
-      request("policy", { opId: "op_2", remove: ["not a host"], source }),
-      never,
-      undefined,
-      o,
-    );
-    // an add (protocol 4: widening happens only on the machine) is refused and audited too
-    await serveOperationV3(
-      {} as MacOperationBackend,
-      { id: "d" },
-      request("policy", { opId: "op_5", add: ["a.com"], source }),
-      never,
-      undefined,
-      o,
-    );
-    expect(lines()).toEqual([
-      expect.objectContaining({
-        op: "policy",
-        tag: null,
-        actor: { accountId: "acc_1" },
-        detail: "policy remove files.slack.com by Ada (acc_1) via web, approval apr_1",
-      }),
-      expect.objectContaining({
-        op: "policy",
-        detail: expect.stringMatching(/^policy refused \("not a host": .*\) by Ada/),
-      }),
-      expect.objectContaining({
-        op: "policy",
-        actor: { accountId: "acc_1" },
-        detail: expect.stringMatching(
-          /^policy failed \(The deployment may not add hosts.*\) by Ada/,
-        ),
-      }),
-    ]);
-  });
-
-  it("audits a policy op that fails for any other reason, also one the frame parser refuses", async () => {
-    const o = owner();
-    // the policy lock is held: the op fails without a write
-    writeFileSync(join(dir, "policy.json.lock"), String(process.pid));
-    const held = await serveOperationV3(
-      {} as MacOperationBackend,
-      { id: "d" },
-      request("policy", { opId: "op_3", remove: ["b.com"], source }),
-      never,
-      undefined,
-      o,
-    );
-    expect(held.ok).toBe(false);
-    rmSync(join(dir, "policy.json.lock"));
-    // a widening the parser refuses before the device's own checks
-    const parsed = await serveOperationV3(
-      {} as MacOperationBackend,
-      { id: "d" },
-      request("policy", { opId: "op_4", mode: "auto", source }),
-      never,
-      undefined,
-      o,
-    );
-    expect(parsed.ok).toBe(false);
-    expect(lines()).toEqual([
-      expect.objectContaining({
-        op: "policy",
-        actor: { accountId: "acc_1" },
-        detail: expect.stringMatching(/^policy failed \(.*held.*\) by Ada \(acc_1\) via web/),
-      }),
-      expect.objectContaining({
-        op: "policy",
-        actor: { accountId: "acc_1" },
-        detail: expect.stringMatching(/^policy failed \(.*mode.*\) by Ada \(acc_1\) via web/),
-      }),
-    ]);
+    expect(res).toMatchObject({ ok: false, error: { kind: "error" } });
+    expect(lines()).toEqual([]);
   });
 
   it("audits a policy change and a ceiling change made with the CLI on the machine", async () => {

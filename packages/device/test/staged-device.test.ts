@@ -1,20 +1,26 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type BindInstanceResult,
-  DEVICE_PROTOCOL_VERSION,
   FileSystemGoneError,
-  type KernelRequest,
-  parseDeviceFrame,
+  parseDialInMachineFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
+import {
+  type BindInstanceResult,
+  DEVICE_DIAL_IN_PROTOCOL,
+  parseDeviceFrame,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DELETED_MESSAGE,
   DISCONNECTED_MESSAGE,
   deploymentOutdatedMessage,
+  foreignProtocolMessage,
   OUTDATED_MESSAGE,
+  outdatedMessage,
+  REPLACED_MESSAGE,
 } from "../src/client.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
@@ -22,8 +28,11 @@ import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { serveOperationV3 } from "../src/server-ops.js";
-import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
+import {
+  CREDENTIAL_CHANGED_MESSAGE,
+  connectStaged,
+  KERNEL_STOPPED_MESSAGE,
+} from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
 import { PROGRAM_RUN_ID } from "../src/staged-session.js";
 import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
@@ -298,30 +307,23 @@ describe("staged device parts (W3-M)", () => {
 
   it("an unbound hello reports no capability; a bound one its generation and verified identity", async () => {
     const s = staged();
-    const parse = (r: object) =>
-      parseDeviceFrame(
-        JSON.stringify({ ...r, transport: { maxFrameBytes: 69632 } }),
-        "device",
-        69632,
-      );
     const unbound = await s.device.report({ bootId: "boot-1" });
-    expect(unbound).toMatchObject({
-      protocol: 5,
+    expect(unbound.envelope.program).toMatchObject({ bootId: "boot-1" });
+    expect(unbound.body).toMatchObject({
       instanceGeneration: null,
       permissionSupport: UNBOUND_SUPPORT,
-      bootId: "boot-1",
       roots: { workspace: join(root, "device", "workspace") },
     });
-    expect(unbound.runtimeIdentity).toBeUndefined();
-    expect(() => parse(unbound)).not.toThrow();
+    expect(unbound.body.runtimeIdentity).toBeUndefined();
+    expect(() => parseDeviceFrame(unbound.body, "hello")).not.toThrow();
     await s.device.binder.bind(request(G1, B1, null), signal());
     const bound = await s.device.report();
-    expect(bound).toMatchObject({
+    expect(bound.body).toMatchObject({
       instanceGeneration: G1,
       runtimeIdentity: { ...verified(), instanceGeneration: G1 },
     });
-    expect(bound.permissionSupport.restricted).not.toBeNull();
-    expect(() => parse(bound)).not.toThrow();
+    expect(bound.body.permissionSupport.restricted).not.toBeNull();
+    expect(() => parseDeviceFrame(bound.body, "hello")).not.toThrow();
   });
 
   it("create reports the roots and drops the bound generation's background tasks only", async () => {
@@ -368,35 +370,6 @@ describe("staged device parts (W3-M)", () => {
   });
 });
 
-describe("staged device: the local command log", () => {
-  it("the program's owner controls write commands.log in the state directory", async () => {
-    writePolicy(state, { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } });
-    const s = staged();
-    const res = await serveOperationV3(
-      s.device.backend(),
-      s.device.handle,
-      {
-        type: "req",
-        id: "q",
-        op: "policy",
-        args: {
-          opId: "op_log",
-          remove: ["files.slack.com"],
-          source: { accountId: "acc_1", accountName: "Ada", via: "web" },
-        },
-        deadlineMs: 1000,
-      } as KernelRequest,
-      signal(),
-      s.device.binder,
-      s.device.owner,
-    );
-    expect(res).toMatchObject({ ok: true });
-    expect(readFileSync(join(state, "commands.log"), "utf8")).toContain(
-      "policy remove files.slack.com by Ada (acc_1) via web",
-    );
-  });
-});
-
 describe("staged device parts: fix round", () => {
   it("a failed self-check is retried by the next report, not kept for the generation (M-4)", async () => {
     let clock = 0;
@@ -405,12 +378,12 @@ describe("staged device parts: fix round", () => {
     expect(answer.permissionSupport.restricted).toBeNull();
     expect(answer.permissionSupport.unavailableReason).toBe("busy machine");
     // a restricted operation is refused with that reason meanwhile
-    expect((await s.device.report()).permissionSupport.restricted).toBeNull();
+    expect((await s.device.report()).body.permissionSupport.restricted).toBeNull();
     expect(s.checks).toHaveLength(1);
     clock = 150;
     // the next hello retries it on the same generation's backend
     const hello = await s.device.report();
-    expect(hello.permissionSupport.restricted).not.toBeNull();
+    expect(hello.body.permissionSupport.restricted).not.toBeNull();
     expect(s.checks).toHaveLength(2);
     expect(s.device.binder.current()?.binding.instanceGeneration).toBe(G1);
   });
@@ -465,14 +438,70 @@ describe("staged connection (W3-M)", () => {
     cleanups.push(() => k.stop());
     return k;
   }
-  const ready = (k: FakeKernel, conn: number) =>
-    k.send(conn, { type: "ready", connectionId: `c${conn}`, maxFrameBytes: 69632 });
-  const res = (k: FakeKernel, id: string) =>
-    k.waitFor(`answer ${id}`, () => k.of("res").find((r) => r.id === id));
+  const ready = (k: FakeKernel, conn: number) => k.ready(conn);
+  const res = (k: FakeKernel, id: string) => k.answer(id);
   const send = (k: FakeKernel, conn: number, id: string, op: string, args: object) =>
-    k.send(conn, { type: "req", id, op, args, deadlineMs: 5000 });
+    k.request(conn, id, op, args);
 
-  it("speaks protocol 4: an unbound hello, then the binding and lifecycle over the socket", async () => {
+  it("sends x-capybara-device-protocol capybara-device/5", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("capybara-device/5");
+    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe(DEVICE_DIAL_IN_PROTOCOL);
+    expect(k.headers[0]?.authorization).toBe("Bearer cap_dev_a");
+  });
+
+  it("hello envelope carries program facts and the body carries ownerCeiling", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, {
+      err: () => {},
+      bootId: "boot-1",
+      programVersion: "9.9.9",
+    });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    const raw = await k.waitFor("hello", () => k.of("hello")[0]);
+    // the kernel's strict envelope parser accepts it as sent
+    const hello = parseDialInMachineFrame(JSON.stringify(raw), 69632);
+    if (hello.type !== "hello") throw new Error("expected a hello");
+    expect(hello).toEqual({
+      type: "hello",
+      protocol: "capybara-device/5",
+      // this process's run: every connection it makes names the same one
+      programRunId: PROGRAM_RUN_ID,
+      program: {
+        version: "9.9.9",
+        // the staged device's platform (the fixture defaults to darwin), not the test host's
+        os: "darwin",
+        arch: process.arch,
+        bootId: "boot-1",
+      },
+      transport: { maxFrameBytes: 69632 },
+      body: expect.any(Object),
+    });
+    // the body is the device protocol's: the owner's ceiling and no program fact
+    const body = parseDeviceFrame(hello.body, "hello");
+    expect(body.ownerCeiling).toEqual(s.device.owner.report());
+    expect(body.instanceGeneration).toBeNull();
+    for (const key of ["protocol", "programVersion", "os", "arch", "bootId", "programRunId"])
+      expect(hello.body).not.toHaveProperty(key);
+    // no policy op is served any more: the deployment changes no policy on this machine
+    const announced = (hello.body as { features?: unknown[] }).features ?? [];
+    expect(announced).not.toContain("policyOp");
+    expect(announced).not.toContain("policyOpId");
+    expect(hello.body).not.toHaveProperty("recentOps");
+  });
+
+  it("an unbound hello, then the binding and lifecycle over the socket", async () => {
     const k = await kernel();
     const s = staged({ cred: credential({ connectUrl: k.url }) });
     const conn = connectStaged(s.device, { err: () => {}, bootId: null });
@@ -481,14 +510,9 @@ describe("staged connection (W3-M)", () => {
       return conn.done;
     });
     const hello = await k.waitFor("hello", () => k.of("hello")[0]);
-    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("5");
-    expect(k.headers[0]?.authorization).toBe("Bearer cap_dev_a");
     expect(hello).toMatchObject({
-      protocol: 5,
-      instanceGeneration: null,
+      body: { instanceGeneration: null },
       transport: { maxFrameBytes: 69632 },
-      // this process's run: every connection it makes names the same one
-      programRunId: PROGRAM_RUN_ID,
     });
     ready(k, 0);
     send(k, 0, "b1", "bindInstance", request(G1, B1, null));
@@ -498,6 +522,96 @@ describe("staged connection (W3-M)", () => {
       ok: true,
       result: { roots: { workspace: join(root, "device", "workspace") } },
     });
+  });
+
+  it("the owner changing its ceiling on the machine is reported as an event", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null, policyCheckMs: 10 });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    const hello = await k.waitFor("hello", () => k.of("hello")[0]);
+    ready(k, 0);
+    writePolicy(state, {
+      ...FULL_POLICY,
+      ownerCeiling: { ...FULL_OWNER_CEILING, outsideSandbox: false },
+    });
+    const event = await k.waitFor("event", () => k.of("event")[0]);
+    const body = parseDeviceFrame(event.body, "event");
+    expect(body).toMatchObject({ type: "policy", ownerCeiling: { outsideSandbox: false } });
+    expect(body.ownerCeiling.revision).not.toBe(hello.body.ownerCeiling.revision);
+    expect(body.ownerCeiling).toEqual(s.device.owner.report());
+    // nothing more while nothing changes
+    await new Promise((r) => setTimeout(r, 50));
+    expect(k.of("event")).toHaveLength(1);
+  });
+
+  it("a kernel stop frame (drain) refuses new work, waits for the owned work and exits 0", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    ready(k, 0);
+    send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+    await res(k, "b1");
+    await s.startTask("task-1");
+    k.send(0, { type: "stop", reason: "drain" });
+    send(k, 0, "c1", "create", { limits: LIMITS });
+    expect(await res(k, "c1")).toMatchObject({ ok: false, error: { kind: "unsupported" } });
+    for (const f of s.finishers) f();
+    expect(await conn.done).toBe(0);
+    expect(s.cancelled).toEqual([]);
+  });
+
+  // The kernel's revocation, deletion and replacement send `stop` right before the close: the
+  // close code still names why the program ends.
+  for (const [ending, close, expected] of [
+    ["revoked", [4003, "the machine was disconnected"], DISCONNECTED_MESSAGE],
+    ["deleted", [4003, "the device was deleted"], DELETED_MESSAGE],
+    ["replaced", [4002, "replaced by a newer connection"], REPLACED_MESSAGE],
+    ["no close", undefined, KERNEL_STOPPED_MESSAGE],
+  ] as const)
+    it(`a kernel stop frame (stop) then ${ending} stops the owned work and says why`, async () => {
+      const k = await kernel();
+      const s = staged({ cred: credential({ connectUrl: k.url }) });
+      const errs: string[] = [];
+      const conn = connectStaged(s.device, {
+        err: (l) => errs.push(l),
+        bootId: null,
+        sleep: async () => {},
+        closeTimeoutMs: 50,
+      });
+      await k.waitFor("hello", () => k.of("hello")[0]);
+      ready(k, 0);
+      send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+      await res(k, "b1");
+      await s.startTask("task-1");
+      k.send(0, { type: "stop", reason: "stop" });
+      await vi.waitFor(() => expect(s.cancelled).toEqual(["task-1"]));
+      if (close) k.sockets[0]?.close(close[0], close[1]);
+      expect(await conn.done).toBe(0);
+      expect(errs).toContain(expected);
+      // it never reconnects
+      expect(k.sockets).toHaveLength(1);
+    });
+
+  it("a frame that is not a valid kernel envelope closes the socket with 4400", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null, sleep: async () => {} });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    ready(k, 0);
+    const closed = new Promise<number>((r) => k.sockets[0]?.once("close", (code) => r(code)));
+    // the flat protocol 4 request: not an envelope
+    k.send(0, { type: "req", id: "r1", op: "create", args: { limits: LIMITS }, deadlineMs: 5000 });
+    expect(await closed).toBe(4400);
+    expect(k.of("res")).toEqual([]);
   });
 
   it("an owner report that breaks after the hello is reported, never an unhandled rejection", async () => {
@@ -663,13 +777,15 @@ describe("staged connection (W3-M)", () => {
     });
   }
 
-  // A 426 names the kernel's protocol: an older deployment is to be upgraded, not this program.
+  // A 426 names the protocol the deployment serves this device with: an older deployment is to
+  // be upgraded, not this program.
   for (const [kernelProtocol, expected] of [
-    [DEVICE_PROTOCOL_VERSION + 1, OUTDATED_MESSAGE],
-    [DEVICE_PROTOCOL_VERSION - 1, deploymentOutdatedMessage(DEVICE_PROTOCOL_VERSION - 1)],
+    ["capybara-device/6", OUTDATED_MESSAGE],
+    ["capybara-device/4", deploymentOutdatedMessage("capybara-device/4")],
+    ["fake-dial-in/1", foreignProtocolMessage("fake-dial-in/1")],
     [undefined, OUTDATED_MESSAGE],
   ] as const) {
-    it(`a 426 from a kernel on protocol ${kernelProtocol ?? "(unreadable)"} says which side to upgrade`, async () => {
+    it(`a kernel 426 naming ${kernelProtocol ?? "(unreadable)"} says which side to update`, async () => {
       const k = await kernel();
       k.rejectWith = 426;
       k.rejectBody =
@@ -678,7 +794,7 @@ describe("staged connection (W3-M)", () => {
           : {
               error: {
                 code: "device.program_outdated",
-                message: `This kernel speaks device protocol ${kernelProtocol}. Update capybara-device.`,
+                message: `This device is served with ${kernelProtocol}, not capybara-device/5.`,
               },
             };
       const s = staged({ cred: credential({ connectUrl: k.url }) });
@@ -688,6 +804,20 @@ describe("staged connection (W3-M)", () => {
       expect(errs).toContain(expected);
     });
   }
+
+  it("reads the kernel's own 426 sentence: plugin names and the install hint never match first", () => {
+    const body = (expected: string) =>
+      JSON.stringify({
+        error: {
+          code: "device.program_outdated",
+          message: `This device is served by device-local2, which speaks ${expected}; this program speaks capybara-device/5. Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.`,
+        },
+      });
+    expect(outdatedMessage(body("capybara-device/4"))).toBe(
+      deploymentOutdatedMessage("capybara-device/4"),
+    );
+    expect(outdatedMessage(body("capybara-device/6"))).toBe(OUTDATED_MESSAGE);
+  });
 
   it("a machine stop whose cancellations do not settle answers an error naming them (I-2)", async () => {
     const k = await kernel();

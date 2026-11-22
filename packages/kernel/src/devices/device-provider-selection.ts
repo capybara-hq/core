@@ -6,22 +6,19 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgSettingsService } from "../orgs/settings.service.js";
-import {
-  type DeviceProviderEntry,
-  DeviceProviders,
-  isInternalProvider,
-} from "../sandbox/providers.js";
+import { type DeviceProviderEntry, DeviceProviders } from "../sandbox/providers.js";
 import { readPlatformDefaultProvider } from "./default-provider-setting.js";
 
 /**
  * Which device providers serve an org: the loaded `device-provider@1` extensions switched on in it
  * (valid config), and the provider a new device gets by default. Everything is read at every call
- * (PG; no in-process cache). Internal providers (`@local`) are never listed here.
+ * (PG; no in-process cache). In-process providers (`DeviceProviders.register`) are never listed.
  */
 @Injectable()
 export class DeviceProviderSelection {
   constructor(
-    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
+    @Inject(DeviceProviders)
+    private readonly providers: Pick<DeviceProviders, "forDevice" | "registered">,
     @Inject(ExtensionPointDefaults)
     private readonly points: Pick<ExtensionPointDefaults, "providersFor" | "serves">,
     @Inject(OrgSettingsService) private readonly orgSettings: Pick<OrgSettingsService, "get">,
@@ -37,20 +34,19 @@ export class DeviceProviderSelection {
     const out: DeviceProviderEntry[] = [];
     for (const p of providers) {
       const e = this.providers.forDevice(p.extension);
-      if (e && !isInternalProvider(e.plugin)) out.push(e);
+      if (e) out.push(e);
     }
     return out;
   }
 
   /**
    * Whether the provider `plugin` (a device's `devices.provider`) serves `orgId` now: an extension
-   * that {@link onInOrg} lists; a kernel-internal provider (`@local`) is no catalog item and has
-   * no org switch, so for it "on in the org" means registered in this process (until phase 2 of
-   * the device-provider plan moves local devices into the `device-local` plugin). Evaluates only
-   * that provider ({@link ExtensionPointDefaults.serves}, the criteria {@link onInOrg} applies).
+   * that {@link onInOrg} lists; an in-process provider is no catalog item and has no org switch,
+   * so for it "on in the org" means registered in this process. Evaluates only that provider
+   * ({@link ExtensionPointDefaults.serves}, the criteria {@link onInOrg} applies).
    */
   async isOnInOrg(orgId: string, plugin: string): Promise<boolean> {
-    if (isInternalProvider(plugin)) return this.providers.forDevice(plugin) !== undefined;
+    if (this.providers.registered(plugin)) return true;
     if (this.providers.forDevice(plugin) === undefined) return false;
     return this.points.serves(orgId, "device-provider", plugin);
   }

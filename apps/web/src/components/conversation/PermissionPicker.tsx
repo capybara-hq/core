@@ -119,17 +119,11 @@ export function pickerNotice(
 }
 
 /**
- * Whether the Auto confirmation names running outside the sandbox: the device may grant
- * it (its outside-sandbox ceiling allows it and its runtime can do it; never a cloud instance).
+ * Whether the Auto confirmation names running outside the sandbox: exactly when the consent the
+ * kernel records for this scope covers it (`consentReach`), whatever the runtime's state now.
  */
 export function fullAccessReachesOutside(p: PermissionPreview): boolean {
-  const a = p.availability;
-  return (
-    p.outsideSandboxCeiling &&
-    a.state === "supported" &&
-    a.report.boundary === "operation" &&
-    a.report.outsideSandbox
-  );
+  return p.consentReach.outsideSandbox;
 }
 
 /**
@@ -261,7 +255,12 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     enabled: deviceId !== undefined && input.preview === undefined,
     retryOnMount: retryOnMountOf(previewQ.queryKey),
   });
-  const preview = input.preview ?? { data: read.data, failed: read.isError };
+  // A read without its consent reach cannot name what Auto would confirm: the check failed.
+  const readPreview = read.data?.consentReach != null ? read.data : undefined;
+  const preview = input.preview ?? {
+    data: readPreview,
+    failed: read.isError || (read.data !== undefined && readPreview === undefined),
+  };
   const shown = deviceId !== undefined ? preview.data : undefined;
   const [choice, setChoice] = useState<Choice>({
     profile: input.initial ?? DEFAULT_PERMISSION_PROFILE,
@@ -605,16 +604,17 @@ export function useConversationPermission(o: {
     // the view is the scope the kernel checks an Auto consent against: no preview is read
     preview: {
       data:
-        view?.deviceId != null && view.scopeRevision !== null
+        view?.deviceId != null && view.scopeRevision !== null && view.consentReach !== null
           ? {
               deviceId: view.deviceId,
               project: project ?? null,
               scopeRevision: view.scopeRevision,
               availability: view.availability,
               outsideSandboxCeiling: view.outsideSandboxCeiling,
+              consentReach: view.consentReach,
             }
           : undefined,
-      failed: view?.deviceId != null && view.scopeRevision === null,
+      failed: view?.deviceId != null && (view.scopeRevision === null || view.consentReach === null),
     },
     onChange: (selection) => {
       if (view === undefined || !confirmed || patch.isPending) return;

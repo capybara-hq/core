@@ -1,6 +1,6 @@
 // The device confirmation page `/devices/link` (environments spec §6.2, §13.3):
 // `capybara-device login` opens `/devices/link?code=XXXX-XXXX`; the signed-in person compares the
-// code with the terminal, picks the org and a new or existing local device, reads the disclosure
+// code with the terminal, picks the org, the dial-in provider and a new or existing device of it, reads the disclosure
 // and confirms or denies.
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -28,46 +28,36 @@ vi.mock("next/navigation", () => ({
 const CODE = "BCDF-GHJK";
 const PAGE = `/devices/link?code=${CODE}`;
 const PENDING = `/api/v1/device/pending/${CODE}`;
-const ENVS = "/api/v1/orgs/o1/devices";
 const D = en.deviceLink;
 const msgs = { zh, en } as const;
 
 const MACHINE = { name: "grant-mbp", os: "darwin", arch: "arm64", programVersion: "0.1.0" };
-const LIMITS = { cpu: 2, memoryMb: 2048, diskMb: 10240, egress: "allowlist", allowHosts: [] };
-const env = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
-  id,
-  name,
-  isDefault: name === null,
-  ownerKind: "personal",
-  source: "cloud",
-  provider: "sandbox-docker",
-  available: true,
-  report: null,
-  online: null,
-  machine: null,
-  sessionIsolation: false,
-  filesLost: false,
-  instance: null,
-  limits: LIMITS,
-  createdAt: "2026-11-07T08:00:00.000Z",
-  ...over,
-});
-const LIST = {
-  items: [
-    env("e1", null),
-    env("d1", "Old laptop", { source: "local", provider: "@local", online: false }),
-  ],
-  defaultId: "e1",
-  lastUsedId: null,
-  providers: [{ plugin: "sandbox-docker", displayName: null }],
-  defaultProvider: "sandbox-docker",
+const PROVIDERS_URL = (org: string) =>
+  `/api/v1/device/providers?orgId=${org}&userCode=${encodeURIComponent(CODE)}`;
+/** One dial-in provider on in the org, with one of the person's devices of it. */
+const SSH = {
+  plugin: "device-ssh",
+  displayName: { en: "SSH devices", zh: "SSH 设备" },
+  devices: [{ id: "d1", name: "Old laptop" }],
 };
+const LOCAL = {
+  plugin: "@local",
+  displayName: { en: "Local device", zh: "本地设备" },
+  devices: [{ id: "d7", name: "Desk" }],
+};
+const providers =
+  (...items: unknown[]) =>
+  () =>
+    json(200, { providers: items });
 const ROUTES: Routes = {
   "GET /api/v1/me": () => json(200, ME),
   [`GET ${PENDING}`]: () => json(200, { machine: MACHINE, expiresAt: "2026-11-08T08:10:00.000Z" }),
-  [`GET ${ENVS}`]: () => json(200, LIST),
+  [`GET ${PROVIDERS_URL("o1")}`]: providers(SSH),
 };
 const unauthenticated = () => json(401, { error: { code: "auth.required", message: "x" } });
+/** The label of the option a select shows now. */
+const chosen = (select: HTMLElement) =>
+  select.querySelector('[data-current="true"]')?.textContent ?? null;
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 20)));
 
 beforeEach(() => {
@@ -97,6 +87,8 @@ describe("/devices/link", () => {
       expect(within(screen.getByRole("note")).getByText(m.disclosure)).toBeTruthy();
       // the new device's name defaults to the machine's
       expect(screen.getByRole("textbox", { name: m.name })).toHaveProperty("value", "grant-mbp");
+      // one provider: nothing to choose
+      expect(screen.queryByRole("combobox", { name: m.provider })).toBeNull();
       // nothing is sent before the person confirms
       expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
       const confirm = screen.getByRole("button", { name: m.confirm });
@@ -106,7 +98,12 @@ describe("/devices/link", () => {
       const post = calls.find((c) => c.method === "POST");
       expect(post?.url).toBe("/api/v1/device/confirm");
       expect(post?.headers.get("x-capybara-csrf")).toBe("1");
-      expect(bodyOf(post)).toEqual({ userCode: CODE, orgId: "o1", name: "grant-mbp" });
+      expect(bodyOf(post)).toEqual({
+        userCode: CODE,
+        orgId: "o1",
+        provider: "device-ssh",
+        name: "grant-mbp",
+      });
     },
   );
 
@@ -140,15 +137,13 @@ describe("/devices/link", () => {
     const calls = stubApi({
       ...ROUTES,
       "GET /api/v1/me": () => json(200, me),
-      "GET /api/v1/orgs/o2/devices": () => json(200, { ...LIST, items: [LIST.items[0]] }),
+      [`GET ${PROVIDERS_URL("o2")}`]: providers(SSH),
       "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
     });
     await renderAuthRouteWithCache(`${PAGE}&org=o2`, lastStubRoutes());
     await screen.findByRole("combobox", { name: D.org });
-    await vi.waitFor(() =>
-      expect(calls.some((c) => c.url === "/api/v1/orgs/o2/devices")).toBe(true),
-    );
-    expect(screen.getByRole("combobox", { name: D.device }).textContent).toBe(D.newDevice);
+    await vi.waitFor(() => expect(calls.some((c) => c.url === PROVIDERS_URL("o2"))).toBe(true));
+    expect(chosen(screen.getByRole("combobox", { name: D.device }))).toBe(D.newDevice);
     expect(screen.getByRole("textbox", { name: D.name })).toHaveProperty("value", "grant-mbp");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
     await userEvent.setup().click(screen.getByRole("button", { name: D.confirm }));
@@ -156,6 +151,7 @@ describe("/devices/link", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       userCode: CODE,
       orgId: "o2",
+      provider: "device-ssh",
       name: "grant-mbp",
     });
   });
@@ -171,7 +167,7 @@ describe("/devices/link", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ orgId: "o1" });
   });
 
-  it("confirms into an existing local device of the org", async () => {
+  it("confirms into an existing device of the provider", async () => {
     const calls = stubApi({
       ...ROUTES,
       "POST /api/v1/device/confirm": () => json(200, { deviceId: "d1" }),
@@ -188,6 +184,7 @@ describe("/devices/link", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       userCode: CODE,
       orgId: "o1",
+      provider: "device-ssh",
       deviceId: "d1",
     });
     // the device is in the current org: the done state opens its page, a full navigation (the
@@ -197,30 +194,7 @@ describe("/devices/link", () => {
     expect(router.replace).not.toHaveBeenCalledWith("/devices/d1");
   });
 
-  it("an unnamed connected device is labelled like everywhere else (deviceName)", async () => {
-    stubApi({
-      ...ROUTES,
-      [`GET ${ENVS}`]: () =>
-        json(200, {
-          ...LIST,
-          items: [
-            ...LIST.items,
-            env("d2", null, {
-              isDefault: false,
-              source: "local",
-              provider: "@local",
-              online: false,
-            }),
-          ],
-        }),
-    });
-    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("combobox", { name: D.device }));
-    expect(await screen.findByRole("option", { name: "Personal" })).toBeTruthy();
-  });
-
-  it("confirming invalidates the org's devices", async () => {
+  it("confirming invalidates the org's devices and providers", async () => {
     const calls = stubApi({
       ...ROUTES,
       "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
@@ -231,8 +205,63 @@ describe("/devices/link", () => {
     // the list was read again after the POST (invalidated while the form observed it)
     await vi.waitFor(() => {
       const names = calls.map((c) => `${c.method} ${c.url}`);
-      expect(names.slice(names.indexOf("POST /api/v1/device/confirm"))).toContain(`GET ${ENVS}`);
+      expect(names.slice(names.indexOf("POST /api/v1/device/confirm"))).toContain(
+        `GET ${PROVIDERS_URL("o1")}`,
+      );
     });
+  });
+
+  it("confirm page offers a provider select when two dial-in providers are on", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`GET ${PROVIDERS_URL("o1")}`]: providers(SSH, LOCAL),
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d7" }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    const user = userEvent.setup();
+    const provider = await screen.findByRole("combobox", { name: D.provider });
+    // the first provider's devices
+    expect(chosen(provider)).toBe("SSH devices");
+    await user.click(screen.getByRole("combobox", { name: D.device }));
+    expect(await screen.findByRole("option", { name: "Old laptop" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Desk" })).toBeNull();
+    await user.keyboard("{Escape}");
+    // another provider: its devices only, and the device choice starts again at a new device
+    await user.click(provider);
+    await user.click(await screen.findByRole("option", { name: "Local device" }));
+    expect(chosen(screen.getByRole("combobox", { name: D.device }))).toBe(D.newDevice);
+    await user.click(screen.getByRole("combobox", { name: D.device }));
+    expect(await screen.findByRole("option", { name: "Desk" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Old laptop" })).toBeNull();
+    await user.click(screen.getByRole("option", { name: "Desk" }));
+    await user.click(screen.getByRole("button", { name: D.confirm }));
+    expect(await screen.findByText(D.doneTitle)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      userCode: CODE,
+      orgId: "o1",
+      provider: "@local",
+      deviceId: "d7",
+    });
+  });
+
+  it("confirm page hides the provider select with one provider and sends it", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      [`GET ${PROVIDERS_URL("o1")}`]: providers(LOCAL),
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    await userEvent.setup().click(await screen.findByRole("button", { name: D.confirm }));
+    expect(await screen.findByText(D.doneTitle)).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: D.provider })).toBeNull();
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ provider: "@local" });
+  });
+
+  it("an org with no provider for this machine says so and cannot confirm", async () => {
+    stubApi({ ...ROUTES, [`GET ${PROVIDERS_URL("o1")}`]: providers() });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    expect(await screen.findByText(D.noProvider)).toBeTruthy();
+    expect(screen.getByRole("button", { name: D.confirm })).toHaveProperty("disabled", true);
   });
 
   it("device page shows the expired state for an unknown code", async () => {

@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
 import WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
 import {
@@ -24,6 +24,10 @@ import type { Credential } from "./state.js";
 /** Printed when the machine credential changed under a running program. */
 export const CREDENTIAL_CHANGED_MESSAGE =
   "The machine credential changed (a new login). Restarting with the new one.";
+
+/** Printed when the deployment stopped this program without naming a reason (no close code). */
+export const KERNEL_STOPPED_MESSAGE =
+  "The deployment stopped this machine's connection. Start capybara-device again to reconnect.";
 
 /** How long a stop (`capybara-device stop`, a signal) waits for the owned work to be stopped. */
 export const STOP_CANCEL_TIMEOUT_MS = 10_000;
@@ -73,12 +77,13 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Connects a staged (protocol 4) program and serves it until told to stop (permission activation
- * W3-M), with protocol 2's lifetime rules (`connect`): backoff, liveness, 401 / 426 / replaced /
- * revoked endings. Each socket is served by {@link serveStagedSession} with the credential's one
- * session state ({@link StagedDevice.states}, grace from the credential), the binder and the owner
- * policy; a machine stop exact-stops the owned work before it is answered; a drain refuses new
- * admissions and ends once the requests and everything the bound backend owns settled.
+ * Connects a staged (protocol 5, `capybara-device/5`) program and serves it until told to stop
+ * (permission activation W3-M), with protocol 2's lifetime rules (`connect`): backoff, liveness,
+ * 401 / 426 / replaced / revoked endings, and the kernel's `stop` frame. Each socket is served by
+ * {@link serveStagedSession} with the credential's one session state ({@link StagedDevice.states},
+ * grace from the credential), the binder and the owner policy; a machine stop exact-stops the
+ * owned work before it is answered; a drain refuses new admissions and ends once the requests and
+ * everything the bound backend owns settled.
  */
 export function connectStaged(device: StagedDevice, opts: StagedConnectOptions = {}): Connection {
   const err = opts.err ?? ((l: string) => console.error(l));
@@ -97,6 +102,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
   let stopping = false;
   let draining = false;
   let exitAfterStop: { exit: number; message?: string } | undefined;
+  /** The kernel sent `stop` (reason `stop`): the program ends at the next close. */
+  let kernelStopped = false;
   let session: ((end: SessionEnd) => void) | undefined;
   let state: StagedSessionState = device.states.for(started);
 
@@ -188,6 +195,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         exit: 0,
         message: reason === "revoked" ? DISCONNECTED_MESSAGE : DELETED_MESSAGE,
       }),
+    // the envelope's `stop`: the kernel asks for a drain (then exit 0) or an immediate stop
+    kernelStop: (reason: "drain" | "stop") => (reason === "drain" ? drain() : kernelStop()),
   };
 
   let attempt = 0;
@@ -207,7 +216,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       const sock = new WebSocket(cred.connectUrl, {
         headers: {
           Authorization: `Bearer ${cred.credential}`,
-          "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+          "X-Capybara-Device-Protocol": DEVICE_DIAL_IN_PROTOCOL,
         },
       });
       ws = sock;
@@ -258,8 +267,9 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
             sock.close(4400, "Device report unavailable; reconnect");
             return;
           }
-          // the owner changed the ceiling on the machine: push the new owner report. A report that
-          // fails now (a broken policy.json) is said and retried by the check, never thrown.
+          // the owner changed the ceiling on the machine: push the new owner report as an event
+          // (the provider turns it into a report revision change). A report that fails now (a
+          // broken policy.json) is said and retried by the check, never thrown.
           let sent = "";
           try {
             sent = JSON.stringify(report_(device));
@@ -274,7 +284,11 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
               const json = JSON.stringify(next);
               if (json === sent) return;
               sent = json;
-              sock.send(JSON.stringify({ type: "policy", ...next }));
+              if (!served.event({ type: "policy", ...next }))
+                err(
+                  "The owner report does not fit the connection's frame capacity; the deployment " +
+                    "learns the change at the next connection.",
+                );
             })().catch((error: unknown) =>
               err(`Owner ceiling reconciliation failed: ${String(error)}`),
             );
@@ -319,7 +333,13 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         }
         if (exitAfterStop) return endSession(exitAfterStop);
         if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });
-        if (code === 4003) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
+        if (code === 4003) {
+          // the kernel closes a deleted device's machine with the same code as a revoked one
+          const deleted = /\bdeleted\b/i.test(reason.toString("utf8"));
+          return endSession({ exit: 0, message: deleted ? DELETED_MESSAGE : DISCONNECTED_MESSAGE });
+        }
+        // the kernel stopped this program: whatever closes the socket now, it does not reconnect
+        if (kernelStopped) return endSession({ exit: 0, message: KERNEL_STOPPED_MESSAGE });
         if (code === 4400) {
           const why = reason.toString("utf8");
           reportFailure(`The deployment closed the connection: 4400${why ? ` ${why}` : ""}.`);
@@ -361,31 +381,44 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       lifetime.abort();
     });
 
-  return {
-    done,
-    drain() {
-      if (draining) return;
-      setState("draining");
-      draining = true;
-      // no new admission at once; ends when the requests and the owned work settled
-      void drainStagedSession(state, device.drainTarget(), new AbortController().signal)
-        .then(() => heldAnswersDelivered())
-        .then(() => finish({ exit: 0 }))
-        .catch((error: unknown) => {
-          err(`Drain failed: ${String(error)}`);
-          finish({ exit: 1 });
-        });
-    },
-    stop() {
-      if (stopping || exitAfterStop) return;
-      exitAfterStop = { exit: 0 };
-      // a stopped program leaves no work running: the owned operations are stopped exactly
-      void stopOwned().then(() => finish({ exit: 0 }));
-    },
-  };
+  function drain(): void {
+    if (draining) return;
+    setState("draining");
+    draining = true;
+    // no new admission at once; ends when the requests and the owned work settled
+    void drainStagedSession(state, device.drainTarget(), new AbortController().signal)
+      .then(() => heldAnswersDelivered())
+      .then(() => finish({ exit: 0 }))
+      .catch((error: unknown) => {
+        err(`Drain failed: ${String(error)}`);
+        finish({ exit: 1 });
+      });
+  }
+  /**
+   * The kernel's `stop` with reason `stop`: the owned work is stopped now, but the exit waits for
+   * the kernel's close (its code names why: revoked, deleted, replaced), at most the close
+   * timeout after the work stopped; without a close it ends with {@link KERNEL_STOPPED_MESSAGE}.
+   */
+  function kernelStop(): void {
+    if (kernelStopped || stopping || exitAfterStop) return;
+    kernelStopped = true;
+    void stopOwned().then(() => {
+      setTimeout(() => {
+        if (!exitAfterStop && !stopping) finish({ exit: 0, message: KERNEL_STOPPED_MESSAGE });
+      }, closeTimeoutMs).unref();
+    });
+  }
+  function stop(): void {
+    if (stopping || exitAfterStop) return;
+    exitAfterStop = { exit: 0 };
+    // a stopped program leaves no work running: the owned operations are stopped exactly
+    void stopOwned().then(() => finish({ exit: 0 }));
+  }
+
+  return { done, drain, stop };
 }
 
-/** The owner report and policy summary a `policy` frame carries. */
+/** The owner report and policy summary an owner change event carries. */
 function report_(device: StagedDevice) {
   return {
     policy: policySummary(device.owner.store.current(), { mode: device.mode }),

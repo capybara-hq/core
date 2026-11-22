@@ -1,8 +1,10 @@
 import { Module } from "@nestjs/common";
+import { DialInRelayModule } from "../dial-in/relay.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgNetworkAllowancesModule } from "../orgs/network-allowances.service.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { DeviceReportsModule } from "../sandbox/device-reports.module.js";
 import { ShareLivenessModule } from "../shares/liveness.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { EmbedTokensModule } from "../ui/embed-token.js";
@@ -54,6 +56,10 @@ import { UsageSubscribersModule } from "./usage-subscribers.js";
     UsageSubscribersModule,
     // ctx.net reads each org's allowed internal endpoints per call
     OrgNetworkAllowancesModule,
+    // ctx.dialIn: the dial-in relay (global infrastructure only: no cycle)
+    DialInRelayModule,
+    // ctx.devices: the stored device reports and the authority epoch (registry and ceiling writes)
+    DeviceReportsModule,
   ],
   providers: [
     PluginInstallLock,

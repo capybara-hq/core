@@ -8,7 +8,6 @@ import { ConversationLeakCheckModule } from "../conversations/leak-check.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
-import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { FileRefs } from "../platform/file-ref.js";
@@ -19,6 +18,7 @@ import { RunJobsModule } from "../runtime/run-jobs.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
 import { ManagedDeviceContextModule } from "../sandbox/managed-device-context.module.js";
+import { NetworkGrantsModule } from "../sandbox/network-grants.module.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
@@ -36,7 +36,6 @@ import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { CredentialsModule } from "./credentials.module.js";
-import { DeviceOpResolver } from "./device-op-resolver.js";
 import { ToolDrift } from "./drift.js";
 import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
 import { OAuthFlow } from "./oauth/flow.js";
@@ -78,8 +77,8 @@ import { ToolAskReview } from "./tool-review.js";
     // the managed sandbox route's device context writer (passed only once activated)
     ManagedDeviceContextModule,
     DevicesModule,
-    // network asks and the sandbox tools read a local device's machine (owner report, policy)
-    LocalDevicesModule,
+    // network asks read the run tree's network grants
+    NetworkGrantsModule,
     // `Bash` with run_in_background records its task; TaskOutput / TaskStop finish and stop it
     BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see
@@ -126,8 +125,6 @@ import { ToolAskReview } from "./tool-review.js";
     ConversationToolInfo,
     OrgExtensionTools,
     OrgToolSwitches,
-    // the `device-op-resolve` job's body (it may decide the network ask the op answers)
-    DeviceOpResolver,
   ],
   exports: [
     PermissionApprovalJobs,
@@ -149,7 +146,6 @@ import { ToolAskReview } from "./tool-review.js";
     ConversationToolInfo,
     OrgExtensionTools,
     OrgToolSwitches,
-    DeviceOpResolver,
   ],
 })
 export class ToolsModule {}

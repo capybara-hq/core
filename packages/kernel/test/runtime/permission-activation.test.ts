@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { KernelReq, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import {
   fakeDm as dm,
   type FakeChannelServer,
@@ -21,18 +21,22 @@ import {
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { PERMISSION_CONTEXT_ACTIVE } from "../../src/sandbox/permission-context-types.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
+import { type Answer, EnvelopeMachine, type KernelReq } from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createAgent,
   createOrgWithProviders,
+  enableExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -44,8 +48,6 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { FakeMachineV3 } from "../local-devices/fake-machine-v3.js";
-import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Permission activation, gate on end to end (W6 Task Q, B-20 and the cross-path smoke test): the
@@ -61,12 +63,6 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
-const MACHINE_ROOTS: SandboxRoots = {
-  workspace: "/home/me/capybara/box/workspace",
-  skills: "/home/me/capybara/box/skills",
-  tmp: "/home/me/capybara/box/tmp",
-};
-
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -79,7 +75,8 @@ let ownerId: string;
 let orgId: string;
 let chatAgentId: string;
 let bashAgentId: string;
-const machines: FakeMachineV3[] = [];
+const machines: EnvelopeMachine[] = [];
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 /** The local and cloud conversations of the scenarios below (their follow-ups continue them). */
 let localConv: { conv: string; req: Req; deviceId: string } | undefined;
 let cloudConv: { conv: string; req: Req; deviceId: string } | undefined;
@@ -88,6 +85,7 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   sandboxRoot = await mkdtemp(join(tmpdir(), "cap-activation-"));
   im = await startFakeChannelServer({ dedupeSends: false });
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -98,9 +96,10 @@ beforeAll(async () => {
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
-        devices: { local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
@@ -108,6 +107,12 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
+  await enableExtensions(raw, orgId, "fake-dial-in");
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
+  // two device providers are loaded: device-fake stays the org's default
+  await sql`UPDATE capybara.orgs SET settings = COALESCE(settings, '{}'::jsonb)
+      || jsonb_build_object('deviceDefaultProvider', 'device-fake')
+    WHERE id = ${orgId}`.execute(raw);
   chatAgentId = await createAgent(owner, orgId);
   const res = await owner({
     method: "POST",
@@ -131,6 +136,7 @@ afterAll(async () => {
   await k?.close();
   await im?.stop();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
@@ -251,11 +257,13 @@ describe("every path records a v2 permission context and replies", () => {
     );
   });
 
-  it("a local device on protocol 3: the command reaches the machine by its operation scope, the context is local and supported", async () => {
+  it("a dial-in device: the command reaches the machine by its operation scope, the context is supported", async () => {
     const m = await member("local-member");
     const { deviceId, credential } = await k.app.get(TransactionHost).run(async () => {
-      const { id } = await k.app.get(DevicesService).createLocal(orgId, m.id, "Box");
-      const issued = await k.app.get(MachinesService).issue({
+      const { id } = await k.app
+        .get(DevicesService)
+        .createDialIn(orgId, m.id, "fake-dial-in", "Box");
+      const issued = await k.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,
         accountId: m.id,
@@ -266,35 +274,30 @@ describe("every path records a v2 permission context and replies", () => {
       });
       return { deviceId: id, credential: issued.credential };
     });
+    // the `fake-dial-in` machine: its provider relays every operation as `{ op, args }`
     const answer = (req: KernelReq): Answer => {
-      switch (String(req.op)) {
-        case "create":
-          return { ok: true, result: { roots: MACHINE_ROOTS } };
+      switch (req.op) {
+        case "resume":
+          return "resumed";
         case "exec":
           return {
-            ok: true,
-            result: {
-              exitCode: 0,
-              stdout: "machine-ok\n",
-              stderr: "",
-              truncated: false,
-              timedOut: false,
-            },
+            exitCode: 0,
+            stdout: "machine-ok\n",
+            stderr: "",
+            truncated: false,
+            timedOut: false,
           };
         default:
-          // bindInstance: the installed evidence (autoBind); prepare and revoke: nothing
-          return { ok: true, result: null };
+          return null;
       }
     };
-    const machine = new FakeMachineV3(
+    const machine = new EnvelopeMachine(
       `ws://127.0.0.1:${k.port}/device/connect`,
       credential,
       answer,
-      { hello: false },
     );
     machines.push(machine);
     await machine.opened;
-    machine.hello({ roots: MACHINE_ROOTS });
     await machine.ready;
     const targets = k.app.get(DeviceTargets);
     await waitFor(
@@ -315,7 +318,7 @@ describe("every path records a v2 permission context and replies", () => {
     const { contexts, events } = await recorded(conv);
     localConv = { conv, req: m.req, deviceId };
 
-    // the command went to the machine as a scoped protocol 3 exec of this conversation
+    // the command went to the machine as a scoped exec of this conversation
     const exec = machine.frames.find((f) => f.type === "req" && String(f.op) === "exec") as
       | KernelReq
       | undefined;
@@ -333,15 +336,15 @@ describe("every path records a v2 permission context and replies", () => {
     expect(result?.isError, JSON.stringify(result)).toBe(false);
     expect(result?.content).toContain("machine-ok");
     expect(replyOf(events)).toContain("machine-ok");
-    // the request answering with the command's result runs under a supported local context
+    // the request answering with the command's result runs under a supported context
     expect(contexts.at(-1)?.payload).toMatchObject({
       deviceId,
       availability: { state: "supported" },
-      scope: { location: "local" },
+      scope: { boundary: "operation" },
     });
   });
 
-  it("a cloud device on device-fake: the managed call runs, the context is cloud and supported", async () => {
+  it("a cloud device on device-fake: the managed call runs, the context records its provider's boundary and is supported", async () => {
     const m = await member("cloud-member");
     const res = await m.req({
       method: "POST",
@@ -356,10 +359,10 @@ describe("every path records a v2 permission context and replies", () => {
     const device = await db
       .selectFrom("conversations")
       .innerJoin("devices", "devices.id", "conversations.device_id")
-      .select(["devices.id", "devices.source", "devices.provider"])
+      .select(["devices.id", "devices.provider"])
       .where("conversations.id", "=", conv)
       .executeTakeFirstOrThrow();
-    expect(device).toMatchObject({ source: "cloud", provider: "device-fake" });
+    expect(device).toMatchObject({ provider: "device-fake" });
     cloudConv = { conv, req: m.req, deviceId: device.id };
     const result = ofType(events, "tool_result").at(-1)?.payload;
     expect(result?.isError, JSON.stringify(result)).toBe(false);
@@ -368,12 +371,13 @@ describe("every path records a v2 permission context and replies", () => {
     expect(contexts.at(-1)?.payload).toMatchObject({
       deviceId: device.id,
       availability: { state: "supported" },
-      scope: { location: "cloud" },
+      // device-fake reports an operation boundary: its context records the provider's boundary
+      scope: { boundary: "operation" },
     });
   });
-  it("a profile change on the local device's conversation appends a new context before the next request", async () => {
+  it("a profile change on the dial-in device's conversation appends a new context before the next request", async () => {
     const c = localConv;
-    if (!c) throw new Error("the local scenario runs first");
+    if (!c) throw new Error("the dial-in scenario runs first");
     const before = ofType(await eventsOf(db, c.conv), "permission_context");
     const now = await c.req({
       method: "GET",
@@ -404,7 +408,7 @@ describe("every path records a v2 permission context and replies", () => {
       effectiveProfile: "request-approval",
       deviceId: c.deviceId,
       availability: { state: "supported" },
-      scope: { location: "local" },
+      scope: { boundary: "operation" },
     });
     expect(calls.at(-1)?.payload.request.permissionContext?.contextSeq).toBe(added[0]?.seq);
     expect(replyOf(events)).toContain("after the change");

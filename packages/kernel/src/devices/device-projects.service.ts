@@ -1,7 +1,7 @@
 import { posix } from "node:path";
 import {
-  DeviceProtocolError,
   type DeviceProvider,
+  isDeviceOfflineError,
   isDeviceProjectName,
   isFileSystemGoneError,
   isProjectPathRefusedError,
@@ -13,16 +13,16 @@ import {
   ToolError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
+import { deviceOffline } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { projectsUnsupported } from "../local-devices/local-device-provider.js";
-import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { KernelLogger } from "../log.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
@@ -34,11 +34,11 @@ import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { DeviceAccess } from "./access.js";
+import { projectsUnsupported } from "./errors.js";
 import {
   baseOf,
   clipped,
   type DeviceProjectScope,
-  homeUnknown,
   nameInvalid,
   nameTaken,
   outsideMode,
@@ -224,12 +224,11 @@ export class DeviceProjectsService {
     if (!scope.supported) {
       return { candidates: [], mode: scope.mode, base: baseOf(scope), supported: false };
     }
-    if (baseOf(scope) === null) throw homeUnknown();
     return this.onDevice(orgId, accountId, deviceId, scope, signal, async (r, sig) => {
       const workspace = r.workspace;
-      const base = baseOf(scope, workspace) as string;
+      const base = baseOf(scope, workspace);
       const scan = r.scan;
-      if (scan === undefined) throw projectsUnsupported(false);
+      if (scan === undefined) throw projectsUnsupported();
       let found: { path: string; suggestedName: string }[];
       try {
         found = await scan(base, sig);
@@ -282,8 +281,7 @@ export class DeviceProjectsService {
   ): Promise<Scope> {
     await this.access.usable(orgId, accountId, deviceId);
     const scope = await this.scope(orgId, accountId, deviceId);
-    if (!scope.supported) throw projectsUnsupported(scope.source === "local");
-    if (baseOf(scope) === null) throw homeUnknown();
+    if (!scope.supported) throw projectsUnsupported();
     if (name !== undefined && !isDeviceProjectName(name)) throw nameInvalid(name);
     const rows = await this.db
       .selectFrom("device_projects")
@@ -316,13 +314,11 @@ export class DeviceProjectsService {
     // a path too broad for any project is refused before the device is leased (a cloud device
     // started): against the last known base; the held instance's base is checked again inside
     const early = baseOf(scope);
-    if (early !== null) {
-      const path = trimSlash(
-        posix.normalize(posix.join(early, input.path === "" ? "." : input.path)),
-      );
-      // outside the mode stays the device-side refusal it is (the held workspace decides it)
-      if (withinMode(scope, path) && aboveHome(path, scope.home)) throw tooBroad(path);
-    }
+    const path = trimSlash(
+      posix.normalize(posix.join(early, input.path === "" ? "." : input.path)),
+    );
+    // outside the mode stays the device-side refusal it is (the held workspace decides it)
+    if (withinMode(scope, path) && aboveHome(path, scope.home)) throw tooBroad(path);
     const resolved = await this.onDevice(
       orgId,
       accountId,
@@ -334,7 +330,7 @@ export class DeviceProjectsService {
         const name = input.name ?? posix.basename(path);
         if (!isDeviceProjectName(name)) throw nameInvalid(name);
         const list = r.list;
-        if (list === undefined) throw projectsUnsupported(false);
+        if (list === undefined) throw projectsUnsupported();
         let answer: Awaited<ReturnType<NonNullable<DeviceProvider["list"]>>>;
         try {
           answer = await list(path, 1, sig);
@@ -557,6 +553,8 @@ export class DeviceProjectsService {
       );
     } catch (e) {
       if (e instanceof ApiError) throw e;
+      // a dial-in device's machine that is not connected: the relay's offline error
+      if (isDeviceOfflineError(e)) throw deviceOffline();
       if (e instanceof SandboxProviderUnreachableError) throw providerUnreachable();
       // the answer hides the cause (a provider's text is not for people): ops read it here
       this.log.warn("device projects: the device could not be asked", { deviceId, err: e });
@@ -601,13 +599,12 @@ const trimSlash = (path: string): string =>
   path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 
 /**
- * The absolute path of `relative` against the scope's base (the instance's `workspace` in sandbox
- * mode and on a cloud device, the owner's home in auto mode), normalized; refused when the base is
- * unknown, the result is not a valid path, or it leaves what the mode reads.
+ * The absolute path of `relative` against the scope's base (the home its provider reported, else
+ * the instance's `workspace`), normalized; refused when the result is not a valid path, or it
+ * leaves what the scope reaches.
  */
 function resolve(scope: Scope, workspace: string, relative: string): string {
   const base = baseOf(scope, workspace);
-  if (base === null) throw homeUnknown();
   const path = trimSlash(posix.normalize(posix.join(base, relative === "" ? "." : relative)));
   if (validateSandboxPathShape(path).length > 0 || !withinMode(scope, path, workspace)) {
     throw outsideMode(path, scope.mode);
@@ -628,7 +625,7 @@ function passThrough(e: unknown): unknown {
   if (e instanceof DeviceProtocolError) {
     return new ApiError(
       "device.projects_unavailable",
-      "The device answered in a form this kernel does not accept; update capybara-device on that machine",
+      "The device answered in a form this kernel does not accept; update its device program or plugin",
     );
   }
   return undefined;
@@ -655,10 +652,10 @@ const pathMissing = (path: string): ApiError =>
   );
 
 /**
- * What a failed `list(path)` becomes. A machine's policy refusal is the device refusing the path
- * in its mode (`device.project_outside_mode`); a provider's `ProjectPathRefusedError` is
- * `device.project_refused` with its reason. Any other error alone cannot tell a file or an
- * unreadable directory from a failure on the device, so the device is asked `stat(path)`: a file
+ * What a failed `list(path)` becomes. A provider's `ProjectPathRefusedError` is
+ * `device.project_refused` with its reason; the owner browse scope refusing the path is the
+ * device refusing it (`device.project_outside_mode`). Any other error alone cannot tell a file or
+ * an unreadable directory from a failure on the device, so the device is asked `stat(path)`: a file
  * or a directory it cannot list is the path's problem (422 `device.project_path_unreadable`), a
  * missing path `device.project_path_missing`, and a `stat` that fails too means the device could
  * not be asked (503 `device.projects_unavailable`).
@@ -679,10 +676,7 @@ async function listFailure(
   }
   const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
   // the owner browse scope refusing the path is the device refusing it (gate on only)
-  if (
-    (e instanceof ToolError && e.message.startsWith(POLICY_REFUSAL_PREFIX)) ||
-    (r.browse && isSandboxScopeDeniedError(e))
-  ) {
+  if (r.browse && isSandboxScopeDeniedError(e)) {
     return new ApiError(
       "device.project_outside_mode",
       `The device refused ${clipped(path)} in ${mode} mode${why}`,

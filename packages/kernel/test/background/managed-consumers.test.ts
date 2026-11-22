@@ -589,7 +589,7 @@ describe("HTTP output of managed tasks", () => {
     expect(res.json()).toMatchObject({
       source: "event",
       truncated: true,
-      unavailable: { reason: "output_missing", environment: "local" },
+      unavailable: { reason: "output_missing", provider: "@managed-consumer-test" },
     });
     expect((res.json() as { text: string }).text).toContain("last words");
   });
@@ -898,7 +898,6 @@ describe("fix round 2: owed stops are applied fairly", () => {
         org_id: f.orgId,
         owner_kind: "personal",
         owner_account_id: owner.id,
-        source: "local",
         provider: "@managed-consumer-test",
         name: "Parked",
       })

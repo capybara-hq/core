@@ -13,11 +13,13 @@ import type { DeviceList, DeviceView } from "../../src/devices/devices.service.j
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createOrg,
   enableDeviceProviders,
@@ -155,15 +157,14 @@ describe("devices API", () => {
       name: "Repo",
       isDefault: false,
       ownerKind: "personal",
-      source: "cloud",
       provider: "device-fake",
+      dialIn: false,
       available: true,
-      sessionIsolation: false,
+      online: null,
+      machine: null,
       filesLost: false,
       instance: null,
       limits: { network: { kind: expect.any(String), hosts: expect.any(Array) } },
-      // a cloud device has no machine and no owner ceiling, and never runs outside its sandbox
-      ownerCeiling: null,
       sandbox: {
         network: "open",
         networkCeiling: "open",
@@ -446,6 +447,46 @@ describe("devices API", () => {
     expect((err as ApiError).code).toBe("device.not_found");
   });
 
+  it("a leftover device of a provider that no longer exists (@local) is deleted and cleaned up", async () => {
+    const me = await member();
+    // a local device from before local devices left the kernel: bound to `@local` for life, with
+    // its signed-in machine (migration 0177 dropped its instance row: no provider can destroy it)
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, name, provider)
+      VALUES (${id}, ${orgId}, 'personal', ${me.id}, 'Old laptop', '@local')`.execute(raw);
+    await sql`INSERT INTO capybara.device_machines
+        (org_id, device_id, account_id, credential_hash, name, os, arch)
+      VALUES (${orgId}, ${id}, ${me.id}, ${randomUUID()}, 'mbp', 'darwin', 'arm64')`.execute(raw);
+    const list = await me.req({ method: "GET", url: base() });
+    expect((list.json() as DeviceList).items.find((d) => d.id === id)).toMatchObject({
+      provider: "@local",
+      available: false,
+    });
+    const del = await me.req({ method: "DELETE", url: `${base()}/${id}` });
+    expect(del.statusCode, del.body).toBe(202);
+    const row = await db
+      .selectFrom("devices")
+      .select("deleted_at")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.deleted_at).not.toBeNull();
+    const machine = await db
+      .selectFrom("device_machines")
+      .select("revoked_at")
+      .where("device_id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(machine.revoked_at).not.toBeNull();
+    // the owed destruction finds nothing to destroy and settles (nothing dead, nothing left)
+    await drainOutbox(k.app, { jobId: deviceDestroyJobId(id) });
+    expect(
+      await db
+        .selectFrom("outbox")
+        .select("id")
+        .where("job_id", "=", deviceDestroyJobId(id))
+        .execute(),
+    ).toEqual([]);
+  });
+
   it("reset files after files_lost", async () => {
     const me = await member();
     const env = await create(me.req, "Fragile");
@@ -506,7 +547,7 @@ describe("device providers (device-provider spec §6.1)", () => {
     const m = await member();
     const before = new Set(await fakeFileSystems(root));
     const onB = await create(m.req, "On B", "device-fake-b");
-    expect(onB).toMatchObject({ provider: "device-fake-b", available: true, source: "cloud" });
+    expect(onB).toMatchObject({ provider: "device-fake-b", available: true, dialIn: false });
     const created = await db
       .selectFrom("audit_events")
       .select("detail")
@@ -586,7 +627,13 @@ describe("device providers (device-provider spec §6.1)", () => {
     const service = k.app.get(DevicesService);
     await setEnabled("device-fake-b", false);
     try {
-      for (const provider of ["device-fake-b", "@local", "nope", "Device-Fake", "a".repeat(60)]) {
+      for (const provider of [
+        "device-fake-b",
+        "@in-process",
+        "nope",
+        "Device-Fake",
+        "a".repeat(60),
+      ]) {
         const res = await m.req({ method: "POST", url: base(), payload: { name: "x", provider } });
         expect(res.statusCode, provider).toBe(400);
         const error = (res.json() as { error: { code: string; details?: { path: string }[] } })
@@ -902,7 +949,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
     expect(changed).toHaveLength(1);
   });
 
-  it("an API token may only narrow it (a rename still works); a local device's network is its machine's", async () => {
+  it("an API token may only narrow it (a rename still works); a dial-in device's network is set the same way", async () => {
     await setOrgNetwork(null);
     const me = await member();
     const env = await create(me.req, "Tokened");
@@ -942,13 +989,6 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-
-    const local = await k.app
-      .get(TransactionHost)
-      .run(() => k.app.get(DevicesService).createLocal(orgId, me.id, "Laptop"));
-    const res = await patch(me.req, local.id, { network: { mode: "allowlist" } });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.ceiling_on_machine");
   });
 
   it("another member or the org's owner changing my device gets not_found", async () => {

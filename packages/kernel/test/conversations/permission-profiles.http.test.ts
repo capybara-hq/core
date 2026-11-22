@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -26,10 +26,9 @@ import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
-import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
+import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
@@ -137,20 +136,48 @@ async function createConv(req: Req, orgId: string, agentId: string): Promise<Con
   return (res.json() as { conversation: ConvJson }).conversation;
 }
 
-async function localDevice(orgId: string, name = "Laptop") {
-  const providers = k.app.get(DeviceProviders),
-    local = providers.forDevice("@local");
-  if (!local) throw new Error("Local provider was not registered");
-  const impl = Object.create(local.impl);
+/**
+ * A provider every operation of which throws: a read-only permission API that reaches it fails.
+ * `contract: false` leaves out the scoped operation factory (an outdated provider plugin).
+ */
+function neverProbingProvider(contract = true): DeviceProvider {
   const neverProbe = async () => {
     throw new Error("Read-only permission API attempted a provider operation");
   };
-  Object.assign(impl, {
-    operation: neverProbe,
-    revokeOperation: neverProbe,
-    permissionSupport: neverProbe,
+  const methods = [
+    "createFileSystem",
+    "destroyFileSystem",
+    "destroyFileSystemByName",
+    "create",
+    "resume",
+    "suspend",
+    "destroy",
+    "destroyByName",
+    "killAll",
+    "killTagged",
+    "exec",
+    "readFile",
+    "writeFile",
+    "stat",
+    "list",
+    "scan",
+    "permissionSupport",
+    ...(contract ? ["operation", "revokeOperation"] : []),
+  ];
+  return {
+    ...Object.fromEntries(methods.map((m) => [m, neverProbe])),
+    concurrentExec: true,
+    networkAllowlist: true,
+  } as unknown as DeviceProvider;
+}
+
+/** A device of the in-process `@permission-test` provider with a signed-in machine. */
+async function localDevice(orgId: string, name = "Laptop") {
+  k.app.get(DeviceProviders).register({
+    plugin: "@permission-test",
+    version: KERNEL_VERSION,
+    impl: neverProbingProvider(),
   });
-  providers.register({ plugin: "@permission-test", version: KERNEL_VERSION, impl });
   const db = kernelDb(raw);
   const id = randomUUID();
   await db
@@ -160,7 +187,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: owner.id,
-      source: "local",
       provider: "@permission-test",
       name,
     })
@@ -175,14 +201,27 @@ async function localDevice(orgId: string, name = "Laptop") {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   return id;
+}
+
+/** The device's provider tells, in its stored report, that it runs nothing outside its sandbox. */
+async function providerAllowsNoOutside(deviceId: string): Promise<void> {
+  await kernelDb(raw)
+    .updateTable("devices")
+    .set({
+      report: JSON.stringify({
+        revision: "r1",
+        description: { en: "A test device." },
+        home: null,
+        limits: [],
+        reset: false,
+        support: { ...SUPPORTS_BOTH, outsideSandbox: false },
+      }),
+    })
+    .where("id", "=", deviceId)
+    .execute();
 }
 
 describe("Conversation permission profiles", () => {
@@ -270,13 +309,11 @@ describe("Conversation permission profiles", () => {
       agentId = await createAgent(req, orgId),
       deviceId = await localDevice(orgId);
     // a provider without the operation factory (an outdated device provider plugin)
-    const local = k.app.get(DeviceProviders).forDevice("@local");
-    if (!local) throw new Error("Local provider was not registered");
-    const impl = Object.create(local.impl);
-    Object.assign(impl, { operation: undefined, revokeOperation: undefined });
-    k.app
-      .get(DeviceProviders)
-      .register({ plugin: "@no-factory-test", version: "0.1.0-rc.16", impl });
+    k.app.get(DeviceProviders).register({
+      plugin: "@no-factory-test",
+      version: "0.1.0-rc.16",
+      impl: neverProbingProvider(false),
+    });
     await kernelDb(raw)
       .updateTable("devices")
       .set({ provider: "@no-factory-test" })
@@ -489,11 +526,7 @@ describe("Conversation permission profiles", () => {
       agentId = await createAgent(req, orgId),
       conv = await createConv(req, orgId, agentId),
       deviceId = await localDevice(orgId);
-    await kernelDb(raw)
-      .updateTable("device_machines")
-      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
-      .where("device_id", "=", deviceId)
-      .execute();
+    await providerAllowsNoOutside(deviceId);
     for (const migration of [
       "0146_permission_authority_epochs.sql",
       "0147_conversation_permission_profiles.sql",
@@ -568,8 +601,9 @@ describe("Conversation permission profiles", () => {
     const previewUrl = `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`;
     const preview = await req({ method: "GET", url: previewUrl });
     expect(preview.statusCode, preview.body).toBe(200);
+    // no support known yet: nothing runs outside the sandbox until the provider's support says so
     expect(preview.json()).toMatchObject({
-      outsideSandboxCeiling: true,
+      outsideSandboxCeiling: false,
       availability: { state: "unprobed" },
     });
     expect(
@@ -621,9 +655,22 @@ describe("Conversation permission profiles", () => {
       provider: "@permission-test",
       version: "test-1",
     });
-    expect((await req({ method: "GET", url: previewUrl })).json().scopeRevision).toBe(
-      preview.json().scopeRevision,
-    );
+    // the support now known runs outside the sandbox, which the consent given before it did not
+    // cover: Full access asks again, and the person confirms it with that crossing shown
+    expect((await req({ method: "GET", url })).json().profile).toBe("approve-for-me");
+    const shown = await req({ method: "GET", url: previewUrl });
+    expect(shown.json()).toMatchObject({ outsideSandboxCeiling: true });
+    const current = (await req({ method: "GET", url })).json() as { revision: number };
+    const again = await req({
+      method: "PATCH",
+      url,
+      payload: {
+        profile: "full-access",
+        expectedRevision: current.revision,
+        consentScopeRevision: shown.json().scopeRevision,
+      },
+    });
+    expect(again.statusCode, again.body).toBe(200);
     expect((await req({ method: "GET", url })).json().profile).toBe("full-access");
     expect(provision).not.toHaveBeenCalled();
     provision.mockRestore();
@@ -640,11 +687,14 @@ describe("Conversation permission profiles", () => {
     );
     // Full access keeps the sandbox: a scoped filesystem, never the device pair
     expect(scope).toMatchObject({ profile: "full-access", filesystem: { kind: "scoped" } });
-    await kernelDb(raw)
-      .updateTable("device_machines")
-      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
-      .where("device_id", "=", deviceId)
-      .execute();
+    // the provider's current support no longer runs outside the sandbox
+    await seedInstalledEvidence(k, raw, {
+      orgId,
+      deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+      report: { ...SUPPORTS_BOTH, outsideSandbox: false },
+    });
     // running outside removed is a narrowing: the consent still covers the device
     expect((await req({ method: "GET", url })).json()).toMatchObject({
       profile: "full-access",
@@ -674,11 +724,7 @@ describe("Conversation permission profiles", () => {
       method: "GET",
       url: `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`,
     });
-    await kernelDb(raw)
-      .updateTable("device_machines")
-      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
-      .where("device_id", "=", deviceId)
-      .execute();
+    await providerAllowsNoOutside(deviceId);
     const first = await req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/first-message`,

@@ -498,8 +498,8 @@ describe("the device picker (environments design §4.1)", () => {
       ...DEVICES,
       items: [
         ...DEVICES.items,
-        envView("d1", "Laptop", { source: "local", provider: "@local", online: true }),
-        envView("d2", "Server", { source: "local", provider: "@local", online: false }),
+        envView("d1", "Laptop", { dialIn: true, provider: "@local", online: true }),
+        envView("d2", "Server", { dialIn: true, provider: "@local", online: false }),
       ],
       lastUsedId: "d2",
     };
@@ -524,7 +524,7 @@ describe("the device picker (environments design §4.1)", () => {
       outsideSandbox,
       layer: { network: "device", outsideSandbox: outsideSandbox ? null : "device" },
     });
-    const local = { source: "local", provider: "@local", online: true };
+    const local = { dialIn: true, provider: "@local", online: true };
     const devices = {
       ...DEVICES,
       items: [
@@ -552,7 +552,7 @@ describe("the device picker (environments design §4.1)", () => {
     await renderRouteWithCache(
       "/",
       withDevices({
-        items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: true })],
+        items: [envView("d1", "Laptop", { dialIn: true, provider: "@local", online: true })],
         defaultId: null,
         lastUsedId: null,
         providers: [],
@@ -571,7 +571,7 @@ describe("the device picker (environments design §4.1)", () => {
     await renderRouteWithCache(
       "/",
       withDevices({
-        items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: false })],
+        items: [envView("d1", "Laptop", { dialIn: true, provider: "@local", online: false })],
         defaultId: null,
         lastUsedId: null,
         providers: [],
@@ -598,7 +598,7 @@ describe("the device picker (environments design §4.1)", () => {
     await renderRouteWithCache(
       "/",
       withDevices({
-        items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: false })],
+        items: [envView("d1", "Laptop", { dialIn: true, provider: "@local", online: false })],
         defaultId: null,
         lastUsedId: null,
         providers: [],

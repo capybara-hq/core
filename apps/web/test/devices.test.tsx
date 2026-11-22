@@ -42,7 +42,6 @@ const SANDBOX = {
   ownNetwork: null,
   allowedDomains: [],
   outsideSandbox: false,
-  restrictedProjectReach: "workspace",
   layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
@@ -53,10 +52,9 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   name,
   isDefault: name === null,
   ownerKind: "personal",
-  source: "cloud",
+  dialIn: false,
   provider: "sandbox-docker",
   available: true,
-  sessionIsolation: false,
   filesLost: false,
   instance: null,
   limits: LIMITS,
@@ -100,7 +98,7 @@ const routes = {
       200,
       list([
         env("e1", null, { instance: { status: "running", lastUsedAt: T } }),
-        env("e2", "Build box", { sessionIsolation: true, filesLost: true }),
+        env("e2", "Build box", { filesLost: true }),
       ]),
     ),
   ...NO_PROJECTS,
@@ -554,20 +552,19 @@ describe("local devices (environments spec §6, §9)", () => {
     id: "m1",
     name: "grant-mbp",
     os: "darwin",
-    mode: "os",
     programVersion: "0.1.0",
     lastSeenAt: T,
   };
   const device = (id: string, name: string, over: Record<string, unknown> = {}) =>
     env(id, name, {
-      source: "local",
+      dialIn: true,
       provider: "@local",
       online: true,
       machine: MACHINE,
       ...over,
     });
 
-  it("a device card says 本地设备 and whether its machine is online", async () => {
+  it("devices list marks a dial-in device online from dialIn and online", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(200, list([device("d1", "Laptop"), device("d2", "Server", { online: false })])),
@@ -933,86 +930,31 @@ describe("local devices (environments spec §6, §9)", () => {
   });
 });
 
-describe("a local machine's allowlist (approval-only profiles design)", () => {
-  const S = E.sandbox;
-  const MACHINE = {
-    id: "m1",
-    name: "grant-mbp",
-    os: "darwin",
-    mode: "os",
-    programVersion: "0.1.0",
-    lastSeenAt: T,
-  };
-  const ceiling = (allowedDomains: string[]) => ({
-    state: "report",
-    revision: "r1",
-    sequence: 1,
-    outsideSandbox: false,
-    network: "allowlist",
-    allowedDomains,
-    restrictedProjectReach: "workspace",
-    observedAt: T,
-    stale: false,
-  });
-  const local = (allowedDomains: string[] = ["files.example.com"]) =>
-    env("e1", "Laptop", {
-      source: "local",
-      provider: "@local",
-      online: true,
-      machine: MACHINE,
-      network: {
-        features: ["networkReport", "policyOp", "policyOpId"],
-        policy: { mode: "sandbox", allowedDomains },
-      },
-      ownerCeiling: ceiling(allowedDomains),
-    });
-
-  it("removes a host: the change goes to the machine and the device is read again", async () => {
-    let removed = false;
+describe("a dial-in machine's allowlist (read only)", () => {
+  it("lists the hosts on 概览 and offers no way to change them from the page", async () => {
     const calls = stubApi({
       ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () => json(200, { device: local(removed ? [] : undefined) }),
-      [`POST ${BASE}/e1/policy`]: () => {
-        removed = true;
-        return json(200, { policy: { mode: "sandbox", allowedDomains: [] } });
-      },
-    });
-    const { client } = await renderDetail();
-    client.setQueryData(["org", "o1", "devices"], list([local()]));
-    const user = await openSettings();
-    expect(await screen.findByText("files.example.com")).toBeTruthy();
-    await user.click(
-      screen.getByRole("button", { name: S.removeLabel.replace("{host}", "files.example.com") }),
-    );
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      remove: ["files.example.com"],
-    });
-    // read again: the host is gone (and with it the open network's host list)
-    await vi.waitFor(() => expect(screen.queryByText("files.example.com")).toBeNull());
-    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
-  });
-
-  it("a refused change shows why with the machine's message", async () => {
-    stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
-      [`POST ${BASE}/e1/policy`]: () =>
-        json(409, {
-          error: {
-            code: "device.policy_refused",
-            message: "change it on the machine: capybara-device policy add allowedDomains a.com",
-          },
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: env("e1", "Laptop", {
+            dialIn: true,
+            provider: "@local",
+            online: true,
+            machine: {
+              id: "m1",
+              name: "grant-mbp",
+              os: "darwin",
+              programVersion: "0.1.0",
+              lastSeenAt: T,
+            },
+            sandbox: { ...SANDBOX, network: "allowlist", hosts: ["files.example.com"] },
+          }),
         }),
     });
     await renderDetail();
-    const user = await openSettings();
-    await user.click(
-      await screen.findByRole("button", {
-        name: S.removeLabel.replace("{host}", "files.example.com"),
-      }),
-    );
-    expect(await screen.findByText(en.errors.device.policy_refused)).toBeTruthy();
-    expect(screen.getByText(/capybara-device policy add allowedDomains a\.com/)).toBeTruthy();
+    expect(await screen.findByText("files.example.com")).toBeTruthy();
+    await openSettings();
+    expect(screen.queryByRole("button", { name: /files\.example\.com/ })).toBeNull();
+    expect(calls.some((c) => c.url.endsWith("/policy"))).toBe(false);
   });
 });

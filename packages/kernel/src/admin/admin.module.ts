@@ -14,6 +14,7 @@ import { PushModule } from "../push/push.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
+import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { AuditLogService } from "./audit-log.service.js";
 import { AdminHealthService } from "./health.service.js";
 import { OrgNetworkAdmin } from "./org-network.service.js";
@@ -31,6 +32,7 @@ import { AdminUsageService } from "./usage.service.js";
  */
 @Module({
   imports: [
+    SandboxProviderRegistryModule,
     IdentityModule,
     OrgsModule,
     SetupLockModule,

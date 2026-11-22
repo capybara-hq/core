@@ -48,7 +48,8 @@ function lineOf(text: string, name: string): number {
 /**
  * The bootstrap manifest (`packages/kernel/bootstrap.json`) pins what the image bakes and init
  * installs, so it must match what the workspace packs:
- * - the manifest must parse (`parseBootstrapManifest`; rule `bootstrap-invalid`);
+ * - the manifest must parse (`parseBootstrapManifest`; rule `bootstrap-invalid`, and
+ *   `bootstrap-scope` for a `scope` on a required or builtin entry);
  * - every `source: "workspace"` entry's `path` (relative to `repoRoot`) is packed with
  *   plugin-tools' `packPlugin` (byte-reproducible) into a temporary directory that is removed afterwards:
  *   a pack that fails is `bootstrap-pack`, a plugin whose name differs from the entry's is
@@ -93,7 +94,17 @@ export async function checkBootstrap(
     return [at(1, "bootstrap-invalid", `not valid JSON: ${(e as Error).message}`)];
   }
   const parsed = parseBootstrapManifest(raw);
-  if ("errors" in parsed) return parsed.errors.map((m) => at(1, "bootstrap-invalid", m));
+  if ("errors" in parsed) {
+    return parsed.errors.map((m) =>
+      at(
+        1,
+        m.endsWith("scope applies only to optional preinstalls")
+          ? "bootstrap-scope"
+          : "bootstrap-invalid",
+        m,
+      ),
+    );
+  }
 
   const findings: Finding[] = [];
   const rawPlugins = (raw as { plugins: Record<string, unknown>[] }).plugins;

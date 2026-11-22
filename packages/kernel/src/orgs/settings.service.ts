@@ -47,12 +47,10 @@ import {
 } from "../sandbox/modes.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import {
-  cloudDevicesFollowingDefault,
+  devicesFollowingDefault,
   hostsNarrowed,
-  localMachineRoots,
   needsFullCeiling,
   needsOpenNetwork,
-  needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
 import {
@@ -1062,13 +1060,12 @@ export class OrgSettingsService {
         (effOutside(before) === "off" && effOutside(reread) === "allowed") ||
         effectiveNetworkWidens(prevNet, nextNet) !== null ||
         deviceNetworkHostsWiden(before.deviceNetwork, reread.deviceNetwork);
-      const machineRoots = await localMachineRoots(this.db.db, orgId);
       // a network ceiling narrowed to the allowlist takes running open-network work; a default
-      // narrowed to the allowlist takes it from the cloud devices that follow the default
+      // narrowed to the allowlist takes it from the devices that follow the default
       const networkNarrowed = prevNet.ceiling === "open" && nextNet.ceiling === "allowlist";
       const following =
         !networkNarrowed && prevNet.default === "open" && nextNet.default === "allowlist"
-          ? await cloudDevicesFollowingDefault(this.db.db, orgId)
+          ? await devicesFollowingDefault(this.db.db, orgId)
           : null;
       // the per-call hosts the org's new ceiling still allows (its hard allowlist ceiling and its
       // exclusions): an independent grant keeps a removed host only within it
@@ -1077,7 +1074,6 @@ export class OrgSettingsService {
         { boundary: "operation", networkMode: "allowlist", networkCeiling: nextNet.ceiling },
         lim,
         reread.deviceNetwork === undefined ? {} : { deviceNetwork: reread.deviceNetwork },
-        null,
       );
       const orgHosts = orgEffectiveHosts(lim, reread.deviceNetwork);
       await this.ceilings.publishLocked(
@@ -1089,13 +1085,7 @@ export class OrgSettingsService {
             (networkNarrowed || following?.has(row.device_id) === true)
           )
             return true;
-          // outside off takes escalated work and restricted work outside the machine's roots;
-          // anything else still goes through the host check below
-          if (
-            after.outsideSandbox === "off" &&
-            needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id))
-          )
-            return true;
+          // outside off takes escalated work; anything else still goes through the host check
           if (needsFullCeiling(scope)) return after.outsideSandbox === "off";
           return hostsNarrowed(scope, row, orgHosts, (host) => hostGrantable(grantCeiling, host));
         },

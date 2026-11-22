@@ -13,10 +13,9 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxDispatcher } from "../../src/infra/outbox/outbox.dispatcher.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
@@ -254,7 +253,6 @@ async function consentFixture() {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: accountId,
-      source: "cloud",
       provider: "@activation-test",
     })
     .execute();
@@ -292,6 +290,16 @@ async function consentFixture() {
     provider: "@activation-test",
     version: "test",
     applied: { mode: "auto", network: { kind: "open-public", hosts: [] } },
+    // a cloud instance is its own sandbox: an instance boundary, nothing outside it; it enforces
+    // an allowlist only, so its sandbox network names the hosts a removal takes
+    report: {
+      version: 2,
+      boundary: "instance",
+      restricted: null,
+      network: { openPublic: false, allowlist: true, perOperationHosts: false },
+      outsideSandbox: false,
+      background: true,
+    },
   });
   const a = readers();
   await a.publication.initialize();
@@ -687,45 +695,6 @@ it.each(["exec", "backgroundStart"] as const)(
     // the sandbox is the same under every profile: Full access work loses the host too
     expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("revoked");
     expect(rows.find((r) => r.operation_id === restrictedId)?.state).toBe("revoked");
-  },
-);
-
-it.each(["exec", "backgroundStart"] as const)(
-  "actual owner writer narrows %s baseline under every profile but preserves recorded additions",
-  async (method) => {
-    const f = await consentFixture();
-    const fullId = await intent(f, false, method);
-    const revokedId = await intent(f, true, method);
-    const grantedId = await intent(f, true, method);
-    await db
-      .updateTable("sandbox_operation_intents")
-      .set({ granted_hosts: JSON.stringify(["a.example"]) })
-      .where("operation_id", "=", grantedId)
-      .execute();
-    const machine = await db
-      .insertInto("device_machines")
-      .values({
-        org_id: f.orgId,
-        device_id: f.deviceId,
-        account_id: f.accountId,
-        credential_hash: randomUUID(),
-        name: "fixture",
-        os: "darwin",
-        arch: "arm64",
-        local_policy: JSON.stringify({ allowedDomains: ["a.example"] }),
-      })
-      .returning("id")
-      .executeTakeFirstOrThrow();
-    await k.app.get(MachinesService).recordPolicy(machine.id, { allowedDomains: [] });
-    const rows = await db
-      .selectFrom("sandbox_operation_intents")
-      .select(["operation_id", "state"])
-      .where("operation_id", "in", [fullId, revokedId, grantedId])
-      .execute();
-    // the sandbox is the same under every profile: Full access work loses the host too
-    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("revoked");
-    expect(rows.find((r) => r.operation_id === grantedId)?.state).toBe("admitted");
-    expect(rows.find((r) => r.operation_id === revokedId)?.state).toBe("revoked");
   },
 );
 

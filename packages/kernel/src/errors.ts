@@ -460,32 +460,24 @@ export const ERROR_CODES = {
   /** The person already has `devices.maxPersonal` live personal devices. */
   "device.limit_reached": 409,
   /**
-   * A local device's files are on its machine: they cannot be reset from the platform; run
-   * `capybara-device logout`, then `capybara-device login` into the device, on the machine
-   * (ruling R24).
+   * The device's provider offers no file reset (its report's `reset` is false): its files are
+   * kept where the provider keeps them; the message carries the provider's description.
    */
   "device.files_on_device": 409,
-  /** The local device's machine is not connected now (no replica holds its lease). */
+  /** A dial-in device's machine is not connected now (no replica holds its lease). */
   "device.offline": 503,
-  /** The local device's machine runs a `capybara-device` too old for this kernel; update it. */
+  /** The device's machine speaks another dial-in protocol than its provider declares. */
   "device.program_outdated": 426,
   /**
-   * The device's machine refused a network policy change (it runs in Docker mode or an older
-   * program, or a host is invalid); the message says how to allow it on the machine.
+   * A machine connected for a device whose provider is off in the org, not loaded, or serves no
+   * dial-in channel (`GET /device/connect`).
    */
-  "device.policy_refused": 409,
-  /** The device cannot change its network policy from the platform (cloud, or an older program). */
-  "device.policy_unsupported": 409,
+  "device.provider_unavailable": 403,
   /**
    * B1: a cloud device's snapshot found applied limits it could not establish exactly; no operation
    * is admitted until a lifecycle action (a file reset) establishes them.
    */
   "device.permission_reconcile_required": 409,
-  "device.owner_report_stale": 409,
-  /** A local device's old instance may still run legacy work until the computer restarts (8.5). */
-  "device.restart_required": 503,
-  /** A local device's old instance may still run legacy work and no restart can prove it (8.5). */
-  "device.replace_required": 503,
   /** A cloud device's earlier instance may run legacy work no evidence can cover (8.5). */
   "device.recreate_required": 503,
   /**
@@ -495,16 +487,7 @@ export const ERROR_CODES = {
   "device.network_not_allowed": 400,
   /** Running outside the sandbox where the device, its org, the platform or its provider forbids it. */
   "device.outside_sandbox_not_allowed": 409,
-  /**
-   * A local device's sandbox settings live on its machine: the web narrows them with
-   * `POST /devices/:id/policy`, the owner widens them on the machine (`capybara-device ceiling set`,
-   * `capybara-device policy add allowedDomains`).
-   */
-  "device.ceiling_on_machine": 409,
-  /**
-   * The device offers no projects (project root §4.1): its `capybara-device` does not announce
-   * `projects` (update it), or its cloud sandbox provider has no `list` / `scan`.
-   */
+  /** The device offers no projects (project root §4.1): its provider has no `list` / `scan`. */
   "device.projects_unsupported": 409,
   /** The device could not be asked about its directories now; the message says why. */
   "device.projects_unavailable": 503,
@@ -526,8 +509,6 @@ export const ERROR_CODES = {
    * cloud devices: the workspace; project root §4.2).
    */
   "device.project_outside_mode": 422,
-  /** Auto mode resolves a relative path against the owner's home, which the device has not reported. */
-  "device.project_home_unknown": 409,
   /**
    * The project's path lies above the owner's home (`/`, `/home`, `/Users`, an ancestor of the
    * reported home): too broad to be a project.

@@ -2,6 +2,7 @@
 import { DEFAULT_LIMITS } from "../../src/lib/attachments";
 import type { ConversationEvent } from "../../src/lib/conversations";
 import type {
+  ConsentReach,
   ConversationPermissions,
   PermissionAvailability,
   PermissionPreview,
@@ -110,36 +111,59 @@ export function permissionAvailability(
   return { state, reason: "Checked when this device starts" };
 }
 
-/** A side-effect-free device preview, separate from a conversation's effective profile. */
-export const permissionPreview = (over: Partial<PermissionPreview> = {}): PermissionPreview => ({
-  deviceId: "d1",
-  project: null,
-  scopeRevision: "scope-1",
-  availability: permissionAvailability(),
-  outsideSandboxCeiling: true,
-  ...over,
+/**
+ * A consent reach a test states: running outside the sandbox only when `outsideSandbox`, open
+ * network. It never reads the runtime's support: a test of a stored support the runtime has not
+ * reported yet passes its own reach.
+ */
+export const consentReachOf = (outsideSandbox: boolean): ConsentReach => ({
+  outsideSandbox,
+  networkCeiling: "open",
+  networkMode: "open",
+  hostCeiling: { kind: "any", excluded: [] },
 });
+
+/** A side-effect-free device preview, separate from a conversation's effective profile. */
+export const permissionPreview = (over: Partial<PermissionPreview> = {}): PermissionPreview => {
+  const availability = over.availability ?? permissionAvailability();
+  const outsideSandboxCeiling = over.outsideSandboxCeiling ?? true;
+  return {
+    deviceId: "d1",
+    project: null,
+    scopeRevision: "scope-1",
+    availability,
+    outsideSandboxCeiling,
+    consentReach: consentReachOf(outsideSandboxCeiling),
+    ...over,
+  };
+};
 
 /** Revision zero is a real initial profile, and no device has neither scope nor a ceiling. */
 export const permissionsView = (
   over: Partial<ConversationPermissions> = {},
-): ConversationPermissions => ({
-  profile: "approve-for-me",
-  revision: 0,
-  rootConversationId: "c1",
-  deviceId: null,
-  consentScope: null,
-  scopeRevision: null,
-  availability: {
+): ConversationPermissions => {
+  const availability: PermissionAvailability = over.availability ?? {
     state: "unsupported",
     reason: "Choose a device to run device operations",
     cause: { kind: "runtime" },
-  },
-  outsideSandboxCeiling: false,
-  startingWorkNotice:
-    "Changes apply to new operations. Work already started keeps its starting permissions.",
-  ...over,
-});
+  };
+  const outsideSandboxCeiling = over.outsideSandboxCeiling ?? false;
+  return {
+    profile: "approve-for-me",
+    revision: 0,
+    rootConversationId: "c1",
+    deviceId: null,
+    consentScope: null,
+    scopeRevision: null,
+    availability,
+    outsideSandboxCeiling,
+    // the kernel reads a reach only where it read the device's scope
+    consentReach: over.scopeRevision != null ? consentReachOf(outsideSandboxCeiling) : null,
+    startingWorkNotice:
+      "Changes apply to new operations. Work already started keeps its starting permissions.",
+    ...over,
+  };
+};
 
 const ENV_LIMITS = {
   cpu: 2,
@@ -155,7 +179,6 @@ export const ENV_SANDBOX = {
   ownNetwork: null,
   allowedDomains: [],
   outsideSandbox: false,
-  restrictedProjectReach: "workspace",
   layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
@@ -166,13 +189,12 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   name,
   isDefault: name === null,
   ownerKind: "personal",
-  source: "cloud",
+  dialIn: false,
   provider: "sandbox-docker",
   available: true,
   report: null,
   online: null,
   machine: null,
-  sessionIsolation: false,
   filesLost: false,
   instance: null,
   limits: ENV_LIMITS,

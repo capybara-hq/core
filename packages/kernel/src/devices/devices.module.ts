@@ -1,7 +1,8 @@
 import { Module } from "@nestjs/common";
+import { DialInModule } from "../dial-in/dial-in.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { PermissionFactsModule } from "../sandbox/permission-facts.module.js";
+import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxFileReader } from "../sandbox/sandbox-file-reader.js";
 import { DeviceAccess } from "./access.js";
@@ -18,12 +19,13 @@ import { DevicesService } from "./devices.service.js";
  * {@link SandboxModule}'s.
  */
 @Module({
-  // ExtensionsModule: the provider display names; LocalDevicesModule: deleting
-  // a local device revokes its machine
+  // ExtensionsModule: the provider display names; DialInModule: deleting a dial-in device
+  // revokes its machine, and whether its machine is online
   imports: [
     SandboxModule,
+    SandboxProviderRegistryModule,
     ExtensionsModule,
-    LocalDevicesModule,
+    DialInModule,
     DeviceAccessModule,
     DeviceProviderSelectionModule,
     PermissionFactsModule,

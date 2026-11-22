@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { DiscoveryService } from "@nestjs/core";
 import { Queue, Worker } from "bullmq";
@@ -9,11 +10,12 @@ import { AdminHealthService, KERNEL_QUEUE_NAMES } from "../../src/admin/health.s
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { TITLE_QUEUE } from "../../src/conversations/titles.js";
 import { createDb } from "../../src/db/pool.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { PRESENCE_INTERVAL_MS } from "../../src/infra/presence/replica-presence.js";
 import { bullConnectionOptions } from "../../src/infra/queue/redis-connection.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
@@ -33,6 +35,8 @@ let k: TestKernel;
 const queues: Queue[] = [];
 
 const SECRET = "conversation-secret-payload";
+/** An in-process provider serving its devices over the dial-in channel (it implements `dialIn`). */
+const DIAL_IN_STUB = "@dial-in-stub";
 const FAILURE = "failure text quoting user input";
 
 beforeAll(async () => {
@@ -109,9 +113,15 @@ describe("AdminHealthService.read", () => {
     await seedChannel(orgId, agentId, accountId, "error", "long_connection");
     await seedChannel(orgId, agentId, accountId, "error", "webhook");
     await seedChannel(orgId, agentId, accountId, "active", "long_connection", true);
-    // devices: 2 local (1 connected), 1 cloud
-    await seedDevice(db(), orgId, undefined, "local");
-    await seedDevice(db(), orgId, undefined, "local");
+    // devices: 2 of a dial-in provider (1 connected), 1 of another provider
+    k.app.get(DeviceProviders).register({
+      plugin: DIAL_IN_STUB,
+      version: "0.0.0",
+      impl: { dialIn: { onHello: async () => ({ ok: true }) } } as unknown as DeviceProvider,
+    });
+    await seedDevice(db(), orgId, undefined, DIAL_IN_STUB);
+    await seedDevice(db(), orgId, undefined, DIAL_IN_STUB);
+    await seedDevice(db(), orgId);
     // sandboxes: docker 2 running + 1 suspended, e2b 1 running, 1 destroyed (not counted)
     await seedInstance(orgId, "sandbox-docker", "running");
     await seedInstance(orgId, "sandbox-docker", "running");
@@ -124,7 +134,7 @@ describe("AdminHealthService.read", () => {
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${gone.orgId}`.execute(db());
 
     vi.spyOn(k.app.get(ChannelSupervisor), "heldCount").mockReturnValue(2);
-    vi.spyOn(k.app.get(LocalDeviceGateway), "connectionCount").mockReturnValue(1);
+    vi.spyOn(k.app.get(DialInGateway), "connectionCount").mockReturnValue(1);
 
     // queues: runs 2 waiting + 1 delayed; titles: one failure now, one 25 h ago
     const runs = queue(RUN_QUEUE_NAME);
@@ -190,7 +200,13 @@ describe("AdminHealthService.read", () => {
     });
 
     expect(h.channels).toEqual({ online: 2, offline: 1, webhook: 1, disabled: 1, error: 2 });
-    expect(h.devices).toEqual({ online: 1, local: 2 });
+    // the other conversations' default devices are on device-fake too
+    expect(h.devices).toMatchObject({ online: 1, dialIn: 2 });
+    expect(h.devices.byProvider).toContainEqual({ provider: DIAL_IN_STUB, devices: 2 });
+    expect(h.devices.byProvider?.map((p) => p.provider).sort()).toEqual([
+      DIAL_IN_STUB,
+      "device-fake",
+    ]);
     expect(h.sandboxes).toEqual({
       running: 3,
       suspended: 1,
@@ -237,7 +253,7 @@ describe("AdminHealthService.read", () => {
         disabled: null,
         error: null,
       });
-      expect(h.devices).toEqual({ online: 1, local: null });
+      expect(h.devices).toEqual({ online: 1, dialIn: null, byProvider: null });
       expect(h.sandboxes).toBeNull();
       expect(h.replicas).toHaveLength(1);
       expect(h.roles).toEqual({ api: 1, worker: 0, gateway: 1 });
@@ -265,7 +281,7 @@ describe("AdminHealthService.read", () => {
         disabled: 1,
         error: 2,
       });
-      expect(h.devices).toEqual({ online: null, local: 2 });
+      expect(h.devices).toMatchObject({ online: null, dialIn: 2 });
       expect(h.sandboxes?.running).toBe(3);
     } finally {
       await pause.call("CLIENT", "UNPAUSE");

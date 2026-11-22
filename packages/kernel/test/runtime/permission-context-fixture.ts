@@ -16,7 +16,6 @@ import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { KERNEL_VERSION } from "../../src/version.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import type { TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -102,15 +101,18 @@ const PROVIDER_METHODS = [
   "permissionSupport",
   "revokeOperation",
 ];
+/** The in-process provider of the fixture's device (an operation-boundary machine runtime). */
+export const CONTEXT_PROVIDER = "@context-test";
+
 /**
- * Replaces the registered `@local` provider (or `opts.plugin`) with a recording, throwing one
- * (restore after).
+ * Registers a recording, throwing provider as {@link CONTEXT_PROVIDER} (or `opts.plugin`),
+ * replacing the one registered before (restore after).
  */
 export function spyProvider(
   k: TestKernel,
   opts: { contract?: boolean; plugin?: string; version?: string } = {},
 ) {
-  const plugin = opts.plugin ?? "@local";
+  const plugin = opts.plugin ?? CONTEXT_PROVIDER;
   const providers = k.app.get(DeviceProviders);
   const previous = providers.forDevice(plugin);
   const calls: string[] = [];
@@ -170,7 +172,6 @@ export async function toCloudDevice(
   await f.db
     .updateTable("devices")
     .set({
-      source: "cloud",
       provider: CLOUD_PROVIDER,
       outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }),
       network_mode: "allowlist",
@@ -201,7 +202,7 @@ export async function toCloudDevice(
         .acquire({ orgId: f.orgId, deviceId: f.deviceId }, { kind: "write", level: "device" });
       await k.app
         .get(PermissionRuntimeReports)
-        .recordCloud(f.deviceId, CLOUD_PROVIDER, CLOUD_VERSION, REPORTS[opts.report ?? "both"]);
+        .recordSupport(f.deviceId, CLOUD_PROVIDER, CLOUD_VERSION, REPORTS[opts.report ?? "both"]);
     });
   return { spy, desired };
 }
@@ -210,7 +211,6 @@ export interface ContextSeed {
   /** Null: no device selected. */
   device?: boolean | undefined;
   report?: ReportKind | null | undefined;
-  binding?: "installed" | "awaiting" | "none" | undefined;
   status?: "running" | "suspended" | undefined;
   profile?: "request-approval" | "approve-for-me" | "full-access" | undefined;
   /** Full consent for the current scope (true), for a stale one (false); default true for Full. */
@@ -222,7 +222,10 @@ export interface ContextSeed {
 
 export type ContextFixture = Awaited<ReturnType<typeof seedContext>>;
 
-/** One org, its owner, a root conversation bound to a local `@local` device and a claimed run. */
+/**
+ * One org, its owner, a root conversation bound to a device of {@link CONTEXT_PROVIDER} (with its
+ * recorded runtime report unless `report` is null) and a claimed run.
+ */
 export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: ContextSeed = {}) {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const s = await seedConversation(raw as Kysely<any>);
@@ -250,9 +253,9 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
   }
   const deviceId = randomUUID();
   const generation = String(1_700_000_000_000 + Math.floor(Math.random() * 1_000_000_000));
-  const bindingId = randomUUID();
-  let machineId: string | null = null;
   if (seed.device !== false) {
+    // readers never call the provider: a throwing one serves the device unless a test spies
+    if (!k.app.get(DeviceProviders).forDevice(CONTEXT_PROVIDER)) spyProvider(k);
     await db
       .insertInto("devices")
       .values({
@@ -260,47 +263,29 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
         org_id: s.orgId,
         owner_kind: "personal",
         owner_account_id: deviceOwner,
-        source: "local",
-        provider: "@local",
+        provider: CONTEXT_PROVIDER,
         name: "Laptop",
       })
       .execute();
-    machineId = (
-      await db
-        .insertInto("device_machines")
-        .values({
-          org_id: s.orgId,
-          device_id: deviceId,
-          account_id: deviceOwner,
-          credential_hash: randomUUID(),
-          name: "Laptop",
-          os: "darwin",
-          arch: "arm64",
-          program_version: "0.1.0",
-          features: ["projects"],
-          roots: JSON.stringify(ROOTS),
-          home: "/home/owner",
-          local_policy: JSON.stringify({ allowedDomains: [] }),
-          owner_report: storedOwnerReport(),
-        })
-        .returning("id")
-        .executeTakeFirstOrThrow()
-    ).id;
     await db
       .insertInto("device_instances")
       .values({
         device_id: deviceId,
         org_id: s.orgId,
-        provider: "@local",
+        provider: CONTEXT_PROVIDER,
         status: seed.status ?? "running",
         handle: JSON.stringify({ id: deviceId, roots: ROOTS }),
         permission_roots: JSON.stringify(ROOTS),
         created_at: new Date(Number(generation)),
         fs_status: "ready",
         had_instance: true,
+        instance_limits: JSON.stringify({
+          mode: "auto",
+          network: { kind: "open-public", hosts: [] },
+        }),
       })
       .execute();
-    const identity = identityFor(generation);
+    // the provider's support is recorded with the kernel-built identity, as for every provider
     if (seed.report !== null)
       await k.app.get(TransactionHost).run(async () => {
         await k.app
@@ -308,21 +293,13 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
           .acquire({ orgId: s.orgId, deviceId }, { kind: "write", level: "device" });
         await k.app
           .get(PermissionRuntimeReports)
-          .record(deviceId, "@local", "0.1.0", identity, REPORTS[seed.report ?? "both"]);
+          .recordSupport(
+            deviceId,
+            CONTEXT_PROVIDER,
+            KERNEL_VERSION,
+            REPORTS[seed.report ?? "both"],
+          );
       });
-    if ((seed.binding ?? "installed") !== "none")
-      await db
-        .insertInto("device_instance_bindings")
-        .values({
-          device_id: deviceId,
-          instance_generation: generation,
-          binding_id: bindingId,
-          provider: "@local",
-          status: seed.binding === "awaiting" ? "awaiting-device" : "installed",
-          machine_id: machineId,
-          runtime_identity: seed.binding === "awaiting" ? null : JSON.stringify(identity),
-        })
-        .execute();
   }
   let taskId: string | null = null;
   if (seed.scheduledRoot) taskId = await seedTask(db, s);
@@ -354,8 +331,6 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
     rootId: s.conversationId,
     deviceId,
     generation,
-    bindingId,
-    machineId,
     taskId,
     db,
     ...run,

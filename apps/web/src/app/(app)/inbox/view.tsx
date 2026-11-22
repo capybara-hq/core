@@ -666,7 +666,6 @@ function scheduleDetail({
       <Stack gap={12}>
         <Text variant="prose">{reason}</Text>
         {a.error !== null && a.error !== undefined && <Text variant="prose">{a.error}</Text>}
-        {a.deviceRefuses === true && <Text variant="prose">{tsa("deviceRefuses")}</Text>}
         {a.missing.length > 0 && (
           <ItemList
             label={tsa("missing")}
@@ -675,9 +674,6 @@ function scheduleDetail({
               if (host !== null) {
                 if ((a.needsAdmin ?? []).includes(k)) {
                   return { id: k, title: host, status: { label: tsa("needsAdmin") } };
-                }
-                if (a.deviceRefuses === true) {
-                  return { id: k, title: host, status: { label: tsa("deviceRefusesShort") } };
                 }
                 return {
                   id: k,

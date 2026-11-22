@@ -3,6 +3,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
   type SandboxOperationScope,
+  type SandboxPermissionSupport,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { vi } from "vitest";
@@ -19,10 +20,9 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { inSandboxOperations } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
-import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
-import type { TestKernel } from "../helpers/runs.js";
-import { seedConversation } from "../helpers/tool-fixtures.js";
-import { storedOwnerReport } from "./owner-report.js";
+import { seedInstalledEvidence } from "./installed-evidence.js";
+import type { TestKernel } from "./runs.js";
+import { seedConversation } from "./tool-fixtures.js";
 
 export async function permissionFixture(
   k: TestKernel,
@@ -30,6 +30,8 @@ export async function permissionFixture(
   toolKey = "Read",
   input: Record<string, unknown> = { file_path: "/work/a" },
   staged = false,
+  /** Overrides the provider's permission support (an operation boundary running outside). */
+  support: Partial<SandboxPermissionSupport> = {},
 ) {
   const seed = await seedConversation(raw),
     db = kernelDb(raw),
@@ -48,9 +50,16 @@ export async function permissionFixture(
       org_id: seed.orgId,
       owner_kind: "personal",
       owner_account_id: seed.accountId,
-      source: "local",
       provider: "@permission-policy-test",
       name: "Laptop",
+      // the provider's report: the owner's home, where its denied paths lie
+      report: JSON.stringify({
+        revision: "test-1",
+        description: { en: "A test laptop." },
+        home: "/home/owner",
+        limits: [],
+        reset: false,
+      }),
     })
     .execute();
   await db
@@ -63,11 +72,6 @@ export async function permissionFixture(
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   await db
@@ -111,7 +115,10 @@ export async function permissionFixture(
   /** The raw errors the tool's error mapping logged (a typed refusal's own message stays here). */
   const warned: unknown[] = [];
   const scopes: SandboxOperationScope[] = [];
-  let effectHook: ((scope: SandboxOperationScope, method: string) => Promise<void>) | undefined;
+  /** Runs before each scoped operation's effect; an exec also gets its input (no signal). */
+  let effectHook:
+    | ((scope: SandboxOperationScope, method: string, input?: unknown) => Promise<void>)
+    | undefined;
   const provider = {
     async permissionSupport() {
       return {
@@ -121,6 +128,7 @@ export async function permissionFixture(
         network: { openPublic: false, allowlist: true, perOperationHosts: true },
         outsideSandbox: true,
         background: false,
+        ...support,
       };
     },
     async revokeOperation() {},
@@ -165,8 +173,8 @@ export async function permissionFixture(
           await effectHook?.(scope, "writeFile");
           effects++;
         },
-        async exec() {
-          await effectHook?.(scope, "exec");
+        async exec({ signal: _signal, ...input }: { signal: AbortSignal }) {
+          await effectHook?.(scope, "exec", input);
           effects++;
           return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
         },

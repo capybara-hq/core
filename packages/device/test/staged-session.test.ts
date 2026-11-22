@@ -2,19 +2,22 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type DeviceHello,
-  type DeviceResponse,
-  parseDeviceFrame,
-  type SandboxExecutionRef,
-} from "@capybara-hq/plugin-sdk";
+import type { SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
+import type { DeviceHello, DeviceResponse } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createStagedSessionState, drainStagedSession, serveStagedSession } from "../src/client.js";
 import type { InstanceBinder } from "../src/exec/instance-binding.js";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
-import { StagedSessionStates } from "../src/staged-session.js";
+import { PROGRAM_RUN_ID, StagedSessionStates } from "../src/staged-session.js";
+import {
+  cancelFrame,
+  readMachineFrame,
+  readyFrame,
+  requestFrame,
+  stagedHello,
+} from "./dial-in-wire.js";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
@@ -27,6 +30,8 @@ async function fixture(
   opts: {
     state?: ReturnType<typeof createStagedSessionState>;
     binder?: (b: { backend: unknown; handle: { id: string } }) => InstanceBinder;
+    /** The effective frame capacity the kernel's `ready` names (default the credential's). */
+    readyCap?: number;
   } = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-output-session-")));
@@ -142,33 +147,21 @@ async function fixture(
     const [socket] = (await accepted) as [WebSocket];
     const connection = ++connections;
     socket.on("message", (raw) => {
-      const f = parseDeviceFrame(raw.toString(), "device", 69632);
+      const f = readMachineFrame(raw.toString(), 69632);
       if (f.type === "hello" && negotiate)
-        socket.send(
-          JSON.stringify({
-            type: "ready",
-            connectionId: `connection-${connection}`,
-            maxFrameBytes: 69632,
-          }),
-        );
+        socket.send(readyFrame(`connection-${connection}`, opts.readyCap ?? 69632));
       else if (f.type === "res") {
-        responses.push({ connection, res: f });
-        answers.get(f.id)?.(f);
+        responses.push({ connection, res: f.res });
+        answers.get(f.res.id)?.(f.res);
       }
     });
     return { client, socket };
   };
   let { client, socket } = await open();
-  const hello: DeviceHello = {
-    type: "hello",
-    protocol: 5,
-    programVersion: "fixture",
-    os: "darwin",
-    arch: "arm64",
+  const body: DeviceHello = {
     mode: "os",
     roots,
     sessionIsolation: false,
-    transport: { maxFrameBytes: 100000 },
     permissionSupport: {
       version: 2,
       restricted: null,
@@ -200,12 +193,13 @@ async function fixture(
       },
     }),
   };
+  const hello = stagedHello(body);
   let state = opts.state ?? createStagedSessionState({ graceMs: 10000 });
   const binder = opts.binder?.({ backend, handle });
   let session = serveStagedSession(
     client,
     hello,
-    { maxFrameBytes: 100000 },
+    { maxFrameBytes: 69632 },
     backend,
     handle,
     state,
@@ -214,7 +208,7 @@ async function fixture(
   if (negotiate) await expect.poll(() => session.ready()).toBeDefined();
   const request = (op: string, args: unknown, deadlineMs = 10000, key = String(++id)) => {
     const response = new Promise<DeviceResponse>((resolve) => answers.set(key, resolve));
-    socket.send(JSON.stringify({ type: "req", id: key, op, args, deadlineMs }));
+    socket.send(requestFrame(key, op, args, deadlineMs));
     return { key, response };
   };
   return {
@@ -248,7 +242,7 @@ async function fixture(
       session = serveStagedSession(
         client,
         hello,
-        { maxFrameBytes: 100000 },
+        { maxFrameBytes: 69632 },
         backend,
         handle,
         state,
@@ -342,14 +336,14 @@ it.each(["cancel", "deadline"])("%s aborts an in-flight read only", async (mode)
     mode === "deadline" ? 100 : 10000,
   );
   await enteredPromise;
-  if (mode === "cancel") f.socket.send(JSON.stringify({ type: "cancel", id: call.key }));
+  if (mode === "cancel") f.socket.send(cancelFrame(call.key));
   await abortedPromise;
   expect(await f.backend.background.status(f.handle, f.ref, signal())).toEqual({
     state: "running",
   });
   expect(f.cancelled).not.toHaveBeenCalled();
 });
-it("refuses requests before ready and incoming frames above effective capacity", async () => {
+it("refuses requests before ready and incoming frames above the credential's capacity", async () => {
   const f = await fixture(false);
   const closed = once(f.client, "close");
   f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 1 });
@@ -370,6 +364,35 @@ it("refuses requests before ready and incoming frames above effective capacity",
   const tooBig = once(g.client, "close");
   g.socket.send(padded(69633));
   expect((await tooBig)[0]).toBe(4400);
+});
+it("frames in both directions obey the effective capacity of ready when the kernel's is lower", async () => {
+  const f = await fixture(true, true, { readyCap: 2048 });
+  expect(f.session.ready()).toEqual({ connectionId: "connection-1", maxFrameBytes: 2048 });
+  const bytes = Buffer.alloc(3072, 67);
+  await f.emit(bytes);
+  // an answer above 2048 bytes (but within the credential's 69632) becomes the fitted error
+  const big = await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 3072 })
+    .response;
+  expect(big).toMatchObject({
+    ok: false,
+    error: { kind: "error", message: expect.stringMatching(/exceeds negotiated capacity/) },
+  });
+  const small = await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 16 })
+    .response;
+  expect(small).toMatchObject({ ok: true });
+  expect(f.client.readyState).toBe(WebSocket.OPEN);
+  // an incoming frame above the effective capacity closes the socket
+  const frame = JSON.stringify({ type: "cancel", id: "unknown" });
+  const closed = once(f.client, "close");
+  f.socket.send(frame + " ".repeat(2049 - Buffer.byteLength(frame)));
+  expect((await closed)[0]).toBe(4400);
+});
+it("a ready naming more capacity than this program announced closes the socket", async () => {
+  const f = await fixture(false);
+  const closed = once(f.client, "close");
+  f.socket.send(readyFrame("c", 69633));
+  expect((await closed)[0]).toBe(4400);
+  expect(f.session.ready()).toBeUndefined();
 });
 it("answers an unbound instance and a duplicate request id without closing the socket", async () => {
   const unbound = await fixture(true, false);
@@ -441,7 +464,7 @@ it("a socket blip aborts in-flight reads only; other operations finish and answe
     .poll(() => f.responses.map((r) => [r.connection, r.res.id, r.res.ok]))
     .toEqual([[2, "status-done", true]]);
   // a cancel sent on the new socket reaches the operation started on the old one
-  f.socket.send(JSON.stringify({ type: "cancel", id: "status-cancelled" }));
+  f.socket.send(cancelFrame("status-cancelled"));
   await expect.poll(() => signals.get("status-2")?.aborted).toBe(true);
   expect(f.cancelled).not.toHaveBeenCalled();
 });
@@ -620,7 +643,7 @@ it("the reconnect grace is required: no silent default of 0 (B-4)", async () => 
   expect(() => createStagedSessionState({} as never)).toThrow(/grace/);
   expect(() => createStagedSessionState({ graceMs: -1 })).toThrow(/grace/);
   expect(createStagedSessionState({ graceMs: 0 }).graceMs).toBe(0);
-  const hello = {} as DeviceHello;
+  const hello = stagedHello({} as DeviceHello);
   const backend = {} as Parameters<typeof serveStagedSession>[3];
   expect(() =>
     serveStagedSession(
@@ -665,7 +688,7 @@ it("session states are kept per credential; a change discards held answers (rere
   expect(() =>
     serveStagedSession(
       f.client,
-      {} as DeviceHello,
+      stagedHello({} as DeviceHello),
       { maxFrameBytes: 1 },
       f.backend,
       f.handle,
@@ -731,4 +754,76 @@ it("a socket still open when its credential's state is discarded admits nothing 
   expect((await closed)[0]).toBe(4401);
   expect(status).not.toHaveBeenCalled();
   expect(f.responses).toEqual([]);
+});
+
+it("a request body for a removed policy op closes the socket with 4400 and reaches nothing", async () => {
+  const f = await fixture();
+  const closed = once(f.client, "close");
+  f.request("policy", {
+    opId: "op_1",
+    remove: ["a.com"],
+    source: { accountId: "a", accountName: "A", via: "web" },
+  });
+  expect((await closed)[0]).toBe(4400);
+  expect(f.responses).toEqual([]);
+});
+
+it("the hello is the dial-in envelope around the device protocol body", async () => {
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(server, "listening");
+  const address = server.address();
+  if (typeof address === "string" || !address) throw Error();
+  cleanups.push(async () => {
+    for (const c of server.clients) c.terminate();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const accepted = once(server, "connection");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(client, "open");
+  const [socket] = (await accepted) as [WebSocket];
+  const first = once(socket, "message");
+  const body = {
+    mode: "os",
+    roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+    sessionIsolation: false,
+    permissionSupport: {
+      version: 2,
+      restricted: null,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
+      background: false,
+      unavailableReason: "Instance binding pending",
+    },
+    ownerCeiling: {
+      version: 3,
+      sequence: 0,
+      restrictedProjectReach: "workspace",
+      revision: "r",
+      outsideSandbox: false,
+      network: "allowlist",
+      allowedDomains: [],
+    },
+    instanceGeneration: null,
+  } satisfies DeviceHello;
+  serveStagedSession(
+    client,
+    {
+      envelope: { program: { version: "1.0.0", os: "linux", arch: "x64", bootId: "boot-1" } },
+      body,
+    },
+    { maxFrameBytes: 69632 },
+    {} as Parameters<typeof serveStagedSession>[3],
+    { id: "d" },
+    createStagedSessionState({ graceMs: 0 }),
+  );
+  const [raw] = (await first) as [Buffer];
+  expect(JSON.parse(raw.toString())).toEqual({
+    type: "hello",
+    protocol: "capybara-device/5",
+    programRunId: PROGRAM_RUN_ID,
+    program: { version: "1.0.0", os: "linux", arch: "x64", bootId: "boot-1" },
+    transport: { maxFrameBytes: 69632 },
+    body,
+  });
 });

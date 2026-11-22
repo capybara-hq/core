@@ -234,7 +234,6 @@ const INBOX_ITEMS: InboxItem[] = [
       missing: [],
       needsRole: [],
       needsAdmin: [],
-      deviceRefuses: false,
       error: "The ledger export was empty.",
     },
   },

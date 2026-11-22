@@ -56,8 +56,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "devices.defaultProvider": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
-  // The local device relay reads the reconnect grace at every disconnect and token response.
-  "devices.local.reconnectGraceSeconds": () => {},
+  // The dial-in gateway and relay read the reconnect grace at every disconnect and token response.
+  "devices.dialIn.reconnectGraceSeconds": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.
   "subagents.maxDepth": () => {},
   "subagents.maxConcurrentPerConversation": () => {},

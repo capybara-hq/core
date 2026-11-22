@@ -3,8 +3,6 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
-  type DeviceExecGrants,
-  type DeviceNetworkMode,
   type SandboxFileScope,
   type SandboxLimits,
   type SandboxOperationScope,
@@ -13,6 +11,7 @@ import {
   sandboxRuntimeDirectoryOf,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { DeviceExecGrants, DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
 import { policyPath, readPolicyFile } from "../state.js";
 import { osRoots } from "./shared.js";

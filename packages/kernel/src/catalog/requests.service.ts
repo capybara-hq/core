@@ -15,7 +15,6 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
-import { orgAllows } from "../local-devices/network-grants.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import {
@@ -25,6 +24,7 @@ import {
   readOrgSettings,
 } from "../orgs/settings.service.js";
 import { type NetworkLimits, orgEffectiveHosts, orgHostOutsideCeiling } from "../sandbox/modes.js";
+import { orgAllows } from "../sandbox/network-grants.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";

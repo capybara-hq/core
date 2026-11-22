@@ -2,36 +2,32 @@ import { ApiError } from "../errors.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 /** What a project's scope is read from: the device's mode now and the bases it gives. */
 export interface DeviceProjectScope {
-  source: "cloud" | "local";
   mode: SandboxMode;
-  /**
-   * How far restricted reads reach (B2): `os-user` only on a local machine whose owner chose it,
-   * within a platform and org that allow the wider device ceiling; else the workspace.
-   */
-  reach: "workspace" | "os-user";
-  /** The workspace root as last known (a machine's hello, a cloud instance's handle). */
+  /** The workspace root as last known (the held instance's handle). */
   workspace: string;
-  /** The owner's home a local machine reported; null when unknown (and for a cloud device). */
+  /**
+   * The home its provider last reported (`devices.report.home`): projects are relative to it and
+   * the kernel narrows no path below it (where a project may lie is the provider's rule); null
+   * when the provider reports none, and projects stay in the workspace.
+   */
   home: string | null;
   supported: boolean;
 }
 
 type Scope = DeviceProjectScope;
 
-/** Only the owner's home bounds nothing: OS-user reach on a machine reads what its owner can. */
-const homeBased = (s: Pick<Scope, "source" | "reach">): boolean =>
-  s.source === "local" && s.reach === "os-user";
-
-/** The base a relative path is resolved against in the scope's mode (project root §4.2). */
-export const baseOf = (s: Scope, workspace: string = s.workspace): string | null =>
-  homeBased(s) ? s.home : workspace;
+/** The base a relative path resolves against (project root §4.2): the home, else the workspace. */
+export const baseOf = (s: Scope, workspace: string = s.workspace): string => s.home ?? workspace;
 
 /**
- * `path` lies inside what the scope's mode may read (sandbox mode and cloud: the workspace, as the
+ * `path` lies inside what the kernel lets the scope's projects reach: anywhere when the provider
+ * reports a home (the provider refuses what it will not serve), else inside the workspace (as the
  * held instance reports it when given).
  */
 export const withinMode = (s: Scope, path: string, workspace: string = s.workspace): boolean =>
-  homeBased(s) || path === workspace || path.startsWith(workspace === "/" ? "/" : `${workspace}/`);
+  s.home !== null ||
+  path === workspace ||
+  path.startsWith(workspace === "/" ? "/" : `${workspace}/`);
 
 export const nameInvalid = (name: string): ApiError =>
   new ApiError(
@@ -56,12 +52,6 @@ export const tooBroad = (path: string): ApiError =>
   new ApiError(
     "device.project_path_too_broad",
     `${clipped(path)} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
-  );
-
-export const homeUnknown = (): ApiError =>
-  new ApiError(
-    "device.project_home_unknown",
-    "In auto mode a project's path is relative to the owner's home directory, which this device has not reported; update capybara-device on that machine and reconnect it",
   );
 
 /** A device-supplied or person-supplied string inside a message, bounded. */

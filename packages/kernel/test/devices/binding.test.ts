@@ -17,7 +17,9 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -36,7 +38,6 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Conversations bound to devices (spec 2026-11-07-environments-design §4.1 items 1-3, §4.2
@@ -478,39 +479,37 @@ describe("conversations bound to devices", () => {
   });
 });
 
-/**
- * A local device of `accountId` whose machine (signed in, not connected) announced `features` and
- * runs in `mode` (its owner report: auto = Full with the OS user's reach), with `projects` stored
- * for it.
- */
+/** An in-process provider that serves projects (`list` / `scan`), unlike the fake sandbox. */
+const PROJECTS_PROVIDER = "@projects-test";
+
+/** A device of {@link PROJECTS_PROVIDER} owned by `accountId`, with `projects` stored for it. */
 async function localDevice(
   accountId: string,
-  opts: {
-    features?: string[];
-    mode?: "auto" | "sandbox";
-    projects?: { name: string; path: string }[];
-  } = {},
+  opts: { projects?: { name: string; path: string }[] } = {},
 ): Promise<string> {
-  const { id } = await k.app
-    .get(DevicesService)
-    .createLocal(orgId, accountId, `box-${randomUUID().slice(0, 8)}`);
-  const features = opts.features ?? ALL_FEATURES;
-  const policy = JSON.stringify({ allowedDomains: [] });
-  const auto = (opts.mode ?? "auto") === "auto";
-  const owner = JSON.stringify({
-    report: ownerReportFor(
-      { allowedDomains: [] },
-      { outsideSandbox: auto, restrictedProjectReach: auto ? "os-user" : "workspace" },
-    ),
-    connectionId: null,
-    observedAt: new Date().toISOString(),
-    via: "hello",
-  });
-  await sql`INSERT INTO capybara.device_machines
-      (org_id, device_id, account_id, credential_hash, name, os, arch, features, local_policy,
-       owner_report)
-    VALUES (${orgId}, ${id}, ${accountId}, ${randomUUID()}, 'mbp', 'darwin', 'arm64',
-      ${features}, ${policy}::jsonb, ${owner}::jsonb)`.execute(raw);
+  const providers = k.app.get(DeviceProviders);
+  if (!providers.forDevice(PROJECTS_PROVIDER))
+    providers.register({
+      plugin: PROJECTS_PROVIDER,
+      version: "0.0.0",
+      impl: {
+        ...createFakeSandbox(join(root, "projects")),
+        list: async () => ({ entries: [], truncated: false }),
+        scan: async () => [],
+      },
+    });
+  const id = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id,
+      org_id: orgId,
+      owner_kind: "personal",
+      owner_account_id: accountId,
+      provider: PROJECTS_PROVIDER,
+      name: `box-${id.slice(0, 8)}`,
+    })
+    .execute();
   for (const p of opts.projects ?? []) {
     await db
       .insertInto("device_projects")
@@ -520,7 +519,6 @@ async function localDevice(
   return id;
 }
 
-const ALL_FEATURES = ["networkReport", "policyOp", "policyOpId", "projects"];
 const CORE = { name: "core", path: "/Users/o/src/core" };
 const PLUGINS = { name: "plugins", path: "/Users/o/src/plugins" };
 
@@ -749,32 +747,22 @@ describe("binding a conversation to a project", () => {
     expect(await countOf(m.id)).toBe(0);
   });
 
-  it("refuses a project outside the device's current mode, and creates nothing", async () => {
-    const m = await member();
-    // sandbox mode reads only the workspace; the project lies outside it
-    const device = await localDevice(m.id, { mode: "sandbox", projects: [CORE] });
-    for (const message of BOTH) {
-      const res = await createWith(m.req, {
-        agentId,
-        deviceId: device,
-        project: "core",
-        ...(message !== undefined && { message: firstMessage() }),
-      });
-      expect(res.statusCode, res.body).toBe(422);
-      expect(errorOf(res).code).toBe("device.project_outside_mode");
-      expect(errorOf(res).message).toContain(CORE.path);
-    }
-    expect(await countOf(m.id)).toBe(0);
-  });
-
   it("refuses a project a later reported home puts above the home, and creates nothing", async () => {
     const m = await member();
     const device = await localDevice(m.id, { projects: [{ name: "srv", path: "/srv" }] });
-    // the machine reports a home under the stored path after it was added
+    // the device's provider reports a home under the stored path after it was added
     await db
-      .updateTable("device_machines")
-      .set({ home: "/srv/me" })
-      .where("device_id", "=", device)
+      .updateTable("devices")
+      .set({
+        report: JSON.stringify({
+          revision: "r1",
+          description: { en: "A test device." },
+          home: "/srv/me",
+          limits: [],
+          reset: false,
+        }),
+      })
+      .where("id", "=", device)
       .execute();
     for (const message of BOTH) {
       const res = await createWith(m.req, {
@@ -791,22 +779,6 @@ describe("binding a conversation to a project", () => {
 
   it("refuses a device that offers no projects, and creates nothing", async () => {
     const m = await member();
-    // an older capybara-device: no `projects` feature, whatever is stored for it
-    const older = await localDevice(m.id, {
-      features: ["networkReport", "policyOp"],
-      projects: [CORE],
-    });
-    for (const message of BOTH) {
-      const res = await createWith(m.req, {
-        agentId,
-        deviceId: older,
-        project: "core",
-        ...(message !== undefined && { message: firstMessage() }),
-      });
-      expect(res.statusCode, res.body).toBe(409);
-      expect(errorOf(res).code).toBe("device.projects_unsupported");
-      expect(errorOf(res).message).toContain("update capybara-device");
-    }
     // no deviceId: the default device, a cloud device on the fake sandbox (no list / scan)
     const cloud = await createWith(m.req, { agentId, project: "core" });
     expect(cloud.statusCode, cloud.body).toBe(409);

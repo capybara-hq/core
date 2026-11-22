@@ -1049,7 +1049,6 @@ describe("整轮回放", () => {
       sandbox: withSandbox
         ? {
             boundary: "operation",
-            location: "local",
             workingRoot: "/project",
             network: { kind: "none", hostsCount: 0 },
             outsideSandbox: false,
@@ -1067,11 +1066,10 @@ describe("整轮回放", () => {
       authorityRevision: `authority-${revision}`,
       availability: { state: "supported" },
       scope: {
-        location: "local",
+        boundary: "operation",
         workingRoot: "/project",
         filesystem: {
           kind: "scoped",
-          readDirectories: ["/project"],
           writeDirectories: ["/project"],
         },
         network: { kind: "none" },
@@ -1296,7 +1294,7 @@ describe("整轮回放", () => {
         k.app.get(PermissionCallGrants),
         ["issueLocked", "findForAdmission", "forExecution", "assertCurrent"],
       ],
-      [k.app.get(PermissionRuntimeReports), ["record"]],
+      [k.app.get(PermissionRuntimeReports), ["recordSupport"]],
       [
         k.app.get(ApprovalsService),
         ["request", "requestNetwork", "requestGit", "requestCommand", "decide"],

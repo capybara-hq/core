@@ -81,20 +81,13 @@ beforeAll(async () => {
       current_version: 1,
     })
     .execute();
-  for (const [id, source] of [
-    [cloudDevice, "cloud"],
-    [localDevice, "local"],
+  for (const [id, provider] of [
+    [cloudDevice, "device-fake"],
+    [localDevice, null],
   ] as const)
     await db
       .insertInto("devices")
-      .values({
-        id,
-        org_id: orgId,
-        owner_kind: "personal",
-        owner_account_id: accountId,
-        source,
-        provider: source === "cloud" ? "device-fake" : null,
-      })
+      .values({ id, org_id: orgId, owner_kind: "personal", owner_account_id: accountId, provider })
       .execute();
   await db
     .insertInto("conversations")
@@ -108,7 +101,8 @@ beforeAll(async () => {
       device_id: localDevice,
     })
     .execute();
-  // a legacy SID task on the local device, whose computer never reported a boot identity
+  // a legacy SID task on the local device, whose incarnation the kernel cannot name (no provider
+  // and no instance record): the same pre-check as every device's
   await db
     .insertInto("background_tasks")
     .values({
@@ -149,13 +143,13 @@ describe("capybara permissions cutover", () => {
       retirement: {
         frozen: false,
         frozenAt: null,
-        localWithoutBoot: [{ deviceId: localDevice, machineId: null }],
-        cloudUnknown: [],
+        cloudUnknown: [{ deviceId: localDevice, noInstance: true, prevHandle: false }],
         open: 0,
         quarantined: 0,
         unfencedWriters: { sinceMigration: 1, afterFreeze: 0 },
       },
-      snapshot: { cloudDevices: 1, pending: 1, reconcileRequired: [] },
+      // every device is snapshotted alike, whatever its provider
+      snapshot: { cloudDevices: 2, pending: 2, reconcileRequired: [] },
     });
   });
 
@@ -164,7 +158,7 @@ describe("capybara permissions cutover", () => {
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("Legacy freeze: not published");
     expect(r.stdout).toContain("Replicas: unknown (Redis did not answer)");
-    expect(r.stdout).toContain(`Local devices without a boot identity: 1`);
+    expect(r.stdout).toContain(`Cloud devices with unknown incarnations: 1`);
     expect(r.stdout).toContain(localDevice);
     expect(r.stdout).toContain("Next:");
   });
@@ -205,8 +199,15 @@ describe("capybara permissions cutover", () => {
   it("snapshot snapshots every cloud device after the freeze; a rerun publishes nothing", async () => {
     const r = await runCliInProcess(["permissions", "cutover", "snapshot", "--json"], env());
     expect(r.code, r.stderr).toBe(0);
-    expect(JSON.parse(r.stdout)).toMatchObject({
-      results: [{ deviceId: cloudDevice, state: "unprobed" }],
+    const out = JSON.parse(r.stdout) as { results: { deviceId: string; state: string }[] };
+    // every device, whatever its provider
+    expect(out.results.map((x) => [x.deviceId, x.state]).sort()).toEqual(
+      [
+        [cloudDevice, "unprobed"],
+        [localDevice, "unprobed"],
+      ].sort(),
+    );
+    expect(out).toMatchObject({
       failed: [],
       pending: 0,
       reconcileRequired: [],

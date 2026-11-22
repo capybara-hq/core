@@ -36,7 +36,7 @@ const PolicyHost = z
   });
 
 /**
- * A cloud device's sandbox network (approval-only profiles design, "Settings model"): `open` (the
+ * A device's sandbox network (approval-only profiles design, "Settings model"): `open` (the
  * public internet), `allowlist` (its org's hosts, narrowed to `hosts` when given: a device list
  * never adds a host, and an empty one follows the org's), `none` (closed), or `null` to follow its
  * org again. `hosts` only with `allowlist`.
@@ -52,11 +52,10 @@ export const DeviceNetworkBody = z
   });
 
 /**
- * `PATCH /devices/:id`: a new name, and a cloud device's sandbox `network`
- * ({@link DeviceNetworkBody}), within its org's and the platform's ceilings (`device.network_not_allowed`
- * above them). A local device's network lives on its machine (`device.ceiling_on_machine`: narrow
- * it with `POST /devices/:id/policy`, widen it on the machine). Through an API token or the
- * Platform tool (`devices.set-network`) the network may only narrow.
+ * `PATCH /devices/:id`: a new name, and the device's sandbox `network` ({@link DeviceNetworkBody}),
+ * within its org's and the platform's ceilings (`device.network_not_allowed` above them), the
+ * same for every provider. Through an API token or the Platform tool (`devices.set-network`) the
+ * network may only narrow.
  */
 export const DevicePatchBody = z
   .object({
@@ -66,41 +65,6 @@ export const DevicePatchBody = z
   .strict()
   .refine((b) => b.name !== undefined || b.network !== undefined, {
     message: "Give at least one of name or network",
-  });
-
-/**
- * `POST /devices/:id/policy` (approval-only profiles design, "Settings model"): the device owner
- * narrows the local machine's sandbox from the web: `remove` hosts from its allowlist, and narrow
- * its owner ceiling (`outsideSandbox: false`, `network: "allowlist"`, `restrictedProjectReach:
- * "workspace"`). The web never widens it: the owner adds hosts, opens the network or allows
- * running outside the sandbox on the machine (`capybara-device policy add allowedDomains`,
- * `capybara-device ceiling set`).
- */
-export const DevicePolicyBody = z
-  .object({
-    remove: z.array(PolicyHost).min(1).max(100).optional(),
-    ownerCeiling: z
-      .object({
-        outsideSandbox: z.literal(false).optional(),
-        network: z.literal("allowlist").optional(),
-        restrictedProjectReach: z.literal("workspace").optional(),
-      })
-      .strict()
-      .refine(
-        (c) =>
-          c.outsideSandbox !== undefined ||
-          c.network !== undefined ||
-          c.restrictedProjectReach !== undefined,
-        {
-          message:
-            "Give outsideSandbox: false, network: allowlist or restrictedProjectReach: workspace",
-        },
-      )
-      .optional(),
-  })
-  .strict()
-  .refine((b) => b.remove !== undefined || b.ownerCeiling !== undefined, {
-    message: "Give at least one of remove or ownerCeiling",
   });
 
 /**
@@ -144,7 +108,6 @@ export const DeviceProjectParams = DeviceParams.extend({ name: DeviceProjectName
 export class DeviceCreateBodyDto extends createZodDto(DeviceCreateBody, "DeviceCreateBody") {}
 export class DevicePatchBodyDto extends createZodDto(DevicePatchBody, "DevicePatchBody") {}
 export class DeviceParamsDto extends createZodDto(DeviceParams, "DeviceParams") {}
-export class DevicePolicyBodyDto extends createZodDto(DevicePolicyBody, "DevicePolicyBody") {}
 export class DeviceProjectAddBodyDto extends createZodDto(
   DeviceProjectAddBody,
   "DeviceProjectAddBody",

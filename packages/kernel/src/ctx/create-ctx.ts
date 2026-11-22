@@ -1,6 +1,8 @@
 import {
   type AvailableHook,
   DEVICE_PROVIDER_EXTENSION_POINT,
+  type DevicesCtx,
+  type DialInChannel,
   type EmbedClaims,
   EXTENSION_POINTS,
   type ExtensionContext,
@@ -42,6 +44,7 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import type { DialInAccess } from "../dial-in/access.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
@@ -52,6 +55,7 @@ import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { ModelImages } from "../models/images.js";
 import type { OrgRole } from "../orgs/roles.js";
 import type { HookRunner } from "../runtime/hook-calls.js";
+import type { DeviceReports } from "../sandbox/device-reports.js";
 import type { ShareLiveness } from "../shares/liveness.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
@@ -114,6 +118,18 @@ export interface KernelDeps {
    * in a test) verifies no share token (fail closed).
    */
   shares: Pick<ShareLiveness, "embedLive"> | undefined;
+  /**
+   * What `ctx.dialIn` is built from (`DialInAccess`): the relay and the check that a device is
+   * served by the calling extension. Absent (a ctx built alone in a test): `ctx.dialIn` calls
+   * reject.
+   */
+  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "stop">;
+  /**
+   * What `ctx.devices` is built from (`DeviceReports`): `changed` reads a device's report again
+   * from the calling provider and refuses (`not-served`) a device bound to another one. Absent
+   * (a ctx built alone in a test): `ctx.devices` calls reject.
+   */
+  devices?: Pick<DeviceReports, "changed">;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -391,6 +407,9 @@ export class LiveConfig {
   constructor(public value: unknown) {}
 }
 
+/** The ctx members that are a plain property when allowed and a denying getter otherwise. */
+type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices";
+
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
  * registered routes, provided extension points and a close function.
@@ -400,7 +419,12 @@ export class LiveConfig {
  *   (through `deps.net`, see `ctx/net.ts`);
  * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
  *   only with `permissions.models` (`embed` only its `embedding` purposes, `generateImage` only its
- *   `image_generation` ones, through `deps.models`); `http.route`
+ *   `image_generation` ones, through `deps.models`); `dialIn` only with `permissions.dialIn`, each
+ *   call only for a device whose provider is this extension and that it serves in the device's org
+ *   (through `deps.dialIn`; another device throws `ExtensionPermissionError`); `devices` only for
+ *   an extension that provides `device-provider@1`, `reportChanged` only for a live device bound to
+ *   this extension (through `deps.devices`; another device throws `ExtensionPermissionError`);
+ *   `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
  *   its mount, see {@link Route}); `tools.register` only names declared in
  *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` or
@@ -513,6 +537,75 @@ export function createExtensionContext(
           },
         }
       : undefined;
+  // ctx.dialIn: only with permissions.dialIn, and each call only for a device this extension serves:
+  // `devices.provider` is this extension and the extension is enabled in the device's org (read
+  // per call). The full availability check (valid org and effective config) runs at the machine's
+  // hello (`DialInHandlers`), so a machine of a provider that is not available never connects.
+  const dialInApi: DialInChannel | undefined = perms.dialIn
+    ? (() => {
+        const access = deps.dialIn;
+        const served = async (deviceId: unknown): Promise<string> => {
+          if (!access) throw new Error(`plugin ${name}: ctx.dialIn is not available`);
+          if (typeof deviceId !== "string" || !(await access.serves(name, deviceId))) {
+            const item = `dialIn:device ${String(deviceId)}`;
+            const p: Promise<void> = recordDenial(deps, name, item).finally(() => audits.delete(p));
+            audits.add(p);
+            const e = new ExtensionPermissionError(name, "permissions.dialIn");
+            e.message = `device ${String(deviceId)} is not served by ${name}`;
+            throw e;
+          }
+          return deviceId;
+        };
+        return {
+          request: async (deviceId, frame, opts) => {
+            const id = await served(deviceId);
+            const signal = opts?.signal
+              ? AbortSignal.any([lifecycle.signal, opts.signal])
+              : lifecycle.signal;
+            // only the options an extension may pass: never the kernel's connection fences
+            return (access as NonNullable<typeof access>).request(id, frame, {
+              timeoutMs: Number(opts?.timeoutMs),
+              signal,
+            });
+          },
+          online: async (deviceId) =>
+            (access as NonNullable<typeof access>).online(await served(deviceId)),
+          stop: async (deviceId, reason) => {
+            if (reason !== "drain" && reason !== "stop")
+              throw new TypeError(`plugin ${name}: ctx.dialIn.stop reason must be drain or stop`);
+            await (access as NonNullable<typeof access>).stop(await served(deviceId), reason);
+          },
+        } satisfies DialInChannel;
+      })()
+    : undefined;
+  // ctx.devices: only for a device provider, and each call only for a device bound to it
+  // (`devices.provider`, read per call): the kernel reads the report again from this extension
+  // and, when its revision changed, moves the device authority epoch (device-provider spec §6.7)
+  const devicesApi: DevicesCtx | undefined = manifest.provides.includes(
+    DEVICE_PROVIDER_EXTENSION_POINT,
+  )
+    ? {
+        reportChanged: async (deviceId) => {
+          const reports = deps.devices;
+          if (!reports) throw new Error(`plugin ${name}: ctx.devices is not available`);
+          const outcome =
+            typeof deviceId === "string"
+              ? await reports.changed(name, deviceId, lifecycle.signal)
+              : "not-served";
+          if (outcome === "not-served") {
+            const item = `devices:device ${String(deviceId)}`;
+            const p: Promise<void> = recordDenial(deps, name, item).finally(() => audits.delete(p));
+            audits.add(p);
+            const e = new ExtensionPermissionError(
+              name,
+              `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`,
+            );
+            e.message = `device ${String(deviceId)} is not served by ${name}`;
+            throw e;
+          }
+        },
+      }
+    : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
   const declaredRoutes = new Map<string, HttpAccess>(
     (perms.http ?? []).map((r) => [`${r.method} ${r.path}`, r.access]),
@@ -651,7 +744,7 @@ export function createExtensionContext(
     },
   } as ExtensionContext["extensionPoints"];
 
-  const ctx: Omit<KernelExtensionContext, "secrets" | "storage" | "models"> = {
+  const ctx: Omit<KernelExtensionContext, GatedKey> = {
     kv: createKv(deps.redis, name),
     lock: {
       // 取到的租约记账：实例撤销时释放仍持有的；插件自己 release 时销账
@@ -917,7 +1010,7 @@ export function createExtensionContext(
         extensionPoint === FILE_PREVIEW_EXTENSION_POINT
           ? checkFilePreviewProvider(manifest, impl, uiResolution, deps.log)
           : extensionPoint === DEVICE_PROVIDER_EXTENSION_POINT
-            ? checkDeviceProvider(name, impl)
+            ? checkDeviceProvider(name, impl, manifest.permissions?.dialIn)
             : impl;
       provided.set(extensionPoint, served);
       ledger.add({
@@ -977,15 +1070,15 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models: a plain property when declared; otherwise a non-enumerable getter
-  // that throws, so spreading or printing ctx triggers no denial and no audit
-  const gated = (key: "secrets" | "storage" | "models", api: unknown): void => {
+  // secrets / storage / models / dialIn / devices: a plain property when declared; otherwise a
+  // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
+  const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
       Object.assign(ctx, { [key]: api });
       return;
     }
     Object.defineProperty(ctx, key, {
-      get: () => deny(`permissions.${key}`),
+      get: () => deny(item),
       enumerable: false,
       configurable: false,
     });
@@ -993,6 +1086,8 @@ export function createExtensionContext(
   gated("secrets", secretsApi);
   gated("storage", storageApi);
   gated("models", modelsApi);
+  gated("dialIn", dialInApi);
+  gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   return ctx as KernelExtensionContext;
 }
 

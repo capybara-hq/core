@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
-import { FileSystemGoneError, SandboxGoneError, ToolError } from "@capybara-hq/plugin-sdk";
+import {
+  FileSystemGoneError,
+  ProjectPathRefusedError,
+  SandboxGoneError,
+} from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { POLICY_REFUSAL_PREFIX } from "../../src/local-devices/relay.js";
 import {
   AGENTS_MD_MAX_BYTES,
   AGENTS_MD_TRUNCATED_MARKER,
@@ -215,9 +218,12 @@ describe("readProjectKnowledge", () => {
     expect(lines).toHaveLength(1);
   });
 
-  it("records a root refused in the mode, unreadable or a file with its reason code", async () => {
+  it("records a root its provider refuses, unreadable or a file with its reason code", async () => {
     const refused = await readProjectKnowledge(
-      device({}, { statError: new ToolError(`${POLICY_REFUSAL_PREFIX}outside the sandbox`) }),
+      device(
+        {},
+        { statError: new ProjectPathRefusedError({ en: "another connection's directory" }) },
+      ),
       { ...TARGET, mode: "sandbox" },
     );
     expect(refused.unavailable?.reason).toBe("outside_mode");

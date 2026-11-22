@@ -1,6 +1,7 @@
 import {
   DEFAULT_SANDBOX_ROOTS,
-  DeviceProtocolError,
+  isDeviceOfflineError,
+  isDeviceRequestNotSent,
   isFileSystemGoneError,
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
@@ -17,6 +18,7 @@ import {
   validateSandboxPath,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { BackgroundTaskFinisher } from "../../../background/finish.js";
 import type { BackgroundTaskStopper } from "../../../background/stop.js";
 import type { BackgroundTaskStore } from "../../../background/store.js";
@@ -34,8 +36,6 @@ import {
 import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
-import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
-import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import {
   ATTACHMENTS_ROOT,
@@ -93,10 +93,7 @@ export interface SandboxToolDeps {
    */
   devices: Pick<ConversationDevices, "forTool"> &
     Partial<
-      Pick<
-        ConversationDevices,
-        "usableNow" | "unusableReason" | "modeLevel" | "workingFacts" | "projectReach"
-      >
+      Pick<ConversationDevices, "usableNow" | "unusableReason" | "modeLevel" | "workingFacts">
     >;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
@@ -238,8 +235,13 @@ const ENV_FORBIDDEN_TEXT =
 /** A device whose provider does not serve its org now (`device.unavailable`): files kept. */
 export const ENV_UNAVAILABLE_TEXT =
   "This conversation's device runs on a device provider that is off in this organization or not installed; its files are kept. Ask an org admin to switch the provider back on, or start a new conversation on another device.";
-const ENV_FILES_LOST_TEXT =
-  "This device's files are gone. Ask the user to reset its files on the devices page, then retry.";
+/**
+ * The device's files are gone at its provider (`device.files_lost`): the devices page resets them
+ * where the provider offers that; otherwise the device is set up again where its provider keeps
+ * its files (a dial-in device: its machine signs in to it again).
+ */
+export const ENV_FILES_LOST_TEXT =
+  "This device's files are gone. Ask the user to reset its files on the devices page, or, where its provider offers no reset, to set the device up again (for a device served by a machine: sign that machine in to it again), then retry.";
 /**
  * A provider call that never connected (refused, unknown host, unreachable network): the request
  * did not reach the provider, so the call did nothing in the sandbox.
@@ -249,18 +251,15 @@ export const SANDBOX_UNREACHABLE_TEXT =
 /** A provider connection that broke during the call: the provider may have acted before it broke. */
 export const SANDBOX_CONNECTION_DROPPED_TEXT =
   "The connection to the sandbox provider broke during this call, so it may or may not have taken effect; check the sandbox state before retrying. If it fails again, continue without the sandbox and ask the person to have a super admin check the sandbox extension's configuration (Admin console → Extensions).";
-const DEVICE_FILES_LOST_TEXT =
-  "This device's directory is gone from the device's machine. Ask the person to run capybara-device logout, then capybara-device login into this device, on that machine, then retry.";
-const FILES_GONE_TEXT =
-  "This device's files are gone. Ask the user to reset its files on the devices page (for a local device: to run capybara-device logout, then capybara-device login, on it), then retry.";
-const DEVICE_OFFLINE_TEXT =
-  "The device's machine is offline. Ask the person to start capybara-device on it, or to start a new conversation on another device.";
+/** A dial-in device whose machine is not connected (`device.offline`, the SDK's offline error). */
+export const DEVICE_OFFLINE_TEXT =
+  "The machine serving this device is offline. Ask the person to connect it again, or to start a new conversation on another device.";
 const DEVICE_OUTDATED_TEXT =
-  "The device's machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
+  "The machine serving this device runs an outdated device program. Ask the person to update it on that machine and connect it again.";
 const DEVICE_REVOKED_TEXT =
-  "The device's machine was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation on another device.";
+  "The machine serving this device was disconnected. Ask the person to sign that machine in to this device again, or to start a new conversation on another device.";
 const deviceProtocolText = (detail: string): string =>
-  `The device's machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
+  `The machine serving this device sent an answer the platform cannot read (${detail}). Ask the person to update the device program on that machine, then retry.`;
 /**
  * A cloud provider refused the device's open public network (`sandbox.open_network_refused`): the
  * fixed text, never the provider's own message (it may name its settings).
@@ -539,7 +538,7 @@ export const PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT =
  * The device does not allow running outside the sandbox (`device.outside_sandbox_not_allowed`).
  */
 export const OUTSIDE_SANDBOX_CEILING_TOOL_TEXT =
-  "This device does not allow running commands outside the sandbox, so nothing ran. Run the command inside the sandbox, or ask the device's owner to allow it on that machine with `capybara-device ceiling set --outside-sandbox on`.";
+  "This device does not allow running commands outside the sandbox, so nothing ran. Run the command inside the sandbox, or ask the device's owner whether its provider can allow it.";
 /**
  * The legacy retirement gate's refusals (`RetirementPendingError`, permission runtime cutover
  * 8.5): the device's earlier instance may still run background work an earlier version started.
@@ -547,17 +546,11 @@ export const OUTSIDE_SANDBOX_CEILING_TOOL_TEXT =
  */
 export const RETIREMENT_PENDING_TOOL_TEXT =
   "This device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet, so nothing ran. Retry later (a cloud device becomes usable once its provider confirms the old instance destroyed), continue without the device, or ask the user to start a new conversation on another device.";
-export const RETIREMENT_RESTART_TOOL_TEXT =
-  "Background work started by an earlier version may still be running on this device's computer, so nothing ran. Ask the user to restart that computer to finish the upgrade, then retry; or continue without the device.";
 export const RETIREMENT_RECREATE_TOOL_TEXT =
   "Background work started by an earlier version may still be running on an earlier instance of this device, which can no longer be verified as destroyed, so nothing ran. Ask the device's owner to delete the device and create it again, or ask the user to start a new conversation on another device.";
-export const RETIREMENT_REPLACE_TOOL_TEXT =
-  "Background work started by an earlier version may still be running on this device's computer, which cannot prove a restart, so nothing ran. Ask the device's owner to delete the device and connect the computer again as a new device, or ask the user to start a new conversation on another device.";
 /** The model-facing text of a retirement refusal's code (`device.unavailable` for any other). */
 function retirementToolText(code: string): string {
-  if (code === "device.restart_required") return RETIREMENT_RESTART_TOOL_TEXT;
   if (code === "device.recreate_required") return RETIREMENT_RECREATE_TOOL_TEXT;
-  if (code === "device.replace_required") return RETIREMENT_REPLACE_TOOL_TEXT;
   return RETIREMENT_PENDING_TOOL_TEXT;
 }
 /**
@@ -577,10 +570,10 @@ export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
   "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
 /** The device itself refused: it cannot enforce its sandbox (`SandboxPermissionUnsupportedError`). */
 export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
-  "This device refused to run the operation because it cannot enforce its sandbox limits, so nothing ran. Ask the device's owner to update capybara-device (or a super admin to update the device's sandbox plugin), or continue without the device.";
+  "This device refused to run the operation because it cannot enforce its sandbox limits, so nothing ran. Ask the device's owner to update its device program (or a super admin to update its device plugin), or continue without the device.";
 /** Earlier work on the device blocks a new operation (`SandboxWorkUnsettledError`). */
 export const WORK_UNSETTLED_TOOL_TEXT =
-  "Earlier work on this device has not settled yet, so nothing ran. Retry in a moment; if it keeps happening, ask the device's owner to stop the device's background tasks or restart capybara-device on that machine.";
+  "Earlier work on this device has not settled yet, so nothing ran. Retry in a moment; if it keeps happening, ask the device's owner to stop the device's background tasks or restart its device program.";
 export { PermissionAdmissionUnavailable };
 /**
  * Admission's refusal on a device without permission-scoped operations
@@ -589,7 +582,7 @@ export { PermissionAdmissionUnavailable };
 export function admissionUnavailableText(cause: PermissionAvailabilityCause): string {
   if (cause.kind === "provider-outdated")
     return `This device's sandbox plugin (${cause.plugin} ${cause.version}) cannot run device tools under a permission profile, so nothing ran. A super admin updates the plugin on the Plugins page; until then, continue without the device, or ask the user to start a new conversation on another device.`;
-  return "This device's runtime cannot enforce its sandbox, so nothing ran. Ask the device's owner to update capybara-device on that machine (for a cloud device, a super admin updates its sandbox plugin), or continue without the device.";
+  return "This device's runtime cannot enforce its sandbox, so nothing ran. Ask the device's owner to update its device program (or a super admin to update its device plugin), or continue without the device.";
 }
 /**
  * A device refused an operation scope as invalid (`SandboxScopeValidationError`): the kernel only
@@ -599,11 +592,11 @@ export function admissionUnavailableText(cause: PermissionAvailabilityCause): st
 export const SCOPE_INVALID_TOOL_TEXT =
   "The device refused this operation as malformed, which points to a problem in the platform itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
 /**
- * A device request whose machine came back as a new run of capybara-device before answering
+ * A device request whose machine came back as a new run of its device program before answering
  * (`DeviceProgramRestartedError`, also as the cause of an unknown outcome): its result is lost.
  */
 export const DEVICE_PROGRAM_RESTARTED_TOOL_TEXT =
-  "The capybara-device program restarted on the device's machine while this operation was in progress, so its result is lost and whether it ran, or how far, is unknown. Check the device's state (for example with Read, Glob or TaskList), then run it again if it is still needed; do not repeat an operation that must not run twice.";
+  "The device program restarted on the machine serving this device while this operation was in progress, so its result is lost and whether it ran, or how far, is unknown. Check the device's state (for example with Read, Glob or TaskList), then run it again if it is still needed; do not repeat an operation that must not run twice.";
 /** A managed operation whose outcome could not be confirmed (`SandboxOperationOutcomeUnknownError`). */
 export const OUTCOME_UNKNOWN_TOOL_TEXT =
   "The device may or may not have run this operation: its outcome could not be confirmed. Check the device's state (for example with Read, Glob or TaskList) before retrying, and do not repeat an operation that must not run twice.";
@@ -617,8 +610,6 @@ export const OUTCOME_UNKNOWN_TOOL_TEXT =
  */
 const RECONCILE_REQUIRED_TEXT =
   "This device's sandbox limits must be established again before it runs anything, so nothing ran. Ask the person to reset the device's files on the devices page, then retry, or to start a new conversation on another device.";
-const INSTANCE_BINDING_TEXT =
-  "The device's machine has not confirmed its current instance, so nothing ran. Ask the person to restart capybara-device on that machine (updating it if it is outdated), then retry, or to start a new conversation on another device.";
 
 /** The provider connection failure behind an unknown outcome, with the raw error to log. */
 function unreachableCause(
@@ -659,6 +650,8 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     log?.warn("sandbox operation outcome unknown", { err: e });
     return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
   }
+  // a dial-in provider's machine is not connected (the SDK's error, from any provider)
+  if (isDeviceOfflineError(e)) return new ToolError(DEVICE_OFFLINE_TEXT);
   // kernel-typed, before the scope refusal it extends: nothing was sent, a retry is safe
   if (isDeviceRequestNotSent(e))
     return new ToolError(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT, { kind: "unavailable" });
@@ -709,16 +702,13 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
       if (reason === NO_DEVICE) return new ToolError(NO_DEVICE_TEXT);
       return new ToolError(NO_SANDBOX_TEXT);
     }
-    const detail = e.details?.[0] as { reason?: unknown; source?: unknown } | undefined;
+    const detail = e.details?.[0] as { reason?: unknown } | undefined;
     if (e.code === "device.not_found") return new ToolError(ENV_NOT_FOUND_TEXT);
     if (e.code === "device.forbidden" && detail?.reason === "machine_revoked") {
       return new ToolError(DEVICE_REVOKED_TEXT);
     }
     if (e.code === "device.forbidden") return new ToolError(ENV_FORBIDDEN_TEXT);
     if (e.code === "device.unavailable") return new ToolError(ENV_UNAVAILABLE_TEXT);
-    if (e.code === "device.files_lost" && detail?.source === "local") {
-      return new ToolError(DEVICE_FILES_LOST_TEXT);
-    }
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
@@ -737,12 +727,8 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "sandbox.create_failed") return new ToolError(SANDBOX_CREATE_FAILED_TEXT);
   }
   // an operation outside withSandbox's own mapping (it records lost files itself)
-  if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
+  if (isFileSystemGoneError(e)) return new ToolError(ENV_FILES_LOST_TEXT);
   if (e instanceof DeviceProtocolError) return new ToolError(deviceProtocolText(e.message));
-  if (e instanceof InstanceBindingError) {
-    log?.warn("device instance binding failed", { err: e });
-    return new ToolError(INSTANCE_BINDING_TEXT, { kind: "unavailable" });
-  }
   if (e instanceof SandboxLockLostError) return new ToolError(LOCK_LOST_TEXT);
   if (e instanceof SandboxPathBusyError) return new ToolError(PATH_BUSY_TEXT);
   return e;
@@ -851,9 +837,8 @@ async function inSandboxWith<T>(
     // the working facts (workspace, home, project snapshot) are read as the review reads them
     // a call the review covered runs in the working root it was reviewed against: never read again
     const reviewed = ctx.reviewedWorkingRoot;
-    const [level, reach, working] = await Promise.all([
+    const [level, working] = await Promise.all([
       deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
-      deps.devices.projectReach?.(ctx.orgId, deviceId),
       reviewed !== undefined
         ? null
         : (deps.devices.workingFacts?.(
@@ -878,8 +863,22 @@ async function inSandboxWith<T>(
               beforeUser: async (staging, info, sig) => {
                 // the held instance's device paths, recorded before any preparation or user callback
                 if (managed) {
-                  // no installed binding to describe the held instance: unavailable, not stale
-                  if (!info.contextEvidence) throw new ManagedDeviceContextUnavailable();
+                  // no installed evidence to describe the held instance: unavailable, not stale
+                  // (a device or machine that is gone for good says so instead)
+                  if (!info.contextEvidence)
+                    throw (
+                      (ctx.runId !== undefined &&
+                        (await managed.goneFor?.(
+                          {
+                            orgId: ctx.orgId,
+                            conversationId: ctx.conversationId,
+                            runId: ctx.runId,
+                            accountId: ctx.accountId,
+                          },
+                          deviceId,
+                        ))) ||
+                      new ManagedDeviceContextUnavailable()
+                    );
                   // B-18: the review judged the call against a root (the workspace included);
                   // held evidence of another root is stale, refused before anything is recorded
                   // or run
@@ -936,7 +935,7 @@ async function inSandboxWith<T>(
           workingRoot:
             (managed ? info.contextEvidence?.workingRoot : undefined) ??
             reviewed ??
-            sessionWorkingRoot(working, mode, info.roots.workspace, reach),
+            sessionWorkingRoot(working, info.roots.workspace),
           p,
           signal,
         };
@@ -1015,14 +1014,9 @@ async function recordDevicePaths(
  * workspace (`workspace`), where the call really runs. Every session built outside `inSandbox` (a
  * person's project skill invocation) takes its working root from here too.
  */
-export function sessionWorkingRoot(
-  working: WorkingFacts | null,
-  mode: SandboxMode,
-  workspace: string,
-  reach?: "workspace" | "os-user",
-): string {
+export function sessionWorkingRoot(working: WorkingFacts | null, workspace: string): string {
   if (working === null) return workspace;
-  const root = workingRootOf(working.project, { mode, reach, ...working });
+  const root = workingRootOf(working.project, working);
   return root === working.workspace ? workspace : root;
 }
 

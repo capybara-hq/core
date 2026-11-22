@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -15,18 +15,13 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
-import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
-import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
-import { localProviderEntry } from "../../src/local-devices/local-devices.module.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { HOLDER_REVOKE, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
@@ -38,11 +33,9 @@ import {
 } from "../helpers/managed-background.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { stagedHello } from "../local-devices/fake-machine-v3.js";
 
 /**
  * B3 evidence end to end (permission activation B-6): the platform's network ceiling narrowed to
@@ -118,7 +111,7 @@ beforeEach(async () => {
 });
 
 /**
- * The owner's machine allows Full and keeps the open network, which its runtime enforces; the
+ * The device's provider allows work outside the sandbox and enforces the open network; the
  * conversation consents to Full on it, so its commands run sandboxed on the open public network.
  */
 async function fullAccessFixture() {
@@ -138,28 +131,6 @@ async function fullAccessFixture() {
     launch: false,
     provider,
   });
-  const machine = await f.db
-    .selectFrom("device_machines")
-    .select("id")
-    .where("device_id", "=", f.deviceId)
-    .executeTakeFirstOrThrow();
-  await k.app.get(MachinesService).recordPolicyV3(
-    machine.id,
-    {
-      type: "policy",
-      policy: { allowedDomains: [] },
-      ownerCeiling: {
-        version: 3,
-        revision: "owner-1",
-        sequence: 1,
-        outsideSandbox: true,
-        network: "open",
-        restrictedProjectReach: "os-user",
-        allowedDomains: [],
-      },
-    },
-    "connection-1",
-  );
   const preview = await k.app.get(PermissionFacts).scope(f.orgId, f.deviceId, null, null);
   if (!preview.scopeRevision) throw new Error("the fixture device has no Full scope");
   const { revision } = await k.app
@@ -380,24 +351,21 @@ it.each([
 
 it("a network narrowing revokes only open-network work: an allowlist sibling keeps its grant and keeps running", async () => {
   const f = await fullAccessFixture();
-  // the machine reports every root of the instance, so sandboxed work stays within its reach
-  await f.db
-    .updateTable("device_machines")
-    .set({ roots: JSON.stringify({ workspace: "/work", skills: "/skills", tmp: "/tmp" }) })
-    .where("device_id", "=", f.deviceId)
-    .execute();
   const openTask = await f.launchAnother();
-  // the owner's network on the allowlist from here on (setup only: the next task's admission
-  // reads it; the owner writer is covered elsewhere)
+  // the device's network on the allowlist from here on (setup only: the next task's admission
+  // reads it; the device network writer is covered elsewhere)
   await f.db
-    .updateTable("device_machines")
-    .set({
-      owner_report: storedOwnerReport({
-        network: "allowlist",
-        allowedDomains: ["registry.npmjs.org"],
-        sequence: 2,
-      }),
-    })
+    .updateTable("devices")
+    .set({ network_mode: "allowlist", network_hosts: JSON.stringify(["registry.npmjs.org"]) })
+    .where("id", "=", f.deviceId)
+    .execute();
+  // the instance already runs at the limits that network gives (no recreation on launch)
+  const limits = await k.app
+    .get(SandboxService)
+    .deviceLimits({ orgId: f.orgId, deviceId: f.deviceId });
+  await f.db
+    .updateTable("device_instances")
+    .set({ instance_limits: JSON.stringify({ mode: limits.mode, network: limits.network }) })
     .where("device_id", "=", f.deviceId)
     .execute();
   await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, owner.id, {
@@ -560,8 +528,11 @@ const support = {
   unavailableReason: "Restricted per-instance validation pending",
 };
 
-/** A local device whose machine answers through the staged transport; `frames` records each op. */
-async function localDevice() {
+/** The in-process provider of {@link machineDevice}: an operation-boundary machine runtime. */
+const PROVIDER = "@revocation-test";
+
+/** A device whose provider records every machine operation in `frames` (no broad kill exists). */
+async function machineDevice() {
   const seed = await seedConversation(raw);
   const deviceId = randomUUID();
   await db()
@@ -571,58 +542,47 @@ async function localDevice() {
       org_id: seed.orgId,
       owner_kind: "personal",
       owner_account_id: seed.accountId,
-      source: "local",
-      provider: LOCAL_PROVIDER,
+      provider: PROVIDER,
       name: "Laptop",
-    })
-    .execute();
-  await db()
-    .insertInto("device_machines")
-    .values({
-      org_id: seed.orgId,
-      device_id: deviceId,
-      account_id: seed.accountId,
-      credential_hash: randomUUID(),
-      name: "Laptop",
-      os: "darwin",
-      arch: "arm64",
-      program_version: "0.1.0",
-      roots: JSON.stringify(ROOTS),
     })
     .execute();
   const frames: { op: string; args: Record<string, unknown> }[] = [];
-  const relay = k.app.get(LocalDeviceRelay);
-  vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
-  vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
-    frames.push({ op, args });
-    if (op === "create") return { roots: ROOTS };
-    if (op === "revokeOperation") return null;
-    if (op === "bindInstance") {
-      const g = args.instanceGeneration as string;
-      return {
-        instanceId: args.instanceId as string,
-        instanceGeneration: g,
-        bindingId: args.bindingId as string,
-        runtimeIdentity: {
-          runtimeHash: "a".repeat(64),
-          helperHash: "b".repeat(64),
-          imageFingerprint: "c".repeat(64),
-          instanceGeneration: g,
-        },
-        permissionSupport: support,
-        ownerCeiling: stagedHello().ownerCeiling,
-      };
-    }
-    throw new Error(`unexpected device op ${op}`);
-  });
-  // the production @local registration, over the answering transport
-  k.app.get(DeviceProviders).register(
-    localProviderEntry({
-      provider: k.app.get(LocalDeviceProvider),
-      relay,
-      bindings: k.app.get(LocalInstanceBindings),
-    }),
-  );
+  const record = (op: string, args: Record<string, unknown> = {}) => frames.push({ op, args });
+  const impl = {
+    concurrentExec: true,
+    async createFileSystem({ name }: { name: string }) {
+      record("createFileSystem");
+      return { id: name };
+    },
+    async destroyFileSystem() {},
+    async destroyFileSystemByName() {},
+    async create() {
+      record("create");
+      return { id: deviceId, roots: ROOTS };
+    },
+    async resume() {
+      return "resumed";
+    },
+    async suspend() {},
+    async destroy() {},
+    async destroyByName() {},
+    async permissionSupport() {
+      return support;
+    },
+    async operation() {
+      throw new Error("unexpected device operation");
+    },
+    async revokeOperation(_h: unknown, ref: unknown) {
+      record("revokeOperation", { ref });
+    },
+    async killAll() {
+      record("killAll");
+    },
+    async killTagged() {
+      record("killTagged");
+    },
+  } as unknown as DeviceProvider;
+  k.app.get(DeviceProviders).register({ plugin: PROVIDER, version: "test", impl });
   const ctx = {
     orgId: seed.orgId,
     deviceId,
@@ -664,7 +624,7 @@ async function seedIntent(
       input: "{}",
       scope: "{}",
       epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
-      provider: o.provider ?? LOCAL_PROVIDER,
+      provider: o.provider ?? PROVIDER,
       provider_version: "test",
       instance_generation: o.generation,
       deadline: new Date(Date.now() + 60_000),
@@ -687,7 +647,7 @@ async function seedIntent(
 
 /** The admitted Bash a crashed replica held on the device's current instance. */
 const admittedBash = (
-  f: Awaited<ReturnType<typeof localDevice>>,
+  f: Awaited<ReturnType<typeof machineDevice>>,
   holder: string,
   generation: string,
 ): Promise<string> => seedIntent(f, { holder, generation, state: "admitted" });
@@ -729,7 +689,7 @@ async function launchingTask(
         run_execution_id: randomUUID(),
         task_tag: randomUUID(),
         instance_id: f.deviceId,
-        instance_provider: LOCAL_PROVIDER,
+        instance_provider: PROVIDER,
         instance_provider_version: "test",
         instance_generation: "1",
         profile_revision: 0,
@@ -780,7 +740,7 @@ it("revokeIncarnation revokes the generation's admitted, dispatching and started
   };
   await k.app
     .get(SandboxOperationIntents)
-    .revokeIncarnation(f.deviceId, { provider: LOCAL_PROVIDER, generation: g });
+    .revokeIncarnation(f.deviceId, { provider: PROVIDER, generation: g });
   expect({
     admitted: await stateOf(ids.admitted),
     dispatching: await stateOf(ids.dispatching),
@@ -823,7 +783,7 @@ it("a revoked launch without an exact ref ends its task and frees its maxTasks s
   const t2 = await launchingTask(f, admitted, "pending");
   expect(await store.countRunning(f.conversationId)).toBe(2);
   await intents.revokeHolders(f.deviceId, [dead]);
-  await intents.revokeIncarnation(f.deviceId, { provider: LOCAL_PROVIDER, generation: "2" });
+  await intents.revokeIncarnation(f.deviceId, { provider: PROVIDER, generation: "2" });
   // the exact revokes are acknowledged (the device confirmed): the tasks stay ended
   await intents.acknowledgeRevocation(dispatched);
   await intents.acknowledgeRevocation(admitted);
@@ -837,21 +797,19 @@ it("a revoked launch without an exact ref ends its task and frees its maxTasks s
 });
 
 it("a crashed holder's revocation survives a failed inline revoke: the owed job revokes its admitted Bash and the device gets the exact revoke", async () => {
-  const original = k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER);
   const redis = new Redis(rd.url);
   try {
     await crashedHolderScenario(redis);
   } finally {
     vi.restoreAllMocks();
-    if (original) k.app.get(DeviceProviders).register(original);
     redis.disconnect();
   }
 });
 
 async function crashedHolderScenario(redis: Redis) {
-  const f = await localDevice();
+  const f = await machineDevice();
   const sandbox = k.app.get(SandboxService);
-  // the first holder makes and binds the instance, then leaves
+  // the first holder makes the instance, then leaves
   await sandbox.ensureRunning(f.ctx, signal());
   const instance = await sandbox.currentInstance(f.deviceId);
   if (!instance) throw new Error("expected the running instance");
@@ -933,6 +891,52 @@ it("owed holder and operation revocations carry the device's org", async () => {
       { jobId: revokeJobId(op), orgId: f.orgId },
       { jobId: revokeJobId(op, "-1"), orgId: f.orgId },
     ]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+// final whole-branch review I1: an owed revoke of a background start whose device is gone (its
+// provider may be gone too) is never acknowledged; it stops queueing retries once the device is
+// deleted, and the retirement settles it, instead of being retried hourly for ever
+it("a revoked background start keeps its retries on a live device and stops them once the device is deleted", async () => {
+  const f = await intentDevice();
+  const intents = k.app.get(SandboxOperationIntents);
+  const outbox = k.app.get(OutboxService);
+  const add = outbox.add.bind(outbox);
+  const owed: string[] = [];
+  const spy = vi.spyOn(outbox, "add").mockImplementation(async (job) => {
+    owed.push(job.jobId);
+    return add(job);
+  });
+  try {
+    const op = await seedIntent(f, {
+      generation: "1",
+      state: "background-running",
+      method: "backgroundStart",
+    });
+    await db()
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "revoked" })
+      .where("operation_id", "=", op)
+      .execute();
+    await intents.deferRevocation(op);
+    await intents.deferRevocation(op);
+    expect(owed).toEqual([revokeJobId(op, "-1"), revokeJobId(op, "-2")]);
+    await db()
+      .updateTable("devices")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await intents.deferRevocation(op);
+    expect(owed).toEqual([revokeJobId(op, "-1"), revokeJobId(op, "-2")]);
+    const row = await db()
+      .selectFrom("sandbox_operation_intents")
+      .select(["state", "revoke_acknowledged", "reconcile_attempt"])
+      .where("operation_id", "=", op)
+      .executeTakeFirstOrThrow();
+    // nothing claims a cleanup that did not happen
+    expect(row).toEqual({ state: "revoked", revoke_acknowledged: false, reconcile_attempt: 2 });
   } finally {
     spy.mockRestore();
   }

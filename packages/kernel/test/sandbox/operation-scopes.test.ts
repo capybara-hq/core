@@ -249,29 +249,6 @@ it("an instance report naming why it is unavailable refuses a network-none nativ
   expect(opened).toBe(1);
 });
 
-import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
-
-it("owner baseline removal preserves Full and explicit additions but revokes baseline-only exec", () => {
-  const restricted = {
-    ...scope(1),
-    network: { kind: "allowlist" as const, hosts: ["api.example.com"] },
-  };
-  const next = { allowedDomains: [] };
-  expect(ownerPolicyRevokes(next, restricted, "exec", [])).toBe(true);
-  expect(ownerPolicyRevokes(next, restricted, "exec", ["api.example.com"])).toBe(false);
-  expect(ownerPolicyRevokes(next, restricted, "stat", [])).toBe(false);
-  // full execution is the scope's reach: a Full access operation and an escalated call alike
-  const full = {
-    ...restricted,
-    filesystem: { kind: "device" as const },
-    network: { kind: "environment" as const },
-  };
-  // the summary never revokes it: a lost outside-sandbox ceiling is revoked by the owner report
-  for (const profile of ["full-access", "approve-for-me"] as const) {
-    expect(ownerPolicyRevokes(next, { ...full, profile }, "exec", [])).toBe(false);
-  }
-});
-
 // final review m4: a cloud provider's background start is told the kernel's generation of the
 // held instance; nothing else about the provider changes
 describe("withKernelGeneration", () => {

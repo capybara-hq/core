@@ -43,10 +43,9 @@ export class DeviceAccess {
    * The device if `accountId` may use it in `orgId` now: `device.not_found` when it is
    * missing, deleted, in another org or someone else's; `device.unavailable` when it has no
    * provider, its provider (`devices.provider`, fixed at creation) does not serve the org now
-   * ({@link DeviceProviderSelection.isOnInOrg}: off in the org, not installed, invalid config;
-   * `@local` not registered), or its instance row names another provider (never written by this
-   * kernel). A local device is usable while `@local` is registered: whether its machine is online
-   * is the relay's concern, not access.
+   * ({@link DeviceProviderSelection.isOnInOrg}: off in the org, not installed, invalid config),
+   * or its instance row names another provider (never written by this kernel). Whether a dial-in
+   * device's machine is online is its provider's concern, not access.
    */
   async usable(
     orgId: string,

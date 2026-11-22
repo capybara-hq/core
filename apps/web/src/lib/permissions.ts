@@ -34,12 +34,29 @@ export type PermissionAvailability =
     }
   | { state: "unprobed"; reason: string };
 
+/** A per-call host ceiling as the kernel records it in a consent. */
+export type HostGrantCeiling =
+  | { kind: "any"; excluded: string[] }
+  | { kind: "hosts"; hosts: string[]; excluded?: string[] };
+
+/**
+ * The crossing ceilings an Auto consent confirmed now records: the confirmation names exactly
+ * what it covers (running outside the sandbox only when `outsideSandbox`).
+ */
+export interface ConsentReach {
+  outsideSandbox: boolean;
+  networkCeiling: "open" | "allowlist" | "none";
+  networkMode: "open" | "allowlist" | "none";
+  hostCeiling: HostGrantCeiling;
+}
+
 export interface PermissionPreview {
   deviceId: string;
   project: string | null;
   scopeRevision: string;
   availability: PermissionAvailability;
   outsideSandboxCeiling: boolean;
+  consentReach: ConsentReach;
 }
 
 /** An owner read; a child's view names the root whose profile it inherits. */
@@ -52,6 +69,8 @@ export interface ConversationPermissions {
   scopeRevision: string | null;
   availability: PermissionAvailability;
   outsideSandboxCeiling: boolean;
+  /** Null when the device's scope was not read (no device, or not usable by this account). */
+  consentReach: ConsentReach | null;
   startingWorkNotice: string;
 }
 

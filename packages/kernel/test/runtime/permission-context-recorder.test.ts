@@ -12,7 +12,6 @@ import {
   runOutsideTransaction,
   TransactionHost,
 } from "../../src/infra/database/transaction-host.js";
-import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { createLogger } from "../../src/log.js";
 import {
   permissionContextIdemKey,
@@ -46,6 +45,7 @@ import {
   contexts,
   identityFor,
   inputOf,
+  REPORTS,
   type ReportKind,
   ROOTS,
   recordUnder,
@@ -102,8 +102,7 @@ beforeEach(async () => {
       k.app.get(PermissionCallGrants),
       ["issueLocked", "findForAdmission", "forExecution", "assertCurrent"],
     ],
-    [k.app.get(PermissionRuntimeReports), ["record", "recordCloud"]],
-    [k.app.get(LocalInstanceBindings), ["bind", "install", "retarget"]],
+    [k.app.get(PermissionRuntimeReports), ["recordSupport", "clearSupport"]],
     [
       k.app.get(ApprovalsService),
       ["request", "requestNetwork", "requestGit", "requestCommand", "decide"],
@@ -151,7 +150,7 @@ beforeEach(async () => {
   });
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_instance_bindings, capybara.device_permission_reports, capybara.device_generation_high_water",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_permission_reports, capybara.device_generation_high_water",
   );
 });
 /** Every cloud provider spy of a case: a context read or admission never reaches it. */
@@ -199,7 +198,6 @@ describe("recorded permission context recorder", () => {
       // the device sandbox, recorded on every supported context
       sandbox: {
         boundary: "operation",
-        location: "local",
         workingRoot: "/work",
         network: { kind: "none", hostsCount: 0 },
         outsideSandbox: true,
@@ -217,11 +215,10 @@ describe("recorded permission context recorder", () => {
       authorityRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
       availability: { state: "supported" },
       scope: {
-        location: "local",
+        boundary: "operation",
         workingRoot: "/work",
         filesystem: {
           kind: "scoped",
-          readDirectories: ["/skills", "/work"],
           writeDirectories: ["/work"],
         },
         network: { kind: "none" },
@@ -724,11 +721,9 @@ describe("permission context projection", () => {
   const unprobed = { state: "unprobed", reason: expect.any(String) };
   it.each<[string, Parameters<typeof seedContext>[2], (f: ContextFixture) => Promise<void>]>([
     ["no runtime report", { report: null }, async () => {}],
-    ["a binding still awaiting the device", { binding: "awaiting" }, async () => {}],
-    ["no binding of this generation", { binding: "none" }, async () => {}],
     [
-      "a suspended instance without its binding",
-      { status: "suspended", binding: "none" },
+      "a suspended instance without a runtime report",
+      { status: "suspended", report: null },
       async () => {},
     ],
     [
@@ -738,17 +733,6 @@ describe("permission context projection", () => {
         await f.db
           .updateTable("device_instances")
           .set({ permission_runtime_identity: JSON.stringify(identityFor(f.generation, "d")) })
-          .where("device_id", "=", f.deviceId)
-          .execute();
-      },
-    ],
-    [
-      "an installed binding of a replaced machine",
-      {},
-      async (f) => {
-        await f.db
-          .updateTable("device_instance_bindings")
-          .set({ machine_id: randomUUID() })
           .where("device_id", "=", f.deviceId)
           .execute();
       },
@@ -799,22 +783,40 @@ describe("permission context projection", () => {
     });
   });
 
-  it("a cloud device with its recorded cloud evidence reports its applied outer boundary", async () => {
+  it("an operation-boundary provider gets the host-environment outer network; an instance-boundary one its instance network", async () => {
+    // the same device and the same applied instance network (an empty allowlist): the outer
+    // boundary follows the provider's boundary only, never where the device runs
+    for (const [report, outer] of [
+      ["both", { kind: "host-environment" }],
+      ["instance", { kind: "none" }],
+    ] as const) {
+      const f = await seedContext(k, raw);
+      const { spy } = await toCloudDevice(k, f, { evidence: true, report });
+      cloudCalls.push(spy.calls);
+      await record(f);
+      expect((await contexts(raw, f.rootId))[0]?.payload).toMatchObject({
+        availability: { state: "supported" },
+        scope: { boundary: REPORTS[report].boundary, outerNetwork: outer },
+        sandbox: { boundary: REPORTS[report].boundary, outerNetwork: outer },
+      });
+    }
+  });
+
+  it("an instance-boundary provider's recorded evidence reports its applied outer boundary", async () => {
     const f = await seedContext(k, raw);
     // the device's outer network snapshot is an empty allowlist: its instance runs network-off
-    const { spy, desired } = await toCloudDevice(k, f, { evidence: true });
+    const { spy, desired } = await toCloudDevice(k, f, { evidence: true, report: "instance" });
     expect(desired.network).toEqual({ kind: "allowlist", hosts: [] });
     cloudCalls.push(spy.calls);
     await record(f);
     expect((await contexts(raw, f.rootId))[0]?.payload).toMatchObject({
       availability: { state: "supported" },
       scope: {
-        location: "cloud",
+        boundary: "instance",
         workingRoot: "/work",
         filesystem: {
           kind: "scoped",
-          readDirectories: ["/skills", "/work"],
-          writeDirectories: ["/work"],
+          writeDirectories: ["/", "/work"],
         },
         network: { kind: "none" },
         outerNetwork: { kind: "none" },
@@ -918,32 +920,12 @@ describe("permission context projection", () => {
     ],
     // the unproved environment precedes the capability report in both readers
     [
-      "local restricted on a Full-only runtime without a binding",
-      { report: "full-only", binding: "none" },
-      null,
-      "unprobed",
-    ],
-    ["local desired but unapplied: binding awaiting", { binding: "awaiting" }, null, "unprobed"],
-    ["local desired but unapplied: no binding", { binding: "none" }, null, "unprobed"],
-    [
       "local stale: runtime identity replaced",
       {},
       async (f) => {
         await f.db
           .updateTable("device_instances")
           .set({ permission_runtime_identity: JSON.stringify(identityFor(f.generation, "d")) })
-          .where("device_id", "=", f.deviceId)
-          .execute();
-      },
-      "unprobed",
-    ],
-    [
-      "local stale: binding of a replaced machine",
-      {},
-      async (f) => {
-        await f.db
-          .updateTable("device_instance_bindings")
-          .set({ machine_id: randomUUID() })
           .where("device_id", "=", f.deviceId)
           .execute();
       },
@@ -1013,6 +995,8 @@ describe("permission context projection", () => {
       {},
       cloud({
         evidence: true,
+        // an instance's applied network is its outer boundary
+        report: "instance",
         limits: (desired) => ({ ...desired, network: { kind: "open-public", hosts: [] } }),
       }),
       "unprobed",
@@ -1022,6 +1006,7 @@ describe("permission context projection", () => {
       {},
       cloud({
         evidence: true,
+        report: "instance",
         limits: (desired) => ({
           ...desired,
           network: { kind: "allowlist", hosts: ["x.example"] },
@@ -1243,7 +1228,6 @@ describe("permission context projection", () => {
       scope: {
         filesystem: {
           kind: "scoped",
-          readDirectories: ["/skills", "/work"],
           writeDirectories: ["/work"],
         },
         network: { kind: "allowlist", hosts: ["api.example.com"] },

@@ -1,5 +1,6 @@
 import {
   type DeviceProvider,
+  isDeviceRequestNotSent,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxExecutionRef,
@@ -15,7 +16,6 @@ import { BackgroundTaskStore } from "../background/store.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { isDeviceRequestNotSent } from "../local-devices/relay.js";
 import type { KernelLogger } from "../log.js";
 import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
 import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
@@ -125,8 +125,7 @@ export class SandboxOperationReconcileJob {
           return {
             ref: await background.start(h, scope, {
               ...input,
-              // a bound (local) device knows its generation from its binding; a cloud one is told
-              ...(!entry.binder && { instanceGeneration: claimed.instance_generation }),
+              instanceGeneration: claimed.instance_generation,
               signal,
             }),
             instanceId: h.id,

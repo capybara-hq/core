@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
-  type DeviceHello,
-  type DeviceResponse,
-  type KernelReady,
-  parseDeviceFrame,
+  type DialInMachineFrame,
+  parseDialInKernelFrame,
+  parseDialInMachineFrame,
   type SandboxHandle,
 } from "@capybara-hq/plugin-sdk";
+import {
+  DEVICE_DIAL_IN_PROTOCOL,
+  type DeviceHello,
+  type DevicePolicyChanged,
+  type DeviceResponse,
+  type DeviceResponseBody,
+  type KernelRequest,
+  parseDeviceFrame,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import type WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
 import { credentialIdentity, type InstanceBinder } from "./exec/instance-binding.js";
@@ -25,7 +33,7 @@ export const PROGRAM_RUN_ID = randomUUID();
 export const MAX_HELD_ANSWERS = 64;
 
 /**
- * What a staged (protocol 4) program keeps across its sockets, like protocol 2's connection
+ * What a staged (protocol 5) program keeps across its sockets, like protocol 2's connection
  * (`client.ts`): the running operations and the answers produced while no socket was ready.
  * One state belongs to one machine credential ({@link StagedSessionStates}); it never serves
  * another credential's sockets.
@@ -153,19 +161,44 @@ const CONNECTION_FENCED = new Set(["backgroundReadOutput"]);
  */
 const REFUSED_WHILE_DRAINING = new Set(["create", "bindInstance"]);
 
-/** Controls served while no generation is bound: lifecycle, machine and owner policy. */
-const CONTROLS = new Set(["bindInstance", "policy", "policyStatus", "create", "stop"]);
+/** Controls served while no generation is bound: binding and the machine lifecycle. */
+const CONTROLS = new Set(["bindInstance", "create", "stop"]);
 
 /**
  * The machine lifecycle of a staged program (`start` supplies it): `create` reports the roots of
  * a new instance, `stop` (revoked or deleted on the deployment) exact-stops what the program owns
  * before it is answered; `stopped` is called once that answer was handed to the socket, and ends
- * the program.
+ * the program. `kernelStop` is the envelope's `stop` frame: the kernel asks the program to drain
+ * (finish its work, then disconnect) or to stop at once.
  */
 export interface StagedMachineControl {
   create(signal: AbortSignal): Promise<{ roots: import("@capybara-hq/plugin-sdk").SandboxRoots }>;
   stop(reason: "revoked" | "deleted", signal: AbortSignal): Promise<void>;
   stopped(reason: "revoked" | "deleted"): void;
+  kernelStop?(reason: "drain" | "stop"): void;
+}
+
+/** A served socket: its `ready` state and the sender of unsolicited events. */
+export interface StagedSession {
+  /** The kernel's `ready`, with the connection's effective frame capacity; undefined before. */
+  ready(): { connectionId: string; maxFrameBytes: number } | undefined;
+  /**
+   * Sends an event body on this connection once it is ready. False when it is not ready or the
+   * frame does not fit the connection's capacity (nothing is sent).
+   */
+  event(body: DevicePolicyChanged): boolean;
+}
+
+/** The program facts a hello's envelope carries (`DialInMachineFrame`'s `program`). */
+export type StagedProgram = Extract<DialInMachineFrame, { type: "hello" }>["program"];
+
+/**
+ * What a socket's hello says (`StagedDevice.report`): the program facts of the dial-in envelope
+ * and the device protocol body. The session adds the protocol, this run's id and the capacity.
+ */
+export interface StagedHello {
+  envelope: { program: StagedProgram };
+  body: DeviceHello;
 }
 
 async function serveMachineControl(
@@ -174,6 +207,7 @@ async function serveMachineControl(
   signal: AbortSignal,
 ): Promise<DeviceResponse> {
   const sdk = await import("@capybara-hq/plugin-sdk");
+  const proto = await import("@capybara-hq/plugin-sdk/device-protocol");
   try {
     if (!machine)
       throw new sdk.SandboxPermissionUnsupportedError(
@@ -184,11 +218,11 @@ async function serveMachineControl(
         type: "res",
         id: req.id,
         ok: true,
-        result: sdk.parseOperationResult("create", await machine.create(signal)),
+        result: proto.parseOperationResult("create", await machine.create(signal)),
       };
     const reason = (req.args as { reason?: unknown }).reason;
     if (reason !== "revoked" && reason !== "deleted")
-      throw new sdk.DeviceProtocolError("A machine stop names its reason: revoked or deleted");
+      throw new proto.DeviceProtocolError("A machine stop names its reason: revoked or deleted");
     await machine.stop(reason, signal);
     return { type: "res", id: req.id, ok: true, result: null };
   } catch (error) {
@@ -267,7 +301,13 @@ export async function drainStagedSession(
 }
 
 /**
- * Dormant authenticated socket adapter. Production connect() remains v2 until paired activation.
+ * Serves one authenticated socket with the dial-in envelope: sends the hello (protocol
+ * `capybara-device/5`, this run's id, the program facts, the credential's frame capacity and the
+ * device protocol body), waits for `ready`, then answers each `req` body with a `res` body and
+ * honours `cancel` and the kernel's `stop`. Every frame from the kernel is parsed strictly (the
+ * envelope, then the request body) and bounded by the connection's capacity (the credential's
+ * until `ready`, then the effective one `ready` names), which every frame sent obeys too; a
+ * malformed frame closes the socket with 4400.
  *
  * Reconnect semantics follow protocol 2: a socket close aborts only in-flight output reads; every
  * other operation keeps running, and an answer produced while no socket is ready waits up to the
@@ -276,7 +316,7 @@ export async function drainStagedSession(
  */
 export function serveStagedSession(
   socket: WebSocket,
-  report: Omit<DeviceHello, "transport">,
+  report: StagedHello,
   credential: Pick<Credential, "maxFrameBytes">,
   backend: MacOperationBackend,
   handle: SandboxHandle,
@@ -287,56 +327,73 @@ export function serveStagedSession(
    * unbound) and `bindInstance` is served; without one, the fixed backend serves a bound hello.
    */
   binder?: InstanceBinder,
-  /** Serves `policy` / `policyStatus` with owner reports (B2); without it they are unsupported. */
+  /** The owner's local controls: the command log and the running operations it lists. */
   owner?: StagedOwnerPolicy,
   /** Serves the machine lifecycle `create` and `stop`; without it they are unsupported. */
   machine?: StagedMachineControl,
-): { ready: () => KernelReady | undefined } {
+): StagedSession {
   if (!state || state.discarded)
     throw new Error("Serve the session with the current credential's session state");
-  const bootId = report.bootId ?? currentBootId();
-  const hello: DeviceHello = {
-    ...report,
-    // the host's OS boot identity: the deployment's evidence that the host restarted (8.5)
-    ...(bootId !== undefined && { bootId }),
-    programRunId: report.programRunId ?? PROGRAM_RUN_ID,
-    transport: { maxFrameBytes: credential.maxFrameBytes },
-  };
-  let ready: KernelReady | undefined;
-  const send = (value: unknown, cap: number) => {
+  const bootId = report.envelope.program.bootId ?? currentBootId();
+  const cap = credential.maxFrameBytes;
+  const hello = {
+    type: "hello",
+    protocol: DEVICE_DIAL_IN_PROTOCOL,
+    programRunId: PROGRAM_RUN_ID,
+    program: {
+      ...report.envelope.program,
+      // the host's OS boot identity: the deployment's evidence that the host restarted (8.5)
+      ...(bootId !== undefined && { bootId }),
+    },
+    transport: { maxFrameBytes: cap },
+    body: report.body,
+  } satisfies DialInMachineFrame;
+  let ready: { connectionId: string; maxFrameBytes: number } | undefined;
+  /** This connection's capacity: the kernel's effective one once ready, the credential's before. */
+  const limit = () => ready?.maxFrameBytes ?? cap;
+  const send = (value: unknown) => {
     const raw = JSON.stringify(value);
-    if (Buffer.byteLength(raw) > cap)
+    if (Buffer.byteLength(raw) > limit())
       throw new Error("Check device and deployment frame limits: control frame cannot fit");
     socket.send(raw);
   };
   const fail = (error: unknown) => socket.close(4400, String(error).slice(0, 100));
-  /** `res`, or an error answer when it cannot fit the negotiated capacity. */
-  const fit = (res: DeviceResponse, cap: number): DeviceResponse =>
-    Buffer.byteLength(JSON.stringify(res)) <= cap
-      ? res
+  /** The envelope of `res`, or of an error answer when it cannot fit the capacity. */
+  const wire = (res: DeviceResponse) => {
+    const { type: _type, id, ...body } = res;
+    const frame = { type: "res" as const, id, body };
+    return Buffer.byteLength(JSON.stringify(frame)) <= limit()
+      ? frame
       : {
-          type: "res",
-          id: res.id,
-          ok: false,
-          error: {
-            kind: "error",
-            message: "Result exceeds negotiated capacity; check frame limits and retry",
+          type: "res" as const,
+          id,
+          body: {
+            ok: false,
+            error: {
+              kind: "error",
+              message: "Result exceeds negotiated capacity; check frame limits and retry",
+            },
           },
         };
+  };
+  /** `res` itself, or the error answer {@link wire} would send instead. */
+  const fit = (res: DeviceResponse): DeviceResponse => {
+    const frame = wire(res);
+    return { type: "res", id: frame.id, ...(frame.body as DeviceResponseBody) };
+  };
   const deliverHere = (res: DeviceResponse) => {
-    const cap = ready?.maxFrameBytes;
-    if (cap === undefined || socket.readyState !== socket.OPEN) {
+    if (ready === undefined || socket.readyState !== socket.OPEN) {
       hold(res);
       return;
     }
     try {
-      send(fit(res, cap), cap);
+      send(wire(res));
     } catch (error) {
       fail(error);
     }
   };
-  // fitted to this socket's own limit, so a held answer is bounded in bytes as well as in count
-  const hold = (res: DeviceResponse) => holdAnswer(state, fit(res, hello.transport.maxFrameBytes));
+  // fitted to this socket's capacity, so a held answer is bounded in bytes as well as in count
+  const hold = (res: DeviceResponse) => holdAnswer(state, fit(res));
   const deliver = (res: DeviceResponse) => {
     if (state.current) state.current(res);
     else hold(res);
@@ -353,15 +410,12 @@ export function serveStagedSession(
     }
     try {
       if (binary) throw new Error("Use JSON text frames");
-      const frame = parseDeviceFrame(
-        data.toString(),
-        "kernel",
-        ready?.maxFrameBytes ?? hello.transport.maxFrameBytes,
-      );
-      if (frame.type === "ready") {
-        if (ready || frame.maxFrameBytes > hello.transport.maxFrameBytes)
+      const envelope = parseDialInKernelFrame(data.toString(), limit());
+      if (envelope.type === "ready") {
+        // the effective capacity is at most what this program announced
+        if (ready || envelope.maxFrameBytes > cap)
           throw new Error("Invalid ready capacity; reconnect");
-        ready = frame;
+        ready = { connectionId: envelope.connectionId, maxFrameBytes: envelope.maxFrameBytes };
         state.current = deliverHere;
         // answers produced while no socket was ready, within the grace
         const now = state.now();
@@ -372,20 +426,34 @@ export function serveStagedSession(
         return;
       }
       if (!ready) throw new Error("Wait for ready before sending requests");
-      if (frame.type === "cancel") {
-        state.pending.delete(frame.id);
-        state.running.get(frame.id)?.ctl.abort();
+      if (envelope.type === "stop") {
+        // a session served without the machine lifecycle (tests) has nothing to stop
+        machine?.kernelStop?.(envelope.reason);
         return;
       }
-      if (frame.type !== "req") throw new Error("Expected request or cancellation");
+      if (envelope.type === "cancel") {
+        state.pending.delete(envelope.id);
+        state.running.get(envelope.id)?.ctl.abort();
+        return;
+      }
+      // a body this protocol does not define (a removed or unknown operation, an unscoped read)
+      // is a protocol error like a malformed envelope: the socket closes with 4400
+      const body = parseDeviceFrame(envelope.body, "req");
+      const frame: KernelRequest = {
+        type: "req",
+        id: envelope.id,
+        op: body.op,
+        args: body.args,
+        deadlineMs: envelope.deadlineMs,
+      };
       // per-request problems get a typed answer; the socket and its other requests carry on
       const target =
-        // lifecycle and owner policy controls are served while unbound too
+        // binding and the machine lifecycle are served while unbound too
         CONTROLS.has(frame.op)
           ? { backend, handle }
           : binder
             ? binder.current()
-            : hello.instanceGeneration === null
+            : report.body.instanceGeneration === null
               ? undefined
               : { backend, handle };
       if (!target) {
@@ -443,10 +511,22 @@ export function serveStagedSession(
       if (CONNECTION_FENCED.has(op)) ctl.abort(new Error("Connection closed; retry the read"));
   });
   try {
-    parseDeviceFrame(JSON.stringify(hello), "device", hello.transport.maxFrameBytes);
-    send(hello, hello.transport.maxFrameBytes);
+    // the hello as the kernel and the provider will read it: the envelope, then the body
+    const text = JSON.stringify(hello);
+    parseDialInMachineFrame(text, cap);
+    parseDeviceFrame(hello.body, "hello");
+    send(hello);
   } catch (error) {
     fail(error);
   }
-  return { ready: () => ready };
+  return {
+    ready: () => ready,
+    event(body) {
+      if (ready === undefined || socket.readyState !== socket.OPEN) return false;
+      const raw = JSON.stringify({ type: "event", body });
+      if (Buffer.byteLength(raw) > limit()) return false;
+      socket.send(raw);
+      return true;
+    },
+  };
 }

@@ -28,11 +28,11 @@ import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { DevicesModule } from "../../src/devices/devices.module.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { OperationAuthorityModule } from "../../src/sandbox/operation-authority.module.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
@@ -153,20 +153,42 @@ async function createConv(req: Req, orgId: string, agentId: string): Promise<Con
   return (res.json() as { conversation: ConvJson }).conversation;
 }
 
+/**
+ * A device of the in-process `@permission-test` provider with a signed-in machine: every provider
+ * operation throws, so a read-only permission API that reaches the provider fails the test.
+ */
 async function localDevice(orgId: string, name = "Laptop") {
-  const providers = k.app.get(DeviceProviders),
-    local = providers.forDevice("@local");
-  if (!local) throw new Error("Local provider was not registered");
-  const impl = Object.create(local.impl);
   const neverProbe = async () => {
     throw new Error("Read-only permission API attempted a provider operation");
   };
-  Object.assign(impl, {
-    operation: neverProbe,
-    revokeOperation: neverProbe,
-    permissionSupport: neverProbe,
+  const impl = Object.fromEntries(
+    [
+      "createFileSystem",
+      "destroyFileSystem",
+      "destroyFileSystemByName",
+      "create",
+      "resume",
+      "suspend",
+      "destroy",
+      "destroyByName",
+      "killAll",
+      "killTagged",
+      "exec",
+      "readFile",
+      "writeFile",
+      "stat",
+      "list",
+      "scan",
+      "operation",
+      "revokeOperation",
+      "permissionSupport",
+    ].map((method) => [method, neverProbe]),
+  );
+  k.app.get(DeviceProviders).register({
+    plugin: "@permission-test",
+    version: KERNEL_VERSION,
+    impl: { ...impl, concurrentExec: true, networkAllowlist: true } as unknown as DeviceProvider,
   });
-  providers.register({ plugin: "@permission-test", version: KERNEL_VERSION, impl });
   const db = kernelDb(raw);
   const id = randomUUID();
   await db
@@ -176,7 +198,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: owner.id,
-      source: "local",
       provider: "@permission-test",
       name,
     })
@@ -191,11 +212,6 @@ async function localDevice(orgId: string, name = "Laptop") {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   return id;
@@ -228,7 +244,6 @@ describe("permission reader behavior", () => {
       for (const child of Reflect.getMetadata(MODULE_METADATA.IMPORTS, module) ?? []) walk(child);
     };
     walk(OperationAuthorityModule);
-    expect(k.app.get(DeviceProviders).forDevice("@local")).toBeDefined();
   });
   it("keeps profile views, authority roots and hashes aligned without lifecycle calls", async () => {
     const req = await session("owner");
@@ -365,37 +380,39 @@ describe("permission reader behavior", () => {
       }),
     ).toEqual(await f.read());
   });
-  it("reads active machine roots without events and falls back to defaults after revocation", async () => {
+  it("reads the recorded roots, else the defaults; the home is the provider's reported one", async () => {
     const f = await workingFixture();
-    expect(await f.read()).toEqual({ workspace: "/work", home: "/home/owner", project: null });
-    await f.db
-      .updateTable("device_machines")
-      .set({ revoked_at: new Date() })
-      .where("device_id", "=", f.deviceId)
-      .execute();
-    expect((await f.read()).workspace).toBe(DEFAULT_SANDBOX_ROOTS.workspace);
+    const report = (home: string | null) =>
+      f.db
+        .updateTable("devices")
+        .set({
+          report: JSON.stringify({
+            revision: "r1",
+            description: { en: "A test device." },
+            home,
+            limits: [],
+            reset: false,
+          }),
+        })
+        .where("id", "=", f.deviceId)
+        .execute();
+    expect(await f.read()).toEqual({
+      workspace: DEFAULT_SANDBOX_ROOTS.workspace,
+      home: homeOf(DEFAULT_SANDBOX_ROOTS.workspace),
+      project: null,
+    });
+    await report("/home/owner");
+    expect((await f.read()).home).toBe("/home/owner");
     await f.event(f.root.id, 1, "device_paths", { roots: { workspace: "/home/root/work" } });
     expect((await f.read()).workspace).toBe("/home/root/work");
-  });
-  it("uses the absolute reported home, otherwise the resolved workspace home, never the project's", async () => {
-    const f = await workingFixture();
-    await f.event(f.child.id, 1, "device_paths", { roots: { workspace: "/Users/child/work" } });
-    // Fixture setup intentionally writes the otherwise immutable project binding.
+    // never the project's: a bound project names no home
     await sql`UPDATE capybara.conversations SET project_name = 'project',
       project_path = ${"/home/project/code"} WHERE id = ${f.root.id}`.execute(raw);
-    await f.event(f.root.id, 1, "project_root", { root: "/home/project/code" });
+    await f.event(f.root.id, 2, "project_root", { root: "/home/project/code" });
     expect((await f.read()).home).toBe("/home/owner");
-    await f.db
-      .updateTable("device_machines")
-      .set({ home: "relative-home" })
-      .where("device_id", "=", f.deviceId)
-      .execute();
-    expect((await f.read()).home).toBe("/Users/child");
-    await f.db
-      .deleteFrom("conversation_events")
-      .where("conversation_id", "=", f.child.id)
-      .execute();
-    expect((await f.read()).home).toBeNull();
+    // no reported home: the workspace's home prefix
+    await report(null);
+    expect((await f.read()).home).toBe("/home/root");
   });
   it("uses only bound root project snapshots and preserves absent, invalid and unavailable states", async () => {
     const f = await workingFixture();
@@ -478,16 +495,20 @@ import {
   TransactionHost,
 } from "../../src/infra/database/transaction-host.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
+import { DeviceReports } from "../../src/sandbox/device-reports.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
-import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import {
+  PermissionAdmissionStale,
+  SandboxOperationIntents,
+} from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import {
   PermissionRuntimeReports,
   readRuntimeReport,
 } from "../../src/sandbox/permission-runtime-reports.js";
+import { homeOf } from "../../src/sandbox/review/rules.js";
 import { KERNEL_VERSION } from "../../src/version.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 
 function barrier() {
   let resolve!: () => void;
@@ -747,11 +768,11 @@ it("runtime report reads never probe and invalidate every provenance dimension",
     "unprobed",
   );
   await expect(
-    tx.run(() => reports.record(f.deviceId, "@permission-test", "test-1", identity, support)),
+    tx.run(() => reports.recordSupport(f.deviceId, "@permission-test", "test-1", support)),
   ).rejects.toThrow("matching authority lock");
   await tx.run(async () => {
     await ceilings.lock({ orgId: f.orgId, deviceId: f.deviceId }, "device");
-    await reports.record(f.deviceId, "@permission-test", "test-1", identity, support);
+    await reports.recordSupport(f.deviceId, "@permission-test", "test-1", support);
   });
   expect((await readRuntimeReport(f.db, f.deviceId, "@permission-test", "test-1")).state).toBe(
     "unsupported",
@@ -894,6 +915,45 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
     .where("job_id", "=", `sandbox-operation-revoke-${row.operation_id}-1`)
     .executeTakeFirst();
   expect(retry).toBeDefined();
+});
+it("an operation pending under one report revision is stale after its provider reports another", async () => {
+  let revision = "r1";
+  const f = await operationFixture({
+    async report() {
+      return { revision, description: { en: "Test device" }, home: null, limits: [], reset: false };
+    },
+  });
+  const intents = k.app.get(SandboxOperationIntents),
+    reports = k.app.get(DeviceReports);
+  const pend = (ordinal: number) =>
+    intents.pending(
+      f.ctx,
+      { ...f.invocation, ordinal },
+      { provider: "@permission-test", providerVersion: "test-1", generation: "1700000000000" },
+      "stat",
+      { path: "/work/file" },
+      "holder",
+      new AbortController().signal,
+    );
+  // the first report publishes nothing; the same revision told again keeps the pending admission
+  expect(await reports.changed("@permission-test", f.deviceId)).toBe("same");
+  // the evidence names the report revision: the next use's lifecycle records it again under r1
+  await seedInstalledEvidence(k, raw, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: "@permission-test",
+    version: "test-1",
+  });
+  await pend(0);
+  expect(await reports.changed("@permission-test", f.deviceId)).toBe("same");
+  expect((await intents.admit(f.ctx, { ...f.invocation, ordinal: 0 })).state).toBe("admitted");
+  // asked under r1, the provider reports r2 before it is admitted: stale, never admitted
+  await pend(1);
+  revision = "r2";
+  expect(await reports.changed("@permission-test", f.deviceId)).toBe("bumped");
+  await expect(intents.admit(f.ctx, { ...f.invocation, ordinal: 1 })).rejects.toBeInstanceOf(
+    PermissionAdmissionStale,
+  );
 });
 it("a newly acquired run claim and lease reconcile the same unknown ID without new effects", async () => {
   let effects = 0;
@@ -1162,12 +1222,7 @@ it("instance recreation preserves consent for the same roots and resets it befor
 it("the egress kill switch closes every device's sandbox network and moves Full consent", async () => {
   const local = await operationFixture(),
     cloud = await operationFixture();
-  await cloud.db
-    .updateTable("devices")
-    .set({ source: "cloud" })
-    .where("id", "=", cloud.deviceId)
-    .execute();
-  // the cloud instance's kernel-recorded evidence (B-15) in place of the local binding
+  // the cloud instance's kernel-recorded evidence (B-15)
   await seedCloudEvidence(k, {
     orgId: cloud.orgId,
     deviceId: cloud.deviceId,
@@ -1263,7 +1318,7 @@ it("first-use forTool binding orders authority before the real run fence against
     .execute();
   await f.db
     .updateTable("devices")
-    .set({ source: "cloud", is_default: true })
+    .set({ is_default: true })
     .where("id", "=", f.deviceId)
     .execute();
   const ready = barrier(),
@@ -1321,7 +1376,7 @@ it.each(["replaced", "cancelled"] as const)(
       .execute();
     await f.db
       .updateTable("devices")
-      .set({ source: "cloud", is_default: true })
+      .set({ is_default: true })
       .where("id", "=", f.deviceId)
       .execute();
     const { runOutsideTransaction } = await import("../../src/infra/database/transaction-host.js");
@@ -1594,12 +1649,11 @@ describe("approval-only profiles: the device sandbox in admission and the record
       report: OPEN_SUPPORT,
     });
     await orgHosts(f.orgId);
+    // the device's own network choice, the same setting for every provider
     await f.db
-      .updateTable("device_machines")
-      .set({
-        owner_report: storedOwnerReport({ network, allowedDomains: ["example.com"] }),
-      })
-      .where("device_id", "=", f.deviceId)
+      .updateTable("devices")
+      .set({ network_mode: network, network_hosts: JSON.stringify(["example.com"]) })
+      .where("id", "=", f.deviceId)
       .execute();
     return f;
   }
@@ -1675,7 +1729,6 @@ describe("approval-only profiles: the device sandbox in admission and the record
       expect(recorded.scope?.network).toEqual(scope.network);
       expect(recorded.sandbox).toEqual({
         boundary: "operation",
-        location: "local",
         workingRoot: recorded.scope?.workingRoot,
         network: { kind: scope.network.kind, hostsCount: network === "open" ? 0 : 1 },
         outsideSandbox: true,
@@ -1798,7 +1851,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
     });
     await f.db
       .updateTable("devices")
-      .set({ source: "cloud", network_mode: "allowlist", network_hosts: "[]" })
+      .set({ network_mode: "allowlist", network_hosts: "[]" })
       .where("id", "=", f.deviceId)
       .execute();
     await orgHosts(f.orgId);
@@ -1852,7 +1905,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
     });
     await f.db
       .updateTable("devices")
-      .set({ source: "cloud", network_mode: "allowlist", network_hosts: "[]" })
+      .set({ network_mode: "allowlist", network_hosts: "[]" })
       .where("id", "=", f.deviceId)
       .execute();
     await orgHosts(f.orgId);

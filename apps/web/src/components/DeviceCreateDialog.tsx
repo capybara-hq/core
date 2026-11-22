@@ -210,7 +210,7 @@ function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Dev
   useEffect(() => {
     if (!enabled || list.data === undefined || done.current) return;
     if (list.dataUpdatedAt < since.current) return;
-    const locals = list.data.items.filter((e) => e.source === "local");
+    const locals = list.data.items.filter((e) => e.dialIn);
     if (known.current === null) {
       known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
       return;

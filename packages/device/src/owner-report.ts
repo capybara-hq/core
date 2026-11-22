@@ -1,6 +1,9 @@
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type DeviceOwnerCeiling, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceOwnerCeiling,
+  parseOwnerCeilingReport,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { readStrictOwnerCeilingSync } from "./exec/operation-types.js";
 import { withPolicyLock, writePrivate } from "./state.js";
 

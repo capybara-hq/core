@@ -20,36 +20,14 @@ export interface DeviceLimits {
   network: { kind: DeviceNetworkKind; hosts: string[] };
 }
 
-/** The machine connected to a local device (its unrevoked one). */
+/** The machine signed in to a dial-in device (its unrevoked one). */
 export interface DeviceMachine {
   id: string;
   name: string;
   /** As the program reports it: `darwin`, `linux`. */
   os: string;
-  /** `os`: the system sandbox; `docker`: a container. */
-  mode: "os" | "docker" | null;
   programVersion: string | null;
   lastSeenAt: string | null;
-}
-
-/**
- * A local device's policy as its machine last reported it (kernel `DeviceLocalPolicySummary`).
- */
-export interface DeviceNetworkPolicy {
-  /** The mode the machine runs at: no OS sandbox, or the sandbox with the allowlist below. */
-  mode: DeviceMode;
-  /** The machine's sandbox-mode allowlist (meaningful in sandbox mode only). */
-  allowedDomains: string[];
-}
-
-/**
- * A local device's network facts when a machine is connected: the program's features (`policyOpId`:
- * it takes policy changes from the deployment under op ids) and its policy summary (null when it
- * reported none).
- */
-export interface DeviceNetwork {
-  features: string[];
-  policy: DeviceNetworkPolicy | null;
 }
 
 /** One side of an owner ceiling change (kernel `DeviceCeilingFacts`). */
@@ -114,19 +92,12 @@ export interface DeviceSandboxView {
   networkCeiling: DeviceNetworkMode;
   /** The allowlist hosts in effect (empty unless `network` is `allowlist`). */
   hosts: string[];
-  /**
-   * The device's own network: a cloud device's stored choice (null follows its org), a local
-   * owner's reported one (null without a readable report).
-   */
+  /** The device's own network: its stored choice (null follows its org). */
   ownNetwork: DeviceNetworkMode | null;
-  /**
-   * The device's own host list, which only narrows the org's: a local owner's `allowedDomains`, a
-   * cloud device's stored hosts (empty: it follows its org's hosts).
-   */
+  /** The device's own host list, which only narrows the org's (empty: it follows its org's hosts). */
   allowedDomains: string[];
-  /** Whether a call may be granted running outside the sandbox (never on a cloud device). */
+  /** Whether a call may be granted running outside the sandbox (its provider decides it). */
   outsideSandbox: boolean;
-  restrictedProjectReach: "workspace" | "os-user";
   /** The layer that set each ceiling (a disabled option names it), null when nothing did. */
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
   /** A cloud device's instance runs another network: its next use applies this one. */
@@ -146,33 +117,25 @@ export interface Device {
   name: string | null;
   isDefault: boolean;
   ownerKind: "personal";
-  /** `local`: a machine connected with `capybara-device` (provider `@local`). */
-  source: "cloud" | "local";
+  /** The provider it is bound to for life. */
   provider: string | null;
-  /** Its provider serves the org now (on in the org; `@local`: registered). */
+  /** Its provider serves its devices over the dial-in channel (a machine signs in to the device). */
+  dialIn: boolean;
+  /** Its provider serves the org now (on in the org). */
   available: boolean;
   /** What its provider last reported about it (the stored copy); null until a first one. */
   report: DeviceReport | null;
-  /** A local device: its machine is connected now; null for a cloud one. */
+  /** A dial-in device: its machine is connected now; null for any other. */
   online: boolean | null;
-  /** A local device's connected machine; null for a cloud one, or when none is connected. */
+  /** A dial-in device's connected machine; null for any other, or when none is connected. */
   machine: DeviceMachine | null;
-  /**
-   * A local device's network facts while a machine is connected; null for a cloud device or
-   * none connected.
-   */
-  network?: DeviceNetwork | null;
   /** Its sandbox in effect (approval-only profiles design, "Settings model"). */
   sandbox: DeviceSandboxView;
-  /** A local machine's owner ceiling (read only); null for a cloud device or none connected. */
-  ownerCeiling: DeviceOwnerCeiling | null;
   /**
-   * A cloud device whose sandbox limits must be established again: nothing runs on it until its
-   * files are rebuilt. Always false for a local device.
+   * A device whose sandbox limits must be established again: nothing runs on it until its files
+   * are reset.
    */
   reconcileRequired: boolean;
-  /** Mirrored from the kernel view; isolation is gone from the device page, the web reads it nowhere. */
-  sessionIsolation: boolean;
   /** Its file system is gone at the provider; resetting the files makes it usable again. */
   filesLost: boolean;
   instance: { status: "running" | "suspended"; lastUsedAt: string } | null;
@@ -209,14 +172,14 @@ export interface DeviceList {
   items: Device[];
   defaultId: string | null;
   lastUsedId: string | null;
-  /** The device providers on in the org: a new cloud device names one. */
+  /** The device providers on in the org: a new device names one. */
   providers: DeviceProviderOption[];
   /** The provider a new device gets when it names none; null when there is none. */
   defaultProvider: string | null;
 }
 
 /**
- * What a device is doing, in the order the page decides: a missing provider wins; a local
+ * What a device is doing, in the order the page decides: a missing provider wins; a dial-in
  * device is online or offline (its machine's connection).
  */
 export type DeviceState =
@@ -230,7 +193,7 @@ export type DeviceState =
 
 export function deviceState(e: Device): DeviceState {
   if (!e.available) return "unavailable";
-  if (e.source === "local") return e.online === true ? "online" : "offline";
+  if (e.dialIn) return e.online === true ? "online" : "offline";
   if (e.filesLost) return "filesLost";
   return e.instance?.status ?? "notStarted";
 }
@@ -263,8 +226,15 @@ export function resetPollInterval(
 export const deviceName = (e: Pick<Device, "name">, personal: string): string => e.name ?? personal;
 
 /**
+ * The one mark a device carries in lists, its page and a conversation's properties: whether a
+ * call may be granted running outside its sandbox there (neutral), never a daily mode.
+ */
+export const deviceCeilingMark = (e: Pick<Device, "sandbox">): "outside" | "sandbox" =>
+  e.sandbox.outsideSandbox ? "outside" : "sandbox";
+
+/**
  * Whether a new conversation can be bound to it now: its provider is there, its files are not
- * lost and, for a local device, its machine is online.
+ * lost and, for a dial-in device, its machine is online.
  */
 export const devicePickable = (e: Device): boolean => {
   const state = deviceState(e);
@@ -273,10 +243,10 @@ export const devicePickable = (e: Device): boolean => {
 
 /**
  * Whether the new conversation's device picker shows at all: a device provider is on in the org, or
- * the person has a local device.
+ * the person has a dial-in device.
  */
 export const deviceChoiceShown = (list: DeviceList): boolean =>
-  list.providers.length > 0 || list.items.some((e) => e.source === "local");
+  list.providers.length > 0 || list.items.some((e) => e.dialIn);
 
 /**
  * The device a new conversation starts on (environments design §4.1 item 2): the one `picked`,
@@ -333,110 +303,10 @@ export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
 
 /**
- * The owner ceiling of a device as last reported (kernel `DeviceOwnerCeilingView`, read only): a
- * local machine's authenticated owner report (`report`), a stale or conflicting one (`blocked`) or
- * nothing readable (`missing`). A cloud device has none.
- */
-export interface DeviceOwnerCeiling {
-  state: "report" | "blocked" | "missing";
-  revision: string | null;
-  sequence: number | null;
-  /** The owner allows granting a call running outside the sandbox (fail closed: false). */
-  outsideSandbox: boolean;
-  /** The owner's sandbox network (fail closed: `allowlist`). */
-  network: "open" | "allowlist";
-  /** The owner's allowlist: under `allowlist` the machine's host ceiling. */
-  allowedDomains: string[];
-  /** How far project browsing and work reach. */
-  restrictedProjectReach: "workspace" | "os-user";
-  observedAt: string | null;
-  /** The machine is offline or its report is not current: last-known facts, not authority. */
-  stale: boolean;
-}
-
-/** What the device page says about the sandbox facts, when anything (one notice at a time). */
-export type DeviceCeilingNotice = "noMachine" | "blocked" | "missing" | "stale";
-
-export interface DeviceCeilingFacts {
-  /** The sandbox in effect; null for a local machine without a usable report (fails closed). */
-  sandbox: DeviceSandboxView | null;
-  /** The owner's own ceiling (a local machine's report), null when unknown or cloud. */
-  owner: DeviceOwnerCeiling | null;
-  /** Project reach; null when unknown (no usable report). */
-  reach: "workspace" | "os-user" | null;
-  notice: DeviceCeilingNotice | null;
-}
-
-/**
- * A device's sandbox in effect (the kernel's `sandbox` view); null for a local machine without a
- * usable owner report (none, blocked or missing), which fails closed.
- */
-export function deviceSandboxOf(
-  e: Pick<Device, "source" | "ownerCeiling" | "sandbox">,
-): DeviceSandboxView | null {
-  if (e.source === "cloud") return e.sandbox ?? null;
-  const c = e.ownerCeiling ?? null;
-  if (c === null || c.state === "blocked" || c.state === "missing") return null;
-  return e.sandbox ?? null;
-}
-
-/**
- * The sandbox facts of a device (approval-only profiles design, "UI"): its sandbox in effect, a
- * local machine's own ceiling and project reach, and one notice when the facts are not current.
- * A local machine fails closed while its report is blocked or missing.
- */
-export function deviceCeilingOf(
-  e: Pick<Device, "source" | "machine" | "ownerCeiling" | "sandbox">,
-): DeviceCeilingFacts {
-  const c = e.ownerCeiling ?? null;
-  const sandbox = deviceSandboxOf(e);
-  if (e.source === "cloud") return { sandbox, owner: null, reach: "workspace", notice: null };
-  if (c === null)
-    return {
-      sandbox: null,
-      owner: null,
-      reach: null,
-      notice: e.machine === null ? "noMachine" : "missing",
-    };
-  if (c.state === "blocked" || c.state === "missing")
-    return { sandbox: null, owner: null, reach: null, notice: c.state };
-  return {
-    sandbox,
-    owner: c,
-    reach: c.restrictedProjectReach,
-    notice: c.stale ? "stale" : null,
-  };
-}
-
-/**
- * The one mark a device carries in lists, its page and a conversation's properties: whether a
- * call may be granted running outside its sandbox there (neutral), never a daily mode.
- */
-export const deviceCeilingMark = (
-  e: Pick<Device, "source" | "machine" | "ownerCeiling" | "sandbox">,
-): "outside" | "sandbox" =>
-  deviceCeilingOf(e).sandbox?.outsideSandbox === true ? "outside" : "sandbox";
-
-/**
- * A narrowing of a local machine's ceiling by its owner in a web session (`POST …/devices/:id/policy`,
- * the device protocol's `DeviceOwnerCeilingNarrowing`): the web never widens a machine (its owner
- * does, on the machine, with `capybara-device ceiling set` / `policy add`).
- */
-export interface DevicePolicyPatch {
-  /** Hosts to remove from the machine's allowlist. */
-  remove?: string[];
-  ownerCeiling?: {
-    outsideSandbox?: false;
-    network?: "allowlist";
-    restrictedProjectReach?: "workspace";
-  };
-}
-
-/**
- * A cloud device's network (`PATCH …/devices/:id`), by its owner only, in either direction within
- * the platform and org ceilings (`device.network_not_allowed` above them): `none` closes it, an
+ * A device's network (`PATCH …/devices/:id`), by its owner only, in either direction within the
+ * platform and org ceilings (`device.network_not_allowed` above them): `none` closes it, an
  * allowlist's hosts only narrow the organization's list (empty follows it), `mode: null` follows the
- * organization. A local device refuses it (`device.ceiling_on_machine`).
+ * organization.
  */
 export const setCloudDeviceNetwork = (
   orgId: string,
@@ -446,13 +316,6 @@ export const setCloudDeviceNetwork = (
   apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`, {
     method: "PATCH",
     body: JSON.stringify({ network }),
-  });
-
-/** Sent to the machine, which writes it and answers with the policy as written. */
-export const updateDevicePolicy = (orgId: string, id: string, patch: DevicePolicyPatch) =>
-  apiFetch<{ policy: DeviceNetworkPolicy }>(`${org(orgId)}/${enc(id)}/policy`, {
-    method: "POST",
-    body: JSON.stringify(patch),
   });
 
 /** A project on a device (project root §4.1; kernel `DeviceProjectView`). */
@@ -497,11 +360,10 @@ export interface DeviceProjectCandidates {
 
 /**
  * The fixed prefix the add form shows before the relative path (project root §4.2): the owner's
- * home (`~/`) for a local device in auto mode, else the workspace (`workspace/`, also every cloud
- * device in either mode).
+ * home (`~/`) for a dial-in device in auto mode, else the workspace (`workspace/`).
  */
-export const projectBasePrefix = (source: Device["source"], mode: DeviceMode): string =>
-  source === "local" && mode === "auto" ? "~/" : "workspace/";
+export const projectBasePrefix = (dialIn: boolean, mode: DeviceMode): string =>
+  dialIn && mode === "auto" ? "~/" : "workspace/";
 
 /** The relative path as sent: trimmed, without a leading `./` or trailing slashes. */
 export const normalizeProjectPath = (p: string): string =>

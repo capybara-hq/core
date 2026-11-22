@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DeviceLocalPolicySummary,
-  DeviceOwnerCeilingNarrowing,
   DeviceReport,
   LocalizedName,
   SandboxBrowseScope,
@@ -11,6 +9,9 @@ import type {
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
+import { DialInHandlers } from "../dial-in/handlers.js";
+import { DialInMachines } from "../dial-in/machines.js";
+import { DialInRelay } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { avatarColumns, type PersonRef, personAvatarUrl } from "../identity/account-avatar.js";
@@ -23,13 +24,7 @@ import {
   withOrderedLocks,
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import { DevicePolicyService } from "../local-devices/device-policy.service.js";
-import { deviceLeaseKey } from "../local-devices/keys.js";
-import { MachinesService } from "../local-devices/machines.js";
-import { type OwnerFacts, ownerFactsOf } from "../local-devices/owner-report.js";
-import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { DeviceReports } from "../sandbox/device-reports.js";
 import type {
@@ -39,23 +34,14 @@ import type {
 } from "../sandbox/device-sandbox.js";
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
-import {
-  coversHost,
-  type DeviceLimits,
-  type DeviceNetwork,
-  projectReachOf,
-} from "../sandbox/modes.js";
+import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
 import {
   hostsNarrowed,
   needsOpenNetwork,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
-import { cloudOwnNetwork, networkOfSandbox, PermissionFacts } from "../sandbox/permission-facts.js";
-import {
-  type DeviceProviderEntry,
-  isInternalProvider,
-  LOCAL_PROVIDER,
-} from "../sandbox/providers.js";
+import { ownNetwork, PermissionFacts } from "../sandbox/permission-facts.js";
+import { type DeviceProviderEntry, DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DeviceProviderSelection } from "./device-provider-selection.js";
@@ -67,54 +53,36 @@ export interface DeviceView {
   name: string | null;
   isDefault: boolean;
   ownerKind: "personal";
-  /** `local`: a machine connected with capybara-device (provider `@local`). */
-  source: "cloud" | "local";
   /** The provider it is bound to for life (`devices.provider`). */
   provider: string | null;
-  /** Its provider serves the org now (on in the org; `@local`: registered). */
+  /**
+   * Its provider serves its devices over the dial-in channel (a machine signs in to the device);
+   * false while the provider is not loaded here.
+   */
+  dialIn: boolean;
+  /** Its provider serves the org now (on in the org). */
   available: boolean;
   /**
    * What its provider last reported about it (`devices.report`, the stored copy: never asked on
    * the request path); null until a first report is stored. Kept while the provider is off.
    */
   report: DeviceReport | null;
-  /** A local device: some replica holds its machine's connection now; null for cloud. */
+  /** A dial-in device: some replica holds its machine's connection now; null for any other. */
   online: boolean | null;
-  /** A local device's connected machine (its unrevoked one); null for cloud or none. */
+  /** The machine signed in to a dial-in device (its unrevoked one); null for any other or none. */
   machine: DeviceMachineView | null;
-  /**
-   * A local device's network facts as its connected machine last reported them (network
-   * ask-to-allow spec §5.4): the program's features and its local policy summary (null when
-   * unknown). null for a cloud device or a local one without a connected machine.
-   */
-  network: {
-    features: string[];
-    policy: DeviceLocalPolicySummary | null;
-  } | null;
   /** Its effective device sandbox, the same under every permission profile. */
   sandbox: DeviceSandboxView;
   /**
-   * A local device's owner ceiling as its machine last reported it (read only): an authenticated
-   * report (`state: "report"`), a stale or conflicting one (`blocked`) or nothing readable
-   * (`missing`). `stale` is true while the machine is offline or the report is not current:
-   * last-known facts, never authority. null for a cloud device (it has no machine) and for a local
-   * one without a connected machine.
-   */
-  ownerCeiling: DeviceOwnerCeilingView | null;
-  /**
-   * A cloud device whose B1 snapshot found applied limits it could not establish exactly: nothing
-   * runs on it until a file reset establishes them (`device.permission_reconcile_required` at
-   * admission). Always false for a local device.
+   * A device whose B1 snapshot found applied limits it could not establish exactly: nothing runs
+   * on it until a file reset establishes them (`device.permission_reconcile_required` at
+   * admission).
    */
   reconcileRequired: boolean;
-  sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
   instance: { status: "running" | "suspended"; lastUsedAt: string } | null;
-  /**
-   * Its sandbox limits: the resources and network a cloud instance is created with; for a local
-   * device the network its commands carry (the machine intersects it with its owner's ceiling).
-   */
+  /** Its sandbox limits: the resources and network its instance is created with. */
   limits: SandboxLimits;
   createdAt: string;
 }
@@ -131,26 +99,20 @@ export interface DeviceSandboxView {
   networkCeiling: "open" | "allowlist" | "none";
   /** The allowlist hosts in effect (empty unless {@link network} is `allowlist`). */
   hosts: string[];
-  /**
-   * The device's own network setting: a cloud device's stored choice (null follows its org), a
-   * local owner's reported network (null without a readable report).
-   */
+  /** The device's own network setting, its stored choice (null follows its org). */
   ownNetwork: "open" | "allowlist" | "none" | null;
   /**
-   * The device's own host list, which only narrows the org's hosts: a local owner's
-   * `allowedDomains` (its machine's ceiling while its network is the allowlist), a cloud device's
-   * stored hosts (empty: it follows its org's hosts).
+   * The device's own host list, which only narrows the org's hosts: its stored hosts (empty: it
+   * follows its org's hosts).
    */
   allowedDomains: string[];
-  /** Whether a call may be granted escalation outside the sandbox (never on a cloud device). */
+  /** Whether a call may be granted escalation outside the sandbox (its provider decides it). */
   outsideSandbox: boolean;
-  /** How far restricted work may root outside the workspace. */
-  restrictedProjectReach: "workspace" | "os-user";
   /** The layer that set each ceiling (a disabled option names it), or null when nothing did. */
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
   /**
-   * A cloud device's instance runs another network: its next use updates or recreates it, files
-   * kept (the page says it applies on next use).
+   * The device's instance runs another network: its next use updates or recreates it, files kept
+   * (the page says it applies on next use).
    */
   pendingNextUse: boolean;
   /**
@@ -160,22 +122,6 @@ export interface DeviceSandboxView {
   pendingFilesReset: boolean;
   /** Its last {@link RECENT_POLICY_CHANGES} setting changes, newest first. */
   recent: DeviceSettingChangeView[];
-}
-
-/** {@link DeviceView.ownerCeiling}: a local machine's owner ceiling as reported. */
-export interface DeviceOwnerCeilingView {
-  state: "report" | "blocked" | "missing";
-  revision: string | null;
-  sequence: number | null;
-  /** The owner allows running outside the sandbox (fail closed: false). */
-  outsideSandbox: boolean;
-  /** The owner's sandbox network (fail closed: `allowlist`). */
-  network: "open" | "allowlist";
-  /** The owner's sandbox allowlist: the machine's host ceiling while its network is `allowlist`. */
-  allowedDomains: string[];
-  restrictedProjectReach: "workspace" | "os-user";
-  observedAt: string | null;
-  stale: boolean;
 }
 
 /** How many recent setting changes a device view lists. */
@@ -224,41 +170,24 @@ export interface DeviceCeilingFacts {
   network?: "open" | "allowlist";
 }
 
-/** A cloud device's stored network setting: `mode` null follows its org. */
+/** A device's stored network setting: `mode` null follows its org. */
 export interface DeviceNetworkSetting {
   mode: "open" | "allowlist" | "none" | null;
   hosts: string[];
 }
 
-/** A narrowing of a local device's policy by its owner (`POST /devices/:id/policy`). */
-export interface DevicePolicyChange {
-  remove?: string[] | undefined;
-  /** Narrow the owner ceiling (never widen; the schema refuses anything wider). */
-  ownerCeiling?:
-    | {
-        outsideSandbox?: false | undefined;
-        network?: "allowlist" | undefined;
-        restrictedProjectReach?: "workspace" | undefined;
-      }
-    | undefined;
-}
-
 /** What `PATCH /devices/:id` changes. */
 export interface DevicePatch {
   name?: string;
-  /**
-   * A cloud device's sandbox network, within its org's and the platform's ceilings. A local
-   * device refuses it here (`device.ceiling_on_machine`).
-   */
+  /** The device's sandbox network, within its org's and the platform's ceilings. */
   network?: { mode: "open" | "allowlist" | "none" | null; hosts?: string[] | undefined };
 }
 
-/** The machine connected to a local device, as its owner sees it. */
+/** The machine signed in to a dial-in device, as its owner sees it. */
 export interface DeviceMachineView {
   id: string;
   name: string;
   os: string;
-  mode: "os" | "docker" | null;
   programVersion: string | null;
   lastSeenAt: string | null;
 }
@@ -311,14 +240,21 @@ const providerNotOn = (provider: string, on: DeviceProviderEntry[]): ApiError =>
   return new ApiError("validation_failed", message, [{ path: "provider", message }]);
 };
 
+/** A device sign-in names a provider that is no dial-in provider on in the org (403). */
+export const dialInProviderUnavailable = (provider: string): ApiError =>
+  new ApiError(
+    "device.provider_unavailable",
+    `Device provider ${provider} cannot take a machine in this organization; choose one of the providers listed on the sign-in page`,
+  );
+
 const nameTaken = (): ApiError =>
   new ApiError("device.name_taken", "You already have a device with this name");
 
 /**
- * Personal devices (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9):
- * cloud ones, each bound for life to the device provider it was created on (device-provider spec
- * §6.1), and `local` ones on a connected machine; a
- * person's devices in an org, visible and usable only by their owner (anyone else gets
+ * Personal devices (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9), each
+ * bound for life to the device provider it was created on (device-provider spec §6.1) and handled
+ * the same way whatever that provider is (a dial-in provider's device is signed in from its
+ * machine); a person's devices in an org, visible and usable only by their owner (anyone else gets
  * `device.not_found`). Deleting one soft-deletes it and owes the destruction of its instance and
  * files (a `sandbox-destroy-for` job) in the same transaction.
  */
@@ -340,12 +276,12 @@ export class DevicesService {
     /** Owes a deleted device's destruction in the delete's transaction. */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
-    /** Reads the device relay's lease (`online`). */
-    @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
-    @Inject(MachinesService)
-    private readonly machines: Pick<MachinesService, "revoke" | "revokeActive">,
-    @Inject(DevicePolicyService)
-    private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
+    /** Whether a dial-in device's machine is connected now. */
+    @Inject(DialInRelay) private readonly relay: Pick<DialInRelay, "online">,
+    /** Each device's provider (whether it serves its devices over the dial-in channel). */
+    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
+    @Inject(DialInMachines)
+    private readonly machines: Pick<DialInMachines, "revoke" | "revokeActive">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "deviceSandbox" | "deviceSandboxFacts">,
@@ -353,6 +289,8 @@ export class DevicesService {
     private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
     /** Each device's stored provider report (read only; never asks the provider). */
     @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "read">,
+    /** The dial-in providers on in an org (a device signed in from a machine). */
+    @Inject(DialInHandlers) private readonly dialIn: Pick<DialInHandlers, "onInOrg">,
   ) {}
 
   /**
@@ -401,7 +339,7 @@ export class DevicesService {
   }
 
   /**
-   * A new personal cloud device, ready at once (its instance and files are made on first use),
+   * A new personal device, ready at once (its instance and files are made on first use),
    * bound for life to `input.provider` or, without one, the org's default provider: a provider not
    * on in the org (unknown, not loaded, off, kernel-internal) → `validation_failed` at `provider`;
    * none named and no default serving the org → `device.provider_required`. A live name of the
@@ -422,7 +360,7 @@ export class DevicesService {
   }
 
   /**
-   * The provider a new cloud device of `orgId` is bound to: `named` when it serves the org now
+   * The provider a new device of `orgId` is bound to: `named` when it serves the org now
    * (one of {@link DeviceProviderSelection.onInOrg}), else the org's default
    * ({@link DeviceProviderSelection.defaultFor}) when none is named; never another one.
    */
@@ -446,28 +384,28 @@ export class DevicesService {
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ): Promise<string> {
-    return this.insertNamed(
-      orgId,
-      accountId,
-      name,
-      "cloud",
-      provider,
-      actorTokenId,
-      auditDetail ?? {},
-    );
+    return this.insertNamed(orgId, accountId, name, provider, actorTokenId, auditDetail ?? {});
   }
 
   /**
-   * A new personal local device for a machine being connected (provider `@local`; the
-   * machine row is the caller's). Joins the caller's transaction (the device authorization's).
+   * A new personal device for a machine being signed in (the device sign-in; the machine row is
+   * the caller's), bound for life to the dial-in provider `provider`: one that serves the org now
+   * and declares `permissions.dialIn` ({@link DialInHandlers.onInOrg}), else
+   * `device.provider_unavailable`. Joins the caller's transaction (the device authorization's).
    * Counted against `devices.maxPersonal` (`device.limit_reached`); a live name of the
-   * person's → `device.name_taken`. Needs no device provider on in the org.
+   * person's → `device.name_taken`.
    */
   @Transactional()
-  async createLocal(orgId: string, accountId: string, name: string): Promise<{ id: string }> {
-    const id = await this.insertNamed(orgId, accountId, name, "local", LOCAL_PROVIDER, undefined, {
-      source: "local",
-    });
+  async createDialIn(
+    orgId: string,
+    accountId: string,
+    provider: string,
+    name: string,
+  ): Promise<{ id: string }> {
+    if (!(await this.dialIn.onInOrg(orgId)).some((p) => p.plugin === provider)) {
+      throw dialInProviderUnavailable(provider);
+    }
+    const id = await this.insertNamed(orgId, accountId, name, provider, undefined, {});
     return { id };
   }
 
@@ -480,7 +418,6 @@ export class DevicesService {
     orgId: string,
     accountId: string,
     name: string,
-    source: "cloud" | "local",
     provider: string,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown>,
@@ -512,7 +449,6 @@ export class DevicesService {
           owner_kind: "personal",
           owner_account_id: accountId,
           name,
-          source,
           provider,
         })
         .execute();
@@ -575,11 +511,12 @@ export class DevicesService {
   }
 
   /**
-   * The refusals {@link resetFiles} would raise (not found, its provider not current, a connected
-   * device), read only.
+   * The refusals {@link resetFiles} would raise (not found, its provider not on, a provider that
+   * offers no reset), read only.
    */
   async checkReset(orgId: string, accountId: string, id: string): Promise<void> {
-    refuseDeviceReset(await this.access.usable(orgId, accountId, id));
+    await this.access.usable(orgId, accountId, id);
+    refuseDeviceReset(await this.reports.read(orgId, id));
   }
 
   /** The refusals {@link rename} would raise, read without locks (see {@link checkCreate}). */
@@ -621,13 +558,12 @@ export class DevicesService {
   }
 
   /**
-   * `PATCH /devices/:id`: renames one of the person's live devices ({@link rename}) and sets a
-   * cloud device's sandbox network ({@link networkLocked}), in one transaction. A network change
-   * takes the membership, the device row and the device's permission write lock as the ordered
-   * prelude (`withOrderedLocks`): inside a run's fence (`devices.set-network`) they follow the org
-   * row and precede the conversation rows. A local device's network lives on its machine
-   * (`device.ceiling_on_machine`). `narrowOnly` (an API token, the Platform tool): the network may
-   * only narrow, stored and effective.
+   * `PATCH /devices/:id`: renames one of the person's live devices ({@link rename}) and sets its
+   * sandbox network ({@link networkLocked}), in one transaction, the same for every provider. A
+   * network change takes the membership, the device row and the device's permission write lock as
+   * the ordered prelude (`withOrderedLocks`): inside a run's fence (`devices.set-network`) they
+   * follow the org row and precede the conversation rows. `narrowOnly` (an API token, the Platform
+   * tool): the network may only narrow, stored and effective.
    */
   async update(
     orgId: string,
@@ -665,7 +601,7 @@ export class DevicesService {
     // held since the prelude for a network change (naming them again re-checks)
     const before = await this.lockOwn(orgId, accountId, id);
     if (patch.network !== undefined)
-      await this.networkLocked(orgId, accountId, id, before, patch.network, actorTokenId, opts);
+      await this.networkLocked(orgId, accountId, id, patch.network, actorTokenId, opts);
     if (patch.name !== undefined) {
       await this.renameLocked(
         orgId,
@@ -680,8 +616,8 @@ export class DevicesService {
   }
 
   /**
-   * Checks a cloud network change without writing anything and without locks (the Platform
-   * tool's precheck): the device is the person's live cloud device, and the change stays within
+   * Checks a network change without writing anything and without locks (the Platform tool's
+   * precheck): the device is the person's live device, and the change stays within
    * the ceilings and, with `narrowOnly`, only narrows. Throws what {@link update} would; the
    * write re-checks under its locks.
    */
@@ -694,7 +630,7 @@ export class DevicesService {
   ): Promise<void> {
     const row = await this.db
       .selectFrom("devices")
-      .select(["source"])
+      .select(["id"])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("owner_kind", "=", "personal")
@@ -702,35 +638,28 @@ export class DevicesService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw deviceNotFound();
-    await this.planNetwork(orgId, id, row, network, narrowOnly);
+    await this.planNetwork(orgId, id, network, narrowOnly);
   }
 
   /**
-   * Decides a cloud network change (read only): the stored setting before and after, the
-   * effective device sandbox before and after (computed in memory from the patched setting), and
-   * whether it widens. Refuses, without writing: a local device (`device.ceiling_on_machine`),
-   * the open network above the ceilings or a host outside the org's list
-   * (`device.network_not_allowed`), and with `narrowOnly` a widening of the stored setting or of
-   * the effective network (`device.network_not_allowed`). Null when nothing changes.
+   * Decides a network change (read only): the stored setting before and after, the effective
+   * device sandbox before and after (computed in memory from the patched setting), and whether it
+   * widens. Refuses, without writing: the open network above the ceilings or a host outside the
+   * org's list (`device.network_not_allowed`), and with `narrowOnly` a widening of the stored
+   * setting or of the effective network (`device.network_not_allowed`). Null when nothing changes.
    */
   private async planNetwork(
     orgId: string,
     id: string,
-    before: { source: string },
     want: NonNullable<DevicePatch["network"]>,
     narrowOnly: boolean,
   ) {
-    if (before.source !== "cloud")
-      throw new ApiError(
-        "device.ceiling_on_machine",
-        "This device's sandbox network is kept on its connected machine: narrow it from the device page, or widen it on that machine with capybara-device ceiling set --network open or capybara-device policy add allowedDomains <host>.",
-      );
     const row = await this.db
       .selectFrom("devices")
       .select(["network_mode", "network_hosts"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
-    const own = cloudOwnNetwork(row);
+    const own = ownNetwork(row);
     const from: DeviceNetworkSetting = { mode: own.networkMode, hosts: [...own.networkHosts] };
     const to: DeviceNetworkSetting = {
       mode: want.mode,
@@ -771,7 +700,7 @@ export class DevicesService {
   }
 
   /**
-   * A cloud device's sandbox network (approval-only profiles design, "Settings model"), under the
+   * A device's sandbox network (approval-only profiles design, "Settings model"), under the
    * device authority writer held since the prelude: its owner chooses `open`, `allowlist` (its
    * org's hosts, narrowed by its own list: a device list never adds a host; an empty one follows
    * the org's hosts), `none` (closed) or null (follow the org), in both directions within the
@@ -785,13 +714,12 @@ export class DevicesService {
     orgId: string,
     accountId: string,
     id: string,
-    before: { source: string },
     want: NonNullable<DevicePatch["network"]>,
     actorTokenId: string | undefined,
     opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
   ): Promise<void> {
     await this.ceilings.lock({ orgId, deviceId: id }, "device");
-    const plan = await this.planNetwork(orgId, id, before, want, opts.narrowOnly === true);
+    const plan = await this.planNetwork(orgId, id, want, opts.narrowOnly === true);
     if (plan === null) return;
     const { from, to, next, widened } = plan;
     await this.db
@@ -826,41 +754,16 @@ export class DevicesService {
   }
 
   /**
-   * How far restricted work may root outside the device's workspace now (B2): a local machine's
-   * owner reach within a platform and org that allow the wider device ceiling; a cloud device
-   * keeps its previous rule (its effective mode). Never the owner's Full permission alone.
-   */
-  async projectReach(orgId: string, deviceId: string): Promise<"workspace" | "os-user"> {
-    const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select(["e.source", "m.owner_report", "m.local_policy"])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) return "workspace";
-    const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
-    return projectReachOf(
-      row.source,
-      policy,
-      row.source === "local" ? ownerFactsOf(row).restrictedProjectReach : null,
-    );
-  }
-
-  /**
    * The level a sandbox call in the device runs at now, for the model (legacy `device_paths`, auto
-   * mode spec §4.2): the kernel-internal tier (`SandboxMode`: a local machine's owner permission to
-   * run outside the sandbox, failing closed) with its device sandbox network, and a cloud device's
-   * pending file-reset state (the tier and network its instance still runs with). Null when the
-   * device is not a live device of the org.
+   * mode spec §4.2), the same for every provider: the kernel-internal tier (`SandboxMode`) with
+   * its device sandbox network, a pending file-reset state (the tier and network its instance
+   * still runs with), and whether its provider runs each operation on its host machine (an
+   * operation boundary). Null when the device is not a live device of the org.
    */
   async modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
     const row = await this.db
       .selectFrom("devices")
-      .select(["source"])
+      .select(["id"])
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -868,21 +771,21 @@ export class DevicesService {
     if (row === undefined) return null;
     const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
     let mode = policy.mode;
-    let network: DeviceNetwork =
-      row.source === "local"
-        ? networkOfSandbox(await this.facts.deviceSandbox(orgId, deviceId))
-        : policy.network;
-    if (row.source === "cloud") {
-      const state = await this.sandbox.limitsState({ orgId, deviceId }, { policy });
-      if (state.pendingFilesReset) {
-        // an unknown record (an instance made before auto mode) may be wider than the effective
-        // limits: tell the model the widest, never a narrower network than it may reach
-        mode = state.applied === null ? "auto" : state.applied.mode;
-        network =
-          state.applied === null ? { kind: "open-public", hosts: [] } : state.applied.network;
-      }
+    let network: DeviceNetwork = policy.network;
+    const state = await this.sandbox.limitsState({ orgId, deviceId }, { policy });
+    if (state.pendingFilesReset) {
+      // an unknown record (an instance made before auto mode) may be wider than the effective
+      // limits: tell the model the widest, never a narrower network than it may reach
+      mode = state.applied === null ? "auto" : state.applied.mode;
+      network = state.applied === null ? { kind: "open-public", hosts: [] } : state.applied.network;
     }
-    return { mode, allowedMode: policy.allowedMode, network, local: row.source === "local" };
+    const box = await this.facts.deviceSandbox(orgId, deviceId);
+    return {
+      mode,
+      allowedMode: policy.allowedMode,
+      network,
+      local: box.boundary === "operation",
+    };
   }
 
   /** Renames the device locked by {@link lockOwn} (`before`); see {@link rename}. */
@@ -924,7 +827,7 @@ export class DevicesService {
    * Deletes one of the person's live devices: soft delete, its IM default row cleared, and a
    * `sandbox-destroy-for` job owed in the same transaction (`device-destroy-<deviceId>`; the
    * worker waits for running commands, then destroys the instance and the files). Conversations bound to it keep pointing at it; their
-   * sandbox tools then fail with `device.not_found`. A local device's machine is
+   * sandbox tools then fail with `device.not_found`. A dial-in device's machine is
    * revoked in the same transaction; after the commit it is told `stop { reason: "deleted" }`
    * (while connected) and its connection is closed.
    *
@@ -988,8 +891,8 @@ export class DevicesService {
   }
 
   /**
-   * Disconnects the machine of one of the person's own local devices (it must sign in
-   * again); see {@link MachinesService.revoke}.
+   * Disconnects the machine of one of the person's own dial-in devices (it must sign in
+   * again); see {@link DialInMachines.revoke}.
    */
   async revokeMachine(
     orgId: string,
@@ -1001,47 +904,12 @@ export class DevicesService {
   }
 
   /**
-   * The owner narrows one of their own local devices' sandbox from the web (approval-only
-   * profiles design, "Settings model"): sent to the machine with the `policy` op, which is the
-   * authority and answers with the policy as written. Anyone but the owner gets
-   * `device.not_found`. The owner may remove hosts from the machine's allowlist and narrow its
-   * owner ceiling (no running outside the sandbox, the allowlist network, the workspace reach);
-   * widening happens on the machine only. The machine offline → `device.offline`; a cloud device
-   * or a program without the `policyOpId` feature → `device.policy_unsupported`; the machine's
-   * refusal → `device.policy_refused` with its message. Callers are human sessions only (no
-   * personal access token, no service token, no Platform op).
-   */
-  async changePolicy(
-    orgId: string,
-    account: { id: string; displayName: string },
-    id: string,
-    change: DevicePolicyChange,
-  ): Promise<DeviceLocalPolicySummary> {
-    await this.access.usable(orgId, account.id, id);
-    const out = await this.policies.apply({
-      orgId,
-      deviceId: id,
-      change: {
-        ...(change.remove !== undefined && { remove: change.remove }),
-        ...(change.ownerCeiling !== undefined && { ownerCeiling: narrowOnly(change.ownerCeiling) }),
-      },
-      source: { accountId: account.id, accountName: account.displayName, via: "web" },
-    });
-    if (out.applied) return out.policy;
-    if (out.reason === "offline") throw new ApiError("device.offline", out.message);
-    if (out.reason === "unsupported") {
-      throw new ApiError("device.policy_unsupported", out.message);
-    }
-    throw new ApiError("device.policy_refused", out.message);
-  }
-
-  /**
    * Starts one of the person's devices over with empty files (after
    * `device.files_lost`): records the request (audit), then, after the commit, enqueues the
    * `sandbox-reset-files` job (deterministic id per device), whose worker waits for running
    * commands and destroys any instance and the file system; the next use creates new ones. Its
-   * provider must be the current one (`device.unavailable`); a local device's files
-   * are its machine owner's (`device.files_on_device`). An enqueue failure is thrown
+   * provider must be on (`device.unavailable`) and offer a reset (its report's `reset`, else
+   * `device.files_on_device`). An enqueue failure is thrown
    * (the request can be repeated: the reset is idempotent).
    */
   async resetFiles(
@@ -1064,7 +932,8 @@ export class DevicesService {
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    refuseDeviceReset(await this.access.usable(orgId, accountId, id));
+    await this.access.usable(orgId, accountId, id);
+    refuseDeviceReset(await this.reports.read(orgId, id));
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1110,7 +979,6 @@ export class DevicesService {
         owner_account_id: accountId,
         name: null,
         is_default: true,
-        source: "cloud",
         provider,
       })
       .onConflict((oc) =>
@@ -1204,7 +1072,6 @@ export class DevicesService {
         "e.id",
         "e.name",
         "e.is_default",
-        "e.source",
         "e.provider",
         "e.network_mode",
         "e.network_hosts",
@@ -1213,13 +1080,8 @@ export class DevicesService {
         "m.id as machine_id",
         "m.name as machine_name",
         "m.os as machine_os",
-        "m.mode as machine_mode",
         "m.program_version as machine_program_version",
         "m.last_seen_at as machine_last_seen_at",
-        "m.session_isolation as machine_session_isolation",
-        "m.features as machine_features",
-        "m.local_policy as machine_local_policy",
-        "m.owner_report as machine_owner_report",
         "i.provider as instance_provider",
         "i.fs_status",
         "i.handle",
@@ -1240,33 +1102,21 @@ export class DevicesService {
       orgId,
       rows.map((r) => r.id),
     );
-    // whether each provider serves the org now: the org's providers are evaluated once per
-    // request; a kernel-internal provider (`@local`) is on while registered (`isOnInOrg`)
+    // whether each provider serves the org now, evaluated once per provider and request
     const providerNames = [...new Set(rows.flatMap((r) => (r.provider ? [r.provider] : [])))];
-    const served = providerNames.some((p) => !isInternalProvider(p))
-      ? new Set((await this.selection.onInOrg(orgId)).map((e) => e.plugin))
-      : new Set<string>();
     const on = new Map(
       await Promise.all(
-        providerNames.map(
-          async (p) =>
-            [
-              p,
-              isInternalProvider(p) ? await this.selection.isOnInOrg(orgId, p) : served.has(p),
-            ] as const,
-        ),
+        providerNames.map(async (p) => [p, await this.selection.isOnInOrg(orgId, p)] as const),
       ),
     );
-    // each device's sandbox, limits and its instance's pending change
+    // each device's sandbox, limits, its instance's pending change and its stored report
     const perDevice = new Map(
       await Promise.all(
         rows.map(async (r) => {
           const policy = await this.sandbox.devicePolicy({ orgId, deviceId: r.id });
           const [limits, state, facts, report] = await Promise.all([
-            this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy, source: r.source }),
-            r.source === "cloud"
-              ? this.sandbox.limitsState({ orgId, deviceId: r.id }, { policy })
-              : { pendingNextUse: false, pendingFilesReset: false },
+            this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy }),
+            this.sandbox.limitsState({ orgId, deviceId: r.id }, { policy }),
             this.facts.deviceSandboxFacts(orgId, r.id),
             this.reports.read(orgId, r.id),
           ]);
@@ -1274,67 +1124,50 @@ export class DevicesService {
         }),
       ),
     );
-    // a local device is online while a replica holds its machine's connection lease
+    // a dial-in device is online while a replica holds its machine's connection
+    const dialIn = new Set(rows.filter((r) => this.isDialIn(r.provider)).map((r) => r.id));
     const online = new Map(
       await Promise.all(
-        rows
-          .filter((r) => r.source === "local")
-          .map(
-            async (r) =>
-              [r.id, (await this.locks.holderOf(deviceLeaseKey(r.id))) !== null] as const,
-          ),
+        [...dialIn].map(async (deviceId) => [deviceId, await this.relay.online(deviceId)] as const),
       ),
     );
     return rows.map((r) => {
       const provider = r.provider;
       const live = (r.status === "running" || r.status === "suspended") && r.last_used_at;
+      const device = perDevice.get(r.id);
       return {
         id: r.id,
         name: r.name,
         isDefault: r.is_default,
         ownerKind: "personal",
-        source: r.source,
         provider,
+        dialIn: dialIn.has(r.id),
         // an instance row of another provider (never written by this kernel) is refused on use
         available:
           provider !== null &&
           (on.get(provider) ?? false) &&
           (r.instance_provider === null || r.instance_provider === provider),
-        report: perDevice.get(r.id)?.report ?? null,
-        online: r.source === "local" ? (online.get(r.id) ?? false) : null,
+        report: device?.report ?? null,
+        online: dialIn.has(r.id) ? (online.get(r.id) ?? false) : null,
         machine:
-          r.machine_id !== null && r.machine_name !== null && r.machine_os !== null
+          dialIn.has(r.id) &&
+          r.machine_id !== null &&
+          r.machine_name !== null &&
+          r.machine_os !== null
             ? {
                 id: r.machine_id,
                 name: r.machine_name,
                 os: r.machine_os,
-                mode: r.machine_mode,
                 programVersion: r.machine_program_version,
                 lastSeenAt: r.machine_last_seen_at?.toISOString() ?? null,
               }
             : null,
-        network:
-          r.source === "local" && r.machine_id !== null
-            ? {
-                features: deviceFeaturesOf(r.machine_features),
-                policy: localPolicyOf(r.machine_local_policy),
-              }
-            : null,
-        sandbox: sandboxViewOf(
-          perDevice.get(r.id)?.box as DeviceSandbox,
-          r.source === "local"
-            ? ownerFactsOf({ owner_report: r.machine_owner_report })
-            : cloudOwnNetwork(r),
-          {
-            pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
-            pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
-            recent: recent.get(r.id) ?? [],
-          },
-        ),
-        // a local device's machine decides it; a cloud device has none
-        ownerCeiling: ownerCeilingViewOf(r, online.get(r.id) ?? false),
-        reconcileRequired: r.source === "cloud" && r.permission_reconcile_required,
-        sessionIsolation: r.machine_session_isolation ?? false,
+        sandbox: sandboxViewOf(device?.box as DeviceSandbox, ownNetwork(r), {
+          pendingNextUse: device?.state.pendingNextUse ?? false,
+          pendingFilesReset: device?.state.pendingFilesReset ?? false,
+          recent: recent.get(r.id) ?? [],
+        }),
+        reconcileRequired: r.permission_reconcile_required,
         filesLost: r.fs_status === "lost",
         instance: live
           ? {
@@ -1342,10 +1175,16 @@ export class DevicesService {
               lastUsedAt: (r.last_used_at as Date).toISOString(),
             }
           : null,
-        limits: limitsView(perDevice.get(r.id)?.limits as DeviceLimits),
+        limits: limitsView(device?.limits as DeviceLimits),
         createdAt: r.created_at.toISOString(),
       };
     });
+  }
+
+  /** Whether `provider` (a device's `devices.provider`) serves its devices over dial-in. */
+  private isDialIn(provider: string | null): boolean {
+    const p = this.providers.forDevice(provider);
+    return p !== undefined && servesDialIn(p);
   }
 
   /**
@@ -1450,12 +1289,11 @@ export class DevicesService {
   ): Promise<{
     name: string | null;
     is_default: boolean;
-    source: "cloud" | "local";
   }> {
     await this.lockMember(orgId, accountId);
     const row = await this.db
       .selectFrom("devices")
-      .select(["name", "is_default", "source"])
+      .select(["name", "is_default"])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("owner_kind", "=", "personal")
@@ -1481,14 +1319,16 @@ export class DevicesService {
 }
 
 /**
- * Ruling R24: a local device's files are in a directory on its machine, which the
- * platform never wipes; a lost directory comes back with `capybara-device logout` and a new `login` on the machine.
+ * A device whose provider last reported no file reset (`report.reset` false, device-provider spec
+ * §6.1): its files are kept where the provider keeps them and the platform never wipes them
+ * (`device.files_on_device`, with the provider's own description). A device with no stored report
+ * yet is not refused: its provider's reset decides.
  */
-function refuseDeviceReset(env: { provider: string | null }): void {
-  if (env.provider === LOCAL_PROVIDER) {
+function refuseDeviceReset(report: DeviceReport | null): void {
+  if (report !== null && !report.reset) {
     throw new ApiError(
       "device.files_on_device",
-      "This device's files are in a directory on its connected machine and cannot be reset from here. To start over, run capybara-device logout, then capybara-device login into this device, on that machine.",
+      `This device's provider does not reset its files from here (${report.description.en}).`,
     );
   }
 }
@@ -1653,71 +1493,22 @@ function settingChangeOf(
 }
 
 /**
- * The sandbox view of one device: its effective {@link DeviceSandbox} with its own network setting
- * (`own`: a local machine's owner facts, a cloud device's stored choice) and the instance's pending
- * change with the recent changes.
+ * The sandbox view of one device: its effective {@link DeviceSandbox} with its own stored network
+ * setting (`own`) and the instance's pending change with the recent changes.
  */
 export function sandboxViewOf(
   box: DeviceSandbox,
-  own:
-    | Pick<OwnerFacts, "state" | "network" | "allowedDomains">
-    | { networkMode: "open" | "allowlist" | "none" | null; networkHosts: readonly string[] },
+  own: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: readonly string[] },
   extra: Pick<DeviceSandboxView, "pendingNextUse" | "pendingFilesReset" | "recent">,
 ): DeviceSandboxView {
-  const local = "state" in own;
   return {
     network: box.networkMode,
     networkCeiling: box.networkCeiling,
     hosts: [...box.hosts],
-    ownNetwork: local ? (own.state === "missing" ? null : own.network) : own.networkMode,
-    allowedDomains: local ? [...own.allowedDomains] : [...own.networkHosts],
+    ownNetwork: own.networkMode,
+    allowedDomains: [...own.networkHosts],
     outsideSandbox: box.outsideSandbox,
-    restrictedProjectReach: box.restrictedProjectReach,
     layer: { ...box.layer },
     ...extra,
-  };
-}
-
-/** The read-only owner ceiling view of a listed local device row. */
-function ownerCeilingViewOf(
-  r: { source: "cloud" | "local"; machine_id: string | null; machine_owner_report: unknown },
-  online: boolean,
-): DeviceOwnerCeilingView | null {
-  if (r.source === "cloud" || r.machine_id === null) return null;
-  const f = ownerFactsOf({ owner_report: r.machine_owner_report });
-  return {
-    state: f.state,
-    revision: f.revision,
-    sequence: f.sequence,
-    outsideSandbox: f.outsideSandbox,
-    network: f.network,
-    allowedDomains: [...f.allowedDomains],
-    restrictedProjectReach: f.restrictedProjectReach,
-    observedAt: f.observedAt,
-    stale: !online || f.state !== "report",
-  };
-}
-
-/** The owner ceiling narrowing the web may send: anything wider is refused, never sent. */
-function narrowOnly(c: {
-  outsideSandbox?: unknown;
-  network?: unknown;
-  restrictedProjectReach?: unknown;
-}): DeviceOwnerCeilingNarrowing {
-  if (
-    (c.outsideSandbox !== undefined && c.outsideSandbox !== false) ||
-    (c.network !== undefined && c.network !== "allowlist") ||
-    (c.restrictedProjectReach !== undefined && c.restrictedProjectReach !== "workspace")
-  )
-    throw new ApiError(
-      "validation_failed",
-      "The device page can only narrow a machine's owner ceiling; widen it on the machine with capybara-device ceiling set",
-    );
-  return {
-    ...(c.outsideSandbox === false && { outsideSandbox: false as const }),
-    ...(c.network === "allowlist" && { network: "allowlist" as const }),
-    ...(c.restrictedProjectReach === "workspace" && {
-      restrictedProjectReach: "workspace" as const,
-    }),
   };
 }

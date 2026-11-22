@@ -370,4 +370,150 @@ describe("ctx 按权限清单构造", () => {
     // 写审计失败时去重键被撤销，下次仍会尝试记录
     expect(await redis.keys("capk:*")).toEqual([]);
   });
+
+  describe("ctx.dialIn", () => {
+    const dialInManifest = (over: Partial<ExtensionManifest> = {}) =>
+      mf({
+        name: "perm-dial-in",
+        provides: ["device-provider@1"],
+        permissions: { dialIn: { protocol: "perm-dial-in/1" } },
+        ...over,
+      });
+    /** A dial-in relay double: `own` is the only device the extension serves. */
+    const access = (own: string) => {
+      const calls: { method: string; deviceId: string; opts?: unknown }[] = [];
+      return {
+        calls,
+        api: {
+          serves: async (plugin: string, deviceId: string) =>
+            plugin === "perm-dial-in" && deviceId === own,
+          request: async (deviceId: string, body: unknown, opts: unknown) => {
+            calls.push({ method: "request", deviceId, opts });
+            return { echoed: body };
+          },
+          online: async (deviceId: string) => {
+            calls.push({ method: "online", deviceId });
+            return true;
+          },
+          stop: async (deviceId: string) => {
+            calls.push({ method: "stop", deviceId });
+          },
+        },
+      };
+    };
+
+    it("ctx.dialIn without permissions.dialIn throws ExtensionPermissionError", async () => {
+      const ctx = createExtensionContext(
+        { ...deps, dialIn: access("d-1").api },
+        mf({ provides: ["device-provider@1"] }),
+        {},
+      );
+      expect(() => ctx.dialIn).toThrow(ExtensionPermissionError);
+      expect(Object.keys(ctx)).not.toContain("dialIn");
+      await ctx.close();
+      expect((await denials())[0]?.detail).toMatchObject({ item: "permissions.dialIn" });
+    });
+
+    /** A device reports double: `own` is the only device bound to `perm-dial-in`. */
+    const reports = (own: string) => {
+      const calls: { plugin: string; deviceId: string; signal?: AbortSignal }[] = [];
+      return {
+        calls,
+        api: {
+          changed: async (plugin: string, deviceId: string, signal?: AbortSignal) => {
+            calls.push({ plugin, deviceId, ...(signal && { signal }) });
+            return plugin === "perm-dial-in" && deviceId === own ? "bumped" : "not-served";
+          },
+        } as NonNullable<KernelDeps["devices"]>,
+      };
+    };
+
+    it("ctx.devices for an extension that provides no device provider throws ExtensionPermissionError", async () => {
+      const ctx = createExtensionContext({ ...deps, devices: reports("d-1").api }, mf(), {});
+      expect(() => ctx.devices).toThrow(ExtensionPermissionError);
+      expect(Object.keys(ctx)).not.toContain("devices");
+      await ctx.close();
+      expect((await denials())[0]?.detail).toMatchObject({
+        item: "provides device-provider@1",
+      });
+    });
+
+    it("ctx.devices.reportChanged reads its own device's report again, under the instance's signal", async () => {
+      const r = reports("d-1");
+      const ctx = createExtensionContext({ ...deps, devices: r.api }, dialInManifest(), {});
+      await ctx.devices.reportChanged("d-1");
+      expect(r.calls.map((c) => [c.plugin, c.deviceId])).toEqual([["perm-dial-in", "d-1"]]);
+      expect(r.calls[0]?.signal?.aborted).toBe(false);
+      await ctx.close();
+      expect(r.calls[0]?.signal?.aborted).toBe(true);
+      expect(await denials()).toEqual([]);
+    });
+
+    it("ctx.devices.reportChanged for a device of another provider throws ExtensionPermissionError and audits", async () => {
+      const ctx = createExtensionContext(
+        { ...deps, devices: reports("d-1").api },
+        dialInManifest(),
+        {},
+      );
+      for (const id of ["d-other", 42 as unknown as string]) {
+        const e = await ctx.devices.reportChanged(id).then(
+          () => null,
+          (x: unknown) => x,
+        );
+        expect(e).toBeInstanceOf(ExtensionPermissionError);
+        expect((e as Error).message).toBe(`device ${id} is not served by perm-dial-in`);
+      }
+      await ctx.close();
+      expect((await denials()).map((d) => d.detail)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ item: "devices:device d-other" }),
+          expect.objectContaining({ item: "devices:device 42" }),
+        ]),
+      );
+    });
+
+    it("ctx.dialIn for a device of another provider throws ExtensionPermissionError and audits", async () => {
+      const a = access("d-1");
+      const ctx = createExtensionContext({ ...deps, dialIn: a.api }, dialInManifest(), {});
+      for (const call of [
+        () => ctx.dialIn.request("d-other", { x: 1 }, { timeoutMs: 1000 }),
+        () => ctx.dialIn.online("d-other"),
+        () => ctx.dialIn.stop("d-other", "stop"),
+      ]) {
+        const e = await call().then(
+          () => null,
+          (x: unknown) => x,
+        );
+        expect(e).toBeInstanceOf(ExtensionPermissionError);
+        expect((e as Error).message).toBe("device d-other is not served by perm-dial-in");
+      }
+      expect(a.calls).toEqual([]);
+      await ctx.close();
+      expect((await denials())[0]?.detail).toMatchObject({ item: "dialIn:device d-other" });
+    });
+
+    it("ctx.dialIn for its own device relays with only the options an extension may pass", async () => {
+      const a = access("d-1");
+      const ctx = createExtensionContext({ ...deps, dialIn: a.api }, dialInManifest(), {});
+      const own = new AbortController();
+      expect(
+        await ctx.dialIn.request("d-1", { x: 1 }, {
+          timeoutMs: 1000,
+          signal: own.signal,
+          // a kernel fence smuggled in by the extension never reaches the relay
+          connection: { connectionId: "c", maxFrameBytes: 1 },
+        } as never),
+      ).toEqual({ echoed: { x: 1 } });
+      expect(await ctx.dialIn.online("d-1")).toBe(true);
+      await ctx.dialIn.stop("d-1", "drain");
+      expect(a.calls.map((c) => c.method)).toEqual(["request", "online", "stop"]);
+      const opts = a.calls[0]?.opts as { timeoutMs: number; signal: AbortSignal };
+      expect(Object.keys(opts).sort()).toEqual(["signal", "timeoutMs"]);
+      // the instance's signal joins the extension's: an unload aborts the wait
+      expect(opts.signal.aborted).toBe(false);
+      await ctx.close();
+      expect(opts.signal.aborted).toBe(true);
+      expect(await denials()).toEqual([]);
+    });
+  });
 });

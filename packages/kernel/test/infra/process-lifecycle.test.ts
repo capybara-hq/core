@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { resolveConfig } from "../../src/config/load.js";
 import type { KernelConfig } from "../../src/config/schema.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
 import { ConfigModule } from "../../src/infra/config/config.module.js";
 import { DatabaseModule, PoolLifecycle } from "../../src/infra/database/database.module.js";
 import { GracefulShutdownModule } from "../../src/infra/lifecycle/graceful-shutdown.module.js";
@@ -32,7 +33,6 @@ import {
 } from "../../src/infra/presence/replica-presence.js";
 import { RedisLifecycle, RedisModule } from "../../src/infra/redis/redis.module.js";
 import { KERNEL_POOL, REDIS_SUBSCRIBER } from "../../src/infra/tokens.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { KernelOverride } from "../../src/overrides.js";
 import { KERNEL_VERSION } from "../../src/version.js";
@@ -417,9 +417,9 @@ describe("replica presence (short interval)", () => {
 
   it("reports the connections each process holds, and a process that stops beating ages out", async () => {
     vi.spyOn(a.app.get(ChannelSupervisor), "heldCount").mockReturnValue(1);
-    vi.spyOn(a.app.get(LocalDeviceGateway), "connectionCount").mockReturnValue(2);
+    vi.spyOn(a.app.get(DialInGateway), "connectionCount").mockReturnValue(2);
     vi.spyOn(b.app.get(ChannelSupervisor), "heldCount").mockReturnValue(2);
-    vi.spyOn(b.app.get(LocalDeviceGateway), "connectionCount").mockReturnValue(3);
+    vi.spyOn(b.app.get(DialInGateway), "connectionCount").mockReturnValue(3);
     const pa = a.app.get(ReplicaPresence);
     const pb = b.app.get(ReplicaPresence);
     expect(pa.windowMs).toBe(INTERVAL * 3);

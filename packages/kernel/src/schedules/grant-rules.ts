@@ -1,7 +1,7 @@
 import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { GIT_REPO_MAX_CHARS } from "../conversations/events.js";
-import { orgAllows } from "../local-devices/network-grants.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { orgAllows } from "../sandbox/network-grants.js";
 import { isFixedAsk } from "../tools/fixed-ask.js";
 import type { ResolvedTool } from "../tools/registry.js";
 import { changesAgentSkills } from "./unattended.js";

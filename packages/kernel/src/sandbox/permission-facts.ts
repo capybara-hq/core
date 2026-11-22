@@ -12,20 +12,13 @@ import { permissionCodePointCompare } from "../conversations/events.js";
 import type { PermissionRoot } from "../conversations/permission-profile-store.js";
 import { DeviceAccess } from "../devices/access.js";
 import { deviceNotFound, projectsUnsupported } from "../devices/errors.js";
-import {
-  type DeviceProjectScope,
-  outsideMode,
-  projectNotFound,
-  tooBroad,
-  withinMode,
-} from "../devices/project-rules.js";
+import { type DeviceProjectScope, projectNotFound, tooBroad } from "../devices/project-rules.js";
 import { aboveHome, type WorkingProject } from "../devices/working-root.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
-import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
+import { storedReport, storedSupport } from "./device-reports.js";
 import {
   type ConsentReach,
   canonicalHostCeiling,
@@ -58,11 +51,7 @@ import {
   permissionAvailabilityFor,
 } from "./permission-availability.js";
 import type { AppliedEnvironment, AppliedOuterNetwork } from "./permission-context-types.js";
-import {
-  readCurrentReport,
-  readRuntimeReport,
-  sameRuntimeIdentity,
-} from "./permission-runtime-reports.js";
+import { readCurrentReport } from "./permission-runtime-reports.js";
 import { DeviceProviders } from "./providers.js";
 import { homeOf } from "./review/rules.js";
 
@@ -73,11 +62,11 @@ type Scope = DeviceProjectScope;
  */
 export interface WorkingFacts {
   /**
-   * The device's workspace: the latest `device_paths` roots recorded in the calling conversation,
-   * else the root's, else the machine's reported roots, else the default.
+   * The device's workspace: the held instance's committed roots, else the latest `device_paths`
+   * roots recorded in the calling conversation, else the root's, else the default.
    */
   workspace: string;
-  /** The owner's home: the machine's reported home, else the workspace's home prefix; null: unknown. */
+  /** The owner's home: the provider's reported home, else the workspace's home prefix; null: unknown. */
   home: string | null;
   /** The root conversation's latest project snapshot; null: free, or none recorded yet. */
   project: WorkingProject | null;
@@ -109,52 +98,33 @@ export class PermissionFacts {
     @Inject(DeviceAccess) private readonly devices: Pick<DeviceAccess, "usable">,
   ) {}
   /**
-   * Current policy, the device sandbox and persisted owner roots; access is checked by the caller.
-   * `sandbox` is the device sandbox under the device's current runtime report (the provider layer
-   * assumed before one is recorded), the same under every permission profile.
+   * Current policy and the device sandbox; access is checked by the caller. `sandbox` is the device
+   * sandbox under the device's current runtime report (else the support stored with its report,
+   * else the provider layer assumed before one is recorded), the same under every permission
+   * profile.
    */
   async readDevice(orgId: string, deviceId: string) {
-    const [policy, machine, availability] = await Promise.all([
+    const [policy, availability] = await Promise.all([
       this.devicePolicy({ orgId, deviceId }),
-      this.db
-        .selectFrom("device_machines")
-        .select(["local_policy", "owner_report", "roots", "home"])
-        .where("device_id", "=", deviceId)
-        .where("org_id", "=", orgId)
-        .where("revoked_at", "is", null)
-        .executeTakeFirst(),
       this.availability(orgId, deviceId),
     ]);
-    const facts = machine ? ownerFactsOf(machine) : null;
-    const owner =
-      facts === null || facts.state === "missing"
-        ? null
-        : {
-            state: facts.state,
-            outsideSandbox: facts.outsideSandbox,
-            restrictedProjectReach: facts.restrictedProjectReach,
-            network: facts.network,
-            allowedDomains: facts.allowedDomains,
-          };
     const sandbox = await this.deviceSandboxFacts(orgId, deviceId, availability);
     return {
       policy,
-      // the owner's authenticated facts (B2); null when the machine reported nothing readable
-      owner,
       sandbox: sandbox.box,
       hostCeiling: sandbox.hostCeiling,
       hostRefusal: sandbox.refusal,
-      reach: sandbox.reach,
-      roots: machine?.roots ?? null,
-      home: machine?.home ?? null,
+      /** The provider's description of the device (its stored report, English), or null. */
+      description: sandbox.description,
     };
   }
 
   /**
    * The effective device sandbox (approval-only profiles design, "Settings model"): the platform,
-   * org, device and provider layers read live and combined by {@link effectiveDeviceSandbox}. A
-   * local device's layer is its owner's authenticated report (missing or blocked: fail closed,
-   * nothing outside and the allowlist); a cloud device's is its stored network choice.
+   * org, device and provider layers read live and combined by {@link effectiveDeviceSandbox}, one
+   * path for every provider. The device layer is its stored network choice; the provider layer
+   * its current runtime report, else the support stored with its device report (device-provider
+   * spec §6.7), else the layer assumed before any ({@link providerLayerOf}).
    */
   async deviceSandbox(
     orgId: string,
@@ -173,39 +143,37 @@ export class PermissionFacts {
     orgId: string,
     deviceId: string,
     availability?: PermissionAvailability,
-    /** A cloud device's network as it would be stored (a change checked before it is written). */
-    pendingCloud?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
+    /** The device's network as it would be stored (a change checked before it is written). */
+    pending?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
+    /**
+     * Which provider layer: `ceilings` (the support chain, {@link providerLayerOf}; the consent
+     * reach reads it too) or `lifecycle` (no support: the network an instance is created with is
+     * the device's own choice within the ceilings, never a support read after an earlier
+     * instance, so a support arriving never makes the next use recreate the instance; the
+     * provider enforces what it can).
+     */
+    layer: "ceilings" | "lifecycle" = "ceilings",
   ) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
       this.db
-        .selectFrom("devices as e")
-        .leftJoin("device_machines as m", (j) =>
-          j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-        )
-        .select(["e.source", "e.network_mode", "e.network_hosts", "m.owner_report"])
-        .where("e.id", "=", deviceId)
-        .where("e.org_id", "=", orgId)
+        .selectFrom("devices")
+        .select(["network_mode", "network_hosts", "report"])
+        .where("id", "=", deviceId)
+        .where("org_id", "=", orgId)
         .executeTakeFirst(),
     ]);
-    const location = row?.source === "local" ? "local" : "cloud";
     const limits = this.config.get().sandbox.limits;
-    let device: DeviceSandboxDeviceLayer;
-    let owner: { network: "open" | "allowlist"; allowedDomains: readonly string[] } | null = null;
-    if (location === "local") {
-      const facts = ownerFactsOf(row ?? {});
-      owner = { network: facts.network, allowedDomains: facts.allowedDomains };
-      device = {
-        location,
-        outsideSandbox: facts.outsideSandbox,
-        network: facts.network,
-        allowedDomains: facts.allowedDomains,
-        restrictedProjectReach: facts.restrictedProjectReach,
-      };
-    } else device = { location, ...(pendingCloud ?? cloudOwnNetwork(row)) };
+    const device: DeviceSandboxDeviceLayer = pending ?? ownNetwork(row);
     const current = availability ?? (await this.availability(orgId, deviceId));
-    const report = current.state === "supported" ? current.report : null;
+    // the provider's support: its current runtime report, else the one stored with its report
+    const support =
+      layer === "lifecycle"
+        ? null
+        : current.state === "supported"
+          ? current.report
+          : storedSupport(row?.report);
     const platform = {
       settings,
       allowHosts: limits.allowHosts,
@@ -216,24 +184,22 @@ export class PermissionFacts {
       ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
       ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
     };
-    const box = effectiveDeviceSandbox(
-      platform,
-      orgLayer,
-      device,
-      providerLayerOf(report, location),
-    );
-    const hostCeiling = hostGrantCeiling(box, platform, orgLayer, owner);
+    const box = effectiveDeviceSandbox(platform, orgLayer, device, providerLayerOf(support));
+    const hostCeiling = hostGrantCeiling(box, platform, orgLayer);
     return {
       box,
       hostCeiling,
       /** The org's effective hosts: what a device's own host list may narrow, never add to. */
       orgHosts: orgHostsOf(platform, orgLayer),
-      refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer, owner),
+      refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer),
+      description: storedReport(row?.report)?.description.en ?? null,
+      /** Its provider enforces a sandbox allowlist (its support): a blocked host may be asked about. */
+      allowlist:
+        support !== null && support.unavailableReason === undefined && support.network.allowlist,
       reach: {
         outsideSandbox: box.outsideSandbox,
         networkCeiling: box.networkCeiling,
         networkMode: box.networkMode,
-        restrictedProjectReach: box.restrictedProjectReach,
         hostCeiling: canonicalHostCeiling(hostCeiling),
       } satisfies ConsentReach,
     };
@@ -264,14 +230,14 @@ export class PermissionFacts {
     const box = effectiveDeviceSandbox(
       platform,
       orgLayer,
-      { location: "cloud", networkMode: null, networkHosts: [] },
+      { networkMode: null, networkHosts: [] },
       {
         boundary: "operation",
         network: { openPublic: true, allowlist: true, perOperationHosts: true },
         outsideSandbox: false,
       },
     );
-    return hostGrantCeiling(box, platform, orgLayer, null);
+    return hostGrantCeiling(box, platform, orgLayer);
   }
 
   /** Stored binding only; projectScope supplies the live owner and deletion checks. */
@@ -289,29 +255,32 @@ export class PermissionFacts {
   }
   /**
    * The device's lifecycle policy: the kernel-internal mode tier (`auto` / `sandbox`, recorded with
-   * a cloud instance's applied limits and deciding the working root's reach) and the network a
-   * cloud instance is created with. A cloud device's network is its device sandbox network
-   * ({@link deviceSandbox}); the B1 snapshot's `outer_network` is no longer read: migrations 0165
-   * and 0167 and the snapshot writer copy an allowlist snapshot into the device's own network
-   * choice (`network_mode`, `network_hosts`).
+   * an instance's applied limits) and the network an instance is created with: its device sandbox
+   * network ({@link deviceSandbox}), the same for every provider. The B1 snapshot's
+   * `outer_network` is no longer read: migrations 0165 and 0167 and the snapshot writer copy an
+   * allowlist snapshot into the device's own network choice (`network_mode`, `network_hosts`).
    */
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
     const [deployment, settings, chosen] = await Promise.all([
       readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, device.orgId),
       device.deviceId === undefined
-        ? { mode: null, source: null }
-        : this.deviceChosenMode(device.orgId, device.deviceId),
+        ? { found: false, mode: null }
+        : this.chosenMode(device.orgId, device.deviceId),
     ]);
     const policy = effectiveDevicePolicy(deployment, settings, chosen.mode);
-    if (chosen.source !== "cloud" || device.deviceId === undefined) return policy;
-    // a cloud instance's outer network is its sandbox network (its provider enforces it, read
-    // under the provider layer assumed before a report); a local device's commands carry its
-    // sandbox network in their limits (`SandboxService.deviceLimits`)
-    const box = await this.deviceSandbox(device.orgId, device.deviceId, {
-      state: "unprobed",
-      reason: "lifecycle",
-    });
+    if (!chosen.found || device.deviceId === undefined) return policy;
+    // an instance's outer network is its sandbox network (its provider enforces it), from the
+    // device's own choice within the ceilings: the same before and after a support is known
+    const box = (
+      await this.deviceSandboxFacts(
+        device.orgId,
+        device.deviceId,
+        { state: "unprobed", reason: "lifecycle" },
+        undefined,
+        "lifecycle",
+      )
+    ).box;
     return { ...policy, network: networkOfSandbox(box) };
   }
 
@@ -336,83 +305,45 @@ export class PermissionFacts {
   }
 
   /**
-   * Refuses new authority on a local device whose machine regressed its owner report sequence on
-   * a new connection or sent conflicting reports (B2): only a valid current report or a new
-   * login clears it. Late deliveries of older reports are ignored, never blocking.
+   * The mode tier a device chose: the narrower of its old switch and its B1 owner snapshot
+   * (`cloudChosenMode`), or null for a device that follows the platform and the org; `found`:
+   * a live device of the org. The tier is kernel-internal (instance limits); whether a call may
+   * run outside the sandbox is the device sandbox's.
    */
-  async assertOwnerReportUsable(orgId: string, deviceId: string): Promise<void> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select(["owner_report", "local_policy"])
-      .where("device_id", "=", deviceId)
-      .where("org_id", "=", orgId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (row && ownerFactsOf(row).state === "blocked")
-      throw new ApiError(
-        "device.owner_report_stale",
-        "This device's machine reported an owner ceiling older than the one it reported before (its owner report sequence was lost or reset); run capybara-device login again on that machine to reset it",
-      );
-  }
-
-  /**
-   * The mode tier a device chose: a local device's derived one (`ownerModeOf`: `auto` only when
-   * its owner allows running outside the sandbox); a cloud device's narrower of its old switch and
-   * its B1 owner snapshot (`cloudChosenMode`), or null for a cloud device that follows the
-   * platform and the org. The tier is kernel-internal (instance limits, reach): a cloud device
-   * never runs outside its sandbox.
-   */
-  private async deviceChosenMode(
+  private async chosenMode(
     orgId: string,
     deviceId: string,
-  ): Promise<{
-    mode: EffectiveDevicePolicy["mode"] | null;
-    source: "local" | "cloud" | null;
-  }> {
+  ): Promise<{ found: boolean; mode: EffectiveDevicePolicy["mode"] | null }> {
     const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select(["e.source", "e.mode", "e.owner_full_access", "m.owner_report"])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.deleted_at", "is", null)
+      .selectFrom("devices")
+      .select(["mode", "owner_full_access"])
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (row === undefined) return { mode: null, source: null };
-    if (row.source === "local") return { mode: ownerModeOf(row), source: "local" };
-    return { mode: cloudChosenMode(row), source: "cloud" };
+    return row === undefined
+      ? { found: false, mode: null }
+      : { found: true, mode: cloudChosenMode(row) };
   }
 
   /**
    * The device's current permission availability: the provider's capability shape, then the
-   * runtime report recorded for its current identity. No probe or provider call.
+   * runtime report recorded for its current identity under the provider's version, the same for
+   * every provider. No probe or provider call.
    */
   private async availability(orgId: string, deviceId: string): Promise<PermissionAvailability> {
     const device = await this.db
       .selectFrom("devices")
-      .select(["provider", "source"])
+      .select("provider")
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const provider = device ? this.providers.forDevice(device.provider) : undefined;
     let availability = permissionAvailabilityFor(provider);
     if (availability.state === "unprobed" && provider) {
-      const machine =
-        provider.plugin === "@local"
-          ? await this.db
-              .selectFrom("device_machines")
-              .select("program_version")
-              .where("device_id", "=", deviceId)
-              .where("revoked_at", "is", null)
-              .executeTakeFirst()
-          : undefined;
-      availability = await readRuntimeReport(
-        this.db.db,
-        deviceId,
-        provider.plugin,
-        machine?.program_version ?? provider.version,
-      );
+      availability = (
+        await readCurrentReport(this.db.db, deviceId, provider.plugin, provider.version)
+      ).availability;
       // a recorded runtime report that cannot enforce the sandbox is the runtime's cause
       if (availability.state === "unsupported")
         availability = { ...availability, cause: { kind: "runtime" } };
@@ -431,24 +362,19 @@ export class PermissionFacts {
     holderConversationId: string;
     deviceId: string;
   }): Promise<WorkingFacts> {
-    const [applied, recorded, recordedRoot, machine, project] = await Promise.all([
+    const [applied, recorded, recordedRoot, reported, project] = await Promise.all([
       this.readAppliedEnvironment({ orgId, deviceId }),
       this.recordedWorkspace(conversationId),
       conversationId === rootConversationId ? null : this.recordedWorkspace(rootConversationId),
-      this.machineRoots(deviceId),
+      this.reportedHome(orgId, deviceId),
       this.workingProject(orgId, rootConversationId),
     ]);
-    // the held instance's committed (and, local, installed) roots first: a recorded
-    // `device_paths` may be stale (an earlier instance's), and the managed writer records the
-    // device paths from these roots; the records only stand in while no instance is committed
+    // the held instance's committed roots first: a recorded `device_paths` may be stale (an
+    // earlier instance's), and the managed writer records the device paths from these roots; the
+    // records only stand in while no instance is committed
     const workspace =
-      applied?.roots.workspace ??
-      recorded ??
-      recordedRoot ??
-      machine?.workspace ??
-      DEFAULT_SANDBOX_ROOTS.workspace;
-    // never from a project root: the machine's home, else the device workspace's home prefix
-    const reported = machine?.home;
+      applied?.roots.workspace ?? recorded ?? recordedRoot ?? DEFAULT_SANDBOX_ROOTS.workspace;
+    // never from a project root: the provider's reported home, else the workspace's home prefix
     const home = reported?.startsWith("/") ? reported : homeOf(workspace);
     return { workspace, home, project };
   }
@@ -500,39 +426,29 @@ export class PermissionFacts {
     return row?.workspace ?? null;
   }
 
-  /**
-   * The workspace root and the owner's home the device's active machine last reported, or null
-   * (cloud: no machine).
-   */
-  private async machineRoots(
-    deviceId: string,
-  ): Promise<{ workspace: string | null; home: string | null } | null> {
+  /** The owner's home the device's provider last reported (`devices.report`), or null. */
+  private async reportedHome(orgId: string, deviceId: string): Promise<string | null> {
     const row = await this.db
-      .selectFrom("device_machines")
-      .select([sql<string | null>`roots->>'workspace'`.as("workspace"), "home"])
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
+      .selectFrom("devices")
+      .select("report")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return row === undefined ? null : { workspace: row.workspace ?? null, home: row.home ?? null };
+    return storedReport(row?.report)?.home ?? null;
   }
 
+  /**
+   * The owner's live device's project scope: whether its provider offers projects (it has
+   * `list`), the home its provider last reported (the base the picker starts from; null: none,
+   * the workspace) and the workspace as last known (the instance's handle). What a project path
+   * may be is the provider's rule (device-provider spec §6.1): it refuses one it will not serve,
+   * so the kernel narrows no path below a reported home.
+   */
   async projectScope(orgId: string, accountId: string, deviceId: string): Promise<Scope> {
     const row = await this.db
       .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
       .leftJoin("device_instances as i", "i.device_id", "e.id")
-      .select([
-        "e.source",
-        "e.provider",
-        "m.features",
-        "m.local_policy",
-        "m.owner_report",
-        "m.home",
-        sql<string | null>`m.roots->>'workspace'`.as("machine_workspace"),
-        "i.handle",
-      ])
+      .select(["e.provider", "e.report", "i.handle"])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.owner_kind", "=", "personal")
@@ -540,37 +456,15 @@ export class PermissionFacts {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) throw deviceNotFound();
-    // `devicePolicy`, not `modeLevel` as the command review reads: a cloud device with a pending
-    // files reset is scoped by the narrower mode it will run at, never the wider one its instance
-    // still has, on purpose (projects are offered for what the device will read; no effect today)
-    const { mode, allowedMode } = await this.devicePolicy({ orgId, deviceId });
-    if (row.source === "local") {
-      const owner = ownerFactsOf(row);
-      return {
-        source: "local",
-        mode,
-        // B2: restricted reach follows the owner's reach, independent of its Full permission, and
-        // only within a platform and org that allow the wider device ceiling
-        reach:
-          allowedMode === "auto" && owner.restrictedProjectReach === "os-user"
-            ? "os-user"
-            : "workspace",
-        // an authenticated report bounds browsing by scope: never wider than the device allows
-        workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
-        home: row.home,
-        supported: deviceFeaturesOf(row.features).includes("projects"),
-      };
-    }
+    const { mode } = await this.devicePolicy({ orgId, deviceId });
+    const home = storedReport(row.report)?.home ?? null;
     const impl = this.providers.forDevice(row.provider)?.impl;
     const handle = row.handle as SandboxHandle | null;
     return {
-      source: "cloud",
       mode,
-      // cloud projects stay within their provisioned files
-      reach: "workspace",
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
-      home: null,
-      supported: typeof impl?.list === "function" && typeof impl.scan === "function",
+      home,
+      supported: typeof impl?.list === "function",
     };
   }
 
@@ -581,10 +475,9 @@ export class PermissionFacts {
     name: string,
   ): Promise<{ name: string; path: string }> {
     const scope = await this.projectScope(orgId, accountId, deviceId);
-    if (!scope.supported) throw projectsUnsupported(scope.source === "local");
+    if (!scope.supported) throw projectsUnsupported();
     const row = await this.readProject(orgId, deviceId, name);
     if (row === null) throw projectNotFound(name);
-    if (!withinMode(scope, row.path)) throw outsideMode(row.path, scope.mode);
     // a home reported after the project was added can put it above the home: the working root
     // would fall back for it, so it is not bound (the add rule, project root §4.3)
     if (aboveHome(row.path, scope.home)) throw tooBroad(row.path);
@@ -603,15 +496,7 @@ export class PermissionFacts {
   }
 
   async scope(orgId: string, deviceId: string, projectPath: string | null, project: string | null) {
-    const { roots: ownerRoots, sandbox, policy } = await this.readDevice(orgId, deviceId);
-    const source = (
-      await this.db
-        .selectFrom("devices")
-        .select("source")
-        .where("id", "=", deviceId)
-        .where("org_id", "=", orgId)
-        .executeTakeFirst()
-    )?.source;
+    const { sandbox } = await this.readDevice(orgId, deviceId);
     const availability = await this.availability(orgId, deviceId);
     // A ceiling restored to the same values is still a new authorization decision. Reads do
     // not initialize epoch rows; absent rows denote the pre-change revision zero.
@@ -630,29 +515,16 @@ export class PermissionFacts {
     for (const row of epochRows)
       if (row.kind === "platform" || row.kind === "org" || row.kind === "device")
         authority[row.kind] = row.full_revision;
-    const instanceRoots = await this.db
-      .selectFrom("device_instances")
-      .select("handle")
-      .where("device_id", "=", deviceId)
-      .executeTakeFirst();
     // the consent fingerprint: the device, the project binding and the crossing ceilings Full
-    // access auto-approves within (approval-only profiles design, "Consent fingerprint"), from
-    // the settings layers under the provider layer assumed before a report: a runtime report
-    // arriving or changing only narrows what the consent covers, so it never resets it
-    const consentReach = (
-      await this.deviceSandboxFacts(orgId, deviceId, { state: "unprobed", reason: "consent" })
-    ).reach;
+    // access auto-approves within (approval-only profiles design, "Consent fingerprint"), read
+    // from exactly the layer the ceilings read (the current runtime support, else the stored one,
+    // else no crossing): a support that allows a crossing the consent did not cover outgrows it,
+    // so Full access never auto-approves past what the person confirmed
+    const consentReach = (await this.deviceSandboxFacts(orgId, deviceId, availability)).reach;
     // what a consent is bound to besides the reach: the device, the project binding and the
-    // epochs a widening writer bumps (a ceiling restored to the same values still resets)
-    const consentIdentity = permissionScopeHash({
-      authority,
-      deviceId,
-      projectPath,
-      workingRoot:
-        projectPath ??
-        (ownerRoots as { workspace?: string } | null)?.workspace ??
-        rootsOf(instanceRoots?.handle ?? { id: deviceId }).workspace,
-    });
+    // epochs a widening writer bumps (a ceiling restored to the same values still resets; an
+    // instance committed on other roots than the device's previous one bumps the device epoch)
+    const consentIdentity = permissionScopeHash({ authority, deviceId, projectPath });
     const scopeRevision = permissionScopeHash({
       identity: consentIdentity,
       orgHosts: this.config.get().sandbox.limits.orgHosts,
@@ -665,22 +537,16 @@ export class PermissionFacts {
       consentIdentity,
       consentReach,
       availability,
-      location: source === "local" ? ("local" as const) : ("cloud" as const),
       sandbox,
       outsideSandboxCeiling: sandbox.outsideSandbox,
-      // B2: broad restricted reach (directories outside the working root) is the owner's reach
-      // within the platform and org ceilings; a cloud instance's whole filesystem is its sandbox,
-      // and an operation-boundary cloud device keeps its previous rule (its mode tier)
-      broadProjectReach:
-        sandbox.boundary === "instance" ||
-        (source === "local"
-          ? sandbox.restrictedProjectReach === "os-user"
-          : policy.mode === "auto" && policy.allowedMode === "auto"),
     };
   }
   /**
    * The preview people see before choosing a profile: availability is the device-work verdict
-   * ({@link deviceWorkAvailability}). Kernel callers only use it as a check.
+   * ({@link deviceWorkAvailability}). Kernel callers only use it as a check. `consentReach` is the
+   * reach an Auto consent confirmed against this `scopeRevision` records (the same layer as the
+   * crossing ceilings, whatever the runtime's state): the confirmation names exactly what it
+   * covers, never a guess from the runtime availability.
    */
   async preview(orgId: string, accountId: string, deviceId: string, project?: string) {
     await this.devices.usable(orgId, accountId, deviceId);
@@ -689,7 +555,7 @@ export class PermissionFacts {
         ? null
         : await this.resolveProjectForBinding(orgId, deviceId, accountId, project);
     const scope = await this.scope(orgId, deviceId, binding?.path ?? null, project ?? null);
-    return { ...scope, availability: deviceWorkAvailability(scope.availability, scope.location) };
+    return { ...scope, availability: deviceWorkAvailability(scope.availability) };
   }
   async view(orgId: string, accountId: string, row: PermissionRoot) {
     return (await this.viewWithAccess(orgId, accountId, row)).view;
@@ -700,10 +566,8 @@ export class PermissionFacts {
    * its sandbox reads `unsupported` with the runtime cause. Kernel readers use {@link view}.
    */
   async peopleView(orgId: string, accountId: string, row: PermissionRoot) {
-    const { view, location } = await this.viewWithAccess(orgId, accountId, row);
-    return location === null
-      ? view
-      : { ...view, availability: deviceWorkAvailability(view.availability, location) };
+    const { view, previewed } = await this.viewWithAccess(orgId, accountId, row);
+    return previewed ? { ...view, availability: deviceWorkAvailability(view.availability) } : view;
   }
   /**
    * {@link view} plus how the actor reached the root's device: none selected, usable, refused for
@@ -742,7 +606,8 @@ export class PermissionFacts {
         : row.permission_profile;
     return {
       access,
-      location: preview?.location ?? null,
+      /** Whether the device's scope was read (a usable device): its availability is a verdict. */
+      previewed: preview !== null,
       view: {
         profile,
         revision: row.permission_revision,
@@ -759,7 +624,8 @@ export class PermissionFacts {
           cause: { kind: "runtime" as const },
         },
         outsideSandboxCeiling: preview?.outsideSandboxCeiling ?? false,
-        broadProjectReach: preview?.broadProjectReach ?? false,
+        /** What an Auto consent confirmed now records (the confirmation names exactly this). */
+        consentReach: preview?.consentReach ?? null,
         sandbox: preview?.sandbox ?? null,
         startingWorkNotice: notice,
       },
@@ -767,14 +633,19 @@ export class PermissionFacts {
   }
 
   /**
-   * The installed environment of the device's current instance (B1 adapter over the Task 8 B4
-   * installed binding and its current runtime attestation), read under the caller's device
-   * authority lock. Null whenever it cannot be proved: no live instance (none, creating,
-   * destroyed), no installed binding of exactly this generation, a binding of another provider or
-   * machine, a runtime identity differing from the bound one, roots differing from the committed
-   * ones. A cloud device proves it by its kernel-recorded cloud evidence instead (B-15,
-   * {@link cloudAppliedLocked}). Never desired policy, never a provider call, probe, resume or
-   * provisioning; a suspended instance is read as recorded.
+   * The installed environment of the device's current instance (B1 adapter), read under the
+   * caller's device authority lock: its provider's current runtime report recorded with the
+   * kernel-built identity ({@link readCurrentReport}, which binds the device's report revision),
+   * the same for every provider. Null whenever it cannot be proved: no live instance (none,
+   * creating, destroyed), an instance of another provider than the device's, roots differing from
+   * the committed ones, missing or stale evidence, desired limits waiting for a file reset
+   * (`unapplied`) and applied limits more permissive than the effective desired ones in any
+   * dimension (network kind, a host the desired allowlist does not cover; spec §124): a pending
+   * desired change is never projected as installed. Applied limits narrower than desired stand;
+   * the next use's lifecycle lease applies any change before admitting an operation, and its new
+   * limits change the identity, so that use records the evidence again. Never desired policy,
+   * never a provider call, probe, resume or provisioning; a suspended instance is read as
+   * recorded.
    */
   async readAppliedEnvironmentLocked(input: {
     orgId: string;
@@ -802,7 +673,7 @@ export class PermissionFacts {
   }): Promise<AppliedEnvironment | null> {
     const device = await this.db
       .selectFrom("devices")
-      .select(["source", "provider"])
+      .select("provider")
       .where("id", "=", input.deviceId)
       .where("org_id", "=", input.orgId)
       .where("deleted_at", "is", null)
@@ -828,7 +699,7 @@ export class PermissionFacts {
       !instance.permission_roots ||
       !instance.permission_runtime_identity ||
       (instance.status !== "running" && instance.status !== "suspended") ||
-      (device.provider !== null && device.provider !== instance.provider)
+      device.provider !== instance.provider
     )
       return null;
     const roots = rootsOf(instance.handle);
@@ -839,77 +710,7 @@ export class PermissionFacts {
       committed.tmp !== roots.tmp
     )
       return null;
-    if (device.source !== "local")
-      return this.cloudAppliedLocked(input, {
-        ...instance,
-        provider: instance.provider,
-        handle: instance.handle,
-      });
-    const instanceGeneration = String(instance.created_at.getTime());
-    const [binding, machine] = await Promise.all([
-      this.db
-        .selectFrom("device_instance_bindings")
-        .select(["binding_id", "provider", "status", "machine_id", "runtime_identity"])
-        .where("device_id", "=", input.deviceId)
-        .where("instance_generation", "=", instanceGeneration)
-        .executeTakeFirst(),
-      this.db
-        .selectFrom("device_machines")
-        .select("id")
-        .where("device_id", "=", input.deviceId)
-        .where("org_id", "=", input.orgId)
-        .where("revoked_at", "is", null)
-        .executeTakeFirst(),
-    ]);
-    if (
-      binding?.status !== "installed" ||
-      binding.provider !== instance.provider ||
-      !binding.runtime_identity ||
-      !machine ||
-      binding.machine_id !== machine.id ||
-      !sameRuntimeIdentity(binding.runtime_identity, instance.permission_runtime_identity)
-    )
-      return null;
-    return {
-      location: "local",
-      provider: instance.provider,
-      instanceId: instance.handle.id,
-      instanceGeneration,
-      bindingId: binding.binding_id,
-      roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
-      // a local device's outer boundary is its host environment; restricted rules are the
-      // operation's own network field, never an outer network-off
-      outerNetwork: { kind: "host-environment" },
-    };
-  }
-
-  /**
-   * A cloud instance's installed environment (B-15, Q1 option A): its current runtime report
-   * recorded with the kernel-built cloud identity (provider plugin and version, handle,
-   * generation, applied limits; `readCurrentReport`), named by that report's identity hash in
-   * place of a binding id. Null while the evidence is missing or stale, while desired limits wait
-   * for a file reset (`unapplied`) and while the applied limits are more permissive than the
-   * effective desired ones in any dimension (mode, network kind, a host the desired allowlist
-   * does not cover; spec §124): a pending desired change is never projected as installed. Applied
-   * limits narrower than desired stand (the outer boundary is the applied network, and restricted
-   * hosts are cut to it); the next use's lifecycle lease applies any change before admitting an
-   * operation, and its new limits change the identity, so that use records the evidence again.
-   */
-  private async cloudAppliedLocked(
-    input: { orgId: string; deviceId: string },
-    instance: {
-      provider: string;
-      handle: SandboxHandle;
-      created_at: Date;
-      instance_limits: unknown;
-    },
-  ): Promise<AppliedEnvironment | null> {
-    const device = await this.db
-      .selectFrom("devices")
-      .select("provider")
-      .where("id", "=", input.deviceId)
-      .executeTakeFirst();
-    const entry = this.providers.forDevice(device?.provider ?? null);
+    const entry = this.providers.forDevice(device.provider);
     if (!entry || entry.plugin !== instance.provider) return null;
     const evidence = await readCurrentReport(
       this.db.db,
@@ -917,21 +718,32 @@ export class PermissionFacts {
       entry.plugin,
       entry.version,
     );
-    if (evidence.identityHash === null) return null;
+    if (evidence.identityHash === null || evidence.support === null) return null;
     const limits = readInstanceLimits(instance.instance_limits);
     if (limits.applied === null || limits.unapplied !== null) return null;
-    // applied limits more permissive than the effective desired ones (spec §124) are not the
-    // installed authority: unproved until the next use's lifecycle lease applies the narrowing
-    if (appliedWider(limits.applied, appliedOf(await this.devicePolicy(input)))) return null;
-    const outerNetwork = cloudOuterNetwork(limits.applied.network);
+    // an operation-boundary runtime holds its outer boundary per operation in its host
+    // environment (the operation's own network field restricts it); an instance-boundary one's
+    // outer boundary is its applied instance network
+    const boundary = evidence.support.boundary;
+    // an instance's applied limits more permissive than the effective desired ones (spec §124)
+    // are not the installed authority: unproved until the next use's lifecycle lease applies the
+    // narrowing (an operation-boundary runtime's operations carry their own network)
+    if (
+      boundary === "instance" &&
+      appliedWider(limits.applied, appliedOf(await this.devicePolicy(input)))
+    )
+      return null;
+    const outerNetwork: AppliedOuterNetwork | null =
+      boundary === "operation"
+        ? { kind: "host-environment" }
+        : instanceOuterNetwork(limits.applied.network);
     if (outerNetwork === null) return null;
-    const roots = rootsOf(instance.handle);
     return {
-      location: "cloud",
+      revision: evidence.identityHash,
+      boundary,
       provider: instance.provider,
       instanceId: instance.handle.id,
       instanceGeneration: String(instance.created_at.getTime()),
-      bindingId: evidence.identityHash,
       roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
       outerNetwork,
     };
@@ -939,11 +751,11 @@ export class PermissionFacts {
 }
 
 /**
- * The outer boundary a cloud instance's applied network proves: public addresses, or its exact
- * allowlist (empty: network disabled). Null when the allowlist cannot be stated as recorded
- * context hosts (a host that is not a normalized authority host, or more than the cap).
+ * The outer boundary an instance-boundary instance's applied network proves: public addresses, or
+ * its exact allowlist (empty: network disabled). Null when the allowlist cannot be stated as
+ * recorded context hosts (a host that is not a normalized authority host, or more than the cap).
  */
-export function cloudOuterNetwork(network: DeviceNetwork): AppliedOuterNetwork | null {
+export function instanceOuterNetwork(network: DeviceNetwork): AppliedOuterNetwork | null {
   if (network.kind === "open-public") return { kind: "open-public" };
   const hosts = [...new Set(network.hosts)].sort(permissionCodePointCompare);
   if (hosts.length === 0) return { kind: "none" };
@@ -952,9 +764,9 @@ export function cloudOuterNetwork(network: DeviceNetwork): AppliedOuterNetwork |
 }
 
 /**
- * Restricted hosts within a cloud instance's applied outer boundary (narrowing only): a host the
- * outer allowlist does not cover cannot be reached, so neither admission nor the recorded context
- * names it. A local device's host environment keeps every host.
+ * Restricted hosts within an instance's applied outer boundary (narrowing only): a host the outer
+ * allowlist does not cover cannot be reached, so neither admission nor the recorded context names
+ * it. An operation-boundary runtime's host environment keeps every host.
  */
 export function hostsWithinOuter(
   hosts: readonly string[],
@@ -967,8 +779,8 @@ export function hostsWithinOuter(
 }
 
 /**
- * The network a device sandbox gives a cloud instance's outer boundary: the open public internet,
- * or its allowlist (empty under the kill switch, which closes it).
+ * The network a device sandbox gives an instance's outer boundary: the open public internet, or
+ * its allowlist (empty under the kill switch, which closes it).
  */
 export function networkOfSandbox(box: DeviceSandbox): DeviceNetwork {
   if (box.networkMode === "open") return { kind: "open-public", hosts: [] };
@@ -976,13 +788,14 @@ export function networkOfSandbox(box: DeviceSandbox): DeviceNetwork {
 }
 
 /**
- * A cloud device's own sandbox network: its stored choice (`network_mode`, `network_hosts`; null
- * follows the org). A B1 snapshot is copied into it by migrations 0165 and 0167, the snapshot
- * writer and every publication (`copyCloudSnapshotNetworks`), never read here.
+ * A device's own sandbox network, whatever its provider: its stored choice (`network_mode`,
+ * `network_hosts`; null follows the org). A B1 snapshot is copied into it by migrations 0165 and
+ * 0167, the snapshot writer and every publication (`copyCloudSnapshotNetworks`), never read here.
  */
-export function cloudOwnNetwork(
-  row: { network_mode?: unknown; network_hosts?: unknown } | undefined,
-): { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] } {
+export function ownNetwork(row: { network_mode?: unknown; network_hosts?: unknown } | undefined): {
+  networkMode: "open" | "allowlist" | "none" | null;
+  networkHosts: string[];
+} {
   const hosts = row?.network_hosts;
   const mode = row?.network_mode;
   if (mode === "open" || mode === "allowlist" || mode === "none")

@@ -265,12 +265,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Disconnects a person's own machine (revokes its credential); a trust decision taken on the device's page",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/devices/:id/policy",
-    category: "human-only",
-    reason:
-      "A person narrows their own machine's sandbox (hosts, network, running outside the sandbox) on its device page; widening happens on the machine, never through an agent",
-  },
-  {
     route: "POST /api/v1/device/authorize",
     category: "transport",
     reason:
@@ -285,6 +279,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/device/pending/:userCode",
     category: "human-only",
     reason: "Shows the machine behind a code the person read off their own machine",
+  },
+  {
+    route: "GET /api/v1/device/providers",
+    category: "human-only",
+    reason:
+      "Lists the providers that may take the machine behind a code the person read off their own machine, for the confirmation page",
   },
   {
     route: "POST /api/v1/device/confirm",

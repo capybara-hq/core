@@ -1,4 +1,3 @@
-import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Patch, Post } from "@nestjs/common";
 import type { z } from "zod";
 import {
@@ -6,7 +5,6 @@ import {
   type Principal,
   patTokenId,
   requireUser,
-  SessionOnly,
 } from "../identity/principal.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
@@ -24,8 +22,6 @@ import {
   DeviceParamsDto,
   type DevicePatchBody,
   DevicePatchBodyDto,
-  type DevicePolicyBody,
-  DevicePolicyBodyDto,
   type DeviceProjectAddBody,
   DeviceProjectAddBodyDto,
   type DeviceProjectParams,
@@ -43,25 +39,16 @@ import {
  * - `POST / { name, provider? }` → 201 `{ device }`, bound for life to `provider` (one of
  *   `providers`, else 400 `validation_failed` at `provider`) or the default provider (none: 400
  *   `device.provider_required`); `GET /:id` → `{ device }`;
- * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets a cloud device's sandbox
- *   network (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design,
- *   "Settings model") within its org's and the platform's ceilings (400
- *   `device.network_not_allowed` above them). A local device's network lives on its machine (409
- *   `device.ceiling_on_machine`; narrow it with `POST /:id/policy`). An API token may only narrow
- *   it (400 `device.network_not_allowed`);
+ * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets its sandbox network
+ *   (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design, "Settings
+ *   model") within its org's and the platform's ceilings (400 `device.network_not_allowed` above
+ *   them), whatever its provider. An API token may only narrow it (400
+ *   `device.network_not_allowed`);
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
  * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
- *   starts empty);
- * - `DELETE /:id/machine` → 204: a local device's machine is disconnected (its credential
+ *   starts empty; 409 `device.files_on_device` when its provider's report offers no reset);
+ * - `DELETE /:id/machine` → 204: a dial-in device's machine is disconnected (its credential
  *   revoked; it must sign in again);
- * - `POST /:id/policy { remove?, ownerCeiling? }` → `{ policy }`: the owner narrows the local
- *   device's sandbox on its machine (hosts removed; `outsideSandbox: false`, `network:
- *   "allowlist"`, `restrictedProjectReach: "workspace"`); widening happens on the machine only.
- *   Web session only
- *   (`@SessionOnly`: a personal access token → 403 `auth.session_required`, a service token → 403):
- *   a person changes their own machine's network policy, nothing model-driven does. Offline → 503
- *   `device.offline`; cloud or an older program → 409 `device.policy_unsupported`; the machine's
- *   refusal → 409 `device.policy_refused`.
  * - a device's projects (project root design §4.1, §4.2), owner only (anyone else:
  *   `device.not_found`): `GET /:id/projects` → the ones its current mode can read;
  *   `GET /:id/projects/candidates` → the device's suggestions under its base;
@@ -174,22 +161,6 @@ export class DevicesController {
   ): Promise<void> {
     const p = requireUser(principal);
     await this.devices.revokeMachine(org.orgId, p.account.id, params.id, patTokenId(p));
-  }
-
-  @Post(":id/policy")
-  @HttpCode(200)
-  @SessionOnly()
-  @OrgAction("agents.use")
-  async changePolicy(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @ZParam(DeviceParamsDto) params: z.infer<typeof DeviceParams>,
-    @ZBody(DevicePolicyBodyDto) body: z.infer<typeof DevicePolicyBody>,
-  ): Promise<{ policy: DeviceLocalPolicySummary }> {
-    const p = requireUser(principal);
-    return {
-      policy: await this.devices.changePolicy(org.orgId, p.account, params.id, body),
-    };
   }
 
   @Get(":id/projects")

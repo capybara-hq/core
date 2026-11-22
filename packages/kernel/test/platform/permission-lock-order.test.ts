@@ -98,7 +98,6 @@ async function seed() {
       org_id: s.orgId,
       owner_kind: "personal",
       owner_account_id: s.accountId,
-      source: "cloud",
       provider: "@cloud",
       name: "Box",
     })
@@ -221,7 +220,6 @@ describe("ceiling writers reached from a tool step lock in the ordered prelude",
     const projects = k.app.get(DeviceProjectsService);
     // the device is not asked (no sandbox in this test): the insert is what is ordered
     vi.spyOn(seam(projects), "precheck").mockResolvedValue({
-      source: "cloud",
       reach: "workspace",
       mode: "sandbox",
       workspace: "/work",
@@ -449,7 +447,6 @@ describe("conversation deletion re-checks its prelude's subject", () => {
         org_id: f.orgId,
         owner_kind: "personal",
         owner_account_id: f.accountId,
-        source: "cloud",
         provider: "@cloud",
         name: "Other",
       })
@@ -535,13 +532,8 @@ describe("more fenced ceiling writes commit", () => {
     }
   });
 
-  it("devices.delete of a local device: the machine's revoke names the held device lock again", async () => {
+  it("devices.delete of a device with a signed-in machine: the machine's revoke names the held device lock again", async () => {
     const f = await seed();
-    await f.db
-      .updateTable("devices")
-      .set({ source: "local", provider: "@local" })
-      .where("id", "=", f.deviceId)
-      .execute();
     await f.db
       .insertInto("device_machines")
       .values({

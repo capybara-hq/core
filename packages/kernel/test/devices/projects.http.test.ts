@@ -6,13 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
-  type KernelReq,
-  type LegacyDeviceHello,
   type SandboxBrowseScope,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -22,20 +19,26 @@ import {
   MAX_DEVICE_PROJECTS,
 } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import {
+  type Answer,
+  EnvelopeMachine as FakeMachine,
+  type KernelReq,
+} from "../helpers/dial-in-machine.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
   createOrg,
   enableDeviceProviders,
@@ -47,14 +50,13 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, ownerReportFor } from "../local-devices/fake-machine-v3.js";
-import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * A device's projects (project root design §4.1, §4.2): `device_projects` written only by the
  * kernel, owner-only routes, every project scoped by the device's current mode, the device asked
- * with `list` / `scan` (a fake machine on a real WebSocket; a cloud device on the fake sandbox,
- * which has neither, offers none).
+ * through its provider's owner browse (`browse`: `stat` / `list` / `scan`). A dial-in device on
+ * the `fake-dial-in` provider offers projects (a machine on a real WebSocket answers each relayed
+ * browse); a cloud device on `device-fake`, which has no `list` / `scan`, offers none.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -62,27 +64,9 @@ const SANDBOX_FAKE = fileURLToPath(
 );
 
 const HOME = "/home/me";
-const ROOTS = {
-  workspace: "/home/me/.capybara/dev/workspace",
-  skills: "/home/me/.capybara/dev/skills",
-  tmp: "/home/me/.capybara/dev/tmp",
-};
-const FEATURES = ["networkReport", "policyOp", "policyOpId", "projects"] as const;
-const AUTO: Partial<LegacyDeviceHello> = {
-  roots: ROOTS,
-  home: HOME,
-  features: [...FEATURES],
-  policy: { allowedDomains: [] },
-};
 
 /** Directories the fake machine has; a path ending in `.txt` is a file. */
-const DIRS = new Set([
-  HOME,
-  `${HOME}/src`,
-  `${HOME}/src/capybara`,
-  ROOTS.workspace,
-  `${ROOTS.workspace}/app`,
-]);
+const DIRS = new Set([HOME, `${HOME}/src`, `${HOME}/src/capybara`]);
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -91,7 +75,8 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
 let sandboxRoot: string;
-let machines: MachinesService;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
+let machines: DialInMachines;
 let devices: DevicesService;
 let projects: DeviceProjectsService;
 let txHost: TransactionHost;
@@ -106,6 +91,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -114,11 +100,13 @@ beforeAll(async () => {
         extensions: [SANDBOX_FAKE],
         // limits fixed at the file system: a narrowed cloud device can await a files reset
         extensionConfig: { "device-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
-        devices: { local: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
-  machines = k.app.get(MachinesService);
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
   projects = k.app.get(DeviceProjectsService);
   txHost = k.app.get(TransactionHost);
@@ -138,6 +126,7 @@ afterAll(async () => {
   await k?.close();
   redis?.disconnect();
   await raw?.destroy();
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
@@ -147,7 +136,7 @@ const base = (deviceId: string, org: string = orgId) =>
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
-/** A new member with a session, a local device and a signed-in machine (not connected). */
+/** A new member with a session, a dial-in device and a signed-in machine (not connected). */
 async function owned() {
   const login = `m-${randomUUID().slice(0, 8)}`;
   const accountId = (
@@ -155,7 +144,7 @@ async function owned() {
   ).id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   const d = await txHost.run(async () => {
-    const { id: deviceId } = await devices.createLocal(orgId, accountId, "Box");
+    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "fake-dial-in", "Box");
     const issued = await machines.issue({
       orgId,
       deviceId,
@@ -170,84 +159,76 @@ async function owned() {
   return { accountId, login, req: await session(k, login), ...d };
 }
 
-/** A machine with the directories of {@link DIRS} answering `create`, `list` and `scan`. */
+/** A machine with the directories of {@link DIRS} answering the owner browse and `scan`. */
 function answering(
   scan: { path: string; suggestedName: string }[] = [],
   opts: { holdList?: boolean } = {},
 ) {
   return (req: KernelReq): Answer => {
-    const a = req.args as { path?: string };
-    const p = a.path as string;
-    // protocol 3: the owner's project browsing comes as `browseStat` / `browseList` / `browseScan`
-    const op = String(req.op).replace(/^browse(\w)/, (_, c: string) => c.toLowerCase());
-    switch (op) {
-      case "create":
-        return { ok: true, result: { roots: ROOTS } };
-      case "list":
+    const p = (req.args as { path?: string }).path as string;
+    switch (req.op) {
+      case "resume":
+        return "resumed";
+      case "browseList":
         // the test answers itself (two adds held at the device at once)
         if (opts.holdList === true) return undefined;
         return listAnswer(p);
-      case "stat":
-        if (p.endsWith("/flaky")) return { ok: false, error: { kind: "error", message: "EIO" } };
-        if (p.endsWith(".txt")) return { ok: true, result: { size: 3, isDir: false } };
-        if (p.endsWith("/secret") || DIRS.has(p))
-          return { ok: true, result: { size: 0, isDir: true } };
-        return { ok: true, result: null };
-      case "scan":
-        return { ok: true, result: scan };
+      case "browseStat":
+        if (p.endsWith("/flaky")) return { error: { kind: "error", message: "EIO" } };
+        if (p.endsWith(".txt")) return { size: 3, isDir: false };
+        if (p.endsWith("/secret") || DIRS.has(p)) return { size: 0, isDir: true };
+        return null;
+      case "browseScan":
+        return scan;
       default:
-        return { ok: true, result: null };
+        return null;
     }
   };
 }
 
-/** What the fake machine's `list` answers for `p`. */
-function listAnswer(p: string): NonNullable<Answer> {
-  // a file, an unreadable directory, a failing disk: one error kind on the wire
+/** What the fake machine's `browseList` answers for `p`. */
+function listAnswer(p: string): NonNullable<Answer> | null {
+  // a file, an unreadable directory, a failing disk: an ordinary error
   if (p.endsWith(".txt") || p.endsWith("/secret") || p.endsWith("/flaky")) {
-    return { ok: false, error: { kind: "error", message: "cannot list" } };
+    return { error: { kind: "error", message: "cannot list" } };
   }
+  // the provider refuses the path (it will not serve it)
   if (p.endsWith("/locked")) {
-    return { ok: false, error: { kind: "policy", message: "outside the sandbox" } };
+    return { error: { kind: "refused", message: "Outside what this device serves" } };
   }
-  if (!DIRS.has(p)) return { ok: true, result: null };
-  return { ok: true, result: { entries: [], truncated: false } };
+  if (!DIRS.has(p)) return null;
+  return { entries: [], truncated: false };
 }
 
-/** Connects the machine with `hello` and waits until its lease and hello are recorded. */
+/** Connects the machine (its hello reports `home`) and waits until its lease and report are stored. */
 async function connect(
-  d: { deviceId: string; machineId: string; credential: string },
-  hello: Partial<LegacyDeviceHello> = AUTO,
+  d: { deviceId: string; credential: string },
+  home: string = HOME,
   answer: (req: KernelReq) => Answer = answering(),
-  auto = true,
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  // an auto-mode machine reports the owner's OS user as its project reach and a Full ceiling
-  machine.hello({
-    ownerCeiling: ownerReportFor(
-      { allowedDomains: hello.policy?.allowedDomains ?? [] },
-      { outsideSandbox: auto, restrictedProjectReach: auto ? "os-user" : "workspace" },
-    ),
-    ...hello,
-  });
+  machine.hello({ home });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(d.deviceId))) !== null,
     10_000,
     "lease held",
   );
+  // the hello's device report (the home the picker starts from) is stored right after it
   await waitFor(
     async () =>
       (
-        await db
-          .selectFrom("device_machines")
-          .select("roots")
-          .where("id", "=", d.machineId)
-          .executeTakeFirst()
-      )?.roots != null,
+        (
+          await db
+            .selectFrom("devices")
+            .select("report")
+            .where("id", "=", d.deviceId)
+            .executeTakeFirst()
+        )?.report as { home?: string } | null
+      )?.home === home,
     10_000,
-    "hello recorded",
+    "device report stored",
   );
   return machine;
 }
@@ -265,12 +246,11 @@ const listOf = async (req: Req, deviceId: string) => {
     supported: boolean;
   };
 };
-/** The machine's requests of one native op, its protocol 3 browse form included. */
-const reqsOf = (m: FakeMachine, op: string) =>
+/** The machine's owner-browse requests of one method (`stat`, `list`, `scan`). */
+const reqsOf = (m: FakeMachine, method: string) =>
   m.frames.filter(
     (f): f is KernelReq =>
-      f.type === "req" &&
-      (f.op === op || String(f.op) === `browse${op.charAt(0).toUpperCase()}${op.slice(1)}`),
+      f.type === "req" && f.op === `browse${method.charAt(0).toUpperCase()}${method.slice(1)}`,
   );
 const storedOf = (deviceId: string) =>
   db
@@ -280,28 +260,8 @@ const storedOf = (deviceId: string) =>
     .orderBy("name")
     .execute();
 
-/**
- * Sets the machine's reported mode in PG (what a hello or a `policy` op records): its summary and
- * the owner report's project reach and Full ceiling (auto: the owner's OS user, sandbox: the
- * workspace).
- */
-const setLocalMode = (machineId: string, mode: "auto" | "sandbox") =>
-  sql`UPDATE capybara.device_machines
-    SET local_policy = ${JSON.stringify({ allowedDomains: [] })}::jsonb,
-      owner_report = jsonb_set(jsonb_set(owner_report, '{report,restrictedProjectReach}',
-        ${JSON.stringify(mode === "auto" ? "os-user" : "workspace")}::jsonb),
-        '{report,outsideSandbox}', ${JSON.stringify(mode === "auto")}::jsonb)
-    WHERE id = ${machineId}`.execute(raw);
-
-/**
- * The owner browse scope a protocol 3 machine is asked under: the owner's OS user in auto mode,
- * the workspace in sandbox mode (the machine intersects it with its own owner ceiling again).
- */
-const browsed = (deviceId: string, mode: "auto" | "sandbox") =>
-  expect.objectContaining({
-    deviceId,
-    readRoots: mode === "auto" ? ["/"] : [ROOTS.workspace],
-  });
+/** An owner browse starts at the provider's reported home (else the workspace), whatever the mode. */
+const browsed = (deviceId: string) => expect.objectContaining({ deviceId, readRoots: [HOME] });
 
 describe("device projects", () => {
   it("adds a readable directory in auto mode: relative to the home, stored absolute, named by its basename", async () => {
@@ -314,7 +274,7 @@ describe("device projects", () => {
     });
     // the device was asked in the current mode, for one entry
     expect(reqsOf(machine, "list").map((r) => r.args)).toEqual([
-      { path: `${HOME}/src/capybara`, limit: 1, scope: browsed(d.deviceId, "auto") },
+      { path: `${HOME}/src/capybara`, limit: 1, scope: browsed(d.deviceId) },
     ]);
     expect(await storedOf(d.deviceId)).toEqual([
       { name: "capybara", path: `${HOME}/src/capybara`, created_by: d.accountId },
@@ -387,53 +347,11 @@ describe("device projects", () => {
     expect(errCode(res)).toBe("device.project_limit_reached");
   });
 
-  it("sandbox mode offers the workspace only: outside it is refused, an auto-mode project is hidden, not deleted", async () => {
-    const d = await owned();
-    const machine = await connect(d);
-    expect((await add(d.req, d.deviceId, { path: "src/capybara" })).statusCode).toBe(201);
-
-    await setLocalMode(d.machineId, "sandbox");
-    const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ mode: "sandbox", base: ROOTS.workspace, projects: [], hidden: 1 });
-    expect(await storedOf(d.deviceId)).toHaveLength(1);
-
-    const outside = await add(d.req, d.deviceId, { path: "../../../src" });
-    expect(outside.statusCode, outside.body).toBe(422);
-    expect(errCode(outside)).toBe("device.project_outside_mode");
-
-    const inside = await add(d.req, d.deviceId, { path: "app" });
-    expect(inside.statusCode, inside.body).toBe(201);
-    expect((inside.json() as { project: { path: string } }).project.path).toBe(
-      `${ROOTS.workspace}/app`,
-    );
-    expect(reqsOf(machine, "list").at(-1)?.args).toEqual({
-      path: `${ROOTS.workspace}/app`,
-      limit: 1,
-      scope: browsed(d.deviceId, "sandbox"),
-    });
-
-    // binding follows the same scope
-    await expect(
-      projects.resolveForBinding(orgId, d.deviceId, d.accountId, "capybara"),
-    ).rejects.toMatchObject({ code: "device.project_outside_mode" });
-    expect(await projects.resolveForBinding(orgId, d.deviceId, d.accountId, "app")).toEqual({
-      name: "app",
-      path: `${ROOTS.workspace}/app`,
-    });
-
-    // back in auto mode, the hidden project is offered again
-    await setLocalMode(d.machineId, "auto");
-    expect((await listOf(d.req, d.deviceId)).projects.map((p) => p.name)).toEqual([
-      "app",
-      "capybara",
-    ]);
-  });
-
   it("candidates: one scan of the base in the current mode, checked again by the kernel", async () => {
     const d = await owned();
     const machine = await connect(
       d,
-      AUTO,
+      HOME,
       answering([
         { path: HOME, suggestedName: "me" },
         { path: `${HOME}/src/capybara`, suggestedName: "capybara" },
@@ -452,18 +370,8 @@ describe("device projects", () => {
       ],
     });
     expect(reqsOf(machine, "scan").map((r) => r.args)).toEqual([
-      { base: HOME, scope: browsed(d.deviceId, "auto") },
+      { base: HOME, scope: browsed(d.deviceId) },
     ]);
-
-    await setLocalMode(d.machineId, "sandbox");
-    const sandboxed = await d.req({ method: "GET", url: `${base(d.deviceId)}/candidates` });
-    expect(sandboxed.statusCode, sandboxed.body).toBe(200);
-    expect(reqsOf(machine, "scan").at(-1)?.args).toEqual({
-      base: ROOTS.workspace,
-      scope: browsed(d.deviceId, "sandbox"),
-    });
-    // in sandbox mode the kernel drops what lies outside the workspace, whatever the device says
-    expect((sandboxed.json() as { candidates: unknown[] }).candidates).toEqual([]);
   });
 
   it("refuses a root above the owner's home, without using the device; the home itself is fine", async () => {
@@ -490,23 +398,11 @@ describe("device projects", () => {
 
   it("refuses every ancestor of a home outside /home and /Users", async () => {
     const d = await owned();
-    const machine = await connect(d, { ...AUTO, home: "/var/lib/svc" });
+    const machine = await connect(d, "/var/lib/svc");
     const res = await add(d.req, d.deviceId, { path: "..", name: "lib" });
     expect(res.statusCode, res.body).toBe(422);
     expect(errCode(res)).toBe("device.project_path_too_broad");
     expect((res.json() as { error: { message: string } }).error.message).toContain("/var/lib");
-    expect(reqsOf(machine, "list")).toEqual([]);
-  });
-
-  it("auto mode without a reported home refuses a relative path", async () => {
-    const d = await owned();
-    const { home: _home, ...noHome } = AUTO;
-    const machine = await connect(d, noHome);
-    const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ mode: "auto", base: null });
-    const res = await add(d.req, d.deviceId, { path: "src" });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.project_home_unknown");
     expect(reqsOf(machine, "list")).toEqual([]);
   });
 
@@ -547,25 +443,6 @@ describe("device projects", () => {
     await expect(unknown).rejects.toMatchObject({ code: "device.project_not_found" });
   });
 
-  it("a machine without the projects feature offers none and refuses add, never asking it", async () => {
-    const d = await owned();
-    const machine = await connect(d, { ...AUTO, features: ["networkReport", "policyOp"] });
-    await db
-      .insertInto("device_projects")
-      .values({ device_id: d.deviceId, name: "old", path: `${HOME}/old`, created_by: d.accountId })
-      .execute();
-    const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ supported: false, projects: [] });
-    const res = await add(d.req, d.deviceId, { path: "src" });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.projects_unsupported");
-    const cand = await d.req({ method: "GET", url: `${base(d.deviceId)}/candidates` });
-    expect(cand.statusCode, cand.body).toBe(200);
-    expect(cand.json()).toMatchObject({ supported: false, candidates: [] });
-    expect(reqsOf(machine, "list")).toEqual([]);
-    expect(reqsOf(machine, "scan")).toEqual([]);
-  });
-
   it("an offline machine is a readable refusal, never a 500", async () => {
     const d = await owned();
     const machine = await connect(d);
@@ -589,7 +466,7 @@ describe("device projects", () => {
     const created = await d.req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/devices`,
-      payload: { name: "Cloud" },
+      payload: { name: "Cloud", provider: "device-fake" },
     });
     expect(created.statusCode, created.body).toBe(201);
     const id = (created.json() as { device: { id: string } }).device.id;
@@ -607,10 +484,11 @@ describe("device projects", () => {
     const secret = await add(d.req, d.deviceId, { path: "secret" });
     expect(secret.statusCode, secret.body).toBe(422);
     expect(errCode(secret)).toBe("device.project_path_unreadable");
-    // the machine's policy refusal is the device refusing the path in its mode
+    // the provider refusing the path, with the provider's text
     const locked = await add(d.req, d.deviceId, { path: "locked" });
     expect(locked.statusCode, locked.body).toBe(422);
-    expect(errCode(locked)).toBe("device.project_outside_mode");
+    expect(errCode(locked)).toBe("device.project_refused");
+    expect(locked.body).toContain("Outside what this device serves");
     // an error on the machine that stat cannot explain either: the device could not be asked
     const flaky = await add(d.req, d.deviceId, { path: "flaky" });
     expect(flaky.statusCode, flaky.body).toBe(503);
@@ -624,7 +502,7 @@ describe("device projects", () => {
 
   it("two concurrent adds of one name: exactly one is stored, the other is name_taken", async () => {
     const d = await owned();
-    const machine = await connect(d, AUTO, answering([], { holdList: true }));
+    const machine = await connect(d, HOME, answering([], { holdList: true }));
     const both = Promise.allSettled([
       projects.add(orgId, d.accountId, d.deviceId, { path: "src", name: "same" }),
       projects.add(orgId, d.accountId, d.deviceId, { path: "src/capybara", name: "same" }),
@@ -643,7 +521,7 @@ describe("device projects", () => {
 
   it("two concurrent adds at 99 projects: exactly one is stored, the other is limit_reached", async () => {
     const d = await owned();
-    const machine = await connect(d, AUTO, answering([], { holdList: true }));
+    const machine = await connect(d, HOME, answering([], { holdList: true }));
     await db
       .insertInto("device_projects")
       .values(
@@ -727,7 +605,7 @@ describe("device projects", () => {
     const created = await d.req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/devices`,
-      payload: { name: `Cloud ${randomUUID().slice(0, 6)}` },
+      payload: { name: `Cloud ${randomUUID().slice(0, 6)}`, provider: "device-fake" },
     });
     expect(created.statusCode, created.body).toBe(201);
     const id = (created.json() as { device: { id: string } }).device.id;
@@ -757,7 +635,8 @@ describe("device projects", () => {
     };
     // a provider that can list and scan offers projects (the calls go through `browse` above)
     const impl = { list: browse.list, scan: browse.scan } as unknown as DeviceProvider;
-    const real = k.app.get(DeviceProviders);
+    const cloud = k.app.get(DeviceProviders).forDevice("device-fake");
+    if (!cloud) throw new Error("device-fake is not loaded");
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),
       txHost,
@@ -775,13 +654,7 @@ describe("device projects", () => {
       new PermissionFacts(
         k.app.get(KernelDb),
         k.app.get(KernelConfigService),
-        {
-          forDevice: () => ({
-            plugin: real.loaded()[0]?.plugin as string,
-            version: real.loaded()[0]?.version as string,
-            impl,
-          }),
-        },
+        { forDevice: () => ({ plugin: cloud.plugin, version: cloud.version, impl }) },
         k.app.get(DeviceAccess),
       ),
       k.app.get(PermissionCeilingWrites),
@@ -795,7 +668,7 @@ describe("device projects", () => {
       .values({
         device_id: id,
         org_id: orgId,
-        provider: real.loaded()[0]?.plugin as string,
+        provider: cloud.plugin,
         fs_handle: JSON.stringify({ id: `fs-${id}` }),
         fs_status: "ready",
         instance_limits: JSON.stringify({

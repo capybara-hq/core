@@ -221,11 +221,11 @@ const REASONS = new Set<string>([
 /** The 409's `details[0]`, when it is a reason the page knows. */
 function unavailableOf(d: unknown): BackgroundTaskUnavailable | null {
   if (typeof d !== "object" || d === null) return null;
-  const { reason, environment } = d as Record<string, unknown>;
+  const { reason, provider } = d as Record<string, unknown>;
   if (typeof reason !== "string" || !REASONS.has(reason)) return null;
   return {
     reason: reason as BackgroundTaskUnavailable["reason"],
-    environment: environment === "local" ? "local" : "cloud",
+    provider: typeof provider === "string" ? provider : null,
   };
 }
 

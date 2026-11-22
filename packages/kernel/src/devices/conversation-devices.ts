@@ -113,7 +113,7 @@ export class ConversationDevices {
     >,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
-    private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel" | "projectReach">,
+    private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel">,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "readWorkingFacts" | "workingProject">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
@@ -125,11 +125,6 @@ export class ConversationDevices {
    */
   modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
     return this.devices.modeLevel(orgId, deviceId);
-  }
-
-  /** How far restricted work may root outside the workspace now (B2; {@link DevicesService.projectReach}). */
-  projectReach(orgId: string, deviceId: string): Promise<"workspace" | "os-user"> {
-    return this.devices.projectReach(orgId, deviceId);
   }
 
   /**
@@ -161,7 +156,7 @@ export class ConversationDevices {
       if (e instanceof ApiError) return null;
       throw e;
     }
-    const [device, level, reach] = await Promise.all([
+    const [device, level] = await Promise.all([
       this.db
         .selectFrom("devices")
         .select("name")
@@ -169,7 +164,6 @@ export class ConversationDevices {
         .where("org_id", "=", orgId)
         .executeTakeFirst(),
       this.modeLevel(orgId, deviceId),
-      this.projectReach(orgId, deviceId),
     ]);
     if (device === undefined) return null;
     const mode = level?.mode ?? "sandbox";
@@ -188,7 +182,7 @@ export class ConversationDevices {
       workspace,
       home,
       deviceHome: homeOf(workspace),
-      workingRoot: workingRootOf(project, { mode, reach, workspace, home }),
+      workingRoot: workingRootOf(project, { workspace, home }),
     };
   }
 

@@ -29,13 +29,14 @@ const PROJECT = "/Users/u/code/app";
 const usable = (root: string): WorkingProject => ({ root, unavailable: false });
 
 describe("workingRootOf", () => {
-  const auto = { mode: "auto" as const, workspace: ROOTS.workspace };
-  const sandbox = { mode: "sandbox" as const, workspace: ROOTS.workspace };
+  const auto = { workspace: ROOTS.workspace };
 
   it("is the project's root when the latest snapshot is usable", () => {
     expect(workingRootOf(usable(PROJECT), auto)).toBe(PROJECT);
     expect(workingRootOf(usable(`${PROJECT}/`), auto)).toBe(PROJECT);
-    expect(workingRootOf(usable(`${ROOTS.workspace}/app`), sandbox)).toBe(`${ROOTS.workspace}/app`);
+    expect(workingRootOf(usable(`${ROOTS.workspace}/app`), auto)).toBe(`${ROOTS.workspace}/app`);
+    // where a project may lie is its provider's rule (checked when it was added), not the kernel's
+    expect(workingRootOf(usable(`${ROOTS.workspace}-x`), auto)).toBe(`${ROOTS.workspace}-x`);
   });
 
   it("is the device's workspace when free, before the first snapshot, or unavailable", () => {
@@ -44,10 +45,7 @@ describe("workingRootOf", () => {
     expect(workingRootOf({ root: PROJECT, unavailable: true }, auto)).toBe(ROOTS.workspace);
   });
 
-  it("never widens: outside the workspace in sandbox mode, malformed, or above every home", () => {
-    expect(workingRootOf(usable(PROJECT), sandbox)).toBe(ROOTS.workspace);
-    // a sibling whose name only starts with the workspace's
-    expect(workingRootOf(usable(`${ROOTS.workspace}-x`), sandbox)).toBe(ROOTS.workspace);
+  it("never widens: malformed, or above every home", () => {
     for (const bad of ["relative/app", "/a/../b", "/a//b", "/a/\u0001"]) {
       expect(workingRootOf(usable(bad), auto), bad).toBe(ROOTS.workspace);
     }
@@ -101,10 +99,7 @@ describe("the review with the working root as its workspace fact", () => {
   });
 
   it("inside a home-directory project, rc files and SSH still ask; an ordinary file is allowed", () => {
-    const workspace = workingRootOf(usable("/Users/u"), {
-      mode: "auto",
-      workspace: ROOTS.workspace,
-    });
+    const workspace = workingRootOf(usable("/Users/u"), { workspace: ROOTS.workspace });
     const home = { workspace, mode: "auto" as const, attended: true };
     expect(reviewWrite("/Users/u/.bashrc", home).hits.map((h) => h.id)).toEqual([
       "ask.shell-config",
@@ -258,15 +253,15 @@ describe("the sandbox tools in a bound conversation", () => {
     expect(gone.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
   });
 
-  it("the project decision uses the review's workspace source; a fallback runs in the instance's workspace", async () => {
-    // sandbox mode: the review's recorded workspace does not hold the project, so neither does the
-    // tool's decision, even though the held instance's workspace would
+  it("a usable project is the working root whatever the recorded workspace; a fallback runs in the instance's workspace", async () => {
+    // the recorded workspace does not hold the project: where a project lies is its provider's
+    // rule, so the project is still the working root
     const stale = device(usable(`${ROOTS.workspace}/app`), {
       mode: "sandbox",
       recorded: "/workspace",
     });
     await stale.tool("Bash").run(bash, ctx);
-    expect(stale.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
+    expect(stale.execs.map((e) => e.cwd)).toEqual([`${ROOTS.workspace}/app`]);
     // free mode with a stale record: the command runs where the instance really is
     const free = device(null, { recorded: "/workspace" });
     await free.tool("Bash").run(bash, ctx);
@@ -327,10 +322,12 @@ describe("the sandbox tools in a bound conversation", () => {
   });
 
   it("sandbox mode keeps its roots: the working root changes nothing the path checks accept", async () => {
-    // a project root outside the workspace is never the working root in sandbox mode
+    // a project root outside the workspace is the working root, but the legacy route's fixed
+    // roots still refuse its paths
     const outside = device(usable(PROJECT), { mode: "sandbox" });
-    await outside.tool("Write").run({ file_path: "a.txt", content: "a" }, ctx);
-    expect(outside.writes).toEqual([`${ROOTS.workspace}/a.txt`]);
+    await expect(
+      outside.tool("Write").run({ file_path: "a.txt", content: "a" }, ctx),
+    ).rejects.toThrow(/path must be under/);
     await expect(
       outside.tool("Write").run({ file_path: `${PROJECT}/a.txt`, content: "a" }, ctx),
     ).rejects.toThrow(/path must be under/);

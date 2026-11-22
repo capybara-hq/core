@@ -62,8 +62,8 @@ export class KernelReadNotAdmitted extends Error {
 
 /**
  * How a kernel read is sent, from the device's recorded runtime support and whether its runtime is
- * isolated (its file system holds no host home: a cloud device, or a local machine recorded in its
- * Docker mode): `restricted` whenever the runtime enforces the restricted profiles (the read-only
+ * isolated (its provider reports the instance boundary, so its file system holds no host home):
+ * `restricted` whenever the runtime enforces the restricted profiles (the read-only
  * scope, whatever the conversation selected); `full` only for an isolated Full-only runtime (the
  * conversation's admitted Full access, still with the one covering path and the read methods);
  * `refused` otherwise (a host machine without restricted enforcement: fail closed).

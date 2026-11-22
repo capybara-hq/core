@@ -10,7 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type KernelRequest, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
+import {
+  type KernelRequest,
+  parseOwnerCeilingReport,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { CEILING_WIDENING_TEXT } from "../src/commands/ceiling.js";
@@ -399,16 +402,12 @@ describe("capybara-device ceiling", () => {
   });
 });
 
-describe("staged policy op with owner reports", () => {
-  const policyReq = (args: Record<string, unknown>, op = "policy", id = "q1") =>
-    ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequest;
-  const source = { accountId: "acc", accountName: "Ann", via: "web" };
-  const setup = () => {
-    writePolicy(state, FULL_POLICY);
-    const store = new PolicyStore(state);
+describe("no owner-ceiling change over the wire", () => {
+  it("refuses every policy request, a narrowing included, and writes nothing", async () => {
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...SANDBOX_OWNER_CEILING } });
     const calls: string[] = [];
     const owner = {
-      store,
+      store: new PolicyStore(state),
       report: () => {
         calls.push("report");
         return report();
@@ -417,65 +416,30 @@ describe("staged policy op with owner reports", () => {
         calls.push("reconcile");
       },
     };
-    const backend = {} as MacOperationBackend;
-    return { owner, calls, backend };
-  };
-
-  it("narrows only, reconciles before answering, and answers with the new owner report", async () => {
-    const { owner, calls, backend } = setup();
-    const res = await serveOperationV3(
-      backend,
-      { id: "dev" },
-      policyReq({ opId: "op1", source, ownerCeiling: { outsideSandbox: false } }),
-      new AbortController().signal,
-      undefined,
-      owner,
-    );
-    expect(res).toMatchObject({
-      ok: true,
-      result: {
-        policy: { allowedDomains: [] },
-        ownerCeiling: {
-          outsideSandbox: false,
-          network: "open",
-          restrictedProjectReach: "os-user",
-          sequence: 0,
-        },
-      },
-    });
-    expect(calls).toEqual(["reconcile", "report"]);
-    const status = await serveOperationV3(
-      backend,
-      { id: "dev" },
-      policyReq({ opId: "op1" }, "policyStatus", "q2"),
-      new AbortController().signal,
-      undefined,
-      owner,
-    );
-    expect(status).toMatchObject({
-      ok: true,
-      result: { outcome: "applied", ownerCeiling: { outsideSandbox: false } },
-    });
-  });
-
-  it("refuses any widening over the wire and writes nothing", async () => {
-    const { owner, calls, backend } = setup();
-    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...SANDBOX_OWNER_CEILING } });
-    for (const ownerCeiling of [
+    const source = { accountId: "acc", accountName: "Ann", via: "web" };
+    for (const [i, ownerCeiling] of [
+      { outsideSandbox: false },
+      { network: "allowlist" },
       { fullAccess: true },
       { restrictedProjectReach: "os-user" },
       { outsideSandbox: true },
       { network: "open" },
-    ]) {
+    ].entries()) {
       const res = await serveOperationV3(
-        backend,
+        {} as MacOperationBackend,
         { id: "dev" },
-        policyReq({ opId: `w${calls.length}`, source, ownerCeiling }),
+        {
+          type: "req",
+          id: `q${i}`,
+          op: "policy",
+          args: { opId: `w${i}`, source, ownerCeiling },
+          deadlineMs: 1000,
+        } as unknown as KernelRequest,
         new AbortController().signal,
         undefined,
         owner,
       );
-      expect(res.ok).toBe(false);
+      expect(res).toMatchObject({ ok: false, error: { message: "Unknown operation" } });
     }
     expect(readPolicyFile(state).policy.ownerCeiling).toEqual(SANDBOX_OWNER_CEILING);
     expect(calls).toEqual([]);

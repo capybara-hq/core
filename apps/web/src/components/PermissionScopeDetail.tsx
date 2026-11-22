@@ -6,8 +6,8 @@ import type { PermissionScope } from "../lib/conversations";
 
 /**
  * The exact reach a permission approval grants (permission profiles, "Exact scope display"), the
- * same in the conversation and the inbox: every read-write directory, read-only directory and
- * host as plain wrapping text (never clipped, never summarized, never a link), each directory
+ * same in the conversation and the inbox: every write directory and host (reads are never
+ * granted: they are the device provider's rule) as plain wrapping text (never clipped, never summarized, never a link), each directory
  * including its descendants; the target file is a separate, informational line, not a grant.
  * Nothing is inferred: no parent, sibling or root is added.
  */
@@ -21,7 +21,6 @@ export function PermissionScopeDetail({
   const t = useTranslations("approval.permissionScope");
   const groups: { key: string; label: string; values: string[] }[] = [
     { key: "write", label: t("write"), values: scope.writeDirectories },
-    { key: "read", label: t("read"), values: scope.readDirectories },
     { key: "hosts", label: t("hosts"), values: scope.hosts },
   ];
   return (

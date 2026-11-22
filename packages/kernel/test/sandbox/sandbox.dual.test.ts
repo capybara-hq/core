@@ -82,8 +82,8 @@ async function seedConversation(): Promise<{
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
   const deviceId = randomUUID();
-  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
-    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'cloud', 'device-fake')`.execute(raw);
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, provider)
+    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'device-fake')`.execute(raw);
   return {
     orgId,
     deviceId,

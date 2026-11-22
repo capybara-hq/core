@@ -1,14 +1,21 @@
-import type { DeviceExecArgs, KernelReq } from "@capybara-hq/plugin-sdk";
-import { createDualReplicaHarness, type Harness } from "@capybara-hq/testing";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createDualReplicaHarness,
+  FAKE_DIAL_IN_PROTOCOL,
+  type Harness,
+} from "@capybara-hq/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { EnvelopeMachine as FakeMachine, type KernelReq } from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * A command ask across replicas (auto mode spec §5.4, multi-replica): the run parks on the
@@ -28,17 +35,10 @@ afterEach(async () => {
 
 type Json = Record<string, unknown>;
 
-const POLICY = { allowedDomains: [] as string[] };
-/** The owner allows work outside the sandbox (what the `auto` mode reported before protocol 4). */
-const OWNER_CEILING = {
-  version: 3,
-  sequence: 1,
-  revision: "test-owner-outside",
-  outsideSandbox: true,
-  network: "open",
-  allowedDomains: [],
-  restrictedProjectReach: "os-user",
-};
+/** The machine's `fake-dial-in` hello: its provider allows work outside the sandbox. */
+const HELLO_BODY = { revision: "r1", outsideSandbox: true };
+/** An exec request body as the `fake-dial-in` provider relays it. */
+type ExecBody = { command: string };
 const PUSH = { command: "git push origin main", description: "Push the branch" };
 
 interface AskScene {
@@ -61,13 +61,18 @@ interface AskScene {
 }
 
 /**
- * Opens a fresh dual-replica scene up to a parked `command` ask: a signed-in owner, a local device
- * on a real WebSocket, an agent and a conversation bound to the device, one posted `git push`
+ * Opens a fresh dual-replica scene up to a parked `command` ask: a signed-in owner, a
+ * `fake-dial-in` device on a real WebSocket, an agent and a conversation bound to the device, one posted `git push`
  * (an `ask.force-push`), and the approval row plus the waiting run it produced.
  */
 async function openAskScene(): Promise<AskScene> {
+  const bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
+  cleanups.push(() => bootstrap.cleanup());
+  const extensionsDir = await mkdtemp(join(tmpdir(), "cap-review-dual-"));
+  cleanups.push(() => rm(extensionsDir, { recursive: true, force: true }));
   h = await createDualReplicaHarness({
     extensions: [MODEL_FAKE],
+    bootstrap: { dir: bootstrap.dir, manifest: bootstrap.manifest },
     // replica 0 is the only worker and gateway (it runs every job and owns the device's socket);
     // replica 1 serves the API only. The first message is posted to replica 0, so the run, the ask
     // and the resume are all processed by replica 0's worker, and a decision posted to replica 1
@@ -75,6 +80,7 @@ async function openAskScene(): Promise<AskScene> {
     roles: [["api", "worker", "gateway"], ["api"]],
     config: {
       auth: { cookieSecure: false },
+      extensionHost: { dir: extensionsDir },
       http: { publicUrl: "https://cap.example" },
     },
   });
@@ -110,17 +116,19 @@ async function openAskScene(): Promise<AskScene> {
   ).toBe(200);
   const org = await call(0, "POST", "/api/v1/orgs", { name: "Acme" });
   const orgId = (org.json.org as { id: string }).id;
-  await enableExtensions(raw, orgId, "model-fake");
+  await enableExtensions(raw, orgId, "model-fake", "fake-dial-in");
   const a = await call(0, "POST", "/api/v1/device/authorize", {
     name: "box",
     os: "linux",
     arch: "x64",
     programVersion: "0.1.0",
+    protocol: FAKE_DIAL_IN_PROTOCOL,
   });
   await call(0, "POST", "/api/v1/device/confirm", {
     userCode: a.json.userCode,
     orgId,
     name: "Box",
+    provider: "fake-dial-in",
   });
   const t = await call(0, "POST", "/api/v1/device/token", { deviceCode: a.json.deviceCode });
   expect(t.status, JSON.stringify(t.json)).toBe(200);
@@ -130,30 +138,26 @@ async function openAskScene(): Promise<AskScene> {
     `ws://127.0.0.1:${harness.replicas[0].port}/device/connect`,
     credential,
     (req: KernelReq) => {
-      if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
-      if (req.op !== "exec") return { ok: true, result: null };
-      return {
-        ok: true,
-        result: { exitCode: 0, stdout: "pushed\n", stderr: "", truncated: false, timedOut: false },
-      };
+      if (req.op === "resume") return "resumed";
+      if (req.op !== "exec") return null;
+      return { exitCode: 0, stdout: "pushed\n", stderr: "", truncated: false, timedOut: false };
     },
     { hello: false },
   );
   cleanups.push(() => machine.close());
   await machine.opened;
-  machine.hello({ features: [], policy: POLICY, ownerCeiling: OWNER_CEILING });
+  machine.hello(HELLO_BODY);
   await waitFor(
     async () =>
       (
         await db
-          .selectFrom("device_machines")
-          .select("local_policy")
-          .where("device_id", "=", deviceId)
-          .where("revoked_at", "is", null)
+          .selectFrom("devices")
+          .select("report")
+          .where("id", "=", deviceId)
           .executeTakeFirst()
-      )?.local_policy != null,
+      )?.report != null,
     15_000,
-    "hello recorded",
+    "report stored",
   );
 
   const agent = await call(0, "POST", `/api/v1/orgs/${orgId}/agents`, {
@@ -218,24 +222,27 @@ async function openAskScene(): Promise<AskScene> {
     askId: ask.id,
     execs: () =>
       machine.frames.filter(
-        (f) =>
-          f.type === "req" &&
-          f.op === "exec" &&
-          (f.args as DeviceExecArgs).command === PUSH.command,
+        (f) => f.type === "req" && f.op === "exec" && (f.args as ExecBody).command === PUSH.command,
       ).length,
   };
 }
 
 describe("command ask (dual replica)", () => {
   it("asked on one replica, decided once on both: one decision, one resume, one exec", async () => {
+    const bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
+    cleanups.push(() => bootstrap.cleanup());
+    const extensionsDir = await mkdtemp(join(tmpdir(), "cap-review-dual-"));
+    cleanups.push(() => rm(extensionsDir, { recursive: true, force: true }));
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE],
+      bootstrap: { dir: bootstrap.dir, manifest: bootstrap.manifest },
       roles: [
         ["api", "worker", "gateway"],
         ["api", "worker"],
       ],
       config: {
         auth: { cookieSecure: false },
+        extensionHost: { dir: extensionsDir },
         http: { publicUrl: "https://cap.example" },
       },
     });
@@ -271,17 +278,19 @@ describe("command ask (dual replica)", () => {
     ).toBe(200);
     const org = await call(0, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
-    await enableExtensions(raw, orgId, "model-fake");
+    await enableExtensions(raw, orgId, "model-fake", "fake-dial-in");
     const a = await call(0, "POST", "/api/v1/device/authorize", {
       name: "box",
       os: "linux",
       arch: "x64",
       programVersion: "0.1.0",
+      protocol: FAKE_DIAL_IN_PROTOCOL,
     });
     await call(0, "POST", "/api/v1/device/confirm", {
       userCode: a.json.userCode,
       orgId,
       name: "Box",
+      provider: "fake-dial-in",
     });
     const t = await call(0, "POST", "/api/v1/device/token", { deviceCode: a.json.deviceCode });
     expect(t.status, JSON.stringify(t.json)).toBe(200);
@@ -291,36 +300,26 @@ describe("command ask (dual replica)", () => {
       `ws://127.0.0.1:${harness.replicas[0].port}/device/connect`,
       credential,
       (req: KernelReq) => {
-        if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
-        if (req.op !== "exec") return { ok: true, result: null };
-        return {
-          ok: true,
-          result: {
-            exitCode: 0,
-            stdout: "pushed\n",
-            stderr: "",
-            truncated: false,
-            timedOut: false,
-          },
-        };
+        if (req.op === "resume") return "resumed";
+        if (req.op !== "exec") return null;
+        return { exitCode: 0, stdout: "pushed\n", stderr: "", truncated: false, timedOut: false };
       },
       { hello: false },
     );
     cleanups.push(() => machine.close());
     await machine.opened;
-    machine.hello({ features: [], policy: POLICY, ownerCeiling: OWNER_CEILING });
+    machine.hello(HELLO_BODY);
     await waitFor(
       async () =>
         (
           await db
-            .selectFrom("device_machines")
-            .select("local_policy")
-            .where("device_id", "=", deviceId)
-            .where("revoked_at", "is", null)
+            .selectFrom("devices")
+            .select("report")
+            .where("id", "=", deviceId)
             .executeTakeFirst()
-        )?.local_policy != null,
+        )?.report != null,
       15_000,
-      "hello recorded",
+      "report stored",
     );
 
     const agent = await call(0, "POST", `/api/v1/orgs/${orgId}/agents`, {
@@ -411,8 +410,7 @@ describe("command ask (dual replica)", () => {
     });
     // the command ran once
     const execs = machine.frames.filter(
-      (f) =>
-        f.type === "req" && f.op === "exec" && (f.args as DeviceExecArgs).command === PUSH.command,
+      (f) => f.type === "req" && f.op === "exec" && (f.args as ExecBody).command === PUSH.command,
     );
     expect(execs).toHaveLength(1);
     const audits = await db

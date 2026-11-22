@@ -7,13 +7,8 @@ import {
   DeviceProjectParams,
 } from "./dto.js";
 
-/** The body of the excluded `POST /devices/:id/policy` route (human-only). */
-export { DevicePolicyBody } from "./dto.js";
-
 /**
- * The devices routes the Platform operations mirror (`check:platform-ops` keys). Narrowing a local
- * machine's sandbox (`POST /devices/:id/policy`, body {@link DevicePolicyBody}) is a person's act
- * on their own machine and stays excluded, so it has no entry here. `PATCH /devices/:id`
+ * The devices routes the Platform operations mirror (`check:platform-ops` keys). `PATCH /devices/:id`
  * ({@link DevicePatchBody}) is mirrored by `devices.rename` (the name) and `devices.set-network`
  * (a cloud device's network, narrow only).
  */

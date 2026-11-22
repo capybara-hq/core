@@ -224,3 +224,34 @@ describe("validatePermissions setupChecks", () => {
     expect(validatePermissions("p", { setupChecks: ids }).join()).toMatch(/32/);
   });
 });
+
+describe("permissions.dialIn", () => {
+  const provides = ["device-provider@1"];
+  it("accepts permissions.dialIn with a protocol", () => {
+    expect(
+      validatePermissions("p", { dialIn: { protocol: "capybara-device/5" } }, provides),
+    ).toEqual([]);
+  });
+  it("rejects dialIn without provides device-provider@1", () => {
+    for (const other of [undefined, [], ["channel@1"]]) {
+      expect(
+        validatePermissions("p", { dialIn: { protocol: "capybara-device/5" } }, other).join(),
+      ).toMatch(/device-provider@1/);
+    }
+  });
+  it("rejects a malformed dialIn protocol", () => {
+    for (const dialIn of [
+      { protocol: "x" },
+      { protocol: "Capybara/5" },
+      { protocol: 5 },
+      {},
+      { protocol: "capybara-device/5", extra: true },
+      "capybara-device/5",
+      null,
+    ]) {
+      expect(validatePermissions("p", { dialIn }, provides), JSON.stringify(dialIn)).not.toEqual(
+        [],
+      );
+    }
+  });
+});

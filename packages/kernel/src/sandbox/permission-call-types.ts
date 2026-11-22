@@ -5,8 +5,11 @@ import type { PermissionAvailabilityCause } from "./permission-availability.js";
 import type { AppliedOuterNetwork } from "./permission-context-types.js";
 
 export type PermissionCallRef = { runId: string; callId: string };
+/**
+ * What a per-call grant adds to an operation's base scope: write roots and hosts. Reads are never
+ * granted: what a sandboxed operation may read is its device provider's rule.
+ */
 export type PermissionExpansion = Readonly<{
-  readDirectories: readonly string[];
   writeDirectories: readonly string[];
   hosts: readonly string[];
 }>;
@@ -86,7 +89,6 @@ export type PermissionCandidateResult =
     };
 export type PermissionReviewSnapshot = Readonly<
   Omit<PermissionCallBinding, "toolKey" | "specHash" | "callInputHash" | "resolvedInputHash"> & {
-    baseReadDirectories: readonly string[];
     baseWriteDirectories: readonly string[];
     baseHosts: readonly string[];
     workingRoot: string;
@@ -103,8 +105,6 @@ export type PermissionReviewSnapshot = Readonly<
     /** The provider's boundary; absent reads as `operation`. */
     boundary?: "operation" | "instance";
     outsideSandboxCeiling: boolean;
-    /** Restricted directory expansions beyond the working root (B2 broad project reach). */
-    broadProjectReach: boolean;
     unattended: boolean;
     fullConsent: boolean;
     /** An `unsupported` state carries its cause (R9), from which admission renders the text. */

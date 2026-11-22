@@ -12,8 +12,7 @@ import {
  * Device modes (auto mode spec §4.1–§4.3): who may choose auto mode, and the network each mode
  * gets. One pure function, {@link effectiveDevicePolicy}, combines the platform's switch
  * (`devices.outsideSandbox`), the org's (`outsideSandbox`, `deviceNetwork`) and the device's owner
- * ceiling (a local machine's owner report, a cloud device's B1 snapshot; null follows the platform
- * and the org).
+ * ceiling (its B1 snapshot; null follows the platform and the org).
  * It is a ceiling only: no device-chosen default mode selects how an operation runs (permission
  * runtime cutover 8.6); the conversation's permission profile does, within this ceiling.
  */
@@ -124,21 +123,6 @@ export interface EffectiveDevicePolicy {
   network: DeviceNetwork;
 }
 
-/**
- * How far restricted work may root outside the workspace now (B2), the one rule the command
- * review (`DevicesService.projectReach`) and admission's working root both read: a local device
- * follows its owner's reported reach within a device ceiling that allows auto; a cloud device
- * reaches beyond its workspace only in auto mode.
- */
-export function projectReachOf(
-  source: string,
-  policy: Pick<EffectiveDevicePolicy, "mode" | "allowedMode">,
-  ownerReach: string | null | undefined,
-): "workspace" | "os-user" {
-  if (source !== "local") return policy.mode === "auto" ? "os-user" : "workspace";
-  return policy.allowedMode === "auto" && ownerReach === "os-user" ? "os-user" : "workspace";
-}
-
 /** The mode the platform and the org allow: `auto` only when neither turns it off. */
 export function allowedDeviceMode(
   platform: FullAccessPermission,
@@ -176,9 +160,8 @@ export function deviceNetwork(
 }
 
 /**
- * The effective device policy. `deviceMode` is the device's owner ceiling (a local machine's owner
- * report, a cloud device's B1 snapshot or narrowing switch; null = follow the platform and the
- * org). A stored mode the platform or org forbids is cut, never honoured; the network follows the
+ * The effective device policy. `deviceMode` is the device's owner ceiling (its B1 snapshot or
+ * narrowing switch; null = follow the platform and the org). A stored mode the platform or org forbids is cut, never honoured; the network follows the
  * resulting mode.
  */
 export function effectiveDevicePolicy(

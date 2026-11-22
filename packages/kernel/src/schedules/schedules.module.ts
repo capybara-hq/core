@@ -1,10 +1,11 @@
 import { Inject, Module, type OnModuleInit } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { ConversationAccessModule } from "../conversations/access.js";
+import { DialInModule } from "../dial-in/dial-in.module.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
-import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
+import { NetworkGrantsModule } from "../sandbox/network-grants.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduleToolsPort } from "../tools/builtins/schedules.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -28,9 +29,10 @@ import { ScheduledTaskStoreModule } from "./store.module.js";
     ToolsModule,
     // a new-conversation task's model must resolve for the org
     ProvidersModule,
-    // network grants: the org's effective egress and the task device's policy summary
+    // network grants: the org's effective egress
     SandboxModule,
-    LocalDevicesModule,
+    NetworkGrantsModule,
+    DialInModule,
   ],
   providers: [ScheduledTasksService],
   exports: [ScheduledTasksService, ScheduledTaskStoreModule],

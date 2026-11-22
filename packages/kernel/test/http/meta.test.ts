@@ -1,4 +1,4 @@
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk/device-protocol";
 import {
   fakeExtensionEntry,
   startTestPostgres,

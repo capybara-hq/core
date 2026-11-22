@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { sql } from "kysely";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
@@ -19,6 +21,8 @@ import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { escalationDeviceOffWhy } from "../../src/sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { ESCALATION_GRANT_MISSING_TEXT } from "../../src/tools/builtins/sandbox/common.js";
@@ -28,7 +32,6 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -76,8 +79,9 @@ const ESCALATED = { command: "npm run dev", sandbox: "escalated", justification:
 async function escalated(
   profile: "request-approval" | "approve-for-me" | "full-access",
   input: Record<string, unknown> = ESCALATED,
+  support: Partial<SandboxPermissionSupport> = {},
 ) {
-  const f = await permissionFixture(k, raw, "Bash", input, true);
+  const f = await permissionFixture(k, raw, "Bash", input, true, support);
   if (profile === "full-access") {
     const view = await k.app
       .get(PermissionProfilesService)
@@ -620,20 +624,254 @@ it.each(["approve-for-me", "request-approval"] as const)(
   },
 );
 
-it("an owner who turned running outside the sandbox off refuses the escalation, naming the machine command", async () => {
+// device-provider spec §6.7: whether a call may run outside the sandbox is the provider's support,
+// read from its runtime report, the same for every provider; its device report says why not
+describe.each([true, false])(
+  "outside-sandbox escalation follows the provider's support, whatever the provider (outsideSandbox %s)",
+  (outsideSandbox) => {
+    it("the escalation is proposed to the person, or refused with the provider's description", async () => {
+      const f = await escalated("request-approval", ESCALATED, { outsideSandbox });
+      // the provider's description of the device, in the report it stored (same revision)
+      await sql`UPDATE capybara.devices SET report = report || ${JSON.stringify({
+        description: { en: "Runs commands on a test machine." },
+      })}::jsonb WHERE id = ${f.deviceId}`.execute(raw);
+      const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+      const step = await f.step();
+      expect(f.effects()).toBe(0);
+      if (outsideSandbox) {
+        // asked: the person decides this call
+        expect(step.kind).toBe("suspended");
+        const ask = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
+        expect(ask?.command).toMatchObject({ escalation: { justification: JUSTIFICATION } });
+        return;
+      }
+      expect(review).not.toHaveBeenCalled();
+      const text = JSON.stringify((await f.results())[0]?.content);
+      expect(text).toContain(
+        `but ${escalationDeviceOffWhy("Runs commands on a test machine.")}, so it did not run`,
+      );
+      expect(text).not.toMatch(/capybara-device/);
+    });
+  },
+);
+
+// Full access never auto-approves past its consent: the consent reach and the crossing ceilings
+// read one provider layer (the current runtime support, else the stored one), so a support that
+// turns a crossing on after the consent outgrows it, whether or not the stored support followed
+describe.each([true, false])(
+  "a support that allows a crossing after the Full consent outgrows it (stored support updated: %s)",
+  (storedFollows) => {
+    /** Records the provider's new runtime support; `storedFollows` false puts the old one back. */
+    async function supportBecomes(
+      f: Awaited<ReturnType<typeof escalated>>,
+      next: SandboxPermissionSupport,
+      old: SandboxPermissionSupport,
+    ) {
+      await seedInstalledEvidence(k, raw, {
+        orgId: f.orgId,
+        deviceId: f.deviceId,
+        provider: "@permission-policy-test",
+        version: "test-1",
+        report: next,
+      });
+      if (!storedFollows)
+        await sql`UPDATE capybara.devices
+          SET report = report || jsonb_build_object('support', ${JSON.stringify(old)}::jsonb)
+          WHERE id = ${f.deviceId}`.execute(raw);
+    }
+    const profileOf = async (f: Awaited<ReturnType<typeof escalated>>) =>
+      (await k.app.get(PermissionProfilesService).get(f.orgId, f.conversationId, f.accountId))
+        .profile;
+
+    it("an outside call is asked, never auto-granted", async () => {
+      const closed = { ...SUPPORTS_BOTH, outsideSandbox: false };
+      const f = await escalated("full-access", ESCALATED, { outsideSandbox: false });
+      expect(await profileOf(f)).toBe("full-access");
+      await supportBecomes(f, SUPPORTS_BOTH, closed);
+      // the consent covered no outside: Full access no longer holds, the profile asks again
+      expect(await profileOf(f)).toBe("approve-for-me");
+      vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+        decision: "ask",
+        by: "classifier",
+        reason: "Unsure about running outside the sandbox.",
+        rule: null,
+      });
+      expect((await f.step()).kind).toBe("suspended");
+      expect(f.effects()).toBe(0);
+      expect(
+        await f.db
+          .selectFrom("permission_call_grants")
+          .select("id")
+          .where("source", "=", "full-access")
+          .execute(),
+      ).toEqual([]);
+      expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toMatchObject({
+        status: "pending",
+      });
+    });
+
+    it("per-call hosts turned on outgrow the consent too", async () => {
+      // an instance boundary takes no host per call; an operation boundary does
+      const instance: SandboxPermissionSupport = {
+        version: 2,
+        boundary: "instance",
+        restricted: null,
+        network: { openPublic: false, allowlist: true, perOperationHosts: false },
+        outsideSandbox: false,
+        background: false,
+      };
+      const f = await escalated(
+        "full-access",
+        { command: "curl https://api.example.com/x", description: "Fetch" },
+        instance,
+      );
+      expect(await profileOf(f)).toBe("full-access");
+      await supportBecomes(f, { ...SUPPORTS_BOTH, outsideSandbox: false }, instance);
+      expect(await profileOf(f)).toBe("approve-for-me");
+    });
+  },
+);
+
+// A Full consent given while no support is known covers no crossing (the ceilings' layer): the
+// first support that allows one outgrows it, so the person confirms again with it shown
+describe("Full chosen before any support is known", () => {
+  /** The device as before its first start: no runtime evidence and no stored support. */
+  async function withoutSupport(input: Record<string, unknown>) {
+    const f = await escalated("request-approval", input);
+    await f.db
+      .updateTable("device_instances")
+      .set({ permission_runtime_identity: null })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    await sql`UPDATE capybara.devices SET report = report - 'support' WHERE id = ${f.deviceId}`.execute(
+      raw,
+    );
+    const profiles = k.app.get(PermissionProfilesService);
+    const view = await profiles.get(f.orgId, f.conversationId, f.accountId);
+    expect(view.outsideSandboxCeiling).toBe(false);
+    await profiles.set(f.orgId, f.conversationId, f.accountId, {
+      profile: "full-access",
+      expectedRevision: view.revision,
+      consentScopeRevision: view.scopeRevision ?? undefined,
+    });
+    expect((await profiles.get(f.orgId, f.conversationId, f.accountId)).profile).toBe(
+      "full-access",
+    );
+    return f;
+  }
+  const profileOf = async (f: Awaited<ReturnType<typeof escalated>>) =>
+    (await k.app.get(PermissionProfilesService).get(f.orgId, f.conversationId, f.accountId))
+      .profile;
+  const supportArrives = (
+    f: Awaited<ReturnType<typeof escalated>>,
+    report: SandboxPermissionSupport,
+  ) =>
+    seedInstalledEvidence(k, raw, {
+      orgId: f.orgId,
+      deviceId: f.deviceId,
+      provider: "@permission-policy-test",
+      version: "test-1",
+      report,
+    });
+
+  it("an outside-capable support arriving makes an escalated Bash ask", async () => {
+    const f = await withoutSupport(ESCALATED);
+    await supportArrives(f, SUPPORTS_BOTH);
+    expect(await profileOf(f)).toBe("approve-for-me");
+    vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+      decision: "ask",
+      by: "classifier",
+      reason: "Unsure about running outside the sandbox.",
+      rule: null,
+    });
+    expect((await f.step()).kind).toBe("suspended");
+    expect(f.effects()).toBe(0);
+    expect(
+      await f.db
+        .selectFrom("permission_call_grants")
+        .select("id")
+        .where("source", "=", "full-access")
+        .execute(),
+    ).toEqual([]);
+    expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toMatchObject({
+      status: "pending",
+    });
+  });
+
+  it("a support with per-call hosts arriving outgrows the consent too", async () => {
+    const f = await withoutSupport({
+      command: "curl https://api.example.com/x",
+      description: "Fetch",
+    });
+    await supportArrives(f, { ...SUPPORTS_BOTH, outsideSandbox: false });
+    expect(await profileOf(f)).toBe("approve-for-me");
+  });
+});
+
+// The Auto confirmation names exactly what the consent records (web keys its clause on the
+// preview's `consentReach`): with the runtime not reported (a recreated instance, a provider
+// version change, a machine's new hello) the stored support still sets the reach, so the preview
+// shows running outside, the consent records it and admission auto-approves within it
+it("stored support, unprobed runtime: the preview's consent reach is what Full records and admission applies", async () => {
   const f = await escalated("request-approval");
   await f.db
-    .updateTable("device_machines")
-    .set({ owner_report: storedOwnerReport({ outsideSandbox: false }) })
+    .updateTable("device_instances")
+    .set({ permission_runtime_identity: null })
     .where("device_id", "=", f.deviceId)
     .execute();
-  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+  const profiles = k.app.get(PermissionProfilesService);
+  const preview = await profiles.preview(f.orgId, f.accountId, f.deviceId);
+  expect(preview.availability.state).not.toBe("supported");
+  expect(preview.consentReach.outsideSandbox).toBe(true);
+  expect(preview.outsideSandboxCeiling).toBe(true);
+  const view = await profiles.get(f.orgId, f.conversationId, f.accountId);
+  expect(view.consentReach).toEqual(preview.consentReach);
+  expect(view.scopeRevision).toBe(preview.scopeRevision);
+  await profiles.set(f.orgId, f.conversationId, f.accountId, {
+    profile: "full-access",
+    expectedRevision: view.revision,
+    consentScopeRevision: preview.scopeRevision,
+  });
+  const row = await f.db
+    .selectFrom("conversations")
+    .select("permission_consent")
+    .where("id", "=", f.conversationId)
+    .executeTakeFirstOrThrow();
+  expect((row.permission_consent as { reach?: unknown }).reach).toEqual(preview.consentReach);
+  // the runtime reports the same support again: the consent still holds, and admission
+  // auto-approves the escalation the confirmation named
+  await seedInstalledEvidence(k, raw, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: "@permission-policy-test",
+    version: "test-1",
+    report: SUPPORTS_BOTH,
+  });
+  expect((await profiles.get(f.orgId, f.conversationId, f.accountId)).profile).toBe("full-access");
   await f.step();
-  expect(f.effects()).toBe(0);
-  expect(review).not.toHaveBeenCalled();
-  expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
-    /off on this device; its owner turns it on by running `capybara-device ceiling set --outside-sandbox on`.*Call Bash without sandbox/,
+  expect(f.effects()).toBe(1);
+  expect(
+    await f.db.selectFrom("permission_call_grants").select(["scope_kind", "source"]).execute(),
+  ).toEqual([{ scope_kind: "sandbox-escalation", source: "full-access" }]);
+});
+
+// spec §6.3: `perOperationHosts` is the gate for per-call host grants, not the boundary alone
+it("an operation boundary without perOperationHosts grants no host per call, and its consent covers none", async () => {
+  const f = await escalated(
+    "request-approval",
+    { command: "curl https://api.example.com/x", description: "Fetch" },
+    { network: { openPublic: false, allowlist: true, perOperationHosts: false } },
   );
+  const device = await k.app.get(PermissionFacts).readDevice(f.orgId, f.deviceId);
+  expect(device.sandbox).toMatchObject({ boundary: "operation", perCallHosts: false });
+  expect(device.hostCeiling).toEqual({ kind: "hosts", hosts: [] });
+  expect(device.hostRefusal("api.example.com")).toBe(
+    "a host cannot be granted per call on this device; add api.example.com to the device's network list",
+  );
+  const preview = await k.app
+    .get(PermissionProfilesService)
+    .preview(f.orgId, f.accountId, f.deviceId);
+  expect(preview.consentReach.hostCeiling).toEqual({ kind: "hosts", hosts: [] });
 });
 
 it("a platform outside-sandbox setting off refuses the escalation, naming the super admin", async () => {
@@ -650,24 +888,6 @@ it("a platform outside-sandbox setting off refuses the escalation, naming the su
   } finally {
     await platformFull("allowed");
   }
-});
-
-it("a runtime that cannot run outside its sandbox refuses the escalation with its reason", async () => {
-  const f = await escalated("request-approval");
-  await seedInstalledEvidence(k, raw, {
-    orgId: f.orgId,
-    deviceId: f.deviceId,
-    provider: "@permission-policy-test",
-    version: "test-1",
-    report: { ...SUPPORTS_BOTH, outsideSandbox: false },
-  });
-  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
-  await f.step();
-  expect(f.effects()).toBe(0);
-  expect(review).not.toHaveBeenCalled();
-  expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
-    /cannot run commands outside its sandbox now/,
-  );
 });
 
 it.each(["org", "platform"] as const)(
@@ -926,7 +1146,6 @@ it("admission refuses a granted write root that is a system runtime or socket di
   vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValue({
     id: randomUUID(),
     expansion: {
-      readDirectories: ["/run/user/1000"],
       writeDirectories: ["/run/user/1000"],
       hosts: [],
     },

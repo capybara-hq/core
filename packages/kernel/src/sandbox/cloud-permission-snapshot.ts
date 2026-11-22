@@ -88,13 +88,12 @@ export interface CloudSnapshotProgress {
   reconcileRequired: string[];
 }
 
-/** The live (not deleted) cloud devices of orgs that still exist. */
+/** The live (not deleted) devices of orgs that still exist, whatever their provider. */
 type DeviceReader = Pick<KernelDb, "selectFrom">;
 const liveCloud = (db: DeviceReader) =>
   db
     .selectFrom("devices as d")
     .innerJoin("orgs as g", "g.id", "d.org_id")
-    .where("d.source", "=", "cloud")
     .where("d.deleted_at", "is", null)
     .where("g.deleted_at", "is", null);
 
@@ -448,7 +447,6 @@ export class CloudPermissionSnapshots {
     const device = await this.db
       .selectFrom("devices")
       .select([
-        "source",
         "provider",
         "mode",
         "owner_full_access",
@@ -461,8 +459,7 @@ export class CloudPermissionSnapshots {
       .where("org_id", "=", orgId)
       .forNoKeyUpdate()
       .executeTakeFirst();
-    if (device === undefined || device.deleted_at !== null || device.source !== "cloud")
-      return undefined;
+    if (device === undefined || device.deleted_at !== null) return undefined;
     return device;
   }
 

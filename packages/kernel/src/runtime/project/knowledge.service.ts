@@ -1,4 +1,5 @@
-import { DeviceProtocolError, isSandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
+import { isSandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";

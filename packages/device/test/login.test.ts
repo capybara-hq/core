@@ -238,7 +238,12 @@ describe("login", () => {
     expect(out[0]).toContain(`${base}/devices/link?code=BCDF-GHJK`);
     expect(opened).toEqual([`${base}/devices/link?code=BCDF-GHJK`]);
     expect(seen.every((s) => s.csrf === "1")).toBe(true);
-    expect(seen[0]?.body).toMatchObject({ os: "linux", name: expect.any(String) });
+    // the sign-in names the protocol: the confirm page offers the providers that serve it
+    expect(seen[0]?.body).toMatchObject({
+      os: "linux",
+      name: expect.any(String),
+      protocol: "capybara-device/5",
+    });
     expect(seen[1]?.body).toEqual({ deviceCode: "cap_dvc_x" });
     expect(statSync(credFile()).mode & 0o777).toBe(0o600);
     const cred = JSON.parse(readFileSync(credFile(), "utf8"));

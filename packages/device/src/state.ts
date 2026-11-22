@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk";
+import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -28,9 +28,9 @@ export interface Credential {
   deviceId: string;
   dir: string;
   mode: DeviceMode;
-  /** The deployment's `devices.local.reconnectGraceSeconds`, returned with the credential. */
+  /** The deployment's `devices.dialIn.reconnectGraceSeconds`, returned with the credential. */
   reconnectGraceSeconds: number;
-  /** The deployment's `devices.local.maxFrameBytes`: no frame this program sends is larger. */
+  /** The deployment's `devices.dialIn.maxFrameBytes`: no frame this program sends is larger. */
   maxFrameBytes: number;
 }
 
@@ -167,11 +167,6 @@ export function credentialPath(dir: string): string {
 
 export function policyPath(dir: string): string {
   return join(dir, "policy.json");
-}
-
-/** The outcomes of the latest `policy` ops by op id (written under the policy lock). */
-export function policyOpsPath(dir: string): string {
-  return join(dir, "policy-ops.json");
 }
 
 /** The lock file that serializes read-modify-writes of policy.json across processes. */

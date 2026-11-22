@@ -14,7 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import {
   ACTOR_NOT_DEVICE_OWNER_REASON,
@@ -30,7 +30,6 @@ import { Waits } from "../../src/runtime/waits.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
-import { ESCALATION_NO_OUTSIDE_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -41,6 +40,7 @@ import {
 } from "../../src/tools/builtins/sandbox/common.js";
 import { PERMISSION_SUPPORT_UNVERIFIED_TEXT, ToolPipeline } from "../../src/tools/pipeline.js";
 import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/device-fake/index.js";
@@ -434,11 +434,11 @@ describe("the command review in the pipeline", () => {
       expect(r.payload.isError).toBe(false);
       const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, conv);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      // a cloud device has no outside of its sandbox: the hints say so instead of inviting one
+      // device-fake's support runs a call outside the sandbox: the hints invite one
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: facts?.workingRoot,
-        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
+        escalation: "available",
       });
       expect(facts?.workingRoot).toBe(facts?.workspace);
     } finally {
@@ -468,7 +468,7 @@ describe("the command review in the pipeline", () => {
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: approvedRoot,
-        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
+        escalation: "available",
       });
     } finally {
       execute.mockRestore();
@@ -857,7 +857,6 @@ describe("the command review in the pipeline", () => {
     expect(ask.scopes).toEqual(["once"]);
     expect(ask.detail as Record<string, unknown>).toMatchObject({
       permissionScope: {
-        readDirectories: ["/etc/capybara-t7"],
         writeDirectories: ["/etc/capybara-t7"],
         hosts: [],
       },
@@ -1267,7 +1266,6 @@ describe("the permission review order", () => {
       kind: "write",
       targetPath: target,
       permissionScope: {
-        readDirectories: ["/etc/capybara-grant"],
         writeDirectories: ["/etc/capybara-grant"],
         hosts: [],
       },
@@ -1301,7 +1299,6 @@ describe("the first managed call of a device", () => {
         org_id: orgId,
         owner_kind: "personal",
         owner_account_id: ownerId,
-        source: "cloud",
         provider: "device-fake",
         name: `Fresh ${deviceId.slice(0, 8)}`,
       })
@@ -1317,6 +1314,10 @@ describe("the first managed call of a device", () => {
     db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute();
 
   it("a fresh cloud device's first call is reviewed as supported: Full access runs sudo with no ask", async () => {
+    // an instance-boundary provider: its first support allows no crossing the consent did not
+    // cover (one that did would ask the person to confirm Full again)
+    await setFakeSandboxPermissionSupport(root, FAKE_INSTANCE_PERMISSION_SUPPORT);
+    onTestFinished(() => setFakeSandboxPermissionSupport(root, null));
     const conv = await createConv(owner, orgId, agentId);
     const deviceId = await freshDevice(conv);
     const consent = (await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null))

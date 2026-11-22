@@ -831,8 +831,8 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   const description = p.network.description?.trim();
   const picked = one ? hosts : hosts.filter((h) => checked.includes(h));
   const none = picked.length === 0;
-  // device protocol 4 never widens a device from the deployment: a network ask is allowed for
-  // this run only, and widening the device is its owner's command on the machine
+  // a network ask is allowed for this run only: it never adds a host to the device's own network
+  // list, which only its owner's network setting widens
   const scopes = p.scopes.filter((scope) => scope === "once");
   const label = (scope: ApprovalScope) =>
     p.scopeLabels?.[scope] ?? t(scope === "once" ? "hitl.network.once" : SCOPE_LABEL[scope]);

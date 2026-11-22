@@ -75,6 +75,12 @@ describe("checkBootstrap", () => {
     expect(f[0]?.message).toContain('packs the plugin "demo"');
   });
 
+  it("bootstrap-scope fails on scope with builtin: true", async () => {
+    const f = await checkBootstrap(fixture("scope-on-builtin.json"), dir);
+    expect(f.map((x) => x.rule)).toEqual(["bootstrap-scope"]);
+    expect(f[0]?.message).toContain("scope applies only to optional preinstalls");
+  });
+
   it("a bootstrap plugin with client code is refused", async () => {
     const f = await checkBootstrap(fixture("client-code/bootstrap.json"), fixture("client-code"));
     expect(f.map((x) => x.rule)).toEqual(["bootstrap-client-code"]);

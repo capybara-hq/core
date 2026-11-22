@@ -1,8 +1,9 @@
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
 
 /**
  * Device sign-in as the confirmation page `/devices/link` uses it (the kernel's
- * `packages/kernel/src/local-devices/device-auth.controller.ts`; environments spec §13.3). Web
+ * `packages/kernel/src/dial-in/auth.controller.ts`; environments spec §13.3). Web
  * code never imports kernel code.
  */
 
@@ -19,8 +20,15 @@ export interface PendingDevice {
   expiresAt: string;
 }
 
-/** Confirm into an existing local device (`deviceId`) or a new one (`name`). */
-export type DeviceConfirmInput = { userCode: string; orgId: string } & (
+/** A dial-in provider a code may choose, with the person's own devices of it in the org. */
+export interface DeviceProviderChoice {
+  plugin: string;
+  displayName: LocalizedName;
+  devices: { id: string; name: string }[];
+}
+
+/** Confirm into an existing device of the provider (`deviceId`) or a new one (`name`). */
+export type DeviceConfirmInput = { userCode: string; orgId: string; provider: string } & (
   | { deviceId: string }
   | { name: string }
 );
@@ -77,6 +85,11 @@ const base = "/api/v1/device";
 
 export const peekDevice = (userCode: string) =>
   apiFetch<PendingDevice>(`${base}/pending/${encodeURIComponent(userCode)}`);
+
+export const listDeviceProviders = (orgId: string, userCode: string) =>
+  apiFetch<{ providers: DeviceProviderChoice[] }>(
+    `${base}/providers?orgId=${encodeURIComponent(orgId)}&userCode=${encodeURIComponent(userCode)}`,
+  );
 
 export const confirmDevice = (input: DeviceConfirmInput) =>
   apiFetch<{ deviceId: string }>(`${base}/confirm`, {

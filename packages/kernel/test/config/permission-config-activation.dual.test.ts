@@ -192,7 +192,6 @@ async function consent() {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: accountId,
-      source: "cloud",
       provider: "@activation-dual",
     })
     .execute();
@@ -237,7 +236,13 @@ async function consent() {
     .updateTable("conversations")
     .set({
       permission_profile: "full-access",
-      permission_consent: JSON.stringify({ deviceId, scopeRevision: preview.scopeRevision }),
+      // what the profile service stores: the scope confirmed, the identity and the reach covered
+      permission_consent: JSON.stringify({
+        deviceId,
+        scopeRevision: preview.scopeRevision,
+        identity: preview.consentIdentity,
+        reach: preview.consentReach,
+      }),
     })
     .where("id", "=", conversationId)
     .execute();

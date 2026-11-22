@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KernelRequest } from "@capybara-hq/plugin-sdk";
+import type { KernelRequest } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type RunningOperation, RunningOperations } from "../src/activity.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";

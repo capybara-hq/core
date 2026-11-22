@@ -18,7 +18,6 @@ import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import type { KernelQueueName } from "./infra/queue/queue-names.js";
-import { DEVICE_POLICY_AFTER_CALL } from "./local-devices/device-policy.service.js";
 import { PUSH_SEND_TIMEOUT_MS } from "./push/delivery.js";
 import { PROJECT_KNOWLEDGE_TIMEOUT } from "./runtime/project/knowledge.service.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
@@ -65,8 +64,6 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `OUTBOX_FAST_PATH_SETTLED`: receives each detached outbox fast-path pass (a test awaits them);
  * - `ENSURE_RUN_FAILS`: returns true to make `RunQueue.ensureRun` throw (Redis unreachable, or the
  *   direct call after a commit skipped by a crash);
- * - `DEVICE_POLICY_AFTER_CALL`: called after a device policy op's call, before its outcome is
- *   recorded (throwing stands for a crash between the call and the resolve transaction);
  * - `PROJECT_KNOWLEDGE_TIMEOUT`: the run-start read of a bound project's time limit, read at every
  *   read (a test shortens it for one run);
  * - `PUSH_SEND_TIMEOUT_MS`: one push send's time limit, read at every send (a test shortens it
@@ -112,7 +109,6 @@ interface KernelSeams {
   [PROMPT_SUGGESTION_TIMEOUT]: () => number;
   [PUSH_SEND_TIMEOUT_MS]: () => number;
   [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
-  [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
   [EXTENSION_NET_SEAMS]: ExtensionNetSeams;
   [APP_INTERCEPTOR]: NestInterceptor;
   [PERMISSION_CONTEXT_ACTIVATION]: boolean;
@@ -157,7 +153,6 @@ const SEAM_TOKENS = [
   PROMPT_SUGGESTION_TIMEOUT,
   PUSH_SEND_TIMEOUT_MS,
   PLUGIN_PUBLIC_WRITE_LIMIT,
-  DEVICE_POLICY_AFTER_CALL,
   EXTENSION_NET_SEAMS,
   APP_INTERCEPTOR,
   PERMISSION_CONTEXT_ACTIVATION,

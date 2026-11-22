@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
+  parseSandboxOperationScope,
   type SandboxBackground,
   type SandboxExecutionRef,
   type SandboxOperationScope,
@@ -35,7 +36,6 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
-import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { operationIdFor, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
@@ -52,7 +52,6 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
@@ -190,6 +189,13 @@ function managedProvider() {
   };
   const impl = {
     concurrentExec: true,
+    // a provider that offers projects (where one may lie is its own rule)
+    async list() {
+      return { entries: [], truncated: false };
+    },
+    async scan() {
+      return [];
+    },
     async permissionSupport() {
       return {
         version: 2,
@@ -290,7 +296,6 @@ async function fixture(opts: { project?: string } = {}) {
       org_id: orgId,
       owner_kind: "personal",
       owner_account_id: owner.id,
-      source: "local",
       provider: PROVIDER,
       name: "Laptop",
     })
@@ -305,11 +310,6 @@ async function fixture(opts: { project?: string } = {}) {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
-      home: "/home/owner",
-      local_policy: JSON.stringify({ allowedDomains: [] }),
-      owner_report: storedOwnerReport(),
     })
     .execute();
   await db
@@ -648,36 +648,24 @@ describe("managed background launch identity", () => {
     expect(i?.execution_id.startsWith("recovery-")).toBe(true);
   });
 
-  // final review m4: a cloud start is told the kernel's generation (it cannot know it), the first
-  // dispatch the held instance's and recovery the recorded one; a bound device is told none
-  it.each([
-    ["a cloud provider", false],
-    ["a bound device", true],
-  ] as const)(
-    "%s: the start's instanceGeneration on dispatch and on recovery",
-    async (_name, bound) => {
-      const f = await fixture();
-      if (bound)
-        k.app.get(DeviceProviders).register({
-          plugin: PROVIDER,
-          version: "test-1",
-          impl: f.provider.impl,
-          binder: { status: async () => "installed", bind: async () => undefined },
-        });
-      f.provider.hooks.afterEffect = async () => {
-        throw new Error("acknowledgement lost");
-      };
-      expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
-      f.provider.hooks.afterEffect = undefined;
-      const recorded = (await f.intent())?.instance_generation;
-      expect(recorded).toBe(String(GENERATION));
-      await reconcileJob().reconcile(f.operationId);
-      expect((await f.intent())?.state).toBe("background-running");
-      expect(f.provider.calls.map((c) => c.args.instanceGeneration)).toEqual(
-        bound ? [undefined, undefined] : [String(GENERATION), recorded],
-      );
-    },
-  );
+  // final review m4: a start is told the kernel's generation (a provider cannot know it), the
+  // first dispatch the held instance's and recovery the recorded one
+  it("the start's instanceGeneration on dispatch and on recovery", async () => {
+    const f = await fixture();
+    f.provider.hooks.afterEffect = async () => {
+      throw new Error("acknowledgement lost");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.afterEffect = undefined;
+    const recorded = (await f.intent())?.instance_generation;
+    expect(recorded).toBe(String(GENERATION));
+    await reconcileJob().reconcile(f.operationId);
+    expect((await f.intent())?.state).toBe("background-running");
+    expect(f.provider.calls.map((c) => c.args.instanceGeneration)).toEqual([
+      String(GENERATION),
+      recorded,
+    ]);
+  });
 
   it("an unreachable instance keeps the uncertainty durable and defers recovery", async () => {
     const f = await fixture();
@@ -1499,27 +1487,25 @@ describe("exact revocation of running background authority (8.4 B3)", () => {
 
   it("a dispatcher released after recovery acknowledged gets the recorded authority and the same ref (8.4 M1)", async () => {
     const f = await fixture();
-    // the real local-device adapter: every start resolves its exact starting authority first
+    // a machine provider's start: it resolves its exact starting authority first (the admitted
+    // execution grant), then the device starts the task once per operation
     const launches = new Map<string, SandboxExecutionRef>();
     let deviceStarts = 0;
-    const staged = k.app.get(LocalDeviceProvider).stagedOperations({
-      async call(deviceId, op, args) {
-        if (op !== "backgroundStart") throw new Error(`unexpected ${op}`);
-        deviceStarts++;
-        const scope = (args as { scope: { operationId: string } }).scope;
-        const ref = launches.get(scope.operationId) ?? {
-          executionId: `x-${scope.operationId.slice(0, 12)}`,
-          operationId: scope.operationId,
-          instanceId: deviceId,
-          instanceGeneration: String(GENERATION),
-        };
-        launches.set(scope.operationId, ref);
-        return ref;
-      },
-      async permissionSupport() {
-        throw new Error("not used");
-      },
-    });
+    const callGrants = k.app.get(PermissionCallGrants);
+    const deviceStart: SandboxBackground["start"] = async (h, input, args) => {
+      const scope = parseSandboxOperationScope(input);
+      const { signal: _signal, instanceGeneration: _generation, ...rest } = args;
+      await callGrants.forExecution(scope.operationId, h.id, "backgroundStart", scope, rest);
+      deviceStarts++;
+      const ref = launches.get(scope.operationId) ?? {
+        executionId: `x-${scope.operationId.slice(0, 12)}`,
+        operationId: scope.operationId,
+        instanceId: h.id,
+        instanceGeneration: String(GENERATION),
+      };
+      launches.set(scope.operationId, ref);
+      return ref;
+    };
     const entered = barrier();
     const release = barrier();
     let starts = 0;
@@ -1532,7 +1518,7 @@ describe("exact revocation of running background authority (8.4 B3)", () => {
           entered.resolve();
           await release.promise;
         }
-        return staged.background.start(h, scope, args);
+        return deviceStart(h, scope, args);
       },
     };
     const work = f.outcome(f.run({ command: "npm run dev" }));
