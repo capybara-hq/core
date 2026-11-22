@@ -75,7 +75,14 @@ function strictRevision(stateDir: string, stateRoot: string, home: string): stri
 }
 
 /** Thrown inside the locked update when the policy now on disk makes the target a widening. */
-class WideningNeedsConfirmation extends Error {}
+class WideningNeedsConfirmation extends Error {
+  constructor(
+    readonly cur: OwnerCeilingPolicy,
+    readonly next: OwnerCeilingPolicy,
+  ) {
+    super("widening needs confirmation");
+  }
+}
 
 const describe = (p: Policy): string[] => [
   `Outside the sandbox: ${p.ownerCeiling.outsideSandbox ? "on" : "off"}`,
@@ -87,10 +94,28 @@ const describe = (p: Policy): string[] => [
   }`,
 ];
 
-/** True when this machine has connections besides one, readable or not. */
+/**
+ * True when this machine has more than one connection (readable or not); a connections directory
+ * that cannot be listed counts as having others (fail closed).
+ */
 function otherConnectionsExist(stateRoot: string): boolean {
-  const { readable, unreadable } = scanConnections(stateRoot);
-  return readable.length + unreadable.length > 1;
+  try {
+    const { readable, unreadable } = scanConnections(stateRoot);
+    return readable.length + unreadable.length > 1;
+  } catch {
+    return true;
+  }
+}
+
+/** The widening text, and the other-connections sentence when `next` turns outside the sandbox on. */
+function wideningLines(
+  cur: OwnerCeilingPolicy,
+  next: OwnerCeilingPolicy,
+  stateRoot: string,
+): string[] {
+  return !cur.outsideSandbox && next.outsideSandbox && otherConnectionsExist(stateRoot)
+    ? [CEILING_WIDENING_TEXT, CEILING_OTHER_CONNECTIONS_TEXT]
+    : [CEILING_WIDENING_TEXT];
 }
 
 /** True when `next` allows anything `cur` does not. */
@@ -189,13 +214,7 @@ export async function ceilingCommand(
   let confirmed = cmd.yes === true;
   const wanted = target(cmd, cur.ownerCeiling);
   if (widens(cur.ownerCeiling, wanted)) {
-    out(CEILING_WIDENING_TEXT);
-    if (
-      !cur.ownerCeiling.outsideSandbox &&
-      wanted.outsideSandbox &&
-      otherConnectionsExist(deps.stateRoot)
-    )
-      out(CEILING_OTHER_CONNECTIONS_TEXT);
+    for (const line of wideningLines(cur.ownerCeiling, wanted, deps.stateRoot)) out(line);
     if (!confirmed) {
       if (deps.ask === undefined) {
         err(CEILING_NEEDS_YES);
@@ -218,7 +237,8 @@ export async function ceilingCommand(
     written = store.update(
       (p) => {
         const next = target(cmd, p.ownerCeiling);
-        if (!confirmed && widens(p.ownerCeiling, next)) throw new WideningNeedsConfirmation();
+        if (!confirmed && widens(p.ownerCeiling, next))
+          throw new WideningNeedsConfirmation(p.ownerCeiling, next);
         return { ...p, ownerCeiling: next };
       },
       {
@@ -229,7 +249,7 @@ export async function ceilingCommand(
     );
   } catch (e) {
     if (e instanceof WideningNeedsConfirmation) {
-      out(CEILING_WIDENING_TEXT);
+      for (const line of wideningLines(e.cur, e.next, deps.stateRoot)) out(line);
       err(`The owner ceiling changed meanwhile. ${CEILING_NEEDS_YES}`);
       return 2;
     }
@@ -250,8 +270,13 @@ export async function ceilingCommand(
       "Sandboxed commands reach only the sandbox allowlist (capybara-device policy add " +
         "allowedDomains <host>).",
     );
-  if (ceiling.projectReach !== "workspace")
-    out("Sandboxed work may reach selected projects outside the device's workspace.");
+  if (ceiling.projectReach === "machine")
+    out(
+      "Sandboxed work may read the whole machine except secrets, this program's state and other " +
+        "connections.",
+    );
+  if (ceiling.projectReach === "paths")
+    out("Sandboxed work may read the listed project paths outside the device's workspace.");
   if (ceiling.projectReach === "paths" && written.projectPaths.length === 0)
     out("No project paths are listed yet: capybara-device policy add projectPaths <dir>");
   return 0;

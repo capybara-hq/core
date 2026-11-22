@@ -481,7 +481,9 @@ describe("capybara-device ceiling", () => {
       answer: "y",
     });
     expect(confirmed.code).toBe(0);
-    expect(confirmed.out).toMatch(/outside the device's workspace/);
+    expect(confirmed.out).toContain(
+      "Sandboxed work may read the whole machine except secrets, this program's state and other connections.",
+    );
     const yes = await cli([
       "ceiling",
       "set",
@@ -513,11 +515,16 @@ describe("capybara-device ceiling", () => {
     const narrowed = await cli(["ceiling", "set", "--project-reach", "workspace"]);
     expect(narrowed.code).toBe(0);
     expect(narrowed.out).toMatch(/Project reach: workspace/);
+    expect(narrowed.out).not.toMatch(/Sandboxed work may read/);
     expect(readPolicyFile(state).policy.ownerCeiling.projectReach).toBe("workspace");
     // the paths reach names how many paths it lists, and how to add one when none is listed
     const paths = await cli(["ceiling", "set", "--project-reach", "paths", "--yes"]);
     expect(paths.code).toBe(0);
     expect(paths.out).toMatch(/Project reach: paths \(0 listed\)/);
+    expect(paths.out).toContain(
+      "Sandboxed work may read the listed project paths outside the device's workspace.",
+    );
+    expect(paths.out).not.toMatch(/Sandboxed work may read the whole machine/);
     expect(paths.out).toContain(
       "No project paths are listed yet: capybara-device policy add projectPaths <dir>",
     );
@@ -571,6 +578,24 @@ describe("capybara-device ceiling", () => {
     writeFileSync(join(connectionsDir(state), "broken", "credential.json"), "{", { mode: 0o600 });
     const broken = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
     expect(broken.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
+    // the changed-meanwhile refusal names them again with the widening text
+    writePolicy(state, FULL_POLICY);
+    const meanwhile = await cli(["ceiling", "set", "--outside-sandbox", "on"], {
+      beforeWrite: () => writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } }),
+    });
+    expect(meanwhile.code).toBe(2);
+    expect(meanwhile.err).toMatch(/changed meanwhile/);
+    expect(meanwhile.out.split("\n")).toEqual([
+      CEILING_WIDENING_TEXT,
+      CEILING_OTHER_CONNECTIONS_TEXT,
+    ]);
+    // a connections directory that cannot be listed counts as other connections (fail closed)
+    rmSync(connectionsDir(state), { recursive: true });
+    writeFileSync(connectionsDir(state), "not a directory");
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    const unlistable = await cli(["ceiling", "set", "--outside-sandbox", "on", "--yes"]);
+    expect(unlistable.code).toBe(0);
+    expect(unlistable.out).toContain(CEILING_OTHER_CONNECTIONS_TEXT);
     // a widening that leaves outside the sandbox off does not name them
     writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
     const net = await cli(["ceiling", "set", "--network", "open", "--yes"]);

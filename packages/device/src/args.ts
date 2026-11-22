@@ -87,11 +87,14 @@ export const USAGE = `Usage:
                                   needs --yes or a y at the prompt
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
-                                  Replace one field (cpu, memoryMb, allowCredentials)
+                                  Replace one field (cpu, memoryMb, allowCredentials, projectPaths)
   capybara-device policy add|remove allowedDomains <host>
                                   Allow or stop allowing a domain on the sandbox allowlist
   capybara-device policy add|remove allowCredentials <name>
                                   Allow or stop allowing a credential for restricted work
+  capybara-device policy add|remove|set projectPaths <dir>[,<dir>...]
+                                  Add, remove or replace project paths the paths reach reads
+                                  (comma-separated, so a path containing a comma cannot be added)
   capybara-device service install|uninstall
                                   Run at login as a user service, or remove it
   capybara-device service start|stop|restart
