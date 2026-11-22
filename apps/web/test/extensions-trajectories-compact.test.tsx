@@ -5,6 +5,7 @@ import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { CAPABILITY_TABS } from "../src/lib/extension-capabilities";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -87,8 +88,11 @@ describe("/extensions at 390", () => {
     expect(toggle).toBeTruthy();
     // the tabs are still one row (D4): every tab is in the tablist, the first with its count
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
-    expect(tabs.length).toBeGreaterThan(1);
+    expect(tabs).toHaveLength(["all", ...CAPABILITY_TABS].length);
     expect(tabs[0]?.textContent).toMatch(/1/);
+    // an admin's row has one trailing cell (the switch): the state label is in the meta part
+    const meta = table.querySelector('[data-part="compact-meta"]') as HTMLElement;
+    expect(meta.textContent).toContain(en.extensions.enabled);
     // tapping the switch toggles the extension and does not open the detail (the row tap)
     await userEvent.setup().click(toggle);
     await vi.waitFor(() =>

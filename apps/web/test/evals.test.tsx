@@ -1298,7 +1298,7 @@ describe("eval tables at 390", () => {
     return el as HTMLElement;
   };
 
-  it("/evals/[setId]: a case's title leads, version and steps are its meta, remove in the menu", async () => {
+  it("/evals/[setId]: a case's title leads, the version is its subtitle, remove in the menu", async () => {
     stubWindowWidth(390);
     resetNavigation("/evals/s1");
     stubApi({

@@ -297,7 +297,10 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   );
 }
 
-/** Compact rows (below 600): the task leads, its owner under it, the agent after, the state at the end. */
+/**
+ * Compact rows (below 600): the task leads, its owner under it, the agent after, the state at
+ * the end.
+ */
 const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
   name: "title",
   agent: "meta",

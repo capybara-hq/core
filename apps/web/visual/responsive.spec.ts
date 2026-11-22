@@ -29,7 +29,10 @@ const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
 /** A member page's route: the real view drawn from a seeded cache (`member-pages.tsx`). */
 const memberRoute = (p: string) => `pages/member-${p}`;
 
-/** An org admin page's route (`admin-pages.tsx`): desktop-only on touch, so a fine pointer at every width. */
+/**
+ * An org admin page's route (`admin-pages.tsx`): desktop-only on touch, so a fine pointer at
+ * every width.
+ */
 const orgRoute = (p: string) => `pages/org-${p}`;
 
 async function open(page: Page, route: string, theme: Theme) {

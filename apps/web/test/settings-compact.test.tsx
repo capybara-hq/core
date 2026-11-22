@@ -130,8 +130,10 @@ describe("org settings tables at 390", () => {
     await renderRouteWithCache("/settings/audit", lastStubRoutes(), { me: admin });
     await screen.findByText("Grant");
     expect(part("title").join()).toContain(en.admin.audit.actions.orgCreated);
-    expect(part("subtitle").join()).toContain("Grant");
-    expect(part("subtitle").join()).toMatch(/·/);
+    // the subtitle follows the shared column order: time, then actor
+    const subtitle = part("subtitle").join();
+    expect(subtitle).toMatch(/^2026-.+ · G?Grant$/);
+    expect(subtitle.indexOf("2026")).toBeLessThan(subtitle.indexOf("Grant"));
   });
 
   it("schedules: the task leads, its owner under it, the state at the end", async () => {

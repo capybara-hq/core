@@ -29,16 +29,15 @@ export default function OrgAuditView() {
 }
 
 /**
- * The audit columns with their compact roles: the action leads, the actor and the time under it
- * (the compact subtitle follows column order, so the actor is moved before the time here).
+ * The audit columns with their compact roles: the action leads, the time and the actor under it
+ * (the compact subtitle follows the shared column order; the wide table is unchanged).
  */
 function useOrgAuditColumns(): Column<AuditEvent>[] {
   const compact = { action: "title", actor: "subtitle", at: "subtitle", target: "hidden" } as const;
-  const order = ["action", "actor", "at"];
-  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length);
-  return useAuditColumns()
-    .map((c) => ({ ...c, compact: compact[c.key as keyof typeof compact] ?? "hidden" }))
-    .sort((a, b) => rank(a.key) - rank(b.key));
+  return useAuditColumns().map((c) => ({
+    ...c,
+    compact: compact[c.key as keyof typeof compact] ?? "hidden",
+  }));
 }
 
 function OrgAudit({ orgId }: { orgId: string }) {
