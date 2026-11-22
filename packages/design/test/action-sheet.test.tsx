@@ -305,7 +305,8 @@ describe("ListPage on compact", () => {
   it("the CSS restyles the marked primary below 600 only", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
     const block = css.slice(css.indexOf("/* The list's floating action button"));
-    expect(block).toContain("@media (max-width: 599px)");
+    // the zoom band (599.x px) is compact too: the complement of min-width 600
+    expect(block).toContain("@media not all and (min-width: 600px)");
     expect(block).toContain('.cb-template[data-fab="true"] [data-head-primary="true"] > .cb-btn');
     expect(block).toContain("position: fixed;");
     expect(block).toContain("width: var(--cb-touch-prominent);");

@@ -147,7 +147,7 @@ describe("inside the shell the open item is a pushed page", () => {
     expect(
       parseCss(css("templates.css")).some(
         (r) =>
-          r.at === "(max-width: 599px)" &&
+          r.at === "not all and (min-width: 600px)" &&
           r.selector
             .split(",")
             .map((x) => x.trim())
@@ -197,6 +197,8 @@ describe("the compact forms of the templates", () => {
     expect(decl(".cb-actionrow .cb-actionrow-primary > *", "height")).toBe(
       "var(--cb-touch-primary)",
     );
+    // the primary takes its own line on the same query (the zoom band included)
+    expect(decl(".cb-actionrow .cb-actionrow-primary", "display")).toBe("flex");
   });
 
   it("WizardPage's compact step bar reads 2 / 4 and names the step", () => {
@@ -424,7 +426,9 @@ describe("ReferenceScreen (the reference set's compact frame)", () => {
     );
     const screenEl = part("screen") as HTMLElement;
     expect([...screenEl.children].map((c) => c.textContent)).toEqual(["TOP", "BODY", "BOTTOM"]);
-    const compact = parseCss(css("templates.css")).filter((r) => r.at === "(max-width: 599px)");
+    const compact = parseCss(css("templates.css")).filter(
+      (r) => r.at === "not all and (min-width: 600px)",
+    );
     expect(
       compact.some(
         (r) =>

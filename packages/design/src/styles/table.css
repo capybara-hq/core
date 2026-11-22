@@ -368,7 +368,7 @@
  * column header (`data-label`). Nothing sticks; the selected row keeps its 2px accent bar.
  * Selectors carry `.cb-table … tbody .cb-table-row > td` so they outrank the wide rules above.
  */
-@media (max-width: 599px) {
+@media not all and (min-width: 600px) {
   .cb-table-toolbar {
     flex-wrap: wrap;
   }

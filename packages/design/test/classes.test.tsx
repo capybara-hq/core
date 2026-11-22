@@ -68,7 +68,7 @@ describe("template forms per size class", () => {
   });
 
   it("TracePage: on compact the waterfall is the page and an open span is its own screen", () => {
-    const at = "(max-width: 599px)";
+    const at = "not all and (min-width: 600px)";
     expect(
       decl(
         "templates.css",
@@ -77,6 +77,13 @@ describe("template forms per size class", () => {
         at,
       ),
     ).toBe("none");
+  });
+
+  // Compact is the complement of min-width 600 (the zoom band between 599 and 600 included).
+  it("the wizard's step count and the band skeleton's column read compact as not min-width 600", () => {
+    const at = "not all and (min-width: 600px)";
+    expect(decl("templates.css", ".cb-steps-count", "display", at)).toBe("block");
+    expect(decl("templates.css", ".cb-detail-band-skeleton", "flex-direction", at)).toBe("column");
   });
 });
 

@@ -216,8 +216,8 @@ describe("StatCards below 600", () => {
   });
 });
 
-describe("DataTable below 640: stacked rows", () => {
-  const narrow = media(css("table.css"));
+describe("DataTable below 600: stacked rows", () => {
+  const narrow = media(css("table.css"), COMPACT);
   /** The rules outside any media block. */
   const table = css("table.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
 
