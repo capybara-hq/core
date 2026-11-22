@@ -90,6 +90,7 @@ describe("start: the policy file", () => {
 
   it("refuses a policy.json in another version, naming the file and how to rewrite it", async () => {
     writeCredential(dir, cred);
+    // an intentionally old-format fixture (version 3, the removed restrictedProjectReach key)
     const old = JSON.stringify({
       version: 3,
       ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },

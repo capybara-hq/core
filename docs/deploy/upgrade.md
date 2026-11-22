@@ -204,19 +204,15 @@ no longer takes `mode` or `ownerCeiling` (the codes `device.mode_on_device`,
 takes `network` (`{ mode: open | allowlist | none | null, hosts? }`), which an API token or the
 Platform tool (`devices.set-network`) may only narrow.
 
-**Local devices.** `capybara-device` converts its `policy.json` once on start, never wider:
-Full access allowed becomes outside-the-sandbox allowed with the open network; denied keeps the
-allowlist with its old `allowedDomains`, and `start` prints `capybara-device ceiling set --network
-open` to open it. A device set up before rc.58 may have no `policy.json` at all (its `login` wrote
-none), and such a device ran with no reachable host: on its first start with a credential the
-program writes `{ outsideSandbox: false, network: "allowlist", allowedDomains: [] }` and prints how
-to open it (`capybara-device ceiling set --network open`); a missing file never reads as the open
-network. New installs (`login`) get outside-the-sandbox off and the open network. The CLI is now
-`capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-[--project-reach machine|paths|workspace]`; `--full-access` is gone. The device page only narrowed a
-local device then: `POST …/devices/:id/policy` took only `remove` and `ownerCeiling` narrowings
-(`add` and `mode` were gone); that route and `device.ceiling_on_machine` were removed later (see
-"Local devices move to the device-local plugin" above).
+**Local devices.** `capybara-device` converts nothing: it reads only the current `policy.json`
+format and refuses an older file when it starts (see "Device protocol 6" below: `capybara-device
+ceiling set ...` rewrites it from the closed policy). A missing file never reads as the open
+network. New installs (`login`) get outside-the-sandbox off, the open network and `workspace`
+reach. The CLI is `capybara-device ceiling set [--outside-sandbox on|off] [--network
+open|allowlist] [--project-reach machine|paths|workspace]`; `--full-access` is gone. The
+deployment cannot change a local device's ceiling (`POST …/devices/:id/policy` and
+`device.ceiling_on_machine` were removed; see "Local devices move to the device-local plugin"
+above).
 
 **Upgrade order.** This is device protocol 4, a paired release with no fallback:
 

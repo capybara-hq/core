@@ -180,9 +180,9 @@ directory. A conversation without a project is in **free mode** (自由模式), 
   `node_modules` and symbolic links skipped; at most 50, at most 500 directories read).
 - **What the reach allows**: a device offers what it can read within its project reach. With
   `workspace` reach, and on a cloud device, that is only the workspace; with `machine` reach on a
-  local device, any directory outside the deny list, and with `paths` reach, the listed project paths. A project the
-  current reach cannot read is hidden (the section says how many), not deleted, and comes back when
-  the reach does. The device enforces its ceiling on every access anyway, so a saved path grants
+  local device, any directory outside the deny list, and with `paths` reach, the listed project
+  paths. A project the current reach cannot read is hidden (the section says how many), not deleted,
+  and comes back when the reach does. The device enforces its ceiling on every access anyway, so a saved path grants
   nothing by itself.
 - **Requirements**: a local device needs a `capybara-device` that supports projects (it announces
   it when it connects; the section asks you to update an older one). A cloud device needs a sandbox
