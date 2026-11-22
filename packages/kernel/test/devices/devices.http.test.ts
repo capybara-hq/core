@@ -9,10 +9,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationDevices, NO_DEVICE } from "../../src/devices/conversation-devices.js";
 import type { DeviceList, DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { ExtensionDisplayNames } from "../../src/extensions/display-name.js";
+import { TransactionHost, withOrderedLocks } from "../../src/infra/database/transaction-host.js";
 import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
@@ -67,7 +69,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [fixture("device-fake"), fixture("device-fake-b")],
+        extensions: [fixture("device-fake"), fixture("device-fake-b"), fixture("fake-dial-in")],
         extensionConfig: { "device-fake": { root }, "device-fake-b": { root: rootB } },
         devices: { maxPersonal: MAX },
       },
@@ -81,6 +83,8 @@ beforeAll(async () => {
   // both providers on in the org, device-fake its default
   await enableDeviceProviders(k, orgId);
   await setDefaultProvider("device-fake");
+  // the dial-in provider is on only in the tests that name it
+  await setEnabled("fake-dial-in", false);
 });
 
 afterAll(async () => {
@@ -674,6 +678,119 @@ describe("device providers (device-provider spec §6.1)", () => {
     expect(there.json()).toMatchObject({ providers: [], defaultProvider: null, defaultId: null });
   });
 
+  it("GET /devices describes each provider: description, dial-in and setup guide", async () => {
+    const m = await member();
+    const itemId = randomUUID();
+    const manifest = {
+      schemaVersion: 1,
+      name: "fake-dial-in",
+      description: { en: "Connect a machine", zh: "连接一台机器" },
+      setupGuides: [{ id: "connect", place: "device-connection" }],
+    };
+    await sql`INSERT INTO capybara.catalog_items
+      (id, name, package_name, publisher, description, latest_version, scope)
+      VALUES (${itemId}, 'fake-dial-in', '@acme/plugin-fake-dial-in', 'Acme', 'Connect a machine',
+        '1.0.0', 'all')`.execute(raw);
+    await sql`INSERT INTO capybara.catalog_item_versions
+      (item_id, version, manifest, source, source_ref, files, size)
+      VALUES (${itemId}, '1.0.0', ${JSON.stringify(manifest)}::jsonb, 'file', 'upload', '[]'::jsonb,
+        1000)`.execute(raw);
+    await setEnabled("fake-dial-in", true);
+    try {
+      const l = await list(m.req);
+      expect(l.providers.map((p) => p.plugin)).toEqual([
+        "device-fake",
+        "device-fake-b",
+        "fake-dial-in",
+      ]);
+      expect(l.providers.find((p) => p.plugin === "fake-dial-in")).toMatchObject({
+        dialIn: true,
+        description: { en: "Connect a machine", zh: "连接一台机器" },
+        guide: { itemId, guideId: "connect", version: "1.0.0" },
+      });
+      expect(l.providers.find((p) => p.plugin === "device-fake")).toMatchObject({
+        dialIn: false,
+        description: null,
+        guide: null,
+      });
+    } finally {
+      await setEnabled("fake-dial-in", false);
+      await sql`DELETE FROM capybara.catalog_item_versions WHERE item_id = ${itemId}`.execute(raw);
+      await sql`DELETE FROM capybara.catalog_items WHERE id = ${itemId}`.execute(raw);
+    }
+  });
+
+  it("POST /devices naming a dial-in provider answers device.provider_dial_in and creates nothing", async () => {
+    const m = await member();
+    await list(m.req); // makes the default
+    const before = await countDevices(m.id);
+    await setEnabled("fake-dial-in", true);
+    try {
+      const res = await m.req({
+        method: "POST",
+        url: base(),
+        payload: { name: "Box", provider: "fake-dial-in" },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(errCode(res)).toBe("device.provider_dial_in");
+      expect(
+        await k.app
+          .get(DevicesService)
+          .checkCreate(orgId, m.id, "Box", "fake-dial-in")
+          .catch((e: ApiError) => e.code),
+      ).toBe("device.provider_dial_in");
+      expect(await countDevices(m.id)).toBe(before);
+    } finally {
+      await setEnabled("fake-dial-in", false);
+    }
+  });
+
+  it("a dial-in default provider makes no default device: defaultId null, conversations find none", async () => {
+    const m = await member();
+    await setEnabled("fake-dial-in", true);
+    await setDefaultProvider("fake-dial-in");
+    try {
+      const l = await list(m.req);
+      expect(l.defaultProvider).toBe("fake-dial-in");
+      expect(l.defaultId).toBeNull();
+      expect(await countDevices(m.id)).toBe(0);
+      // a conversation resolves its default device as with no default provider
+      const devices = k.app.get(ConversationDevices);
+      expect(await devices.forNew(orgId, m.id)).toBeNull();
+      const agentId = randomUUID();
+      await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+        VALUES (${agentId}, ${orgId}, ${m.id}, 'org', 1)`.execute(raw);
+      const conv = randomUUID();
+      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+        VALUES (${conv}, ${orgId}, ${agentId}, ${m.id}, NULL)`.execute(raw);
+      expect(await devices.unusableReason(orgId, conv)).toBe("no-device");
+      const err = await devices.forTool(orgId, conv).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("sandbox.unavailable");
+      expect((err as ApiError).details).toEqual([{ reason: NO_DEVICE }]);
+      expect(await countDevices(m.id)).toBe(0);
+    } finally {
+      await setDefaultProvider("device-fake");
+      await setEnabled("fake-dial-in", false);
+    }
+  });
+
+  it("a device carries its provider's display name, also while the provider is off", async () => {
+    const m = await member();
+    const onB = await create(m.req, "Named", "device-fake-b");
+    expect(onB.providerDisplayName).toEqual(
+      (await k.app.get(ExtensionDisplayNames).get("device-fake-b")) ?? null,
+    );
+    await setEnabled("device-fake-b", false);
+    try {
+      const off = (await list(m.req)).items.find((d) => d.id === onB.id);
+      expect(off).toMatchObject({ available: false });
+      expect(off?.providerDisplayName).toEqual(onB.providerDisplayName);
+    } finally {
+      await setEnabled("device-fake-b", true);
+    }
+  });
+
   it("a device whose provider is switched off lists as available false with its stored report", async () => {
     const m = await member();
     const onB = await create(m.req, "Report", "device-fake-b");
@@ -851,8 +968,8 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       kind: "network",
       network: { from: { mode: null, hosts: [] }, to: { mode: "allowlist", hosts: [] } },
       via: "web",
-      outcome: "applied",
     });
+    expect(view.sandbox.recent[0]).not.toHaveProperty("outcome");
     expect(await networkAudits(env.id)).toEqual([
       {
         actor_account_id: me.id,
@@ -918,6 +1035,138 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         .executeTakeFirstOrThrow();
       expect(row).toEqual({ network_mode: null, network_hosts: [] });
       expect(await networkAudits(env.id)).toEqual([]);
+    } finally {
+      await setOrgNetwork(null);
+    }
+  });
+
+  it("addNetworkHostsIn adds within the org's hosts, like PATCH; refuses outside them or with no own list", async () => {
+    await setOrgNetwork({ extraHosts: ["a.dev", "b.dev"] });
+    try {
+      const me = await member();
+      const env = await create(me.req, "Adds");
+      const svc = k.app.get(DevicesService);
+      const refused = async (hosts: string[]) => {
+        const err = await svc.addNetworkHostsIn(orgId, me.id, env.id, hosts, "web").then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(ApiError);
+        expect(err).toMatchObject({ code: "device.network_not_allowed" });
+        return (err as ApiError).message;
+      };
+      // following its org (mode null) or the org's whole allowlist: every addable host is in
+      expect(await refused(["b.dev"])).toContain("follows its organization's hosts");
+      expect((await patch(me.req, env.id, { network: { mode: "allowlist" } })).statusCode).toBe(
+        200,
+      );
+      await refused(["b.dev"]);
+
+      const own = await patch(me.req, env.id, { network: { mode: "allowlist", hosts: ["a.dev"] } });
+      expect(own.statusCode, own.body).toBe(200);
+      const audits = (await networkAudits(env.id)).length;
+      const epoch = async () =>
+        (
+          await db
+            .selectFrom("permission_authority_epochs")
+            .select("revision")
+            .where("kind", "=", "device")
+            .where("id", "=", env.id)
+            .executeTakeFirst()
+        )?.revision ?? 0;
+      const before = await epoch();
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["B.dev"], "im");
+      const view = viewOf(await me.req({ method: "GET", url: `${base()}/${env.id}` }));
+      expect(view.sandbox.allowedDomains).toEqual(["a.dev", "b.dev"]);
+      expect(view.sandbox.hosts).toEqual(["a.dev", "b.dev"]);
+      expect(view.sandbox.recent[0]).toMatchObject({
+        kind: "network",
+        network: {
+          from: { mode: "allowlist", hosts: ["a.dev"] },
+          to: { mode: "allowlist", hosts: ["a.dev", "b.dev"] },
+        },
+        via: "im",
+      });
+      const rows = await networkAudits(env.id);
+      expect(rows).toHaveLength(audits + 1);
+      expect(rows.at(-1)).toEqual({
+        actor_account_id: me.id,
+        detail: {
+          from: { mode: "allowlist", hosts: ["a.dev"] },
+          to: { mode: "allowlist", hosts: ["a.dev", "b.dev"] },
+          by: me.id,
+          via: "im",
+        },
+      });
+      expect(await epoch()).toBeGreaterThan(before);
+      // a host already listed changes nothing
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["a.dev"], "web");
+      expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+
+      // a host outside the org's list, even next to an addable one: nothing is written
+      expect(await refused(["x.dev"])).toContain("an organization admin adds x.dev");
+      await setOrgNetwork({ extraHosts: ["a.dev", "b.dev", "c.dev"], excludedHosts: ["pypi.org"] });
+      await refused(["c.dev", "x.dev"]);
+      // a platform host the org excludes
+      await refused(["pypi.org"]);
+      expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+
+      const tx = k.app.get(TransactionHost);
+      const ownHosts = async () =>
+        (
+          await db
+            .selectFrom("devices")
+            .select(["network_hosts"])
+            .where("id", "=", env.id)
+            .executeTakeFirstOrThrow()
+        ).network_hosts;
+      // in a caller's transaction without the prelude's device write lock: refused, nothing written
+      await expect(
+        tx.run(() => svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web")),
+      ).rejects.toThrow("The matching authority lock is required");
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
+      // it joins the caller's transaction after the caller's prelude: a rollback there takes the
+      // addition with it
+      const inCaller = (fn: () => Promise<void>) =>
+        withOrderedLocks(
+          () => svc.lockNetworkAddSubject(orgId, me.id, env.id),
+          () => tx.run(fn),
+        );
+      await expect(
+        inCaller(async () => {
+          await svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web");
+          throw new Error("rolled back");
+        }),
+      ).rejects.toThrow("rolled back");
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
+      expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+      // and commits with it
+      await inCaller(() => svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web"));
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev", "c.dev"]);
+      expect(await networkAudits(env.id)).toHaveLength(audits + 2);
+      // the prelude needs a transaction and the person's own device
+      await expect(svc.lockNetworkAddSubject(orgId, me.id, env.id)).rejects.toThrow();
+
+      // a host an own wildcard already covers changes nothing (no audit row, no epoch bump)
+      await setOrgNetwork({ extraHosts: ["a.dev", "b.dev", "c.dev", "*.w.dev"] });
+      await patch(me.req, env.id, { network: { mode: "allowlist", hosts: ["a.dev", "*.w.dev"] } });
+      const wildAudits = (await networkAudits(env.id)).length;
+      const wildEpoch = await epoch();
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["x.w.dev"], "web");
+      expect(await networkAudits(env.id)).toHaveLength(wildAudits);
+      expect(await epoch()).toBe(wildEpoch);
+      // an own host the org dropped since leaves the list with the next addition
+      await setOrgNetwork({ extraHosts: ["b.dev", "c.dev", "*.w.dev"] });
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["b.dev"], "web");
+      expect(await ownHosts()).toEqual(["*.w.dev", "b.dev"]);
+
+      // closed: refused; another member's device: not found
+      const other = await member();
+      await expect(
+        svc.addNetworkHostsIn(orgId, other.id, env.id, ["c.dev"], "web"),
+      ).rejects.toMatchObject({ code: "device.not_found" });
+      expect((await patch(me.req, env.id, { network: { mode: "none" } })).statusCode).toBe(200);
+      await refused(["c.dev"]);
     } finally {
       await setOrgNetwork(null);
     }

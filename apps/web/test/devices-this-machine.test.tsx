@@ -275,16 +275,13 @@ describe("本机 on the device page", () => {
     });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
-    await screen.findByRole("tab", { name: D.detail.tabSettings });
+    await screen.findByRole("tab", { name: D.detail.tabOverview });
     expect(screen.queryByRole("heading", { name: M.title })).toBeNull();
-    await userEvent.setup().click(screen.getByRole("tab", { name: D.detail.tabSettings }));
-    expect(await screen.findByRole("button", { name: D.machine.revoke })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: D.sandbox.widen.outside })).toBeNull();
     cleanup();
     Reflect.deleteProperty(window, "capybaraShell");
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
-    await screen.findByRole("tab", { name: D.detail.tabSettings });
+    await screen.findByRole("tab", { name: D.detail.tabOverview });
     expect(screen.queryByRole("heading", { name: M.title })).toBeNull();
   });
 });

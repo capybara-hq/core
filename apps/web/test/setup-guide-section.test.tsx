@@ -712,3 +712,70 @@ describe("channel detail: 接入指南 and the drift notice", () => {
     expect(screen.queryByRole("button", { name: /I updated/ })).toBeNull();
   });
 });
+
+describe("a device-connection guide (新建设备)", () => {
+  it("shows every block before save and passes shell actions to renderShellAction", async () => {
+    const provider = {
+      plugin: "device-local",
+      displayName: { zh: "本机", en: "Local machine" },
+      description: null,
+      dialIn: true,
+      guide: { itemId: "item-dev", guideId: "connect" },
+    };
+    stubApi({
+      [`GET ${BASE}/devices`]: () =>
+        json(200, {
+          items: [],
+          defaultId: null,
+          lastUsedId: null,
+          providers: [provider],
+          defaultProvider: "device-local",
+        }),
+      [`GET ${BASE}/catalog/item-dev/guides/connect`]: () =>
+        json(200, {
+          guide: {
+            itemId: "item-dev",
+            plugin: "device-local",
+            version: "0.1.0",
+            id: "connect",
+            place: "device-connection",
+            locale: "en",
+            title: "Connect",
+            modes: [],
+            mode: null,
+            audiences: ["member"],
+            audience: "member",
+            blocks: [
+              { kind: "markdown", text: "Before the break" },
+              { kind: "markdown", text: "***\n\nAfter the break" },
+              { kind: "shell-action", action: "connect-this-machine", label: "Connect here" },
+            ],
+            checks: [],
+            unresolved: [],
+            hash: "a".repeat(64),
+            target: null,
+          },
+        }),
+    });
+    (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
+      version: 1,
+      capabilities: {
+        "device@2": {
+          status: vi.fn().mockResolvedValue({ connections: [] }),
+          onStatus: () => () => {},
+          connect: vi.fn(),
+        },
+      },
+      on: () => () => {},
+    };
+    try {
+      await renderRouteWithCache("/devices", lastStubRoutes(), { locale: "en" });
+      await userEvent.click(await screen.findByRole("button", { name: en.devices.new }));
+      expect(await screen.findByText("Before the break")).toBeTruthy();
+      expect(screen.getByText("After the break")).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Connect here" })).toBeTruthy();
+    } finally {
+      Reflect.deleteProperty(window, "capybaraShell");
+    }
+  });
+});

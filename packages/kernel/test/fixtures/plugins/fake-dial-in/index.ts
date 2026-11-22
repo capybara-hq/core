@@ -25,8 +25,8 @@ import {
  *
  * A machine refuses an operation by answering `{ error: { kind, message } }`: kind `gone` throws
  * `SandboxGoneError` (the instance is gone), `fileSystemGone` `FileSystemGoneError`, `refused`
- * `ProjectPathRefusedError` (the message is its reason), `offline` `DeviceOfflineError`; any other
- * kind is an ordinary error with the message. An unconnected machine is the relay's own
+ * `ProjectPathRefusedError` (the message is its reason's `en`, an optional `zh` its `zh`),
+ * `offline` `DeviceOfflineError`; any other kind is an ordinary error with the message. An unconnected machine is the relay's own
  * `DeviceOfflineError`.
  *
  * The machine's hello body is `{ revision: string; outsideSandbox: boolean; perOperationHosts?:
@@ -100,7 +100,10 @@ function refusal(deviceId: string, answer: unknown): Error | null {
     case "fileSystemGone":
       return new FileSystemGoneError(message);
     case "refused":
-      return new ProjectPathRefusedError({ en: message });
+      return new ProjectPathRefusedError({
+        en: message,
+        ...(typeof answer.error.zh === "string" && { zh: answer.error.zh }),
+      });
     case "offline":
       return new DeviceOfflineError(deviceId);
     default:

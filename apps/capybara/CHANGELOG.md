@@ -1,5 +1,17 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.94
+
+### Patch Changes
+
+- 827062e: One device page for every provider (概览 / 网络 / 项目, provider origin on the nameplate), 新建设备
+  offers the org's providers with their connection guides, and a network ask can add its hosts to
+  the device's own list, with the moment that takes effect shown on the card.
+- 7a5b3da: The image pins `device-local` `@capybara-hq/plugin-device-local@0.1.0-rc.2` (device protocol 6:
+  per-connection project reach and coded project refusals) as the bootstrap preinstall with scope
+  `all`, and the device-docker build contexts move to the plugins commit that lists it. Upgrade
+  `capybara-device` to 0.1.0-rc.29 or later together with the kernel.
+
 ## 0.1.0-rc.93
 
 ### Patch Changes

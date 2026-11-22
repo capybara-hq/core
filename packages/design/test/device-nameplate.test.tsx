@@ -18,7 +18,7 @@ function plate(over: Partial<Parameters<typeof DeviceNameplate>[0]> = {}) {
     <DesignProvider locale="zh">
       <DeviceNameplate
         name="设计工作机"
-        origin="local"
+        origin="本机"
         state="online"
         version="0.4.0"
         lastSeen={LAST_SEEN}
@@ -32,7 +32,7 @@ describe("DeviceNameplate", () => {
   it("draws the name, origin, status light and mono figures in the design's words", () => {
     const { container } = plate();
     expect(screen.getByText("设计工作机")).toBeTruthy();
-    expect(screen.getByText("本地设备")).toBeTruthy();
+    expect(screen.getByText("本机")).toBeTruthy();
     expect(screen.getByText("在线")).toBeTruthy();
     expect(screen.getByText("程序")).toBeTruthy();
     expect(screen.getByText("最后活跃")).toBeTruthy();
@@ -45,8 +45,8 @@ describe("DeviceNameplate", () => {
   });
 
   it("draws the cloud running state with an optional mode badge", () => {
-    plate({ origin: "cloud", state: "running", badge: <Badge tone="warn">自动</Badge> });
-    expect(screen.getByText("云端设备")).toBeTruthy();
+    plate({ origin: "Docker devices", state: "running", badge: <Badge tone="warn">自动</Badge> });
+    expect(screen.getByText("Docker devices")).toBeTruthy();
     expect(screen.getByText("运行中")).toBeTruthy();
     expect(screen.getByText("自动")).toBeTruthy();
   });

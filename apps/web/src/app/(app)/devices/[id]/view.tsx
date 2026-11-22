@@ -17,22 +17,15 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import {
-  DeviceOverview,
-  DeviceSettings,
-  RecentChanges,
-} from "../../../../components/DeviceModeSection";
-import {
-  DeviceProjectsOverview,
-  DeviceProjectsSettings,
-} from "../../../../components/DeviceProjectsSection";
+import { DeviceNetworkSection } from "../../../../components/DeviceNetworkSection";
+import { DeviceOverviewSection } from "../../../../components/DeviceOverviewSection";
+import { DeviceProjectsSection } from "../../../../components/DeviceProjectsSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
-import { ThisMachineSection } from "../../../../components/ThisMachineSection";
 import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
 import {
@@ -41,11 +34,12 @@ import {
   deviceCeilingMark,
   deviceState,
   isDeviceName,
+  providerLabel,
   renameDevice,
   resetDeviceFiles,
   resetPollInterval,
-  revokeDeviceMachine,
 } from "../../../../lib/devices";
+import { labelLocale } from "../../../../lib/extension-label";
 import { deviceQuery } from "../../../../lib/query/devices";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -55,20 +49,18 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/devices/[id]`: one device (DetailPage, one centred column). Its head is the `DeviceNameplate`
- * band — name, origin, status light and the sandbox mark (can run outside the sandbox, or sandbox only) on
- * the left, program version, last seen and creation time on the right — the page's one bright
- * element, and the page's title: the PageHeader is title-less, so the name is said once
- * (`titleHidden`). Everything below is quiet and dense: the owner ceiling (read only on Overview, with
- * the narrowing the kernel allows on Settings; no daily mode), the cloud facts (Provider, Resources and Network,
- * each said once), the files and suspension notes, the recent changes, and for a local device its
- * allowlist and machine block (System and Disconnect this machine).
- * Rename, Rebuild files (only when its files are lost, a change waits for a file reset or its sandbox
- * limits must be established again, said up front in a callout; behind a confirmation; a job, so the page then
- * polls until the files are back) and 删除 (typing its name; the files are deleted with it, a
- * destructive item of the ⋯ menu; deleting 个人设备 says a new empty one is created the next time
- * one is needed). A local device never offers 重建文件 (the kernel refuses it): its files-lost note
- * tells the person to run `capybara-device logout`, then `capybara-device login` on the machine.
+ * `/devices/[id]`: one device, the same page for every provider (device provider design §6.6;
+ * DetailPage, one centred column). Its head is the `DeviceNameplate` band — name, the provider's
+ * display name, status light and the sandbox mark on the left, program version (a dial-in
+ * device's machine), last seen (the machine's, else the instance's last use) and creation time on
+ * the right — the page's one bright element, and the page's title: the PageHeader is title-less,
+ * so the name is said once (`titleHidden`). Tabs Overview (values: the provider's report, files,
+ * recent changes, the danger zone), Network (the network setting) and Projects (the projects).
+ * Rename, Rebuild files (only when the provider's report offers a reset and its files are lost, a
+ * change waits for a file reset or its sandbox limits must be established again, said up front in
+ * a callout; behind a confirmation; a job, so the page then polls until the files are back) and
+ * Delete (typing its name; deleting the personal device says a new empty one is created the next
+ * time one is needed). A provider not on in the org is one callout naming it.
  * From the query cache (the layout prefetched it on a first load); a device the kernel does not
  * find is the not-found state.
  */
@@ -101,10 +93,7 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
         }}
         tabs={{
           label: t("detail.tabsLabel"),
-          items: [
-            { id: "overview", label: t("detail.tabOverview") },
-            { id: "settings", label: t("detail.tabSettings") },
-          ],
+          items: tabItems(t),
           value: "overview",
           onChange: () => {},
         }}
@@ -128,7 +117,17 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   );
 }
 
-type Dialogs = "rename" | "reset" | "delete" | "revoke" | null;
+type Dialogs = "rename" | "reset" | "delete" | null;
+
+type Tab = "overview" | "network" | "projects";
+const TABS: readonly Tab[] = ["overview", "network", "projects"];
+const TAB_LABEL = {
+  overview: "detail.tabOverview",
+  network: "detail.tabNetwork",
+  projects: "detail.tabProjects",
+} as const;
+const tabItems = (t: ReturnType<typeof useTranslations<"devices">>) =>
+  TABS.map((id) => ({ id, label: t(TAB_LABEL[id]) }));
 
 function Detail({
   orgId,
@@ -144,7 +143,8 @@ function Detail({
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState<Dialogs>(null);
-  const [tab, setTab] = useState<"overview" | "settings">("overview");
+  const [tab, setTab] = useState<Tab>("overview");
+  const lang = labelLocale(useLocale());
   const name = useDeviceName()(e);
   const state = deviceState(e);
   const invalidates = () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)];
@@ -160,8 +160,11 @@ function Detail({
     invalidates: () => [keys.org(orgId).devices()],
     forgetsOnLeave: () => [keys.org(orgId).device(e.id)],
   });
-  const revoke = useAppMutation({ fn: () => revokeDeviceMachine(orgId, e.id), invalidates });
-  const local = e.dialIn;
+  const provider = providerLabel(e, lang) || t("none");
+  const canReset =
+    e.report?.reset === true &&
+    e.available &&
+    (e.filesLost || e.sandbox.pendingFilesReset || e.reconcileRequired);
   const npState: DeviceNameplateState =
     state === "running"
       ? "running"
@@ -181,9 +184,7 @@ function Detail({
           titleHidden: true,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...((e.filesLost || e.sandbox.pendingFilesReset || e.reconcileRequired) &&
-            e.available &&
-            !local
+            ...(canReset
               ? [
                   {
                     label: t("detail.resetFiles"),
@@ -196,72 +197,49 @@ function Detail({
         }}
         tabs={{
           label: t("detail.tabsLabel"),
-          items: [
-            { id: "overview", label: t("detail.tabOverview") },
-            { id: "settings", label: t("detail.tabSettings") },
-          ],
+          items: tabItems(t),
           value: tab,
-          onChange: (id) => setTab(id === "settings" ? "settings" : "overview"),
+          onChange: (id) => setTab(TABS.find((x) => x === id) ?? "overview"),
         }}
         facts={
           <DeviceNameplate
             name={name}
-            origin={local ? "local" : "cloud"}
+            origin={provider}
             state={npState}
-            version={local ? (e.machine?.programVersion ?? null) : null}
-            lastSeen={local ? (e.machine?.lastSeenAt ?? null) : (e.instance?.lastUsedAt ?? null)}
+            version={e.machine?.programVersion ?? null}
+            lastSeen={e.machine !== null ? e.machine.lastSeenAt : (e.instance?.lastUsedAt ?? null)}
             created={e.createdAt}
             badge={<Badge>{t(`sandbox.mark.${mark}`)}</Badge>}
-            labels={{
-              // a device whose provider is not loaded is neither: it names its provider
-              origin: {
-                cloud: e.available ? t("source.cloud") : (e.provider ?? t("none")),
-                local: t("source.local"),
-              },
-              state: { [npState]: t(`state.${state}`) },
-            }}
+            labels={{ state: { [npState]: t(`state.${state}`) } }}
           />
         }
       >
-        {e.filesLost && (
+        {!e.available && <Callout tone="warn">{t("detail.providerOffNote", { provider })}</Callout>}
+        {e.available && e.filesLost && (
           <Callout tone="warn">
-            {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
+            {t(e.report?.reset === true ? "detail.filesLostNote" : "detail.filesLostNoReset")}
           </Callout>
         )}
-        {e.reconcileRequired && !e.filesLost && (
+        {e.available && e.reconcileRequired && !e.filesLost && (
           <Callout tone="warn">{t("detail.reconcileNote")}</Callout>
         )}
-        {!e.available && <Callout tone="warn">{t("detail.providerOffNote")}</Callout>}
         {tab === "overview" ? (
           <Stack gap={12}>
-            <ThisMachineSection orgId={orgId} device={e} />
-            <DeviceOverview device={e} onOpenSettings={() => setTab("settings")} />
-            <DeviceProjectsOverview
-              orgId={orgId}
-              device={e}
-              onOpenSettings={() => setTab("settings")}
-            />
-            <RecentChanges recent={e.sandbox.recent} />
-          </Stack>
-        ) : (
-          <>
-            <DeviceSettings orgId={orgId} device={e} onDisconnect={() => setOpen("revoke")} />
-            <DeviceProjectsSettings orgId={orgId} device={e} />
+            <DeviceOverviewSection orgId={orgId} device={e} />
             <DangerZone title={t("danger.title")}>
               <DangerZoneItem
                 title={t("detail.delete")}
-                description={t(
-                  local
-                    ? "detail.deleteDangerLocal"
-                    : e.isDefault
-                      ? "detail.deleteDangerDefault"
-                      : "detail.deleteDanger",
-                  { name },
-                )}
+                description={t(e.isDefault ? "detail.deleteDangerDefault" : "detail.deleteDanger", {
+                  name,
+                })}
                 action={{ label: t("detail.delete"), onSelect: () => setOpen("delete") }}
               />
             </DangerZone>
-          </>
+          </Stack>
+        ) : tab === "network" ? (
+          <DeviceNetworkSection orgId={orgId} device={e} />
+        ) : (
+          <DeviceProjectsSection orgId={orgId} device={e} />
         )}
       </DetailPage>
       {open === "rename" && (
@@ -289,19 +267,6 @@ function Detail({
           }}
         />
       )}
-      {open === "revoke" && e.machine !== null && (
-        <RevokeDialog
-          machine={e.machine.name}
-          pending={revoke.isPending}
-          onClose={() => setOpen(null)}
-          onRevoke={async () => {
-            const machine = e.machine?.name ?? "";
-            await revoke.mutateAsync(undefined);
-            setOpen(null);
-            toast.success(t("machine.revoked", { name: machine }));
-          }}
-        />
-      )}
       <DangerConfirm
         open={open === "delete"}
         onOpenChange={(o) => {
@@ -310,14 +275,7 @@ function Detail({
         title={t("detail.deleteTitle")}
         description={
           <Text variant="prose">
-            {t(
-              local
-                ? "detail.deleteLocalHint"
-                : e.isDefault
-                  ? "detail.deleteDefaultHint"
-                  : "detail.deleteHint",
-              { name },
-            )}
+            {t(e.isDefault ? "detail.deleteDefaultHint" : "detail.deleteHint", { name })}
           </Text>
         }
         confirmName={name}
@@ -452,65 +410,6 @@ function ResetDialog({
     >
       <Stack gap={12}>
         <Text variant="prose">{t("detail.resetHint")}</Text>
-        {error !== undefined && <FormError message={error} />}
-      </Stack>
-    </Dialog>
-  );
-}
-
-/**
- * 断开这台机器: its credential is revoked, so it asks first (a dangerous dialog that starts on
- * Cancel).
- */
-function RevokeDialog({
-  machine,
-  pending,
-  onClose,
-  onRevoke,
-}: {
-  machine: string;
-  pending: boolean;
-  onClose(): void;
-  onRevoke(): Promise<void>;
-}) {
-  const t = useTranslations("devices");
-  const errorMessage = useErrorMessage();
-  const [error, setError] = useState<string>();
-  const submit = async () => {
-    setError(undefined);
-    try {
-      await onRevoke();
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
-  return (
-    <Dialog
-      open
-      danger
-      initialFocus="cancel"
-      onOpenChange={(open) => {
-        if (!open && !pending) onClose();
-      }}
-      title={t("machine.revokeTitle", { name: machine })}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            {t("create.cancel")}
-          </Button>
-          <Button
-            variant="danger-solid"
-            loading={pending}
-            disabled={pending}
-            onClick={() => void submit()}
-          >
-            {t("machine.revokeSubmit")}
-          </Button>
-        </>
-      }
-    >
-      <Stack gap={12}>
-        <Text variant="prose">{t("machine.revokeHint")}</Text>
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>

@@ -11,7 +11,7 @@ function deviceNameplateBlocks(): ReactNode {
       <RefBlock id="device-nameplate-cloud" width={640}>
         <DeviceNameplate
           name="staging-builder"
-          origin="cloud"
+          origin="Docker devices"
           state="running"
           version="0.4.0"
           lastSeen="2026-11-13T16:21:00Z"
@@ -22,7 +22,7 @@ function deviceNameplateBlocks(): ReactNode {
       <RefBlock id="device-nameplate-local" width={640}>
         <DeviceNameplate
           name="设计工作机"
-          origin="local"
+          origin="本机"
           state="online"
           version="0.4.0"
           lastSeen="2026-11-13T15:58:00Z"
@@ -33,7 +33,7 @@ function deviceNameplateBlocks(): ReactNode {
       <RefBlock id="device-nameplate-suspended" width={640}>
         <DeviceNameplate
           name="report-runner"
-          origin="cloud"
+          origin="Docker devices"
           state="suspended"
           version="0.4.0"
           lastSeen="2026-11-12T09:04:00Z"
@@ -44,7 +44,7 @@ function deviceNameplateBlocks(): ReactNode {
       <RefBlock id="device-nameplate-offline" width={640}>
         <DeviceNameplate
           name="办公室工作站"
-          origin="local"
+          origin="本机"
           state="offline"
           version="0.3.9"
           lastSeen="2026-11-10T18:40:00Z"

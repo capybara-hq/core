@@ -275,10 +275,14 @@ export function providerLimits(limits: DeviceLimits): SandboxLimits {
 }
 
 /**
- * What the kernel records of a cloud instance's limits (auto mode spec §4.2). Only the kind of its
- * network decides whether a running instance must change; `hosts` and resources reach instances
- * created afterwards. `mode` is recorded but never decides a change ({@link sameApplied},
- * {@link appliedWider}; only the one-time B1 reconciliation compares it, {@link sameAppliedExactly}):
+ * What the kernel records of a cloud instance's limits (auto mode spec §4.2). The kind of its
+ * network decides whether a running instance must change, and so do its hosts: a host the
+ * instance's list allows that the desired list does not ({@link appliedWider}, applied at once) or
+ * a desired host the instance's list does not cover ({@link appliedLacksHost}, a host added to the
+ * device's or the org's list, applied per the provider's `limitsApplyAt`: at the next use, or
+ * after a file reset). Resources reach instances created afterwards. `mode` is recorded but never
+ * decides a change ({@link sameApplied}, {@link appliedWider}; only the one-time B1 reconciliation
+ * compares it, {@link sameAppliedExactly}):
  * a cloud device has no outside of its sandbox and the mode never reaches a provider
  * ({@link providerLimits}), so a mode that follows the platform's or org's outside-sandbox setting
  * must not update every cloud instance when that setting is toggled (Docker would recreate it
@@ -319,6 +323,18 @@ export function appliedWider(a: AppliedLimits | null | undefined, b: AppliedLimi
   if (b.network.kind === "open-public") return false;
   if (a.network.kind === "open-public") return true;
   return a.network.hosts.some((host) => !b.network.hosts.some((p) => coversHost(p, host)));
+}
+
+/**
+ * Whether desired limits `b` allow a host that applied limits `a` do not cover, both allowlists
+ * (device-provider spec §6.3): a host added to the device's own list, or to the org's or the
+ * platform's, which the instance gets at its next use (or, with limits fixed at its file system,
+ * after a file reset). Unknown (null) is false here, as for {@link appliedWider}; a change of kind
+ * is {@link sameApplied}'s. The mode is not a dimension ({@link AppliedLimits}).
+ */
+export function appliedLacksHost(a: AppliedLimits | null | undefined, b: AppliedLimits): boolean {
+  if (a == null || a.network.kind !== "allowlist" || b.network.kind !== "allowlist") return false;
+  return b.network.hosts.some((host) => !a.network.hosts.some((p) => coversHost(p, host)));
 }
 
 const isMode = (v: unknown): v is SandboxMode => v === "auto" || v === "sandbox";

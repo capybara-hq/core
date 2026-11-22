@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Approval block</h1>
-<p>The only accent-outlined card: title, then the tool as "connector: title" and always its model-visible key (faint), every argument as key / value (key arguments first, long values capped, "show full input" opens the JSON), one button per allowed scope, a kernel-rendered one-sentence summary above the arguments when the call has one (Platform operations), Deny with an optional reason, the policy on the right. Handled: one line with who, the tool and its key, scope, when and the reason. The network ask (a device refused a command network hosts): the hosts with their registrable domain, the command, a checkbox per host when there are several, 这次允许 (primary) with its hint, Deny, and the machine command that allows a host on the device for good (the deployment never widens a device); decided, one line with the word, the hosts and who. The command ask carries its details inside the card: the agent's reason first as an attributed quote, the lead, the facts of a crossing (or the working root, middle-truncated) right above the command, the short hint under 允许一次 and a note under the actions; decided, one line with the crossing phrase and nothing below it. The secure input request (secret fields only the person can enter): the accent card with the head 输入密钥：<target>, the note that the values are saved directly and the agent never sees them, one masked field per secret, and 提交 (primary, disabled while a field is empty) and 取消, no scopes and no arguments; decided, one line, 已提交 or 已取消, and the target.</p>
+<p>The only accent-outlined card: title, then the tool as "connector: title" and always its model-visible key (faint), every argument as key / value (key arguments first, long values capped, "show full input" opens the JSON), one button per allowed scope, a kernel-rendered one-sentence summary above the arguments when the call has one (Platform operations), Deny with an optional reason, the policy on the right. Handled: one line with who, the tool and its key, scope, when and the reason. The network ask (a device refused a command network hosts): the hosts with their registrable domain, the command, a checkbox per host when there are several, 这次允许 (primary) with its hint, 加入此设备的列表 with when it applies (the only button, as the primary, on a device without per-operation hosts), Deny; decided, one line with the word (已允许（这次） or 已加入此设备的列表), the hosts and who. The command ask carries its details inside the card: the agent's reason first as an attributed quote, the lead, the facts of a crossing (or the working root, middle-truncated) right above the command, the short hint under 允许一次 and a note under the actions; decided, one line with the crossing phrase and nothing below it. The secure input request (secret fields only the person can enter): the accent card with the head 输入密钥：<target>, the note that the values are saved directly and the agent never sees them, one masked field per secret, and 提交 (primary, disabled while a field is empty) and 取消, no scopes and no arguments; decided, one line, 已提交 or 已取消, and the target.</p>
 <div class="r-blocks">
 <section data-ref-block="approval-block-pending" style="width:752px" data-pad>
   <template data-fixture="approval-block" data-opts='{"state": "pending"}'></template>
@@ -47,6 +47,15 @@
 </section>
 <section data-ref-block="approval-block-network-once" style="width:752px" data-pad>
   <template data-fixture="approval-block" data-opts='{"state": "network-once"}'></template>
+</section>
+<section data-ref-block="approval-block-network-always" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "network-always"}'></template>
+</section>
+<section data-ref-block="approval-block-network-list-only" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "network-list-only"}'></template>
+</section>
+<section data-ref-block="approval-block-network-added" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "network-added"}'></template>
 </section>
 <section data-ref-block="approval-block-network-allowed" style="width:752px" data-pad>
   <template data-fixture="approval-block" data-opts='{"state": "network-allowed"}'></template>

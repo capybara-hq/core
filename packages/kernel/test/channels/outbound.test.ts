@@ -1013,6 +1013,7 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
         hosts: hosts.map((host) => ({ host, port: 443 })),
         command: "curl -fsSL https://files.slack.com/x -H 'Authorization: app-secret-1234567'",
         description: "Download the file",
+        appliesAt: "next-command",
         result: { content: "curl: (56) CONNECT tunnel failed, response 403", isError: true },
       },
       scopes: ["once"],

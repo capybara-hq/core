@@ -159,7 +159,7 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
     if (connector !== undefined) target = { kind: "connector", id: connector.id };
   }
   // `extension-deployment`: the common variables only, no org and no target (the deployment);
-  // `device-connection`: the common ones and `orgId`; the new device's target comes with phase 3
+  // `device-connection`: the common ones and `orgId`, no target
   reasons.publicUrl = "public_url";
   reasons.signInCallbackUrl = "public_url";
   reasons.oauthCallbackUrl = "public_url";

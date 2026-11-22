@@ -2,32 +2,32 @@
 
 import {
   Button,
-  ContentSection,
   Dialog,
   Field,
   FormSection,
   Input,
   ItemList,
-  SkeletonText,
   Stack,
   Subsection,
   Text,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiClientError } from "../lib/api";
 import {
   addDeviceProject,
   type Device,
-  type DeviceProject,
   type DeviceProjectList,
+  type DeviceText,
   defaultProjectName,
+  deviceText,
   normalizeProjectPath,
   projectBasePrefix,
   removeDeviceProject,
 } from "../lib/devices";
+import { labelLocale } from "../lib/extension-label";
 import { retryOnMountOf } from "../lib/query/client";
 import { deviceProjectCandidatesQuery, deviceProjectsQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
@@ -64,87 +64,24 @@ function LoadFailed({ onRetry }: { onRetry(): void }) {
   );
 }
 
-/** The muted line under the list when the current mode hides stored projects. */
-function HiddenNote({ count }: { count: number }) {
+/** Why a device offers no projects: its provider does not list them. */
+function UnsupportedNote() {
   const t = useTranslations("devices.projects");
-  if (count === 0) return null;
   return (
     <Text variant="prose" tone="muted">
-      {t("hidden", { count })}
+      {t("unsupported")}
     </Text>
   );
 }
 
-/** Why a device offers no projects: its program is old, or its cloud provider lacks them. */
-function UnsupportedNote({ device }: { device: Device }) {
-  const t = useTranslations("devices.projects");
-  return (
-    <Text variant="prose" tone="muted">
-      {t(device.dialIn ? "unsupportedLocal" : "unsupportedCloud")}
-    </Text>
-  );
-}
-
-const rowsOf = (projects: DeviceProject[]) =>
-  projects.map((p) => ({ id: p.name, title: p.name, meta: p.path }));
-
 /**
- * 概览's projects: the ones the device's current mode can read, read only, with a link to 设置
- * where they are managed.
+ * Projects (device provider design §6.6), the same for every provider: the list with Remove each
+ * (after a confirmation), and Add project in a dialog taking the path relative to the base the
+ * kernel returns (the provider's home, else the workspace; project root §4.2), the base drawn as a
+ * fixed prefix. A device without project support says so and offers no form; a refusal of the
+ * provider's (`device.project_refused`) shows its reason in the page language.
  */
-export function DeviceProjectsOverview({
-  orgId,
-  device,
-  onOpenSettings,
-}: {
-  orgId: string;
-  device: Device;
-  onOpenSettings(): void;
-}) {
-  const t = useTranslations("devices.projects");
-  const read = useDeviceProjects(orgId, device.id);
-  if (read.isError && refused(read.error)) return null;
-  const list = read.data;
-  return (
-    <ContentSection
-      title={t("title")}
-      {...(list !== undefined && list.projects.length > 0 ? { count: list.projects.length } : {})}
-      {...(list?.supported
-        ? {
-            actions: (
-              <Button density="dense" onClick={onOpenSettings}>
-                {t("manage")}
-              </Button>
-            ),
-          }
-        : {})}
-    >
-      {read.isError && list === undefined ? (
-        <LoadFailed onRetry={() => void read.refetch()} />
-      ) : list === undefined ? (
-        <Stack gap={8}>
-          <SkeletonText width="45%" />
-          <SkeletonText width="70%" size="small" />
-        </Stack>
-      ) : !list.supported ? (
-        <UnsupportedNote device={device} />
-      ) : (
-        <Stack gap={8}>
-          <ItemList label={t("title")} rows={rowsOf(list.projects)} empty={t("overviewEmpty")} />
-          <HiddenNote count={list.hidden} />
-        </Stack>
-      )}
-    </ContentSection>
-  );
-}
-
-/**
- * The Settings tab's projects, beside the access ceiling and the allowlist: the list with Remove each (after a
- * confirmation), and 添加项目 in a dialog taking the path relative to the base of the device's
- * current mode (§4.2), the base drawn as a fixed prefix. A device without project support says
- * why and offers no form.
- */
-export function DeviceProjectsSettings({ orgId, device }: { orgId: string; device: Device }) {
+export function DeviceProjectsSection({ orgId, device }: { orgId: string; device: Device }) {
   const t = useTranslations("devices.projects");
   const toast = useToast();
   const read = useDeviceProjects(orgId, device.id);
@@ -164,7 +101,7 @@ export function DeviceProjectsSettings({ orgId, device }: { orgId: string; devic
       {read.isError && list === undefined ? (
         <LoadFailed onRetry={() => void read.refetch()} />
       ) : list === undefined ? null : !list.supported ? (
-        <UnsupportedNote device={device} />
+        <UnsupportedNote />
       ) : (
         <Stack gap={12}>
           <ItemList
@@ -185,10 +122,9 @@ export function DeviceProjectsSettings({ orgId, device }: { orgId: string; devic
             }))}
             empty={t("empty")}
           />
-          <HiddenNote count={list.hidden} />
           {list.base === null ? (
             <Text variant="prose" tone="warn">
-              {t("homeUnknown")}
+              {t("baseUnknown")}
             </Text>
           ) : (
             <div>
@@ -199,11 +135,12 @@ export function DeviceProjectsSettings({ orgId, device }: { orgId: string; devic
           )}
         </Stack>
       )}
-      {adding && list !== undefined && (
+      {adding && list?.base != null && (
         <AddProjectDialog
           orgId={orgId}
           device={device}
           list={list}
+          base={list.base}
           onClose={() => setAdding(false)}
           onAdded={(name) => {
             setAdding(false);
@@ -234,22 +171,33 @@ function detailPath(d: unknown): string | undefined {
   return typeof first === "string" ? first.split(".")[0] : undefined;
 }
 
+/** The provider's reason in a `device.project_refused` refusal (its first detail's `reason`). */
+function refusalReason(e: ApiClientError): DeviceText | undefined {
+  const reason = (e.rawDetails[0] as { reason?: unknown } | undefined)?.reason;
+  return typeof (reason as { en?: unknown } | undefined)?.en === "string"
+    ? (reason as DeviceText)
+    : undefined;
+}
+
 /**
  * 添加项目: the path relative to the base (a fixed prefix, never typed) and an optional name
  * defaulting to the path's last segment. The suggestions are read only while this dialog is open
  * (asking the device starts or resumes it); picking one fills the form. A refusal is drawn under
- * the field it concerns, in the reader's language mapped from its code.
+ * the field it concerns, in the reader's language: mapped from its code, or the provider's own
+ * reason for `device.project_refused`.
  */
 function AddProjectDialog({
   orgId,
   device,
   list,
+  base,
   onClose,
   onAdded,
 }: {
   orgId: string;
   device: Device;
   list: DeviceProjectList;
+  base: string;
   onClose(): void;
   onAdded(name: string): void;
 }) {
@@ -257,6 +205,7 @@ function AddProjectDialog({
   // a schema refusal of the name reads as the service's own name refusal (the same rules)
   const te = useTranslations("errors");
   const errorMessage = useErrorMessage();
+  const lang = labelLocale(useLocale());
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const [failure, setFailure] = useState<{ field: "path" | "name" | "form"; message: string }>();
@@ -270,7 +219,7 @@ function AddProjectDialog({
       keys.org(orgId).permissionPreviewAll(device.id),
     ],
   });
-  const prefix = projectBasePrefix(device.dialIn, list.mode);
+  const prefix = projectBasePrefix(base);
   const relative = normalizeProjectPath(path);
   const typedName = name.trim();
   const pending = add.isPending;
@@ -287,6 +236,12 @@ function AddProjectDialog({
       onAdded(r.project.name);
     } catch (e) {
       const code = e instanceof ApiClientError ? e.code : "";
+      const reason =
+        code === "device.project_refused" ? refusalReason(e as ApiClientError) : undefined;
+      if (reason !== undefined) {
+        setFailure({ field: "path", message: deviceText(reason, lang) });
+        return;
+      }
       if (code === "validation_failed") {
         // the route's schema names the field; its text is the kernel's English, so the reader
         // gets the field's own copy instead
@@ -341,11 +296,7 @@ function AddProjectDialog({
       }
     >
       <Stack gap={12}>
-        <Field
-          label={t("pathLabel")}
-          help={t(prefix === "~/" ? "pathHelpHome" : "pathHelpWorkspace")}
-          {...pathError}
-        >
+        <Field label={t("pathLabel")} help={t("pathHelp", { base })} {...pathError}>
           <Input
             value={path}
             prefix={prefix}

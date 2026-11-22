@@ -79,7 +79,6 @@ export {
 } from "./date-time";
 export {
   DeviceNameplate,
-  type DeviceNameplateOrigin,
   type DeviceNameplateProps,
   type DeviceNameplateState,
 } from "./device-nameplate";

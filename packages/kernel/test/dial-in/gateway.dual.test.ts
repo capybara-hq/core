@@ -303,26 +303,6 @@ describe("the dial-in channel across replicas (dual replica)", () => {
     });
   });
 
-  it("revoking the machine on B stops it and closes 4003 on A; requests then answer device.forbidden", async () => {
-    const { deviceId, machine } = await onA();
-    const del = await call("DELETE", `/api/v1/orgs/${orgId}/devices/${deviceId}/machine`);
-    expect(del.status, JSON.stringify(del.json)).toBe(204);
-    const closed = await machine.closed;
-    expect(closed.code).toBe(DEVICE_CLOSE.revoked);
-    expect(machine.stops).toEqual(["stop"]);
-    await until(`closed:${deviceId}`, "revoked");
-    await waitFor(
-      async () => ((await redis.get(deviceLeaseKey(deviceId))) === null ? true : null),
-      10_000,
-      "lease released",
-    );
-    const res = await requestOnB(deviceId, { op: "ping" });
-    expect(res.ok === false && res.error).toMatchObject({
-      code: "device.forbidden",
-      offline: false,
-    });
-  });
-
   it("signing the device in from another machine on B closes the old one 4002 on A without a stop", async () => {
     const { deviceId, machine: old } = await onA();
     const next = await signIn({ deviceId });

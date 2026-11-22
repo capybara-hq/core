@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChannelCardActions, type ChannelCardActionsDeps } from "../../src/channels/actions.js";
 import { approvalCard, CARD_SUMMARY_MAX, commandCardText } from "../../src/channels/cards.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { ApiError } from "../../src/errors.js";
 import { escalationAskReason } from "../../src/sandbox/review/permission-candidate.js";
 
 /**
@@ -189,8 +190,11 @@ const click = (over: Record<string, unknown> = {}) =>
 const actions = (
   rows: { card?: unknown; thread?: unknown; approvalKind?: string },
   speaker: { accountId: string; threadAccount: string | null },
+  decideError?: Error,
 ) => {
-  const decide = vi.fn(async () => undefined);
+  const decide = vi.fn(async () => {
+    if (decideError !== undefined) throw decideError;
+  });
   const send = vi.fn(async () => ({ messageId: "m2" }));
   const enqueue = vi.fn(async () => undefined);
   const deps = {
@@ -248,6 +252,42 @@ describe("a command ask's click in IM", () => {
       undefined,
       "im",
     );
+  });
+});
+
+describe("a network ask's add to this device's list refused in IM", () => {
+  const replyText = (a: ReturnType<typeof actions>) =>
+    (a.send.mock.calls[0] as unknown as [string, unknown, { text: string }])[2].text;
+
+  it("the device can no longer take the host: an invalid action reply, nothing thrown", async () => {
+    const a = actions(
+      { card: CARD, approvalKind: "network" },
+      { accountId: "a1", threadAccount: "a1" },
+      new ApiError("device.network_not_allowed", "b.dev cannot be added to this device's list"),
+    );
+    await a.handler.handle(
+      "conn1",
+      click({
+        action: { cardKind: "approval", cardId: "ca1", action: "approve", scope: "always" },
+      }),
+    );
+    expect(replyText(a)).toBe("无法完成这个操作，请到网页上处理。");
+    expect(a.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("the device is gone or no longer the clicker's: a cannot-handle reply", async () => {
+    const a = actions(
+      { card: CARD, approvalKind: "network" },
+      { accountId: "a1", threadAccount: "a1" },
+      new ApiError("device.not_found", "Device not found"),
+    );
+    await a.handler.handle(
+      "conn1",
+      click({
+        action: { cardKind: "approval", cardId: "ca1", action: "approve", scope: "always" },
+      }),
+    );
+    expect(replyText(a)).toBe("你不能处理这条请求。");
   });
 });
 

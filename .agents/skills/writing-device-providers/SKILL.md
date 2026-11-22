@@ -87,8 +87,8 @@ unavailableReason? }`. A report of any other shape reads unprobed and admits not
   run the escalated pair (`filesystem: device` + `network: environment`, recognized by `isFullExecutionScope`).
 - **`boundary: "instance"`** (`sandbox-docker`, `sandbox-e2b`): the container or microVM is the sandbox. `restricted: null`
   is supported here: the scope is the whole instance, the provider's outer network is the sandbox network,
-  `perOperationHosts` and `outsideSandbox` are `false` (a cloud device has no outside and no per-call host grants; the reply
-  says to add the host to the device's list). All three profiles are offered; they differ only in who approves.
+  `perOperationHosts` and `outsideSandbox` are `false` (a cloud device has no outside and no per-call host grants: a network
+  ask offers only "add to this device's list", see **Network asks** below). All three profiles are offered; they differ only in who approves.
 - **Availability never gates the profile.** A device whose provider cannot enforce scoped operations
   is `unsupported`, with a `cause` on the HTTP views (`provider-outdated` with plugin and version, or
   `runtime`); the recorded `permission_context` keeps only `{ state, reason }`. All three profiles stay
@@ -203,7 +203,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   applied limits stand: the outer boundary is the applied network, and restricted hosts (base, accepted additions,
   proposals) are cut to it. A narrowing, host-only too, goes through the exclusive lease on the next use: it is applied
   (`update` or recreate) and recorded again, or, on a provider bound to its file system, recorded `unapplied` (unprobed
-  until a file reset). Readers never call the provider (a suspended instance reads as recorded). A failed read is logged
+  until a file reset). A desired host the applied allowlist does not cover (`appliedLacksHost`: a host added to the
+  device's, org's or platform's list) is applied the same way on the next use, once (the record then covers it); on a
+  provider bound to its file system it waits for a file reset (`pendingFilesReset`). Resources and the mode alone never
+  change a running instance. Readers never call the provider (a suspended instance reads as recorded). A failed read is logged
   once per generation and never fails the lifecycle step; after a resume it clears the recorded identity (unprobed),
   otherwise the evidence stays as it was. A cloud device without an instance is refused by admission but stays
   provisionable: provisioning is the lease's job, and the first operation is admitted only after it recorded the evidence.
@@ -346,6 +349,20 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     operation-boundary device whose provider does not report `perOperationHosts`, or on a closed
     network. The kernel reads no machine owner's list: a dial-in provider that keeps one enforces it
     on its side and reports what it then enforces through its permission support.
+  - **Network asks** offer what the provider enforces (`networkAskOffer`, `deviceAskTerms` in
+    `tools/network-asks.ts`, device-provider spec §6.3): "this run" (`once`, a run grant) only with
+    per-operation hosts; "add to this device's list" (`always`) only when the device has a list of
+    its own and every asked host passes `deviceListAddRefusal`, applying `next-command`
+    (per-operation hosts), `next-use`, or `files-reset` (`limitsApplyAt: "fileSystem"`). Without
+    per-operation hosts a host the list cannot take is never asked (its note names who adds it). An
+    `always` decision adds the hosts with `DevicesService.addNetworkHostsIn` in the decision's
+    ordered prelude (after `lockNetworkAddSubject`, before any conversation row: a widening locks
+    the device's Full access roots), writes no run grant and never reruns the command. Without
+    per-operation hosts a host the device's settings already allow (its own list, else the org's
+    hosts it follows) but its instance has not applied is not asked again, its note says when it
+    applies (`onList`); with per-operation hosts every operation carries the device's own list,
+    so a refusal of a host on it is the device's own (`deviceBlocks`, e.g. a machine's local
+    narrowing) and its note says so, never "it applies".
 - **What a provider gets.** `SandboxLimits` carries resources and the outer network only:
   `network: { kind: "open-public" | "allowlist", hosts }`. There is **no `limits.mode`** (the tier
   was removed; the device's `exec` / `create` limits refuse unknown keys, and a provider must

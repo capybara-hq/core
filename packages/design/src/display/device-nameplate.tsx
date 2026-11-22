@@ -3,9 +3,6 @@ import type { DesignKey } from "../i18n";
 import { useDesignT } from "../provider";
 import { DateTime, versionLabel } from "./date-time";
 
-/** Where a device lives: a cloud sandbox or a machine connected with `capybara-device`. */
-export type DeviceNameplateOrigin = "cloud" | "local";
-
 /**
  * What a device is doing, in the page's words (auto mode design §4): a cloud device runs or is
  * suspended, a local device's machine is online or offline.
@@ -15,7 +12,9 @@ export type DeviceNameplateState = "running" | "suspended" | "online" | "offline
 export type DeviceNameplateProps = {
   /** The device's name, the plate's one large line. */
   name: string;
-  origin: DeviceNameplateOrigin;
+  /** The device provider's display name (such as "Docker devices" or "This machine"), drawn
+   * as is. */
+  origin: string;
   state: DeviceNameplateState;
   /**
    * The device program's version as reported (e.g. "0.4.0"); drawn as `v0.4.0`. Null or absent
@@ -38,11 +37,10 @@ export type DeviceNameplateProps = {
    */
   badge?: ReactNode;
   /**
-   * The page's own labels. Anything left out comes from the design i18n (§7): 云端设备 /
-   * 本地设备, the four state words, 程序 / 最后活跃 / 从未连接.
+   * The page's own labels. Anything left out comes from the design i18n (§7): the four state
+   * words, Program / Last active / Never connected.
    */
   labels?: {
-    origin?: Partial<Record<DeviceNameplateOrigin, string>>;
     state?: Partial<Record<DeviceNameplateState, string>>;
     version?: string;
     lastSeen?: string;
@@ -70,26 +68,20 @@ export function DeviceNameplate({
   labels,
 }: DeviceNameplateProps) {
   const t = useDesignT();
-  const originLabel = labels?.origin?.[origin] ?? t(`nameplate.origin.${origin}` as DesignKey);
   const stateLabel = labels?.state?.[state] ?? t(`nameplate.state.${state}` as DesignKey);
   const versionText = labels?.version ?? t("nameplate.version");
   const lastSeenText = labels?.lastSeen ?? t("nameplate.lastSeen");
   const createdText = labels?.created ?? t("nameplate.created");
   const neverText = labels?.never ?? t("nameplate.never");
   return (
-    <div
-      className="cb-nameplate"
-      data-part="device-nameplate"
-      data-origin={origin}
-      data-state={state}
-    >
+    <div className="cb-nameplate" data-part="device-nameplate" data-state={state}>
       <div className="cb-nameplate-main">
         <span className="cb-nameplate-name" data-part="device-nameplate-name">
           {name}
         </span>
         <span className="cb-nameplate-meta" data-part="device-nameplate-meta">
           <span className="cb-nameplate-origin" data-part="device-nameplate-origin">
-            {originLabel}
+            {origin}
           </span>
           <span className="cb-nameplate-status" data-part="device-nameplate-status">
             <span

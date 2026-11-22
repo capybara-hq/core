@@ -832,6 +832,36 @@ function networkApprovalBlocks(): ReactNode {
           onDeny={noop}
         />
       </Block>
+      <Block id="approval-block-network-always">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once", "always"]}
+          network={{ ...one, appliesAt: "next-command" }}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-network-list-only">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["always"]}
+          network={{ ...one, appliesAt: "next-use" }}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      {decided("approval-block-network-added", {
+        decision: "approved",
+        scope: "always",
+        who: W.who,
+        when: W.approved.at,
+      })}
       {decided("approval-block-network-allowed", {
         decision: "approved",
         scope: "once",

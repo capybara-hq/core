@@ -455,6 +455,11 @@ export const ERROR_CODES = {
    * message lists the providers on in the org.
    */
   "device.provider_required": 400,
+  /**
+   * A new device is created on a dial-in provider (or the default is one): its devices are made
+   * by the machine signing in, following the provider's guide in the new-device dialog.
+   */
+  "device.provider_dial_in": 409,
   /** The person already has a live device with this name (case-insensitive). */
   "device.name_taken": 409,
   /** The person already has `devices.maxPersonal` live personal devices. */
@@ -505,8 +510,8 @@ export const ERROR_CODES = {
   /** The device has no project with this name. */
   "device.project_not_found": 404,
   /**
-   * The project's path is outside what the device may read in its current mode (sandbox mode and
-   * cloud devices: the workspace; project root §4.2).
+   * The project's path is outside what the device lets a project reach: its browse scope refused
+   * it (no reason given), or the resolved path is not one a device can hold.
    */
   "device.project_outside_mode": 422,
   /**
@@ -516,7 +521,7 @@ export const ERROR_CODES = {
   "device.project_path_too_broad": 422,
   /** The project's directory does not exist on the device. */
   "device.project_path_missing": 422,
-  /** The project's path is a file, cannot be read, or the device refused it in its current mode. */
+  /** The project's path is a file or a directory the device cannot read. */
   "device.project_path_unreadable": 422,
   /** The device provider refused the project's directory (its reason is the message and details). */
   "device.project_refused": 422,

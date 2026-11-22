@@ -237,7 +237,7 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     });
   });
 
-  it("the org's network ceiling applies whatever running outside allows; a kind change recreates", async () => {
+  it("the org's network ceiling applies whatever running outside allows; an added host or a kind change recreates", async () => {
     const s = service();
     // a cloud device has no outside: the org's allowlist ceiling is its sandbox network
     await setOrg({
@@ -248,7 +248,8 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
       network: { kind: "allowlist", hosts: ["example.com"] },
     });
-    // an added host under the same network kind reaches only later instances
+    // an added host under the same network kind reaches the instance at its next use (this
+    // provider has no update: recreated on its files, device-provider spec §6.3), once
     await setOrg({
       outsideSandbox: "allowed",
       deviceNetwork: {
@@ -257,12 +258,16 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
         extraHosts: ["example.com", "other.example.com"],
       },
     });
-    const same = await use(s);
-    expect(same.h).toEqual(first.h);
+    const added = await use(s);
+    expect(added.h).not.toEqual(first.h);
+    expect((await fakeSandboxMeta(root, added.h.id))?.limits).toMatchObject({
+      network: { kind: "allowlist", hosts: ["example.com", "other.example.com"] },
+    });
+    expect((await use(s)).h).toEqual(added.h);
     // opening the org's network changes the kind: the instance is recreated on the open network
     await setOrg({ outsideSandbox: "allowed" });
     const again = await use(s);
-    expect(again.h).not.toEqual(first.h);
+    expect(again.h).not.toEqual(added.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
     expect((await fakeSandboxMeta(root, again.h.id))?.limits).toMatchObject({
       network: { kind: "open-public" },

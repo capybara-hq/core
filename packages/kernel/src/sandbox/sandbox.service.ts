@@ -124,6 +124,7 @@ import { isKnownProvider, LegacyRetirementStore } from "./legacy-retirement.js";
 import { ManagedDeviceContextFailed } from "./managed-device-context.js";
 import {
   type AppliedLimits,
+  appliedLacksHost,
   appliedOf,
   appliedWider,
   type DeviceLimits,
@@ -144,7 +145,6 @@ import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
 import type { SandboxUseContext } from "./use-context.js";
 
-export { deviceNotFound } from "../devices/errors.js";
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
   SANDBOX_LOCK_PREFIX,
@@ -857,17 +857,30 @@ export class SandboxService {
   }
 
   /**
-   * Why a per-call host grant for each host is unavailable on the device, naming who can add it
-   * (`hostGrantRefusal`; null: grantable): a network ask is made only for a grantable host, and
-   * only on a device whose provider enforces an allowlist (`allowlist`, from its support).
+   * What a network ask may offer on the device (device-provider spec §6.3): why a per-call host
+   * grant is unavailable (`hostGrantRefusal`; null: grantable), why a host cannot join the
+   * device's own list (`deviceListAddRefusal`), whether it has a list of its own (`ownList`) and
+   * its hosts (`ownHosts`),
+   * where its provider applies new limits (`limitsApplyAt`) and its sandbox (`box.perCallHosts`:
+   * the provider's per-operation hosts).
    */
   async hostRefusal(device: { orgId: string; deviceId: string }): Promise<{
     refusal: (host: string) => string | null;
+    listAddRefusal: (host: string) => string | null;
     box: DeviceSandbox;
-    allowlist: boolean;
+    ownList: boolean;
+    ownHosts: string[];
+    limitsApplyAt: "instance" | "fileSystem" | undefined;
   }> {
     const facts = await this.facts.deviceSandboxFacts(device.orgId, device.deviceId);
-    return { refusal: facts.refusal, box: facts.box, allowlist: facts.allowlist };
+    return {
+      refusal: facts.refusal,
+      listAddRefusal: facts.listAddRefusal,
+      box: facts.box,
+      ownList: facts.ownList,
+      ownHosts: facts.ownHosts,
+      limitsApplyAt: facts.limitsApplyAt,
+    };
   }
 
   /**
@@ -902,7 +915,13 @@ export class SandboxService {
       return { applied: null, effective, pendingNextUse: false, pendingFilesReset: false };
     }
     const rec = readInstanceLimits(row.instance_limits);
-    const differs = row.provider === p.plugin && !sameApplied(rec.applied, effective);
+    // what mustApply applies at the next use: another kind, a host the instance allows that the
+    // desired list does not (a narrowing), or a desired host it lacks (a host added to a list)
+    const differs =
+      row.provider === p.plugin &&
+      (!sameApplied(rec.applied, effective) ||
+        appliedWider(rec.applied, effective) ||
+        appliedLacksHost(rec.applied, effective));
     const fsBound = differs && row.fs_status === "ready" && this.fsBound(p, rec, effective);
     const hasInstance =
       row.handle !== null && (row.status === "running" || row.status === "suspended");
@@ -929,18 +948,21 @@ export class SandboxService {
 
   /**
    * Whether the running instance of `row` must get `want` before use (auto mode spec §4.2): a
-   * cloud instance whose recorded network kind differs (never the mode alone), or whose recorded limits are more
-   * permissive than `want` in any dimension (a host-only narrowing too, spec §124; a host-only
-   * widening still reaches instances created afterwards), unless only a file reset could apply it
-   * ({@link fsBound}). A provider bound to its file system still goes through the exclusive lease
-   * once for a narrowing, so `applyLimits` records it as `unapplied` (the device is then unprobed
-   * until the reset, never silently supported).
+   * cloud instance whose recorded network kind differs (never the mode alone), whose recorded
+   * limits are more permissive than `want` in any dimension (a host-only narrowing too, spec
+   * §124), or whose recorded allowlist lacks a host `want` allows (a host added to the device's or
+   * the org's list, device-provider spec §6.3; applied once, then recorded), unless only a file
+   * reset could apply it ({@link fsBound}). A provider bound to its file system still goes through
+   * the exclusive lease once for a narrowing, so `applyLimits` records it as `unapplied` (the
+   * device is then unprobed until the reset, never silently supported); an added host there only
+   * waits for the reset (`pendingFilesReset`).
    */
   private mustApply(row: Row, p: DeviceProviderEntry, want: DeviceLimits): boolean {
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
     const wider = appliedWider(rec.applied, target);
-    if (sameApplied(rec.applied, target) && !wider) return false;
+    if (sameApplied(rec.applied, target) && !wider && !appliedLacksHost(rec.applied, target))
+      return false;
     if (!this.fsBound(p, rec, target)) return true;
     return wider && !sameAppliedExact(rec.unapplied, target);
   }
@@ -3562,8 +3584,8 @@ export class SandboxService {
       destroyed_at: null,
       sweep_failed_at: null,
     });
-    // the device's effective limits apply at creation (a changed mode or network kind is applied
-    // on use, see applyLimits; other changes reach only instances created afterwards)
+    // the device's effective limits apply at creation (a changed network kind or host list is
+    // applied on use, see applyLimits; resources reach only instances created afterwards)
     const wanted = want;
     // the record says what is in force: a provider whose limits are fixed at its file system
     // records them with the file system, any other with the instance (spec §7.1)

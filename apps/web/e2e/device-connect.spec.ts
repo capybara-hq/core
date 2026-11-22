@@ -95,7 +95,8 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
     await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
     // Opening the device loads a new document; its server-rendered tabs are not interactive yet.
     await hydrated(page);
-    await expect(page.getByText(zh.devices.source.local)).toBeVisible();
+    // the nameplate names the device's provider
+    await expect(page.locator('[data-part="device-nameplate-origin"]')).not.toBeEmpty();
     await expect(
       page.locator('[data-part="device-nameplate-status"]').getByText(zh.devices.state.offline),
     ).toBeVisible();
@@ -104,8 +105,7 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
       page.locator('[data-template="DetailPage"]').getByText(machine).first(),
     ).toBeVisible();
 
-    // clean up: delete the device (设置 → danger zone, typing its name)
-    await page.getByRole("tab", { name: zh.devices.detail.tabSettings }).click();
+    // clean up: delete the device (the Overview tab's danger zone, typing its name)
     await page.getByRole("button", { name: zh.devices.detail.delete }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("textbox").fill(machine);
@@ -123,12 +123,8 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
  * devices (fake-dial-in speaks another protocol and never counts), and the org, which never switched
  * it on, offers it to a program speaking `capybara-device` and creates a device on it. No real
  * `capybara-device` connects: the program's side is the public API, as in the case above.
- *
- * fixme during the device protocol 6 release cycle: the pinned device-local 0.1.0-rc.1 declares
- * `capybara-device/5` and no longer loads against the SDK speaking 6. The device-local release from
- * capybara-hq/plugins#162 and the core pin PR that bumps bootstrap.json remove this fixme.
  */
-test.fixme("device-local is pinned, on in the org by default and takes a capybara-device sign-in", async ({
+test("device-local is pinned, on in the org by default and takes a capybara-device sign-in", async ({
   page,
   playwright,
   baseURL,
