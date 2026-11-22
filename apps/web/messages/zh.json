@@ -3406,7 +3406,6 @@
     "empty": "还没有可查看的运行记录。",
     "emptyHint": "你拥有的智能体（组织管理员为全部智能体）有会话运行后会出现在这里。",
     "noMatch": "没有符合当前筛选的会话。",
-    "loadMore": "加载更多",
     "columns": {
       "title": "会话",
       "agent": "智能体",
@@ -3760,7 +3759,6 @@
       },
       "resultsLabel": "结果",
       "resultsEmpty": "没有结果。",
-      "loadMore": "加载更多",
       "columns": {
         "case": "用例",
         "step": "步骤",

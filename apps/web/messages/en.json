@@ -3418,7 +3418,6 @@
     "empty": "No run history to view yet.",
     "emptyHint": "Conversations with agents you own (all agents for org admins) appear here once they run.",
     "noMatch": "No conversations match the current filters.",
-    "loadMore": "Load more",
     "columns": {
       "title": "Conversation",
       "agent": "Agent",
@@ -3772,7 +3771,6 @@
       },
       "resultsLabel": "Results",
       "resultsEmpty": "No results.",
-      "loadMore": "Load more",
       "columns": {
         "case": "Case",
         "step": "Step",

@@ -297,7 +297,6 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   );
 }
 
-/** Every task of the org (a flush section holding the table), with the creator. */
 /** Compact rows (below 600): the task leads, its owner under it, the agent after, the state at the end. */
 const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
   name: "title",
@@ -308,6 +307,7 @@ const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListIte
   last: "hidden",
 };
 
+/** Every task of the org (a flush section holding the table), with the creator. */
 function AllTasks({ orgId }: { orgId: string }) {
   const t = useTranslations("scheduleSettings");
   const ts = useTranslations("schedules");

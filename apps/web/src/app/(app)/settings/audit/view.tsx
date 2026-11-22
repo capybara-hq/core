@@ -15,11 +15,11 @@ import { useWorkspace } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
 /**
- * `/settings/audit`: the org's audit log (SettingsPage, group Organization; `org.update`, org admins): the
- * org's own events, newest first, in the admin console's audit table, Load more by cursor
- * (the table reads the next page as its end comes into view on a compact window, a button on a wide one). The first
- * page comes from the query cache (the layout prefetched it on a first load); later pages are read
- * through the cache and appended.
+ * `/settings/audit`: the org's audit log (SettingsPage, group Organization; `org.update`, org
+ * admins): the org's own events, newest first, in the admin console's audit table, Load more by
+ * cursor (the table reads the next page as its end comes into view on a compact window, a button
+ * on a wide one). The first page comes from the query cache (the layout prefetched it on a first
+ * load); later pages are read through the cache and appended.
  */
 export default function OrgAuditView() {
   const ws = useWorkspace({ min: "admin" });
@@ -28,13 +28,17 @@ export default function OrgAuditView() {
   return <OrgAudit orgId={ws.orgId} />;
 }
 
-/** The audit columns with their compact roles: the action leads, the actor and the time under it. */
+/**
+ * The audit columns with their compact roles: the action leads, the actor and the time under it
+ * (the compact subtitle follows column order, so the actor is moved before the time here).
+ */
 function useOrgAuditColumns(): Column<AuditEvent>[] {
   const compact = { action: "title", actor: "subtitle", at: "subtitle", target: "hidden" } as const;
-  return useAuditColumns().map((c) => ({
-    ...c,
-    compact: compact[c.key as keyof typeof compact] ?? "hidden",
-  }));
+  const order = ["action", "actor", "at"];
+  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length);
+  return useAuditColumns()
+    .map((c) => ({ ...c, compact: compact[c.key as keyof typeof compact] ?? "hidden" }))
+    .sort((a, b) => rank(a.key) - rank(b.key));
 }
 
 function OrgAudit({ orgId }: { orgId: string }) {
