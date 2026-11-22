@@ -256,7 +256,14 @@ const listing = (cs: ConnectionInfo[]): string =>
   cs.map((c) => `  ${connectionLine(c)}`).join("\n");
 const CHOOSE = "choose one with --connection <deviceId>";
 
-/** deviceId exact, else deviceName exact, else host exact; implied when exactly one exists. */
+/** A deployment's device id: the kernel gives each device a random UUID. */
+const DEVICE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * deviceId exact, else deviceName exact, else host exact; implied when exactly one exists. A
+ * selector shaped like a device id (a UUID) matches a device id only: a connection logged out in
+ * between is never replaced by another one whose name or host happens to equal it.
+ */
 export function resolveConnection(
   selector?: string,
   machineDir: string = stateDir(),
@@ -281,10 +288,10 @@ export function resolveConnection(
   }
   const byId = all.find((c) => c.deviceId === selector);
   if (byId !== undefined) return byId;
-  for (const matches of [
-    all.filter((c) => c.deviceName === selector),
-    all.filter((c) => c.host === selector),
-  ]) {
+  const byNameOrHost = DEVICE_UUID.test(selector)
+    ? []
+    : [all.filter((c) => c.deviceName === selector), all.filter((c) => c.host === selector)];
+  for (const matches of byNameOrHost) {
     if (matches.length === 1) return matches[0] as ConnectionInfo;
     if (matches.length > 1) {
       throw new ConnectionSelectError(

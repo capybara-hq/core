@@ -206,6 +206,25 @@ describe("connections: resolving", () => {
     expect(resolveConnection("dev-b", m).deviceId).toBe("dev-b");
   });
 
+  it("a device id selector (a UUID) matches a device id only, never a name or host", () => {
+    const gone = "0b6c1f4e-2d3a-4c5b-9e8f-7a6b5c4d3e2f";
+    add("dev-a", "a.example.com", { deviceName: gone });
+    add("dev-b", gone);
+    // the intended connection was logged out: the id never falls back to another connection
+    const e = catchError(() => resolveConnection(gone, m)) as ConnectionSelectError;
+    expect(e.code).toBe("not_found");
+    expect(
+      (catchError(() => resolveConnection(gone.toUpperCase(), m)) as ConnectionSelectError).code,
+    ).toBe("not_found");
+    const id = "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b51";
+    add(id, "c.example.com");
+    expect(resolveConnection(id, m).deviceId).toBe(id);
+    // a selector of another shape still matches a name or a host
+    add("dev-n", "n.example.com", { deviceName: "Laptop N" });
+    expect(resolveConnection("Laptop N", m).deviceId).toBe("dev-n");
+    expect(resolveConnection("n.example.com", m).deviceId).toBe("dev-n");
+  });
+
   it("implies the only connection", () => {
     add("dev-a", "a.example.com");
     expect(resolveConnection(undefined, m).deviceId).toBe("dev-a");

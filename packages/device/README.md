@@ -18,7 +18,8 @@ capybara-device logout
 ```
 
 A machine can hold several connections (one per deployment device). Every command except `login`
-takes `-c <connection>` / `--connection <connection>`: a device id, a device name or a host. With
+takes `-c <connection>` / `--connection <connection>`: a device id, a device name or a host (a
+selector shaped like a device id, a UUID, matches a device id only, never a name or host). With
 one connection it is implied; with several, a command that needs one refuses and lists them, and
 `status` lists all. `login` adds a connection (or replaces the credential of a device the machine
 already serves). `start -c <id>` with no such connection exits 0, so a logged-out connection's
