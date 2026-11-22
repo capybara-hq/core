@@ -399,12 +399,38 @@ describe("deviceListAddRefusal", () => {
     ).toMatch(/organization admin adds a\.dev/);
   });
 
+  // exclusions drop platform entries only (orgEffectiveHosts): never an extra, nothing under base none
+  it("an org extra kept in the org's hosts is addable whatever the exclusions say", () => {
+    expect(
+      deviceListAddRefusal("api.corp.com", ALLOWLIST_BOX, LIST(["*.corp.com"]), {
+        deviceNetwork: { excludedHosts: ["*.corp.com"], extraHosts: ["api.corp.com"] },
+      }),
+    ).toBeNull();
+    // the excluded platform wildcard still refuses its other subdomains
+    expect(
+      deviceListAddRefusal("db.corp.com", ALLOWLIST_BOX, LIST(["*.corp.com"]), {
+        deviceNetwork: { excludedHosts: ["*.corp.com"], extraHosts: ["api.corp.com"] },
+      }),
+    ).toBe("the organization excludes db.corp.com; an organization admin removes the exclusion");
+    expect(
+      deviceListAddRefusal("a.dev", ALLOWLIST_BOX, LIST(["b.dev"]), {
+        deviceNetwork: { base: "none", extraHosts: ["a.dev"], excludedHosts: ["a.dev"] },
+      }),
+    ).toBeNull();
+    // under within, an extra the platform list does not cover is dropped, so not addable
+    expect(
+      deviceListAddRefusal("x.dev", ALLOWLIST_BOX, LIST(["a.dev"], "within"), {
+        deviceNetwork: { extraHosts: ["x.dev"] },
+      }),
+    ).toMatch(/super admin adds the host/);
+  });
+
   it("an excluded host or a closed network is refused", () => {
     expect(
       deviceListAddRefusal("a.dev", ALLOWLIST_BOX, LIST(["a.dev"]), {
         deviceNetwork: { excludedHosts: ["a.dev"] },
       }),
-    ).toMatch(/organization admin adds a\.dev/);
+    ).toBe("the organization excludes a.dev; an organization admin removes the exclusion");
     // an exclusion is a pattern: it refuses a host a wider platform entry still covers
     expect(
       deviceListAddRefusal("x.a.dev", ALLOWLIST_BOX, LIST(["*.a.dev"]), {
