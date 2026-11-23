@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  Button,
-  Dialog,
-  Field,
-  Input,
-  RadioGroup,
-  Stack,
-  Text,
-  useToast,
-} from "@capybara-hq/design";
+import { Button, Dialog, Field, Input, Select, Stack, Text, useToast } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
@@ -34,9 +25,10 @@ import { SetupGuideSection } from "./SetupGuideSection";
 export const WAIT_POLL_MS = 3000;
 
 /**
- * New device on the Devices page: a card per device provider on in the org (the org's default
- * preselected when it is one, else the first) and, under the cards, the chosen provider's
- * connection guide.
+ * New device on the Devices page: a device type select of the device providers on in the org (the
+ * org's default preselected when it is one, else the first; read-only with one provider), the
+ * chosen provider's description as the field's help and, under it, its connection guide. The
+ * dialog body scrolls under a fixed head and footer, so a long guide keeps the actions reachable.
  *
  * - A provider that creates devices itself: a name (1-64 characters) and Create (primary, disabled
  *   until the name is valid). A created device is ready at once: the dialog invalidates the list
@@ -107,6 +99,8 @@ export function DeviceCreateDialog({
         if (!open && !create.isPending) onClose();
       }}
       title={t("title")}
+      // a connection guide carries commands to copy: the wider ordinary dialog
+      size={640}
       footer={
         dialIn ? (
           <Button variant="ghost" onClick={onClose}>
@@ -130,20 +124,27 @@ export function DeviceCreateDialog({
       }
     >
       <Stack gap={16}>
-        <RadioGroup
-          variant="card"
+        <Field
           label={t("providerLabel")}
-          value={plugin}
-          onChange={(v) => {
-            setPlugin(v);
-            setError(undefined);
-          }}
-          options={providers.map((p) => ({
-            value: p.plugin,
-            label: extensionLabel({ name: p.plugin, displayName: p.displayName }, locale),
-            ...(p.description !== null && { description: deviceText(p.description, locale) }),
-          }))}
-        />
+          // the chosen provider's description, as one short line under the picker
+          {...(chosen?.description != null && {
+            help: deviceText(chosen.description, locale),
+          })}
+        >
+          <Select
+            value={plugin}
+            // one provider is still shown as the select, read-only: the same field in every org
+            disabled={providers.length < 2}
+            onChange={(e) => {
+              setPlugin(e.target.value);
+              setError(undefined);
+            }}
+            options={providers.map((p) => ({
+              value: p.plugin,
+              label: extensionLabel({ name: p.plugin, displayName: p.displayName }, locale),
+            }))}
+          />
+        </Field>
         {chosen?.guide != null && (
           <SetupGuideSection
             // a provider's guide is its own: switching starts over
