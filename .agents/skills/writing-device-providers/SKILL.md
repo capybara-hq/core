@@ -694,12 +694,8 @@ suite in `@capybara-hq/testing` checks it):
   every other connection's state and working directory and their private temps
   (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
-  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`): subdirectories whole, and the non-denied
-  regular files directly inside each expanded directory as exact file roots (the agent pins each O_PATH|O_NOFOLLOW,
-  one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned descriptor, skips
-  one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). An
-  expanded directory cannot be listed, more than 4096 carved directories refuses machine reach, and files past the cap
-  or the agent's open-file limit are dropped.
+  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
+  path to a denied one are unreadable and it cannot be listed, and more than 4096 carved roots refuses machine reach.
   Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system
   mounted inside it and elsewhere, an overlay layer, a loop image) are denied too, from `/proc/self/mountinfo` at each
   ceiling read (`exec/linux-mountinfo.ts`, `mountReexposedDenies`, every reach); mounts of unknown content (an
