@@ -1204,6 +1204,7 @@ export class SandboxOperationIntents {
         .updateTable("background_tasks")
         .set({ launch_state: "terminal" })
         .where("id", "=", task.id)
+        .where("org_id", "=", r.org_id)
         .where("launch_state", "=", "cancel-pending")
         .where("execution_ref", "is", null)
         .execute();
