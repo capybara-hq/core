@@ -91,8 +91,19 @@ export class HostServer {
   readonly ready: Promise<number>;
   readonly exited: Promise<void>;
 
-  /** `env`: extra variables in the device process's environment (planted secrets, for instance). */
-  constructor(where: LinuxDevice | { local: string }, env: Readonly<Record<string, string>> = {}) {
+  /**
+   * `env`: extra variables in the device process's environment (planted secrets, for instance).
+   * `nofile`: the open-file limit of a container device process (and so of its agents).
+   */
+  constructor(
+    where: LinuxDevice | { local: string },
+    env: Readonly<Record<string, string>> = {},
+    options: { nofile?: number } = {},
+  ) {
+    const server =
+      options.nofile === undefined
+        ? ["node", `${SERVER_DIR}/server.mjs`]
+        : ["sh", "-c", `ulimit -n ${options.nofile} && exec node ${SERVER_DIR}/server.mjs`];
     this.child =
       "local" in where
         ? spawn(process.execPath, [where.local], { env: { ...process.env, ...env } })
@@ -103,8 +114,7 @@ export class HostServer {
             "1000:1000",
             ...Object.entries(env).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
             where.name,
-            "node",
-            `${SERVER_DIR}/server.mjs`,
+            ...server,
           ]);
     let markReady: (pid: number) => void = () => {};
     this.ready = new Promise((resolve) => {
