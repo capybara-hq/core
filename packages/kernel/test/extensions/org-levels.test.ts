@@ -1,3 +1,4 @@
+import { platformOnly, secret } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { parseDeploymentConfig } from "../../src/extensions/cli.js";
@@ -13,13 +14,20 @@ import { OrgrefinedDeploymentSchema } from "../fixtures/plugins/orgrefined/index
 import { OrgwrappedDeploymentSchema } from "../fixtures/plugins/orgwrapped/index.js";
 
 describe("org field levels (spec A §5.1, §5.4a)", () => {
-  it("fieldLevels reads each top-level key's orgAccess; no level is hidden", () => {
+  it("fieldLevels: an unmarked top-level key is override, a platformOnly key is platform", () => {
     expect(Object.fromEntries(fieldLevels(OrglevelsDeploymentSchema))).toEqual({
-      host: "hidden",
-      limit: "readonly",
+      host: "platform",
+      limit: "override",
       baseUrl: "override",
       apiKey: "override",
     });
+  });
+
+  it("fieldLevels: a platformOnly root makes every key platform, marked again or not", () => {
+    const s = platformOnly(z.object({ a: z.string(), b: platformOnly(z.number()) }));
+    expect(Object.fromEntries(fieldLevels(s))).toEqual({ a: "platform", b: "platform" });
+    expect(missingOverridable(s, {})).toEqual([]);
+    expect(parseLoadGate(s, {}).success).toBe(false);
   });
 
   it("fieldLevels of a schema that is not an object, or none, is empty", () => {
@@ -34,23 +42,14 @@ describe("org field levels (spec A §5.1, §5.4a)", () => {
       success: true,
       data: { host: "h", limit: 5 },
     });
+    // a platform-only field stays required
     expect(relaxed.safeParse({}).success).toBe(false);
     // a value present must still be valid
     expect(relaxed.safeParse({ host: "h", baseUrl: "not a url" }).success).toBe(false);
   });
 
-  it("relaxOverridable keeps a required readonly field required", () => {
-    const s = z.object({
-      limit: z.number().meta({ org: "readonly" }),
-      key: z.string().meta({ org: "override" }),
-    });
-    const relaxed = relaxOverridable(s);
-    expect(relaxed.safeParse({}).success).toBe(false);
-    expect(relaxed.safeParse({ limit: 1 }).success).toBe(true);
-  });
-
   it("relaxOverridable is the identity without overridable keys", () => {
-    const s = z.object({ a: z.string() });
+    const s = z.object({ a: platformOnly(z.string()) });
     expect(relaxOverridable(s)).toBe(s);
     const str = z.string();
     expect(relaxOverridable(str)).toBe(str);
@@ -66,25 +65,46 @@ describe("org field levels (spec A §5.1, §5.4a)", () => {
     ).toEqual(["apiKey"]);
     const optional = z.object({
       a: z.object({}).optional(),
-      b: orgAccessOptional(),
+      b: z.string().optional(),
     });
     expect(missingOverridable(optional, {})).toEqual([]);
+    // an unmarked required key the platform leaves empty is listed; a platform-only one is not
+    const mixed = z.object({ host: platformOnly(z.string()), region: z.string() });
+    expect(missingOverridable(mixed, {})).toEqual(["region"]);
   });
 
-  it("jsonSchemaFieldLevels reads x-org of top-level properties", () => {
+  it("parseLoadGate accepts an empty required secret (overridable) but not an empty platform-only field", () => {
+    expect(parseLoadGate(z.object({ apiKey: secret(z.string()) }), {})).toEqual({
+      success: true,
+      data: {},
+    });
+    expect(parseLoadGate(z.object({ host: platformOnly(z.string()) }), {}).success).toBe(false);
+  });
+
+  it("jsonSchemaFieldLevels reads x-platform-only of the root and top-level properties", () => {
     expect(
       Object.fromEntries(
         jsonSchemaFieldLevels({
           type: "object",
           properties: {
             a: { type: "string" },
-            b: { type: "string", "x-org": "readonly" },
-            c: { type: "string", "x-org": "override" },
-            d: { type: "string", "x-org": "bogus" },
+            b: { type: "string", "x-platform-only": true },
+            c: { type: "string", "x-platform-only": false },
+            // a removed annotation means nothing
+            d: { type: "string", "x-org": "readonly" },
           },
         }),
       ),
-    ).toEqual({ a: "hidden", b: "readonly", c: "override", d: "hidden" });
+    ).toEqual({ a: "override", b: "platform", c: "override", d: "override" });
+    expect(
+      Object.fromEntries(
+        jsonSchemaFieldLevels({
+          type: "object",
+          "x-platform-only": true,
+          properties: { a: { type: "string" }, b: { type: "string" } },
+        }),
+      ),
+    ).toEqual({ a: "platform", b: "platform" });
     expect(jsonSchemaFieldLevels(undefined).size).toBe(0);
   });
 });
@@ -99,7 +119,7 @@ describe("the load gate on a refined deployment schema (spec A §5.4a)", () => {
       success: true,
       data: { mode: "strict" },
     });
-    // a hidden field is still required
+    // a platform-only field is still required
     expect(parseLoadGate(OrgrefinedDeploymentSchema, {}).success).toBe(false);
   });
 
@@ -130,17 +150,17 @@ describe("the load gate on a refined deployment schema (spec A §5.4a)", () => {
   });
 });
 
-describe("a wrapped overridable field", () => {
-  it("fieldLevels reads orgAccess through .default()", () => {
+describe("a wrapped platform-only field", () => {
+  it("fieldLevels reads platformOnly through .optional()", () => {
     expect(Object.fromEntries(fieldLevels(OrgwrappedDeploymentSchema))).toEqual({
-      host: "hidden",
+      host: "platform",
       region: "override",
     });
   });
 });
 
 describe("parseDeploymentConfig (the CLI's deployment config check)", () => {
-  it("an empty overridable field counts as configured; a missing hidden required field does not", () => {
+  it("an empty overridable field counts as configured; a missing platform-only required field does not", () => {
     expect(parseDeploymentConfig(OrglevelsDeploymentSchema, { host: "h" }, undefined)).toEqual({
       ok: true,
       value: { host: "h", limit: 5 },
@@ -154,7 +174,3 @@ describe("parseDeploymentConfig (the CLI's deployment config check)", () => {
     expect(!r.ok && r.issues.map((i) => i.path)).toEqual(["host"]);
   });
 });
-
-function orgAccessOptional() {
-  return z.string().optional().meta({ org: "override" });
-}

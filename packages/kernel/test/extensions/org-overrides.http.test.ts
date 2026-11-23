@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   type ExtensionManifest,
-  orgAccess,
+  platformOnly,
   secret,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
@@ -50,7 +50,6 @@ const LONG = "ok-long-Rt66-key";
 
 interface OverrideField {
   path: string;
-  level: "readonly" | "override";
   secret: boolean;
   platform: { value?: unknown; set?: boolean };
   org?: { value?: unknown; set?: boolean };
@@ -218,7 +217,7 @@ beforeAll(async () => {
   await platform({ baseUrl: "https://p.example", apiKey: PK });
 });
 
-/** First install: the hidden `host` is required, so it loads once the platform saved it. */
+/** First install: the platform-only `host` is required, so it loads once the platform saved it. */
 async function deployWithHost(): Promise<void> {
   const up = await root({
     method: "POST",
@@ -247,13 +246,10 @@ afterAll(async () => {
 
 describe("mergeCopy (the copy half of the effective config)", () => {
   const schema = z.object({
-    host: z.string(),
-    url: orgAccess(z.string(), "override"),
-    key: orgAccess(secret(z.string().optional()), "override"),
-    nested: orgAccess(
-      z.object({ id: z.string(), token: secret(z.string()).optional() }),
-      "override",
-    ),
+    host: platformOnly(z.string()),
+    url: z.string(),
+    key: secret(z.string().optional()),
+    nested: z.object({ id: z.string(), token: secret(z.string()).optional() }),
   });
   const platform = {
     host: "h",
@@ -273,7 +269,7 @@ describe("mergeCopy (the copy half of the effective config)", () => {
     );
   });
 
-  it("uses the copy's own secrets and ignores copy values of keys that are not overridable", () => {
+  it("uses the copy's own secrets and ignores copy values of platform-only keys", () => {
     expect(
       mergeCopy(schema, platform, {
         config: { url: "o", host: "evil", nested: { id: "oid", token: "smuggled" } },
@@ -284,36 +280,35 @@ describe("mergeCopy (the copy half of the effective config)", () => {
 });
 
 describe("org copies of overridable config", () => {
-  it("1. GET overrides while following: platform values, secrets only as set, no hidden field; members refused", async () => {
+  it("1. GET overrides while following: platform values, secrets only as set, no platform-only field, no level; members refused", async () => {
     const v = await getOverrides(orgA);
     expect(v.state).toBe("following");
     expect(v).not.toHaveProperty("createdAt");
     expect(v.fields.map((f) => f.path)).toEqual(["limit", "baseUrl", "apiKey"]);
     expect(field(v, "baseUrl")).toEqual({
       path: "baseUrl",
-      level: "override",
       secret: false,
       platform: { value: "https://p.example" },
     });
+    // an unmarked field with a schema default is overridable; the platform value is the default
     expect(field(v, "limit")).toEqual({
       path: "limit",
-      level: "readonly",
       secret: false,
       platform: { value: 5 },
     });
     expect(field(v, "apiKey")).toEqual({
       path: "apiKey",
-      level: "override",
       secret: true,
       platform: { set: true },
     });
+    expect(v.fields.some((f) => "level" in f)).toBe(false);
     expect(v).toMatchObject({ valid: true, issues: [] });
-    // the form schema: read-only and overridable properties only, never a hidden one or a value
+    // the form schema: overridable properties only, never a platform-only one or a value
     expect(Object.keys(v.schema?.properties ?? {}).sort()).toEqual(["apiKey", "baseUrl", "limit"]);
     expect(v.schema?.required ?? []).not.toContain("host");
     expect(v.schema?.required).toEqual(expect.arrayContaining(["baseUrl", "apiKey"]));
     expect(v.schema?.properties?.apiKey?.["x-secret"]).toBe(true);
-    expect(v.schema?.properties?.baseUrl?.["x-org"]).toBe("override");
+    expect(JSON.stringify(v.schema)).not.toContain("x-platform-only");
     expect(JSON.stringify(v.schema)).not.toContain("host");
     expect(JSON.stringify(v.schema)).not.toContain("p.example");
     const res = await member({ method: "GET", url: ovUrl(orgA) });
@@ -394,7 +389,6 @@ describe("org copies of overridable config", () => {
     expect(typeof v.createdAt).toBe("string");
     expect(field(v, "apiKey")).toEqual({
       path: "apiKey",
-      level: "override",
       secret: true,
       platform: { set: true },
       org: { set: true },
@@ -458,7 +452,6 @@ describe("org copies of overridable config", () => {
     const v = await getOverrides(orgA);
     expect(field(v, "baseUrl")).toEqual({
       path: "baseUrl",
-      level: "override",
       secret: false,
       platform: { value: "https://p2.example" },
       org: { value: "https://o.example" },
@@ -502,12 +495,23 @@ describe("org copies of overridable config", () => {
     expect(none.json().error.code).toBe("extension.no_org_override");
   });
 
-  it("6. read-only and hidden fields cannot be saved", async () => {
-    for (const values of [{ limit: 9 }, { host: "x" }, { nope: 1 }]) {
+  it("6. platform-only and unknown fields cannot be saved", async () => {
+    for (const [values, path] of [
+      [{ host: "x" }, "host"],
+      [{ nope: 1 }, "nope"],
+    ] as const) {
       const res = await save(orgA, values);
       expect(res.statusCode, res.body).toBe(400);
       expect(res.json().error.code).toBe("extension.field_not_overridable");
+      expect(res.json().error.details).toEqual([{ path }]);
     }
+    const take = await owner({
+      method: "POST",
+      url: `${ovUrl(orgA)}/take`,
+      payload: { paths: ["host"] },
+    });
+    expect(take.statusCode, take.body).toBe(400);
+    expect(take.json().error.code).toBe("extension.field_not_overridable");
   });
 
   it("7. DELETE drops the copy and its secrets; the org follows the platform again; save, take and reset are audited", async () => {
@@ -654,7 +658,7 @@ describe("org copies of overridable config", () => {
     const a = await save(orgA, { baseUrl: "https://a.example", apiKey: SHORT });
     expect(a.statusCode, a.body).toBe(200);
     await deploy("orglevels-v2", "0.2.0");
-    // orgB's copy still holds baseUrl, which is now hidden: the platform's value applies; the
+    // orgB's copy still holds baseUrl, now platform-only: the platform's value applies; the
     // transforms of 0.2.0 ran exactly once (host "h!", tags split once)
     expect(await effective().get(orgB, "orglevels")).toEqual({
       ok: true,
@@ -700,7 +704,7 @@ describe("org copies of overridable config", () => {
     ).toMatchObject({
       source: "env",
       readonly: true,
-      org: "override",
+      level: "override",
       value: "https://env.example",
     });
     const res = await save(orgA, { baseUrl: "https://a2.example", apiKey: LONG });

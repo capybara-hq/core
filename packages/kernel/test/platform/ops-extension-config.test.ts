@@ -288,25 +288,21 @@ describe("the org's copy of the overridable fields", () => {
 });
 
 describe("the person fields of the org's copy", () => {
-  it("asks only for secrets under overridable fields; one under a read-only object is refused", () => {
+  it("asks only for secrets under the listed overridable fields; one under another property is refused", () => {
     const view: OrgOverrideView = {
       state: "following",
+      // `conn` is in the form schema but not among the listed (overridable) fields
       schema: {
         type: "object",
         properties: {
           conn: {
             type: "object",
-            "x-org": "readonly",
             properties: { host: { type: "string" }, key: { type: "string", "x-secret": true } },
           },
-          token: { type: "string", "x-secret": true, "x-org": "override" },
+          token: { type: "string", "x-secret": true },
         },
       },
-      fields: [
-        { path: "conn.host", level: "readonly", secret: false, platform: { value: "h" } },
-        { path: "conn.key", level: "readonly", secret: true, platform: { set: true } },
-        { path: "token", level: "override", secret: true, platform: { set: false } },
-      ],
+      fields: [{ path: "token", secret: true, platform: { set: false } }],
       valid: true,
       issues: [],
     };
@@ -424,8 +420,24 @@ describe("read-only secrets of the deployment config", () => {
     version: "1.0.0",
     configurable: true,
     fields: [
-      { path: "token", secret: true, hot: false, source: "env", readonly: true, set: true },
-      { path: "master", secret: true, hot: false, source: "unset", readonly: false, set: false },
+      {
+        path: "token",
+        secret: true,
+        hot: false,
+        source: "env",
+        readonly: true,
+        set: true,
+        level: "platform",
+      },
+      {
+        path: "master",
+        secret: true,
+        hot: false,
+        source: "unset",
+        readonly: false,
+        set: false,
+        level: "platform",
+      },
     ],
     schema: {
       type: "object",

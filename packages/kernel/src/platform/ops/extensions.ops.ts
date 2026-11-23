@@ -69,9 +69,9 @@ function withUnaddressed(
 }
 
 /**
- * The person fields of the org's copy: the copy's own secrets (under overridable top-level fields),
- * set or not. A secret under a read-only field is not the org's to set: never asked, and a value
- * for it in `values` is refused as well.
+ * The person fields of the org's copy: the copy's own secrets (under the listed overridable
+ * top-level fields), set or not. A secret under any other field is not the org's to set: never
+ * asked, and a value for it in `values` is refused as well.
  */
 export function copyPersonFields(
   v: OrgOverrideView,
@@ -80,9 +80,8 @@ export function copyPersonFields(
   const stored = new Set(secrets.filter((f) => f.org?.set === true).map((f) => f.path));
   // levels are per top-level property (org-levels.ts)
   const top = (path: string) => path.split(/[.[]/)[0] as string;
-  const overridable = new Set(
-    v.fields.filter((f) => f.level === "override").map((f) => top(f.path)),
-  );
+  // the view lists overridable fields only
+  const overridable = new Set(v.fields.map((f) => top(f.path)));
   const found = secretFieldsOf(v.schema, stored);
   const fields = found.fields.filter((f) => overridable.has(top(f.path)));
   const notOurs = found.fields.filter((f) => !overridable.has(top(f.path))).map((f) => f.path);

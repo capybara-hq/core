@@ -1,4 +1,9 @@
-import { defineExtension, type ExtensionContext, secret } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionContext,
+  platformOnly,
+  secret,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** 测试观察点（同进程读）：setup 次数与最近一次的 ctx。 */
@@ -13,22 +18,25 @@ export const deploycfgProbe = (): DeploycfgProbe => {
   return g.__deploycfg;
 };
 
-export const DeploycfgSchema = z.object({
-  /** 必填：没配时插件待配置。 */
-  endpoint: z.string().min(1),
-  region: z.string().default("us"),
-  greeting: z.string().default("hi").meta({ hot: true }),
-  poolSize: z.number().int().positive().default(1),
-  token: secret(z.string()).optional(),
-  limits: z
-    .object({ burst: z.number().int().default(5).meta({ hot: true }) })
-    .default({ burst: 5 }),
-  mode: z.string().default("auto"),
-  tags: z.array(z.string()).default([]),
-  headers: z.record(z.string(), z.string()).default({}),
-  /** 为 true 时 setup 抛错（测试非 hot 改动重新加载失败）。 */
-  failSetup: z.boolean().default(false),
-});
+/** Platform-only as a whole: a required field left empty keeps the extension pending. */
+export const DeploycfgSchema = platformOnly(
+  z.object({
+    /** 必填：没配时插件待配置。 */
+    endpoint: z.string().min(1),
+    region: z.string().default("us"),
+    greeting: z.string().default("hi").meta({ hot: true }),
+    poolSize: z.number().int().positive().default(1),
+    token: secret(z.string()).optional(),
+    limits: z
+      .object({ burst: z.number().int().default(5).meta({ hot: true }) })
+      .default({ burst: 5 }),
+    mode: z.string().default("auto"),
+    tags: z.array(z.string()).default([]),
+    headers: z.record(z.string(), z.string()).default({}),
+    /** 为 true 时 setup 抛错（测试非 hot 改动重新加载失败）。 */
+    failSetup: z.boolean().default(false),
+  }),
+);
 
 /**
  * 部署级配置的测试插件（T15）：`greeting`、`limits.burst` 是 hot 字段（就地替换，`ctx.config` 读到新值），

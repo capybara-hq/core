@@ -2,6 +2,7 @@ import {
   defineExtension,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
   type ModelProvider,
+  platformOnly,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -13,10 +14,13 @@ import { z } from "zod";
  * every request with `fake-bootstrap-a`; it never calls a network service.
  */
 
-const DeploymentConfig = z.object({
-  apiKey: secret(z.string().min(1)),
-  baseUrl: z.string().url().optional(),
-});
+/** Platform-only as a whole: the platform must set the key before the extension loads. */
+const DeploymentConfig = platformOnly(
+  z.object({
+    apiKey: secret(z.string().min(1)),
+    baseUrl: z.string().url().optional(),
+  }),
+);
 
 const REPLY = "fake-bootstrap-a";
 

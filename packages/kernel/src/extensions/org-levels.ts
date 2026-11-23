@@ -1,35 +1,40 @@
-import { type JsonSchema, orgAccessOf } from "@capybara-hq/plugin-sdk";
+import { isPlatformOnly, type JsonSchema } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
- * The org level of a deployment config field (spec A §5.1): `hidden` (platform only, orgs never
- * see it; a field without `orgAccess`), `readonly` (orgs see it, cannot change it) or `override`
- * (the platform sets the default, an org may bring its own value). Levels sit on top-level keys of
- * the deployment schema only (§5.2); a nested field has its top-level key's level.
+ * The org level of a deployment config field (unified config spec §5.1): `override` (the default:
+ * the platform sets the default value, an org may save its own copy) or `platform` (marked
+ * `platformOnly`: set by the platform only, never shown to an org). Levels sit on top-level keys of
+ * the deployment schema only (spec A §5.2); a nested field has its top-level key's level. A
+ * `platformOnly` root makes every key `platform`.
  */
-export type FieldLevel = "hidden" | "readonly" | "override";
+export type FieldLevel = "platform" | "override";
 
 /** The top-level keys of a `ZodObject` deployment schema with their level; empty otherwise. */
 export function fieldLevels(schema: z.ZodTypeAny | undefined): Map<string, FieldLevel> {
   const out = new Map<string, FieldLevel>();
   if (!(schema instanceof z.ZodObject)) return out;
+  const root = isPlatformOnly(schema);
   for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
-    out.set(key, orgAccessOf(field) ?? "hidden");
+    out.set(key, root || isPlatformOnly(field) ? "platform" : "override");
   }
   return out;
 }
 
+const markedPlatformOnly = (node: unknown): boolean =>
+  (node as { "x-platform-only"?: unknown } | null)?.["x-platform-only"] === true;
+
 /**
- * The same levels read from a package's static form schema (`x-org` on top-level properties), for
- * an install record whose module this replica has not loaded.
+ * The same levels read from a package's static form schema (`x-platform-only` on the root or a
+ * top-level property), for an install record whose module this replica has not loaded.
  */
 export function jsonSchemaFieldLevels(schema: JsonSchema | undefined): Map<string, FieldLevel> {
   const out = new Map<string, FieldLevel>();
   const props = (schema as { properties?: unknown } | undefined)?.properties;
   if (typeof props !== "object" || props === null) return out;
+  const root = markedPlatformOnly(schema);
   for (const [key, prop] of Object.entries(props as Record<string, unknown>)) {
-    const v = (prop as { "x-org"?: unknown } | null)?.["x-org"];
-    out.set(key, v === "readonly" || v === "override" ? v : "hidden");
+    out.set(key, root || markedPlatformOnly(prop) ? "platform" : "override");
   }
   return out;
 }
@@ -40,7 +45,7 @@ const overrideKeys = (schema: z.ZodTypeAny): string[] =>
 /**
  * The platform's relaxed schema (§5.4a): a plain object rebuilt from the shape with every
  * `override` key optional, so the platform may leave overridable fields empty (each org then
- * brings its own); hidden and read-only fields stay as declared. Object-level refinements
+ * brings its own); platform-only fields stay as declared. Object-level refinements
  * (`.refine` / `.superRefine`) are not carried over: they may read the absent fields, and zod
  * refuses `.extend()` on a refined object. The identity when there is no `override` key. Parse
  * through {@link parseLoadGate}, which uses this only when an overridable field is missing.

@@ -46,7 +46,7 @@ interface Field {
   readonly: boolean;
   value?: unknown;
   set?: boolean;
-  org?: "readonly" | "override";
+  level: "platform" | "override";
 }
 interface ConfigView {
   plugin: string;
@@ -303,6 +303,7 @@ describe("部署级插件配置入 PG（审查重点 5）", () => {
     expect(field(v, "token")).toEqual({
       path: "token",
       secret: true,
+      level: "platform",
       hot: false,
       source: "unset",
       readonly: false,
@@ -348,6 +349,7 @@ describe("部署级插件配置入 PG（审查重点 5）", () => {
     expect(field(v, "token")).toEqual({
       path: "token",
       secret: true,
+      level: "platform",
       hot: false,
       source: "db",
       readonly: false,
@@ -581,7 +583,7 @@ describe("部署级插件配置入 PG（审查重点 5）", () => {
     const url = "/api/v1/admin/extensions/orglevels/config";
     const putOrg = (values: Record<string, unknown>) =>
       admin({ method: "PUT", url, payload: { values } });
-    // hidden fields stay required: saving without host is refused
+    // platform-only fields stay required: saving without host is refused
     const missingHost = await putOrg({ limit: 7 });
     expect(missingHost.statusCode, missingHost.body).toBe(400);
     expect(missingHost.json().error.code).toBe("extension.config_invalid");
@@ -609,9 +611,9 @@ describe("部署级插件配置入 PG（审查重点 5）", () => {
     expect(res.statusCode, res.body).toBe(200);
     const v = res.json() as ConfigView;
     expect(v).toMatchObject({ valid: true, issues: [], orgMustConfigure: ["baseUrl", "apiKey"] });
-    expect(Object.fromEntries(v.fields.map((f) => [f.path, f.org ?? null]))).toEqual({
-      host: null,
-      limit: "readonly",
+    expect(Object.fromEntries(v.fields.map((f) => [f.path, f.level]))).toEqual({
+      host: "platform",
+      limit: "override",
       baseUrl: "override",
       apiKey: "override",
     });

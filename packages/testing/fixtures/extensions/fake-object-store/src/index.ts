@@ -14,6 +14,7 @@ import {
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectHead,
   type ObjectStore,
+  platformOnly,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -28,14 +29,17 @@ import { z } from "zod";
  * refused, `presignGet` sets the disposition and response type.
  */
 
-const DeploymentConfig = z.object({
-  endpoint: z.string().url().optional(),
-  region: z.string().min(1),
-  bucket: z.string().min(1),
-  accessKeyId: secret(z.string().min(1)),
-  secretAccessKey: secret(z.string().min(1)),
-  forcePathStyle: z.boolean().default(true),
-});
+/** Platform-only (object-store@1 is infrastructure, unified config spec §5.3). */
+const DeploymentConfig = platformOnly(
+  z.object({
+    endpoint: z.string().url().optional(),
+    region: z.string().min(1),
+    bucket: z.string().min(1),
+    accessKeyId: secret(z.string().min(1)),
+    secretAccessKey: secret(z.string().min(1)),
+    forcePathStyle: z.boolean().default(true),
+  }),
+);
 
 /** The deployment config of the fake (as `startTestS3()` gives it). */
 export type FakeObjectStoreConfig = z.input<typeof DeploymentConfig>;
