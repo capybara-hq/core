@@ -5,15 +5,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { SandboxLeases } from "../../src/sandbox/leases.js";
 import {
   readFakeSandboxLimits,
   readFakeSandboxOps,
   setFakeSandboxDelays,
 } from "../fixtures/plugins/device-fake/index.js";
+import { managedUseOn } from "../helpers/managed-calls.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { enableFakeProvider } from "../helpers/sandbox.js";
 
@@ -53,6 +54,10 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 2);
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 afterAll(async () => {
   for (const k of kernels) await k.close();
   await raw?.destroy();
@@ -60,19 +65,57 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
+/**
+ * An org, a member account, its device and `use`: one managed use of the device on a replica, as
+ * a tool call of a new root conversation of the account bound to the device.
+ */
 async function seed() {
   const accountId = randomUUID();
   const orgId = randomUUID();
   const deviceId = randomUUID();
+  const agentId = randomUUID();
   await sql`INSERT INTO capybara.accounts (id, display_name) VALUES (${accountId}, 'U')`.execute(
     raw,
   );
   await sql`INSERT INTO capybara.orgs (id, slug, name, created_by)
     VALUES (${orgId}, ${`o-${orgId.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
+  await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
+    VALUES (${orgId}, ${accountId}, 'owner')`.execute(raw);
   await enableFakeProvider(raw, orgId);
   await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, provider)
     VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'device-fake')`.execute(raw);
-  return { orgId, accountId, deviceId };
+  await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+    VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
+  const use = async <T>(k: TestKernel, fn: Parameters<typeof managedUseOn<T>>[3]): Promise<T> => {
+    const conversationId = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
+    return managedUseOn(
+      k,
+      raw,
+      {
+        orgId,
+        deviceId,
+        holderConversationId: conversationId,
+        actor: { accountId, conversationId },
+      },
+      fn,
+    );
+  };
+  return { orgId, accountId, deviceId, use };
+}
+
+/** Resolves once `k` tried for the device's exclusive lease and found it held (it now waits). */
+function exclusiveRefused(k: TestKernel): Promise<void> {
+  const leases = k.app.get(SandboxLeases);
+  const original = leases.tryExclusive.bind(leases);
+  return new Promise<void>((resolve) => {
+    vi.spyOn(leases, "tryExclusive").mockImplementation(async (...args) => {
+      const lease = await original(...args);
+      if (lease === null) resolve();
+      return lease;
+    });
+  });
 }
 
 const setAutoMode = (orgId: string, mode: "allowed" | "off") =>
@@ -86,18 +129,8 @@ describe("device modes (two replicas)", () => {
   it("a mode changed while both replicas use the device is applied once; both then use the updated instance", async () => {
     const [k1, k2] = await Promise.all([startKernel(cfg()), startKernel(cfg())]);
     kernels.push(k1, k2);
-    const { orgId, accountId, deviceId } = await seed();
-    const use = (k: TestKernel) =>
-      k.app.get(SandboxService).withSandbox(
-        {
-          orgId,
-          deviceId,
-          holderConversationId: randomUUID(),
-          actor: { accountId, conversationId: randomUUID() },
-        },
-        async (h, _p, info) => ({ h, info }),
-        AbortSignal.timeout(30_000),
-      );
+    const { orgId, deviceId, use: useOn } = await seed();
+    const use = (k: TestKernel) => useOn(k, async (h, _p, info) => ({ h, info }));
     const first = await use(k1);
     expect(first.info.fresh).toBe(true);
 
@@ -123,16 +156,8 @@ describe("device modes (two replicas)", () => {
 
   it("a replica that read a mode before waiting applies the mode read under the lease", async () => {
     const [k1, k2] = kernels as [TestKernel, TestKernel];
-    const { orgId, accountId, deviceId } = await seed();
-    const ctx = () => ({
-      orgId,
-      deviceId,
-      holderConversationId: randomUUID(),
-      actor: { accountId, conversationId: randomUUID() },
-    });
-    const first = await k1.app
-      .get(SandboxService)
-      .withSandbox(ctx(), async (h) => h, AbortSignal.timeout(30_000));
+    const { orgId, deviceId, use } = await seed();
+    const first = await use(k1, async (h) => h);
     const before = (await readFakeSandboxLimits(root)).length;
 
     // replica 1 holds the instance (a shared lease) while replica 2 reads the new mode and waits
@@ -144,20 +169,15 @@ describe("device modes (two replicas)", () => {
     const inside = new Promise<void>((r) => {
       entered = r;
     });
-    const holder = k1.app.get(SandboxService).withSandbox(
-      ctx(),
-      async () => {
-        entered();
-        await held;
-      },
-      AbortSignal.timeout(30_000),
-    );
+    const holder = use(k1, async () => {
+      entered();
+      await held;
+    });
     await inside;
     await setAutoMode(orgId, "off");
-    const waiter = k2.app
-      .get(SandboxService)
-      .withSandbox(ctx(), async (h, _p, info) => ({ h, info }), AbortSignal.timeout(30_000));
-    await new Promise((r) => setTimeout(r, 300));
+    const waiting = exclusiveRefused(k2);
+    const waiter = use(k2, async (h, _p, info) => ({ h, info }));
+    await waiting;
     release();
     await holder;
     const again = await waiter;

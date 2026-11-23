@@ -6,22 +6,25 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { SANDBOX_DESTROY_JOB, SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { readFakeSandboxOps, setFakeSandboxDelays } from "../fixtures/plugins/device-fake/index.js";
+import { managedUseOn } from "../helpers/managed-calls.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { enableFakeProvider } from "../helpers/sandbox.js";
 
 /**
- * 两个内核副本（同一进程里的两个独立 Kernel：各自的 PG 池、Redis 连接、插件实例；共享 PG / Redis 与
- * 假沙箱的「提供方后端」目录）同时首次使用同一对话的沙箱：只创建一个，另一边等锁后复用（审查重点 2）。
+ * Two kernel replicas (two independent kernels in one process: own PG pools, Redis connections and
+ * extension instances; shared PG, Redis and the fake provider's backend directory) use one device
+ * for the first time at once, each as a tool call of a conversation on it (the managed route): only
+ * one instance is created, the other replica waits for the lease and reuses it.
  *
- * 沙箱服务在 T7 还没有 HTTP 入口（T8 才有工具），所以不用子进程 harness，而是在同一进程里起两个 Kernel；
- * 服务本身没有进程内状态，两个实例之间只经 PG / Redis 协调，与两个进程等价。
+ * The service keeps no in-process state, so two kernels in one process coordinating only through
+ * PG and Redis are equivalent to two processes.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -60,13 +63,18 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-/** An org, an account, a conversation and the account's device: a `withSandbox` context. */
-async function seedConversation(): Promise<{
+interface Seeded {
   orgId: string;
   deviceId: string;
   holderConversationId: string;
   actor: { accountId: string; conversationId: string };
-}> {
+}
+
+/**
+ * An org, a member account, a root conversation of it and the account's device: a use context.
+ * The conversation is left unbound (a managed use binds it to the device).
+ */
+async function seedConversation(): Promise<Seeded & { agentId: string }> {
   const accountId = randomUUID();
   const orgId = randomUUID();
   const agentId = randomUUID();
@@ -76,6 +84,8 @@ async function seedConversation(): Promise<{
   );
   await sql`INSERT INTO capybara.orgs (id, slug, name, created_by)
     VALUES (${orgId}, ${`o-${orgId.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
+  await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
+    VALUES (${orgId}, ${accountId}, 'owner')`.execute(raw);
   await enableFakeProvider(raw, orgId);
   await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
@@ -87,12 +97,27 @@ async function seedConversation(): Promise<{
   return {
     orgId,
     deviceId,
+    agentId,
     holderConversationId: conversationId,
     actor: { accountId, conversationId },
   };
 }
 
-describe("沙箱（两个副本）", () => {
+/** Another root conversation of the same account on the same device (a second holder). */
+async function secondHolder(ctx: Seeded & { agentId: string }): Promise<Seeded> {
+  const conversationId = randomUUID();
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+    VALUES (${conversationId}, ${ctx.orgId}, ${ctx.agentId}, ${ctx.actor.accountId},
+      ${ctx.deviceId})`.execute(raw);
+  return {
+    orgId: ctx.orgId,
+    deviceId: ctx.deviceId,
+    holderConversationId: conversationId,
+    actor: { accountId: ctx.actor.accountId, conversationId },
+  };
+}
+
+describe("sandbox (two replicas)", () => {
   it("two replicas using one device for the first time at once: one file system and one instance, both get the same handle", async () => {
     const [k1, k2] = await Promise.all([
       startKernel(cfg([SANDBOX_FAKE], ["api", "worker"])),
@@ -104,11 +129,11 @@ describe("沙箱（两个副本）", () => {
     expect(await k2.app.get(SandboxService).availableFor(ctx.deviceId, ctx.orgId)).toBe(true);
     await setFakeSandboxDelays(root, { create: 300 });
 
-    const use = (k: TestKernel) =>
-      k.app
-        .get(SandboxService)
-        .withSandbox(ctx, async (h, _p, info) => ({ h, info }), AbortSignal.timeout(30_000));
-    const [a, b] = await Promise.all([use(k1), use(k2)]);
+    // each replica's use is a tool call of its own conversation's claimed run on the device
+    const other = await secondHolder(ctx);
+    const use = (k: TestKernel, holder: Seeded) =>
+      managedUseOn(k, raw, holder, async (h, _p, info) => ({ h, info }));
+    const [a, b] = await Promise.all([use(k1, ctx), use(k2, other)]);
     expect(a.h).toEqual(b.h);
     expect([a.info.fresh, b.info.fresh].sort()).toEqual([false, true]);
     const ops = await readFakeSandboxOps(root);
@@ -135,10 +160,9 @@ describe("沙箱（两个副本）", () => {
     kernels.push(k);
     const ctx = await seedConversation();
     expect(await k.app.get(SandboxService).availableFor(ctx.deviceId, ctx.orgId)).toBe(false);
-    const err = await k.app
-      .get(SandboxService)
-      .withSandbox(ctx, async () => 1, AbortSignal.timeout(5000))
-      .catch((e: unknown) => e);
+    const fn = vi.fn(async () => 1);
+    const err = await managedUseOn(k, raw, ctx, fn).catch((e: unknown) => e);
+    expect(fn).not.toHaveBeenCalled();
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(503);
     expect((err as ApiError).code).toBe("device.unavailable");

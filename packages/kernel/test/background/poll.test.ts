@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SandboxOperationOutcomeUnknownError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,7 +46,7 @@ import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { managedTaskFixture } from "../helpers/managed-background.js";
-import { startClaimedRun } from "../helpers/managed-calls.js";
+import { managedUseOn, startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -243,28 +244,23 @@ async function conversation(): Promise<Conv> {
   return { ...s, deviceId, ...(await startClaimedRun(k, raw, s.conversationId, s.accountId)) };
 }
 
-/** The device a conversation is bound to. */
-async function envOf(conversationId: string): Promise<string> {
-  const r = await db
-    .selectFrom("conversations")
-    .select("device_id")
-    .where("id", "=", conversationId)
-    .executeTakeFirstOrThrow();
-  if (r.device_id === null) throw new Error(`conversation ${conversationId} is not bound`);
-  return r.device_id;
-}
-
-/** Runs `command` in the conversation's device (creating or resuming its instance). */
-async function inSandbox(
-  c: { orgId: string; conversationId: string },
+/**
+ * Runs `command` in the conversation's device (creating or resuming its instance) as a tool call
+ * of the conversation's claimed run does: the managed route under the run's claim fence, the exec
+ * admitted by the real operation intents.
+ */
+const inSandbox = (
+  c: Conv,
   command: string,
-): Promise<{ exitCode: number | null; stdout: string }> {
-  return sandbox.withSandbox(
+): Promise<{ exitCode: number | null; stdout: string }> =>
+  managedUseOn(
+    k,
+    raw,
     {
       orgId: c.orgId,
-      deviceId: await envOf(c.conversationId),
+      deviceId: c.deviceId,
       holderConversationId: c.conversationId,
-      actor: { accountId: "test", conversationId: c.conversationId },
+      actor: { accountId: c.accountId, conversationId: c.conversationId },
     },
     (h, p, _info, sig) =>
       p.exec(h, {
@@ -275,8 +271,8 @@ async function inSandbox(
         signal: sig,
       }),
     signal(),
+    { run: { runId: c.runId, claim: c.claim } },
   );
-}
 
 /** Starts `command` as a managed background task of the conversation through the `Bash` path. */
 const launch = (c: ManagedLauncher, command: string, seconds = 300): Promise<BackgroundTaskRow> =>
@@ -427,7 +423,17 @@ describe("polling", () => {
       .executeTakeFirstOrThrow();
     await killFakeExecution(root, t);
     await removeFakeSandbox(root, (row.handle as { id: string }).id);
-    // the next use finds the instance gone and rebuilds it
+    // the next call's dispatched exec finds the instance gone: its outcome stays unknown (never
+    // retried under a new identity) and the instance is rebuilt on the kept files (the gone
+    // after dispatch branch of SandboxService.withOperations)
+    await expect(inSandbox(c, "true")).rejects.toBeInstanceOf(SandboxOperationOutcomeUnknownError);
+    const rebuilt = await db
+      .selectFrom("device_instances")
+      .select(["handle", "status"])
+      .where("device_id", "=", c.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(rebuilt.status).toBe("running");
+    expect(rebuilt.handle).not.toEqual(row.handle);
     expect((await inSandbox(c, "true")).exitCode).toBe(0);
     expect(await job.pollOnce()).toBe(1);
     expect(await store.get(t.id)).toMatchObject({
