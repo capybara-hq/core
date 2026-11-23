@@ -1,4 +1,4 @@
-import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { taskOutputFile } from "../../../src/background/launch.js";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
@@ -158,6 +158,7 @@ describe("Bash time limit", () => {
       devices,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到配置
       sandbox: {} as any,
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -280,6 +281,7 @@ describe("registry without a sandbox provider", () => {
       devices: { ...devices, usableNow: async () => false },
       // biome-ignore lint/suspicious/noExplicitAny: never called
       sandbox: {} as any,
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -620,15 +622,11 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     signal: new AbortController().signal,
   });
 
-  /**
-   * An instance whose handle carries `ROOTS`, entered on the managed route production takes;
-   * `legacy`: the legacy route (only its dormant-only tests, deleted with that route).
-   */
-  function device(route: "managed" | "legacy" = "managed") {
+  /** An instance whose handle carries `ROOTS`, entered on the managed route production takes. */
+  function device() {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
     const execs: { command: string; cwd: string }[] = [];
-    let entered = 0;
     const p = {
       readFile: async (_h: unknown, path: string) => {
         const d = files.get(path);
@@ -651,15 +649,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };
-    const withSandbox: SandboxToolDeps["sandbox"]["withSandbox"] = async (_c, fn, sig) => {
-      entered++;
-      return fn(
-        { id: "env-1", roots: ROOTS },
-        p as never,
-        { fresh: false, restarted: false, roots: ROOTS },
-        sig,
-      );
-    };
     const managed = managedSandbox(p, { roots: ROOTS, handle: { id: "env-1", roots: ROOTS } });
     const tools = sandboxTools({
       devices,
@@ -670,9 +659,9 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       } as any,
       sandbox: {
         currentInstance: async () => ({ createdAt: new Date(0), provider: "device-fake" }),
-        ...(route === "legacy" ? { withSandbox } : managed.sandbox),
+        ...managed.sandbox,
       },
-      ...(route === "managed" && managedRoute()),
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: test stub
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: never called
@@ -685,8 +674,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       config: { get: () => cfg },
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
-    const enteredCount = () => (route === "legacy" ? entered : managed.entries.length);
-    return { files, writes, execs, tool, entered: enteredCount };
+    return { files, writes, execs, tool, entered: () => managed.entries.length };
   }
 
   const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
@@ -704,42 +692,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       // the managed route bounds paths by the admitted scope, so the text names no roots
       // (checkToolWritable in src/tools/builtins/sandbox/common.ts)
       `Path ${ROOTS.skills}/x/run.sh is read-only (${ROOTS.skills} holds skill files); pass another path instead.`,
-    );
-  });
-
-  it("a /workspace path is refused under custom roots with an actionable error naming the real workspace", async () => {
-    const d = device("legacy");
-    await expect(d.tool("Read").run({ file_path: "/workspace/a.txt" }, ctx)).rejects.toThrow(
-      `Invalid file_path "/workspace/a.txt": path must be under ${ROOTS.workspace}, ${ROOTS.skills}, ${ROOTS.tmp}. Pass an absolute path under ${ROOTS.workspace}, ${ROOTS.skills} or ${ROOTS.tmp}.`,
-    );
-    expect(d.writes).toEqual([]);
-  });
-
-  it("default roots keep the old path error, byte for byte", async () => {
-    const d = device();
-    const tools = sandboxTools({
-      devices,
-      sandbox: {
-        withSandbox: async (_c, fn, sig) =>
-          fn(
-            { id: "x" },
-            {} as never,
-            { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-            sig,
-          ),
-      },
-      // biome-ignore lint/suspicious/noExplicitAny: test stub
-      attachments: { listForConversation: async () => [] } as any,
-      // biome-ignore lint/suspicious/noExplicitAny: never called
-      storage: {} as any,
-      // biome-ignore lint/suspicious/noExplicitAny: never called
-      eventLog: {} as any,
-      config: { get: () => cfg },
-    });
-    void d;
-    const read = tools.find((t) => t.spec.name === "Read") as BuiltinTool;
-    await expect(read.run({ file_path: "/etc/passwd" }, ctx)).rejects.toThrow(
-      'Invalid file_path "/etc/passwd": path must be under /workspace, /skills, /tmp. Pass an absolute path under /workspace, /skills or /tmp.',
     );
   });
 
@@ -823,10 +775,11 @@ describe("sandbox tools listed by the conversation's device (ruling R8)", () => 
     sandboxTools({
       devices: { forTool: async () => "env-1", usableNow: usable },
       sandbox: {
-        withSandbox: async () => {
+        withOperations: async () => {
           throw new Error("not used");
         },
       },
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: never called
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: never called

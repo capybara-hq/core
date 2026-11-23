@@ -101,9 +101,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `ExecutionRevoked` (checked before the abort); every other callback or refresh failure is a named no-send
   `run.permission_context_*` run error, never a provider error or fallback. Compaction, title, review and
   extraction calls get no permission context. **Live producers are on** (the paired activation, device
-  protocol 4): `RunSteps` wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed device
-  writer (`ManagedDeviceContextRecorder`) while the one gate `PERMISSION_CONTEXT_ACTIVATION` is on (production
-  `PERMISSION_CONTEXT_ACTIVE = true`; a test may provide `false` for the dormant state). Every agent run now
+  protocol 4): `RunSteps` always wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed
+  device writer (`ManagedDeviceContextRecorder`, required: there is no legacy `device_paths` writer and no
+  activation seam any more; events of the earlier writer already in logs still render). Every agent run now
   records a context before its first request (a conversation without a usable device records it as
   `unavailable` / `unsupported`, which the model sees), and again whenever it changes (a device's first
   provisioning moves `unprobed` to `supported`, a profile change): all logged, so zero drift without a new

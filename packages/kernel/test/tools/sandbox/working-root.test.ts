@@ -8,12 +8,8 @@ import {
   workingRootOf,
 } from "../../../src/devices/working-root.js";
 import { MANAGED_DEVICE_CONTEXT_STALE_TEXT } from "../../../src/sandbox/managed-device-context.js";
-import type { SandboxMode } from "../../../src/sandbox/modes.js";
 import { reviewRules, reviewWrite } from "../../../src/sandbox/review/index.js";
-import {
-  type SandboxToolDeps,
-  sandboxStartedNotice,
-} from "../../../src/tools/builtins/sandbox/common.js";
+import { sandboxStartedNotice } from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinTool } from "../../../src/tools/registry.js";
 import { managedCall, managedRoute, managedSandbox } from "../../helpers/managed-tool-stubs.js";
@@ -152,31 +148,19 @@ describe("the sandbox tools in a bound conversation", () => {
   });
 
   /**
-   * A device at `mode` whose root conversation has the project snapshot `project` (null: free);
-   * `fresh`: the call is the conversation's first use of the device. On the managed route (the
-   * default, the only one production takes) the call runs in the working root its held evidence
-   * names, which `OperationAuthority.workingRootFor` decides with the same `workingRootOf` rule
-   * from the held instance's workspace (src/sandbox/operation-authority.ts); `legacy`: the legacy
-   * route, which decides it in the tool itself from the working facts (`sessionWorkingRoot`), kept
-   * only for its dormant-only tests.
+   * A device whose root conversation has the project snapshot `project` (null: free); `fresh`:
+   * the call is the conversation's first use of the device. On the managed route the call runs in
+   * the working root its held evidence names, which `OperationAuthority.workingRootFor` decides
+   * with the same `workingRootOf` rule from the held instance's workspace
+   * (src/sandbox/operation-authority.ts).
    */
-  function device(
-    project: WorkingProject | null,
-    {
-      mode = "auto",
-      fresh = false,
-      recorded = ROOTS.workspace,
-      legacy = false,
-    }: { mode?: SandboxMode; fresh?: boolean; recorded?: string; legacy?: boolean } = {},
-  ) {
+  function device(project: WorkingProject | null, { fresh = false }: { fresh?: boolean } = {}) {
     const files = new Map<string, Uint8Array>();
     const dirs = new Set([ROOTS.workspace, PROJECT, `${ROOTS.workspace}/app`]);
     const writes: string[] = [];
     const execs: { command: string; cwd: string }[] = [];
-    const asked: string[] = [];
     /** The file states the conversation recorded (what Read leaves for a later Edit). */
     const states = new Map<string, { size: number; sha256: string }>();
-    let entered = 0;
     const devicesAsked: string[] = [];
     const p = {
       readFile: async (_h: unknown, path: string) => {
@@ -203,15 +187,6 @@ describe("the sandbox tools in a bound conversation", () => {
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };
-    const withSandbox: SandboxToolDeps["sandbox"]["withSandbox"] = async (_c, fn, sig) => {
-      entered++;
-      return fn(
-        { id: "env-1", roots: ROOTS },
-        p as never,
-        { fresh, restarted: false, roots: ROOTS },
-        sig,
-      );
-    };
     const managed = managedSandbox(p, {
       roots: ROOTS,
       handle: { id: "env-1", roots: ROOTS },
@@ -224,16 +199,6 @@ describe("the sandbox tools in a bound conversation", () => {
           devicesAsked.push(conversationId);
           return "env-1";
         },
-        modeLevel: async () => ({
-          mode,
-          allowedMode: "auto",
-          network: { kind: "open-public", hosts: [] },
-          local: true,
-        }),
-        workingFacts: async (_orgId: string, rootConversationId: string) => {
-          asked.push(rootConversationId);
-          return { workspace: recorded, home: "/Users/u", project };
-        },
       },
       background: {
         get: async () => undefined,
@@ -242,9 +207,9 @@ describe("the sandbox tools in a bound conversation", () => {
       } as any,
       sandbox: {
         currentInstance: async () => ({ createdAt: new Date(0), provider: "device-fake" }),
-        ...(legacy ? { withSandbox } : managed.sandbox),
+        ...managed.sandbox,
       },
-      ...(!legacy && managedRoute()),
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: test stub
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: never called
@@ -257,17 +222,15 @@ describe("the sandbox tools in a bound conversation", () => {
       config: { get: () => cfg },
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
-    const enteredCount = () => (legacy ? entered : managed.entries.length);
     return {
       files,
       writes,
       execs,
-      asked,
       devicesAsked,
       entries: managed.entries,
       states,
       tool,
-      entered: enteredCount,
+      entered: () => managed.entries.length,
     };
   }
 
@@ -286,28 +249,11 @@ describe("the sandbox tools in a bound conversation", () => {
     expect(gone.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
   });
 
-  it("a usable project is the working root whatever the recorded workspace; a fallback runs in the instance's workspace", async () => {
-    // the recorded workspace does not hold the project: where a project lies is its provider's
-    // rule, so the project is still the working root
-    const stale = device(usable(`${ROOTS.workspace}/app`), {
-      mode: "sandbox",
-      recorded: "/workspace",
-      legacy: true,
-    });
-    await stale.tool("Bash").run(bash, ctx);
-    expect(stale.execs.map((e) => e.cwd)).toEqual([`${ROOTS.workspace}/app`]);
-    // free mode with a stale record: the command runs where the instance really is
-    const free = device(null, { recorded: "/workspace", legacy: true });
-    await free.tool("Bash").run(bash, ctx);
-    expect(free.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
-  });
-
-  it("a reviewed call runs in the working root its review judged, without reading it again", async () => {
+  it("a reviewed call runs in the working root its review judged", async () => {
     // the held evidence names the project root, which the review judged the call against
     const d = device(usable(PROJECT));
     await d.tool("Bash").run(bash, { ...ctx, reviewedWorkingRoot: `${PROJECT}/` });
     expect(d.execs.map((e) => e.cwd)).toEqual([PROJECT]);
-    expect(d.asked).toEqual([]);
     await d
       .tool("Write")
       .run({ file_path: "a.txt", content: "a" }, { ...ctx, reviewedWorkingRoot: PROJECT });
@@ -318,7 +264,6 @@ describe("the sandbox tools in a bound conversation", () => {
       d.tool("Bash").run(bash, { ...ctx, reviewedWorkingRoot: "/Users/u/code/reviewed" }),
     ).rejects.toThrow(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
     expect(d.execs).toHaveLength(1);
-    expect(d.asked).toEqual([]);
   });
 
   it("a sub-agent's call uses its root conversation's device and holds it as itself", async () => {
@@ -362,24 +307,6 @@ describe("the sandbox tools in a bound conversation", () => {
     const d = device(null);
     await d.tool("Write").run({ file_path: "notes.md", content: "n" }, ctx);
     expect(d.writes).toEqual([`${ROOTS.workspace}/notes.md`]);
-  });
-
-  it("sandbox mode keeps its roots: the working root changes nothing the path checks accept", async () => {
-    // a project root outside the workspace is the working root, but the legacy route's fixed
-    // roots still refuse its paths
-    const outside = device(usable(PROJECT), { mode: "sandbox", legacy: true });
-    await expect(
-      outside.tool("Write").run({ file_path: "a.txt", content: "a" }, ctx),
-    ).rejects.toThrow(/path must be under/);
-    await expect(
-      outside.tool("Write").run({ file_path: `${PROJECT}/a.txt`, content: "a" }, ctx),
-    ).rejects.toThrow(/path must be under/);
-    // inside the workspace it is, and the roots still bound every path
-    const inside = device(usable(`${ROOTS.workspace}/app`), { mode: "sandbox", legacy: true });
-    await inside.tool("Write").run({ file_path: "a.txt", content: "a" }, ctx);
-    expect(inside.writes).toEqual([`${ROOTS.workspace}/app/a.txt`]);
-    await inside.tool("Bash").run(bash, ctx);
-    expect(inside.execs.map((e) => e.cwd)).toEqual([`${ROOTS.workspace}/app`]);
   });
 
   it("a relative path with ~ or .. is refused before the call enters its device", async () => {

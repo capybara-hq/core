@@ -26,14 +26,7 @@ import type { HookRunner } from "../../runtime/hook-calls.js";
 import { ProviderListError, ProviderRegistry } from "../../runtime/providers.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
-import {
-  type ManagedDeviceContextPort,
-  ManagedDeviceContextRecorder,
-} from "../../sandbox/managed-device-context.js";
-import {
-  PERMISSION_CONTEXT_ACTIVATION,
-  permissionContextActive,
-} from "../../sandbox/permission-context-types.js";
+import { ManagedDeviceContextRecorder } from "../../sandbox/managed-device-context.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
@@ -104,12 +97,7 @@ export class BuiltinTools {
     /** The managed sandbox route's device context writer (permission context replay spec B3). */
     @Inject(ManagedDeviceContextRecorder) managedDeviceContext: ManagedDeviceContextRecorder,
     @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
-    /** The paired activation gate (one switch with the runtime's request boundary). */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
-    // dormant: the builtins keep the legacy route until the paired activation turns the gate on;
-    // then every builtin entering a device (the skill tool too) takes the managed route
-    const managed = managedSandboxDeps(managedDeviceContext, activation);
     // `Read` beyond the device (vision-read design §1): files by id, the vision read with its
     // hooks (as the WebFetch extraction), the stored copies and the chat model's capabilities
     const vision = { purposes, eventLog, stepLog, config, log, hooks: host?.hooks };
@@ -140,7 +128,7 @@ export class BuiltinTools {
       eventLog,
       config,
       log,
-      ...managed,
+      managedDeviceContext,
       read,
     };
     this.tools = [
@@ -163,7 +151,7 @@ export class BuiltinTools {
         attachments,
         eventLog,
         log,
-        ...managed,
+        managedDeviceContext,
         get db() {
           return db.db;
         },
@@ -263,19 +251,6 @@ export class BuiltinTools {
   list(): readonly BuiltinTool[] {
     return this.tools;
   }
-}
-
-/**
- * The managed device context fields of the builtin sandbox tools' deps (spec B3): the injected
- * writer, required, only when the one activation gate is on; otherwise no keys at all, and the
- * legacy writer stays.
- */
-export function managedSandboxDeps(
-  recorder: ManagedDeviceContextPort,
-  activation: boolean | undefined,
-): Pick<SandboxToolDeps, "managedDeviceContext" | "managedDeviceContextRequired"> {
-  if (!permissionContextActive(activation)) return {};
-  return { managedDeviceContext: recorder, managedDeviceContextRequired: true };
 }
 
 /**

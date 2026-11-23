@@ -248,7 +248,6 @@ describe("a dial-in device through the sandbox tools", () => {
       eventLog: k.app.get(EventLog),
       config: k.app.get(KernelConfigService),
       managedDeviceContext: k.app.get(ManagedDeviceContextRecorder),
-      managedDeviceContextRequired: true,
     };
     const tools = sandboxTools(deps);
     return async (name: string, input: Record<string, unknown>): Promise<unknown> => {

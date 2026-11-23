@@ -597,7 +597,7 @@ describe("Conversation permission profiles", () => {
       agentId = await createAgent(req, orgId),
       deviceId = await localDevice(orgId);
     const sandbox = k.app.get(SandboxService);
-    const provision = vi.spyOn(sandbox, "withSandbox");
+    const provision = vi.spyOn(sandbox, "withOperations");
     const previewUrl = `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`;
     const preview = await req({ method: "GET", url: previewUrl });
     expect(preview.statusCode, preview.body).toBe(200);

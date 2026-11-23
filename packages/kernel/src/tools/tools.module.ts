@@ -74,7 +74,7 @@ import { ToolAskReview } from "./tool-review.js";
     SubagentsModule,
     // the builtin sandbox and skill tools run in the conversation's device
     SandboxModule,
-    // the managed sandbox route's device context writer (passed only once activated)
+    // the managed sandbox route's device context writer
     ManagedDeviceContextModule,
     DevicesModule,
     // network asks read the run tree's network grants

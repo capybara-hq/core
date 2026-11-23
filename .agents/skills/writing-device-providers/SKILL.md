@@ -55,7 +55,7 @@ interface DeviceProvider {
 }
 ```
 
-On the activated tree (device protocol 5, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
+Since the paired activation (device protocol 5) the kernel never calls the raw `exec` / `readFile` /
 `writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
 permission-scoped surface (`packages/plugin-sdk/src/device-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
 (the admitted `SandboxOperationScope`: its filesystem is `{ kind: "scoped", projectRoot, writeRoots }` or `{ kind: "device" }`, with

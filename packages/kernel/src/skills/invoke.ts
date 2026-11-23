@@ -7,16 +7,13 @@ import {
   SKILL_ENTRY_FILE,
   SKILL_INVOCATION_LIMITS,
   skillDigest,
-  skillSandboxDir,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup } from "../agents/agent-lookup.js";
 import { type AgentDefinition, builtinDisabled } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { ConversationDevices } from "../devices/conversation-devices.js";
-import { providerUnreachable } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -29,21 +26,10 @@ import {
 } from "../runtime/context/project-root.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
 import { PROJECT_SKILLS_DIR } from "../sandbox/kernel-read.js";
-import {
-  PERMISSION_CONTEXT_ACTIVATION,
-  permissionContextActive,
-} from "../sandbox/permission-context-types.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
-import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { StorageService } from "../storage/storage.service.js";
 import { BUILTIN } from "../tools/builtin-names.js";
-import { sessionPathBound, sessionWorkingRoot } from "../tools/builtins/sandbox/common.js";
 import {
   findSkillVersion,
-  PROJECT_DIR_DIGEST,
-  type ProjectSkillProblem,
-  ProjectSkillReadError,
-  readProjectSkill,
   readSkillFile,
   SkillIntegrityError,
 } from "../tools/builtins/skill-load.js";
@@ -150,35 +136,6 @@ export type ProjectUnavailableReason =
 const projectUnavailable = (reason: ProjectUnavailableReason, message: string) =>
   new ApiError("skill.project_unavailable", message, [{ reason }]);
 
-/** The refusal of a {@link ProjectSkillProblem}: its reason and the person's text. */
-function projectProblemRefusal(name: string, p: ProjectSkillProblem): ApiError {
-  switch (p.kind) {
-    case "outside_mode":
-      return projectUnavailable(
-        "outside_mode",
-        `Skill "${name}" cannot be invoked: ${p.path} is outside what the device can read in ${p.mode} mode now`,
-      );
-    case "gone":
-      return projectUnavailable(
-        "gone",
-        `Skill "${name}" cannot be invoked: ${p.path} is no longer on the device`,
-      );
-    case "read_failed":
-      return projectUnavailable(
-        "unreadable",
-        `Skill "${name}" cannot be invoked: reading ${p.path} on the device failed (${p.why.slice(0, 300)})`,
-      );
-    case "invalid":
-      return projectUnavailable(
-        "unparsable",
-        `Skill "${name}" cannot be invoked: ${p.path} is not a valid SKILL.md (${p.why.slice(0, 300)})`,
-      );
-  }
-}
-
-/** The longest a person's invocation waits for its project skill's SKILL.md on the device. */
-const PROJECT_SKILL_READ_TIMEOUT_MS = 30_000;
-
 /** Where an effective skill comes from, for the `/` menu ({@link InvocableSource}). */
 export const invocableSource = (r: {
   scope: ResolvedSkill["scope"];
@@ -265,12 +222,12 @@ export const forkLeadText = (name: string, agentType: string, args: string): str
   );
 
 /**
- * A person's `/project:<name>` invocation once the activation gate is on (permission activation
- * L2, Hook 2): no device read at send time (a person's send has no run, so nothing could admit
- * it). The message is a stub rendered from the conversation's latest `project_root` (the skill's
- * name, its recorded digest, its directory in the project and the person's arguments) telling the
- * agent to load `project:<name>` with its `Skill` tool, which reads it under the run's admission.
- * Model-visible, so English; tags in the arguments stay inert. Always inline, as before.
+ * A person's `/project:<name>` invocation (permission activation L2, Hook 2): no device read at
+ * send time (a person's send has no run, so nothing could admit it). The message is a stub
+ * rendered from the conversation's latest `project_root` (the skill's name, its recorded digest,
+ * its directory in the project and the person's arguments) telling the agent to load
+ * `project:<name>` with its `Skill` tool, which reads it under the run's admission. Model-visible,
+ * so English; tags in the arguments stay inert. Always inline, as before.
  */
 export function projectSkillStub(
   a: { name: string; args: string },
@@ -329,12 +286,6 @@ export class SkillInvoker {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     /** A bound conversation's latest `project_root` (its project skills). */
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "latestOfType">,
-    /** A project skill's SKILL.md is read through the conversation's device. */
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
-    @Inject(ConversationDevices)
-    private readonly devices: Pick<ConversationDevices, "forTool" | "modeLevel" | "workingFacts">,
-    /** The paired activation gate: once on, no raw device use reads a project skill. */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -369,9 +320,8 @@ export class SkillInvoker {
       ...(conversationId !== undefined && { conversationId }),
     });
     if (conversationId === undefined) return skills;
-    // once activated a project skill is loaded by the agent's Skill tool: none without it
-    if (permissionContextActive(this.activation) && !hasBuiltin(agent.definition, BUILTIN.Skill))
-      return skills;
+    // a project skill is loaded by the agent's Skill tool: none without it
+    if (!hasBuiltin(agent.definition, BUILTIN.Skill)) return skills;
     const latest = await this.eventLog.latestOfType(conversationId, "project_root");
     return [...skills, ...projectInvocables(latest?.payload)];
   }
@@ -487,17 +437,12 @@ export class SkillInvoker {
 
   /**
    * A person's invocation of `project:<name>` (project root spec §4.6): resolved from the
-   * conversation's latest `project_root` (what the model saw), then its SKILL.md is read through
-   * the conversation's device as `Skill` reads it ({@link readProjectSkill}) and rendered like any
-   * invocation, `${CLAUDE_SKILL_DIR}` being the skill's directory in the project. Always inline
-   * (`context: fork` is not honoured for project skills, as in `Skill`). Refusals:
-   * `skill.not_invocable` `not_found` (no conversation yet, no project, a name it does not list),
-   * `skill.project_unavailable` with its reason (the latest project is unavailable, or its file
-   * cannot be used), the device's own refusals as they are (`device.offline`, ...),
-   * `device.projects_unavailable` when the device cannot be asked. Once the activation gate is on
-   * the device is not read at send time: the invocation is the recorded stub
-   * ({@link projectSkillStub}) and only the first two refusals remain, plus
-   * `skill.project_unavailable` `skill_tool_off` for an agent without the `Skill` tool.
+   * conversation's latest `project_root` (what the model saw). The device is not read at send
+   * time: the invocation is the recorded stub ({@link projectSkillStub}), which the agent's
+   * `Skill` tool loads. Refusals: `skill.not_invocable` `not_found` (no conversation yet, no
+   * project, a name it does not list), `skill.project_unavailable` with its reason (the latest
+   * project is unavailable), and `skill.project_unavailable` `skill_tool_off` for an agent without
+   * the `Skill` tool.
    */
   private async prepareProject(
     a: {
@@ -522,127 +467,13 @@ export class SkillInvoker {
     if (projectSkillBlocked(latest, a.name) !== null || latest === undefined) {
       throw notInvocable("not_found", a.name);
     }
-    // once activated: no device read at send time, the agent loads the skill with Skill
-    if (permissionContextActive(this.activation)) {
-      if (!hasBuiltin(a.agent, BUILTIN.Skill))
-        throw projectUnavailable(
-          "skill_tool_off",
-          `Skill "${a.name}" cannot be invoked: this agent cannot load project skills; turn on its ${BUILTIN.Skill} tool`,
-        );
-      return projectSkillStub(a, latest, bare);
-    }
-    const file = await this.readProjectFile({ ...a, conversationId }, latest.root, bare);
-    const args = a.args.trim();
-    // the renderer's skills-root directory becomes the skill's directory in the project (a closing
-    // tag in the path stays inert, as in the body)
-    const dir = file.dir.replace(/<\//g, "<\\/");
-    const text = rendered(() =>
-      renderSkillInvocation({
-        name: a.name,
-        skillName: bare,
-        digest: PROJECT_DIR_DIGEST,
-        version: 0,
-        body: file.body,
-        invocation: file.invocation,
-        args: a.args,
-        lines: {
-          ...(hasShellInjection(file.body) &&
-            hasBuiltin(a.agent, BUILTIN.Bash) && { shellHint: true as const }),
-        },
-      }),
-    ).replaceAll(skillSandboxDir(bare, PROJECT_DIR_DIGEST), dir);
-    const full = [
-      text,
-      ...(file.truncated
-        ? [
-            `Its SKILL.md was cut at 1 MiB when it was read; the rest of its instructions is missing.`,
-          ]
-        : []),
-      `Its other files, if any, are in ${dir}/ on the device; use them there.`,
-    ].join("\n\n");
-    // the closing lines count toward the limit too
-    if (full.length > SKILL_INVOCATION_LIMITS.renderedMaxChars) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        {
-          path: "text",
-          message: `the rendered skill must be at most ${SKILL_INVOCATION_LIMITS.renderedMaxChars} characters; shorten the arguments`,
-        },
-      ]);
-    }
-    return {
-      text: full,
-      skill: {
-        id: a.name,
-        version: 0,
-        source: "project",
-        name: a.name,
-        arguments: args,
-        mode: "inline",
-      },
-    };
-  }
-
-  /**
-   * {@link readProjectSkill} in a silent use of the conversation's device, as its owner (gate off
-   * only: once activated a person's invocation renders {@link projectSkillStub} and never reads
-   * the device at send time).
-   */
-  private async readProjectFile(
-    a: { orgId: string; accountId: string; conversationId: string; name: string },
-    root: string,
-    bare: string,
-  ) {
-    try {
-      const deviceId = await this.devices.forTool(a.orgId, a.conversationId);
-      // a person invokes in a root conversation: it is its own sandbox conversation
-      const [level, working] = await Promise.all([
-        this.devices.modeLevel(a.orgId, deviceId),
-        this.devices.workingFacts(a.orgId, a.conversationId, a.conversationId, deviceId),
-      ]);
-      // unknown mode: the strict (sandbox) path checks stay (fail closed), as in a tool call
-      const mode = level?.mode ?? "sandbox";
-      return await this.sandbox.withSandbox(
-        {
-          orgId: a.orgId,
-          deviceId,
-          holderConversationId: a.conversationId,
-          // tells the model nothing: its next tool call still learns what the device did
-          silent: true,
-          actor: { accountId: a.accountId, conversationId: a.conversationId },
-        },
-        (h, p, info, signal) =>
-          readProjectSkill(
-            {
-              deviceId,
-              // the legacy route (gate off): the fixed roots unless the device runs in auto mode
-              pathBound: sessionPathBound(false, mode),
-              h,
-              roots: info.roots,
-              // the working root a tool call of this conversation would get (one rule)
-              workingRoot: sessionWorkingRoot(working, info.roots.workspace),
-              p,
-              signal,
-            },
-            root,
-            bare,
-          ),
-        AbortSignal.timeout(PROJECT_SKILL_READ_TIMEOUT_MS),
+    // no device read at send time: the agent loads the skill with Skill
+    if (!hasBuiltin(a.agent, BUILTIN.Skill))
+      throw projectUnavailable(
+        "skill_tool_off",
+        `Skill "${a.name}" cannot be invoked: this agent cannot load project skills; turn on its ${BUILTIN.Skill} tool`,
       );
-    } catch (e) {
-      if (e instanceof ProjectSkillReadError) throw projectProblemRefusal(a.name, e.problem);
-      if (e instanceof ApiError) throw e;
-      if (e instanceof SandboxProviderUnreachableError) throw providerUnreachable();
-      this.log.warn("project skill unreadable: the device could not be asked", {
-        orgId: a.orgId,
-        conversationId: a.conversationId,
-        skill: a.name,
-        err: e,
-      });
-      throw new ApiError(
-        "device.projects_unavailable",
-        "The device could not be reached to read the project skill; retry later",
-      );
-    }
+    return projectSkillStub(a, latest, bare);
   }
 
   /**
