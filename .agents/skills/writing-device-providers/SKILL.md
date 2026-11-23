@@ -715,8 +715,9 @@ suite in `@capybara-hq/testing` checks it):
   one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned descriptor, skips
   one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). The
   worker sends file roots only when the launcher it carries declares `features: ["fileReadRoots"]`
-  (`LinuxRuntimeBundle.fileReadRoots`); with a launcher that does not, the files stay unreadable (the staged launcher
-  in `SANDBOX_RUNTIME_SOURCE.files` ignores `readFiles`, proven on a real kernel in `sandbox-linux-runtime.test.ts`). An
+  (`LinuxRuntimeBundle.fileReadRoots`); with a launcher that does not, the files stay unreadable (the launcher
+  before core#742 ignored `readFiles` and closed every inherited descriptor before exec, proven on a real kernel while
+  both shipped). An
   expanded directory cannot be listed, more than 4096 carved directories refuses machine reach, and files past the cap
   or the agent's open-file limit are dropped.
   Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system
