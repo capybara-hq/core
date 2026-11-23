@@ -4,6 +4,7 @@ import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 import {
   appearanceIssues,
+  CONNECTOR_TEMPLATE_LIMITS,
   ConnectorTemplateFileSchema,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
@@ -401,6 +402,35 @@ describe("parseConnectorTemplateFile", () => {
     const errs = "errors" in r ? r.errors : [];
     expect(errs.join("\n")).toMatch(/extra/);
     expect(errs.join("\n")).toMatch(/displayName/);
+  });
+
+  it("description is a string or { zh, en }, each text within the limit", () => {
+    const max = CONNECTOR_TEMPLATE_LIMITS.descriptionChars;
+    const parse = (description: unknown) => parseConnectorTemplateFile({ ...file(), description });
+    const both = parse({ zh: "客户管理服务器", en: "The CRM server" });
+    expect("errors" in both ? both.errors : both.description).toEqual({
+      zh: "客户管理服务器",
+      en: "The CRM server",
+    });
+    const atLimit = parse({ zh: "字".repeat(max), en: "x".repeat(max) });
+    expect("errors" in atLimit ? atLimit.errors : []).toEqual([]);
+    for (const bad of [
+      { zh: "客户管理" },
+      { en: "CRM" },
+      { zh: "客户管理", en: "CRM", fr: "CRM" },
+      { zh: "", en: "CRM" },
+      { zh: "  ", en: "CRM" },
+      { zh: "字".repeat(max + 1), en: "CRM" },
+      { zh: "客户管理", en: "x".repeat(max + 1) },
+      "x".repeat(max + 1),
+      ["CRM"],
+      7,
+    ]) {
+      const r = parse(bad);
+      expect("errors" in r ? r.errors.join("\n") : "", JSON.stringify(bad).slice(0, 40)).toMatch(
+        /description/,
+      );
+    }
   });
 
   it("accepts the file text", () => {

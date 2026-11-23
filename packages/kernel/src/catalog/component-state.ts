@@ -6,6 +6,7 @@
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
+import { templateDescription } from "./template-description.js";
 
 /** The kinds of platform components. */
 export type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
@@ -122,7 +123,10 @@ export interface ComponentRow extends ComponentScopeFacts {
   /** The current version (a connector template: the catalog version that last changed it). */
   version: string;
   description: string | null;
-  /** The description's Chinese text (a theme's or skill's `description.zh`); null without one. */
+  /**
+   * The description's Chinese text (a theme's or skill's `description.zh`, a connector template's
+   * `description.zh`); null without one.
+   */
   descriptionZh: string | null;
   /**
    * A connector template's localized display name (its file's `displayName`); null for skills and
@@ -206,8 +210,7 @@ export async function loadComponents(
         name: r.template_id,
         plugin: r.item_name,
         version: r.current_version,
-        description: typeof file?.description === "string" ? file.description : null,
-        descriptionZh: null,
+        ...templateDescription(file?.description),
         displayName: localizedName(file?.displayName),
         originOrgId: null,
       };

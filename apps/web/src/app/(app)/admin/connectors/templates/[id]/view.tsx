@@ -17,7 +17,11 @@ import { NoAccess } from "../../../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../../../components/shell/path";
 import { templateGuideIn } from "../../../../../../lib/catalog";
-import { componentLabel, type PlatformComponent } from "../../../../../../lib/components";
+import {
+  componentDescription,
+  componentLabel,
+  type PlatformComponent,
+} from "../../../../../../lib/components";
 import { catalogItemQuery } from "../../../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../../../lib/query/client";
 import {
@@ -87,7 +91,9 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
 function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("adminComponents.detail");
-  const label = componentLabel(c, useLocale());
+  const locale = useLocale();
+  const label = componentLabel(c, locale);
+  const description = componentDescription(c, locale);
   const [tab, setTab] = useState<Tab>("versions");
   const vq = componentVersionsQuery("connector_template", c.id);
   const versions = useQuery({ ...vq, retryOnMount: retryOnMountOf(vq.queryKey) }).data?.versions;
@@ -128,9 +134,9 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
       >
         <Stack gap={16}>
           {/* The full description, first in the column (the head's line would cut it) */}
-          {c.description !== null && c.description !== "" && (
+          {description !== null && (
             <Text variant="prose" tone="muted" pre>
-              {c.description}
+              {description}
             </Text>
           )}
           <ComponentNotes c={c} />

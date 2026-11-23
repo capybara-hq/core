@@ -2289,6 +2289,8 @@
     "form": {
       "nameLabel": "Name",
       "nameRequired": "Enter a name.",
+      "descriptionLabel": "Description",
+      "descriptionHint": "Shown on the connector card and page.",
       "slugLabel": "Slug",
       "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
       "urlLabel": "Endpoint URL",
@@ -2385,6 +2387,7 @@
     },
     "settings": {
       "title": "General",
+      "descriptionFallback": "Left empty, the connector shows its template's description (the greyed-out text).",
       "activeLabel": "Connector enabled",
       "save": "Save",
       "saved": "Saved.",

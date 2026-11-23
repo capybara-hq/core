@@ -38,6 +38,7 @@ import type {
 } from "./plugin-install.js";
 import { iconProblem, pluginThemeError, themeApiError } from "./plugin-package.js";
 import type { OrgPluginState, PluginScope } from "./scope.js";
+import { templateDescriptionText } from "./template-description.js";
 import { satisfiesRange } from "./versions.js";
 
 /** A catalog item from an organization's view (`GET /orgs/:orgId/catalog`). */
@@ -102,7 +103,10 @@ export interface OrgCatalogItem
 export interface OrgCatalogTemplate {
   id: string;
   displayName: LocalizedName | null;
+  /** The English text, or the one text of a plain-string description ("" without one). */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -182,7 +186,7 @@ export function orgTemplateView(
   return {
     id,
     displayName: file.displayName,
-    description: file.description ?? "",
+    ...templateDescriptionText(file.description),
     plugin: t.plugin,
     connector: t.connector,
     endpoint: t.endpoint,

@@ -179,7 +179,11 @@ export interface PluginManifest {
 /** A connector template file `connectors/<id>.json`; the template id is the file's base name. */
 export interface ConnectorTemplateFile {
   displayName: LocalizedName;
-  description?: string;
+  /**
+   * A string (shown in both languages) or `{ zh, en }`; each text ≤
+   * {@link CONNECTOR_TEMPLATE_LIMITS}`.descriptionChars` characters.
+   */
+  description?: string | LocalizedName;
   /** Safe path relative to the plugin root (an optional leading `./`), .svg / .png. */
   icon?: string;
   /**
@@ -670,7 +674,15 @@ const template = z.strictObject({
 const templateFile = z
   .strictObject({
     displayName: localized,
-    description: text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description").optional(),
+    description: z
+      .union([
+        text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description"),
+        z.strictObject({
+          zh: text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description.zh"),
+          en: text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description.en"),
+        }),
+      ])
+      .optional(),
     icon: z
       .string()
       .max(L.pathChars)

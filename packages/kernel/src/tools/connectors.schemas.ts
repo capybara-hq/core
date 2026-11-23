@@ -1,4 +1,9 @@
-import { ConnectorAuthSchema, GitSourceSchema, secret } from "@capybara-hq/plugin-sdk";
+import {
+  CONNECTOR_TEMPLATE_LIMITS,
+  ConnectorAuthSchema,
+  GitSourceSchema,
+  secret,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 
@@ -29,6 +34,16 @@ export const ConnectorPathParams = z.object({ connectorId: z.string().min(1) });
 export const GitPushPolicyBody = z.object({ policy: z.enum(["allow", "ask", "deny"]) }).strict();
 
 /** `POST …/connectors`: a custom connector with its endpoint, auth method and credential. */
+/** Upper bound on a connector's own description, in characters (as a template's, per text). */
+export const CONNECTOR_DESCRIPTION_MAX = CONNECTOR_TEMPLATE_LIMITS.descriptionChars;
+
+/** A connector's own description: plain text an org admin typed, trimmed (blank means none). */
+const ConnectorDescription = z
+  .string()
+  .trim()
+  .max(CONNECTOR_DESCRIPTION_MAX)
+  .describe("The connector's own description, plain text shown on the connector pages.");
+
 export const ConnectorCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
@@ -39,6 +54,8 @@ export const ConnectorCreateSchema = z
     credential: CredentialValue.optional(),
     /** The git hosts the credential serves in sandboxes (sandbox git credentials spec §6.1). */
     git: GitSourceSchema.optional(),
+    /** The connector's own description (plain text; blank: none). */
+    description: ConnectorDescription.optional(),
   })
   .strict();
 
@@ -79,6 +96,8 @@ export const ConnectorUpdateSchema = z
     allowUnannotated: z.boolean().optional(),
     /** Use an org-credential connector for git in sandboxes (spec 2026-11-12 §6.2). */
     useForGit: z.boolean().optional(),
+    /** The connector's own description; null or blank removes it. */
+    description: ConnectorDescription.nullable().optional(),
   })
   .strict();
 
