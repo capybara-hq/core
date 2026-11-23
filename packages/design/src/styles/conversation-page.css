@@ -881,6 +881,39 @@ span.cb-title-btn {
   height: var(--cb-touch-sheet-close-icon);
   stroke-width: 2.2;
 }
+/* A drill-in page's back (§6.59): the close's circle, ground, hit ring and glyph at the head's
+   start. */
+.cb-bsheet-head .cb-btn.cb-bsheet-back,
+.cb-bsheet-head .cb-btn.cb-bsheet-back:hover:not(:disabled),
+.cb-bsheet-head .cb-btn.cb-bsheet-back:active:not(:disabled) {
+  background: var(--cb-hover);
+}
+.cb-bsheet-head .cb-btn.cb-bsheet-back {
+  position: relative;
+  grid-column: 1;
+  justify-self: start;
+  width: var(--cb-touch-sheet-close);
+  min-width: 0;
+  height: var(--cb-touch-sheet-close);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-pill);
+  color: var(--cb-muted);
+}
+.cb-bsheet-head .cb-btn.cb-bsheet-back:hover:not(:disabled) {
+  color: var(--cb-ink);
+}
+.cb-bsheet-back::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--cb-touch-sheet-close) - var(--cb-touch-hit)) / 2);
+}
+.cb-bsheet-back > .cb-icon {
+  width: var(--cb-touch-sheet-close-icon);
+  height: var(--cb-touch-sheet-close-icon);
+  stroke-width: 2.2;
+}
 .cb-bsheet-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -891,6 +924,29 @@ span.cb-title-btn {
   /* the body's content (the groups, the option rows' grounds) `touch.sheet-inset` from the edges */
   padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
     calc(var(--cb-space-4) + var(--cb-inset-bottom));
+}
+/* An in-sheet drill-in (§6.59): a pushed page slides in from the end edge, a page gone back to
+   from the start, over motion.push with ease.push like a pushed page (§4.6); none under reduced
+   motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .cb-bsheet-pane[data-nav="push"] {
+    animation: cb-bsheet-push var(--cb-motion-push) var(--cb-ease-push);
+  }
+  .cb-bsheet-pane[data-nav="pop"] {
+    animation: cb-bsheet-pop var(--cb-motion-push) var(--cb-ease-push);
+  }
+}
+@keyframes cb-bsheet-push {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-bsheet-pop {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
 }
 /* A sheet's footer (a dialog's buttons, §6.7): under the body, outside its scroll, over the
    bottom inset; the body above it then keeps only a small gap. */
@@ -1057,6 +1113,21 @@ span.cb-title-btn {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+/* The model page (§6.16.2): the search field stays at the body's top while the list scrolls under
+   it (as a Select sheet's, §6.2). */
+.cb-options-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: var(--cb-touch-sheet-inset);
+}
+.cb-options-models-empty {
+  margin: var(--cb-space-3) 0 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: center;
 }
 /* A group's notice, right under its title: the title's own space.1 above it, space.2 to the rows. */
 .cb-options-title + .cb-options-sheet-note {

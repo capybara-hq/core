@@ -1,6 +1,15 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type ReactNode, type Ref, useCallback, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { IconButton } from "../controls/button";
+import { Badge } from "../display/basic";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { type DragState, useDragDismiss } from "./drag";
@@ -18,6 +27,8 @@ type InnerProps = {
   title: ReactNode;
   /** The close button (a Radix `Close` inside a dialog). */
   close: ReactNode;
+  /** A drill-in page's back control, at the head's start (§6.59 "In-sheet drill-in"). */
+  back?: ReactNode;
   /** The accessible name of the grab handle; without it the handle is decorative. */
   handleLabel?: string | undefined;
   bodyRef?: Ref<HTMLDivElement>;
@@ -27,7 +38,15 @@ type InnerProps = {
 };
 
 /** The handle, the head and the body: the inside of every bottom sheet. */
-function BottomSheetInner({ title, close, handleLabel, bodyRef, footer, children }: InnerProps) {
+function BottomSheetInner({
+  title,
+  close,
+  back,
+  handleLabel,
+  bodyRef,
+  footer,
+  children,
+}: InnerProps) {
   return (
     <>
       <div className="cb-bsheet-grab" data-part="handle-zone">
@@ -38,6 +57,7 @@ function BottomSheetInner({ title, close, handleLabel, bodyRef, footer, children
         />
       </div>
       <header className="cb-bsheet-head" data-part="sheet-head">
+        {back}
         {title}
         {close}
       </header>
@@ -134,6 +154,17 @@ export type BottomSheetContentProps = {
   initialFocus?: ((sheet: HTMLElement) => HTMLElement | null | undefined) | undefined;
   /** Drawn under the body, outside its scroll, over the bottom inset (a dialog's buttons). */
   footer?: ReactNode;
+  /**
+   * In-sheet drill-in (§6.59): the key of the page the body shows. A change slides the new page
+   * in (from the end edge when it has `back`, a push; from the start without, a pop; none under
+   * reduced motion) and scrolls the body to its top. The caller moves the focus.
+   */
+  page?: string;
+  /**
+   * A drilled-in page's way back (§6.59): a back control at the head's start named `label`; Esc
+   * goes back too instead of closing. The `title` is then the page's.
+   */
+  back?: { label: string; onBack(): void } | undefined;
   children?: ReactNode;
 };
 
@@ -150,9 +181,17 @@ export function BottomSheetContent({
   describedBy,
   initialFocus,
   footer,
+  page,
+  back,
   children,
 }: BottomSheetContentProps) {
   const t = useDesignT();
+  // The page shown and how it came (a push or a pop): adjusted while rendering, so the new page's
+  // first paint already slides; the first page never does.
+  const [shown, setShown] = useState<{ page: string | undefined; nav?: "push" | "pop" }>({
+    page,
+  });
+  if (shown.page !== page) setShown({ page, nav: back ? "push" : "pop" });
   const focusReturn = useFocusReturn();
   const sheet = useRef<HTMLDivElement | null>(null);
   const body = useRef<HTMLDivElement | null>(null);
@@ -169,6 +208,10 @@ export function BottomSheetContent({
     scroller: body,
     onDismiss,
   });
+  // a new page starts at its top
+  useLayoutEffect(() => {
+    if (page !== undefined && body.current) body.current.scrollTop = 0;
+  }, [page]);
   return (
     <RD.Portal>
       <RD.Overlay className="cb-bsheet-scrim" data-part="bsheet-scrim" {...drag.scrimProps} />
@@ -189,6 +232,12 @@ export function BottomSheetContent({
           );
         }}
         onCloseAutoFocus={focusReturn.restore}
+        onEscapeKeyDown={(e) => {
+          // a drilled-in page: Esc goes back a page, the next one closes the sheet
+          if (!back) return;
+          e.preventDefault();
+          back.onBack();
+        }}
         {...drag.handleProps}
         {...drag.panelProps}
       >
@@ -204,11 +253,36 @@ export function BottomSheetContent({
               />
             </RD.Close>
           }
+          {...(back
+            ? {
+                back: (
+                  <IconButton
+                    label={back.label}
+                    icon={<Icon name="chevron-left" size={16} />}
+                    className="cb-bsheet-back"
+                    part="sheet-back"
+                    onClick={back.onBack}
+                  />
+                ),
+              }
+            : {})}
           handleLabel={handleLabel ?? t("overlay.dragToClose")}
           bodyRef={bodyRef}
           footer={footer}
         >
-          {children}
+          {page === undefined ? (
+            children
+          ) : (
+            <div
+              key={page}
+              className="cb-bsheet-pane"
+              data-part="sheet-pane"
+              data-page={page}
+              data-nav={shown.page === page ? shown.nav : undefined}
+            >
+              {children}
+            </div>
+          )}
         </BottomSheetInner>
       </RD.Content>
     </RD.Portal>
@@ -236,6 +310,11 @@ export type SheetOption = {
   label: string;
   /** A count after the label (a filter's matches). */
   count?: number;
+  /** A muted tag after the label (a model's 「智能体默认」, a disabled one's reason). */
+  tag?: string;
+  /** An attention mark after the tag, as a Badge (`warn` unless `badgeTone`). */
+  badge?: string;
+  badgeTone?: "default" | "warn" | "fail";
   checked?: boolean;
   /** Not choosable now (an org switch in flight). */
   disabled?: boolean;
@@ -282,6 +361,12 @@ export function SheetOptionList({
             {o.checked ? <Icon name="check" size={14} /> : null}
           </span>
           <span className="cb-sheet-option-label">{o.label}</span>
+          {o.tag ? (
+            <span className="cb-cmenu-tag" data-part="option-tag">
+              {o.tag}
+            </span>
+          ) : null}
+          {o.badge ? <Badge tone={o.badgeTone ?? "warn"}>{o.badge}</Badge> : null}
           {o.count !== undefined ? <span className="cb-sheet-option-count">{o.count}</span> : null}
         </label>
       ))}

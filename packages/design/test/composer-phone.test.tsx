@@ -326,20 +326,13 @@ describe("the composer's options button (phones, §6.16.2)", () => {
       within(sheet)
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent),
-    ).toEqual(["设备", "模型", "思考档位"]);
-    // the picker's contents: provider labels, checked items, a disabled item with its reason, the note
-    const model = within(sheet).getByRole("radiogroup", { name: "模型" });
-    expect(
-      within(model)
-        .getAllByRole("radio")
-        .map((r) => (r as HTMLInputElement).value),
-    ).toEqual(["ds/flash", "ds/pro", "qw/max"]);
-    expect(
-      (within(model).getByRole("radio", { name: "DeepSeek-V4.1-Flash" }) as HTMLInputElement)
-        .checked,
-    ).toBe(true);
-    expect(model.textContent).toContain("Qwen");
-    expect(sheet.textContent).toContain("从下一条消息起生效");
+    ).toEqual(["设备", "思考档位"]);
+    // the model is one row: 模型 · the current model · chevron (§6.59 in-sheet drill-in)
+    const row = within(sheet).getByRole("button", { name: /^模型/ });
+    expect(row.getAttribute("data-part")).toBe("options-model");
+    expect(row.textContent).toContain("DeepSeek-V4.1-Flash");
+    expect(within(sheet).queryByRole("radio", { name: "DeepSeek-V4-Pro" })).toBeNull();
+    // the other pickers' contents: checked items, a disabled item with its reason
     const e2b = within(sheet).getByRole("radio", { name: /E2B/ }) as HTMLInputElement;
     expect(e2b.disabled).toBe(true);
     expect(e2b.closest("label")?.textContent).toContain("不可用");
@@ -362,12 +355,12 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     }
     wrap(<Harness />);
     await user.click(screen.getByRole("button", { name: /^会话选项/ }));
+    // the model page: a pick goes back to the options
+    await user.click(screen.getByRole("button", { name: /^模型/ }));
     await user.click(screen.getByRole("radio", { name: "DeepSeek-V4-Pro" }));
     await user.click(screen.getByRole("radio", { name: "低" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(
-      (screen.getByRole("radio", { name: "DeepSeek-V4-Pro" }) as HTMLInputElement).checked,
-    ).toBe(true);
+    expect(screen.getByRole("button", { name: /^模型/ }).textContent).toContain("DeepSeek-V4-Pro");
     const button = document.querySelector('[data-part="composer-options"]') as HTMLElement;
     expect(button.getAttribute("aria-label")).toBe("会话选项: DeepSeek-V4-Pro · 低");
     // no device picker: two groups

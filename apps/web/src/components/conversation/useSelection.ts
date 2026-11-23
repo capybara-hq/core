@@ -121,7 +121,8 @@ export function useSelection(
           return {
             id: refId(ref),
             label: m.displayName || m.id,
-            ...(sameRef(ref, agentModel) ? { tag: t("agentDefault") } : {}),
+            // the agent's default leads a long list with the current model (§6.16.2, §6.16.3)
+            ...(sameRef(ref, agentModel) ? { tag: t("agentDefault"), pinned: true } : {}),
             checked: sameRef(ref, model),
           };
         }),

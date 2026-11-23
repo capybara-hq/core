@@ -57,3 +57,9 @@ export function focusOnOpen(el: HTMLElement | null | undefined): void {
 
 /** The overlay's first focusable element (links, enabled buttons, tab stops). */
 export const FIRST_FOCUSABLE = "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+/** Whether the last input was a key press rather than a pointer press. */
+export function lastInputWasKey(): boolean {
+  listen();
+  return keyboardLast;
+}

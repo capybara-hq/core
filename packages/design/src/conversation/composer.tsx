@@ -24,6 +24,7 @@ import { isTouchPointer } from "../shell/pointer";
 import { ComposerOptions } from "./composer-options";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 import { ModeMenu, type ModeMenuProps, nextMode } from "./mode-menu";
+import { arrangePickerGroups, LONG_PICKER_THRESHOLD } from "./picker-groups";
 import { findTokenLikeSpans, removeSpans, type TokenLikeKind } from "./token-like";
 
 // The composer (spec §6.16.2): the floating frame that holds the attachment strip, the textarea and
@@ -81,6 +82,11 @@ export type PickerItem = {
   /** A tag after the label ("agent 默认"). */
   tag?: string;
   checked?: boolean;
+  /**
+   * Kept at the top of a long list, after the checked item, in a group of its own (the agent's
+   * default model; §6.16.2, §6.16.3).
+   */
+  pinned?: boolean;
   /** Not choosable; its `tag` then says why ("未配置"). */
   disabled?: boolean;
   /** An attention mark after the tag, as a `warn` Badge (a device's 「开放」). */
@@ -130,7 +136,12 @@ export function isShortPickerValue(value: string): boolean {
   return [...value].length <= 3;
 }
 
-/** A composer picker (§6.16.3): a ghost button opening a grouped menu above it. */
+/**
+ * A composer picker (§6.16.3): a ghost button opening a grouped menu above it. `searchable` (the
+ * model picker): a long list (more than {@link LONG_PICKER_THRESHOLD} items) gets a search field
+ * matching the item and group labels, and the checked and pinned items lead in a group of their
+ * own.
+ */
 export function Picker({
   label,
   value,
@@ -141,7 +152,9 @@ export function Picker({
   action,
   onPick,
   referenceOpen,
-}: PickerProps): JSX.Element {
+  searchable,
+}: PickerProps & { searchable?: boolean }): JSX.Element {
+  const t = useDesignT();
   const [open, setOpen] = useState(false);
   if (locked?.warning) {
     return (
@@ -171,13 +184,16 @@ export function Picker({
     );
   }
   const entries: ConvMenuEntry[] = [];
-  for (const g of groups) {
+  const shown = searchable ? arrangePickerGroups(groups, t("composer.models.pinned")) : groups;
+  for (const g of shown) {
     if (g.label) entries.push({ kind: "label", label: g.label });
     for (const it of g.items) {
+      const keywords = "keywords" in it && typeof it.keywords === "string" ? it.keywords : "";
       entries.push({
         kind: "item",
         id: it.id,
         label: it.label,
+        ...(keywords ? { keywords } : {}),
         ...(it.tag ? { tag: it.tag } : {}),
         ...(it.badge ? { badge: it.badge } : {}),
         ...(it.badgeTone ? { badgeTone: it.badgeTone } : {}),
@@ -211,6 +227,16 @@ export function Picker({
       align="start"
       open={open}
       onOpenChange={setOpen}
+      {...(searchable
+        ? {
+            filter: {
+              // the action is an item too, but no model
+              threshold: LONG_PICKER_THRESHOLD + (action ? 1 : 0),
+              label: t("composer.models.search"),
+              empty: t("composer.models.noMatch"),
+            },
+          }
+        : {})}
       trigger={
         <Button
           variant="ghost"
@@ -645,6 +671,7 @@ export function ComposerBox({
             // the effort lives in the mode menu: the model picker names it ("<model> · <effort>")
             <Picker
               {...pickers.model}
+              searchable
               {...(pickers.effort
                 ? { value: `${pickers.model.value} · ${pickers.effort.value}` }
                 : {})}
@@ -652,7 +679,7 @@ export function ComposerBox({
           ) : (
             <>
               {pickers.permission ? <Picker {...pickers.permission} /> : null}
-              <Picker {...pickers.model} />
+              <Picker {...pickers.model} searchable />
               {pickers.effort ? <Picker {...pickers.effort} /> : null}
             </>
           )}
