@@ -15,7 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { sandboxServiceFor } from "../helpers/sandbox.js";
+import { managedUse, sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Concurrent sandbox holders on two replicas (sub-agents spec §10.5, §10.9; environments spec
@@ -124,7 +124,8 @@ const ctx = (conv = conversationId) => ({
 });
 const signal = () => AbortSignal.timeout(50_000);
 const run = (s: SandboxService, command: string, conv = conversationId) =>
-  s.withSandbox(
+  managedUse(
+    s,
     ctx(conv),
     async (h, p, info, sig) => ({
       info,
@@ -145,10 +146,17 @@ const until = (cond: () => Promise<boolean>, ms = 20_000) =>
 describe("concurrent sandbox holders (two replicas)", () => {
   it("a crashed holder in a shared device is taken over without any kill; a live sibling runs on", async () => {
     const fake = createFakeSandbox(root);
-    // A dies with its command still running: its provider never kills on abort
+    // A dies with its command still running: its provider never kills on abort (a managed command
+    // runs through the operation the provider opens for its admitted scope)
+    const never = () => new AbortController().signal;
+    const open = fake.operation;
+    if (!open) throw new Error("device-fake opens operations");
     const deaf: DeviceProvider = {
       ...fake,
-      exec: (h, a) => fake.exec(h, { ...a, signal: new AbortController().signal }),
+      operation: async (h, scope) => {
+        const op = await open(h, scope, never());
+        return { ...op, exec: (a) => op.exec({ ...a, signal: never() }) };
+      },
     };
     const a = replica(deaf, { ttlMs: 1500 });
     const b = replica(fake);
@@ -197,7 +205,8 @@ describe("concurrent sandbox holders (two replicas)", () => {
     });
     let inside = 0;
     const hold = (s: SandboxService, gate: Promise<void>) =>
-      s.withSandbox(
+      managedUse(
+        s,
         ctx(),
         async () => {
           inside++;

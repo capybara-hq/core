@@ -18,7 +18,7 @@ import { type DeviceProviderEntry, DeviceProviders } from "../../src/sandbox/pro
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { managedUse, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
  * A device is bound to its own provider for life (device-provider spec §6.1): each device runs on
@@ -178,7 +178,8 @@ const run = (
   deviceId: string,
   o?: { orgId: string; accountId: string; conversationId: string },
 ) =>
-  s.withSandbox(
+  managedUse(
+    s,
     at(deviceId, o),
     async (h, p, _i, sig) => {
       const r = await p.exec(h, {
