@@ -6,17 +6,20 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { asPlatform, withOrgScope } from "../../src/infra/database/org-scope.js";
-import { rlsBypassReason } from "../../src/infra/database/rls-role.js";
+import { rlsEnforceProblem } from "../../src/infra/database/rls-role.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
 import { accountsFor } from "../helpers/identity.js";
+import { enableRlsForTest } from "../helpers/rls.js";
 import { PW, type Req, session, startKernel, type TestKernel } from "../helpers/runs.js";
 
 // RLS phase 3 (spec §4, §7): the policies of migration 0182, enforced. A kernel with
 // `db.rls: enforce` migrates the database and serves HTTP; the database-level cases use pools of
 // their own in each mode. Rows are seeded through a pool that sets nothing (admitted: the
 // policies are off unless a connection enforces them). Everything connects as a role that is not
-// a superuser and owns the database: Postgres never applies RLS to a superuser (spec §10).
+// a superuser and owns the database: Postgres never applies RLS to a superuser (spec §10). The
+// shipped migration leaves RLS disabled (truly dark); the setup records that state, then enables
+// and forces it on every org-scoped table as phase 5 will (`enableRlsForTest`).
 
 let pgc: TestContainer;
 /** The database URL as the non-superuser owner role. */
@@ -33,6 +36,10 @@ let alice: string;
 let bob: string;
 let root: Req;
 let aliceReq: Req;
+/** What the shipped migration left, read before the setup enabled RLS. */
+let shipped: { table: string; enabled: boolean; forced: boolean; policies: number }[];
+let problemBefore: string | undefined;
+let darkEnforcedRows: number;
 
 // biome-ignore lint/suspicious/noExplicitAny: raw pools carry no schema types
 function pool(rls: "off" | "scoped" | "enforce", max = 2): Kysely<any> {
@@ -89,6 +96,20 @@ beforeAll(async () => {
   );
   await sql`insert into capybara.model_purpose_mappings (org_id, purpose, provider, model) values
     (null, 'title', 'p', 'platform-title')`.execute(raw);
+  shipped = (
+    await sql<{ table: string; enabled: boolean; forced: boolean; policies: number }>`
+      select c.relname as table, c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
+        (select count(*)::int from pg_policy p where p.polrelid = c.oid) as policies
+      from information_schema.columns col
+      join pg_class c on c.relname = col.table_name
+      join pg_namespace n on n.oid = c.relnamespace and n.nspname = col.table_schema
+      where col.table_schema = 'capybara' and col.column_name = 'org_id' and c.relkind = 'r'
+      order by 1`.execute(raw)
+  ).rows;
+  problemBefore = await rlsEnforceProblem(raw);
+  // truly dark: even an enforcing, unscoped connection sees every row while RLS is disabled
+  darkEnforcedRows = (await members(pool("enforce"))).length;
+  await enableRlsForTest(raw);
   root = await session(k, "root");
   aliceReq = await session(k, "alice");
 });
@@ -101,28 +122,25 @@ afterAll(async () => {
 });
 
 describe("RLS policies, dark", () => {
-  it("cover every kernel table with an org_id column: enabled, forced, one policy", async () => {
-    const r = await sql<{ table: string; enabled: boolean; forced: boolean; policies: number }>`
-      select c.relname as table, c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
-        (select count(*)::int from pg_policy p where p.polrelid = c.oid) as policies
-      from information_schema.columns col
-      join pg_class c on c.relname = col.table_name
-      join pg_namespace n on n.oid = c.relnamespace and n.nspname = col.table_schema
-      where col.table_schema = 'capybara' and col.column_name = 'org_id' and c.relkind = 'r'
-      order by 1`.execute(raw);
-    expect(r.rows.length).toBeGreaterThanOrEqual(59);
+  it("ship a policy for every kernel table with an org_id column, with RLS left disabled", async () => {
+    expect(shipped.length).toBeGreaterThanOrEqual(59);
     // the two tables whose platform defaults every org reads add a SELECT-only policy
     const expected = (t: string) =>
       t === "model_purpose_mappings" || t === "model_disabled" ? 2 : 1;
-    expect(
-      r.rows.filter((t) => !t.enabled || !t.forced || t.policies !== expected(t.table)),
-    ).toEqual([]);
+    expect(shipped.filter((t) => t.policies !== expected(t.table))).toEqual([]);
+    // phase 5 enables them in a migration of its own (maintainer decision 2026-11-24)
+    expect(shipped.filter((t) => t.enabled || t.forced)).toEqual([]);
+    expect(darkEnforcedRows).toBe(2);
+    expect(problemBefore).toMatch(
+      /^row level security is not enabled and forced on \d+ org-scoped/,
+    );
+    expect(await rlsEnforceProblem(raw)).toBeUndefined();
   });
 
   it("are bypassed by a superuser, which the kernel reports when enforcing", async () => {
     const admin = createDb(pgc.url, 1);
     try {
-      expect(await rlsBypassReason(admin)).toBe("the database role is a superuser");
+      expect(await rlsEnforceProblem(admin)).toBe("the database role is a superuser");
       // even an enforcing, unscoped superuser connection sees every row
       await sql`select set_config('capybara.rls', 'enforce', false)`.execute(admin);
       const n = await sql<{
@@ -132,7 +150,6 @@ describe("RLS policies, dark", () => {
     } finally {
       await admin.destroy();
     }
-    expect(await rlsBypassReason(raw)).toBeUndefined();
   });
 
   it("admit every row while db.rls is off or scoped, and on connections that set nothing", async () => {

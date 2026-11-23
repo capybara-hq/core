@@ -128,6 +128,7 @@ import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
 import { oweScopeItem } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
+import { templateDescriptionText } from "./template-description.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
@@ -234,7 +235,10 @@ export interface PluginReviewClient {
 export interface PluginReviewTemplate {
   id: string;
   displayName: LocalizedName;
+  /** The English text, or the one text of a plain-string description ("" without one). */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -2266,7 +2270,7 @@ export class PluginImport {
       return {
         id: c.id,
         displayName: c.file.displayName,
-        description: c.file.description ?? "",
+        ...templateDescriptionText(c.file.description),
         plugin: t.plugin,
         connector: t.connector,
         endpoint: t.endpoint,

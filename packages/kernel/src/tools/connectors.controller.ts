@@ -13,6 +13,20 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { sendCatalogIcon } from "../catalog/org-catalog.controller.js";
+import type { TemplateDescription } from "../catalog/template-description.js";
+
+/**
+ * The description of the platform connector template a connector was made from (its current
+ * version; both null for a custom connector or a template the reader may not see). The
+ * connector's own `description` comes first on the pages; this is the fallback.
+ */
+export interface ConnectorTemplateDescription {
+  /** The template's English or only text. */
+  templateDescription: string | null;
+  /** The template's Chinese text; null: `templateDescription` serves both languages. */
+  templateDescriptionZh: string | null;
+}
+
 import type { ConnectionGuideState } from "../extensions/plugin-guides.js";
 import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
@@ -100,11 +114,13 @@ class ConnectorGuideAckBody extends createZodDto(
 
 /**
  * A connector as the org's pages show it: with its template's or plugin's icon (`icon`, see
- * `withIcons`), its template's setup guide and the drift since it was set up (`setupGuide`,
+ * `withIcons`), its platform template's description (`templateDescription` /
+ * `templateDescriptionZh`, null for a custom connector; its own `description` comes first), its template's setup guide and the drift since it was set up (`setupGuide`,
  * `guideDrift`; spec 2026-11-09-setup-guides-v2-design.md §9.3, §11).
  */
 export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T &
-  ConnectionGuideState & {
+  ConnectionGuideState &
+  ConnectorTemplateDescription & {
     icon: string | null;
     /** The one-connector read of an `oauth_code` connector, for managers: its redirect URI. */
     oauthCallbackUrl?: string | null;
@@ -129,17 +145,34 @@ export class ConnectorsController {
    * load it too): the own icon of the platform connector template it was made from (its current
    * version, the platform's one version of the template), else the icon of the plugin its template
    * came from, else null (a custom connector, no icon, or one the reader's catalog does not show:
-   * the share gate holds; maintainer decision 2026-11-09).
+   * the share gate holds; maintainer decision 2026-11-09). Also `templateDescription` /
+   * `templateDescriptionZh`: that platform template's description under the same gate (null for
+   * a custom connector).
    */
   private async withIcons<T extends ConnectorSummary>(
     org: OrgContext,
     rows: T[],
-  ): Promise<(T & { icon: string | null })[]> {
-    const urls = await this.icons.ofConnectors(
-      rows.map((r) => ({ id: r.id, templateId: r.platformTemplateId, itemId: r.catalogItemId })),
-      orgIconScope(org),
-    );
-    return rows.map((r, i) => ({ ...r, icon: urls[i] ?? null }));
+  ): Promise<(T & ConnectorTemplateDescription & { icon: string | null })[]> {
+    const scope = orgIconScope(org);
+    const templateIds = rows.flatMap((r) => (r.platformTemplateId ? [r.platformTemplateId] : []));
+    const [urls, descriptions] = await Promise.all([
+      this.icons.ofConnectors(
+        rows.map((r) => ({ id: r.id, templateId: r.platformTemplateId, itemId: r.catalogItemId })),
+        scope,
+      ),
+      this.icons.templateDescriptions(templateIds, scope),
+    ]);
+    return rows.map((r, i) => {
+      const d: TemplateDescription | undefined = r.platformTemplateId
+        ? descriptions.get(r.platformTemplateId)
+        : undefined;
+      return {
+        ...r,
+        templateDescription: d?.description ?? null,
+        templateDescriptionZh: d?.descriptionZh ?? null,
+        icon: urls[i] ?? null,
+      };
+    });
   }
 
   /**

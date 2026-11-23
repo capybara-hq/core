@@ -22,6 +22,7 @@ import { ApiClientError } from "../lib/api";
 import {
   type AuthHint,
   type AuthType,
+  CONNECTOR_DESCRIPTION_MAX,
   type ConnectorAuth,
   type ConnectorDetail,
   type ConnectorEndpoint,
@@ -168,6 +169,7 @@ export function useConnectorWizard(
   // 2. 端点与文档
   const [name, setName] = useState(prefill?.name ?? "");
   const [slug, setSlug] = useState("");
+  const [description, setDescription] = useState("");
   const [url, setUrl] = useState(prefill?.kind === "mcp" ? prefill.endpoint : "");
   const [specSource, setSpecSource] = useState<"url" | "file">("url");
   const [specUrl, setSpecUrl] = useState(prefill?.kind === "openapi" ? prefill.endpoint : "");
@@ -417,6 +419,7 @@ export function useConnectorWizard(
         const res = await create.mutateAsync({
           name: name.trim(),
           ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
+          ...(description.trim() !== "" ? { description: description.trim() } : {}),
           connector,
           endpoint: endpoint(true),
           auth: auth(),
@@ -572,6 +575,20 @@ export function useConnectorWizard(
           </Field>
           <Field label={t("form.slugLabel")} optional help={t("form.slugHelp")}>
             <Input maxLength={SLUG_MAX} value={slug} onChange={(e) => setSlug(e.target.value)} />
+          </Field>
+          <Field
+            label={t("form.descriptionLabel")}
+            optional
+            help={t("form.descriptionHint")}
+            count={{ value: description.length, max: CONNECTOR_DESCRIPTION_MAX }}
+          >
+            <Textarea
+              name="connector-description"
+              rows={2}
+              maxLength={CONNECTOR_DESCRIPTION_MAX}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </Field>
           {connector === "mcp" ? (
             <Field label={t("form.urlLabel")} required help={t("form.urlHelp")} {...errorOf("url")}>

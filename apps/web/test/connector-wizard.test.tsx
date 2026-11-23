@@ -230,6 +230,11 @@ describe("安装向导（WizardPage）", () => {
         screen.getByRole("textbox", { name: m.connectors.form.urlLabel }),
         "https://mcp.example.com/mcp",
       );
+      // the optional own description goes with the create only (the previews do not need it)
+      await user.type(
+        screen.getByRole("textbox", { name: new RegExp(`^${m.connectors.form.descriptionLabel}`) }),
+        " Fixture tools ",
+      );
       await clickAction(user, locale, w.next);
       expect(
         await screen.findByRole("combobox", { name: m.connectors.form.authTypeLabel }),
@@ -273,6 +278,7 @@ describe("安装向导（WizardPage）", () => {
       await clickAction(user, locale, w.install);
       expect(bodyOf(calls.find((c) => `${c.method} ${c.url}` === CREATE))).toEqual({
         name: "Fixture",
+        description: "Fixture tools",
         connector: "mcp",
         endpoint: { url: "https://mcp.example.com/mcp" },
         auth: { type: "bearer", ownership: "org" },

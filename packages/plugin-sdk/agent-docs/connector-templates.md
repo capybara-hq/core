@@ -9,7 +9,7 @@ the file's base name.
 {
   "$schema": "https://capybarahq.com/schemas/connector-template.v1.schema.json",
   "displayName": { "zh": "Acme CRM", "en": "Acme CRM" },
-  "description": "Acme CRM over MCP",
+  "description": { "zh": "通过 MCP 访问 Acme CRM", "en": "Acme CRM over MCP" },
   "template": {
     "plugin": "connector-mcp",
     "pluginVersion": "^0.1.0-rc.0",
@@ -28,11 +28,14 @@ The file is strict. Top-level fields:
 | Field | Type | Required |
 |---|---|---|
 | `displayName` | object | yes |
-| `description` | string | no |
+| `description` | string or object | no |
 | `icon` | string | no |
 | `defaultEnabled` | boolean | no |
 | `template` | object | yes |
 <!-- /generated -->
+
+`description` is a string (shown in every language) or `{ "zh", "en" }`, each text at most 1024
+characters; the UI shows the text for its language.
 
 Fields of `template`:
 

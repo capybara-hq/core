@@ -2,10 +2,8 @@
 "@capybara-hq/kernel": minor
 ---
 
-RLS phase 3 (issue #115): migration 0182 enables and forces row level security on every kernel
-table with an `org_id` column, with one policy per table through `capybara.rls_admits`. The
-policies admit every row unless the kernel pool enforces them (`db.rls: enforce`). On a database
-role that is subject to RLS (not a superuser, no BYPASSRLS; the compose file's role is a superuser)
-`pg_dump` then needs `--enable-row-security` and `COPY FROM` into these tables is refused; see
-"Row level security" in docs/deploy/README.md. With `enforce`, the kernel logs an error at start when its database role is a
-superuser or has BYPASSRLS, since PostgreSQL never applies RLS to such a role.
+RLS phase 3 (issue #115): migration 0182 creates `capybara.rls_admits` and one row level security
+policy per kernel table with an `org_id` column, truly dark: no table enables RLS yet (a later
+migration does), so nothing changes for any database role. With `db.rls: enforce` the kernel logs
+an error at start while RLS is not enabled on the tables or its role is a superuser or has
+BYPASSRLS, since PostgreSQL filters nothing then.

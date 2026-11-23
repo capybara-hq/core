@@ -4,11 +4,14 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useCallback,
+  useId,
   useRef,
+  useState,
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Badge } from "../display/basic";
 import { useSkeletonAnnounces } from "../display/skeleton";
+import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope, useInBox } from "../layout/box";
@@ -176,6 +179,11 @@ export type PropertySectionProps = {
   value?: ReactNode;
   /** `muted` value (counts) rather than `ink` (the context ratio). */
   valueTone?: "ink" | "muted";
+  /**
+   * A note about the section, behind an `info` button after the title: its Tooltip opens on hover,
+   * focus or a tap, and the button is described by the text (spec §6.16.17).
+   */
+  hint?: string;
   state?: BlockState;
   failure?: { reason?: string };
   onRetry?(): void;
@@ -187,6 +195,7 @@ export function PropertySection({
   title,
   value,
   valueTone = "muted",
+  hint,
   state = "ready",
   failure,
   onRetry,
@@ -213,8 +222,11 @@ export function PropertySection({
       data-inset={inBox ? "box" : undefined}
     >
       <h3 className="cb-property-head">
-        <span className="cb-property-title" data-part="property-title">
-          {title}
+        <span className="cb-property-title-line">
+          <span className="cb-property-title" data-part="property-title">
+            {title}
+          </span>
+          {hint ? <PropertyHint title={title} hint={hint} /> : null}
         </span>
         {value !== undefined && state !== "failed" ? (
           <span className={valueTone === "muted" ? "cb-muted" : undefined}>{value}</span>
@@ -225,13 +237,78 @@ export function PropertySection({
   );
 }
 
-/** The built-in Context section: the usage meter, model · sandbox, connectors. */
+/**
+ * A section's hint: an `info` 12 button (its hit area grows past the icon without growing the head)
+ * whose Tooltip carries the text. Hover and focus open it; a tap toggles it, since a touch screen
+ * neither hovers nor focuses first. The text is also the button's description, so a screen reader
+ * hears it without opening anything.
+ */
+function PropertyHint({ title, hint }: { title: string; hint: string }): JSX.Element {
+  const t = useDesignT();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  // what a touch press found: the Tooltip's own press handlers close it, and a tap toggles it
+  const press = useRef<{ touch: boolean; wasOpen: boolean }>({ touch: false, wasOpen: false });
+  return (
+    <>
+      <Tooltip content={hint} open={open} onOpenChange={setOpen} side="bottom">
+        <button
+          type="button"
+          className="cb-property-hint"
+          data-part="property-hint"
+          aria-label={fillCopy(t("props.hint"), { name: title })}
+          aria-describedby={id}
+          onPointerDown={(e) => {
+            press.current = { touch: e.pointerType === "touch", wasOpen: open };
+          }}
+          onClick={(e) => {
+            if (!press.current.touch) return;
+            press.current.touch = false;
+            e.preventDefault();
+            setOpen(!press.current.wasOpen);
+          }}
+        >
+          <Icon name="info" size={12} />
+        </button>
+      </Tooltip>
+      <span id={id} className="cb-sr-only">
+        {hint}
+      </span>
+    </>
+  );
+}
+
+/** One labeled row of the Context section's facts (`context-row`). */
+function ContextRow({
+  label,
+  part,
+  children,
+}: {
+  label: string;
+  /** The value's part name (`context-last-run`, `context-total`). */
+  part?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div className="cb-context-row" data-part="context-row">
+      <dt className="cb-context-key">{label}</dt>
+      <dd className="cb-context-value" data-part={part}>
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * The built-in Context section: the usage meter, then labeled rows (spec §6.16.17): the model, the
+ * device with its mark under it, the connectors, the last run and the tokens with sub-agents.
+ */
 export function ContextSection({
   ratio,
   model,
-  sandbox,
-  sandboxBadge,
-  sandboxBadgeTone = "warn",
+  device,
+  deviceBadge,
+  deviceBadgeTone = "warn",
   connectors,
   lastRun,
   total,
@@ -239,15 +316,19 @@ export function ContextSection({
   /** Context usage in percent (0–100). */
   ratio: number;
   model: string;
-  sandbox?: string;
-  /** A mode mark after the model · sandbox line, as a `warn` Badge (「自动」). */
-  sandboxBadge?: string;
+  /** The device and its state ("MacBook-Pro.local · Online"), worded by the page. */
+  device?: string;
+  /** A mode mark under the device, as a Badge ("May run outside the sandbox"). */
+  deviceBadge?: string;
   /** The mark's tone: `fail` for a danger mark, `default` for a quiet one; default `warn`. */
-  sandboxBadgeTone?: "default" | "warn" | "fail";
+  deviceBadgeTone?: "default" | "warn" | "fail";
   connectors: string[];
-  /** The last run's line ("上次运行 · <model> · <duration> · <tokens>"), worded by the page. */
-  lastRun?: string;
-  /** A last line, e.g. the conversation's tokens with its sub-agents' (the page words it). */
+  /**
+   * The last run's parts (duration, tokens; the model only when it differs from `model`), worded
+   * by the page and joined with " · "; no row when empty.
+   */
+  lastRun?: readonly string[];
+  /** The conversation's tokens with its sub-agents' (the page words the value). */
   total?: string;
 }): JSX.Element {
   const t = useDesignT();
@@ -266,30 +347,34 @@ export function ContextSection({
       >
         <span style={{ width: `${pct}%` }} />
       </div>
-      <div className="cb-muted cb-small cb-context-line">
-        {[model, sandbox].filter(Boolean).join(" · ")}
-        {sandboxBadge ? (
-          <>
-            {" "}
-            <Badge tone={sandboxBadgeTone}>{sandboxBadge}</Badge>
-          </>
+      <dl className="cb-context-facts" data-part="context-facts">
+        <ContextRow label={t("props.model")}>{model}</ContextRow>
+        {device || deviceBadge ? (
+          <ContextRow label={t("props.device")}>
+            {device}
+            {deviceBadge ? (
+              <span className="cb-context-mark">
+                <Badge tone={deviceBadgeTone}>{deviceBadge}</Badge>
+              </span>
+            ) : null}
+          </ContextRow>
         ) : null}
-      </div>
-      {connectors.length > 0 ? (
-        <div className="cb-muted cb-small cb-context-line">
-          {fillCopy(t("props.connectors"), { list: connectors.join(t("props.listJoin")) })}
-        </div>
-      ) : null}
-      {lastRun ? (
-        <div className="cb-muted cb-small cb-context-line" data-part="context-last-run">
-          {lastRun}
-        </div>
-      ) : null}
-      {total ? (
-        <div className="cb-muted cb-small cb-context-line" data-part="context-total">
-          {total}
-        </div>
-      ) : null}
+        {connectors.length > 0 ? (
+          <ContextRow label={t("props.connectors")}>
+            {connectors.join(t("props.listJoin"))}
+          </ContextRow>
+        ) : null}
+        {lastRun && lastRun.length > 0 ? (
+          <ContextRow label={t("props.lastRun")} part="context-last-run">
+            {lastRun.join(" · ")}
+          </ContextRow>
+        ) : null}
+        {total ? (
+          <ContextRow label={t("props.total")} part="context-total">
+            {total}
+          </ContextRow>
+        ) : null}
+      </dl>
     </PropertySection>
   );
 }

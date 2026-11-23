@@ -869,8 +869,9 @@ function contextSection() {
     <ContextSection
       ratio={P.context.ratio}
       model={P.context.model}
-      sandbox={P.context.sandbox}
+      device={P.context.device}
       connectors={P.context.connectors}
+      lastRun={P.context.lastRun}
     />
   );
 }
@@ -894,7 +895,10 @@ const BG_START = NOW - RUNNING_MS;
 
 function backgroundSection() {
   return (
-    <PropertySection title="后台任务">
+    <PropertySection
+      title="后台任务"
+      hint="运行中的工作保留开始时的权限，权限更改只对新的操作生效；撤销设备或组织的访问仍可能使其停止。"
+    >
       <BackgroundTasks
         items={[
           ...P.background.running.map(

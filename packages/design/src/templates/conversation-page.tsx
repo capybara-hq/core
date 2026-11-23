@@ -37,7 +37,7 @@ import { useFollowBottom } from "./follow-bottom";
 // panel beside it, full height and resizable. Below a 1280 window the right area is a sheet.
 
 /** `layout.panel-min`, `layout.panel`, `layout.chat-min` (tokens.json). */
-export const PANEL_MIN = 520;
+export const PANEL_MIN = 360;
 export const PANEL_DEFAULT = 560;
 export const CHAT_MIN = 480;
 /** One arrow-key step of the resize handle. */

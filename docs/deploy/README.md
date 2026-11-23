@@ -537,9 +537,11 @@ other plugins) go through the catalog:
   (manifests, mirrors, archive and git sources, git imports) is https only, follows no redirects and
   may reach only public addresses; the connection is pinned to the address that was checked. Two
   settings change that:
-  - `marketplaces.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
-    an internal GitLab or mirror. List an internal DNS name **by name**
-    (`CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
+  - `net.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
+    an internal GitLab, mirror or identity provider. It is the one list of internal hosts for every
+    outbound request the kernel resolves itself: these downloads, npm registry downloads, OAuth
+    requests (discovery, client registration, token endpoints) and git identity checks. List an internal DNS name **by name**
+    (`CAPYBARA_NET__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
     (`10.20.0.0/16`) match only URLs that use an IP literal (`https://10.20.0.5/…`), never a DNS name
     that resolves into the range. Link-local and cloud metadata addresses (`169.254.0.0/16`,
     `fe80::/10`) are always refused, and very broad prefixes (shorter than /8 for IPv4, /16 for IPv6)
@@ -559,20 +561,20 @@ other plugins) go through the catalog:
   - the kernel does **not** resolve the target's hostname: the proxy does. Blocking private,
     internal and metadata addresses for DNS names is then **the proxy's job**: configure it to refuse
     them (most corporate proxies do). The kernel still refuses IP-literal URLs in private ranges
-    (unless `marketplaces.allowPrivateHosts` lists them) and link-local IP literals, and still applies
+    (unless `net.allowPrivateHosts` lists them) and link-local IP literals, and still applies
     `marketplaces.allowedHosts`, https-only and no redirects.
   - `net.noProxy` (default `[]`; e.g. `CAPYBARA_NET__NO_PROXY='["gitlab.corp.example"]'`) lists
     hostnames or IPs that go direct (an entry also matches its subdomains). Those are resolved locally
-    and pinned as above, so an internal host listed there also needs `marketplaces.allowPrivateHosts`.
+    and pinned as above, so an internal host listed there also needs `net.allowPrivateHosts`.
     Loopback hosts never use the proxy.
   - npm registry downloads (`packages.npmRegistry`) use the proxy too; an internal https registry
-    goes in `net.noProxy` (its origin is trusted, so it needs no `marketplaces.allowPrivateHosts`
+    goes in `net.noProxy` (its origin is trusted, so it needs no `net.allowPrivateHosts`
     entry). An `http://` registry is fetched directly.
 
   This is also the fix for a fake-IP DNS resolver (one that answers every name with an address in
   `198.18.0.0/15`, as some proxy and VPN clients do): without a proxy every host looks private and
   downloads are refused, so either set `net.httpsProxy`, give the kernel real DNS, or list each host
-  by name in `marketplaces.allowPrivateHosts`.
+  by name in `net.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash
@@ -834,19 +836,17 @@ extension's `egressProxyImage` to those tags.
 ## Row level security (`db.rls`)
 
 Every kernel table with an `org_id` column has a row level security policy (migration 0182; spec
-`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`). `db.rls` (`CAPYBARA_DB__RLS`) decides what
-the kernel's connections carry: `off` (default) sends nothing and the policies admit every row;
+`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`), shipped dark: no table enables row level
+security yet, so the policies apply to nothing (a later migration enables them). `db.rls`
+(`CAPYBARA_DB__RLS`) decides what the kernel's connections carry: `off` (default) sends nothing;
 `scoped` sets each request's, job's or run's org on its connection (one extra round trip per pool
-query and per transaction) while still admitting every row; `enforce` makes the policies filter by it.
+query and per transaction); `enforce` also asks the policies to filter by it, which takes effect
+only once row level security is enabled on the tables: until then the kernel logs an error at start.
 
 - PostgreSQL never applies RLS to a **superuser** or a role with **BYPASSRLS**. The compose file's
-  `POSTGRES_USER` is a superuser, so `enforce` needs the kernel to connect as a role without either
-  (it may own the `capybara` schema); the kernel logs an error at start when it enforces on such a
-  role.
-- On a role that is subject to RLS, the policies are in place even with `db.rls: off`: `pg_dump` as
-  that role needs `--enable-row-security` (or dump as a superuser), and `COPY FROM` into these tables
-  (a data-only restore, a bulk load, logical replication into them) is refused for that role. A full
-  `pg_restore` is unaffected (the policies are restored after the data).
+  `POSTGRES_USER` is a superuser, so `enforce` will need the kernel to connect as a role without
+  either (it may own the `capybara` schema); the kernel logs an error at start when it enforces on
+  such a role.
 - With `db.rls` other than `off`, no PgBouncer in transaction pooling mode in front of the kernel:
   the scope of a read outside a transaction is a session setting.
 

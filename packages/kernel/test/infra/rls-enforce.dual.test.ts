@@ -9,8 +9,9 @@ import { type Kysely, sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { rlsBypassReason } from "../../src/infra/database/rls-role.js";
+import { rlsEnforceProblem } from "../../src/infra/database/rls-role.js";
 import { accountsFor } from "../helpers/identity.js";
+import { enableRlsForTest } from "../helpers/rls.js";
 import { PW } from "../helpers/runs.js";
 
 // RLS phase 3 across replicas (spec §5.2): two kernel processes with `db.rls: enforce`, connected
@@ -69,6 +70,8 @@ describe("RLS enforced on two replicas", () => {
       config: { db: { rls: "enforce" } },
     });
     raw = createDb(h.dbUrl, 2);
+    // the shipped migration leaves RLS disabled; turn it on as phase 5 will (the owner role)
+    await enableRlsForTest(raw);
     const accounts = accountsFor(kernelDb(raw));
     alice = (await accounts.createLocal({ login: "alice", password: PW, displayName: "Alice" })).id;
     bob = (await accounts.createLocal({ login: "bob", password: PW, displayName: "Bob" })).id;
@@ -93,7 +96,7 @@ describe("RLS enforced on two replicas", () => {
 
   it("the replicas' role is subject to the policies, which fail closed unscoped", async () => {
     // a superuser would pass every case below with no policy at all
-    expect(await rlsBypassReason(raw)).toBeUndefined();
+    expect(await rlsEnforceProblem(raw)).toBeUndefined();
     const probe = createDb(h.dbUrl, 1, () => {}, { rls: "enforce" });
     try {
       const rows = await probe
