@@ -18,7 +18,7 @@ import {
 import { build } from "esbuild";
 import type { LinuxFaultInjection } from "../src/exec/linux-operation-worker.js";
 import type { DeviceOwnerCeiling, LocalExecAuthority } from "../src/exec/operation-types.js";
-import { fixtureCeiling, type LinuxDevice, NAMES } from "./linux-docker-fixture.js";
+import { fixtureCeiling, IMAGE, type LinuxDevice, NAMES } from "./linux-docker-fixture.js";
 
 const SERVER_DIR = "/home/sandbox/capybara-test";
 
@@ -234,6 +234,7 @@ export async function hostBackend(
           mode: "docker",
           container: options.docker.container,
           user: "1000:1000",
+          image: IMAGE,
           hostRoots: options.docker.hostRoots,
         }
       : { mode: "host" }),

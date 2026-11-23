@@ -5,7 +5,7 @@ description: 'Use when adding or changing a kernel config option (KernelConfigSc
 
 # Adding a kernel config option
 
-Kernel config has a single source of definition: `KernelConfigSchema` (Zod 4) in `packages/kernel/src/config/schema.ts`. An extension's deployment-level config is not added here; it goes in the extension manifest's `config.deployment` (see `.agents/skills/writing-extensions`).
+Kernel config has a single source of definition: `KernelConfigSchema` (Zod 4) in `packages/kernel/src/config/schema.ts`. An extension's deployment-level config is not added here; it goes in the extension manifest's `config.deployment` (see `.agents/skills/writing-extensions`): its fields are org-overridable by default, `platformOnly(schema)` (`x-platform-only`) marks a field or the whole schema platform-only, and there is no `config.org`.
 
 ## Steps
 

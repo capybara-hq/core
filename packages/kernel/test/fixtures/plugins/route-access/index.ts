@@ -1,4 +1,4 @@
-import { defineExtension, orgAccess } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** Every handler call, in order (single-replica tests in the same process). */
@@ -48,7 +48,7 @@ export default defineExtension({
     ui: { embeds: ["page"] },
   },
   config: {
-    deployment: z.object({ baseUrl: orgAccess(z.string(), "override") }),
+    deployment: z.object({ baseUrl: z.string() }),
   },
   setup(ctx) {
     const routes = [

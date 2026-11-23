@@ -339,7 +339,9 @@ export interface ExtensionOrgConfigsTable {
   plugin: string;
   org_id: string;
   enabled: Generated<boolean>;
-  /** null when there is no config. */
+  /**
+   * Retired (the org-only config): neither read nor written; dropped by a later contract migration.
+   */
   config: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;

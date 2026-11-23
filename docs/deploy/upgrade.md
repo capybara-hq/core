@@ -64,7 +64,7 @@ git fetch --tags
 git checkout v<version>      # compose.yaml and .env.example of the new release
 cd docker
 docker compose pull
-docker compose up -d
+docker compose run --rm init && docker compose up -d
 ```
 
 Compare your `.env` with the new `.env.example` before `up`. If you pinned `CAPYBARA_VERSION` in
@@ -72,8 +72,23 @@ Compare your `.env` with the new `.env.example` before `up`. If you pinned `CAPY
 old compose file (only setting `CAPYBARA_VERSION`) works when the release notes say the compose file
 didn't change; otherwise take the compose file of the release too.
 
-`init` runs on every `up`, re-applies migrations and runs the bootstrap step. If it fails, compose doesn't start the new `api`,
-`worker` and `gateway`: read `docker compose logs init`.
+**Run `init` on its own first.** A plain `docker compose up -d` replaces `api`, `worker`,
+`gateway` and `web` with new containers before the new `init` has run: compose recreates every
+changed service first and only then waits for `init` to complete. If `init` then fails (a
+migration, or a bootstrap package that can't be downloaded), the new containers never start and
+the deployment is down until you fix it or roll back. `docker compose run --rm init` runs the new
+image's migrations and bootstrap step in a one-off container while the old containers keep
+serving; only when it exits 0 does `up -d` replace them. That `up` runs `init` once more, which
+finds the migrations applied and the bootstrap done and needs no network. If `run --rm init`
+fails, nothing was replaced: read its output, fix the cause (the registry, a mirror in
+`CAPYBARA_PACKAGES__NPM_REGISTRY` or the offline directory, see
+[Bootstrap plugins](README.md#extensions)) and run it again. Old replicas run against the migrated
+schema in the meantime, which the one-version compatibility rule above allows; when you skip
+versions, stop them first as described there.
+
+The bootstrap step retries each package download a few times (about 8 seconds per package) when the
+registry fails transiently (a dropped connection, a timeout, HTTP 5xx); a 404, a refused connection
+or a package that differs from its pin fails at once.
 
 ### Kubernetes
 

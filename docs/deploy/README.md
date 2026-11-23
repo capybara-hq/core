@@ -123,7 +123,9 @@ There are two ways to create the first super admin:
 
 A failing `init` (for example PostgreSQL older than 15, a bootstrap package that can't be downloaded,
 or one that doesn't match its pin) keeps `api`, `worker` and `gateway` from
-starting. Read its output with `docker compose logs init`.
+starting. Read its output with `docker compose logs init`. When upgrading a running deployment, run
+`docker compose run --rm init` before `docker compose up -d`, so a failing `init` doesn't take the
+serving containers down ([upgrade.md](upgrade.md#docker-compose)).
 
 ### Services, ports and networks
 
@@ -395,14 +397,18 @@ Every extension is installed from a plugin package (an npm-pack tgz with
 `.capybara-plugin/plugin.json`). Installing, enabling, upgrading and disabling extensions don't need a
 restart.
 
-**Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
-`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512,
-as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
-`deepseek`, `bailian`, `ark`, `connector-mcp`, `connector-openapi`, `jina`, `device-docker`,
-`device-local` and `todo`. They are installed and enabled on the deployment, but each organization
-gets them off until an org admin switches them on (catalog scope `optional`), except `device-local`
-(local devices), which the manifest gives `scope: "all"`: on in every organization, and an org
-admin may switch it off. A super admin may disable or uninstall any of them, and owns its scope
+**Bootstrap plugins.** The fixed set every deployment needs is pinned in
+`packages/kernel/bootstrap.json` by exact version and sha512: `object-store-s3` (storage) as a
+required entry, `skills-core` and `file-preview` as builtin entries (on in every organization; a
+change to this set is a maintainer decision, checked by `check:bootstrap`). The same manifest pins
+optional preinstalls: `openai-compatible`, `anthropic`, `openai`, `deepseek`, `bailian`, `ark`,
+`connector-mcp`, `connector-openapi`, `jina`, `device-docker`, `device-local` and `todo`. They are
+installed and enabled on the deployment, but each organization gets them off until an org admin
+switches them on (catalog scope `optional`), except `device-local` (local devices), which the
+manifest gives `scope: "all"`: on in every organization, and an org admin may switch it off. On a
+deployment where `openai-compatible` was still a required entry, it keeps scope `all` when it
+becomes optional: it stays on in every organization (now through an org install) until an org
+admin switches it off. A super admin may disable or uninstall any of them, and owns its scope
 after the first import; an uninstalled one is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
@@ -424,10 +430,12 @@ into the CLI any more.
 - `capybara bootstrap` installs them: compose's `init` runs it after `migrate` (`--dir <path>` overrides
   the offline directory). When the step is already done it reads nothing and needs no network.
   Otherwise, holding a PostgreSQL advisory lock (replicas starting together run it once, and download
-  once), it obtains and checks every package before writing anything: `bootstrap.download_failed`
-  (the registry could not be reached or refused, naming the registry and the offline directory),
-  `bootstrap.integrity_mismatch` (a download that differs from the pin) or `bootstrap.missing_file`
-  name the plugin. Each one is imported into the catalog with source
+  once), it obtains and checks every package before writing anything. A download that fails
+  transiently (a dropped connection, a timeout, HTTP 408 / 429 / 5xx) is retried up to three times,
+  about 8 seconds in all per package; then, or at once for a 404, a refused connection or a
+  refusal by the network rules, `bootstrap.download_failed` (naming the registry and the offline
+  directory), `bootstrap.integrity_mismatch` (a download that differs from the pin) or
+  `bootstrap.missing_file` name the plugin. Each one is imported into the catalog with source
   `bootstrap`, installed, approved (audited `extension.permissions_approved`, source `bootstrap`) and
   enabled. A run is recorded once per manifest (table `bootstrap_runs`, audit `bootstrap.completed`),
   so later runs print `Bootstrap already done ...; nothing to do.` If a required plugin fails to

@@ -2,7 +2,7 @@
 
 | Extension | Description |
 |---|---|
-| `@capybara-hq/plugin-openai-compatible` | **Bootstrap plugin** (baked into the image and installed by `init`; required, can't be disabled; no need to list it in `CAPYBARA_EXTENSIONS`). OpenAI-compatible Chat Completions services (DeepSeek, Qwen, vLLM and so on), configured per endpoint, with dialect presets for the differences |
+| `@capybara-hq/plugin-openai-compatible` | **Optional bootstrap plugin** (preinstalled by `init`, off in each org until switched on; no need to list it in `CAPYBARA_EXTENSIONS`). OpenAI-compatible Chat Completions services (DeepSeek, Qwen, vLLM and so on), configured per endpoint, with dialect presets for the differences |
 | `@capybara-hq/plugin-model-fake` | Deterministic scripted model for tests and key-free demos |
 | `@capybara-hq/plugin-anthropic` | Anthropic (official SDK + native Messages API), **optional bootstrap plugin** (preinstalled, off in each org until switched on) |
 | `@capybara-hq/plugin-openai` | OpenAI (official SDK + native Responses API), **optional bootstrap plugin** (preinstalled, off in each org until switched on) |
@@ -10,7 +10,7 @@
 | `@capybara-hq/plugin-bailian` | Alibaba Cloud Model Studio (Bailian): chat and embedding models listed from the platform, **optional bootstrap plugin** (preinstalled, off in each org until switched on) |
 | `@capybara-hq/plugin-ark` | Volcengine Ark: chat and embedding models listed from the platform, optional management keys add inference endpoints, **optional bootstrap plugin** (preinstalled, off in each org until switched on) |
 
-You can use several at once: `openai-compatible` is a bootstrap plugin and the rest are installed as extension packages (see [Extensions](extensions.md)), during development too (`pnpm capybara extensions install npm:@capybara-hq/plugin-anthropic`; only `model-fake` can be listed in `CAPYBARA_EXTENSIONS`); deployment-level config goes in `CAPYBARA_EXTENSION_CONFIG` keyed by extension name, or is filled in by the super admin in the admin console. `anthropic`, `openai`, `deepseek`, `bailian` and `ark` are optional bootstrap plugins: preinstalled from npm by the bootstrap step, they only need their deployment config and an org admin switching them on.
+You can use several at once: the bootstrap plugins are preinstalled and the rest are installed as extension packages (see [Extensions](extensions.md)), during development too (`pnpm capybara extensions install npm:@capybara-hq/plugin-anthropic`; only `model-fake` can be listed in `CAPYBARA_EXTENSIONS`); deployment-level config goes in `CAPYBARA_EXTENSION_CONFIG` keyed by extension name, or is filled in by the super admin in the admin console. `openai-compatible`, `anthropic`, `openai`, `deepseek`, `bailian` and `ark` are optional bootstrap plugins: preinstalled from npm by the bootstrap step, they only need their deployment config and an org admin switching them on. An organization follows the platform's deployment config; an org admin may save the organization's own copy of the overridable fields (for example its own endpoints and keys), while platform-only fields stay with the super admin.
 
 Each model declares in its extension the parameters it supports (the standard knobs `effort`, `thinking`, `temperature`, `maxOutputTokens` and so on, plus vendor parameters of the form `<extension name>.<name>`); the web agent form renders from the declarations, and agent versions are validated against them on save.
 

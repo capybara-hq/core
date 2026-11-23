@@ -65,10 +65,7 @@ export interface OrgExtension {
   version: string;
   enabled: boolean;
   configurable: boolean;
-  config: Record<string, unknown> | null;
-  secrets: { path: string; set: boolean }[];
   permissions: PermissionGroup[];
-  orgConfigSchema: JsonSchema | null;
   /**
    * Org admins only: the plugin's suggested appearance (client extensions spec §6.5), null without
    * one; members never get it (they cannot apply it).
@@ -115,7 +112,6 @@ export interface OrgExtension {
 /** One field of an org's two-level config (kernel `OrgOverrideField`). */
 export interface OrgOverrideField {
   path: string;
-  level: "readonly" | "override";
   secret: boolean;
   /** The platform's value (non-secret) or only whether it is set (secret). */
   platform: { value?: unknown; set?: boolean };
@@ -160,7 +156,6 @@ export function capabilityGroups(e: OrgExtension): PermissionGroup[] {
 
 export interface PutOrgExtensionInput {
   enabled?: boolean;
-  config?: Record<string, unknown>;
   force?: boolean;
   /** The hash of the switch-off preview, to confirm switching the extension's plugin off. */
   confirm?: string;
@@ -168,20 +163,17 @@ export interface PutOrgExtensionInput {
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/extensions`;
 
-/** The fields a member's list leaves out (kernel `OrgExtensionMemberItem`). */
-type AdminOnlyField = "config" | "secrets" | "orgConfigSchema" | "permissions";
+/** The field a member's list leaves out (kernel `OrgExtensionMemberItem`). */
+type AdminOnlyField = "permissions";
 
 export const listOrgExtensions = (orgId: string) =>
   apiFetch<{
     extensions: (Omit<OrgExtension, AdminOnlyField> &
       Partial<Pick<OrgExtension, AdminOnlyField>>)[];
   }>(base(orgId)).then((r) => ({
-    // A member's list omits config, secrets, schema and permissions: fill the admin shape's empties
+    // A member's list omits permissions: fill the admin shape's empty
     extensions: r.extensions.map((e) => ({
       ...e,
-      config: e.config ?? null,
-      secrets: e.secrets ?? [],
-      orgConfigSchema: e.orgConfigSchema ?? null,
       permissions: e.permissions ?? [],
     })),
   }));

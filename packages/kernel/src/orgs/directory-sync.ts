@@ -158,14 +158,17 @@ const silentSkip = (reason: DirectorySkipReason): boolean =>
 class OrgGone extends Error {}
 
 type Eligible =
-  | { ok: true; directory: Directory; orgConfig: unknown; config: unknown }
+  | { ok: true; directory: Directory; config: unknown }
   | { ok: false; reason: Exclude<DirectorySkipReason, "locked"> };
 
 /**
  * 通讯录同步（`directory@1`）：把企业通讯录同步为组织成员。框架无关。
  *
- * - 维护队列每小时 `directory-scan`：给每个「插件提供 `directory@1`、在该组织启用、组织级配置满足 schema」的
- *   (组织, 插件) 投递一次同步（job id 按小时桶去重，多副本重复扫描只跑一次）；手动与 `directory_changed` 也投递同步。
+ * - The maintenance queue's hourly `directory-scan` enqueues one sync per (org, extension) whose
+ *   extension provides `directory@1`, is enabled in the org and has a valid effective config there
+ *   (job ids deduplicated by hour bucket, so repeated scans on several replicas run once); manual
+ *   triggers and `directory_changed` enqueue syncs too. Each call gets the org's own effective
+ *   config (its copy of the overridable fields, or the platform's), never another org's.
  * - One sync at a time per (org, extension): the `LockService` lock
  *   `lock:directory-sync:<org>:<plugin>`, renewed while held. A sync that finds the lock taken sets
  *   the dirty flag `capk:directory-sync-dirty:<org>:<plugin>` (1 hour) and ends; after releasing
@@ -235,9 +238,9 @@ export class DirectorySync {
   }
 
   /**
-   * The org exists, the extension provides a directory, is enabled in the org, its org config
-   * satisfies the schema (reuses the `OrgExtensionConfigs.get` validation) and its effective
-   * deployment config for the org is valid (layering spec A §6).
+   * The org exists, the extension provides a directory and is enabled in the org, and its effective
+   * deployment config for the org (the platform's, or this org's copy of the overridable fields;
+   * never another org's) is valid (layering spec A §6).
    */
   private async eligible(orgId: string, plugin: string): Promise<Eligible> {
     const directory = this.provider(plugin);
@@ -249,11 +252,11 @@ export class DirectorySync {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!org) return { ok: false, reason: "org_not_found" };
-    let cfg: { enabled: boolean; config: unknown } | undefined;
+    let cfg: { enabled: boolean } | undefined;
     try {
       cfg = await this.orgConfigs.get(orgId, plugin);
     } catch (err) {
-      this.log.warn("directory sync: stored organization config is invalid", {
+      this.log.warn("directory sync: cannot read whether the extension is enabled", {
         orgId,
         plugin,
         err,
@@ -273,13 +276,13 @@ export class DirectorySync {
     if (directory.configured !== undefined) {
       let configured = false;
       try {
-        configured = directory.configured(cfg.config, effective.config) === true;
+        configured = directory.configured(effective.config) === true;
       } catch {
         configured = false;
       }
       if (!configured) return { ok: false, reason: "not_configured" };
     }
-    return { ok: true, directory, orgConfig: cfg.config, config: effective.config };
+    return { ok: true, directory, config: effective.config };
   }
 
   /**
@@ -325,7 +328,7 @@ export class DirectorySync {
   /**
    * Manual trigger by an admin: re-checks `org.members.manage` live under the org row lock, then that
    * the extension can sync (does not provide a directory -> `extension.not_found`, not enabled ->
-   * `extension.not_enabled`, config no longer valid -> `extension.config_invalid`, the extension says
+   * `extension.not_enabled`, its state cannot be read -> `extension.config_invalid`, the extension says
    * the directory is not configured -> `directory.not_configured`, Ruling A28; the effective config
    * is not valid in the org -> `extension.needs_config`, layering spec A §6), and enqueues a sync
    * job with a unique id.
@@ -457,7 +460,7 @@ export class DirectorySync {
     // 锁丢了（续租失败、过期后被他人取得）：停止本轮，不再移除任何人
     const signal = lease.lost;
     try {
-      return await this.run(orgId, plugin, e.directory, e.orgConfig, e.config, signal, opts);
+      return await this.run(orgId, plugin, e.directory, e.config, signal, opts);
     } finally {
       await lease.release().catch(() => {});
       await this.rerunIfDirty(orgId, plugin, dirtyKey);
@@ -482,7 +485,6 @@ export class DirectorySync {
     orgId: string,
     plugin: string,
     directory: Directory,
-    orgConfig: unknown,
     config: unknown,
     signal: AbortSignal,
     opts: {
@@ -506,8 +508,8 @@ export class DirectorySync {
         }
         signal.throwIfAborted();
         const r = await directory.listMembers({
-          orgConfig,
           config,
+          orgId,
           ...(cursor !== undefined && { cursor }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(DIRECTORY_PAGE_TIMEOUT_MS)]),
         });

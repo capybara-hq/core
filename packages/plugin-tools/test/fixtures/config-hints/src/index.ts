@@ -1,4 +1,4 @@
-// Fixture: valid, fully labelled config UI hints at both levels (packs; config forms check green).
+// Fixture: valid, fully labelled deployment config UI hints (packs; config forms check green).
 import { defineExtension, secret, ui } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
@@ -32,16 +32,6 @@ export default defineExtension({
         },
       ),
       apiKeys: secret(z.record(z.string(), z.string()).optional()),
-    }),
-    org: z.object({
-      mode: ui(z.enum(["fast", "slow"]).default("fast"), {
-        label: { zh: "模式", en: "Mode" },
-        widget: "radio",
-        options: [
-          { value: "fast", label: { zh: "快", en: "Fast" } },
-          { value: "slow", label: { zh: "慢", en: "Slow" } },
-        ],
-      }),
     }),
   },
   setup() {},

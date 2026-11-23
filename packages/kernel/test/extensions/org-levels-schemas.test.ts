@@ -24,8 +24,8 @@ import {
 
 /**
  * Org levels on deployment schemas real plugins write (spec A §5.2, §5.4a): an object-level
- * refinement across fields (`orgrefined`) and an overridable field wrapped in `.default()` after
- * `orgAccess` (`orgwrapped`).
+ * refinement across fields (`orgrefined`) and a platform-only field wrapped in `.optional()` after
+ * `platformOnly` (`orgwrapped`).
  */
 
 const fx = (n: string) =>
@@ -172,12 +172,12 @@ describe("an extension not running on this replica", () => {
   });
 });
 
-describe("an overridable field wrapped in .default()", () => {
-  it("is overridable end to end: the org view lists it and a save is accepted", async () => {
+describe("a platform-only field wrapped in .optional()", () => {
+  it("stays platform-only end to end: the org view lists only the overridable field and a save of it is accepted", async () => {
     const view = await owner({ method: "GET", url: ovUrl("orgwrapped") });
     expect(view.statusCode, view.body).toBe(200);
     expect(view.json().fields).toEqual([
-      { path: "region", level: "override", secret: false, platform: { value: "eu" } },
+      { path: "region", secret: false, platform: { value: "eu" } },
     ]);
     const saved = await owner({
       method: "PUT",

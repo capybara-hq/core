@@ -1,16 +1,17 @@
-import { defineExtension, orgAccess } from "@capybara-hq/plugin-sdk";
+import { defineExtension, platformOnly } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
- * Deployment schema whose overridable field is wrapped after `orgAccess` (`.default()`), the way
- * authors naturally write it: the kernel must still read it as `override`.
+ * Deployment schema whose platform-only field is wrapped after `platformOnly` (`.optional()`), the
+ * way authors naturally write it: the kernel must still read it as `platform`. `region` (with a
+ * default) is overridable.
  */
 export const OrgwrappedDeploymentSchema = z.object({
-  host: z.string(),
-  region: orgAccess(z.string(), "override").default("eu"),
+  host: platformOnly(z.string()).optional(),
+  region: z.string().default("eu"),
 });
 
-/** Test plugin with a wrapped overridable field; it registers nothing. */
+/** Test plugin with a wrapped platform-only field; it registers nothing. */
 export default defineExtension({
   name: "orgwrapped",
   version: "0.1.0",

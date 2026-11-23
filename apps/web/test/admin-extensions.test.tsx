@@ -1701,7 +1701,7 @@ describe("two-level extension config on the admin side", () => {
         source: "db",
         readonly: false,
         value: "eu",
-        org: "readonly",
+        level: "platform",
       },
       {
         path: "baseUrl",
@@ -1710,9 +1710,17 @@ describe("two-level extension config on the admin side", () => {
         source: "db",
         readonly: false,
         value: "https://p",
-        org: "override",
+        level: "override",
       },
-      { path: "internal", secret: false, hot: false, source: "db", readonly: false, value: "x" },
+      {
+        path: "internal",
+        secret: false,
+        hot: false,
+        source: "db",
+        readonly: false,
+        value: "x",
+        level: "platform",
+      },
     ],
     valid: true,
     validated: true,
@@ -1731,22 +1739,27 @@ describe("two-level extension config on the admin side", () => {
     ],
   };
 
-  it.each(LOCALES)("the config tab tags each field with the org level (%s)", async (locale) => {
-    const m = msgs[locale];
-    detailRoutes(plugin(), {
-      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
-      "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
-      "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, { overrides: [] }),
-    });
-    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale });
-    const user = userEvent.setup();
-    await user.click(
-      await screen.findByRole("tab", { name: m.admin.extensions.detail.tabs.config }),
-    );
-    await screen.findByLabelText("region");
-    for (const level of ["readonly", "override", "hidden"] as const)
-      expect(screen.getByText(m.configForm.level[level], { exact: false })).toBeTruthy();
-  });
+  it.each(LOCALES)(
+    "the config tab tags each field platform-only or org-overridable (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      detailRoutes(plugin(), {
+        "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
+        "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
+        "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, { overrides: [] }),
+      });
+      await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("tab", { name: m.admin.extensions.detail.tabs.config }),
+      );
+      await screen.findByLabelText("region");
+      for (const level of ["platform", "override"] as const)
+        expect(
+          screen.getAllByText(m.configForm.level[level], { exact: false }).length,
+        ).toBeGreaterThan(0);
+    },
+  );
 
   it("the config tab lists the orgs that hold a copy: when, what differs, secrets by state, nothing to edit", async () => {
     const m = en.admin.extensions.orgCopies;

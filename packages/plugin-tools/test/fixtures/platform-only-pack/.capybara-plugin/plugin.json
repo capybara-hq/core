@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-platform-only-pack",
+  "displayName": { "zh": "仅平台示例", "en": "Platform only" },
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a platform-only deployment field"
+}

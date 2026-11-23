@@ -137,10 +137,17 @@ beforeEach(async () => {
     const res = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
-      payload: { enabled: true, ...(plugin === "fake-web" && { config: { token: "tok" } }) },
+      payload: { enabled: true },
     });
     expect(res.statusCode, res.body).toBe(200);
   }
+  // the org's copy holds the fake web provider's token (the platform leaves it empty)
+  const copy = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/extensions/fake-web/overrides`,
+    payload: { values: { token: "tok" } },
+  });
+  expect(copy.statusCode, copy.body).toBe(200);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

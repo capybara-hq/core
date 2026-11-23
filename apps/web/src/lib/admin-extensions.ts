@@ -221,8 +221,11 @@ export interface DeploymentConfigField {
    * names, never values); saved per key through `secretEntries`.
    */
   keys?: string[];
-  /** What orgs may do with the field: see it (`readonly`) or bring their own (`override`); absent = hidden. */
-  org?: "readonly" | "override";
+  /**
+   * What orgs may do with the field: `override` = overridable (an org may save its own copy),
+   * `platform` = platform-only (orgs neither see nor change it).
+   */
+  level: "platform" | "override";
 }
 
 /** One operation on a secret record drawn per item (kernel `SecretEntry`). */

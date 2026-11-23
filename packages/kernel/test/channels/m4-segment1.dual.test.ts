@@ -228,11 +228,13 @@ describe("M4 第一段验收（双副本）", () => {
     // ================= 1. 建连接；首轮通讯录同步 =================
     const book = im.book("acme");
     book.members = [fakeDirectoryMember("u-bob", { displayName: "Bob" })];
-    const en = await call(ownerJar, "PUT", `${base}/extensions/fake-im`, {
-      enabled: true,
-      config: { url: book.url },
-    });
+    const en = await call(ownerJar, "PUT", `${base}/extensions/fake-im`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
+    // the org's copy of the overridable directoryUrl points at its book
+    const copy = await call(ownerJar, "PUT", `${base}/extensions/fake-im/overrides`, {
+      values: { directoryUrl: book.url },
+    });
+    expect(copy.status, JSON.stringify(copy.json)).toBe(200);
     const sync1 = await call(ownerJar, "POST", `${base}/extensions/fake-im/directory/sync`);
     expect(sync1.status).toBe(202);
     await syncsReach(0, { added: 1, removed: 0 }, "first directory sync");

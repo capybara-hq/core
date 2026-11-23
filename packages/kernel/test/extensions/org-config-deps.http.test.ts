@@ -199,8 +199,8 @@ describe("依赖按主版本匹配与未加载提供方", () => {
   });
 });
 
-describe("GET 插件列表：权限清单与配置 schema", () => {
-  it("permissions 按类别分组并标敏感项；orgConfigSchema 的密钥带 x-secret", async () => {
+describe("GET the extension list: the permission list", () => {
+  it("permissions are grouped by category with sensitive items marked; no org config schema", async () => {
     const { req, orgId } = await setup();
     const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(res.statusCode).toBe(200);
@@ -208,7 +208,6 @@ describe("GET 插件列表：权限清单与配置 schema", () => {
       extensions: {
         plugin: string;
         permissions: { category: string; sensitive: boolean; items: string[] }[];
-        orgConfigSchema: { properties?: Record<string, Record<string, unknown>> } | null;
       }[];
     };
     const consumer = plugins.find((p) => p.plugin === "cap-consumer");
@@ -234,19 +233,17 @@ describe("GET 插件列表：权限清单与配置 schema", () => {
         },
       ]),
     );
-    expect(consumer?.orgConfigSchema).toBeNull();
+    for (const p of plugins) expect(p).not.toHaveProperty("orgConfigSchema");
     const org = plugins.find((p) => p.plugin === "orgcfg");
     const secrets = org?.permissions.find((g) => g.category === "secrets");
     expect(secrets).toMatchObject({
       category: "secrets",
       sensitive: true,
-      items: expect.arrayContaining(["org:appSecret"]),
+      items: expect.arrayContaining(["deployment:appSecret"]),
       entries: expect.arrayContaining([
-        { value: "org:appSecret", sensitive: true, reason: "secrets" },
+        { value: "deployment:appSecret", sensitive: true, reason: "secrets" },
       ]),
     });
-    expect(org?.orgConfigSchema?.properties?.appSecret?.["x-secret"]).toBe(true);
-    expect(org?.orgConfigSchema?.properties?.appId).not.toHaveProperty("x-secret");
   });
 });
 
@@ -258,13 +255,20 @@ describe("org extension point defaults over HTTP", () => {
     member = await session(k, "mem");
   });
 
+  /** Enables `plugin` with the org's copy holding its token (the platform leaves it empty). */
   async function enable(plugin: string, token: string): Promise<void> {
     const r = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
-      payload: { enabled: true, config: { token } },
+      payload: { enabled: true },
     });
     expect(r.statusCode, r.body).toBe(200);
+    const copy = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/${plugin}/overrides`,
+      payload: { values: { token } },
+    });
+    expect(copy.statusCode, copy.body).toBe(200);
   }
 
   it("GET lists both points; PUT sets a default (204); GET shows it effective", async () => {

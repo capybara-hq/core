@@ -41,6 +41,7 @@ export const RUNNERS: Record<string, NamedCheck> = {
     name: "Bootstrap manifest",
     run: () =>
       checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root, {
+        fixedSet: true,
         composeFiles: BOOTSTRAP_COMPOSE_FILES.map((f) => join(root, f)),
       }),
   },

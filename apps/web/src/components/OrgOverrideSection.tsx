@@ -20,13 +20,13 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { ConfigForm } from "./config-form/ConfigForm";
 import { buildTree, fromDraft, toDraft } from "./config-form/model";
-import { orgProblems, overrideForm, overrideValues } from "./config-form/org";
+import { overrideForm, overrideValues } from "./config-form/org";
 import { FormError } from "./form-error";
 import { OrgOverrideDiff } from "./OrgOverrideDiff";
 
 /**
- * The org's two-level deployment config of an extension inside its Sheet (spec A §5.3 to §5.6):
- * the platform's read-only and overridable fields in one form. While the org follows the platform
+ * The org's deployment config of an extension inside its Sheet (spec A §5.3 to §5.6): the
+ * overridable fields in one form. While the org follows the platform
  * the fields show the platform's values and the first edit says the org will use its own
  * configuration, with its own keys in the same save; with a copy a banner offers 与平台对比 and
  * 使用平台配置 (after a confirmation). The kernel decides what an org may see and write.
@@ -209,7 +209,7 @@ function Loaded({
         issues={error?.issues ?? view.issues}
         disabled={busy}
         onChange={(value, _entries, s) =>
-          setCurrent({ value, ok: orgProblems(view, s.problems).length === 0, dirty: s.dirty })
+          setCurrent({ value, ok: s.problems.length === 0, dirty: s.dirty })
         }
       />
       {error !== undefined && <FormError message={error.message} />}

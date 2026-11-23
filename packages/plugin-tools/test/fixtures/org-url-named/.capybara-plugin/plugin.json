@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-org-url-named",
+  "displayName": { "zh": "配置分级示例", "en": "Config classification" },
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: an overridable endpoint declared as a plain string"
+}

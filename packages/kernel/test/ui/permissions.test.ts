@@ -118,7 +118,7 @@ describe("permissionKeyItems：权限键逐项的敏感标记与原因码", () =
     expect(
       permissionKeyItems([
         "permissions.secrets",
-        "config.org.secret:token",
+        "config.deployment.secret:token",
         "permissions.http.public:GET /hook",
         "permissions.tools:echo",
         "permissions.hooks:run.start",
@@ -132,7 +132,7 @@ describe("permissionKeyItems：权限键逐项的敏感标记与原因码", () =
       ]),
     ).toEqual([
       { value: "permissions.secrets", sensitive: true, reason: "secrets" },
-      { value: "config.org.secret:token", sensitive: true, reason: "secrets" },
+      { value: "config.deployment.secret:token", sensitive: true, reason: "secrets" },
       { value: "permissions.http.public:GET /hook", sensitive: true, reason: "public_routes" },
       { value: "permissions.tools:echo", sensitive: true, reason: "tools" },
       { value: "permissions.hooks:run.start", sensitive: true, reason: "hooks" },
@@ -151,7 +151,7 @@ describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别"
   it("密钥、公开路由、工具、hook、敏感能力、embed 为敏感；其余不是", () => {
     const sensitive = [
       "permissions.secrets",
-      "config.org.secret:apiKey",
+      "config.deployment.secret:apiKey",
       "config.deployment.secret:<root>",
       "permissions.http.public:POST /events",
       "permissions.http.embed:GET /ui/data",
@@ -165,7 +165,7 @@ describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别"
     const plain = [
       "provides:counter@1",
       "requires:channel@1",
-      "config.org:region",
+      "config.deployment:region",
       "table:todos",
       "permissions.http.member:GET /a",
       "permissions.http.admin:GET /a",

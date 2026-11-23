@@ -32,6 +32,18 @@ describe("defineExtension", () => {
     expect(defineExtension(m)).toBe(m);
     expect(() => defineExtension(valid({ permissions }))).toThrow(/device-provider@1/);
   });
+  it("accepts config.deployment and rejects any other config key, naming it", () => {
+    const deployment = z.object({ region: z.string() });
+    expect(defineExtension(valid({ config: { deployment } }))).toBeDefined();
+    const org = { config: { deployment, org: z.object({}) } } as unknown as ExtensionManifest;
+    expect(() => defineExtension({ ...valid(), ...org })).toThrow(
+      /config\.org was removed: move org fields into config\.deployment/,
+    );
+    const other = { config: { connection: z.object({}) } } as unknown as ExtensionManifest;
+    expect(() => defineExtension({ ...valid(), ...other })).toThrow(
+      /config\.connection is not a config level/,
+    );
+  });
   it("rejects missing setup", () => {
     // biome-ignore lint/suspicious/noExplicitAny: 构造缺 setup 的畸形清单
     const bad = { ...valid(), setup: undefined } as any;

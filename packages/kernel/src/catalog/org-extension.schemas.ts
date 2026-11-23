@@ -16,12 +16,10 @@ export const OrgToolSwitchPut = z
   })
   .strict();
 
-/** `PUT /orgs/:orgId/extensions/:extension`: enablement and / or the org config. */
+/** `PUT /orgs/:orgId/extensions/:extension`: enablement (an org's config is its copy: `…/overrides`). */
 export const OrgExtensionPut = z
   .object({
     enabled: z.boolean().optional(),
-    /** The whole org config: secret fields omitted keep, `null` clears, a value sets. */
-    config: z.record(z.string(), z.unknown()).optional(),
     force: z.boolean().optional(),
     /** The hash of the plugin uninstall preview, to confirm switching the extension's plugin off. */
     confirm: z.string().optional(),

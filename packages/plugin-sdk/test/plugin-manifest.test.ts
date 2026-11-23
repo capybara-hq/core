@@ -24,7 +24,7 @@ const staticManifest = (over: Partial<StaticExtensionManifest> = {}): StaticExte
   requires: [],
   optional: [],
   permissions: {},
-  config: { deployment: [], org: [] },
+  config: { deployment: [] },
   ...over,
 });
 
@@ -103,6 +103,58 @@ describe("parsePluginManifest", () => {
     const r = parsePluginManifest(withExtension());
     expect(errorsOf(withExtension())).toEqual([]);
     expect((r as PluginManifest).extension?.manifest.name).toBe("todo");
+  });
+
+  it("reads a legacy config.org list from packages packed before core#720 and drops it", () => {
+    for (const org of [[], [{ path: "apiKey", secret: true, hot: false }]]) {
+      const json = withExtension(
+        {},
+        {
+          config: {
+            deployment: [{ path: "readerUrl", secret: false, hot: false }],
+            org,
+          } as StaticExtensionManifest["config"],
+        },
+      );
+      expect(errorsOf(json)).toEqual([]);
+      const config = (parsePluginManifest(json) as PluginManifest).extension?.manifest.config;
+      expect(config).toEqual({ deployment: [{ path: "readerUrl", secret: false, hot: false }] });
+      expect(config).not.toHaveProperty("org");
+    }
+  });
+
+  it("reads a legacy configSchemas.org from packages packed before core#720 and drops it", () => {
+    const deployment = { type: "object", properties: { readerUrl: { type: "string" } } };
+    const org = { type: "object", properties: { apiKey: { type: "string", "x-secret": true } } };
+    const json = withExtension({
+      extension: {
+        entry: "./dist/index.mjs",
+        manifest: staticManifest(),
+        configSchemas: { deployment, org },
+      },
+    });
+    expect(errorsOf(json)).toEqual([]);
+    const schemas = (parsePluginManifest(json) as PluginManifest).extension?.configSchemas;
+    expect(schemas).toEqual({ deployment });
+    expect(schemas).not.toHaveProperty("org");
+  });
+
+  it("still refuses other unknown configSchemas keys", () => {
+    const json = withExtension({
+      extension: {
+        entry: "./dist/index.mjs",
+        manifest: staticManifest(),
+        configSchemas: { deployment: { type: "object" }, extra: { type: "object" } },
+      },
+    });
+    expect(errorsOf(json).join()).toMatch(/extra/);
+  });
+
+  it("still refuses other unknown config keys and a malformed legacy org list", () => {
+    const withConfig = (config: unknown) =>
+      withExtension({}, { config: config as StaticExtensionManifest["config"] });
+    expect(errorsOf(withConfig({ deployment: [], extra: [] })).join()).toMatch(/extra/);
+    expect(errorsOf(withConfig({ deployment: [], org: [{ path: "x" }] })).join()).toMatch(/org/);
   });
 
   it("accepts $schema", () => {
@@ -621,6 +673,44 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     [
       "extension unknown key",
       withExtension({ extension: { entry: "./dist/index.mjs", manifest: staticManifest(), x: 1 } }),
+    ],
+    [
+      "legacy config.org (packed before core#720)",
+      withExtension(
+        {},
+        {
+          config: { deployment: [], org: [] } as StaticExtensionManifest["config"],
+        },
+      ),
+    ],
+    [
+      "legacy configSchemas.org (packed before core#720)",
+      withExtension({
+        extension: {
+          entry: "./dist/index.mjs",
+          manifest: staticManifest(),
+          configSchemas: { deployment: { type: "object" }, org: { type: "object" } },
+        },
+      }),
+    ],
+    [
+      "unknown configSchemas key",
+      withExtension({
+        extension: {
+          entry: "./dist/index.mjs",
+          manifest: staticManifest(),
+          configSchemas: { extra: { type: "object" } },
+        },
+      }),
+    ],
+    [
+      "unknown config key",
+      withExtension(
+        {},
+        {
+          config: { deployment: [], extra: [] } as unknown as StaticExtensionManifest["config"],
+        },
+      ),
     ],
     ["bad name", skillsOnly({ name: "Bad" })],
     ["bad version", skillsOnly({ version: "1" })],

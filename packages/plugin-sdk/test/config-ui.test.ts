@@ -10,8 +10,9 @@ import {
   type JsonSchema,
   type LocalizedName,
   missingInboundModeFields,
-  orgAccess,
+  type PluginManifest,
   parsePluginManifest,
+  platformOnly,
   type StaticExtensionManifest,
   secret,
   ui,
@@ -21,11 +22,9 @@ import {
 type Props = { properties: Record<string, Record<string, unknown>> };
 const T = (zh: string, en: string): LocalizedName => ({ zh, en });
 
-const problems = (
-  schema: z.ZodTypeAny,
-  level: "deployment" | "org" | "connection" = "deployment",
-) => validateConfigUi(configJsonSchema(schema), level);
-const paths = (schema: z.ZodTypeAny, level?: "deployment" | "org" | "connection") =>
+const problems = (schema: z.ZodTypeAny, level: "deployment" | "connection" = "deployment") =>
+  validateConfigUi(configJsonSchema(schema), level);
+const paths = (schema: z.ZodTypeAny, level?: "deployment" | "connection") =>
   problems(schema, level).map((p) => p.path);
 
 /** Every key of every object in a JSON tree, including keys inside `properties`. */
@@ -317,8 +316,7 @@ describe("validateConfigUi", () => {
     expect(paths(withSecrets("keys", "missing"))).toEqual(["list.endpoints"]);
   });
 
-  it("secrets at level org", () => {
-    expect(paths(withSecrets("keys", "name"), "org")).toEqual(["list.endpoints"]);
+  it("secrets at level connection", () => {
     expect(paths(withSecrets("keys", "name"), "connection")).toEqual(["list.endpoints"]);
   });
 
@@ -539,7 +537,7 @@ describe("plugin.json extension.configSchemas", () => {
     requires: [],
     optional: [],
     permissions: {},
-    config: { deployment: [], org: [] },
+    config: { deployment: [] },
   };
   const manifest = (configSchemas: unknown) => ({
     schemaVersion: 1,
@@ -550,13 +548,19 @@ describe("plugin.json extension.configSchemas", () => {
     extension: { entry: "./dist/index.mjs", manifest: staticManifest, configSchemas },
   });
 
-  it("accepts deployment and org JSON Schemas", () => {
+  it("accepts a deployment JSON Schema", () => {
     const deployment: JsonSchema = configJsonSchema(
       z.object({ a: ui(z.string(), { label: T("甲", "A") }) }),
     );
-    const r = parsePluginManifest(manifest({ deployment, org: { type: "object" } }));
+    const r = parsePluginManifest(manifest({ deployment }));
     expect(r).not.toHaveProperty("errors");
     expect(r).toMatchObject({ extension: { configSchemas: { deployment } } });
+  });
+
+  it("reads a legacy org JSON Schema (packed before core#720) and drops it", () => {
+    const r = parsePluginManifest(manifest({ org: { type: "object" } }));
+    expect(r).not.toHaveProperty("errors");
+    expect((r as PluginManifest).extension?.configSchemas).toEqual({});
   });
 
   it("accepts a schema just under the limit", () => {
@@ -582,46 +586,52 @@ describe("plugin.json extension.configSchemas", () => {
   });
 });
 
-describe("x-org", () => {
-  const lv = (schema: z.ZodTypeAny, level: "deployment" | "org" | "connection" = "deployment") =>
-    problems(schema, level);
-
-  it("configJsonSchema emits x-org on the property and removes org", () => {
+describe("x-platform-only", () => {
+  it("configJsonSchema emits x-platform-only on the property and removes platformOnly", () => {
     const js = configJsonSchema(
-      z.object({ k: orgAccess(secret(z.string()), "override"), h: z.string() }),
+      z.object({ a: platformOnly(z.string()), k: platformOnly(secret(z.string())), h: z.string() }),
     ) as unknown as Props;
-    expect(js.properties.k?.["x-org"]).toBe("override");
-    expect(js.properties.h?.["x-org"]).toBeUndefined();
-    expect(nodeKeys(js)).not.toContain("org");
+    expect(js.properties.a?.["x-platform-only"]).toBe(true);
+    expect(js.properties.k?.["x-platform-only"]).toBe(true);
+    expect(js.properties.k?.["x-secret"]).toBe(true);
+    expect(js.properties.h?.["x-platform-only"]).toBeUndefined();
+    expect(nodeKeys(js)).not.toContain("platformOnly");
+    expect(nodeKeys(js)).not.toContain("x-org");
   });
 
-  it("accepts a valid deployment schema", () => {
-    expect(
-      lv(z.object({ a: orgAccess(z.string(), "override"), b: orgAccess(z.string(), "readonly") })),
-    ).toEqual([]);
+  it("configJsonSchema emits x-platform-only on a marked root", () => {
+    const js = configJsonSchema(platformOnly(z.object({ a: z.string() })));
+    expect(js["x-platform-only"]).toBe(true);
   });
 
-  it("rejects readonly on a secret field", () => {
-    const p = lv(z.object({ k: orgAccess(secret(z.string()), "readonly") }));
-    expect(p).toHaveLength(1);
-    expect(p[0]?.path).toBe("k");
+  it("accepts the mark on the root and on top-level fields at the deployment level", () => {
+    expect(problems(z.object({ a: platformOnly(z.string()), b: z.string() }))).toEqual([]);
+    expect(problems(platformOnly(z.object({ a: platformOnly(z.string()) })))).toEqual([]);
   });
 
-  it("rejects x-org on a nested node", () => {
-    const p = lv(z.object({ o: z.object({ n: orgAccess(z.string(), "override") }) }));
+  it("rejects the mark on a nested field", () => {
+    const p = problems(z.object({ o: z.object({ n: platformOnly(z.string()) }) }));
     expect(p.map((x) => x.path)).toEqual(["o.n"]);
   });
 
-  it("rejects an unknown value", () => {
-    const p = lv(z.object({ k: z.string().meta({ org: "bogus" }) }));
-    expect(p).toHaveLength(1);
-    expect(p[0]?.path).toBe("k");
+  it("rejects the mark at the connection level", () => {
+    expect(problems(z.object({ k: platformOnly(z.string()) }), "connection")).toHaveLength(1);
+    expect(problems(platformOnly(z.object({ k: z.string() })), "connection")).toHaveLength(1);
   });
 
-  it("rejects x-org at the org and connection levels", () => {
-    const schema = z.object({ k: orgAccess(z.string(), "override") });
-    expect(lv(schema, "org")).toHaveLength(1);
-    expect(lv(schema, "connection")).toHaveLength(1);
+  it("rejects a value other than true", () => {
+    const js = { type: "object", properties: { k: { type: "string", "x-platform-only": "yes" } } };
+    const p = validateConfigUi(js as JsonSchema, "deployment");
+    expect(p).toHaveLength(1);
+    expect(p[0]?.path).toBe("k");
+    const off = { type: "object", properties: { k: { type: "string", "x-platform-only": false } } };
+    expect(validateConfigUi(off as JsonSchema, "deployment")).toHaveLength(1);
+  });
+
+  it("rejects a hand-written x-platform-only at the org level", () => {
+    const js = { type: "object", properties: { k: { type: "string", "x-platform-only": true } } };
+    // Guards untyped callers (hand-written JSON): the type only allows "deployment".
+    expect(validateConfigUi(js as JsonSchema, "org" as "deployment")).toHaveLength(1);
   });
 });
 
@@ -640,9 +650,8 @@ describe("inboundModes (channel inbound mode fields spec §2)", () => {
     expect(problems(slack, "connection")).toEqual([]);
   });
 
-  it("is refused at the deployment and org levels", () => {
+  it("is refused at the deployment level", () => {
     expect(paths(slack, "deployment")).toEqual(["appToken", "signingSecret", "both"]);
-    expect(paths(slack, "org")).toEqual(["appToken", "signingSecret", "both"]);
   });
 
   it("is refused on a nested field, empty, unknown or duplicated", () => {
