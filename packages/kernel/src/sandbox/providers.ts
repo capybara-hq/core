@@ -7,7 +7,7 @@ import { guardProviderConnection } from "./unreachable.js";
  * An in-process provider name: it starts with `@`, which no extension name can
  * (`EXTENSION_NAME_RE`), so it never collides with a loaded `device-provider@1` plugin.
  */
-const isInProcessName = (name: string): boolean => name.startsWith("@");
+export const isInProcessName = (name: string): boolean => name.startsWith("@");
 
 /**
  * Whether a provider serves its devices over the dial-in channel: it implements
