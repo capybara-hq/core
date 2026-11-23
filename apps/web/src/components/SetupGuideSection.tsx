@@ -66,6 +66,8 @@ export type SetupGuideSectionProps = (
     connectionId?: string;
     name?: string;
     connectorId?: string;
+    /** connector-template: the template shown (a guide may cover several). */
+    templateId?: string;
     audience?: SetupGuideAudience;
   };
   /**
@@ -144,7 +146,7 @@ export function SetupGuideSection({
   const onDeployment = deployment !== undefined;
   const ownRead = useQuery({
     ...(admin
-      ? adminSetupGuideQuery(guide, locale)
+      ? adminSetupGuideQuery(guide, locale, query.templateId)
       : setupGuideQuery(orgId, guide, { ...q, ...(mode && { mode }) })),
     // the name typed so far re-renders the guide: keep the last one on screen meanwhile
     placeholderData: keepPreviousData,

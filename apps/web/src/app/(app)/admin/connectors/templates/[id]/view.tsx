@@ -136,7 +136,7 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
           <ComponentNotes c={c} />
           <ComponentFacts c={c} />
           {shown === "guide" && guide !== null ? (
-            <PlatformGuide guide={guide} />
+            <PlatformGuide guide={guide} templateId={c.name} />
           ) : shown === "versions" ? (
             <ComponentVersions versions={versions ?? null} />
           ) : (
@@ -154,7 +154,7 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
  * it, with no org and no target: org and connector names stay as written, and there are no check
  * rows (they need a target) and no drift notice.
  */
-function PlatformGuide({ guide }: { guide: SetupGuideRef }) {
+function PlatformGuide({ guide, templateId }: { guide: SetupGuideRef; templateId: string }) {
   const t = useTranslations("setupGuide");
   return (
     <Card title={t("title")}>
@@ -162,7 +162,7 @@ function PlatformGuide({ guide }: { guide: SetupGuideRef }) {
         <Text variant="prose" tone="muted">
           {t("platformHint")}
         </Text>
-        <SetupGuideSection orgId="" guide={guide} query={{}} admin />
+        <SetupGuideSection orgId="" guide={guide} query={{ templateId }} admin />
       </Stack>
     </Card>
   );

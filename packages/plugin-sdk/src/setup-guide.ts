@@ -108,7 +108,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
   "extension-deployment": {
     modes: [],
     audiences: ["admin"],
-    variables: { ...COMMON_VARIABLES, pluginName: "text" },
+    variables: { ...COMMON_VARIABLES, pluginName: "text", signInCallbackUrl: "url" },
     drift: false,
     shellActions: [],
   },
@@ -125,6 +125,8 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
 export const SETUP_GUIDE_LIMITS = {
   /** Guides per plugin. */
   guides: 8,
+  /** Connector templates one `connector-template` guide covers. */
+  templatesPerGuide: 64,
   /** Bytes per document (each language). */
   docBytes: 65536,
   /** Fenced code blocks per document. */
@@ -150,8 +152,13 @@ export interface PluginSetupGuide {
   /** `^[a-z0-9][a-z0-9-]{0,63}$`, unique in the plugin; the documents are `guides/<id>.md`. */
   id: string;
   place: SetupGuidePlace;
-  /** Only and required for `connector-template`: one of the plugin's connector template ids. */
-  template?: string;
+  /**
+   * Only and required for `connector-template`: the plugin's connector template ids the guide is
+   * for (one or more, at most {@link SETUP_GUIDE_LIMITS}`.templatesPerGuide`). A template has at
+   * most one guide; `{{templateId}}` / `{{templateName}}` render the template the guide is shown
+   * for.
+   */
+  templates?: string[];
 }
 
 /** The package path of a guide's document: `guides/<id>.md` (en) or `guides/<id>.zh.md` (zh). */

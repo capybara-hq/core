@@ -39,7 +39,7 @@ const guidePlugin = () =>
   pluginTgz({
     manifest: {
       name: "gh-guide",
-      setupGuides: [{ id: "gh", place: "connector-template", template: TEMPLATE_ID }],
+      setupGuides: [{ id: "gh", place: "connector-template", templates: [TEMPLATE_ID] }],
     },
     files: {
       ...templateFiles(TEMPLATE_ID, mcpTemplate(), {

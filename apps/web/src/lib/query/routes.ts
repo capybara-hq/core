@@ -222,7 +222,12 @@ async function prefetchFirstTemplateGuide(
   const guide = first?.guide;
   if (!guide) return;
   await qc.prefetchQuery({
-    ...setupGuideQuery(orgId, guide, { audience: "admin", locale: labelLocale(locale) }),
+    // the wizard's TemplateGuideSection: the guide shown for this template
+    ...setupGuideQuery(orgId, guide, {
+      audience: "admin",
+      templateId: first.id,
+      locale: labelLocale(locale),
+    }),
     retry: false,
   });
 }

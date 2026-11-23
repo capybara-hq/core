@@ -105,7 +105,7 @@ describe("setup guides v2 at import", () => {
     const noTemplate = await issuesOf(
       read({
         extension: false,
-        guides: [{ id: "gh", place: "connector-template", template: "gitlab" }],
+        guides: [{ id: "gh", place: "connector-template", templates: ["gitlab"] }],
         files: {
           "guides/gh.md": "# Set up\n\nText.\n",
           ...templateFiles("github-mcp", mcpTemplate()),

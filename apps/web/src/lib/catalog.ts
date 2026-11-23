@@ -152,7 +152,7 @@ export interface PluginManifest {
    * Setup guides (setup guides v2 spec §4.1): `guides/<id>.md` rendered for a place; a
    * connector-template guide names its template.
    */
-  setupGuides?: { id: string; place: string; template?: string }[];
+  setupGuides?: { id: string; place: string; templates?: string[] }[];
   extension?: {
     entry: string;
     manifest: StaticExtensionManifest;
@@ -1549,8 +1549,8 @@ export const descriptionOf = (
 
 /**
  * A connector template's setup guide in an item's latest version (the super admin's template
- * page, setup guides v2 spec §9.3): the `connector-template` guide naming the template, as the
- * kernel resolves it; null without one.
+ * page, setup guides v2 spec §9.3): the `connector-template` guide whose `templates` name the
+ * template, as the kernel resolves it; null without one.
  */
 export function templateGuideIn(
   detail: CatalogItemDetail,
@@ -1558,7 +1558,7 @@ export function templateGuideIn(
 ): { itemId: string; guideId: string; version: string } | null {
   const v = detail.versions.find((x) => x.version === detail.item.latestVersion);
   const g = (v?.manifest.setupGuides ?? []).find(
-    (x) => x.place === "connector-template" && x.template === templateId,
+    (x) => x.place === "connector-template" && (x.templates ?? []).includes(templateId),
   );
   return g === undefined || v === undefined
     ? null

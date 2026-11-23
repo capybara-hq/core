@@ -45,8 +45,8 @@ export interface SetupGuideListEntry {
   plugin: string;
   guideId: string;
   place: SetupGuidePlace;
-  /** The connector template of a `connector-template` guide; null for other places. */
-  template: string | null;
+  /** The connector templates a `connector-template` guide covers; empty for other places. */
+  templates: string[];
   /** The section rendered: org admins get the admin guides, members their member sections. */
   audience: SetupGuideAudience;
   title: string;
@@ -204,7 +204,7 @@ export class SetupGuidesService {
           plugin: g.plugin,
           guideId: g.id,
           place: g.place,
-          template: g.template,
+          templates: g.templates,
           audience: p.audience,
           title: g.title,
           targets: [],

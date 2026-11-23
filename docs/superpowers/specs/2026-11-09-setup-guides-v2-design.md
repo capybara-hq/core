@@ -117,7 +117,7 @@ Anti-goals (a failure even if it works):
 {
   "setupGuides": [
     { "id": "slack-app", "place": "channel-connection" },
-    { "id": "slack-connector", "place": "connector-template", "template": "slack" }
+    { "id": "slack-connector", "place": "connector-template", "templates": ["slack"] }
   ]
 }
 ```
@@ -233,7 +233,7 @@ The private-use range is refused because the renderer uses it for its placeholde
 {
   "setupGuides": [
     { "id": "slack-app", "place": "channel-connection" },
-    { "id": "slack-connector", "place": "connector-template", "template": "slack" }
+    { "id": "slack-connector", "place": "connector-template", "templates": ["slack"] }
   ]
 }
 ```
@@ -1401,3 +1401,33 @@ folded into the section it changes.
 7. **Token paste warning**: the composer warns client side before sending when the draft holds
    something token-like, with a pattern list and a non-blocking warn with 「仍然发送」 (§12.1).
 8. **Org admins on the member sheet** get a link to the admin guide (§9.3).
+
+## As built: several templates per guide, `signInCallbackUrl` at `extension-deployment` (2026-11-23, core#554)
+
+Two limits the Google plugin hit (capybara-hq/plugins#146, its spec §9.4 and §9.5), changed
+directly before 0.1.0 (no compatibility layer):
+
+- **A `connector-template` guide covers one or more templates**: the declaration is
+  `{ id, place: "connector-template", templates: ["gmail", "drive", …] }` (replacing the single
+  `template`; at least one, at most `SETUP_GUIDE_LIMITS.templatesPerGuide` = 64), each template
+  still has at most one guide, and every id must be one of the plugin's connector templates (the
+  manifest parser for listed templates; `capybara-plugin pack` / `check` and the kernel importer
+  for scanned ones). `SETUP_GUIDE_LIMITS.guides` stays 8. `{{templateId}}` / `{{templateName}}`
+  render the template the guide is shown for: the target connector's template (`connectorId` must
+  be a connector made from one of the guide's templates), else the new target parameter
+  `templateId` of the guide routes (org `GET …/catalog/:itemId/guides/:guideId`, the super admin's
+  `GET /admin/catalog/:itemId/guides/:guideId`, `setup.read`; it must be one of the guide's
+  templates, else 400), else the guide's only template; a guide covering several rendered without
+  either leaves both unresolved with the new reason `no_template`. A rendered guide carries
+  `template` (the one rendered for, or null) and `templates` (all it covers); `setup.guides`
+  entries carry `templates`. The drift hash is per guide (unchanged), so the templates sharing a
+  guide share its ack hash; the update preview's `TemplateGuideChange` still lists one row per
+  template. The web passes the template it shows (`templateId`) in the install wizard and on the
+  super admin's template page.
+- **`extension-deployment` offers `signInCallbackUrl`** (url,
+  `<publicUrl>/api/v1/auth/sso/<plugin>/callback`, unresolved `public_url`), for every plugin like
+  the other places (the place registry is static, so it is not tied to `identity-source@1`). The
+  path comes from `packages/kernel/src/identity/sso-paths.ts` (`ssoCallbackPath`), which the SSO
+  flow's redirect URI uses too; the controller's decorators stay literals (`check:platform-ops`
+  matches routes by them) and a unit test keeps them equal, so a login guide no longer spells the
+  kernel route.

@@ -109,13 +109,16 @@ live check rows. v2 replaced v1's steps and files directly (pre-0.1.0, no compat
 §15).
 
 - **Declaration** (§4.1, SDK `setup-guide.ts`): `plugin.json` `setupGuides` (≤ 8) of `{ id, place,
-  template? }`. `id` `^[a-z0-9][a-z0-9-]{0,63}$`; the documents sit at the fixed paths
+  templates? }`. `id` `^[a-z0-9][a-z0-9-]{0,63}$`; the documents sit at the fixed paths
   `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (optional; `setupGuideDocPath`).
   `place` is one of `SETUP_GUIDE_PLACES`: `channel-connection` (the extension must provide
-  `channel@1`; at most one per plugin), `connector-template` (`template` required: one of the
-  plugin's own `connectors/<template>.json`, at most one guide per template) or
+  `channel@1`; at most one per plugin), `connector-template` (`templates` required: one or more
+  of the plugin's own `connectors/<template>.json` (≤ `templatesPerGuide`), at most one guide per
+  template; `{{templateId}}` / `{{templateName}}` are the template rendered for: the connector's,
+  the `templateId` query, or the only one, else unresolved `no_template`) or
   `extension-deployment` (platform deployment config of the plugin's own extension, e.g. a push
-  channel's credentials; at most one per plugin; the platform's super admin sees it) or
+  channel's credentials; at most one per plugin; the platform's super admin sees it; variables:
+  the common ones plus `signInCallbackUrl`, the SSO callback of a login guide) or
   `device-connection` (a device provider's guide for connecting a machine: member audience only,
   variables `publicUrl`, `orgId`, `orgName`, `pluginName`; the only place that allows a
   `::shell-action connect-this-machine <label>` line, at most 4 per document, rendered as a

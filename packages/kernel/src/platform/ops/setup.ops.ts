@@ -86,7 +86,7 @@ export class SetupOperations implements OnModuleInit {
           },
           {
             code: "validation_failed",
-            next: "Pass a mode and audience the guide has (setup.guides lists the audience) and the target of its place: connectionId for a channel guide, connectorId for a connector template guide.",
+            next: "Pass a mode and audience the guide has (setup.guides lists the audience) and the target of its place: connectionId for a channel guide, connectorId (or templateId, one of the guide's templates) for a connector template guide.",
           },
           {
             code: "forbidden",

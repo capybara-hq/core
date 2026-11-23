@@ -41,7 +41,7 @@ export function TemplateGuideSection({
         key={template.id}
         orgId={orgId}
         guide={template.guide}
-        query={{ audience: "admin" }}
+        query={{ audience: "admin", templateId: template.id }}
         checks="live"
       />
     </FormSection>

@@ -2959,6 +2959,7 @@
       "public_url": "{names} 现在原样显示：需要超级管理员设置 http.publicUrl（平台的公开地址）。",
       "webhook_base": "{names} 现在原样显示：需要超级管理员设置 channels.webhookBaseUrl（Webhook 回调地址）。",
       "no_connector": "{names} 创建连接器后显示，现在原样显示。",
+      "no_template": "{names} 取决于连接器模板，这里原样显示。",
       "no_org": "{names} 在各组织里填上，这里原样显示。"
     },
     "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",

@@ -512,7 +512,7 @@ describe("/admin/connectors/templates/<id>: the template's guide for the platfor
     const calls = stubApi(
       routes([
         { id: "slack-app", place: "channel-connection" },
-        { id: "slack-connector", place: "connector-template", template: "slack" },
+        { id: "slack-connector", place: "connector-template", templates: ["slack"] },
       ]),
     );
     const { container } = await renderRouteWithCache(
@@ -525,7 +525,7 @@ describe("/admin/connectors/templates/<id>: the template's guide for the platfor
       .click(await screen.findByRole("tab", { name: en.adminComponents.detail.tabs.guide }));
     expect(await screen.findByText("Create the Slack OAuth app")).toBeTruthy();
     expect(screen.getByText(G.platformHint)).toBeTruthy();
-    expect(calls.some((c) => c.url === `${ADMIN_GUIDE_URL}?locale=en`)).toBe(true);
+    expect(calls.some((c) => c.url === `${ADMIN_GUIDE_URL}?locale=en&templateId=slack`)).toBe(true);
     // no target: no check rows, no notice; the org's names stay as written
     expect(screen.queryByRole("group", { name: "OAuth client works" })).toBeNull();
     expect(screen.queryByText("OAuth client works")).toBeNull();

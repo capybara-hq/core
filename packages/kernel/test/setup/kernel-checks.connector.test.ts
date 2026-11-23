@@ -82,7 +82,7 @@ beforeAll(async () => {
     await pluginTgz({
       manifest: {
         name: PLUGIN,
-        setupGuides: [{ id: "oauth", place: "connector-template", template: TEMPLATE }],
+        setupGuides: [{ id: "oauth", place: "connector-template", templates: [TEMPLATE] }],
       },
       files: {
         ...templateFiles(

@@ -573,7 +573,7 @@ export function readPluginFiles(
   // Setup guides v2 (spec 2026-11-09-setup-guides-v2-design.md §4.5): the documents are text
   // within the limits and pass the SDK validator (an unknown variable is accepted: it renders as
   // written); a channel guide needs a channel extension, which the manifest parser checks when the
-  // extension section is there; a template guide names one of the plugin's connector templates
+  // extension section is there; a template guide names only the plugin's connector templates
   const templateIds = new Set(connectorTemplates.map((t) => t.id));
   manifest.setupGuides?.forEach((g, i) => {
     const at = `setupGuides.${i} (${g.id})`;
@@ -583,12 +583,12 @@ export function readPluginFiles(
       );
     }
     // a listed template is checked by the manifest parser; scanned ones only here
-    if (
-      g.template !== undefined &&
-      manifest.connectorTemplates === undefined &&
-      !templateIds.has(g.template)
-    ) {
-      issues.push(`${at}: template ${g.template} is not one of the plugin's connector templates`);
+    if (manifest.connectorTemplates === undefined) {
+      for (const t of g.templates ?? []) {
+        if (!templateIds.has(t)) {
+          issues.push(`${at}: template ${t} is not one of the plugin's connector templates`);
+        }
+      }
     }
     const docs: Partial<Record<"en" | "zh", string>> = {};
     for (const locale of ["en", "zh"] as const) {

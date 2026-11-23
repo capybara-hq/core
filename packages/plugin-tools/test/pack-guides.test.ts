@@ -124,7 +124,7 @@ describe("packPlugin: setup guides v2 without an extension", () => {
         publisher: "Capybara",
         description: "Guide tests",
         connectorTemplates: [{ path: "./connectors/x.json" }],
-        setupGuides: [{ id: "x-setup", place: "connector-template", template: "x" }],
+        setupGuides: [{ id: "x-setup", place: "connector-template", templates: ["x"] }],
       }),
     );
     await mkdir(join(dir, "guides"));
@@ -153,6 +153,17 @@ describe("packPlugin: setup guides v2 without an extension", () => {
     expect(entries.has("guides/x-setup.md")).toBe(true);
     expect(entries.has("guides/x-setup.zh.md")).toBe(false);
     expect(r.warnings).toEqual([]);
+  });
+
+  it("pack fails on a scanned template the guide names but the plugin lacks", async () => {
+    const manifest = JSON.parse(await readFile(join(dir, PLUGIN_MANIFEST_FILE), "utf8"));
+    delete manifest.connectorTemplates;
+    manifest.setupGuides = [{ id: "x-setup", place: "connector-template", templates: ["x", "y"] }];
+    await writeFile(join(dir, PLUGIN_MANIFEST_FILE), JSON.stringify(manifest));
+    await guide("x-setup.md", en("b: 2"));
+    await expect(packPlugin(dir, out)).rejects.toThrow(
+      "@x/plugin-guides: setupGuides x-setup: template y is not one of the plugin's connector templates",
+    );
   });
 
   it("pack fails on a missing English document", async () => {

@@ -145,7 +145,8 @@ export const CatalogRequestsListQuery = z.object({
  * `GET catalog/:itemId/guides/:guideId` (spec 2026-11-09-setup-guides-v2-design.md §7.2): the mode
  * and audience to render (the place's, checked by the service), the document language, and the
  * target: a channel connection or the name typed so far on 新建渠道 (`channel-connection`), a
- * connector made from the template (`connector-template`).
+ * connector made from the template and which of the guide's templates to render for
+ * (`connector-template`; a guide may cover several).
  */
 export const CatalogGuideQuery = z
   .object({
@@ -155,6 +156,7 @@ export const CatalogGuideQuery = z
     connectionId: z.string().min(1).max(100).optional(),
     name: z.string().max(100).optional(),
     connectorId: z.string().min(1).max(100).optional(),
+    templateId: z.string().min(1).max(64).optional(),
   })
   .strict();
 

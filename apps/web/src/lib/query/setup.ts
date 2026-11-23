@@ -19,6 +19,7 @@ export const setupGuideQuery = (orgId: string, ref: SetupGuideRef, q: SetupGuide
       connectionId: q.connectionId ?? "",
       name: q.name ?? "",
       connectorId: q.connectorId ?? "",
+      templateId: q.templateId ?? "",
       mode: q.mode ?? "",
       audience: q.audience ?? "",
       locale: q.locale ?? "",
@@ -27,11 +28,23 @@ export const setupGuideQuery = (orgId: string, ref: SetupGuideRef, q: SetupGuide
     freshness: "orgConfig",
   });
 
-/** A template's setup guide as the super admin sees it (spec §9.3): no org, no target. */
-export const adminSetupGuideQuery = (ref: SetupGuideRef, locale: "en" | "zh") =>
+/**
+ * A template's setup guide as the super admin sees it (spec §9.3): no org, no target; shown for
+ * `templateId` (a guide may cover several templates).
+ */
+export const adminSetupGuideQuery = (
+  ref: SetupGuideRef,
+  locale: "en" | "zh",
+  templateId?: string,
+) =>
   defineQuery({
-    key: keys.deployment().adminSetupGuide(ref.itemId, ref.guideId, ref.version ?? "", locale),
-    fn: () => getAdminSetupGuide(ref, { locale }).then((r) => r.guide),
+    key: keys
+      .deployment()
+      .adminSetupGuide(ref.itemId, ref.guideId, ref.version ?? "", templateId ?? "", locale),
+    fn: () =>
+      getAdminSetupGuide(ref, { locale, ...(templateId !== undefined && { templateId }) }).then(
+        (r) => r.guide,
+      ),
     freshness: "deployment",
   });
 

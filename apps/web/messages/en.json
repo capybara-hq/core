@@ -2971,6 +2971,7 @@
       "public_url": "{names} are shown as written: a super admin needs to set http.publicUrl (the platform's public address).",
       "webhook_base": "{names} are shown as written: a super admin needs to set channels.webhookBaseUrl (the webhook address).",
       "no_connector": "{names} appear once the connector is created and are shown as written for now.",
+      "no_template": "{names} depend on the connector template and are shown as written here.",
       "no_org": "{names} are filled in per org and are shown as written here."
     },
     "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
