@@ -212,27 +212,12 @@ const kernel = (replica: number): TestKernel => {
   return k;
 };
 
-/**
- * One managed use of the device on `replica` (a tool call of a claimed run of the holder), whose
- * run then ends: a conversation has one active run at most, so the holder's next use starts its
- * own.
- */
-const use = async <T = string>(
+/** One managed use of the device on `replica` (a tool call of a claimed run of the holder). */
+const use = <T = string>(
   replica: number,
   ctx: UseCtx,
   fn: () => Promise<T> = async () => "entered" as T,
-): Promise<T> => {
-  try {
-    return await managedUseOn(kernel(replica), raw, ctx, fn, signal());
-  } finally {
-    await db()
-      .updateTable("runs")
-      .set({ status: "completed" })
-      .where("conversation_id", "=", ctx.holderConversationId)
-      .where("status", "=", "running")
-      .execute();
-  }
-};
+): Promise<T> => managedUseOn(kernel(replica), raw, ctx, fn, signal());
 
 it("two replicas racing on a fresh device create one instance and both enter it", async () => {
   const f = await device();

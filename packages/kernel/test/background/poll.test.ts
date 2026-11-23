@@ -29,7 +29,6 @@ import { createDb } from "../../src/db/pool.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
-import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -47,7 +46,7 @@ import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { managedTaskFixture } from "../helpers/managed-background.js";
-import { recordCallStarted, startClaimedRun } from "../helpers/managed-calls.js";
+import { managedUseOn, startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -247,39 +246,33 @@ async function conversation(): Promise<Conv> {
 
 /**
  * Runs `command` in the conversation's device (creating or resuming its instance) as a tool call
- * of the conversation's claimed run does: its `tool_call_started`, then the managed route
- * (`withOperations`) under the claim fence, the exec admitted by the real operation intents.
+ * of the conversation's claimed run does: the managed route under the run's claim fence, the exec
+ * admitted by the real operation intents.
  */
-async function inSandbox(
+const inSandbox = (
   c: Conv,
   command: string,
-): Promise<{ exitCode: number | null; stdout: string }> {
-  const callId = randomUUID();
-  await recordCallStarted(raw, c.conversationId, c.runId, callId, "Bash");
-  return k.app.get(RunExecution).withClaim(
-    c.claim,
-    () => true,
-    () =>
-      sandbox.withOperations(
-        {
-          orgId: c.orgId,
-          deviceId: c.deviceId,
-          holderConversationId: c.conversationId,
-          actor: { accountId: c.accountId, conversationId: c.conversationId, runId: c.runId },
-        },
-        { claim: c.claim, callId, deadlineMs: Date.now() + 30_000 },
-        (h, p, _info, sig) =>
-          p.exec(h, {
-            command,
-            cwd: "/workspace",
-            timeoutMs: 20_000,
-            maxOutputBytes: 64_000,
-            signal: sig,
-          }),
-        signal(),
-      ),
+): Promise<{ exitCode: number | null; stdout: string }> =>
+  managedUseOn(
+    k,
+    raw,
+    {
+      orgId: c.orgId,
+      deviceId: c.deviceId,
+      holderConversationId: c.conversationId,
+      actor: { accountId: c.accountId, conversationId: c.conversationId },
+    },
+    (h, p, _info, sig) =>
+      p.exec(h, {
+        command,
+        cwd: "/workspace",
+        timeoutMs: 20_000,
+        maxOutputBytes: 64_000,
+        signal: sig,
+      }),
+    signal(),
+    { run: { runId: c.runId, claim: c.claim } },
   );
-}
 
 /** Starts `command` as a managed background task of the conversation through the `Bash` path. */
 const launch = (c: ManagedLauncher, command: string, seconds = 300): Promise<BackgroundTaskRow> =>

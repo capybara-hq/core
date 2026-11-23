@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
@@ -52,6 +52,10 @@ beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-modes-dual-"));
   raw = createDb(pgc.url, 2);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -187,6 +191,5 @@ describe("device modes (two replicas)", () => {
       mode: "sandbox",
       network: { kind: "allowlist" },
     });
-    vi.restoreAllMocks();
   });
 });
