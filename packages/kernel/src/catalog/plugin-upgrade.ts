@@ -621,9 +621,9 @@ export class PlatformPluginUpdater {
   /**
    * Runs an update confirmed with the preview's `diffHash` (see the class comment). A version an
    * org upload waits with, or an item whose first version waits, -> 409 `catalog.item_pending`
-   * (confirmed in 待确认 instead, pre-flight F8). `actor` null: the kernel itself (the bootstrap
-   * step raising a pinned plugin without an extension): no super admin is re-checked and the audits
-   * name no account.
+   * (confirmed in the admin console's pending confirmations instead, pre-flight F8). `actor`
+   * null: the kernel itself (the bootstrap step raising a pinned plugin without an extension): no
+   * super admin is re-checked and the audits name no account.
    */
   async update(
     actor: string | null,
