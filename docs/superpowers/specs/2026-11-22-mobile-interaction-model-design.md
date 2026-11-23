@@ -220,8 +220,9 @@ conversation's title menu items (#572).
   flat title bar inside the desktop shell, with a `space.2` gap, so they never cover the row's
   controls; full width minus 16 gutters, inside the side insets; one at a time (errors first,
   then first in first shown). They slide down into place (`motion.overlay`; none under reduced
-  motion). Swipe up (back toward the edge they came from), the close button or the timer dismisses
-  them; an undo action in the toast where the action is reversible (archive) instead of a
+  motion). Swipe up (back toward the edge they came from; from 600, where toasts stay top center, a swipe
+  down dismisses instead), the close button or the timer dismisses them; an undo action in the
+  toast where the action is reversible (archive) instead of a
   confirmation. A toast is no modal: inside the desktop shell the top row keeps dragging the
   window while one shows, and the toast area itself is never a drag region. (The 2026-11-22 form
   put them at the bottom, above the composer / FAB / ActionRow; the top is easier to see.)
@@ -444,7 +445,8 @@ All sixteen open questions of the review draft were answered as recommended:
 - **D2** ~~Toasts sit at the bottom on phones, above the composer / FAB / ActionRow.~~ Amended by
   maintainer decision 2026-11-23: toasts sit at the **top** on phones, docked under the top row
   (below the safe-area inset and the floating row or flat title bar), full width minus the
-  gutters, sliding down; swipe up dismisses; the top is easier to see (§7).
+  gutters, sliding down; swipe up dismisses on compact (from 600 a swipe down, as before); the top is
+  easier to see (§7).
 - **D3** No swipe actions on rows for now; long press covers them.
 - **D4** Pull to refresh only in the native mobile shell, on the inbox, the conversations page and
   the drawer's recents; the browser keeps its own pull-to-reload.

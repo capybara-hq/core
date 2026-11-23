@@ -76,7 +76,7 @@ describe("the toast region on compact", () => {
   });
 
   it("leaves vertical drags to the swipe, not the page pan", () => {
-    expect(decls(COMPACT, ".cb-toast")?.["touch-action"]).toBe("pan-x");
+    expect(decls(null, ".cb-toast")?.["touch-action"]).toBe("pan-x");
   });
 
   it("keeps the desktop rule at the top center", () => {
@@ -95,34 +95,37 @@ function Fire() {
   );
 }
 
-describe("swipe up to dismiss", () => {
+const swipeApp = () =>
+  render(
+    <DesignProvider locale="en">
+      <ToastProvider>
+        <Fire />
+      </ToastProvider>
+    </DesignProvider>,
+  );
+const shown = () => {
+  fireEvent.click(screen.getByText("go"));
+  return screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
+};
+const drag = (toast: HTMLElement, from: number, to: number) => {
+  fireEvent.pointerDown(toast, { clientY: from, pointerType: "touch" });
+  act(() => {
+    fireEvent.pointerUp(toast, { clientY: to, pointerType: "touch" });
+  });
+};
+
+describe("swipe up to dismiss on compact", () => {
   it("closes the toast when dragged up past the threshold", () => {
-    render(
-      <DesignProvider locale="en">
-        <ToastProvider>
-          <Fire />
-        </ToastProvider>
-      </DesignProvider>,
-    );
-    fireEvent.click(screen.getByText("go"));
-    const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
-    fireEvent.pointerDown(toast, { clientY: 160, pointerType: "touch" });
-    act(() => {
-      fireEvent.pointerUp(toast, { clientY: 100, pointerType: "touch" });
-    });
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    swipeApp();
+    drag(shown(), 160, 100);
     expect(screen.queryByText("Saved")).toBeNull();
   });
 
   it("follows the finger and ignores a drag that starts on the close button", () => {
-    render(
-      <DesignProvider locale="en">
-        <ToastProvider>
-          <Fire />
-        </ToastProvider>
-      </DesignProvider>,
-    );
-    fireEvent.click(screen.getByText("go"));
-    const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    swipeApp();
+    const toast = shown();
     fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
     fireEvent.pointerMove(toast, { clientY: 80, pointerType: "touch" });
     expect(toast.style.transform).toBe("translateY(-20px)");
@@ -138,21 +141,38 @@ describe("swipe up to dismiss", () => {
   });
 
   it("keeps it on a short drag up and on a drag down", () => {
-    render(
-      <DesignProvider locale="en">
-        <ToastProvider>
-          <Fire />
-        </ToastProvider>
-      </DesignProvider>,
-    );
-    fireEvent.click(screen.getByText("go"));
-    const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
-    fireEvent.pointerDown(toast, { clientY: 110, pointerType: "touch" });
-    fireEvent.pointerUp(toast, { clientY: 100, pointerType: "touch" });
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    swipeApp();
+    const toast = shown();
+    drag(toast, 110, 100);
+    expect(screen.queryByText("Saved")).not.toBeNull();
+    drag(toast, 100, 200);
+    expect(screen.queryByText("Saved")).not.toBeNull();
+  });
+});
+
+describe("swipe down to dismiss from 600", () => {
+  it("closes the toast when dragged down past the threshold", () => {
+    window.matchMedia = matchMediaFor(1280).matchMedia;
+    swipeApp();
+    drag(shown(), 100, 160);
+    expect(screen.queryByText("Saved")).toBeNull();
+  });
+
+  it("keeps it on a drag up and on a short drag down, and follows the finger down only", () => {
+    window.matchMedia = matchMediaFor(1280).matchMedia;
+    swipeApp();
+    const toast = shown();
+    drag(toast, 160, 100);
+    expect(screen.queryByText("Saved")).not.toBeNull();
+    drag(toast, 100, 110);
     expect(screen.queryByText("Saved")).not.toBeNull();
     fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
-    fireEvent.pointerUp(toast, { clientY: 200, pointerType: "touch" });
-    expect(screen.queryByText("Saved")).not.toBeNull();
+    fireEvent.pointerMove(toast, { clientY: 120, pointerType: "touch" });
+    expect(toast.style.transform).toBe("translateY(20px)");
+    fireEvent.pointerMove(toast, { clientY: 70, pointerType: "touch" });
+    expect(toast.style.transform).toBe("translateY(0px)");
+    fireEvent.pointerCancel(toast);
   });
 });
 

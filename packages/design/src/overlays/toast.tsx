@@ -38,9 +38,9 @@ const SUCCESS_MS = 4000;
 const UNDO_MS = 8000;
 const SEGMENTS = 10;
 /**
- * A touch drag up by this many px dismisses a toast: toasts sit at the top in every class, so the
- * swipe sends one back toward the edge it came from (interaction spec §7, D2 as amended
- * 2026-11-23). The close button and the timer stay the ways that need no gesture.
+ * A touch drag by this many px dismisses a toast, up on compact (where toasts dock under the top
+ * row: back toward the edge they came from) and down on the wider classes (interaction spec §7,
+ * D2 as amended 2026-11-23). The close button and the timer stay the ways that need no gesture.
  */
 const SWIPE_DISMISS_PX = 40;
 const TOAST_ICON = {
@@ -142,6 +142,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 
   const swipeStart = useRef<number | null>(null);
+  // +1: a drag down dismisses (wide); -1: a drag up dismisses (compact).
+  const swipeDir = form === "compact" ? -1 : 1;
 
   const renderToast = (it: ToastItem) => (
     <div
@@ -155,13 +157,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       onPointerMove={(e) => {
         const from = swipeStart.current;
         if (from === null || prefersReducedMotion()) return;
-        e.currentTarget.style.transform = `translateY(${Math.min(0, e.clientY - from)}px)`;
+        e.currentTarget.style.transform = `translateY(${swipeDir * Math.max(0, swipeDir * (e.clientY - from))}px)`;
       }}
       onPointerUp={(e) => {
         const from = swipeStart.current;
         swipeStart.current = null;
         e.currentTarget.style.transform = "";
-        if (from !== null && from - e.clientY >= SWIPE_DISMISS_PX) close(it.id);
+        if (from !== null && swipeDir * (e.clientY - from) >= SWIPE_DISMISS_PX) close(it.id);
       }}
       onPointerCancel={(e) => {
         swipeStart.current = null;

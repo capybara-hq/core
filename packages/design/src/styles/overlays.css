@@ -345,10 +345,8 @@
   .cb-toast-group:not(:has(> .cb-toast:not([data-queued="true"]))) {
     display: none;
   }
-  /* A vertical drag is the dismiss swipe, not a page pan (toast.tsx follows the finger); a toast
-     slides down from just above its place, over motion.overlay. */
+  /* A toast slides down from just above its place, over motion.overlay. */
   .cb-toast {
-    touch-action: pan-x;
     animation: cb-toast-down var(--cb-motion-overlay) ease-out;
   }
 }
@@ -371,6 +369,8 @@
   margin-top: 8px;
 }
 .cb-toast {
+  /* A vertical drag is the dismiss swipe, not a page pan (toast.tsx follows the finger). */
+  touch-action: pan-x;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
