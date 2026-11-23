@@ -142,8 +142,16 @@ describe("project reach and other connections' directories", () => {
     expect(c.otherConnectionDenies).not.toContain(f.stateRoot);
     expect(c.secretAndStateDenies).toContain(f.stateRoot);
     expect(c.secretAndStateDenies).not.toContain(b);
+    // (on Linux the machine's own mount table may add re-exposed or unknown-content mounts, such
+    // as Docker's overlay roots whose layers this user cannot resolve)
     expect([...c.restrictedDeniedReadRoots].sort()).toEqual(
-      [...new Set([...c.secretAndStateDenies, ...c.otherConnectionDenies])].sort(),
+      [
+        ...new Set([
+          ...c.secretAndStateDenies,
+          ...c.otherConnectionDenies,
+          ...c.mountReexposedDenies,
+        ]),
+      ].sort(),
     );
   });
   it("the revision changes when a connection is added or removed", async () => {
