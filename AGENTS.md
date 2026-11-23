@@ -238,11 +238,13 @@ pnpm dev:kernel  # capybara start, pretty logs, copied to /tmp/capybara-dev-kern
 pnpm dev:web     # the web app, output copied to /tmp/capybara-dev-web.log
 pnpm wt:new <branch>   # start a task worktree
 pnpm doctor:env  # check your environment
-pnpm verify      # the required checks for this branch; full-suite diffs run only the touched packages' tests (--full: all)
-pnpm verify --fast   # lint, typecheck, custom checks, kernel unit and design/plugin-client tests, ~40 s
-                     # advisory, not the gate: needs no upstream remote, prints no changeset warning,
-                     # and runs no kernel integration/container tests and no other package tests
-                     # (plugin-sdk, plugin-tools, testing, device, apps/*, tools/*)
+pnpm verify --fast   # the local check before pushing: lint, typecheck, custom checks, kernel unit and
+                     # design/plugin-client tests, ~40 s; then the tests of the files you changed
+                     # (pnpm exec vitest run <path>). No upstream remote needed, no changeset warning
+                     # (pnpm check:api-changeset --base origin/main), no kernel integration/container
+                     # tests and no other package tests: CI on the PR runs those and is the gate
+pnpm verify      # optional: what CI runs for this branch, locally; full-suite diffs run only the
+                 # touched packages' tests (--full: all); heavy (testcontainers, a worker per core)
 CAPYBARA_TEST_WORKERS=4 pnpm verify   # cap vitest's workers to keep the machine usable (unset: one per core)
 docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ```

@@ -82,7 +82,9 @@ if (fast) {
     else for (const c of checks) console.log(`${c.id}: ${c.detail}`);
   } else {
     const checks = runSteps(fastSteps());
-    say("\nfast check only; pnpm verify (or CI) runs the affected tests before merge");
+    say(
+      "\nfast check only; run the tests of the files you changed, CI runs the affected tests before merge",
+    );
     say("");
     process.exitCode = printReport(checks, json);
   }
