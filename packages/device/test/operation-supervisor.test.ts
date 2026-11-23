@@ -1050,11 +1050,14 @@ it("drain retries dirty control persistence once and waits for it", async () => 
     release = r;
   });
   f.supervisor.beginDrain();
-  const done = await drainOpen(f.supervisor.settle(new AbortController().signal));
+  const settling = f.supervisor.settle(new AbortController().signal);
+  const done = await drainOpen(settling);
   await persisting;
   expect(done()).toBe(false);
   release();
-  await vi.waitFor(() => expect(done()).toBe(true));
+  // the drain itself is the convergence condition (no bounded poll: a loaded runner is slow)
+  await settling;
+  expect(done()).toBe(true);
   expect(f.supervisor.ownership().persistence).toBe(0);
 });
 it("keeps a native read's bytes out of the journal; a restarted retry gets an unknown outcome", async () => {
