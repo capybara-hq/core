@@ -29,8 +29,6 @@ const BAILIAN = {
   version: "1.0.0",
   enabled: true,
   configurable: true,
-  config: null,
-  secrets: [],
   permissions: [
     {
       category: "provides",
@@ -40,7 +38,6 @@ const BAILIAN = {
     },
   ],
   provides: ["model-provider@2"],
-  orgConfigSchema: null,
   overrideState: "following",
   needsConfig: false,
 };
@@ -48,24 +45,22 @@ const BAILIAN = {
 const SCHEMA = {
   type: "object",
   properties: {
-    region: { type: "string" },
     baseUrl: { type: "string", "x-ui": { label: { zh: "接口地址", en: "Endpoint URL" } } },
     apiKey: { type: "string", "x-secret": true },
     orgToken: { type: "string", "x-secret": true },
   },
-  required: ["region", "baseUrl", "apiKey"],
+  required: ["baseUrl", "apiKey"],
 };
-/** With the kernel's schema: region is read-only and empty on the platform; orgToken is optional. */
+/** With the kernel's schema: only overridable fields; orgToken is optional. */
 const WITH_SCHEMA = {
   state: "following",
   valid: true,
   issues: [],
   schema: SCHEMA,
   fields: [
-    { path: "region", level: "readonly", secret: false, platform: {} },
-    { path: "baseUrl", level: "override", secret: false, platform: { value: "https://p.example" } },
-    { path: "apiKey", level: "override", secret: true, platform: { set: true } },
-    { path: "orgToken", level: "override", secret: true, platform: { set: true } },
+    { path: "baseUrl", secret: false, platform: { value: "https://p.example" } },
+    { path: "apiKey", secret: true, platform: { set: true } },
+    { path: "orgToken", secret: true, platform: { set: true } },
   ],
 };
 
@@ -74,14 +69,12 @@ const FOLLOWING = {
   valid: true,
   issues: [],
   fields: [
-    { path: "region", level: "readonly", secret: false, platform: { value: "eu" } },
     {
       path: "baseUrl",
-      level: "override",
       secret: false,
       platform: { value: "https://platform.example" },
     },
-    { path: "apiKey", level: "override", secret: true, platform: { set: true } },
+    { path: "apiKey", secret: true, platform: { set: true } },
   ],
 };
 
@@ -91,10 +84,8 @@ const COPY = {
   valid: true,
   issues: [],
   fields: [
-    { path: "region", level: "readonly", secret: false, platform: { value: "eu" } },
     {
       path: "baseUrl",
-      level: "override",
       secret: false,
       platform: { value: "https://platform.example" },
       org: { value: "https://own.example" },
@@ -102,7 +93,6 @@ const COPY = {
     },
     {
       path: "apiKey",
-      level: "override",
       secret: true,
       platform: { set: true },
       org: { set: true },
@@ -142,19 +132,20 @@ async function openSheet(locale: "zh" | "en" = "en") {
 
 describe("the org form of a two-level extension config (Sheet)", () => {
   it.each(["zh", "en"] as const)(
-    "following: read-only fields are locked and labelled, a secret shows who holds it and no value (%s)",
+    "following: no read-only field, one form, a secret shows who holds it and no value (%s)",
     async (locale) => {
       const m = msgs[locale];
       routes(FOLLOWING);
       const { sheet } = await openSheet(locale);
-      const region = (await within(sheet).findByLabelText("region")) as HTMLInputElement;
-      expect(region.disabled).toBe(true);
-      expect(region.value).toBe("eu");
+      await within(sheet).findByLabelText("baseUrl");
+      expect(within(sheet).queryByLabelText("region")).toBeNull();
+      for (const input of within(sheet).getAllByRole("textbox"))
+        expect((input as HTMLInputElement).disabled).toBe(false);
       const baseUrl = within(sheet).getByLabelText("baseUrl") as HTMLInputElement;
       expect(baseUrl.disabled).toBe(false);
       expect(baseUrl.value).toBe("https://platform.example");
-      // the platform's label on the read-only field and on the followed one
-      expect(within(sheet).getAllByText(new RegExp(m.configForm.platformSet)).length).toBe(2);
+      // the platform's label on the followed field
+      expect(within(sheet).getAllByText(new RegExp(m.configForm.platformSet)).length).toBe(1);
       expect(within(sheet).getByText(m.extensions.overrides.following)).toBeTruthy();
       expect(within(sheet).getByText(m.configForm.secretState.platform)).toBeTruthy();
       const key = within(sheet).getByLabelText(/^apiKey/) as HTMLInputElement;
@@ -186,10 +177,10 @@ describe("the org form of a two-level extension config (Sheet)", () => {
       own: "本组织已配置",
       unset: "未配置",
     });
-    expect(zh.configForm.level).toEqual({
-      hidden: "组织不可见",
-      readonly: "组织只读",
-      override: "组织可覆盖",
+    expect(zh.configForm.level).toEqual({ platform: "仅平台", override: "组织可覆盖" });
+    expect(en.configForm.level).toEqual({
+      platform: "Platform only",
+      override: "Org can override",
     });
     expect(zh.admin.extensions.status.runningOrgsConfigure).toContain("运行中 · 组织需各自配置");
   });
@@ -238,8 +229,7 @@ describe("the org form of a two-level extension config (Sheet)", () => {
     expect(within(diff).getByText("baseUrl")).toBeTruthy();
     expect(within(diff).getByText("This org: https://own.example")).toBeTruthy();
     expect(within(diff).getByText("Platform: https://platform.example")).toBeTruthy();
-    // the read-only field never differs; the secret row has states only
-    expect(within(diff).queryByText("region")).toBeNull();
+    // the secret row has states only
     expect(within(diff).getByText(p.platformConfigured)).toBeTruthy();
     expect(within(diff).getByText(p.orgConfigured)).toBeTruthy();
     expect(diff.textContent).not.toContain("sk-");
@@ -291,14 +281,13 @@ describe("the org form of a two-level extension config (Sheet)", () => {
     expect(within(row).getByText(en.extensions.needsConfig)).toBeTruthy();
   });
 
-  it("drawn from the kernel's schema: its labels, an optional secret stays optional, an empty read-only field does not block Save", async () => {
+  it("drawn from the kernel's schema: its labels, an optional secret stays optional ", async () => {
     const p = en.extensions.overrides;
     const calls = routes(WITH_SCHEMA, {
       [`PUT ${OVERRIDES}`]: () => json(200, COPY),
     });
     const { user, sheet } = await openSheet();
     const url = await within(sheet).findByLabelText(/^Endpoint URL/);
-    expect((within(sheet).getByLabelText(/^region/) as HTMLInputElement).disabled).toBe(true);
     await user.type(url, "/v2");
     const save = within(sheet).getByRole("button", { name: p.saveLabel }) as HTMLButtonElement;
     // apiKey is required, orgToken is not: typing the key is enough

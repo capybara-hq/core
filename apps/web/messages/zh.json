@@ -2805,8 +2805,7 @@
       "unset": "未配置"
     },
     "level": {
-      "hidden": "组织不可见",
-      "readonly": "组织只读",
+      "platform": "仅平台",
       "override": "组织可覆盖"
     }
   },
@@ -3018,13 +3017,8 @@
       "components": "界面组件",
       "dialIn": "机器接入（协议）"
     },
-    "configTitle": "组织配置",
     "save": "保存配置",
-    "saveLabel": "保存 {plugin} 的配置",
-    "saveAndEnable": "保存并启用",
-    "saveAndEnableLabel": "保存 {plugin} 的配置并启用",
     "configFirstHint": "先填写组织配置再启用",
-    "configSaved": "「{plugin}」的配置已保存。",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
@@ -3124,7 +3118,6 @@
       "embedRoutes": "嵌入页路由",
       "provides": "扩展点"
     },
-    "missingRequired": "缺少必填项：{fields}",
     "listSep": "、",
     "toolSwitches": {
       "title": "工具",
@@ -5477,7 +5470,6 @@
         "alreadyOn": "{name} 已启用，无需再填写。",
         "backToPlugin": "返回插件",
         "connectorStep": "连接器：{name}",
-        "extensionStep": "扩展配置",
         "confirmStep": "确认",
         "name": "连接器名称",
         "slug": "标识（slug）",
@@ -5490,9 +5482,6 @@
         "personalMembersHint": "这个连接器使用个人凭据：每位成员之后各自连接。",
         "noneHint": "这个连接器不需要凭据。",
         "dcrHint": "客户端会自动注册，不需要填写。",
-        "extensionHint": "插件会在本组织启用它的扩展；有组织配置的请填写（已启用的扩展不改配置）。",
-        "extensionNone": "没有需要填写的扩展配置。",
-        "extensionEnabled": "{name}：已在本组织启用，保持现有配置。",
         "connectorKept": "{name}：本组织已有它的连接器，将保留现有连接器，无需填写。",
         "summary": "启用后本组织会得到：",
         "summaryExtension": "扩展 {name}",

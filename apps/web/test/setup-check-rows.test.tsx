@@ -58,8 +58,6 @@ const PLUGINS = [
     version: "0.2.0",
     enabled: true,
     configurable: false,
-    config: null,
-    secrets: [],
     permissions: [
       {
         category: "provides",
@@ -69,7 +67,6 @@ const PLUGINS = [
       },
     ],
     provides: ["channel@1"],
-    orgConfigSchema: null,
   },
 ];
 const CHANNEL = {

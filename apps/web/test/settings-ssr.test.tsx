@@ -164,9 +164,6 @@ const EXTENSION = {
   enabled: true,
   available: true,
   configurable: false,
-  orgConfigSchema: null,
-  config: null,
-  secrets: [],
   permissions: [],
   provides: [],
 };

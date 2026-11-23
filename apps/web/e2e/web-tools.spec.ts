@@ -24,7 +24,7 @@ const pd = zh.extensions.pointDefaults;
 
 /**
  * Sets the org token of a fake web provider and switches it on: on the org 扩展 page its row opens a
- * Sheet with the org config form, and 保存并启用 saves the token and turns it on.
+ * Sheet with the overridable fields; saving the token gives the org its own copy, then the switch turns it on.
  */
 async function enableWebProvider(page: Page, plugin: string) {
   const row = page
@@ -39,16 +39,13 @@ async function enableWebProvider(page: Page, plugin: string) {
   await row.click();
   const sheet = page.getByRole("dialog", { name: plugin, exact: true });
   await sheet.getByLabel(/^token/).fill(`${plugin}-token`);
-  await sheet
-    .getByRole("button", {
-      name: zh.extensions.saveAndEnableLabel.replace("{plugin}", plugin),
-      exact: true,
-    })
-    .click();
+  await sheet.getByRole("button", { name: zh.extensions.overrides.saveLabel }).click();
   const enable = row.getByRole("switch", {
     name: zh.extensions.enableLabel.replace("{plugin}", plugin),
     exact: true,
   });
+  await expect(enable).toBeEnabled();
+  await enable.click();
   await expect(enable).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();

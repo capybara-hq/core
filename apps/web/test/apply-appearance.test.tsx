@@ -357,10 +357,7 @@ const ext = (over: Record<string, unknown> = {}) => ({
   version: "1.0.0",
   enabled: true,
   configurable: false,
-  config: null,
-  secrets: [],
   permissions: [],
-  orgConfigSchema: null,
   provides: [],
   ...over,
 });

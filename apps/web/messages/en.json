@@ -2817,9 +2817,8 @@
       "unset": "Not configured"
     },
     "level": {
-      "hidden": "Hidden from orgs",
-      "readonly": "Read-only for orgs",
-      "override": "Orgs can override"
+      "platform": "Platform only",
+      "override": "Org can override"
     }
   },
   "channels": {
@@ -3030,13 +3029,8 @@
       "components": "Interface components",
       "dialIn": "Machine connections (protocol)"
     },
-    "configTitle": "Organization config",
     "save": "Save config",
-    "saveLabel": "Save config of {plugin}",
-    "saveAndEnable": "Save and enable",
-    "saveAndEnableLabel": "Save config of {plugin} and enable",
     "configFirstHint": "Fill in the organization config before enabling",
-    "configSaved": "Config of \"{plugin}\" saved.",
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
     "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
@@ -3136,7 +3130,6 @@
       "embedRoutes": "Embed routes",
       "provides": "Extension points"
     },
-    "missingRequired": "Missing required: {fields}",
     "listSep": ", ",
     "toolSwitches": {
       "title": "Tools",
@@ -5489,7 +5482,6 @@
         "alreadyOn": "{name} is already on; nothing to fill in.",
         "backToPlugin": "Back to the plugin",
         "connectorStep": "Connector: {name}",
-        "extensionStep": "Extension settings",
         "confirmStep": "Confirm",
         "name": "Connector name",
         "slug": "Slug",
@@ -5502,9 +5494,6 @@
         "personalMembersHint": "This connector uses personal credentials: each member connects later.",
         "noneHint": "This connector needs no credentials.",
         "dcrHint": "The client is registered automatically; nothing to fill in.",
-        "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
-        "extensionNone": "No extension settings to fill in.",
-        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
         "connectorKept": "{name}: this organization already has its connector, which is kept as it is; nothing to fill in.",
         "summary": "Turning it on gives this organization:",
         "summaryExtension": "extension {name}",

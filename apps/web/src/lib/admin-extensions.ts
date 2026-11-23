@@ -222,7 +222,7 @@ export interface DeploymentConfigField {
    */
   keys?: string[];
   /** What orgs may do with the field: see it (`readonly`) or bring their own (`override`); absent = hidden. */
-  org?: "readonly" | "override";
+  level: "platform" | "override";
 }
 
 /** One operation on a secret record drawn per item (kernel `SecretEntry`). */

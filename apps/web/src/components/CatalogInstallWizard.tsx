@@ -2,8 +2,6 @@
 
 import {
   type ActionRowProps,
-  Card,
-  EmptyState,
   Field,
   type FieldShape,
   Input,
@@ -33,7 +31,6 @@ import {
   showValue,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
-import { extensionLabel, labelLocale } from "../lib/extension-label";
 import type { OrgExtension } from "../lib/extensions";
 import { orgCatalogItemQuery, pluginChangeKeys } from "../lib/query/catalog";
 import { orgExtensionsQuery } from "../lib/query/channels";
@@ -52,9 +49,6 @@ import {
   OAuthClientFields,
 } from "./ConnectorForm";
 import { TemplateGuideSection } from "./ConnectorGuides";
-import { ConfigForm } from "./config-form/ConfigForm";
-import { hasConfigFields } from "./config-form/model";
-import { orgConfig } from "./config-form/org";
 import { FormError } from "./form-error";
 import { usePagePath } from "./shell/path";
 
@@ -215,7 +209,7 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
 
 /**
  * What the install wizard starts from: the catalog item and the org's extensions (`null` when they
- * could not be read: no extension config step is offered then).
+ * could not be read).
  */
 export interface CatalogInstallData {
   detail: OrgCatalogDetail;
@@ -259,8 +253,7 @@ export interface WizardView {
  * The wizard that asks for a plugin's input before switching it on (the page puts `frame` into a
  * WizardPage; the last step calls the plugin's switch with the input): for
  * each of its connector templates, the name, the editable endpoint fields (the rest read-only),
- * credentials or client id / secret; a plugin with an extension has a step for that extension's org
- * config (asked only when this install enables it and it has org config); then confirm, listing the
+ * credentials or client id / secret; then confirm, listing the
  * components and the dependencies installed with it (they take no input). A failure shows the failed
  * step (and the dependency it failed in) and says the components this install created were rolled
  * back.
@@ -301,27 +294,17 @@ export function CatalogInstallWizard({
       wizardLoading: { fields: LOADING_FIELDS },
     });
   }
-  return (
-    <Wizard
-      orgId={orgId}
-      detail={data.detail}
-      orgExtensions={data.extensions ?? []}
-      header={header}
-      frame={frame}
-    />
-  );
+  return <Wizard orgId={orgId} detail={data.detail} header={header} frame={frame} />;
 }
 
 function Wizard({
   orgId,
   detail,
-  orgExtensions,
   header,
   frame,
 }: {
   orgId: string;
   detail: OrgCatalogDetail;
-  orgExtensions: OrgExtension[];
   header(title: string): PageHeaderProps;
   frame(view: WizardView): ReactNode;
 }) {
@@ -344,29 +327,14 @@ function Wizard({
   // connector back (its endpoint and credentials), so an input here would be discarded.
   const templates = installTemplates(detail.templates);
   const kept = keptTemplates(detail.templates);
-  // The plugin's own extension in this org: its org config is asked only when this install enables it
-  const own =
-    detail.extension === null
-      ? undefined
-      : orgExtensions.find((o) => o.plugin === detail.extension);
-  const withConfig =
-    own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema) ? own : undefined;
-  const hasExtensionStep = detail.extension !== null;
   const steps = [
     ...templates.map((c) => t("connectorStep", { name: templateName(c) })),
-    ...(hasExtensionStep ? [t("extensionStep")] : []),
     t("confirmStep"),
   ];
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>(() =>
     Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)])),
   );
-  // The extension step's config as the form last reported it (kept across steps).
-  const [config, setConfig] = useState<{ value: Record<string, unknown>; ok: boolean }>({
-    value: {},
-    ok: true,
-  });
-  const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   // Switching it on (with the input) changes the catalog's view, the installed plugins and what
@@ -376,7 +344,6 @@ function Wizard({
     invalidates: () => pluginChangeKeys(orgId),
   });
   const confirmIdx = steps.length - 1;
-  const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
   const installable =
     item.state !== "unavailable" && item.state !== "not_offered" && !item.notDeployed;
 
@@ -392,7 +359,6 @@ function Wizard({
     draft !== undefined &&
     (needsClient(template.auth) || template.ownership === "personal") &&
     missingInput(template, draft) !== undefined;
-  const configErrors = withConfig !== undefined && !config.ok;
 
   const submit = async () => {
     setSubmitting(true);
@@ -404,7 +370,6 @@ function Wizard({
           templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
         ),
       }),
-      ...(withConfig !== undefined && { extensionConfig: config.value }),
     };
     try {
       await install.mutateAsync(body);
@@ -445,10 +410,6 @@ function Wizard({
   };
 
   const next = () => {
-    if (step === extensionIdx && configErrors) {
-      setShowRequired(true);
-      return;
-    }
     setStep((s) => Math.min(s + 1, confirmIdx));
   };
 
@@ -498,38 +459,6 @@ function Wizard({
         {template !== undefined && <TemplateGuideSection orgId={orgId} template={template} />}
         {template !== undefined && draft !== undefined && (
           <TemplateStep template={template} draft={draft} onChange={setDraft} />
-        )}
-        {step === extensionIdx && (
-          <Stack gap={16}>
-            <Text variant="prose" tone="muted">
-              {t("extensionHint")}
-            </Text>
-            {own?.enabled === true && (
-              <Text variant="small" tone="muted">
-                {t("extensionEnabled", { name: own.plugin })}
-              </Text>
-            )}
-            {withConfig === undefined && own?.enabled !== true && (
-              <EmptyState text={t("extensionNone")} />
-            )}
-            {withConfig !== undefined && (
-              <Card
-                title={extensionLabel(
-                  { name: withConfig.plugin, displayName: withConfig.displayName },
-                  labelLocale(locale),
-                )}
-              >
-                <ConfigForm
-                  schema={withConfig.orgConfigSchema}
-                  value={config.value}
-                  showRequired={showRequired}
-                  onChange={(value, _entries, state) =>
-                    setConfig({ value: orgConfig(value), ok: state.problems.length === 0 })
-                  }
-                />
-              </Card>
-            )}
-          </Stack>
         )}
         {step === confirmIdx && (
           <Stack gap={12}>

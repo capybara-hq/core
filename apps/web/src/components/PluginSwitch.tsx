@@ -32,7 +32,6 @@ import { pluginInstallsQuery } from "../lib/query/settings";
 import { skillsQuery } from "../lib/query/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
-import { hasConfigFields } from "./config-form/model";
 import { FormError } from "./form-error";
 import { useOrgThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
@@ -86,17 +85,15 @@ export const ownExtension = (
 
 /**
  * Whether switching a plugin on asks for input first (the wizard at `/plugins/<id>/enable`): its
- * connector templates, an org config the kernel still misses (`needs_config`), or its extension's
- * org config form when the extension is off (unknown extensions: ask, the wizard says when there
- * is nothing to fill in).
+ * connector templates or an org config the kernel still misses (`needs_config`) (unknown
+ * extensions: ask, the wizard says when there is nothing to fill in).
  */
 export function needsInput(item: OrgCatalogItem, extensions: OrgExtension[] | undefined): boolean {
   if (item.state === "needs_config") return true;
   if (item.componentCounts.connectorTemplates > 0) return true;
   if (item.componentCounts.extension === 0) return false;
   if (extensions === undefined) return true;
-  const own = ownExtension(item, extensions);
-  return own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema);
+  return false;
 }
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
@@ -376,10 +373,10 @@ export function usePluginActions({
           : { id: "enable", label: t("action.enable"), onSelect: () => void enable(i) },
       ];
     }
-    // On: the extension's org config when it has a form; 停用 unless the platform turned it on
+    // On: the extension's org config when it has overridable fields; 停用 unless the platform turned it on
     const own = ownExtension(i, extensions);
     return [
-      ...(own?.configurable === true && hasConfigFields(own.orgConfigSchema)
+      ...(own?.configurable === true
         ? [
             {
               id: "configure" as const,

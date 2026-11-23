@@ -61,7 +61,7 @@ export function OrgModelProviders({
 
   const listRows: ItemListRow[] = actions.rows.map((r) => {
     const canEnable = !r.ext.enabled && !r.locked;
-    const canConfigure = r.configForm || r.overrides;
+    const canConfigure = r.overrides;
     const pending = actions.busy[r.ext.plugin] !== undefined;
     return {
       id: r.ext.plugin,
