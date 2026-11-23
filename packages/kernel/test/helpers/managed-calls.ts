@@ -154,3 +154,29 @@ export async function managedUseOn<T>(
       await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
   }
 }
+
+/**
+ * A free root conversation of `accountId` (agent `agentId`) already bound to `deviceId`: the
+ * holder of a setup use through {@link managedUseOn} that seeds the device's workspace (a free
+ * conversation writes the workspace; a bound one only its project root) while the conversation
+ * under test keeps no run or call of the setup. Returns its id.
+ */
+export async function setupConversationOn(
+  raw: Kysely<unknown>,
+  opts: { orgId: string; agentId: string; accountId: string; deviceId: string },
+): Promise<string> {
+  const id = randomUUID();
+  // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
+  await kernelDb(raw as Kysely<any>)
+    .insertInto("conversations")
+    .values({
+      id,
+      org_id: opts.orgId,
+      agent_id: opts.agentId,
+      account_id: opts.accountId,
+      device_id: opts.deviceId,
+      source: "web",
+    })
+    .execute();
+  return id;
+}
