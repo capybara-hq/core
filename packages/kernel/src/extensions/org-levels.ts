@@ -32,6 +32,11 @@ function markedAnywhere(schema: z.ZodTypeAny, seen = new Set<unknown>()): boolea
   seen.add(schema);
   if (isPlatformOnly(schema)) return true;
   const def = schema._zod.def as unknown as Record<string, unknown>;
+  // A lazy schema's inner schema comes from its getter (`seen` stops a recursive one)
+  if (def.type === "lazy" && typeof def.getter === "function") {
+    const inner = (def.getter as () => unknown)();
+    if (inner instanceof z.ZodType && markedAnywhere(inner as z.ZodTypeAny, seen)) return true;
+  }
   for (const v of Object.values(def)) {
     const children =
       v instanceof z.ZodType

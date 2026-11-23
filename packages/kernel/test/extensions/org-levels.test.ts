@@ -235,6 +235,24 @@ describe("a platformOnly mark below a top-level key fails closed (hand-made pack
     ).toEqual({ conn: "platform", list: "platform", region: "override" });
   });
 
+  it("a mark inside z.lazy (also a recursive one) counts, in both forms", () => {
+    const s = z.object({
+      conn: z.lazy(() => z.object({ key: platformOnly(z.string()) })),
+      region: z.string(),
+    });
+    expect(Object.fromEntries(fieldLevels(s))).toEqual({ conn: "platform", region: "override" });
+    expect(Object.fromEntries(jsonSchemaFieldLevels(configJsonSchema(s)))).toEqual({
+      conn: "platform",
+      region: "override",
+    });
+    type Node = { child?: Node };
+    const tree: z.ZodType<Node> = z.lazy(() => z.object({ child: tree.optional() }));
+    expect(Object.fromEntries(fieldLevels(z.object({ tree, region: z.string() })))).toEqual({
+      tree: "override",
+      region: "override",
+    });
+  });
+
   it("the loaded and the static form agree", () => {
     expect(Object.fromEntries(jsonSchemaFieldLevels(configJsonSchema(nested)))).toEqual(
       Object.fromEntries(fieldLevels(nested)),
