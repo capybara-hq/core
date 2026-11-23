@@ -20,6 +20,7 @@ import { withCanonicalForms, within } from "../exec/operation-types.js";
 import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
+import { type ExecutableCheck, hostPythonProblem } from "../host-python.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
@@ -149,6 +150,8 @@ export interface LoginDeps {
   hostname?: string;
   /** Whether the OS sandbox can run here (default: the runtime's check); injectable for tests. */
   sandboxAvailable?: SandboxCheck;
+  /** Whether a path is an executable file (default: the file system); for the docker-mode check. */
+  isExecutable?: ExecutableCheck;
 }
 
 const SLOW_DOWN_STEP_SECONDS = 5;
@@ -344,6 +347,12 @@ export async function login(
       "capybara-device runs on macOS and Linux. On Windows use WSL or Docker.",
       1,
     );
+  }
+  // Docker mode needs the host's python3: refused before anything is requested or stored.
+  if (cmd.mode === "docker") {
+    const problem = hostPythonProblem(platform, deps.isExecutable);
+    if (problem !== undefined)
+      return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
   }
   // Before the person approves anything: a credential the kernel issues must have a place here.
   try {

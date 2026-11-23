@@ -5,6 +5,7 @@ import { CommandLog } from "../command-log.js";
 import { DEVICE_ID_PATTERN } from "../connections.js";
 import type { LiveStatus } from "../control/protocol.js";
 import { startControlServer } from "../control/server.js";
+import { type ExecutableCheck, hostPythonProblem } from "../host-python.js";
 import { KeepAwake } from "../keep-awake.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
@@ -42,6 +43,8 @@ export interface StartDeps {
    */
   createStaged?: (cred: Credential, policy: PolicyStore) => Promise<StagedDevice> | StagedDevice;
   connectStaged?: typeof connectStaged;
+  /** Whether a path is an executable file (default: the file system); for the docker-mode check. */
+  isExecutable?: ExecutableCheck;
   /** Test seams for keep-awake: the holder's spawn, the wake detector and the check period. */
   keepAwakeSpawn?: typeof spawn;
   wake?: WakeDetector;
@@ -79,6 +82,13 @@ export async function start(deps: StartDeps): Promise<number> {
   if (deps.createStaged === undefined) {
     err("capybara-device start: no execution backend is available in this build");
     return 1;
+  }
+  if (cred.mode === "docker") {
+    const problem = hostPythonProblem(process.platform, deps.isExecutable);
+    if (problem !== undefined) {
+      err(`Cannot start: ${problem}`);
+      return 1;
+    }
   }
   const where = deps.service ?? { home: homedir(), platform: process.platform };
   if (

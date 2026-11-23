@@ -378,6 +378,12 @@ container has a read-only root file system, a pids limit of 1024, `--cap-drop AL
 `no-new-privileges`, and the policy's `cpu` and `memoryMb` as `--cpus`, `--memory` and an equal
 `--memory-swap`.
 
+Docker mode also needs the host's `/usr/bin/python3` (macOS: `xcode-select --install`; Debian or
+Ubuntu: `sudo apt install python3`; Fedora or RHEL: `sudo dnf install python3`): the program runs its
+trusted helpers on the host with it, by absolute path, even though the work runs in the container.
+`login --mode docker` and `start` check for it first and refuse with that hint; a refused login
+stores nothing.
+
 The container is always on Docker's default bridge: an escalated call has the container's whole network.
 Restricted work inside it is confined by the Linux launcher (Landlock, the seccomp broker and the
 proxy with the allowlist above), on the container's paths. The hello reports no home directory, and

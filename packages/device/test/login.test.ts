@@ -79,6 +79,8 @@ let out: string[];
 let err: string[];
 let sleeps: number[];
 let opened: string[];
+/** Whether the host's /usr/bin/python3 is executable, as the docker-mode check sees it. */
+let hostPython = true;
 
 const pending = {
   status: 400,
@@ -92,6 +94,7 @@ beforeEach(async () => {
   err = [];
   sleeps = [];
   opened = [];
+  hostPython = true;
   tokenAnswers = [];
   server = createServer((req, res) => {
     let raw = "";
@@ -147,6 +150,7 @@ const run = (
     ...(kill && { kill }),
     ps: ourPs,
     sandboxAvailable: () => sandbox,
+    isExecutable: () => hostPython,
     env: { XDG_CONFIG_HOME: join(home, "cfg") },
     home,
     platform,
@@ -623,6 +627,23 @@ describe("login", () => {
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(out).toContain(outsideSandboxLoginLine("env-1"));
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
+  });
+
+  it("--mode docker without the host python3: refused with the fix, before the deployment is asked", async () => {
+    hostPython = false;
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(1);
+    expect(err.join("\n")).toContain("/usr/bin/python3");
+    expect(err.join("\n")).toContain("sudo apt install python3");
+    expect(seen).toEqual([]);
+    expect(existsSync(credFile())).toBe(false);
+    out.length = 0;
+    err.length = 0;
+    expect(await run(["login", "--url", base, "--mode", "docker"], "darwin")).toBe(1);
+    expect(err.join("\n")).toContain("xcode-select --install");
+    // OS mode never needs it
+    err.length = 0;
+    expect(await run(["login", "--url", base])).toBe(0);
   });
 
   it("points at the installed login service instead of start", async () => {
