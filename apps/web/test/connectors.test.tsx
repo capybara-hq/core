@@ -212,7 +212,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
   );
 
   it("template cards sort by the page's locale, not the runtime's (server and browser agree)", async () => {
-    // Under the zh collation 表 (biao) comes before 云 (yun); in code point order 云 comes first.
+    // Under the zh (pinyin) collation the Sheets name sorts first; in code point order Drive does.
     const drive = template({
       id: "t-drive",
       name: "google-drive",
