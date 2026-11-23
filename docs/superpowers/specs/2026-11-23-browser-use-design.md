@@ -95,12 +95,12 @@ Anti-goals (a failure even if it works)
  │  component)      │         │  pipes bytes)│  openStream      │  │  profile in fs      │
  └──────────────────┘         └──────────────┘                  │  └ CDP                 │
                                      ▲                          └────────────────────────┘
- agent ── browser tools ── browser plugin (server) ── ctx.deviceAccess.exec / stream ──┘
+ agent ── browser tools ── browser plugin (server) ── ctx.deviceAccess.ensureService / openStream ┘
 ```
 
 - **Kernel (core)**: the device stream (provider capability + relay + viewer endpoint),
-  `ctx.deviceAccess` for extensions (exec and streams in the conversation's device, through the same
-  command review, approvals and network rules as the builtin sandbox tools), takeover state.
+  `ctx.deviceAccess` for extensions (a service and streams in the conversation's device, under the
+  command review, the owner rule and the device network rules, §7).
 - **`browser` plugin (plugins repo)**: the daemon, the agent tools, the panel (client component in the
   `conversation.panel` slot), the handoff tool.
 - **Device providers**: `device-docker`, `device-e2b`, `device-local` + `packages/device` implement
@@ -172,7 +172,7 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
 ### 6.2 Relay and viewer endpoint
 
 - The plugin's panel asks the plugin server for a viewer ticket; the plugin server calls
-  `ctx.deviceAccess.streamTicket({ conversationId, target })`. The kernel checks that the caller is
+  `ctx.deviceAccess.streamTicket({ conversationId, accountId, target })`. The kernel checks that the caller is
   the device's owner (the conversation's owner on their own device) and the extension is on in the
   org, and returns a short-lived single-use ticket.
 - The web panel opens a WebSocket to a kernel endpoint with the ticket. The kernel re-checks the
@@ -180,10 +180,16 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
   frames, input events, tab / navigation state) is the plugin's; the kernel does not parse it.
 - **Frames never pass through Redis or PG.** The viewer WebSocket is served by the replica that can
   open the provider stream directly: any replica for docker / e2b; for local devices the gateway
-  replica holding the machine's dial-in socket. Routing (designer's call): the ingress sends the
-  viewer path to the gateway role (compose and deploy docs change); a gateway replica that does not
-  hold the machine's socket forwards the WebSocket once to the holder over an internal
-  replica-to-replica connection (holder looked up in the existing dial-in connection registry).
+  replica holding the machine's dial-in socket. Routing (designer's call): the viewer path is
+  `/device/stream`, served only on the `gateway` role; the web server forwards its upgrades to a
+  gateway replica exactly as it already forwards `/device/connect`
+  (`apps/web/src/lib/device-connect-proxy.ts`, `CAPYBARA_WEB_GATEWAY_URL`), and an external proxy
+  may route it to the gateway replicas directly. Cookies are not forwarded there, so the ticket is
+  the only credential. A gateway replica that does not hold the machine's socket forwards the
+  WebSocket once to the holder over an internal replica-to-replica connection. Today no state says
+  which replica holds a machine (the lease value is a random token), so the holder records its
+  internal address next to the lease (`capk:device-holder-addr:<deviceId>`, same TTL as the lease);
+  the hop is authenticated with an HMAC over the ticket id under the kernel's internal secret.
 - An open viewer stream counts as device use: it refreshes the instance's last use (and a takeover
   holds it), so idle suspension never cuts off a person logging in. (designer's call)
 - Every open, close and takeover is audited (`browser.view`, `browser.takeover`); frames are not.
@@ -204,12 +210,26 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
 Extension tools cannot reach the conversation's device today. New `ctx.deviceAccess` (permission
 `permissions.deviceAccess`, reviewed at import like every permission):
 
-- `exec(call, argv, opts)`: runs in the conversation's device on behalf of a tool call, through the
-  same pipeline as the builtin Bash: the command review (fail closed), the conversation's permission
-  profile, the device network setting, abort kills the command.
-- `streamTicket` (§6.2) and a server-side `openStream` for the plugin's own tool calls to the daemon.
-- Refused when the conversation has no device, the device's provider is unavailable, or the provider
-  lacks `openStream` (actionable English error for the model).
+The browser needs no general `exec`: everything goes through the service and its stream. So the
+surface is small (amended 2026-11-23 after mapping the kernel):
+
+- `ensureService(call, spec)`: starts (or finds running) the named service in the conversation's
+  device (§5): the kernel writes the spec's files into the service's state directory, runs the
+  command review on the launch argv (fail closed), and starts it through the provider. Returns the
+  service's status.
+- `openStream(call, target)`: a stream from the plugin server to the service's socket, for tool calls.
+- `streamTicket({ conversationId, accountId, target })`: a viewer ticket (§6.2); the account must be
+  the conversation's owner.
+- `reportBlockedHosts(call, hosts)`: the daemon saw requests refused by the device's allowlist during
+  this call; the kernel raises the network ask in the call's conversation (§7.1) and the pipeline
+  waits on it as for an exec. Only an ask, so trusting the plugin's report costs nothing.
+- `addNetworkHosts({ conversationId, accountId, hosts })`: owner-only, used from the panel during
+  takeover (§7.1), through the same device write the device page uses (ceilings apply, audited).
+- `answerHandoff({ conversationId, accountId, callId, done })`: answers the handoff question of that
+  call from the panel (§9); the kernel's own question rules apply (only the run's starter answers).
+- Each call is refused when the conversation has no device, the device's provider is unavailable or
+  lacks the service / stream capability, or the trigger account is not the conversation's owner
+  (actionable English error for the model).
 
 The daemon's launch command has a fixed shape so the command review can recognize it; how the review
 classifies it is the builder's call, but it is never exempt from review. Every `ctx.deviceAccess`
@@ -227,9 +247,11 @@ by `actor.runId`). The browser is a long-lived service, so:
   browser tool call is in flight, the plugin raises the ask in **that call's conversation** through
   the existing network ask flow; the person's approval adds the host to the device's allowlist (the
   device-wide grant the device page already edits), so every conversation on the device then
-  reaches it. The tool call waits for the answer the way an exec waits for its network ask.
-- During takeover (no run), the ask appears in the browser panel itself; the decision has the same
-  effect (device allowlist).
+  reaches it. The tool call waits for the answer the way an exec waits for its network ask. The
+  ask offers only "always" (device allowlist): a "once" grant is applied per exec
+  (`NetworkGrants.forExec`) and cannot reach a long-lived service.
+- During takeover (no run), the panel shows the blocked host with 允许; it calls
+  `ctx.deviceAccess.addNetworkHosts` (device allowlist), owner-only.
 - Subresource requests of an already allowed page follow the same rule (no exemption); a page that
   pulls many new hosts asks for each new host once. The ask text explains that open mode stops the
   asks.
@@ -242,8 +264,9 @@ by `actor.runId`). The browser is a long-lived service, so:
 - **Watch state (side panel, default)**: tab strip, address bar, back / forward / reload, the picture
   scaled to the panel width at 16:10 with letterboxing, a status line ("agent: filling the form…"),
   the agent's clicks flashed on the picture. Clicking in the small view works (closing a popup).
-- **Expanded state**: `⤢` or 接管 opens a design overlay over the conversation area at near 1:1, with
-  交还智能体 and `Esc` back.
+- **Expanded state**: the right area's existing full-screen mode (`RightArea` `full`: the panel
+  maximised inside the page) at near 1:1; 接管 switches to it, 交还智能体 and `Esc` restore. No new
+  overlay. (amended 2026-11-23)
 - Input coordinates are mapped back through the scale. The viewport stays fixed (default 1280×800);
   resizing or closing the panel never changes it. A viewport switch (desktop / tablet / phone via
   `Emulation.setDeviceMetricsOverride`) is phase 2.
@@ -277,8 +300,8 @@ Primary, structure based (every chat model):
 - wait (for text, a ref, navigation, or a time cap)
 - handoff (`message` for the person): opens the expanded view with the message on top, waits until
   the person hands back or cancels, then returns the new page state. The wait is the existing
-  resumable `InputRequired` (a two-choice form: 完成 / 取消, answered by 交还智能体 in the panel or
-  in the conversation), so it survives replica restarts. `wait` with a long cap uses the same
+  resumable `InputRequired` (a two-choice form: 完成 / 取消, answered in the conversation or by
+  交还智能体 in the panel through `ctx.deviceAccess.answerHandoff`), so it survives replica restarts. `wait` with a long cap uses the same
   mechanism. (designer's call)
 
 Vision:
@@ -306,9 +329,11 @@ Rules:
 
 ## 10. Multi-replica and state
 
-- Takeover state (who controls, since when) is shared state: PG row or Redis key with TTL, never
-  process memory. The daemon also knows it (it refuses agent input while taken over), so a lost
-  kernel record cannot let both drive at once.
+- Takeover state (who controls, since when) lives in the daemon, the one place every tool call and
+  every viewer stream of the device reaches; it refuses agent input while taken over, so the
+  kernel keeps no takeover record and two replicas can never disagree about it. A takeover ends
+  when the person hands back, or when the last viewer stream closes and a grace period passes
+  (builder's call on the period). (amended 2026-11-23)
 - The daemon's lifecycle follows the device instance; its idle stop is the daemon's own timer inside
   the device (allowed: it is not kernel process state).
 - Viewer streams end cleanly on replica shutdown; the panel reconnects with a new ticket.
