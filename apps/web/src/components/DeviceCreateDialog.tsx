@@ -25,7 +25,7 @@ import { SetupGuideSection } from "./SetupGuideSection";
 const WAIT_POLL_MS = 3000;
 
 /**
- * New device on the Devices page: a 设备类型 select of the device providers on in the org (the
+ * New device on the Devices page: a device type select of the device providers on in the org (the
  * org's default preselected when it is one, else the first; read-only with one provider), the
  * chosen provider's description as the field's help and, under it, its connection guide. The
  * dialog body scrolls under a fixed head and footer, so a long guide keeps the actions reachable.

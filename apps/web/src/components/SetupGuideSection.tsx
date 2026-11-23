@@ -115,7 +115,7 @@ export type SetupGuideSectionProps = (
  * rows), and a muted line per reason naming the variables without a value (shown as written).
  * Prose is shown exactly as the kernel sent it (its U+2060 word joiners included). It draws no box:
  * the page puts it in a section card (a FormSection or a Card), where the notice is a line.
- * 让智能体协助 sits in the head beside the title (never at the foot of a long guide).
+ * Ask an agent sits in the head beside the title (never at the foot of a long guide).
  */
 export function SetupGuideSection({
   orgId: ownOrgId,
@@ -224,7 +224,7 @@ export function SetupGuideSection({
       {admin || onDeployment ? (
         <Text variant="h3">{g.title}</Text>
       ) : (
-        // 让智能体协助 sits in the guide's head, beside its title, where it is seen before the
+        // Ask an agent sits in the guide's head, beside its title, where it is seen before the
         // steps rather than after a long guide; it wraps under the title when the row is narrow
         <Stack direction="row" justify="between" align="center" gap={8} wrap>
           <Text variant="h3">{g.title}</Text>
