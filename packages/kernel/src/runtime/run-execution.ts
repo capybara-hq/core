@@ -101,6 +101,7 @@ export class RunExecution {
     live: () => boolean = () => true,
   ): Promise<ExecutionClaim | null> {
     if (!live()) return null;
+    // org-filter: the worker's claim of a kernel-written run job; reads the conversation's own org
     const conv = await this.db
       .selectFrom("conversations")
       .select("org_id")
@@ -174,6 +175,7 @@ export class RunExecution {
       .selectFrom("conversations")
       .select("deleted_at")
       .where("id", "=", claim.rootId)
+      .where("org_id", "=", claim.orgId)
       .forNoKeyUpdate()
       .executeTakeFirst();
     if (!root || !isLive(root.deleted_at)) return false;

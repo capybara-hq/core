@@ -580,6 +580,9 @@ importers:
       '@capybara-hq/testing':
         specifier: workspace:*
         version: link:../../packages/testing
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
       zod:
         specifier: ^4.6.7
         version: 4.6.7

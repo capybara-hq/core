@@ -616,14 +616,14 @@ describe("the gates", () => {
   });
 
   it("a deleted parent agent's allowlist authorizes nothing (allowlist)", async () => {
-    expect(await currentAgentDefinition(db, leadId)).not.toBeNull();
+    expect(await currentAgentDefinition(db, orgId, leadId)).not.toBeNull();
     const del = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${leadId}` });
     expect(del.statusCode, del.body).toBe(204);
     // a run of the deleted lead that is still going reads no allowlist, so the gate refuses
-    expect(await currentAgentDefinition(db, leadId)).toBeNull();
+    expect(await currentAgentDefinition(db, orgId, leadId)).toBeNull();
     const check = await checkOrgAgent(db, {
       orgId,
-      parentDefinition: (await currentAgentDefinition(db, leadId)) ?? {},
+      parentDefinition: (await currentAgentDefinition(db, orgId, leadId)) ?? {},
       agentId: analystId,
       triggerAccountId: ids.member,
     });

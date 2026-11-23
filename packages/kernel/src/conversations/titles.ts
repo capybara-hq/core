@@ -165,6 +165,8 @@ export interface TitleDeps {
 }
 
 /** The attempt number to enqueue for this conversation, or null when no title job is due. */
+// org-filter: called by the kernel after a message it wrote (the title queue), with that
+// conversation's id, never with a request id
 export async function titleAttemptDue(
   db: KernelSchemaDb,
   conversationId: string,
@@ -236,6 +238,7 @@ export async function runTitleJob(
   const exchange = await firstExchange(d.eventLog, conversationId);
   if (!exchange) return;
   if (d.signal?.aborted) return;
+  // org-filter: the job payload id is kernel-written (TitleQueue); the row's org is returned here
   const claimed = await d.db
     .updateTable("conversations")
     .set({ title_attempts: attempt + 1 })
@@ -256,7 +259,9 @@ export async function runTitleJob(
     orgId: claimed.org_id,
     accountId: claimed.account_id,
     agentId: claimed.agent_id,
-    agentVersion: started?.payload.agentVersion ?? (await agentVersionOf(d.db, claimed.agent_id)),
+    agentVersion:
+      started?.payload.agentVersion ??
+      (await agentVersionOf(d.db, claimed.org_id, claimed.agent_id)),
     conversationId,
     runId: "",
   };
@@ -296,6 +301,7 @@ export async function runTitleJob(
         .updateTable("conversations")
         .set({ title_attempts: TITLE_MAX_ATTEMPTS })
         .where("id", "=", conversationId)
+        .where("org_id", "=", claimed.org_id)
         .execute();
       return;
     }
@@ -359,6 +365,7 @@ async function logUsage(
 }
 
 /** Returns a claimed attempt (shutdown before the call was sent). */
+// org-filter: gives back the attempt runTitleJob claimed by the kernel-written job id
 async function giveBack(
   db: KernelSchemaDb,
   conversationId: string,
@@ -373,11 +380,12 @@ async function giveBack(
     .execute();
 }
 
-async function agentVersionOf(db: KernelSchemaDb, agentId: string): Promise<number> {
+async function agentVersionOf(db: KernelSchemaDb, orgId: string, agentId: string): Promise<number> {
   const row = await db
     .selectFrom("agents")
     .select("current_version")
     .where("id", "=", agentId)
+    .where("org_id", "=", orgId)
     .executeTakeFirst();
   return row?.current_version ?? 1;
 }
@@ -525,6 +533,7 @@ export class TitleGenerator {
    * Appends the call's `usage` event (owing its `usage.report` delivery) and writes the title while
    * `title_source IS NULL` (a rename wins), in one transaction.
    */
+  // org-filter: the title job's kernel-written conversation id, claimed by runTitleJob
   @Transactional({ propagation: "requires_new" })
   async writeResult(
     conversationId: string,

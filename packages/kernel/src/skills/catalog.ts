@@ -341,6 +341,9 @@ export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:$
  * `db` is the caller's transaction handle (`KernelDb.db` inside `@Transactional`).
  * 「读最新 → 推出下一份 → 追加」都在这把锁内，别的写快照的事务（运行开始、技能注册、拒绝时的回退）插不进来。
  */
+// org-filter: conversationId is the run's own conversation (run start) or one the callers checked
+// in their org first (AgentSkillsService.lockConversation, a request row of the org); this takes
+// the same row lock EventLog.append takes
 export async function lockLatestCatalog(
   db: KernelSchemaDb,
   conversationId: string,

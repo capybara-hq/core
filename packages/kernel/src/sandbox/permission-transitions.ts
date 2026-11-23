@@ -74,6 +74,7 @@ export class PermissionTransitions {
           .selectFrom("conversations")
           .select("id")
           .where("id", "=", change.rootConversationId)
+          .where("org_id", "=", change.orgId)
           .unionAll((q) =>
             q
               .selectFrom("conversations as c")
@@ -85,6 +86,7 @@ export class PermissionTransitions {
       .selectFrom("conversations")
       .select("id")
       .where("id", "in", (q) => q.selectFrom("tree").select("id"))
+      .where("org_id", "=", change.orgId)
       .orderBy("id")
       .forUpdate()
       .execute();
@@ -130,6 +132,7 @@ export class PermissionTransitions {
           superseded_reason: change.reason,
         })
         .where("id", "=", card.id)
+        .where("org_id", "=", orgId)
         .execute();
       const cardEvents = await this.events.appendIn(card.conversation_id, [
         {

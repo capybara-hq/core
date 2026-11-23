@@ -66,6 +66,7 @@ export class UsageReportJobs {
   async oweEvents(conversationId: string, events: readonly ConversationEvent[]): Promise<void> {
     const usage = events.filter((e) => e.type === "usage");
     if (usage.length === 0 || !(await this.subscribers.any())) return;
+    // org-filter: reads the org of the conversation whose log this transaction just wrote
     const conv = await this.kdb.db
       .selectFrom("conversations")
       .select("org_id")

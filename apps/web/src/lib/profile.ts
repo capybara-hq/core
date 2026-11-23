@@ -6,7 +6,7 @@ import type { Account } from "./session";
 type CreatedAvatarUpload = Omit<CreatedAttachment, "id"> & { uploadId: string };
 
 /** Register an avatar upload: the kernel checks type and size and returns a presigned upload. */
-export const createAvatarUpload = (input: { name: string; contentType: string; size: number }) =>
+export const createAvatarUpload = (input: { contentType: string; size: number }) =>
   apiFetch<CreatedAvatarUpload>("/api/v1/me/avatar/uploads", {
     method: "POST",
     body: JSON.stringify(input),
@@ -18,7 +18,7 @@ export const createAvatarUpload = (input: { name: string; contentType: string; s
  */
 export async function uploadAccountAvatar(file: Blob): Promise<{ uploadId: string }> {
   const name = file instanceof File ? file.name : "avatar";
-  const created = await createAvatarUpload({ name, contentType: file.type, size: file.size });
+  const created = await createAvatarUpload({ contentType: file.type, size: file.size });
   await uploadToStorage(
     created.upload,
     file instanceof File ? file : new File([file], name, { type: file.type }),

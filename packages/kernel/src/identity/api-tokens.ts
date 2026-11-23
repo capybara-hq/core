@@ -165,6 +165,8 @@ export class ApiTokenService {
         ? "service"
         : undefined;
     if (!kind) return null;
+    // org-filter: lookup by the token's secret hash, before any org is known; the record carries
+    // the token's org (or none for a personal token)
     const row = await this.db
       .selectFrom("api_tokens")
       .selectAll()
@@ -175,6 +177,7 @@ export class ApiTokenService {
       .executeTakeFirst();
     if (!row) return null;
     // 节流：同一令牌 5 分钟内最多写一次 last_used_at
+    // org-filter: by primary key of the token just authenticated above
     const touched = await this.db
       .updateTable("api_tokens")
       .set({ last_used_at: sql<Date>`now()` })
@@ -193,6 +196,8 @@ export class ApiTokenService {
   }
 
   /** 列出该 scope 下未吊销的令牌（含已过期），按创建时间升序。 */
+  // org-filter: scoped() filters a service token by org_id and a personal one (org_id null) by
+  // account_id
   async list(scope: Scope): Promise<ApiTokenRecord[]> {
     const rows = await this.scoped(this.db.selectFrom("api_tokens").selectAll(), scope)
       .where("revoked_at", "is", null)
@@ -203,6 +208,8 @@ export class ApiTokenService {
   }
 
   /** Revokes a token (in the context's transaction when there is one); missing, revoked or out of scope → `token.not_found`. */
+  // org-filter: scoped() filters a service token by org_id and a personal one (org_id null) by
+  // account_id
   async revoke(id: string, scope: Scope): Promise<void> {
     const r = await this.scoped(
       this.db.updateTable("api_tokens").set({ revoked_at: sql<Date>`now()` }),
@@ -225,6 +232,7 @@ export class ApiTokenService {
       .execute();
   }
 
+  // org-filter: personal tokens belong to the account, not an org (org_id null)
   async revokeAllPersonal(accountId: string): Promise<void> {
     await this.db
       .updateTable("api_tokens")

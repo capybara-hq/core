@@ -6,16 +6,34 @@ export type DisclosureProps = {
   summary: ReactNode;
   /** Open on first render (default closed). */
   defaultOpen?: boolean;
+  /**
+   * Controlled: the block is open exactly when this is true (the owner opens it itself, e.g. to
+   * show an error inside); `onOpenChange` reports the summary's toggles.
+   */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
   children: ReactNode;
 };
 
 /**
  * An expandable block (spec §6.5): a summary line as a button (`aria-expanded`, a faint
  * `chevron-right` / `chevron-down` icon on the right) and, once open, the body under it with a 1px `line` guide on the left. The body is
- * rendered only while open.
+ * rendered only while open. Uncontrolled by default (`defaultOpen`); `open` + `onOpenChange` hand
+ * the state to the owner.
  */
-export function Disclosure({ summary, defaultOpen = false, children }: DisclosureProps) {
-  const [open, setOpen] = useState(defaultOpen);
+export function Disclosure({
+  summary,
+  defaultOpen = false,
+  open: openProp,
+  onOpenChange,
+  children,
+}: DisclosureProps) {
+  const [openState, setOpenState] = useState(defaultOpen);
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setOpenState(next);
+    onOpenChange?.(next);
+  };
   const id = useId();
   return (
     <div className="cb-disclosure">
@@ -24,7 +42,7 @@ export function Disclosure({ summary, defaultOpen = false, children }: Disclosur
         className="cb-row-toggle cb-disclosure-summary"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(!open)}
       >
         {summary}
         <span className="cb-row-caret" aria-hidden="true">

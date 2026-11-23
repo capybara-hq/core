@@ -963,6 +963,7 @@ export class ConnectorsService {
         updated_at: sql`now()`,
       })
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .execute();
     // Tools at a default the org did not set (template or derived): a tool the new template names
     // takes its policy (`template`); an unnamed `template` one returns to the derived policy;
@@ -1535,6 +1536,7 @@ export class ConnectorsService {
           updated_at: sql`now()`,
         })
         .where("id", "=", connectorId)
+        .where("org_id", "=", orgId)
         .execute();
     }
     const allowed: string[] = [];
@@ -1633,6 +1635,7 @@ export class ConnectorsService {
         .updateTable("connectors")
         .set({ git_push_policy: policy, updated_at: sql`now()` })
         .where("id", "=", connectorId)
+        .where("org_id", "=", orgId)
         .execute();
       await audit(t, {
         actorAccountId,
@@ -1744,6 +1747,7 @@ export class ConnectorsService {
       // leaves the connector as the platform set it
       .set({ status, disabled_by_plugin_id: null, updated_at: sql`now()` })
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(t, {
       actorAccountId: actor.accountId,
@@ -1808,10 +1812,15 @@ export class ConnectorsService {
       .updateTable("connectors")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .execute();
     await this.credentials.clearConnector(orgId, connectorId);
     // 授权绑定连接器 id（软删除不触发外键级联）：一并删掉，不留给任何后来的连接器
-    await t.deleteFrom("tool_grants").where("connector_id", "=", connectorId).execute();
+    await t
+      .deleteFrom("tool_grants")
+      .where("org_id", "=", orgId)
+      .where("connector_id", "=", connectorId)
+      .execute();
     await t
       .deleteFrom("conversation_tool_grants")
       .where("connector_id", "=", connectorId)

@@ -247,6 +247,8 @@ export class CloudPermissionSnapshots {
 
   /** {@link reconcile} by device id alone (after a file reset); nothing for an unknown device. */
   async reconcileDevice(deviceId: string): Promise<CloudSnapshotOutcome> {
+    // org-filter: reads the device's own org to scope the reconcile; the id comes from the
+    // kernel-enqueued reset-files job, not caller input
     const row = await this.db
       .selectFrom("devices")
       .select(["org_id", "permission_reconcile_required"])
@@ -285,7 +287,7 @@ export class CloudPermissionSnapshots {
     ]);
     // the OLD algorithm on the old inputs: the snapshot columns are still empty here
     const old = effectiveDevicePolicy(deployment, settings, cloudChosenMode(device));
-    const instance = await this.lockedInstance(deviceId);
+    const instance = await this.lockedInstance(orgId, deviceId);
     const rec = instance === null ? null : readInstanceLimits(instance.instance_limits);
     // what the instance really runs narrows the snapshot even when a newer value is pending
     const known = rec?.applied ?? null;
@@ -314,6 +316,7 @@ export class CloudPermissionSnapshots {
         permission_reconcile_required: state === "reconcile-required",
       })
       .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .execute();
     // A snapshot narrowed by what the instance really runs changes the device's authority: it
     // goes through the device ceiling writer (epoch, Full consent, exact revocation) in this
@@ -371,7 +374,7 @@ export class CloudPermissionSnapshots {
     const device = await this.lockedDevice(orgId, deviceId);
     if (device === undefined) return { state: "skipped" };
     if (!device.permission_reconcile_required) return { state: "existing" };
-    const instance = await this.lockedInstance(deviceId);
+    const instance = await this.lockedInstance(orgId, deviceId);
     let state: CloudSnapshotState = "unprobed";
     let target: AppliedLimits | undefined;
     if (instance !== null) {
@@ -402,6 +405,7 @@ export class CloudPermissionSnapshots {
               ...ownNetworkOf(narrowed.outerNetwork),
             })
             .where("id", "=", deviceId)
+            .where("org_id", "=", orgId)
             .execute();
           await this.publishNarrowing(orgId, deviceId, narrowed, fullNarrowed);
         }
@@ -418,6 +422,7 @@ export class CloudPermissionSnapshots {
         .updateTable("devices")
         .set({ permission_reconcile_required: false })
         .where("id", "=", deviceId)
+        .where("org_id", "=", orgId)
         .execute();
     return state === "reconcile-required"
       ? { state, action: "reset-files", ...(target !== undefined && { target }) }
@@ -467,11 +472,12 @@ export class CloudPermissionSnapshots {
    * The device's instance row when an instance or a file system exists (their limits are in
    * force); null when neither does (the next create applies the desired limits exactly).
    */
-  private async lockedInstance(deviceId: string) {
+  private async lockedInstance(orgId: string, deviceId: string) {
     const row = await this.db
       .selectFrom("device_instances")
       .select(["handle", "status", "fs_status", "instance_limits", "generation"])
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirst();
     if (row === undefined) return null;

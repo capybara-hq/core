@@ -723,6 +723,7 @@ export class CatalogRequestsService {
   @Transactional()
   private async pendingDeploymentRequest(actor: string, requestId: string) {
     await this.adminLock.lockAndAuthorize(actor);
+    // org-filter: super admin decides deployment requests of every org (adminLock just above)
     const row = await this.db
       .selectFrom("catalog_requests")
       .select(["kind", "status", "marketplace_id", "entry_name", "entry_version", "staging_id"])
@@ -744,6 +745,7 @@ export class CatalogRequestsService {
     opts: RequestActorOpts,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
+    // org-filter: super admin links any org's import request (adminLock just above)
     const row = await this.db
       .selectFrom("catalog_requests")
       .select(["org_id", "status", "entry_name"])
@@ -755,6 +757,7 @@ export class CatalogRequestsService {
       .updateTable("catalog_requests")
       .set({ staging_id: stagingId })
       .where("id", "=", requestId)
+      .where("org_id", "=", row.org_id)
       .execute();
     await audit(this.db, {
       actorAccountId: actor,
@@ -830,6 +833,7 @@ export class CatalogRequestsService {
         decided_at: sql<Date>`now()`,
       })
       .where("id", "=", requestId)
+      .where("org_id", "=", row.org_id)
       .execute();
     await audit(t, {
       actorAccountId: actor,

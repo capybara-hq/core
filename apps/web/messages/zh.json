@@ -3789,7 +3789,6 @@
         "cleared": "已清除「{model}」的价格。"
       },
       "purposes": {
-        "title": "用途默认映射",
         "description": "内核与扩展按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
       },
       "toMarket": "浏览插件市场",
@@ -3808,7 +3807,6 @@
     },
     "org": {
       "pageTitle": "模型",
-      "title": "模型用途",
       "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。",
       "noProviders": "平台还没有部署模型服务。模型服务由超级管理员在「管理 → 模型」里部署。",
       "toAdminModels": "去部署模型服务",
@@ -3836,9 +3834,11 @@
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
       "useDefault": "使用部署默认（{target}）",
+      "none": "没有可设置的用途。",
       "overridden": "已覆盖",
       "unavailable": "{target}（不可用）",
-      "params": "参数",
+      "paramsAllDefault": "参数 · 全部默认",
+      "paramsCustomized": "参数 · {n} 项已自定义",
       "save": "保存",
       "savedAll": "已保存 {n} 个用途。",
       "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。",
@@ -5536,7 +5536,8 @@
         "connector": "连接器",
         "skill": "技能",
         "plugin": "依赖插件",
-        "agent_template": "智能体模板"
+        "agent_template": "智能体模板",
+        "theme": "主题"
       },
       "installedAt": "安装于 {at}",
       "cleanup": "清理",
@@ -6665,7 +6666,9 @@
         "not_grantable": "不能预先批准",
         "not_available": "智能体目前没有这个工具",
         "needs_role": "需要你没有的角色",
-        "fixed_ask": "总是需要人确认"
+        "fixed_ask": "总是需要人确认",
+        "needs_admin": "不在组织的网络许可内，需要组织管理员添加",
+        "device_refuses": "任务的设备不接受网络设置的变更"
       },
       "network": "网络访问",
       "networkHint": "任务运行时可以在其设备上直接访问、无需询问的域名（不超出组织允许的范围）。",

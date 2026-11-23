@@ -416,7 +416,7 @@ function settingsBlocks(): ReactNode {
           loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 } } }}
         />
       </RefBlock>
-      {/* A section that lists items (the model purposes): rows in a flush card, never cards. */}
+      {/* A section that lists items: rows in a flush card, never cards. */}
       <RefBlock id="template-settings-items" width={W} height={H}>
         <SettingsPage header={SETTINGS_HEADER} nav={SETTINGS_NAV} activeNav="org">
           <FormSection id="purposes" title="模型用途" description="每个用途用哪个模型。" flush>

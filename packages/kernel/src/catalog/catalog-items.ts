@@ -673,6 +673,8 @@ export async function countInstalls(
   versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
 ): Promise<Map<string, number>> {
   const orgs = new Map<string, Set<string>>(items.map((i) => [i.id, new Set<string>()]));
+  // org-filter: the platform catalog's install count per item (super admin's catalog view): it
+  // counts the orgs on purpose and returns no org row
   const installed = await db
     .selectFrom("plugin_installs")
     .select(["item_id", "org_id"])
@@ -865,6 +867,8 @@ export async function itemScopeFacts(
   if (items.length === 0) return out;
   const ids = items.map((i) => i.id);
   // one after the other: `db` may be a transaction's single connection
+  // org-filter: the platform catalog's scope facts per item (super admin's catalog and import
+  // views): the named orgs of each item are listed across orgs on purpose
   const listed = await db
     .selectFrom("catalog_item_scope_orgs")
     .select(["item_id", "org_id"])

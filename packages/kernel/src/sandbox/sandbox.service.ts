@@ -69,12 +69,14 @@ const backgroundBinding = (
 
 import { randomUUID } from "node:crypto";
 import {
+  type DeviceFence,
   type DeviceProvider,
   type ExecResult,
   type FileSystemHandle,
   isFileSystemGoneError,
   isSandboxGoneError,
   isSandboxOperationOutcomeUnknownError,
+  isStaleFenceError,
   rootsOf,
   type SandboxActor,
   type SandboxHandle,
@@ -291,6 +293,13 @@ type ExecArgs = Parameters<DeviceProvider["exec"]>[1];
 interface Fence {
   gen: number;
 }
+
+/**
+ * The token a lifecycle call carries (device update fencing design §3.2): the generation this
+ * holder's own last fenced write committed; null without a fence (nothing to compare).
+ */
+const tokenOf = (fence: Fence | null): DeviceFence | null =>
+  fence === null ? null : { token: fence.gen };
 
 /**
  * One instance of a device: its handle and the row's `created_at`, which the fenced write
@@ -962,10 +971,12 @@ export class SandboxService {
     const fsBound = differs && row.fs_status === "ready" && this.fsBound(p, rec, effective);
     const hasInstance =
       row.handle !== null && (row.status === "running" || row.status === "suspended");
+    // an update the kernel never heard back from is applied again at the next use (§7.2)
+    const inFlight = row.provider === p.plugin && rec.pending !== null;
     return {
       applied: rec.applied,
       effective,
-      pendingNextUse: differs && !fsBound && hasInstance,
+      pendingNextUse: ((differs && !fsBound) || inFlight) && hasInstance,
       pendingFilesReset: fsBound,
     };
   }
@@ -993,9 +1004,14 @@ export class SandboxService {
    * the exclusive lease once for a narrowing, so `applyLimits` records it as `unapplied` (the
    * device is then unprobed until the reset, never silently supported); an added host there only
    * waits for the reset (`pendingFilesReset`).
+   *
+   * A recorded `pending` (an `update` sent and never answered, device update fencing design §7.2)
+   * always applies again, even when `applied` already matches `want`: the instance may enforce
+   * the in-flight target, and only a newer call with this holder's higher token settles it.
    */
   private mustApply(row: Row, p: DeviceProviderEntry, want: DeviceLimits): boolean {
     const rec = readInstanceLimits(row.instance_limits);
+    if (rec.pending !== null) return true;
     const target = appliedOf(want);
     const wider = appliedWider(rec.applied, target);
     if (sameApplied(rec.applied, target) && !wider && !appliedLacksHost(rec.applied, target))
@@ -1031,6 +1047,8 @@ export class SandboxService {
   async currentInstance(
     deviceId: string,
   ): Promise<{ createdAt: Date; provider: string | null } | null> {
+    // org-filter: deviceId is the device its caller already resolved in its org (the tool's bound
+    // device); the instance row is keyed by its device
     const row = await this.db
       .selectFrom("device_instances")
       .select(["status", "handle", "created_at", "provider"])
@@ -1084,6 +1102,8 @@ export class SandboxService {
     const token = randomUUID();
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
+      // org-filter: deviceId comes from an org-scoped background task row or a kernel-written
+      // operation intent, never caller input; the instance row is keyed by its device
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -1504,6 +1524,7 @@ export class SandboxService {
       provider: p.plugin,
     });
     try {
+      // org-filter: the device this holder entered under its lease after readRow's org check
       await this.db
         .updateTable("device_instances")
         .set((eb) => ({ fs_status: "lost", generation: eb("generation", "+", 1) }))
@@ -2113,6 +2134,7 @@ export class SandboxService {
         .selectFrom("device_instances")
         .select("instance_limits")
         .where("device_id", "=", ctx.deviceId)
+        .where("org_id", "=", ctx.orgId)
         .executeTakeFirst();
       if (!row) return;
       const held = { ...e, limits: row.instance_limits };
@@ -2150,6 +2172,8 @@ export class SandboxService {
   }
 
   private async readRow(ctx: { orgId: string; deviceId: string }): Promise<Row | undefined> {
+    // org-filter: reads org_id and throws foreign below: a filter would turn another org's device
+    // into a missing one
     const row = await this.db
       .selectFrom("device_instances")
       .selectAll()
@@ -2220,6 +2244,7 @@ export class SandboxService {
         .updateTable("device_instances")
         .set((eb) => ({ generation: eb("generation", "+", 1) }))
         .where("device_id", "=", env)
+        .where("org_id", "=", ctx.orgId)
         .execute();
       await this.register(env, lease.token);
       // other holders (any conversation of the device) may be running: only the dead holders'
@@ -2303,6 +2328,7 @@ export class SandboxService {
   private async leave(env: string, e: Entered): Promise<void> {
     await this.unregister(env, e.lease.token);
     await e.lease.release();
+    // org-filter: the device this holder entered under its lease after readRow's org check
     await this.db
       .updateTable("device_instances")
       .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
@@ -2519,6 +2545,8 @@ export class SandboxService {
         c.device_id,
         async (lease) => {
           const id = c.device_id;
+          // org-filter: deployment-wide suspension sweep (worker) over every org's idle instances,
+          // re-read under each device's lease
           const row = await this.db
             .selectFrom("device_instances")
             .selectAll()
@@ -2580,6 +2608,8 @@ export class SandboxService {
     let n = 0;
     await inPool(await this.candidates(mine), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
+        // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
+        // re-read under each device's lease
         const row = await this.db
           .selectFrom("device_instances")
           .selectAll()
@@ -2606,6 +2636,8 @@ export class SandboxService {
    * abandoned instead ({@link abandonInstance}) and the call returns (#675). The provider only
    * needs to be loaded: a device is deleted while its org has the provider off too.
    */
+  // org-filter: deviceId is the payload of the kernel's sandbox-destroy-for job, owed by the
+  // transaction that soft-deleted the device in its org; never caller input
   async destroyDevice(deviceId: string): Promise<void> {
     const row = await this.db
       .selectFrom("device_instances")
@@ -2680,6 +2712,7 @@ export class SandboxService {
    * nothing retries the row; a plugin of that name installed again destroys it as before.
    */
   private async abandonInstance(deviceId: string, provider: string): Promise<void> {
+    // org-filter: only from destroyDevice: the kernel destroy job's device, not caller input
     const written = await this.db
       .with("a", (db) =>
         db
@@ -2744,6 +2777,8 @@ export class SandboxService {
       { intent: true },
     );
     try {
+      // org-filter: deviceId is the payload of the kernel's sandbox-reset-files job (enqueued after
+      // the org-checked device request), not caller input
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -2754,8 +2789,10 @@ export class SandboxService {
         throw deviceInstanceForeign(p.plugin, row.provider);
       }
       const fence = { gen: row.generation };
+      // the fenced increment first: the provider calls carry this holder's own token (§3.2)
+      await this.fenced(lease, deviceId, fence, {});
       const signal = opSignal(lease);
-      const prev = await this.destroyInstance(row, p, signal);
+      const prev = await this.destroyInstance(row, p, signal, lease, fence);
       await this.destroyFiles(row, p, signal);
       if (!(await lease.renew())) throw new SandboxLockLostError(deviceId);
       await this.fenced(lease, deviceId, fence, {
@@ -2793,6 +2830,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
+      // org-filter: deviceId comes from the deployment-wide retire-legacy-tasks worker's due list,
+      // not caller input
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -2831,6 +2870,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
+      // org-filter: reads the device's own org; deviceId comes from the deployment-wide reconcile
+      // sweep, not caller input
       const device = await this.db
         .selectFrom("devices")
         .select(["org_id", "provider"])
@@ -2842,6 +2883,7 @@ export class SandboxService {
         .selectFrom("device_instances")
         .selectAll()
         .where("device_id", "=", deviceId)
+        .where("org_id", "=", orgId)
         .executeTakeFirst();
       const fence = row ? { gen: row.generation } : null;
       if (row && fence) await this.fenced(lease, deviceId, fence, {});
@@ -2875,7 +2917,21 @@ export class SandboxService {
       const sig = AbortSignal.any([signal, opSignal(lease)]);
       const facts = { deviceId, provider: p.plugin, to: before.target };
       const suspended = row.status === "suspended";
+      // the intent first (device update fencing design §7.2): an update this holder never hears
+      // back from is applied again by the next exclusive use
+      const rec = readInstanceLimits(row.instance_limits);
+      await this.fenced(lease, deviceId, fence, {
+        instance_limits: instanceLimitsJson(
+          rec.applied,
+          rec.unapplied ?? undefined,
+          appliedOf(want),
+        ),
+      });
       let answer: "updated" | "recreate" | "gone";
+      // whether the provider answered without applying (nothing in flight): the intent goes again
+      let settled = false;
+      // a stale holder leaves the instance as it is (a newer holder may use it)
+      let stale = false;
       try {
         if (suspended && (await p.impl.resume(handle, sig)) === "gone") answer = "gone";
         else {
@@ -2890,9 +2946,15 @@ export class SandboxService {
               sig,
               false,
             );
-          answer = await update(handle, providerLimits(want), sig);
+          answer = await update(handle, providerLimits(want), sig, { token: fence.gen });
         }
+        settled = answer !== "updated";
       } catch (err) {
+        // a newer holder applied a higher token: this one is stale (never recorded, §7.1)
+        if (isStaleFenceError(err)) {
+          stale = true;
+          throw await this.staleHolder(lease, deviceId, p.plugin, fence, "update", err);
+        }
         if (sig.aborted) throw err;
         this.log.warn("cannot apply the reconcile limits to the sandbox instance", {
           ...facts,
@@ -2900,12 +2962,24 @@ export class SandboxService {
         });
         answer = "recreate";
       } finally {
-        if (suspended)
+        if (suspended && !stale)
           await this.bestEffort(deviceId, "suspend the instance again after a limits update", (s) =>
             p.impl.suspend(handle, s),
           );
       }
-      if (answer !== "updated") return before;
+      if (answer !== "updated") {
+        // the provider answered and changed nothing: the record goes back to what it was; a
+        // failed update keeps the intent for the next use
+        if (settled && (await lease.renew()))
+          await this.fenced(lease, deviceId, fence, {
+            instance_limits: instanceLimitsJson(
+              rec.applied,
+              rec.unapplied ?? undefined,
+              rec.pending ?? undefined,
+            ),
+          });
+        return before;
+      }
       if (!(await lease.renew())) throw new SandboxLockLostError(deviceId);
       await this.fenced(lease, deviceId, fence, {
         instance_limits: instanceLimitsJson(appliedOf(want)),
@@ -2949,6 +3023,8 @@ export class SandboxService {
   /** {@link reconcileMarked} for the devices of one provider. */
   private async reconcileMarkedOf(p: DeviceProviderEntry, limit: number): Promise<number> {
     const cursorKey = reconcileCursorKey(p.plugin);
+    // org-filter: deployment-wide reconcile sweep (worker) over every org's marked devices of
+    // this provider
     const page = (after: string, n: number) =>
       this.db
         .selectFrom("devices as d")
@@ -3058,7 +3134,7 @@ export class SandboxService {
      * reason is noted, the destroy follows).
      */
     const cancelOnResume = async (
-      o: { id: string; provider: string; instanceGeneration: string },
+      o: { id: string; orgId: string; provider: string; instanceGeneration: string },
       live: Row & { handle: SandboxHandle },
     ): Promise<{ cancelled: string[] } | "skip" | { failed: string }> => {
       if (live.status !== "suspended" || !isKnownProvider(o.provider)) return "skip";
@@ -3080,6 +3156,7 @@ export class SandboxService {
             "execution_ref",
           ])
           .where("operation_id", "=", m.refId)
+          .where("org_id", "=", o.orgId)
           .where("device_id", "=", id)
           .executeTakeFirst();
         if (intent?.revoke_acknowledged === true) continue;
@@ -3169,9 +3246,12 @@ export class SandboxService {
             AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
             ...(signal ? [signal] : []),
           ]),
+          tokenOf(fence),
         );
       } catch (err) {
         if (held.signal.aborted || signal?.aborted) throw err;
+        if (isStaleFenceError(err) && fence)
+          throw await this.staleHolder(held, id, provider, fence, "destroy", err);
         await this.retirement.noteFailure(o.id, err);
         this.log.warn("cannot destroy an instance that may run legacy work; device unavailable", {
           deviceId: id,
@@ -3191,6 +3271,8 @@ export class SandboxService {
           sweep_failed_at: null,
         });
       this.log.info("instance that may run legacy work destroyed", { deviceId: id });
+      // org-filter: the device this retirement gate holds under its exclusive lease; the instance
+      // row is keyed by its device
       now = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -3220,9 +3302,12 @@ export class SandboxService {
             AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
             ...(signal ? [signal] : []),
           ]),
+          tokenOf(fence),
         );
       } catch (err) {
         if (held.signal.aborted || signal?.aborted) throw err;
+        if (isStaleFenceError(err) && fence)
+          throw await this.staleHolder(held, id, provider, fence, "destroy", err);
         await this.retirement.noteFailure(o.id, err);
         this.log.warn("cannot destroy by name an instance that may run legacy work", {
           deviceId: id,
@@ -3241,6 +3326,8 @@ export class SandboxService {
           sweep_failed_at: null,
         });
       this.log.info("instance that may run legacy work destroyed by name", { deviceId: id });
+      // org-filter: the device this retirement gate holds under its exclusive lease; the instance
+      // row is keyed by its device
       now = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -3379,13 +3466,20 @@ export class SandboxService {
    */
   private async fenced(lease: SandboxLease, id: string, fence: Fence, set: Patch): Promise<Date> {
     if (lease.signal.aborted) throw new SandboxLockLostError(id);
-    const r = await this.db
-      .updateTable("device_instances")
-      .set({ ...set, generation: fence.gen + 1 })
-      .where("device_id", "=", id)
-      .where("generation", "=", fence.gen)
-      .returning("created_at")
-      .executeTakeFirst();
+    // committed on its own, never inside a caller's transaction: the generation it writes is the
+    // token the next provider call carries, which every replica must see before that call (device
+    // update fencing design §3.2)
+    // org-filter: fenced write on the device this holder leases (entered after the org check, or a
+    // sweep's device); the fence generation guards it
+    const r = await runOutsideTransaction(() =>
+      this.db
+        .updateTable("device_instances")
+        .set({ ...set, generation: fence.gen + 1 })
+        .where("device_id", "=", id)
+        .where("generation", "=", fence.gen)
+        .returning("created_at")
+        .executeTakeFirst(),
+    );
     if (!r) throw new SandboxLockLostError(id, "generation");
     fence.gen++;
     return r.created_at;
@@ -3395,6 +3489,8 @@ export class SandboxService {
   private async candidates(
     due: (eb: ExpressionBuilder<KernelDatabase, "device_instances">) => Expression<SqlBool>,
   ): Promise<{ device_id: string; running_since: Date | null }[]> {
+    // org-filter: deployment-wide sweep candidates (suspension and destruction workers) across
+    // every org
     return await this.db
       .selectFrom("device_instances")
       .select(["device_id", "running_since"])
@@ -3441,6 +3537,8 @@ export class SandboxService {
       return await fn(lease);
     } catch (err) {
       this.log.warn("sandbox maintenance failed; will retry", { deviceId, err });
+      // org-filter: sweep bookkeeping on the device this deployment-wide sweep holds under its
+      // lease
       await this.db
         .updateTable("device_instances")
         .set({ sweep_failed_at: sql<Date>`now()` })
@@ -3503,6 +3601,8 @@ export class SandboxService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!live) throw deviceNotFound();
+    // org-filter: reads org_id and throws foreign below (the device itself was just checked in
+    // ctx.orgId)
     const read = await this.db
       .selectFrom("device_instances")
       .selectAll()
@@ -3555,6 +3655,9 @@ export class SandboxService {
             try {
               created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
             } catch (err) {
+              // refused as stale: the provider changed nothing, and the instance (the same
+              // incarnation after an in-place update) may already run a newer holder's work
+              if (err instanceof SandboxLockLostError && err.reason === "generation") throw err;
               // the work a pause brought back is revoked exactly, never killed broadly; the row
               // still says suspended, so the next use resumes and revokes again
               await this.revokeIncarnation(
@@ -3710,8 +3813,11 @@ export class SandboxService {
         limits,
         fileSystem: fs,
         signal,
+        fence: { token: fence.gen },
       });
     } catch (err) {
+      if (isStaleFenceError(err))
+        throw await this.staleHolder(held, id, p.plugin, fence, "create", err);
       if (!isFileSystemGoneError(err)) {
         throw providerRefusal(
           this.log,
@@ -3768,12 +3874,14 @@ export class SandboxService {
       // (Ruling M10) may then hit the one the new holder just resumed or created; that heals:
       // its next provider call throws SandboxGoneError (or resume returns gone) and the use
       // rebuilds in place. The file system is never touched here.
-      await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
-        this.log.warn("cannot destroy sandbox created after the lock was lost", {
-          deviceId: id,
-          err,
-        }),
-      );
+      await p.impl
+        .destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS), tokenOf(fence))
+        .catch((err: unknown) =>
+          this.log.warn("cannot destroy sandbox created after the lock was lost", {
+            deviceId: id,
+            err,
+          }),
+        );
       throw e;
     }
     this.log.info("sandbox created", { deviceId: id, provider: p.plugin });
@@ -3806,22 +3914,32 @@ export class SandboxService {
   ): Promise<Instance | null> {
     const id = ctx.deviceId;
     const target = appliedOf(want);
-    const was = readInstanceLimits(row.instance_limits).applied;
+    const rec = readInstanceLimits(row.instance_limits);
+    const was = rec.applied;
     const facts = { deviceId: id, provider: p.plugin, from: was, to: target };
     let gone = false;
     if (p.impl.update) {
+      // the intent first (device update fencing design §7.2): should this holder stop hearing
+      // from the provider (a lost lease, a crash), the next exclusive holder applies the desired
+      // limits again with its higher token, even when the record of what succeeded matches them
+      await this.fenced(held, id, fence, {
+        instance_limits: instanceLimitsJson(was, rec.unapplied ?? undefined, target),
+      });
+      let answer: "updated" | "recreate" | undefined;
       try {
-        if ((await p.impl.update(handle, providerLimits(want), signal)) === "updated") {
-          await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(target) });
-          this.log.info("sandbox instance limits updated", facts);
-          return null;
-        }
+        answer = await p.impl.update(handle, providerLimits(want), signal, { token: fence.gen });
       } catch (err) {
+        // a newer holder already changed the instance: this one is stale and must neither record
+        // nor recreate (a recreate by a stale holder is what the fence exists to stop)
+        if (isStaleFenceError(err))
+          throw await this.staleHolder(held, id, p.plugin, fence, "update", err);
         if (isSandboxGoneError(err)) {
           gone = true;
         } else if (signal.aborted || p.impl.limitsApplyAt === "fileSystem") {
           // the instance may run with half-applied limits and cannot be recreated here: stop it,
-          // so the next use resumes it and applies them again
+          // so the next use resumes it and applies them again (also after a lost lease: stopping
+          // a possibly half-widened instance fails closed, at worst it pauses a newer holder's
+          // work, which auto-starts on its next call; the intent makes it apply again)
           await this.quarantine(held, id, handle, p, fence, {
             provider: p.plugin,
             generation: String(row.created_at.getTime()),
@@ -3842,6 +3960,13 @@ export class SandboxService {
           });
         }
       }
+      // outside the try: a failed record write is a lost lease, never a reason to recreate (a
+      // holder whose fence moved must not destroy the instance a newer holder is using)
+      if (answer === "updated") {
+        await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(target) });
+        this.log.info("sandbox instance limits updated", facts);
+        return null;
+      }
     }
     if (p.impl.limitsApplyAt === "fileSystem" && !gone) {
       await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(was, target) });
@@ -3849,10 +3974,15 @@ export class SandboxService {
       return null;
     }
     this.log.info("sandbox limits changed; recreating the instance on the kept files", facts);
+    // still the holder (a fenced write), so a holder whose lease ended meanwhile never destroys
+    // what a newer one uses; the destroy's token is then this holder's latest
+    await this.fenced(held, id, fence, {});
     if (!gone) {
       try {
-        await p.impl.destroy(handle, signal);
+        await p.impl.destroy(handle, signal, { token: fence.gen });
       } catch (err) {
+        if (isStaleFenceError(err))
+          throw await this.staleHolder(held, id, p.plugin, fence, "destroy", err);
         // `create` replaces an instance of the same name anyway
         if (signal.aborted) throw err;
         this.log.warn("cannot destroy the sandbox instance before recreating it", {
@@ -3901,6 +4031,52 @@ export class SandboxService {
     }
   }
 
+  /**
+   * A provider refused a lifecycle call with `StaleFenceError` (device update fencing design
+   * §7.1). Normally another holder took the device and applied a higher token, so this holder's
+   * lease is gone: a fenced no-op write fails and the lock-lost error its next write would raise
+   * is returned. Should the write succeed, the provider holds a token ahead of the device record
+   * (a restored database, a provider fault): the row's generation is raised past it (fenced), so
+   * the next holder's token wins and the device heals at its next use instead of refusing forever;
+   * this use still fails as lock-lost.
+   */
+  private async staleHolder(
+    held: SandboxLease,
+    id: string,
+    provider: string,
+    fence: Fence,
+    op: "update" | "create" | "destroy",
+    err: unknown,
+  ): Promise<SandboxLockLostError> {
+    const current = isStaleFenceError(err) ? err.current : undefined;
+    const facts = { deviceId: id, provider, op, token: fence.gen, current };
+    try {
+      await this.fenced(held, id, fence, {});
+    } catch {
+      this.log.warn("a device provider refused a stale lifecycle call; the lease was lost", facts);
+      return new SandboxLockLostError(id, "generation");
+    }
+    if (current !== undefined && Number.isSafeInteger(current) && current >= fence.gen) {
+      // org-filter: fenced write on the device this holder leases (entered after the org check, or
+      // a sweep's device); the fence generation guards it
+      const raised = await runOutsideTransaction(() =>
+        this.db
+          .updateTable("device_instances")
+          .set({ generation: current + 1 })
+          .where("device_id", "=", id)
+          .where("generation", "=", fence.gen)
+          .executeTakeFirst(),
+      );
+      if (Number(raised.numUpdatedRows) === 1) fence.gen = current + 1;
+    }
+    this.log.warn(
+      "a device provider holds a fence token ahead of the device record; generation raised so " +
+        "the next use applies again",
+      facts,
+    );
+    return new SandboxLockLostError(id, "generation");
+  }
+
   /** Runs `call` with its own short signal; a failure is warned and returns false. */
   private async bestEffort(
     deviceId: string,
@@ -3926,6 +4102,7 @@ export class SandboxService {
     provider: string,
     handle: SandboxHandle,
     signal: AbortSignal,
+    fence: Fence,
   ): Promise<boolean> {
     const old = this.providers.forDevice(provider)?.impl;
     if (old) {
@@ -3933,9 +4110,12 @@ export class SandboxService {
         await old.destroy(
           handle,
           AbortSignal.any([signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]),
+          tokenOf(fence),
         );
         return false;
       } catch (err) {
+        // the previous provider's instance carries a higher token: this holder is stale
+        if (isStaleFenceError(err)) throw new SandboxLockLostError(id, "generation");
         this.log.warn("cannot destroy a sandbox instance recorded from a previous provider", {
           deviceId: id,
           provider,
@@ -3960,18 +4140,26 @@ export class SandboxService {
     row: Row,
     p: DeviceProviderEntry,
     signal: AbortSignal,
+    held: SandboxLease,
+    fence: Fence,
   ): Promise<Patch> {
     const id = row.device_id;
     assertOwnRow(row, p);
     let prev: Patch = {};
-    if (row.handle) {
-      await p.impl.destroy(row.handle, signal);
-    } else if (row.status === "creating") {
-      // the provider may have built it already: only the name finds it
-      await p.impl.destroyByName(deviceResourceName(id), signal);
+    try {
+      if (row.handle) {
+        await p.impl.destroy(row.handle, signal, tokenOf(fence));
+      } else if (row.status === "creating") {
+        // the provider may have built it already: only the name finds it
+        await p.impl.destroyByName(deviceResourceName(id), signal, tokenOf(fence));
+      }
+    } catch (err) {
+      if (isStaleFenceError(err))
+        throw await this.staleHolder(held, id, p.plugin, fence, "destroy", err);
+      throw err;
     }
     if (row.prev_handle && row.prev_provider) {
-      if (!(await this.retire(id, row.prev_provider, row.prev_handle, signal))) {
+      if (!(await this.retire(id, row.prev_provider, row.prev_handle, signal, fence))) {
         prev = { prev_provider: null, prev_handle: null };
       }
     }
@@ -4001,8 +4189,11 @@ export class SandboxService {
   ): Promise<void> {
     const id = row.device_id;
     const fence = { gen: row.generation };
+    // the fenced increment first, so the token the provider calls carry is this holder's own
+    // (strictly higher than any earlier holder's, device update fencing design §3.2)
+    await this.fenced(held, id, fence, {});
     const signal = opSignal(held);
-    const prev = await this.destroyInstance(row, p, signal);
+    const prev = await this.destroyInstance(row, p, signal, held, fence);
     // the provider's destroy resolved: confirmed destruction of exactly this incarnation (8.5
     // evidence), the same for every provider
     if (row.handle && isKnownProvider(p.plugin))
@@ -4023,6 +4214,7 @@ export class SandboxService {
     const r = await this.db
       .deleteFrom("device_instances")
       .where("device_id", "=", id)
+      .where("org_id", "=", row.org_id)
       .where("generation", "=", fence.gen)
       .executeTakeFirst();
     if (Number(r.numDeletedRows) !== 1) throw new SandboxLockLostError(id, "generation");
@@ -4051,6 +4243,8 @@ export class SandboxService {
   private deviceGone(
     eb: ExpressionBuilder<KernelDatabase, "device_instances">,
   ): Expression<SqlBool> {
+    // org-filter: deployment-wide sweep condition: a deleted device of any org, correlated to
+    // the instance row
     return eb.or([
       eb.exists(
         eb

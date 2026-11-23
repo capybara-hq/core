@@ -170,6 +170,8 @@ export class ScheduledTaskStore {
   }
 
   /** Patches a live task; null when it is missing or deleted. */
+  // org-filter: by the id of a task its caller loaded under an org filter (lockManaged / lockTask)
+  // or locked in the scan's deployment-wide due sweep
   async updateTask(
     t: KernelSchemaDb,
     id: string,
@@ -186,6 +188,7 @@ export class ScheduledTaskStore {
   }
 
   /** Deletes a task softly: hidden from every read and never due again. */
+  // org-filter: by the id of a task its caller locked under an org filter (lockManaged)
   async softDelete(t: KernelSchemaDb, id: string): Promise<boolean> {
     const r = await t
       .updateTable("scheduled_tasks")
@@ -245,6 +248,7 @@ export class ScheduledTaskStore {
    * rows another transaction holds (`FOR UPDATE SKIP LOCKED`). Call it inside a transaction: the
    * locks last until it ends.
    */
+  // org-filter: the scan's deployment-wide due-task sweep (LockedCron), each task fired in its own org
   async lockDue(t: KernelSchemaDb, now: Date, limit: number): Promise<ScheduledTask[]> {
     const rows = await t
       .selectFrom("scheduled_tasks")
@@ -289,6 +293,8 @@ export class ScheduledTaskStore {
   }
 
   /** Patches a task run; null when it does not exist. */
+  // org-filter: by task run id for the fire / settle jobs only; the id is the kernel-written job
+  // payload or a run row the job already holds, never caller input
   async updateRun(t: KernelSchemaDb, id: string, patch: TaskRunPatch): Promise<TaskRun | null> {
     const c: Updateable<ScheduledTaskRunsTable> = {};
     if (patch.scheduledFor !== undefined) c.scheduled_for = patch.scheduledFor;
@@ -320,6 +326,7 @@ export class ScheduledTaskStore {
    * The task's latest run still `pending` or `running` (the overlap check), other than `exceptId`
    * (the run being fired); null when none.
    */
+  // org-filter: the fire job's overlap check, by the task id of the run it claimed
   async latestNonTerminalRun(
     t: KernelSchemaDb,
     taskId: string,
@@ -355,6 +362,7 @@ export class ScheduledTaskStore {
   }
 
   /** A task's runs, latest tick first. */
+  // org-filter: by the id of a task its caller read under an org filter (ScheduledTasksService.get)
   async listRuns(t: KernelSchemaDb, taskId: string, limit: number): Promise<TaskRun[]> {
     const rows = await t
       .selectFrom("scheduled_task_runs")

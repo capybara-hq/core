@@ -54,6 +54,8 @@ async function resolveConversation(
   if (!event) return null;
   const trigger = pushTriggerOf({ type: event.type, payload: event.payload } as never);
   if (trigger === null) return null;
+  // org-filter: conversationId comes from the kernel-written push fan-out job; this read learns
+  // the conversation's org, which every later read filters by
   const conv = await db
     .selectFrom("conversations")
     .select(["org_id", "kind", "account_id", "deleted_at"])
@@ -72,6 +74,7 @@ async function resolveConversation(
           .selectFrom("conversations")
           .select(["org_id", "kind", "account_id", "deleted_at"])
           .where("id", "=", rootId)
+          .where("org_id", "=", orgId)
           .executeTakeFirst();
   if (
     root !== null &&
@@ -155,6 +158,7 @@ async function resolveConversation(
     .selectFrom("conversations")
     .select(["agent_id", "title"])
     .where("id", "=", rootId)
+    .where("org_id", "=", orgId)
     .executeTakeFirstOrThrow();
   const org = encodeURIComponent(orgId);
   const path =
@@ -167,7 +171,7 @@ async function resolveConversation(
     category: trigger.category,
     path,
     threadId: rootId,
-    title: await agentName(db, rootRow.agent_id),
+    title: await agentName(db, orgId, rootRow.agent_id),
     conversationTitle: rootRow.title,
     text: trigger.text,
   };
@@ -177,6 +181,8 @@ async function resolveSchedule(
   db: KernelSchemaDb,
   taskRunId: string,
 ): Promise<ResolvedRecipients | null> {
+  // org-filter: taskRunId comes from the kernel-written push fan-out job; this read learns the
+  // run's org (checked against its task's below), which every later read filters by
   const row = await db
     .selectFrom("scheduled_task_runs")
     .innerJoin("scheduled_tasks", "scheduled_tasks.id", "scheduled_task_runs.task_id")
@@ -266,7 +272,7 @@ async function activeMembers(
 }
 
 /** The agent's name in its current version (empty when it has none). */
-async function agentName(db: KernelSchemaDb, agentId: string): Promise<string> {
+async function agentName(db: KernelSchemaDb, orgId: string, agentId: string): Promise<string> {
   const row = await db
     .selectFrom("agents")
     .innerJoin("agent_versions", (j) =>
@@ -276,6 +282,7 @@ async function agentName(db: KernelSchemaDb, agentId: string): Promise<string> {
     )
     .select("agent_versions.definition")
     .where("agents.id", "=", agentId)
+    .where("agents.org_id", "=", orgId)
     .executeTakeFirst();
   const name = (row?.definition as { name?: unknown } | null | undefined)?.name;
   return typeof name === "string" ? name : "";

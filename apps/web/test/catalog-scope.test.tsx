@@ -31,12 +31,12 @@ describe("plugin scope data layer: loaders call the kernel routes with the given
     const calls = stubApi({ [`PUT /api/v1/orgs/${ORG}/catalog/i1/switch`]: ok });
     await setOrgPluginSwitch(ORG, "i1", {
       enabled: true,
-      inputs: { extensionConfig: { region: "eu" } },
+      inputs: { connectors: { t1: { endpoint: { url: "https://x.test" } } } },
     });
     await setOrgPluginSwitch(ORG, "i1", { enabled: false });
     await setOrgPluginSwitch(ORG, "i1", { enabled: false, confirm: "h" });
     expect(calls.map((c) => bodyOf(c))).toEqual([
-      { enabled: true, inputs: { extensionConfig: { region: "eu" } } },
+      { enabled: true, inputs: { connectors: { t1: { endpoint: { url: "https://x.test" } } } } },
       { enabled: false },
       { enabled: false, confirm: "h" },
     ]);

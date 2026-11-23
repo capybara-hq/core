@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { DesignProvider, Disclosure } from "../src/index";
 
@@ -53,5 +54,39 @@ describe("Disclosure", () => {
     await userEvent.click(button);
     expect(icon()?.getAttribute("data-icon")).toBe("chevron-down");
     r.unmount();
+  });
+
+  it("controlled: follows `open` and reports the summary's toggles", async () => {
+    const seen: boolean[] = [];
+    function Owner() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            force
+          </button>
+          <Disclosure
+            summary="Params"
+            open={open}
+            onOpenChange={(o) => {
+              seen.push(o);
+              setOpen(o);
+            }}
+          >
+            <span>fields</span>
+          </Disclosure>
+        </>
+      );
+    }
+    wrap(<Owner />);
+    const summary = screen.getByRole("button", { name: "Params" });
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    // the owner opens it (e.g. an error inside)
+    await userEvent.click(screen.getByRole("button", { name: "force" }));
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("fields")).toBeTruthy();
+    await userEvent.click(summary);
+    expect(seen).toEqual([false]);
+    expect(screen.queryByText("fields")).toBeNull();
   });
 });

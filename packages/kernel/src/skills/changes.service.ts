@@ -221,6 +221,7 @@ export class SkillChangesService {
       .selectFrom("agents")
       .select(["owner_account_id", "deleted_at"])
       .where("id", "=", head.agent_id)
+      .where("org_id", "=", orgId)
       .forNoKeyUpdate()
       .executeTakeFirst();
     if (head.kind === "version" && head.requested_in_conversation !== null) {
@@ -228,6 +229,7 @@ export class SkillChangesService {
         .selectFrom("conversations")
         .select("id")
         .where("id", "=", head.requested_in_conversation)
+        .where("org_id", "=", orgId)
         .forUpdate()
         .executeTakeFirst();
     }
@@ -238,12 +240,14 @@ export class SkillChangesService {
             .selectFrom("skills")
             .select(["id", "scope", "agent_id", "name", "deleted_at", "current_version"])
             .where("id", "=", head.skill_id)
+            .where("org_id", "=", orgId)
             .forUpdate()
             .executeTakeFirst();
     const req = await this.db
       .selectFrom("skill_change_requests")
       .selectAll()
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirst();
     // the row went between the first read and the lock (agent / org hard-deleted) -> 404, not 500
@@ -274,7 +278,7 @@ export class SkillChangesService {
         ...(actorTokenId !== undefined && { actorTokenId }),
         reason: "stale",
       });
-      return { updated: await this.reread(id), drafts, usedOwner: false };
+      return { updated: await this.reread(orgId, id), drafts, usedOwner: false };
     }
     const p = req.proposed_version;
     const approved = body.decision === "approve";
@@ -339,6 +343,7 @@ export class SkillChangesService {
         decided_at: sql<Date>`now()`,
       })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .returningAll()
       .executeTakeFirstOrThrow();
     await audit(this.db.db, {
@@ -377,11 +382,12 @@ export class SkillChangesService {
     };
   }
 
-  private reread(id: string): Promise<Selectable<SkillChangeRequestsTable>> {
+  private reread(orgId: string, id: string): Promise<Selectable<SkillChangeRequestsTable>> {
     return this.db
       .selectFrom("skill_change_requests")
       .selectAll()
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
   }
 
@@ -448,6 +454,7 @@ export class SkillChangesService {
           "skill_versions.object_prefix",
         ])
         .where("skills.id", "=", row.skill_id)
+        .where("skills.org_id", "=", orgId)
         .where("skills.deleted_at", "is", null)
         .executeTakeFirst();
       // the request is the current version itself (a share, an approved version): no "before"
@@ -518,6 +525,7 @@ export class SkillChangesService {
   private async views(rows: Selectable<SkillChangeRequestsTable>[]): Promise<SkillChangeView[]> {
     if (rows.length === 0) return [];
     const agentIds = [...new Set(rows.map((r) => r.agent_id))];
+    // org-filter: the agent ids come from request rows the callers read with their org filter
     const agents = await this.db
       .selectFrom("agents")
       .innerJoin("agent_versions", (j) =>

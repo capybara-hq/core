@@ -65,15 +65,15 @@ function spied(name: string, impl: DeviceProvider): DeviceProvider {
     calls.push(`${name} resume ${h.id}`);
     return impl.resume(h, s);
   };
-  w.destroy = async (h, s) => {
+  w.destroy = async (h, s, f) => {
     calls.push(`${name} destroy ${h.id}`);
     if (destroyFails) throw new Error("provider refused the destroy");
-    return impl.destroy(h, s);
+    return impl.destroy(h, s, f);
   };
-  w.destroyByName = async (n, s) => {
+  w.destroyByName = async (n, s, f) => {
     calls.push(`${name} destroy-by-name ${n}`);
     if (destroyByNameFails) throw new Error("provider refused the destroy by name");
-    return impl.destroyByName(n, s);
+    return impl.destroyByName(n, s, f);
   };
   w.killAll = (h, s) => {
     calls.push(`${name} killAll ${h.id}`);

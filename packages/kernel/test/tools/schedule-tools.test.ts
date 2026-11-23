@@ -35,6 +35,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
+  createOrg,
   createOrgWithProviders,
   enableExtensions,
   eventsOf,
@@ -315,6 +316,29 @@ describe("schedule tools (spec §11)", () => {
       conversationId: null,
       chat: { connectionId, chatId: "chat-dm-1", chatType: "dm" },
     });
+  });
+
+  it("a chat card never shows the name of another org's connection (issue #115)", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const otherOrg = await createOrg(owner, "Other");
+    await enableExtensions(raw, otherOrg, "fake-im");
+    const foreign = randomUUID();
+    await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
+      VALUES (${foreign}, ${otherOrg}, 'fake-im', 'Other org bot', ${agentId}, ${ownerId})`.execute(
+      raw,
+    );
+    const input = {
+      name: "DM brief",
+      prompt: "Summarize the build.",
+      cron: "0 9 * * *",
+      mode: "chat",
+      chat: { connectionId: foreign, chatId: "chat-dm-1", agentId },
+    };
+    const p = await policyOf("ScheduleCreate", input, aliceId, conv);
+    expect(p.summary?.en).not.toContain("Other org bot");
+    expect(p.summary?.en).toContain(`the direct chat on ${foreign}`);
+    expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toBeTruthy();
+    expect(await tasksOf(aliceId)).toEqual([]);
   });
 
   it("agentId is a chat property; the old top-level form is rejected", async () => {
