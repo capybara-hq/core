@@ -186,10 +186,10 @@ const HELPER_MODULES = [
 /** The shipped program's layout, resolved from this module's own installed location. */
 export function installedLayout(): ManifestLayout {
   const here = fileURLToPath(import.meta.url);
-  const native = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "native-files.py");
+  const native = SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "native-files.py");
   if (!native || sha256(native.source) !== native.sha256)
     throw new RuntimeManifestError("Bundled native helper source does not match its hash");
-  const linux = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+  const linux = SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "linux-sandbox.py");
   if (!linux || sha256(linux.source) !== linux.sha256)
     throw new RuntimeManifestError("Bundled Linux launcher source does not match its hash");
   return {

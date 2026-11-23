@@ -3417,11 +3417,9 @@ export const SANDBOX_RUNTIME_DIRECTORIES: readonly string[];
 // @public
 export const SANDBOX_RUNTIME_SOURCE: {
     readonly version: number;
-    readonly files: readonly {
-        readonly name: string;
-        readonly source: string;
-        readonly sha256: string;
-    }[];
+    readonly files: readonly SandboxRuntimeFile[];
+    readonly current: readonly SandboxRuntimeFile[];
+    readonly accepted: Readonly<Record<string, readonly string[]>>;
 };
 
 // @public
@@ -3669,6 +3667,17 @@ export interface SandboxRoots {
 
 // @public
 export function sandboxRuntimeDirectoryOf(root: string): string | null;
+
+// @public
+export type SandboxRuntimeFeature = "fileReadRoots";
+
+// @public
+export interface SandboxRuntimeFile {
+    readonly features?: readonly SandboxRuntimeFeature[];
+    readonly name: string;
+    readonly sha256: string;
+    readonly source: string;
+}
 
 // @public
 export class SandboxScopeDeniedError extends Error {
