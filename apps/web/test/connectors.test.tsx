@@ -211,6 +211,35 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     },
   );
 
+  it("template cards sort by the page's locale, not the runtime's (server and browser agree)", async () => {
+    // Under the zh collation 表 (biao) comes before 云 (yun); in code point order 云 comes first.
+    const drive = template({
+      id: "t-drive",
+      name: "google-drive",
+      displayName: { zh: "Google 云端硬盘", en: "Google Drive" },
+    });
+    const sheets = template({
+      id: "t-sheets",
+      name: "google-sheets",
+      displayName: { zh: "Google 表格", en: "Google Sheets" },
+    });
+    await renderRouteWithCache(
+      "/connectors",
+      {
+        "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
+        [COMPONENTS]: () => json(200, { components: [drive, sheets] }),
+      },
+      { locale: "zh" },
+    );
+    const list = await screen.findByRole("list", { name: zh.connectors.title });
+    const titles = within(list)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent ?? "");
+    const at = (name: string) => titles.findIndex((t) => t.includes(name));
+    expect(at("Google 表格")).toBeGreaterThanOrEqual(0);
+    expect(at("Google 表格")).toBeLessThan(at("Google 云端硬盘"));
+  });
+
   it("启用 switches the template on, then goes straight to entering its input (补充配置, back to /connectors)", async () => {
     let on = false;
     const calls = stubApi({
