@@ -56,6 +56,7 @@ import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
@@ -1973,30 +1974,32 @@ export class PluginImport {
   /** The expired staging rows, batch by batch; returns the rows deleted. */
   // org-filter: deployment-wide expiry sweep (maintenance job) over every org's staging rows
   private async cleanupStagingRows(): Promise<number> {
-    let total = 0;
-    for (;;) {
-      const batch = await this.db
-        .selectFrom("plugin_import_staging")
-        .select(["id", "object_prefix"])
-        .where("expires_at", "<=", sql<Date>`now()`)
-        .orderBy("expires_at")
-        .limit(CLEANUP_BATCH)
-        .execute();
-      if (batch.length === 0) return total;
-      let progressed = 0;
-      for (const r of batch) {
-        try {
-          const done = await this.cleanupOne(r);
-          if (done) {
-            total++;
-            progressed++;
+    return asPlatform("deployment-wide expiry sweep", async () => {
+      let total = 0;
+      for (;;) {
+        const batch = await this.db
+          .selectFrom("plugin_import_staging")
+          .select(["id", "object_prefix"])
+          .where("expires_at", "<=", sql<Date>`now()`)
+          .orderBy("expires_at")
+          .limit(CLEANUP_BATCH)
+          .execute();
+        if (batch.length === 0) return total;
+        let progressed = 0;
+        for (const r of batch) {
+          try {
+            const done = await this.cleanupOne(r);
+            if (done) {
+              total++;
+              progressed++;
+            }
+          } catch (err) {
+            this.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
           }
-        } catch (err) {
-          this.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
         }
+        if (progressed === 0 || batch.length < CLEANUP_BATCH) return total;
       }
-      if (progressed === 0 || batch.length < CLEANUP_BATCH) return total;
-    }
+    });
   }
 
   /**
@@ -2006,20 +2009,22 @@ export class PluginImport {
   // org-filter: deployment-wide expiry sweep; the row id comes from the sweep's own read
   @Transactional()
   private async cleanupOne(r: { id: string; object_prefix: string | null }): Promise<boolean> {
-    const t = this.db;
-    const locked = await t
-      .selectFrom("plugin_import_staging")
-      .select(["id", "org_id", "review", "manifest"])
-      .where("id", "=", r.id)
-      .where("expires_at", "<=", sql<Date>`now()`)
-      .forUpdate()
-      .skipLocked()
-      .executeTakeFirst();
-    if (!locked) return false;
-    if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
-    await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
-    await this.dropOrgPackage(locked);
-    return true;
+    return asPlatform("deployment-wide expiry sweep", async () => {
+      const t = this.db;
+      const locked = await t
+        .selectFrom("plugin_import_staging")
+        .select(["id", "org_id", "review", "manifest"])
+        .where("id", "=", r.id)
+        .where("expires_at", "<=", sql<Date>`now()`)
+        .forUpdate()
+        .skipLocked()
+        .executeTakeFirst();
+      if (!locked) return false;
+      if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
+      await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
+      await this.dropOrgPackage(locked);
+      return true;
+    });
   }
 
   /**

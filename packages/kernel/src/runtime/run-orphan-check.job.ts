@@ -4,6 +4,7 @@ import { EventLog } from "../conversations/event-log.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
@@ -130,14 +131,16 @@ export async function jobInOutbox(
   queue: string,
   jobId: string,
 ): Promise<boolean> {
-  const row = await db
-    .selectFrom("outbox")
-    .select("id")
-    .where("queue", "=", queue)
-    .where("job_id", "=", jobId)
-    .where("dead_at", "is", null)
-    .executeTakeFirst();
-  return row !== undefined;
+  return asPlatform("orphan check: outbox rows by kernel job id", async () => {
+    const row = await db
+      .selectFrom("outbox")
+      .select("id")
+      .where("queue", "=", queue)
+      .where("job_id", "=", jobId)
+      .where("dead_at", "is", null)
+      .executeTakeFirst();
+    return row !== undefined;
+  });
 }
 
 /** Every page of {@link orphanCandidates}, at most {@link RUN_ORPHAN_CHECK_MAX_PAGES}. */
@@ -300,15 +303,17 @@ export class RunOrphanCheck {
   // org-filter: outbox rows looked up by queue and deterministic kernel job id (unique across the
   // deployment) in the deployment-wide orphan check; outbox.org_id is nullable
   private async hasDeadDelivery(c: OrphanCandidate): Promise<boolean> {
-    return (
-      (await this.db
-        .selectFrom("outbox")
-        .select("id")
-        .where("queue", "=", c.queue)
-        .where("job_id", "=", c.jobId)
-        .where("dead_at", ">=", sql<Date>`${c.since}::timestamptz`)
-        .executeTakeFirst()) !== undefined
-    );
+    return asPlatform("orphan check: outbox rows by kernel job id", async () => {
+      return (
+        (await this.db
+          .selectFrom("outbox")
+          .select("id")
+          .where("queue", "=", c.queue)
+          .where("job_id", "=", c.jobId)
+          .where("dead_at", ">=", sql<Date>`${c.since}::timestamptz`)
+          .executeTakeFirst()) !== undefined
+      );
+    });
   }
 
   /**

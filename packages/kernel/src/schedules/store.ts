@@ -6,6 +6,7 @@ import type {
   ScheduledTaskRunsTable,
   ScheduledTasksTable,
 } from "../db/kernel-schema.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import type { ScheduledTask, ScheduledTaskGrant, TaskRun, TaskRunStatus } from "./types.js";
 
 /** What a caller supplies to create a task; the counters, pause fields and timestamps default. */
@@ -171,7 +172,7 @@ export class ScheduledTaskStore {
 
   /** Patches a live task; null when it is missing or deleted. */
   // org-filter: by the id of a task its caller loaded under an org filter (lockManaged / lockTask)
-  // or locked in the scan's deployment-wide due sweep
+  // or locked in the scan's due sweep (which runs in the platform scope)
   async updateTask(
     t: KernelSchemaDb,
     id: string,
@@ -250,19 +251,21 @@ export class ScheduledTaskStore {
    */
   // org-filter: the scan's deployment-wide due-task sweep (LockedCron), each task fired in its own org
   async lockDue(t: KernelSchemaDb, now: Date, limit: number): Promise<ScheduledTask[]> {
-    const rows = await t
-      .selectFrom("scheduled_tasks")
-      .selectAll()
-      .where("status", "=", "active")
-      .where("deleted_at", "is", null)
-      .where("next_run_at", "<=", now)
-      .orderBy("next_run_at")
-      .orderBy("id")
-      .limit(limit)
-      .forUpdate()
-      .skipLocked()
-      .execute();
-    return rows.map(toTask);
+    return asPlatform("deployment-wide due-task sweep", async () => {
+      const rows = await t
+        .selectFrom("scheduled_tasks")
+        .selectAll()
+        .where("status", "=", "active")
+        .where("deleted_at", "is", null)
+        .where("next_run_at", "<=", now)
+        .orderBy("next_run_at")
+        .orderBy("id")
+        .limit(limit)
+        .forUpdate()
+        .skipLocked()
+        .execute();
+      return rows.map(toTask);
+    });
   }
 
   /**

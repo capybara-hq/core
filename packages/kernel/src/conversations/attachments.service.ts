@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { CacheService } from "../infra/cache/cache.service.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -1270,25 +1271,26 @@ export class AttachmentsService {
   // org-filter: deployment-wide cleanup job across all orgs; each claimed row is deleted by its
   // own id and handled in its own org (r.org_id)
   async purgeRead(): Promise<number> {
-    if (!this.storage.available) return 0;
-    const hours = this.config.get().attachments.readPurgeAfterHours;
-    let deleted = 0;
-    const failed: string[] = [];
-    for (;;) {
-      const claimed = await this.db
-        .updateTable("attachments")
-        .set({ status: "deleting" })
-        .where(
-          "id",
-          "in",
-          this.db
-            .selectFrom("attachments")
-            .select("id")
-            .where("purpose", "=", "read")
-            .where(
-              "conversation_id",
-              "in",
-              sql<string>`(
+    return asPlatform("deployment-wide cleanup job across all orgs", async () => {
+      if (!this.storage.available) return 0;
+      const hours = this.config.get().attachments.readPurgeAfterHours;
+      let deleted = 0;
+      const failed: string[] = [];
+      for (;;) {
+        const claimed = await this.db
+          .updateTable("attachments")
+          .set({ status: "deleting" })
+          .where(
+            "id",
+            "in",
+            this.db
+              .selectFrom("attachments")
+              .select("id")
+              .where("purpose", "=", "read")
+              .where(
+                "conversation_id",
+                "in",
+                sql<string>`(
                 WITH RECURSIVE gone(id, level) AS (
                   SELECT c.id, 0 FROM capybara.conversations c
                   WHERE c.deleted_at < now() - make_interval(hours => ${hours})
@@ -1299,36 +1301,37 @@ export class AttachmentsService {
                 )
                 SELECT id FROM gone
               )`,
-            )
-            .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
-            .orderBy("created_at")
-            .limit(READ_PURGE_BATCH)
-            .forUpdate()
-            .skipLocked(),
-        )
-        .returning(["id", "org_id", "object_key"])
-        .execute();
-      if (claimed.length === 0) return deleted;
-      for (const r of claimed) {
-        try {
-          await this.storage.kernel(r.org_id).delete(r.object_key);
-          await this.db
-            .deleteFrom("attachments")
-            .where("id", "=", r.id)
-            .where("purpose", "=", "read")
-            .execute();
-          deleted++;
-        } catch (err) {
-          failed.push(r.id);
-          this.log.warn("cannot purge read attachment; will retry", {
-            orgId: r.org_id,
-            attachmentId: r.id,
-            err,
-          });
+              )
+              .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
+              .orderBy("created_at")
+              .limit(READ_PURGE_BATCH)
+              .forUpdate()
+              .skipLocked(),
+          )
+          .returning(["id", "org_id", "object_key"])
+          .execute();
+        if (claimed.length === 0) return deleted;
+        for (const r of claimed) {
+          try {
+            await this.storage.kernel(r.org_id).delete(r.object_key);
+            await this.db
+              .deleteFrom("attachments")
+              .where("id", "=", r.id)
+              .where("purpose", "=", "read")
+              .execute();
+            deleted++;
+          } catch (err) {
+            failed.push(r.id);
+            this.log.warn("cannot purge read attachment; will retry", {
+              orgId: r.org_id,
+              attachmentId: r.id,
+              err,
+            });
+          }
         }
+        if (claimed.length < READ_PURGE_BATCH) return deleted;
       }
-      if (claimed.length < READ_PURGE_BATCH) return deleted;
-    }
+    });
   }
 
   /**
@@ -1341,61 +1344,63 @@ export class AttachmentsService {
   // org-filter: deployment-wide cleanup job across all orgs; each claimed row is deleted by its
   // own id and handled in its own org (r.org_id)
   async deleteExpired(): Promise<number> {
-    if (!this.storage.available) return 0;
-    let deleted = 0;
-    const failed: string[] = [];
-    for (;;) {
-      const claimed = await this.db
-        .updateTable("attachments")
-        .set({ status: "deleting" })
-        .where(
-          "id",
-          "in",
-          this.db
-            .selectFrom("attachments")
-            .select("id")
-            .where("conversation_id", "is", null)
-            .where("expires_at", "<", sql<Date>`now()`)
-            .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
-            .orderBy("expires_at")
-            .limit(CLEANUP_BATCH)
-            .forUpdate()
-            .skipLocked(),
-        )
-        .returning(["id", "org_id", "object_key", "purpose"])
-        .execute();
-      if (claimed.length === 0) return deleted;
-      for (const r of claimed) {
-        try {
-          const store = this.storage.kernel(r.org_id);
-          await store.delete(r.object_key);
-          if (r.purpose === "skill-package") {
-            // 解出的文件没被任何版本引用（处理中途失败、或从未用掉）才删
-            const prefix = skillFilesPrefix(r.id);
-            const used = await this.db
-              .selectFrom("skill_versions")
-              .select("skill_id")
-              .where("object_prefix", "=", prefix)
-              .executeTakeFirst();
-            if (!used) await store.deletePrefix(prefix);
+    return asPlatform("deployment-wide cleanup job across all orgs", async () => {
+      if (!this.storage.available) return 0;
+      let deleted = 0;
+      const failed: string[] = [];
+      for (;;) {
+        const claimed = await this.db
+          .updateTable("attachments")
+          .set({ status: "deleting" })
+          .where(
+            "id",
+            "in",
+            this.db
+              .selectFrom("attachments")
+              .select("id")
+              .where("conversation_id", "is", null)
+              .where("expires_at", "<", sql<Date>`now()`)
+              .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
+              .orderBy("expires_at")
+              .limit(CLEANUP_BATCH)
+              .forUpdate()
+              .skipLocked(),
+          )
+          .returning(["id", "org_id", "object_key", "purpose"])
+          .execute();
+        if (claimed.length === 0) return deleted;
+        for (const r of claimed) {
+          try {
+            const store = this.storage.kernel(r.org_id);
+            await store.delete(r.object_key);
+            if (r.purpose === "skill-package") {
+              // delete the unpacked files only when no version references them (a failed or unused upload)
+              const prefix = skillFilesPrefix(r.id);
+              const used = await this.db
+                .selectFrom("skill_versions")
+                .select("skill_id")
+                .where("object_prefix", "=", prefix)
+                .executeTakeFirst();
+              if (!used) await store.deletePrefix(prefix);
+            }
+            await this.db
+              .deleteFrom("attachments")
+              .where("id", "=", r.id)
+              .where("conversation_id", "is", null)
+              .execute();
+            deleted++;
+          } catch (err) {
+            failed.push(r.id);
+            this.log.warn("cannot delete expired attachment; will retry", {
+              orgId: r.org_id,
+              attachmentId: r.id,
+              err,
+            });
           }
-          await this.db
-            .deleteFrom("attachments")
-            .where("id", "=", r.id)
-            .where("conversation_id", "is", null)
-            .execute();
-          deleted++;
-        } catch (err) {
-          failed.push(r.id);
-          this.log.warn("cannot delete expired attachment; will retry", {
-            orgId: r.org_id,
-            attachmentId: r.id,
-            err,
-          });
         }
+        if (claimed.length < CLEANUP_BATCH) return deleted;
       }
-      if (claimed.length < CLEANUP_BATCH) return deleted;
-    }
+    });
   }
 }
 
