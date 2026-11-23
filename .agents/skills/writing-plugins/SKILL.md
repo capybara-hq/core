@@ -120,7 +120,7 @@ live check rows. v2 replaced v1's steps and files directly (pre-0.1.0, no compat
   channel's credentials; at most one per plugin; the platform's super admin sees it; variables:
   the common ones plus `signInCallbackUrl`, the SSO callback of a login guide) or
   `device-connection` (a device provider's guide for connecting a machine: member audience only,
-  variables `publicUrl`, `orgId`, `orgName`, `pluginName`; served to members with `agents.use`;
+  variables `publicUrl`, `orgId`, `orgName`, `pluginName`; served to members with `agents.use`; `::check` lines are refused there (no target to check, `SetupGuidePlaceInfo.checks`);
   native shells offer no "connect this machine": the guide tells the person how to connect with
   `capybara-device`, maintainer decision 2026-11-23). The title is
   the document's `#` heading; there is no title, steps or files field.

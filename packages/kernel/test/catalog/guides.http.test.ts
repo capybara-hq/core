@@ -689,6 +689,22 @@ describe("setup guides v2: device-connection", () => {
     }
   });
 
+  it("refuses to import a device-connection guide with a check line", async () => {
+    const bytes = await pluginTgz({
+      manifest: { name: "dev-guide", setupGuides: [{ id: "connect", place: "device-connection" }] },
+      files: { "guides/connect.md": `${DEVICE_DOC}\n::check capybara:public-url Public URL\n` },
+      extension: { manifest: {} },
+    });
+    const r = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(bytes),
+    });
+    expect(r.statusCode, r.body).toBeGreaterThanOrEqual(400);
+    expect(r.body).toContain("is not allowed in place device-connection");
+  });
+
   it("renders the platform preview with the member audience and an unresolved orgId", async () => {
     const itemId = await importPlugin(env, await devicePlugin());
     const r = await env.root({

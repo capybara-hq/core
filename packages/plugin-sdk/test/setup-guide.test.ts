@@ -95,8 +95,12 @@ describe("places and paths", () => {
       modes: [],
       audiences: ["member"],
       drift: false,
+      checks: false,
       variables: { publicUrl: "url", orgId: "token", orgName: "text", pluginName: "token" },
     });
+    for (const p of SETUP_GUIDE_PLACES) {
+      if (p !== "device-connection") expect(SETUP_GUIDE_PLACE_INFO[p].checks).toBe(true);
+    }
   });
 
   it("names the documents by convention", () => {
@@ -365,6 +369,21 @@ describe("validateSetupGuide: language parity", () => {
     const zhDoc = doc(`${F}yaml`, "a: 1", F, "::: mode webhook", ":::");
     expect(errors(v(enDoc, { zh: zhDoc }))).toEqual([
       "guides/slack-app.zh.md: code block 1 is in another section than guides/slack-app.md block 1; code blocks must be identical in every language",
+    ]);
+  });
+});
+
+describe("check lines in a place without a target", () => {
+  it("refuses check lines in device-connection", () => {
+    expect(
+      errors(
+        v(doc("::check capybara:public-url Public URL", "", "::check key-ok Key"), {
+          place: "device-connection",
+        }),
+      ),
+    ).toEqual([
+      "guides/slack-app.md:3: check capybara:public-url is not allowed in place device-connection (guide slack-app): guides of this place have no target to check, so remove the line",
+      "guides/slack-app.md:5: check key-ok is not allowed in place device-connection (guide slack-app): guides of this place have no target to check, so remove the line",
     ]);
   });
 });

@@ -58,6 +58,8 @@ export interface SetupGuidePlaceInfo {
   audiences: readonly SetupGuideAudience[];
   variables: Readonly<Record<string, SetupGuideVariableType>>;
   drift: boolean;
+  /** Whether guides of the place may use check lines (a place with no target has nothing to check). */
+  checks: boolean;
 }
 
 const COMMON_VARIABLES = {
@@ -80,6 +82,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
       connectionName: "text",
     },
     drift: true,
+    checks: true,
   },
   "connector-template": {
     modes: [],
@@ -93,18 +96,21 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
       connectorName: "text",
     },
     drift: true,
+    checks: true,
   },
   "extension-deployment": {
     modes: [],
     audiences: ["admin"],
     variables: { ...COMMON_VARIABLES, pluginName: "text", signInCallbackUrl: "url" },
     drift: false,
+    checks: true,
   },
   "device-connection": {
     modes: [],
     audiences: ["member"],
     variables: { publicUrl: "url", orgId: "token", orgName: "text", pluginName: "token" },
     drift: false,
+    checks: false,
   },
 };
 
@@ -257,7 +263,15 @@ export function validateSetupGuide(input: {
         );
       }
     }
-    if (input.pluginChecks !== undefined) {
+    if (!info.checks) {
+      for (const c of parsed.checks) {
+        err(
+          c.line,
+          `check ${c.id} is not allowed in place ${input.place}${input.id !== undefined ? ` (guide ${input.id})` : ""}: guides of this place have no target to check, so remove the line`,
+        );
+      }
+    }
+    if (input.pluginChecks !== undefined && info.checks) {
       for (const c of parsed.checks) {
         if (c.source === "plugin" && !input.pluginChecks.includes(c.id)) {
           err(c.line, `check ${c.id} is not declared in the extension's permissions.setupChecks`);

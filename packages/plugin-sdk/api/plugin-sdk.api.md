@@ -3882,6 +3882,7 @@ export type SetupGuidePlace = (typeof SETUP_GUIDE_PLACES)[number];
 // @public
 export interface SetupGuidePlaceInfo {
     audiences: readonly SetupGuideAudience[];
+    checks: boolean;
     drift: boolean;
     modes: readonly string[];
     variables: Readonly<Record<string, SetupGuideVariableType>>;
