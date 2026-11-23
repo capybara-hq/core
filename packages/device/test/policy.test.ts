@@ -357,6 +357,20 @@ describe("policy command", () => {
     expect(plain.out).not.toContain(note);
   });
 
+  it.skipIf(process.platform !== "darwin")(
+    "notes the inner denies of a path spelled through the macOS data volume firmlink",
+    async () => {
+      login();
+      writePolicy(dir, DEFAULT_POLICY);
+      mkdirSync(join(home, ".ssh"));
+      const r = await run(["add", "projectPaths", `/System/Volumes/Data${realpathSync(home)}`]);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(
+        "Secrets, capybara-device's own state and other connections inside it stay unreadable.",
+      );
+    },
+  );
+
   it("add checks other connections when not logged in", async () => {
     const otherWork = project("other-work");
     otherConnection("other", otherWork);

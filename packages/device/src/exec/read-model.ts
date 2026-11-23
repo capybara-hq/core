@@ -190,7 +190,7 @@ const DARWIN_DATA_VOLUME = "/system/volumes/data/";
  * is not a symlink, so `realpath` keeps either spelling as given; used for the deny checks only,
  * where an extra form can only add a refusal. Elsewhere `paths` as given.
  */
-function withFirmlinkForms(paths: readonly string[]): string[] {
+export function withFirmlinkForms(paths: readonly string[]): string[] {
   if (process.platform !== "darwin") return [...paths];
   const out = new Set(paths);
   for (const p of paths)
