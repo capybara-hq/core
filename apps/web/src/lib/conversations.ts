@@ -1,4 +1,4 @@
-import type { AgentProfile } from "./agents";
+import type { AgentProfile, Effort } from "./agents";
 import { apiFetch } from "./api";
 import type { OrgRole } from "./members";
 import type { PersonRef } from "./people";
@@ -23,8 +23,8 @@ export type ContentBlock =
   /** An attachment the model only gets a reference to (an xlsx, say), same rules as the others. */
   | { type: "file"; mediaType: string; source: MediaSource; name?: string; size?: number };
 
-/** 媒体块的来源：日志里只会是 `ref`（字节不进日志）。 */
-export type MediaSource = { kind: "ref"; attachmentId: string } | { kind: "base64"; data: string };
+/** A media block's source: only `ref` in the log (bytes never enter it). */
+export type MediaSource = { kind: "ref"; attachmentId: string };
 
 type FormText = string | { zh: string; en: string };
 
@@ -91,7 +91,7 @@ export interface ReviewRecord {
    * Who approved the call's crossing: inside the scope (`scope`), the review model, or Auto
    * by itself (approval-only profiles design). Absent on a denial.
    */
-  decisionSource?: "scope" | "review-model" | "full-access";
+  decisionSource?: "scope" | "human" | "review-model" | "full-access" | "task-grant";
   /** The boundary crossing the allow covered (absent when the call crossed nothing). */
   crossing?: "directory" | "host" | "outside-sandbox" | "sensitive";
 }
@@ -533,6 +533,11 @@ type EventBody =
     }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
+  /** Model context and review records the timeline does not draw (kernel `events.ts`). */
+  | {
+      type: "permission_context" | "permission_reviewed" | "plugin_context";
+      payload: Record<string, unknown>;
+    }
   /** A plugin policy hook denied a model request or a tool call (the timeline names the plugin). */
   | {
       type: "hook_denied";
@@ -865,7 +870,7 @@ export interface MessageInput {
   files?: string[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
-  effort?: string;
+  effort?: Effort;
   /** A retry after a failed run: the seq of the repeated message. */
   retryOf?: number;
   /** Invoke this skill (phase D): `text` is its arguments. */

@@ -651,7 +651,8 @@ export class ExtensionAdmin {
       list.push({
         orgId: r.org_id,
         contribution: r.contribution,
-        kind: r.kind,
+        // written only from a validated report (`ReportBody.kind`)
+        kind: r.kind as NonNullable<AdminExtensionView["clientReports"]>[number]["kind"],
         count: r.count,
         firstAt: r.first_at.toISOString(),
         lastAt: r.last_at.toISOString(),

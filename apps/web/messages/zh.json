@@ -5536,7 +5536,8 @@
         "connector": "连接器",
         "skill": "技能",
         "plugin": "依赖插件",
-        "agent_template": "智能体模板"
+        "agent_template": "智能体模板",
+        "theme": "主题"
       },
       "installedAt": "安装于 {at}",
       "cleanup": "清理",
@@ -6665,7 +6666,9 @@
         "not_grantable": "不能预先批准",
         "not_available": "智能体目前没有这个工具",
         "needs_role": "需要你没有的角色",
-        "fixed_ask": "总是需要人确认"
+        "fixed_ask": "总是需要人确认",
+        "needs_admin": "不在组织的网络许可内，需要组织管理员添加",
+        "device_refuses": "任务的设备不接受网络设置的变更"
       },
       "network": "网络访问",
       "networkHint": "任务运行时可以在其设备上直接访问、无需询问的域名（不超出组织允许的范围）。",

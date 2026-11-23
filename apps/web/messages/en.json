@@ -5548,7 +5548,8 @@
         "connector": "Connector",
         "skill": "Skill",
         "plugin": "Dependency plugin",
-        "agent_template": "Agent template"
+        "agent_template": "Agent template",
+        "theme": "Theme"
       },
       "installedAt": "Installed {at}",
       "cleanup": "Clean up",
@@ -6677,7 +6678,9 @@
         "not_grantable": "Can't be approved in advance",
         "not_available": "Not one of the agent's tools now",
         "needs_role": "Needs a role you don't have",
-        "fixed_ask": "Always asks a person"
+        "fixed_ask": "Always asks a person",
+        "needs_admin": "Outside the organization's network allowlist: an organization admin must add it",
+        "device_refuses": "The task's device can't take network changes"
       },
       "network": "Network access",
       "networkHint": "Domains the task's runs may reach on its device without asking (within what the organization allows).",
