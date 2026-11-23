@@ -64,6 +64,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let runQueue: Queue;
+let maintQueue: Queue;
 let k: TestKernel;
 let req: Req;
 let orgId: string;
@@ -101,6 +102,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redis });
+  maintQueue = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redis });
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   req = await session(k, "owner");
@@ -133,6 +135,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await k?.close();
   await runQueue?.close();
+  await maintQueue?.close();
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -536,12 +539,17 @@ it("deleting an org stops only the conversations that still have live work", asy
   }
   try {
     await drainOutbox(k.app, { jobName: STOP_DELETED_ORG_JOB });
-    await waitForRunJobDone(db, runQueue, id, 15_000);
+    // The stop job commits each conversation's abort before it stops that conversation's
+    // background work, so the run can read `aborted` while the job is still running: wait for
+    // the job itself to finish (it is removed on completion) before reading the stopper's calls.
+    const stopJob = `stop-deleted-org-${deletingOrg}`;
     await waitFor(
-      async () => (await runsOf(db, live)).find((r) => r.id === id)?.status === "aborted",
+      async () => (await maintQueue.getJob(stopJob)) == null,
       15_000,
-      "live run aborted",
+      `${stopJob} done`,
     );
+    await waitForRunJobDone(db, runQueue, id, 15_000);
+    expect((await runsOf(db, live)).find((r) => r.id === id)?.status).toBe("aborted");
     const calls = stopped.mock.calls.map((c) => c[0]);
     expect(calls).toContain(live);
     for (const conv of idle) expect(calls).not.toContain(conv);
