@@ -308,6 +308,16 @@ Made while building phases 2–3 (within the decisions above):
   claim reads, the route-access check of extension routes and the session lookup run unscoped;
   `@Cacheable` keys of org data must carry the org before `enforce`, or one org's filtered view is
   cached for another.
+- **A superuser or a BYPASSRLS role is never subject to RLS**, `FORCE` or not. The official compose
+  file connects as its `POSTGRES_USER`, a superuser, so on such a deployment `enforce` changes
+  nothing: enforcing needs a role without `SUPERUSER` and `BYPASSRLS` first (it may still own the
+  schema; `FORCE` covers the owner), which makes part of phase 6 a prerequisite of phase 5. The
+  kernel logs an error at start when `db.rls` is `enforce` on such a role (it never fails the start),
+  and the enforce tests connect as a non-superuser owner of their database.
+- **Phase 3 ships as migration `0181_rls_policies.sql`**: the helper `capybara.rls_admits` and one
+  `org_scope` policy per table (`DROP POLICY IF EXISTS` + `CREATE POLICY`, since Postgres has no
+  `CREATE POLICY IF NOT EXISTS`). The measurement of §8 is `tools/dev/rls-measure.ts`, run against
+  a kernel once per `db.rls` value on the same commit.
 - **Not on the scoped pool**, and so admitted whatever `db.rls` says: the migrator's own client, the
   owned startup activation session (platform work at start, before the gate opens) and extension
   pools (`ctx.db`, out of scope by decision 9).
