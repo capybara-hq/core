@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
+  DEVICE_REPORT_LIMITS,
   EXTENSION_POINTS,
   isFileSystemGoneError,
   isProjectPathRefusedError,
@@ -218,6 +219,31 @@ describe("SandboxLimits", () => {
     };
     expect(parseDeviceReport(full)).toEqual(full);
     expect(() => parseDeviceReport({ ...ok, reset: "no" })).toThrow(TypeError);
+  });
+
+  it("parseDeviceReport keeps an optional localized changeHint within its size", () => {
+    const ok = {
+      revision: "r1",
+      description: { en: "Docker container" },
+      home: null,
+      limits: [],
+      reset: true,
+    };
+    const hinted = {
+      ...ok,
+      changeHint: { en: "The super admin sets these.", zh: "由超级管理员设置。" },
+    };
+    expect(parseDeviceReport(hinted)).toEqual(hinted);
+    expect(parseDeviceReport(ok)).not.toHaveProperty("changeHint");
+    expect(() => parseDeviceReport({ ...ok, changeHint: "plain" })).toThrow(TypeError);
+    expect(() => parseDeviceReport({ ...ok, changeHint: { en: "" } })).toThrow(TypeError);
+    expect(() => parseDeviceReport({ ...ok, changeHint: { en: "x", de: "y" } })).toThrow(TypeError);
+    expect(() =>
+      parseDeviceReport({
+        ...ok,
+        changeHint: { en: "x".repeat(DEVICE_REPORT_LIMITS.changeHintChars + 1) },
+      }),
+    ).toThrow(TypeError);
   });
 
   it("isProjectPathRefusedError is duck-typed and keeps the reason", () => {

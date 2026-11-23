@@ -202,7 +202,8 @@ export type SandboxBoundary = "operation" | "instance";
  * Runtime support, version 2 (approval-only profiles design, "SDK and protocol"). `boundary:
  * "instance"` with `restricted: null` is a supported device whose scope is the whole instance.
  * `outsideSandbox` says whether a call can run outside the sandbox (an escalated call). Runtime
- * support, not consent.
+ * support, not consent. `limitedBy` names who keeps a crossing closed when it is not the provider
+ * itself ({@link SandboxSupportLimitedBy}); absent, a closed crossing is the provider's own limit.
  */
 export interface SandboxPermissionSupport {
   readonly version: 2;
@@ -221,6 +222,19 @@ export interface SandboxPermissionSupport {
   readonly outsideSandbox: boolean;
   readonly background: boolean;
   readonly unavailableReason?: string;
+  readonly limitedBy?: SandboxSupportLimitedBy;
+}
+
+/**
+ * Who keeps a closed crossing of a {@link SandboxPermissionSupport} closed, when it is not the
+ * provider itself: `owner` is the owner of the machine the device runs on (for example a local
+ * connection's owner ceiling, set on that machine). Only a closed crossing may name one:
+ * `outsideSandbox` with `outsideSandbox: false`, `openPublic` with `network.openPublic: false`.
+ * Display only: the kernel names that layer in its refusals and never enforces from it.
+ */
+export interface SandboxSupportLimitedBy {
+  readonly outsideSandbox?: "owner";
+  readonly openPublic?: "owner";
 }
 
 /**

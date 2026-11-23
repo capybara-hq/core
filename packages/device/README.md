@@ -121,9 +121,13 @@ scope against the **owner ceiling** in `policy.json`, which only you widen, on t
   reach does not cover is refused with a reason (`project_refused`: another connection's directory,
   outside the reach, or a denied path), never shown as missing.
 
-A new login starts with outside-the-sandbox off, the open network and `machine` reach. `login`
-prints the ceiling and how to widen it; a widening (including a wider reach) prints the risk text
-and needs `--yes` or a `y` at the prompt. The organization and the platform have their own
+A new connection starts with outside-the-sandbox on, the open network and `machine` reach (aligned
+with Claude Code: commands run in the sandbox, and a call that asks to run outside it runs only
+as the conversation's permission profile decides: the person approves it, the review model does, or
+the Auto profile grants it). An existing connection keeps its stored ceiling. `login` prints the
+ceiling, the risk text when running outside the sandbox is on, and how to narrow or widen it
+(`capybara-device ceiling set -c <device id> --outside-sandbox off`); a widening (including a
+wider reach) prints the risk text and needs `--yes` or a `y` at the prompt. The organization and the platform have their own
 settings; the narrowest wins.
 
 **Upgrading from policy format 3.** This program reads only `policy.json` format 4. A format 3 file

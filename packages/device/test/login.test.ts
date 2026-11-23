@@ -46,7 +46,8 @@ import {
 
 /** The owner ceiling a new setup writes (B-14). */
 /** A new install's owner ceiling: in the sandbox only, the open network, the whole machine. */
-const NEW_INSTALL = { outsideSandbox: false, network: "open", projectReach: "machine" };
+/** A new connection's owner ceiling: outside the sandbox per approved call, the open network. */
+const NEW_INSTALL = { outsideSandbox: true, network: "open", projectReach: "machine" };
 /** An owner's sandbox-only policy with the allowlist network. */
 const SANDBOX_ONLY = {
   outsideSandbox: false,
@@ -470,15 +471,21 @@ describe("login", () => {
     expect(JSON.parse(readFileSync(credFile(), "utf8")).maxFrameBytes).toBe(4_194_304);
   });
 
-  it("a new install writes the sandbox-only, open-network default and says how to widen it", async () => {
+  it("a new install writes the outside-per-approved-call, open-network default and says how to narrow it", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    // written, not just defaulted: version 4, in the sandbox only, the open network
+    // written, not just defaulted: version 4, outside the sandbox per approved call, the open network
     const file = JSON.parse(readFileSync(policyPath(stateDir()), "utf8"));
     expect(file).toMatchObject({ version: 4, ownerCeiling: NEW_INSTALL, projectPaths: [] });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(helloOutside()).toBe(false);
-    expect(out.filter((l) => l === sandboxOnlyLoginLine("env-1"))).toHaveLength(1);
+    expect(helloOutside()).toBe(true);
+    expect(out.filter((l) => l === outsideSandboxLoginLine("env-1"))).toHaveLength(1);
+    expect(outsideSandboxLoginLine("env-1")).toContain(
+      "capybara-device ceiling set --outside-sandbox off -c env-1",
+    );
+    // the risk text is shown once, at the login that turned it on
+    expect(out.filter((l) => l === outsideSandboxRiskText("env-1"))).toHaveLength(1);
+    expect(out).not.toContain(sandboxOnlyLoginLine("env-1"));
     expect(sandboxOnlyLoginLine("env-1")).toContain(
       "capybara-device ceiling set --outside-sandbox on -c env-1",
     );
@@ -489,16 +496,14 @@ describe("login", () => {
       projectReachLoginLine("machine", 0, "env-1"),
     ]);
     expect(projectReachLoginLine("machine", 0, "env-1")).toMatch(/^Project reach: machine \(/);
-    expect(out).not.toContain(outsideSandboxLoginLine("env-1"));
-    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
-  it("an organization without outside-sandbox runs gets the same default", async () => {
+  it("an organization without outside-sandbox runs gets the same default and is told so", async () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, outsideSandbox: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
-    expect(out).not.toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
+    expect(out).toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
@@ -609,8 +614,15 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
-    expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1"));
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
+    expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1", true));
+    // the ceiling already allows running outside: no hint to widen it
+    expect(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1", true)).not.toContain(
+      "--outside-sandbox on",
+    );
+    expect(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1", false)).toContain(
+      "--outside-sandbox on -c env-1",
+    );
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
   });
 
@@ -619,14 +631,9 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
-    expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
-    out.length = 0;
-    writeOutsideAllowedPolicy(stateDir());
-    tokenAnswers = [granted];
-    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(out).toContain(outsideSandboxLoginLine("env-1"));
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
+    expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
   });
 
   it("--mode docker without the host python3: refused with the fix, before the deployment is asked", async () => {

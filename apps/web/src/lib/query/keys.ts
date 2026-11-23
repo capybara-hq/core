@@ -528,17 +528,6 @@ export const keys = {
       ],
     };
   },
-  /** What the desktop shell reports (never read on the server). */
-  shell() {
-    const all = ["shell"] as const;
-    return {
-      all: all as readonly unknown[],
-      /** This machine's connections into the deployment (`device@2` `status()`). */
-      deviceStatus: (): readonly unknown[] => [...all, "device-status"],
-      /** What runs on this machine now for one device (`device@2` `running({ deviceId })`). */
-      running: (deviceId: string): readonly unknown[] => [...all, "running", deviceId],
-    };
-  },
   deployment() {
     const all = ["deployment"] as const;
     return {

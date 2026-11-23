@@ -68,9 +68,14 @@ signature for the lifecycle and the conformance suite.
 **`networkAllowlist: true`** is a static declaration, not a probe: a provider that cannot restrict outbound hosts does not implement
 `device-provider@1`.
 
-**`report(device, signal)`** answers `DeviceReport` (`{ revision, description: {en, zh?}, home, limits[], reset }`, checked by
+**`report(device, signal)`** answers `DeviceReport` (`{ revision, description: {en, zh?}, home, limits[], reset, changeHint? }`, checked by
 `parseDeviceReport` with the sizes in `DEVICE_REPORT_LIMITS`): what the device page shows (a description, the owner's home or
-null, up to 8 limit lines, whether the provider can reset the files). It is shown to people and never used for enforcement.
+null, up to 8 limit lines, whether the provider can reset the files, and `changeHint`: who changes the limits and how, in the
+provider's words). It is shown to people and never used for enforcement. The kernel appends `changeHint.en` to every refusal
+that cites the report (`escalationCeilingWhy` for the `provider` and `owner` layers, the device network refusal), worded
+neutrally ("to change this, as the device's provider says: …"). The permission support's optional `limitedBy: { outsideSandbox?,
+openPublic? }` (value `owner`, only on a closed crossing) makes `effectiveDeviceSandbox` name the `owner` layer instead of
+`provider`; `deviceSideLayer` treats both alike (they clamp the sandbox network, never an org's per-call grants).
 The kernel stores the parsed report in `devices.report` (migration 0175) and refreshes it under the exclusive lifecycle lease
 after a create and a resume, through a bounded call raced against its deadline (a provider that ignores the signal is given up
 at the bound); a failed or invalid report leaves the stored one and never fails the lifecycle step.

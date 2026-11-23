@@ -95,12 +95,19 @@ function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps
   return rest;
 }
 
-/** How a form section places its head (spec §5.3). */
-export type FormSectionLayout = "columns" | "stacked";
+/**
+ * How a form section places its head (spec §5.3): only ever forced to `stacked`. Whether sections
+ * stand in two columns is the template's choice from the page's section count, never a page's.
+ */
+export type FormSectionLayout = "stacked";
 
 /**
- * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
- * the left, the fields on a `panel` card on the right. Sections are separated by spacing. The card
+ * A form section (spec §5.3): the title (h2) and a prose-small muted description, then the fields
+ * on a `panel` card. The template places the head from the section count (spec §5.3 "Columns by
+ * count", {@link SECTION_COLUMNS_MIN}): with one or two sections in the page (or the tab's panel)
+ * the head stands above the card across the full width; with three or more, and room for the
+ * label column, the head is a 240 column beside the card. A SettingsPage's sections are always
+ * stacked (its sub-nav is the title column). Sections are separated by spacing. The card
  * is the one box (spec §1): what it holds groups with headings and hairlines (`Subsection`,
  * `ItemList`), and boxed pieces inside draw their unboxed form (a DataTable unframed, a Repeater
  * divided, a CodeBlock borderless).
@@ -109,14 +116,14 @@ export type FormSectionLayout = "columns" | "stacked";
  * `flush` section keeps its flush card and draws `fields` switch rows instead; `items` draws item
  * row placeholders in a flush card (a section that lists items, spec §5.8); a section whose data
  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
- * `layout="stacked"` puts the head above a fields card across the full width, for content that
- * needs it (an editor); below 841 every section is stacked anyway.
+ * `layout="stacked"` keeps one section stacked in a page of many, for content that needs the width
+ * (an editor); there is no way to force the columns.
  */
 export function FormSection({
   id,
   title,
   description,
-  layout = "columns",
+  layout,
   flush,
   loading,
   children,
@@ -124,7 +131,7 @@ export function FormSection({
   id: string;
   title: string;
   description?: string;
-  /** `columns` (default): the head column beside the card; `stacked`: the head above it. */
+  /** `stacked`: the head above the card even where the page's sections stand in columns. */
   layout?: FormSectionLayout;
   /**
    * The card without padding, for content that reaches its edges: a SwitchList, a flush
@@ -190,7 +197,7 @@ export function LoadingFormSection({
   items,
   title,
   description,
-  layout = "columns",
+  layout,
 }: {
   layout?: FormSectionLayout;
   fields?: number | FieldShape[];

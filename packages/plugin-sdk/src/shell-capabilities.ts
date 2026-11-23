@@ -10,7 +10,6 @@ import type { PushPlatform } from "./push.js";
 /** Capability keys, `name@major`; each value is a key of `SHELL_CAPABILITIES`. */
 export const SHELL_CAPABILITY_KEYS = {
   chrome: "chrome@1",
-  device: "device@2",
   notify: "notify@1",
   openExternal: "openExternal@1",
   signIn: "signIn@1",
@@ -22,66 +21,8 @@ export const SHELL_CAPABILITY_KEYS = {
   push: "push@1",
 } as const;
 
-export type KeepAwakeMode = "off" | "while-busy" | "connected";
-
-export type DeviceConnection = "starting" | "online" | "offline" | "draining" | "stopped";
-
-/**
- * One connection of this machine into the deployment the shell shows (a machine may hold several,
- * into one org or several).
- */
-export interface ThisMachineConnection {
-  deviceId: string;
-  orgId: string;
-  mode: "os" | "docker";
-  connection: DeviceConnection;
-  offlineReason?: string;
-  serviceInstalled: boolean;
-  keepAwake: { mode: KeepAwakeMode; held: boolean; unavailable?: string };
-  lastWakeAt?: string;
-}
-
-/** One operation running on this machine for one of its devices. */
-export interface DeviceRunningOp {
-  tag: string;
-  conversationId: string | null;
-  accountId: string | null;
-  isolation: "restricted" | "full";
-  startedAt: string;
-}
-
 /** The `code` of a rejected shell call. */
 export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
-
-/**
- * A change to a connection's owner ceiling, as `capybara-device ceiling set` takes it
- * (`--outside-sandbox on|off`, `--network open|allowlist`,
- * `--project-reach machine|paths|workspace`): only the fields to change. A field left out is never
- * touched, so a stale value on the page can never narrow it. A widening needs the shell's native
- * confirmation; a narrowing applies at once.
- */
-export interface DeviceCeilingRequest {
-  outsideSandbox?: boolean;
-  network?: "open" | "allowlist";
-  projectReach?: "machine" | "paths" | "workspace";
-}
-
-/**
- * `device@2`: this machine's connections into the deployment the shell shows. Every action names
- * the connection by its device id; `connect` adds a connection into an org.
- */
-export interface DeviceCapabilityV2 {
-  status(): Promise<{ connections: ThisMachineConnection[] }>;
-  /** Called when any connection's status changes; read `status()` again. */
-  onStatus(cb: () => void): () => void;
-  running(a: { deviceId: string }): Promise<DeviceRunningOp[]>;
-  connect(a: { orgId: string }): Promise<"connected" | "cancelled" | { error: string }>;
-  pause(a: { deviceId: string }): Promise<void>;
-  resume(a: { deviceId: string }): Promise<"resumed" | "cancelled">;
-  disconnect(a: { deviceId: string }): Promise<void>;
-  requestCeiling(a: { deviceId: string } & DeviceCeilingRequest): Promise<"applied" | "cancelled">;
-  setKeepAwake(a: { deviceId: string; mode: KeepAwakeMode }): Promise<"applied" | "cancelled">;
-}
 
 /** `notify@1`: a native notification; `path` is the in-app path opened on click. */
 export interface NotifyCapabilityV1 {
