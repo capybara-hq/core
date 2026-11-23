@@ -176,6 +176,21 @@ describe("Skill: project skills", () => {
     expect(e.message).toContain("permission denied");
   });
 
+  it("a recorded root that makes no clean absolute path: the cause, nothing read", async () => {
+    for (const [root, cause] of [
+      ["/Users/u/../core", "'..' segments"],
+      ["Users/u/core", "absolute"],
+    ] as const) {
+      const t = setup({ project: { ...usable, root } });
+      const e = await toolError(t.run({ skill: "project:fix-issue" }));
+      expect(e.message).toContain(`${root}/.agents/skills/fix-issue/SKILL.md`);
+      expect(e.message).toContain(cause);
+      // a path shape, not the device's mode
+      expect(e.message).not.toMatch(/mode/);
+      expect(t.reads).toEqual([]);
+    }
+  });
+
   it("an unparsable SKILL.md: an actionable error", async () => {
     const t = setup({ project: usable, files: { [PATH]: "no frontmatter" } });
     const e = await toolError(t.run({ skill: "project:fix-issue" }));

@@ -12,6 +12,7 @@ import {
   skillSandboxPath,
   ToolError,
   type ToolSpec,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
@@ -34,7 +35,6 @@ import { PLATFORM_SOURCE, skillFileStore } from "../../skills/usable.js";
 import { AGENT_TOOL, SANDBOX_TOOL_NAMES } from "../builtin-names.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../registry.js";
 import {
-  checkToolPath,
   clip,
   display,
   inSandboxPreparation,
@@ -534,8 +534,8 @@ const notInProject = (asked: string, project: string, names: readonly string[]):
   return `Skill "${clip(asked, 80)}" is not one of the skills of the project "${project}"; call Skill with one of the project's skills (${shown.length === 0 ? "it lists none" : `${shown.join(", ")}${more}`}).`;
 };
 
-const projectOutsideModeText = (asked: string, path: string, mode: string): string =>
-  `Skill "${asked}" cannot be loaded: ${path} is outside what the device can read in ${mode} mode now. Ask the user to switch the device to auto mode, or do the task without the skill.`;
+const projectBadPathText = (asked: string, path: string, why: string): string =>
+  `Skill "${asked}" cannot be loaded: the project's recorded root makes its SKILL.md path ${clip(path, 300)}, which is not a clean absolute path (${why}), so nothing was read. Ask the user to check the project's location on the device, or do the task without the skill.`;
 
 const projectFileGoneText = (asked: string, path: string): string =>
   `Skill "${asked}" cannot be loaded: ${path} is no longer on the device. Check the project's .agents/skills directory with Glob or Read, or do the task without the skill.`;
@@ -548,7 +548,8 @@ const projectParseText = (asked: string, path: string, why: string): string =>
 
 /** Why a project skill's SKILL.md could not be used (each caller phrases it for its reader). */
 export type ProjectSkillProblem =
-  | { kind: "outside_mode"; path: string; mode: string }
+  /** The path built from the recorded root fails the shape checks (`why`: which). */
+  | { kind: "bad_path"; path: string; why: string }
   | { kind: "gone"; path: string }
   | { kind: "read_failed"; path: string; why: string }
   | { kind: "invalid"; path: string; why: string };
@@ -574,12 +575,11 @@ export interface ProjectSkillFile {
 }
 
 /**
- * Reads `<root>/.agents/skills/<name>/SKILL.md` in `s` (its path checked as `Read` checks one,
- * {@link checkToolPath}) and parses it; its name must be its
- * directory's. Shared by `Skill` and a person's invocation (`SkillInvoker`), so both read a
- * project skill the same way. A problem with the file or its path throws
- * {@link ProjectSkillReadError}; the sandbox's own failures (offline, lost files, ...) and an abort
- * are rethrown as they are.
+ * Reads `<root>/.agents/skills/<name>/SKILL.md` in `s` (its path shape checked as `Read` checks
+ * one, `validateSandboxPathShape`) and parses it; its name must be its directory's. A problem with
+ * the file or its path throws {@link ProjectSkillReadError}; the sandbox's own failures (offline,
+ * lost files, a read outside the scope the device admits, ...) and an abort are rethrown as they
+ * are.
  */
 export async function readProjectSkill(
   s: SandboxSession,
@@ -589,12 +589,11 @@ export async function readProjectSkill(
 ): Promise<ProjectSkillFile> {
   const dir = `${root}/${PROJECT_SKILLS_DIR}/${bare}`;
   const path = `${dir}/${SKILL_ENTRY_FILE}`;
-  try {
-    checkToolPath(path);
-  } catch (e) {
-    if (!(e instanceof ToolError)) throw e;
-    // only a path whose shape fails (from the recorded root) is refused here
-    throw new ProjectSkillReadError({ kind: "outside_mode", path, mode: "sandbox" });
+  // only a path whose shape fails (from the recorded root) is refused here; what the device may
+  // read is the provider's rule, refused by the read itself
+  const shape = validateSandboxPathShape(path);
+  if (shape.length > 0) {
+    throw new ProjectSkillReadError({ kind: "bad_path", path, why: shape.join("; ") });
   }
   let read: Awaited<ReturnType<SandboxSession["p"]["readFile"]>>;
   try {
@@ -638,8 +637,8 @@ export async function readProjectSkill(
 /** The model's text for a {@link ProjectSkillProblem} of `Skill`. */
 function projectProblemText(asked: string, p: ProjectSkillProblem): string {
   switch (p.kind) {
-    case "outside_mode":
-      return projectOutsideModeText(asked, p.path, p.mode);
+    case "bad_path":
+      return projectBadPathText(asked, p.path, p.why);
     case "gone":
       return projectFileGoneText(asked, p.path);
     case "read_failed":
