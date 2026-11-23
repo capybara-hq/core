@@ -25,7 +25,6 @@ import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DeviceTargets } from "../../src/dial-in/targets.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
-import { PERMISSION_CONTEXT_ACTIVE } from "../../src/sandbox/permission-context-types.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { type Answer, EnvelopeMachine, type KernelReq } from "../helpers/dial-in-machine.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -191,9 +190,8 @@ async function member(login: string): Promise<{ id: string; req: Req }> {
   return { id, req: await session(k, login) };
 }
 
-describe("the paired activation is on as production starts it", () => {
-  it("the gate is the production constant, and the run steps carry the live recorder", () => {
-    expect(PERMISSION_CONTEXT_ACTIVE).toBe(true);
+describe("the recorded permission context is on as production starts it", () => {
+  it("the run steps carry the live recorder", () => {
     expect(k.app.get(RunSteps).deps.permissionContext).toBeDefined();
   });
 });

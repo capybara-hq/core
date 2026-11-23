@@ -88,7 +88,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
       const { value: files, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
         // default: the working root (a bound project's root, else the workspace)
-        dir = checkToolPath((input as GlobInput).path ?? s.workingRoot, s);
+        dir = checkToolPath((input as GlobInput).path ?? s.workingRoot);
         const st = await p.stat(h, dir, signal);
         if (!st?.isDir) throw new ToolError(notDirectory(dir, s.workingRoot));
         const r = await p.exec(h, {

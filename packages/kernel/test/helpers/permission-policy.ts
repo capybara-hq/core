@@ -15,6 +15,7 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
+import { ManagedDeviceContextRecorder } from "../../src/sandbox/managed-device-context.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { inSandboxOperations } from "../../src/tools/builtins/sandbox/common.js";
@@ -241,6 +242,7 @@ export async function permissionFixture(
           },
           storage: { available: () => false } as never,
           log: { warn: (_message, fields) => warned.push((fields as { err?: unknown })?.err) },
+          managedDeviceContext: replica.app.get(ManagedDeviceContextRecorder),
         },
         ctx,
         async (s) => {

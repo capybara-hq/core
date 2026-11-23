@@ -1,7 +1,6 @@
 import { ToolError, type ToolResult } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import type { SandboxToolDeps } from "../../src/tools/builtins/sandbox/common.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { managedCall, managedRoute, managedSandbox } from "../helpers/managed-tool-stubs.js";
 
@@ -44,10 +43,6 @@ interface Setup {
   catalog?: EventPayload<"skills_catalog">;
   files?: Record<string, string>;
   readError?: Error;
-  /** The device's mode now (default auto: the project's root is outside the sandbox roots). */
-  mode?: "auto" | "sandbox";
-  /** The legacy route instead (only its dormant-only test, deleted with that route). */
-  legacy?: boolean;
 }
 
 function setup(s: Setup) {
@@ -73,13 +68,6 @@ function setup(s: Setup) {
       throw new Error("a project skill writes nothing");
     },
   };
-  const withSandbox: SandboxToolDeps["sandbox"]["withSandbox"] = async (_c, fn, sig) =>
-    fn(
-      { id: "e1", roots: ROOTS } as never,
-      p as never,
-      { fresh: false, restarted: false, roots: ROOTS } as never,
-      sig,
-    );
   const tool = skillLoadTool({
     db: {} as never,
     storage: {} as never,
@@ -94,19 +82,9 @@ function setup(s: Setup) {
         return undefined;
       }) as never,
     },
-    sandbox: s.legacy
-      ? { withSandbox }
-      : managedSandbox(p, { roots: ROOTS, handle: { id: "e1", roots: ROOTS } }).sandbox,
-    ...(!s.legacy && managedRoute()),
-    devices: {
-      forTool: async () => "device-1",
-      modeLevel: async () => ({
-        mode: s.mode ?? "auto",
-        allowedMode: "auto" as const,
-        network: { kind: "allowlist" as const, hosts: [] },
-        local: true,
-      }),
-    },
+    sandbox: managedSandbox(p, { roots: ROOTS, handle: { id: "e1", roots: ROOTS } }).sandbox,
+    ...managedRoute(),
+    devices: { forTool: async () => "device-1" },
     attachments: { listForConversation: async () => [], openForConversation: async () => null },
     config: { get: () => ({ sandbox: { limits: {} } }) as never },
   });
@@ -202,18 +180,5 @@ describe("Skill: project skills", () => {
     const t = setup({ project: usable, files: { [PATH]: "no frontmatter" } });
     const e = await toolError(t.run({ skill: "project:fix-issue" }));
     expect(e.message).toContain("SKILL.md");
-  });
-  it("a mode narrowed to sandbox since the run started: the root outside the roots is refused, nothing read", async () => {
-    const t = setup({
-      project: usable,
-      mode: "sandbox",
-      files: { [PATH]: skillMd("fix-issue", "Body.") },
-      legacy: true,
-    });
-    const e = await toolError(t.run({ skill: "project:fix-issue" }));
-    expect(t.reads).toEqual([]);
-    expect(e.message).toContain(PATH);
-    expect(e.message).toMatch(/sandbox mode/);
-    expect(e.message).toMatch(/ask the user|do the task without/i);
   });
 });

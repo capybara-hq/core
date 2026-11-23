@@ -1,5 +1,39 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.76
+
+### Patch Changes
+
+- c6d4a02: The bootstrap step now raises a pinned plugin without an extension (a theme, skills or connector
+  templates) like one with an extension: when its platform version came from the bootstrap and is
+  lower than the pin, the pinned version is imported and applied through the platform plugin update
+  (`upgraded`). A version the super admin moved to (another source or a higher version) is kept, and
+  the run reports the version actually in place instead of the pin.
+- 99a2c5b: Deleting a device whose provider plugin is no longer installed no longer retries forever: the
+  instance is marked abandoned (migration 0180), its provider-side names are kept on the row and in
+  a `device.instance_abandoned` platform audit event, and the destroy job finishes.
+- e71a6c5: A device report's limit value is text now: `DeviceReportLimit.value` is `DeviceText`
+  (`{ en, zh? }`, at most 60 characters per language, checked by `parseDeviceReport`) instead of a
+  string, so a provider can translate words in it; a string value no longer passes. Migration 0179
+  turns the string values of stored reports into `{ en }`, and the device page shows each value in
+  the UI language.
+- 8e9fe85: Org readiness agrees with the agent form: the model step is ready only when the org has a chat
+  model an agent can pick (the same cached lists and time limit as the agent form's model list).
+  Providers that are on but give no model make the new state `no_models`, with each provider and
+  why (its list failed, with the error kind such as `auth`, or it has no chat model on in the org).
+  The setup checklist names the provider and the problem and links to `/admin/models` or
+  `/settings/models`; the agent form says the configured model services list no usable model
+  instead of asking to install a provider.
+- 7cbe0e2: The kernel's legacy sandbox route is gone: `SandboxService.withSandbox`, the protocol-2 held
+  provider, the builtin tools' legacy entry and `device_paths` writer, and the
+  `PERMISSION_CONTEXT_ACTIVATION` test seam with every dormant branch behind it. Every use of the
+  instance through the sandbox service's use entry is an operation invocation, a trusted preparation
+  or a kernel read. Production already took only
+  these routes, so nothing changes for a deployment; `device_paths` events already in logs still
+  render and replay as before.
+- Updated dependencies [e71a6c5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.61
+
 ## 0.1.0-rc.75
 
 ### Minor Changes

@@ -147,8 +147,8 @@ export function sandboxFetchAttachmentTool(deps: SandboxToolDeps): BuiltinTool {
             await p.writeFile(path, bytes, signal);
           } catch (e) {
             // an abort (timeout / lost lock / stopped run) and a gone device or instance go to
-            // withSandbox and mapSandboxError; never the provider's own words (they may name its
-            // internal address)
+            // the sandbox service and mapSandboxError; never the provider's own words (they may
+            // name its internal address)
             if (signal.aborted || isSandboxGoneError(e) || isFileSystemGoneError(e)) throw e;
             // a managed route's typed refusal too: mapSandboxError gives its fixed text
             if (

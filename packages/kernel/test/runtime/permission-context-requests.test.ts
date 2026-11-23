@@ -15,11 +15,6 @@ import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { ExecutionRevoked } from "../../src/runtime/run-execution.js";
 import { livePermissionContext, RunSteps } from "../../src/runtime/run-steps.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
-import {
-  PERMISSION_CONTEXT_ACTIVATION,
-  PERMISSION_CONTEXT_ACTIVE,
-  permissionContextActive,
-} from "../../src/sandbox/permission-context-types.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/classifier.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
@@ -42,9 +37,8 @@ import {
 
 /**
  * Gate 9.4: the live recorder at every actual agent request, through the production path
- * RunWorker → RunExecution.withClaim → RunSteps/LangGraphLoop → model-call, with the paired
- * activation gate provided on (production leaves it off: {@link PERMISSION_CONTEXT_ACTIVE}). The
- * provider requests are captured as sent; the first one can be held while it streams.
+ * RunWorker → RunExecution.withClaim → RunSteps/LangGraphLoop → model-call. The provider
+ * requests are captured as sent; the first one can be held while it streams.
  */
 
 const sent: ModelRequest[] = [];
@@ -98,9 +92,7 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
-  k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }), {
-    overrides: [{ provide: PERMISSION_CONTEXT_ACTIVATION, useValue: true }],
-  });
+  k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
 });
 afterAll(async () => {
   ProviderRegistry.prototype.resolve = originalResolve;
@@ -151,19 +143,11 @@ async function revision(conv: string): Promise<number> {
   return body.revision ?? body.permission?.revision ?? 0;
 }
 
-describe("the paired activation gate", () => {
-  it("is one explicit switch, on in production since the paired activation and off only where a test provides it", () => {
-    expect(PERMISSION_CONTEXT_ACTIVE).toBe(true);
-    expect(permissionContextActive(undefined)).toBe(true);
-    expect(permissionContextActive(true)).toBe(true);
-    expect(permissionContextActive(false)).toBe(false);
-    // this kernel provides the gate: the live recorder is the step deps' request boundary
+describe("the live request boundary", () => {
+  it("the run steps carry the live recorder as their request boundary", () => {
     expect(k.app.get(RunSteps).deps.permissionContext).toBeDefined();
-    // the production value (no provider for the token) wires the boundary; an explicit off none
     const recorder = k.app.get(PermissionContextRecorder);
-    expect(livePermissionContext(recorder, undefined).permissionContext).toBeDefined();
-    expect(livePermissionContext(recorder, true).permissionContext).toBeDefined();
-    expect(livePermissionContext(recorder, false)).toEqual({});
+    expect(livePermissionContext(recorder).permissionContext).toBeDefined();
   });
 });
 

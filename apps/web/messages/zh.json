@@ -1533,6 +1533,7 @@
     "pickModel": "切换模型",
     "pickDevice": "设备",
     "deviceNote": "发出第一条消息后不能更换",
+    "noDevice": "不用设备",
     "deviceOffline": "你的本地设备都已离线，本对话将在没有设备的情况下开始。在机器上启动 capybara-device 后即可使用设备。",
     "deviceLocked": "对话开始后设备不再更换",
     "projectGroup": "项目",

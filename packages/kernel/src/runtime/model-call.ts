@@ -225,8 +225,8 @@ export interface ModelStepDeps {
    * before each agent-history request construction, record (live) or feed (full-run replay) the
    * permission context, then rebuild from the complete log. Called at every request construction
    * of the attempt ladder (a retry, a fallback, the rebuild after a forced compaction, wrap-up);
-   * absent, no call and no reread (old requests build byte for byte). Live runs get the recorder
-   * only through the paired activation gate (`RunSteps`); full-run replays strip any live one and
+   * absent, no call and no reread (old requests build byte for byte). Live runs always get the
+   * recorder (`RunSteps`); full-run replays strip any live one and
    * install only the recorded feeder (`evals/recorded-permission-context.ts`).
    */
   permissionContext?: PermissionContextPort;

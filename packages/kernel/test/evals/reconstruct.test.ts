@@ -1108,7 +1108,8 @@ describe("reconstructRequest：基线零漂移", () => {
 
   it("project_root events, usable then unavailable, before and after a summary (project root spec §5): zero drift, no device touched", async () => {
     reset();
-    const withSandbox = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
+    const operations = vi.spyOn(k.app.get(SandboxService), "withOperations");
     try {
       const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
       const conv = await createConv(owner, orgId, agentId);
@@ -1162,15 +1163,18 @@ describe("reconstructRequest：基线零漂移", () => {
       const last = systemTexts(sent.at(-1));
       expect(last.some((t) => t.includes("no longer exists on the device"))).toBe(true);
       await expectZeroDrift(conv, await snapshotOf(conv));
-      expect(withSandbox).not.toHaveBeenCalled();
+      expect(kernelRead).not.toHaveBeenCalled();
+      expect(operations).not.toHaveBeenCalled();
     } finally {
-      withSandbox.mockRestore();
+      kernelRead.mockRestore();
+      operations.mockRestore();
     }
   });
 
   it("a sub-agent's run copies its root's project_root into its own log: its first request carries the project, zero drift, no device touched", async () => {
     reset();
-    const withSandbox = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
+    const operations = vi.spyOn(k.app.get(SandboxService), "withOperations");
     try {
       const agentId = await createAgent(
         { provider: "model-fake", model: "fake-1" },
@@ -1295,9 +1299,11 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(after).toHaveLength(2);
       expect(after[1]?.payload).toEqual(changed);
       expect(after[1]?.runId).toBe(third);
-      expect(withSandbox).not.toHaveBeenCalled();
+      expect(kernelRead).not.toHaveBeenCalled();
+      expect(operations).not.toHaveBeenCalled();
     } finally {
-      withSandbox.mockRestore();
+      kernelRead.mockRestore();
+      operations.mockRestore();
     }
   });
 

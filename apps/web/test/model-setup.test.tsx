@@ -425,8 +425,12 @@ describe("/settings/models: 模型服务", () => {
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
     expect(within(row).getByText(en.extensions.needsConfig)).toBeTruthy();
-    // no switch while it waits for config: configuring comes first
-    expect(within(row).queryByRole("switch")).toBeNull();
+    // the switch shows it off and stays disabled while it waits for config: configuring comes first
+    const locked = within(row).getByRole("switch", {
+      name: en.models.org.providers.enableLabel.replace("{plugin}", "Anthropic models"),
+    }) as HTMLButtonElement;
+    expect(locked.disabled).toBe(true);
+    expect(locked.getAttribute("aria-checked")).toBe("false");
     const user = userEvent.setup();
     await user.click(
       within(row).getByRole("button", {
@@ -445,7 +449,7 @@ describe("/settings/models: 模型服务", () => {
     );
   });
 
-  it("a service the platform cannot run: its state, no action for an org admin", async () => {
+  it("a service the platform cannot run: its state, a disabled switch and no other action for an org admin", async () => {
     orgKernel([anthropic({ available: false, reason: "needs_deployment_config" })], {
       modelProvider: "none",
       orgFixableProviders: [],
@@ -472,7 +476,9 @@ describe("/settings/models: 模型服务", () => {
       ),
     ).toBeTruthy();
     expect(within(row).queryByRole("button")).toBeNull();
-    expect(within(row).queryByRole("switch")).toBeNull();
+    const locked = within(row).getByRole("switch") as HTMLButtonElement;
+    expect(locked.disabled).toBe(true);
+    expect(locked.getAttribute("aria-checked")).toBe("false");
     // the warn line is for org_fixable only
     expect(screen.queryByText(en.models.org.providers.orgFixable)).toBeNull();
   });
@@ -509,7 +515,7 @@ describe("/settings/models: 模型服务", () => {
   it.each([
     ["a platform-wide (required) service", { required: true }],
     ["a service the org may not switch", { switchable: false }],
-  ])("%s on in the org: its state, no switch", async (_what, over) => {
+  ])("%s on in the org: its state on a disabled switch", async (_what, over) => {
     orgKernel([anthropic({ enabled: true, ...over })], MODEL_READY);
     await renderRouteWithCache("/settings/models", lastStubRoutes(), {
       me: orgAdmin,
@@ -517,7 +523,9 @@ describe("/settings/models: 模型服务", () => {
     });
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
-    expect(within(row).queryByRole("switch")).toBeNull();
+    const locked = within(row).getByRole("switch") as HTMLButtonElement;
+    expect(locked.disabled).toBe(true);
+    expect(locked.getAttribute("aria-checked")).toBe("true");
   });
 
   it.each([

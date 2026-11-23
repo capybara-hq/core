@@ -88,11 +88,11 @@ describe("Bash run_in_background without the managed route", () => {
   it("reserves nothing and runs no exec: there is no legacy launch left", async () => {
     const exec = vi.fn();
     const reserve = vi.fn(async () => true);
-    const withSandbox = vi.fn();
+    const withOperations = vi.fn();
     const tool = sandboxBashTool({
       sandbox: {
         availableFor: async () => true,
-        withSandbox,
+        withOperations,
         currentInstance: async () => ({ provider: "p", createdAt: new Date(1) }),
       },
       devices: { forTool: async () => "00000000-0000-4000-8000-000000000003" },
@@ -127,7 +127,7 @@ describe("Bash run_in_background without the managed route", () => {
       ),
     );
     expect(reserve).not.toHaveBeenCalled();
-    expect(withSandbox).not.toHaveBeenCalled();
+    expect(withOperations).not.toHaveBeenCalled();
     expect(exec).not.toHaveBeenCalled();
   });
 });
@@ -242,7 +242,7 @@ function taskTools(task: BackgroundTaskRow, answer: { kind: string; status?: str
   const deps = {
     sandbox: {
       availableFor: async () => true,
-      withSandbox: vi.fn(),
+      withOperations: vi.fn(),
       ifRunning,
     },
     devices: { forTool: async () => DEV },

@@ -28,6 +28,7 @@ import { taskStopTool } from "../../src/tools/builtins/sandbox/task-stop.js";
 import type { BuiltinCallContext, BuiltinResult } from "../../src/tools/registry.js";
 import { asUser, cookieJar } from "./http.js";
 import { seedInstalledEvidence } from "./installed-evidence.js";
+import { recordingDeviceContext } from "./managed-tool-stubs.js";
 import { enableModelProviders, type Req, type TestKernel } from "./runs.js";
 
 /**
@@ -449,6 +450,8 @@ export async function managedTaskFixture(opts: {
     storage: {} as SandboxToolDeps["storage"],
     eventLog: kk.app.get(EventLog),
     config: kk.app.get(KernelConfigService),
+    // the call runs outside a run's claim wrapper: a recording writer stands in for the real one
+    managedDeviceContext: recordingDeviceContext(),
   });
   const ctxFor = async (over: Partial<BuiltinCallContext> = {}): Promise<BuiltinCallContext> => ({
     orgId,

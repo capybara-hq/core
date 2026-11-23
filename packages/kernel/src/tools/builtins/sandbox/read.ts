@@ -261,7 +261,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       let path = "";
       const { value, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
-        path = checkToolPath(resolveToolPath(filePath, s), s, "file_path");
+        path = checkToolPath(resolveToolPath(filePath, s), "file_path");
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         if (st.isDir) throw new ToolError(isDirectory(path));

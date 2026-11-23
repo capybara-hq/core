@@ -73,7 +73,7 @@ describe("sandbox tool errors", () => {
     );
   });
 
-  it.each(others)("outside withSandbox: %s", (_name, err) => {
+  it.each(others)("outside the sandbox service: %s", (_name, err) => {
     const text = message(mapSandboxError(err, undefined));
     expect(text).toMatch(/device/);
     expect(text).not.toMatch(/environment/i);

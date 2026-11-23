@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSandboxScopeDeniedError, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,8 +20,8 @@ import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import {
   checkToolPath,
   checkToolWritable,
+  mapSandboxError,
   SCOPE_DENIED_TOOL_TEXT,
-  sessionPathBound,
 } from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -252,30 +253,13 @@ describe("file tool paths in the device's mode", () => {
     expect(ok.payload.isError).toBe(false);
   });
 
-  it("the path checks are pure over what bounds them", () => {
-    // the managed route is bounded by the admitted scope under every tier; only the legacy route
-    // in sandbox mode keeps the fixed roots
-    expect(sessionPathBound(true, "sandbox")).toBe("scope");
-    expect(sessionPathBound(true, "auto")).toBe("scope");
-    expect(sessionPathBound(false, "auto")).toBe("scope");
-    expect(sessionPathBound(false, "sandbox")).toBe("roots");
+  it("the path checks are pure: the admitted scope bounds a path, the kernel checks its shape", () => {
     const roots = { workspace: "/workspace", skills: "/skills", tmp: "/tmp" };
-    expect(checkToolPath("/etc/hosts", { roots, pathBound: "scope" })).toBe("/etc/hosts");
-    expect(() => checkToolPath("/etc/../etc/hosts", { roots, pathBound: "scope" })).toThrow(/\.\./);
-    expect(() => checkToolPath("relative/x", { roots, pathBound: "scope" })).toThrow(/absolute/);
-    expect(() => checkToolPath("/etc/hosts", { roots, pathBound: "roots" })).toThrow(
-      /under \/workspace/,
-    );
-    expect(checkToolPath("/workspace/./a.txt", { roots, pathBound: "roots" })).toBe(
-      "/workspace/./a.txt",
-    );
+    expect(checkToolPath("/etc/hosts")).toBe("/etc/hosts");
+    expect(() => checkToolPath("/etc/../etc/hosts")).toThrow(/\.\./);
+    expect(() => checkToolPath("relative/x")).toThrow(/absolute/);
     const workingRoot = roots.workspace;
-    expect(() =>
-      checkToolWritable("/skills/x.md", { roots, pathBound: "scope", workingRoot }),
-    ).toThrow(/read-only/);
-    expect(() =>
-      checkToolWritable("/skills/x.md", { roots, pathBound: "roots", workingRoot }),
-    ).toThrow(/read-only/);
+    expect(() => checkToolWritable("/skills/x.md", { roots, workingRoot })).toThrow(/read-only/);
   });
 });
 
@@ -395,6 +379,46 @@ describe("a bound conversation works in its project's root", () => {
       decision: "allow",
       rule: "allow.workspace-write",
     });
+  });
+
+  it("a write outside the admitted write roots that reaches the device is refused and writes nothing", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const conv = await boundConversation(`/workspace/${dir}`);
+    const deviceId = await deviceOf(conv);
+    await put(deviceId, { [`${dir}/notes.txt`]: "x\n" });
+    // inside the instance's roots but outside the bound conversation's write roots (its project
+    // root, no directory granted): admitted without a grant, the device refuses the write
+    const outside = `/workspace/outside-${dir}.txt`;
+    const err = await managedUseOn(
+      k,
+      raw,
+      {
+        orgId,
+        deviceId,
+        holderConversationId: conv,
+        actor: { accountId: ownerId, conversationId: conv },
+      },
+      (h, p, _info, signal) => p.writeFile(h, outside, new TextEncoder().encode("x"), signal),
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isSandboxScopeDeniedError(err)).toBe(true);
+    expect(mapSandboxError(err, undefined)).toEqual(new ToolError(SCOPE_DENIED_TOOL_TEXT));
+    // nothing was written: a free conversation on the device reads its workspace
+    const holder = await setupConversationOn(raw, { orgId, agentId, accountId: ownerId, deviceId });
+    const got = await managedUseOn(
+      k,
+      raw,
+      {
+        orgId,
+        deviceId,
+        holderConversationId: holder,
+        actor: { accountId: ownerId, conversationId: holder },
+      },
+      (h, p, _info, signal) => p.readFile(h, outside, { maxBytes: 100, signal }),
+    );
+    expect(got).toBeNull();
   });
 
   it("the review judges a write against the project root: outside it asks, even in the device's workspace", async () => {

@@ -118,7 +118,7 @@ type Subject = { orgId: string; deviceId: string; rootConversationId: string };
  * admission use) and admission's working root. Any difference is
  * {@link ManagedDeviceContextStale}: no rediscovery, no provisioning, no whole-handler retry. The
  * bus hint follows the commit and is lossy. A lower event writer, not a permission context
- * publisher; dormant until the paired activation passes it to `common.ts`.
+ * publisher; `BuiltinTools` passes it to `common.ts`, which requires it.
  */
 @Injectable()
 export class ManagedDeviceContextRecorder {

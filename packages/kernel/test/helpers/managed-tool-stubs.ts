@@ -67,7 +67,7 @@ export interface ManagedSandboxOptions {
 
 /**
  * A device whose provider calls go to `p` (its methods take the handle first, as `HeldProvider`
- * does). The legacy `withSandbox` throws: a tool on the managed route never enters it.
+ * does).
  */
 export function managedSandbox(p: unknown, o: ManagedSandboxOptions = {}) {
   const roots = o.roots ?? DEFAULT_SANDBOX_ROOTS;
@@ -124,13 +124,45 @@ export function managedSandbox(p: unknown, o: ManagedSandboxOptions = {}) {
     if (invocation.beforeUser) await invocation.beforeUser(staging, info, signal);
     return fn(handle, held, info, signal);
   };
-  const sandbox = {
-    withSandbox: async (): Promise<never> => {
-      throw new Error("the legacy withSandbox route must not be entered");
-    },
-    withOperations,
-  } satisfies Pick<SandboxService, "withSandbox" | "withOperations">;
+  const sandbox = { withOperations } satisfies Pick<SandboxService, "withOperations">;
   return { sandbox, entries, staged };
+}
+
+/**
+ * The real service's `withOperations` (its leases, admission and provider calls) for a
+ * service-level test whose device records no installed environment: the use never asks the
+ * service for held evidence, and stub evidence of the held instance (its roots, the workspace as
+ * the working root) is added to the info `beforeUser` and the callback get, as an installed
+ * binding would give it.
+ */
+export function withStubEvidence(s: Pick<SandboxService, "withOperations">) {
+  const withOperations: SandboxService["withOperations"] = (use, invocation, fn, signal) => {
+    const add = (info: SandboxUseInfo): SandboxUseInfo => ({
+      ...info,
+      contextEvidence: {
+        deviceId: use.deviceId,
+        provider: "@managed-tool-stub",
+        instanceId: "h",
+        instanceGeneration: "1",
+        revision: "r1",
+        roots: info.roots,
+        workingRoot: info.roots.workspace,
+      },
+    });
+    const { contextEvidence: _asked, beforeUser, ...rest } = invocation;
+    return s.withOperations(
+      use,
+      {
+        ...rest,
+        ...(beforeUser && {
+          beforeUser: (staging, info, sig) => beforeUser(staging, add(info), sig),
+        }),
+      },
+      (h, p, info, sig) => fn(h, p, add(info), sig),
+      signal,
+    );
+  };
+  return { withOperations };
 }
 
 /** A managed device context writer that records what it was asked to write. */
@@ -149,9 +181,9 @@ export function recordingDeviceContext(): ManagedDeviceContextPort & {
   };
 }
 
-/** The `SandboxToolDeps` fields of the activated tree: the managed writer, required. */
+/** The `SandboxToolDeps` field of the managed route: the managed writer. */
 export function managedRoute(writer = recordingDeviceContext()) {
-  return { managedDeviceContext: writer, managedDeviceContextRequired: true as const };
+  return { managedDeviceContext: writer };
 }
 
 /** `ctx` with its run's server execution claim (the managed route refuses a call without one). */

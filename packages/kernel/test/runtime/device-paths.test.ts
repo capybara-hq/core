@@ -1,6 +1,5 @@
 import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { AppendEvent } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { RecordedToolPipeline, recordedCalls } from "../../src/evals/recorded-tools.js";
@@ -14,14 +13,13 @@ import {
   modeLevelText,
 } from "../../src/runtime/context/device-paths.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
-import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
-import type { BuiltinTool } from "../../src/tools/registry.js";
 import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./context/fixtures.js";
 
 /**
- * Devices, local phase (environments spec §13.1, ruling R22): the first sandbox call of every conversation
- * records the instance's roots in an `device_paths` event (rendered as a system line), and a
- * later call records them again whenever they changed.
+ * Devices, local phase (environments spec §13.1, ruling R22): a `device_paths` event in the log
+ * (written by the managed device context writer, managed-device-context.test.ts; events of the
+ * earlier writer stay in logs) is rendered as a system line, kept through compaction and copied
+ * by a full-run replay.
  */
 
 const ROOTS: SandboxRoots = {
@@ -32,12 +30,6 @@ const ROOTS: SandboxRoots = {
 
 const LINE =
   "This device's directories: workspace /Users/u/capybara-device/e1/workspace, skills /Users/u/capybara-device/e1/skills (read only), temporary files /Users/u/capybara-device/e1/tmp. Use these paths in commands and tool calls.";
-
-const cfg = KernelConfigSchema.parse({
-  db: { url: "postgres://x/y" },
-  redis: { url: "redis://x" },
-  masterKey: Buffer.alloc(32, 7).toString("base64"),
-});
 
 type Logged = AppendEvent & { conversationId: string; seq: number };
 
@@ -66,81 +58,8 @@ function memLog() {
   };
 }
 
-/**
- * An in-memory instance with `roots` (absent: a cloud instance without roots); `setRoots` changes
- * the instance's roots for later calls (a replaced machine, a mode switch).
- */
-function memTools(initial: SandboxRoots | undefined, initialLevel?: DeviceModeLevel | null) {
-  let roots = initial;
-  let level = initialLevel;
-  const files = new Map<string, Uint8Array>();
-  const log = memLog();
-  const p = {
-    readFile: async (_h: unknown, path: string) => {
-      const d = files.get(path);
-      return d === undefined ? null : { data: d, truncated: false };
-    },
-    writeFile: async (_h: unknown, path: string, data: Uint8Array) => {
-      files.set(path, data);
-    },
-    stat: async (_h: unknown, path: string) => {
-      const d = files.get(path);
-      return d === undefined ? null : { size: d.byteLength, isDir: false };
-    },
-  };
-  const deps: SandboxToolDeps = {
-    devices: {
-      forTool: async () => "env-1",
-      ...(level !== undefined && { modeLevel: async () => level ?? null }),
-    },
-    sandbox: {
-      withSandbox: async (_c, fn, sig) =>
-        fn(
-          { id: "env-1", ...(roots !== undefined && { roots }) },
-          p as never,
-          { fresh: false, restarted: false, roots: roots ?? DEFAULT_SANDBOX_ROOTS },
-          sig,
-        ),
-    },
-    attachments: {
-      listForConversation: async () => [],
-      openForConversation: async () => null,
-    },
-    // biome-ignore lint/suspicious/noExplicitAny: never called
-    storage: {} as any,
-    // biome-ignore lint/suspicious/noExplicitAny: append / findByIdem / latestFileState only
-    eventLog: log.eventLog as any,
-    config: { get: () => cfg },
-  };
-  const tool = (name: string) =>
-    sandboxTools(deps).find((t) => t.spec.name === name) as BuiltinTool;
-  const ctx = {
-    orgId: "o",
-    conversationId: "c",
-    runId: "r",
-    callId: "call-1",
-    accountId: "acc",
-    signal: new AbortController().signal,
-    // biome-ignore lint/suspicious/noExplicitAny: only these fields are read
-  } as any;
-  const setRoots = (r: SandboxRoots | undefined) => {
-    roots = r;
-  };
-  const setLevel = (l: DeviceModeLevel) => {
-    level = l;
-  };
-  return { files, log, tool, ctx, setRoots, setLevel };
-}
-
-describe("device_paths: recorded by the sandbox tools", () => {
-  it("device_paths is recorded on the first call, not again for the same roots, and rendered as a system line", async () => {
-    const t = memTools(ROOTS);
-    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a.txt`, content: "a" }, t.ctx);
-    await t.tool("Write").run({ file_path: `${ROOTS.tmp}/b.txt`, content: "b" }, t.ctx);
-    const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths).toHaveLength(1);
-    expect(paths[0]).toMatchObject({ conversationId: "c", runId: "r", payload: { roots: ROOTS } });
-
+describe("device_paths: rendered for the model", () => {
+  it("a recorded device_paths event is rendered as a system line", () => {
     // rendered after the step's tool results, as recorded between the call and its result
     const log = new Log();
     log.user("write a file");
@@ -165,41 +84,9 @@ describe("device_paths: recorded by the sandbox tools", () => {
     expect(request.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "system"]);
     expect(request.messages[3]).toEqual({ role: "system", content: LINE });
     expect(devicePathsText({ roots: ROOTS })).toBe(LINE);
-  });
-
-  it("a cloud conversation's first call records the default roots (ruling R22)", async () => {
-    for (const roots of [undefined, { ...DEFAULT_SANDBOX_ROOTS }]) {
-      const t = memTools(roots);
-      await t.tool("Write").run({ file_path: "/workspace/a.txt", content: "a" }, t.ctx);
-      await t.tool("Write").run({ file_path: "/workspace/b.txt", content: "b" }, t.ctx);
-      const paths = t.log.appended.filter((e) => e.type === "device_paths");
-      expect(paths.map((e) => e.payload)).toEqual([{ roots: DEFAULT_SANDBOX_ROOTS }]);
-    }
     expect(devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS })).toBe(
       "This device's directories: workspace /workspace, skills /skills (read only), temporary files /tmp. Use these paths in commands and tool calls.",
     );
-  });
-
-  it("roots that change are recorded again, back to the defaults too (A, B, A)", async () => {
-    const t = memTools(undefined);
-    const write = (dir: string) =>
-      t.tool("Write").run({ file_path: `${dir}/x-${Math.random()}.txt`, content: "x" }, t.ctx);
-    await write("/workspace");
-    t.setRoots(ROOTS);
-    await write(ROOTS.workspace);
-    await write(ROOTS.workspace);
-    t.setRoots(undefined);
-    await write("/workspace");
-    t.setRoots(ROOTS);
-    await write(ROOTS.workspace);
-    const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths.map((e) => (e.payload as { roots: SandboxRoots }).roots)).toEqual([
-      DEFAULT_SANDBOX_ROOTS,
-      ROOTS,
-      DEFAULT_SANDBOX_ROOTS,
-      ROOTS,
-    ]);
-    expect(new Set(paths.map((e) => e.idemKey)).size).toBe(4);
   });
 
   it("a summary covering the event restores the line right after the summary", () => {
@@ -472,61 +359,6 @@ describe("device_paths: the mode and network (auto mode spec §4.2)", () => {
     expect(devicePathsText({ roots: ROOTS, tier: "open", isolation: "none" })).toMatch(
       /^This device's directories: .*\nSandbox level: open, without a sandbox\./,
     );
-  });
-
-  it("a change of the mode or the network kind records a new event", async () => {
-    const t = memTools(ROOTS, SANDBOX_LOCAL);
-    const write = () =>
-      t
-        .tool("Write")
-        .run({ file_path: `${ROOTS.workspace}/x-${Math.random()}`, content: "x" }, t.ctx);
-    await write();
-    await write();
-    t.setLevel(AUTO_LOCAL);
-    await write();
-    t.setLevel({ ...AUTO_LOCAL, network: { kind: "open-public", hosts: [] }, local: false });
-    await write();
-    const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths.map((e) => e.payload)).toEqual([
-      { roots: ROOTS, ...SANDBOX_LOCAL },
-      { roots: ROOTS, ...AUTO_LOCAL },
-      {
-        roots: ROOTS,
-        ...AUTO_LOCAL,
-        network: { kind: "open-public", hosts: [] },
-        local: false,
-      },
-    ]);
-    expect(new Set(paths.map((e) => e.idemKey)).size).toBe(3);
-  });
-
-  it("records the level with the roots on the first call", async () => {
-    const t = memTools(ROOTS, AUTO_LOCAL);
-    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a`, content: "a" }, t.ctx);
-    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/b`, content: "b" }, t.ctx);
-    const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths.map((e) => e.payload)).toEqual([{ roots: ROOTS, ...AUTO_LOCAL }]);
-  });
-
-  it("a conversation whose latest event predates auto mode gets one new event with the level", async () => {
-    const t = memTools(ROOTS, SANDBOX_LOCAL);
-    await t.log.eventLog.append("c", [
-      { type: "device_paths", idemKey: "device_paths:old:0", payload: { roots: ROOTS } },
-    ]);
-    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a`, content: "a" }, t.ctx);
-    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/b`, content: "b" }, t.ctx);
-    const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths.map((e) => e.payload)).toEqual([
-      { roots: ROOTS },
-      { roots: ROOTS, ...SANDBOX_LOCAL },
-    ]);
-  });
-
-  it("an unknown level (no device row) records the roots only, as before", async () => {
-    const t = memTools(ROOTS, null);
-    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a`, content: "a" }, t.ctx);
-    const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths.map((e) => e.payload)).toEqual([{ roots: ROOTS }]);
   });
 
   it("renders the mode line after the roots at the event's position; a replay copies the level", () => {

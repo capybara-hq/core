@@ -51,6 +51,7 @@ import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
+import { recordingDeviceContext } from "../helpers/managed-tool-stubs.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -422,6 +423,8 @@ async function fixture(opts: { project?: string } = {}) {
     storage: {} as SandboxToolDeps["storage"],
     eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
+    // the call runs outside a run's claim wrapper: a recording writer stands in for the real one
+    managedDeviceContext: recordingDeviceContext(),
   };
   const ctxFor = async (claim?: ExecutionClaim): Promise<BuiltinCallContext> => ({
     orgId,
@@ -887,6 +890,7 @@ describe("managed background launch identity", () => {
       storage: {},
       eventLog: k.app.get(EventLog),
       config: k.app.get(KernelConfigService),
+      managedDeviceContext: recordingDeviceContext(),
     } as unknown as SandboxToolDeps;
     await expect(
       runInBackgroundManaged(

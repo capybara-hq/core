@@ -590,10 +590,10 @@ export async function readProjectSkill(
   const dir = `${root}/${PROJECT_SKILLS_DIR}/${bare}`;
   const path = `${dir}/${SKILL_ENTRY_FILE}`;
   try {
-    checkToolPath(path, s);
+    checkToolPath(path);
   } catch (e) {
     if (!(e instanceof ToolError)) throw e;
-    // only the fixed roots refuse a path, and they bound paths only in sandbox mode (legacy route)
+    // only a path whose shape fails (from the recorded root) is refused here
     throw new ProjectSkillReadError({ kind: "outside_mode", path, mode: "sandbox" });
   }
   let read: Awaited<ReturnType<SandboxSession["p"]["readFile"]>>;
