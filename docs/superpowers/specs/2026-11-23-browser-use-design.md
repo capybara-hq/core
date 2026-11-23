@@ -378,7 +378,7 @@ takeover (§9).
 
 1. Spike: screencast + input in `chrome-headless-shell --single-process` under the local sandbox and in
    the docker device.
-2. Kernel: `openStream` + service process in the contract, `ctx.dialIn.openStream`, relay + viewer endpoint, `ctx.deviceAccess`, network asks for services, takeover state;
+2. Kernel: `openStream` + service process in the contract, `ctx.dialIn.openStream`, relay + viewer endpoint, `ctx.deviceAccess`, network asks for services;
    fake provider support for tests.
 3. Providers: docker, e2b, local (+ `packages/device`).
 4. `browser` plugin: daemon, tools, panel (watch + expanded + takeover + handoff).
@@ -396,7 +396,7 @@ takeover (§9).
 - **Extension UI**: the browser panel is a client component in `conversation.panel`; a new kernel
   WebSocket endpoint for device streams with single-use tickets (embed tokens still never valid for
   `/api`).
-- **Multi-replica discipline**: frames never through Redis / PG; takeover state in PG / Redis with TTL.
+- **Multi-replica discipline**: frames never through Redis / PG; takeover state lives in the daemon (no kernel record); the dial-in holder records its internal address next to the lease.
 - **Tools**: new browser tools follow writing-tools; snapshot / screenshot outputs follow output
   archiving and media limits.
 - **Public API reports**: SDK changes (`openStream`, `ctx.deviceAccess`, permission) need
