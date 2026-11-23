@@ -1,5 +1,12 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.95
+
+### Patch Changes
+
+- 3284d6a: The image pins device-local rc.3 (`@capybara-hq/plugin-device-local@0.1.0-rc.3`): shows project
+  directories shared with another connection.
+
 ## 0.1.0-rc.94
 
 ### Patch Changes
