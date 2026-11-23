@@ -71,10 +71,14 @@ export const CatalogShownBody = z.object({ shownToOthers: z.boolean() }).strict(
 
 /**
  * `GET :itemId/guides/:guideId`, the super admin's preview of a setup guide (spec
- * 2026-11-09-setup-guides-v2-design.md §9.3): only the document language; no org, no target.
+ * 2026-11-09-setup-guides-v2-design.md §9.3): the document language and, for a connector-template
+ * guide covering several templates, the template to show it for; no org, no target.
  */
 export const AdminCatalogGuideQuery = z
-  .object({ locale: z.enum(["en", "zh"]).optional() })
+  .object({
+    locale: z.enum(["en", "zh"]).optional(),
+    templateId: z.string().min(1).max(64).optional(),
+  })
   .strict();
 
 export const ADMIN_CATALOG_ROUTES: readonly RouteSchemas[] = [

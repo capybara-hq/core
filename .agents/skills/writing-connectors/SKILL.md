@@ -132,7 +132,8 @@ A connector template spares the org from endpoint details: a super admin imports
 
 ### Connector template setup guides (spec `2026-11-09-setup-guides-v2-design.md` §9.3, §10, §11)
 
-A template's plugin may ship a `connector-template` guide (`setupGuides` entry with `template`,
+A template's plugin may ship a `connector-template` guide (`setupGuides` entry with `templates`,
+one guide for one or more templates,
 writing-plugins). The template's plugin (slack) is usually not the connector extension
 (connector-mcp); the guide, its checks and its drift belong to the template, not to the protocol.
 

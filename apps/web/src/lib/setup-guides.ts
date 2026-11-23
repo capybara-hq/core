@@ -25,7 +25,8 @@ export type SetupGuideAudience = "admin" | "member";
  * Why a known variable has no value here (spec §6.3): the connection is not saved yet, no name is
  * typed yet on 新建渠道 (`no_name`), the
  * deployment has no `http.publicUrl` or no `channels.webhookBaseUrl`, the org has no connector made
- * from the template yet, or the guide is rendered for the platform (no org).
+ * from the template yet, a guide covering several templates is rendered without naming one
+ * (`no_template`), or the guide is rendered for the platform (no org).
  */
 export type UnresolvedReason =
   | "not_saved"
@@ -33,6 +34,7 @@ export type UnresolvedReason =
   | "public_url"
   | "webhook_base"
   | "no_connector"
+  | "no_template"
   | "no_org";
 
 /**
@@ -81,6 +83,8 @@ export interface SetupGuideQuery {
   name?: string;
   /** connector-template: the org's connector made from the template. */
   connectorId?: string;
+  /** connector-template: the template to render for (a guide may cover several). */
+  templateId?: string;
 }
 
 const guideParams = (q: SetupGuideQuery): string => {
@@ -91,6 +95,7 @@ const guideParams = (q: SetupGuideQuery): string => {
   if (q.connectionId) params.set("connectionId", q.connectionId);
   if (q.name) params.set("name", q.name);
   if (q.connectorId) params.set("connectorId", q.connectorId);
+  if (q.templateId) params.set("templateId", q.templateId);
   const query = params.toString();
   return query ? `?${query}` : "";
 };
@@ -100,8 +105,14 @@ export const getSetupGuide = (orgId: string, ref: SetupGuideRef, q: SetupGuideQu
     `/api/v1/orgs/${encodeURIComponent(orgId)}/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}${guideParams(q)}`,
   );
 
-/** The super admin's view of a template's guide: no org, no target (spec §9.3). */
-export const getAdminSetupGuide = (ref: SetupGuideRef, q: { locale?: "en" | "zh" } = {}) =>
+/**
+ * The super admin's view of a template's guide: no org, no target (spec §9.3); `templateId` is the
+ * template shown, for a guide covering several.
+ */
+export const getAdminSetupGuide = (
+  ref: SetupGuideRef,
+  q: { locale?: "en" | "zh"; templateId?: string } = {},
+) =>
   apiFetch<{ guide: RenderedSetupGuide }>(
     `/api/v1/admin/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}${guideParams(q)}`,
   );

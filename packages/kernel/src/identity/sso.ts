@@ -13,13 +13,14 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { isSafeReturnPath } from "../tools/oauth/flow-paths.js";
 import { ExternalIdentities, IdentityNotVerified } from "./external.js";
+import { SSO_PATH_PREFIX, ssoCallbackPath } from "./sso-paths.js";
 
 /** state 的有效期（秒）。 */
 export const SSO_STATE_TTL_SECONDS = 600;
 /** 浏览器绑定 Cookie：回调必须来自发起登录的同一个浏览器（防登录 CSRF / 把回跳链接转给别人）。 */
 export const SSO_BINDING_COOKIE = "cap_sso";
 /** 绑定 Cookie 的 Path：覆盖所有插件的回调。 */
-export const SSO_COOKIE_PATH = "/api/v1/auth/sso";
+export const SSO_COOKIE_PATH = SSO_PATH_PREFIX;
 /** 登录失败回到的网页（next-intl 会补语言前缀）。 */
 export const LOGIN_PATH = "/login";
 /** 插件 `callback` 的最长等待。 */
@@ -120,7 +121,7 @@ export class SsoFlow {
 
   private redirectUri(plugin: string): string {
     const base = (this.config.get().http.publicUrl ?? "").replace(/\/+$/, "");
-    return `${base}/api/v1/auth/sso/${encodeURIComponent(plugin)}/callback`;
+    return `${base}${ssoCallbackPath(plugin)}`;
   }
 
   /** 绑定 Cookie 是否加 Secure：`auth.cookieSecure`，或 `http.publicUrl` 是 https（浏览器经 https 访问）。 */

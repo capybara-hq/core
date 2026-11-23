@@ -91,8 +91,14 @@ export interface RenderedSetupGuide {
   version: string;
   id: string;
   place: SetupGuidePlace;
-  /** The connector template a `connector-template` guide is for; null for other places. */
+  /**
+   * The connector template a `connector-template` guide is rendered for (the target connector's,
+   * the one asked for, or the guide's only one); null for other places and when a guide covering
+   * several templates was rendered without naming one.
+   */
   template: string | null;
+  /** The connector templates a `connector-template` guide covers; empty for other places. */
+  templates: string[];
   /** The document rendered (zh falls back to en). */
   locale: "en" | "zh";
   title: string;
@@ -122,7 +128,7 @@ export interface GuideQuery extends GuideTargetQuery {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GUIDE_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const GUIDE_KEYS = new Set(["id", "place", "template"]);
+const GUIDE_KEYS = new Set(["id", "place", "templates"]);
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 const guideNotFound = () =>
   new ApiError("catalog.guide_not_found", "The plugin has no such setup guide");
@@ -169,7 +175,9 @@ function isV2Guide(g: unknown): g is PluginSetupGuide {
     typeof o.id === "string" &&
     GUIDE_ID_RE.test(o.id) &&
     (SETUP_GUIDE_PLACES as readonly unknown[]).includes(o.place) &&
-    (o.template === undefined || (typeof o.template === "string" && GUIDE_ID_RE.test(o.template)))
+    (o.templates === undefined ||
+      (Array.isArray(o.templates) &&
+        o.templates.every((t) => typeof t === "string" && GUIDE_ID_RE.test(t))))
   );
 }
 
@@ -193,7 +201,8 @@ const defaultAudience = (place: SetupGuidePlace): SetupGuideAudience => {
 /** A plugin's guide for a place (and template): the manifest allows at most one. */
 const guideFor = (manifest: unknown, place: SetupGuidePlace, templateId?: string) =>
   guidesOf(manifest).guides.find(
-    (g) => g.place === place && (templateId === undefined || g.template === templateId),
+    (g) =>
+      g.place === place && (templateId === undefined || (g.templates ?? []).includes(templateId)),
   );
 
 /**
@@ -443,8 +452,10 @@ export class PluginGuides {
     from: string | null,
     to: { version: string; manifest: unknown; files: VersionFile[] },
   ): Promise<TemplateGuideChange[]> {
-    const targets = guidesOf(to.manifest).guides.filter(
-      (g) => g.place === "connector-template" && g.template !== undefined,
+    const targets = guidesOf(to.manifest).guides.flatMap((g) =>
+      g.place === "connector-template"
+        ? (g.templates ?? []).map((templateId) => ({ guide: g, templateId }))
+        : [],
     );
     if (targets.length === 0) return [];
     const fromRow =
@@ -457,8 +468,7 @@ export class PluginGuides {
             .where("version", "=", from)
             .executeTakeFirst();
     const out: TemplateGuideChange[] = [];
-    for (const guide of targets) {
-      const templateId = guide.template as string;
+    for (const { guide, templateId } of targets) {
       const toHash = await this.storedHash(to, guide);
       if (toHash === undefined) continue;
       const before = fromRow && guideFor(fromRow.manifest, "connector-template", templateId);
@@ -693,19 +703,25 @@ export class PluginGuides {
       guide,
       locale: docs.locale,
       org: { orgId: org.orgId, name: orgRow?.name ?? "" },
-      query: { connectionId: q.connectionId, name: q.name, connectorId: q.connectorId },
+      query: {
+        connectionId: q.connectionId,
+        name: q.name,
+        connectorId: q.connectorId,
+        templateId: q.templateId,
+      },
     });
     return this.renderDoc(row, guide, docs, resolution, { mode: q.mode, audience });
   }
 
   /**
    * Renders a guide for the platform (the super admin's preview, `GET /admin/catalog/:itemId/guides/
-   * :guideId`): any live item, the admin audience, no org (`orgName` unresolved) and no target.
+   * :guideId`): any live item, the admin audience, no org (`orgName` unresolved) and no target;
+   * `templateId` picks the template a guide covering several is shown for.
    */
   async renderForPlatform(
     itemId: string,
     guideId: string,
-    q: { locale?: "en" | "zh" | undefined },
+    q: { locale?: "en" | "zh" | undefined; templateId?: string | undefined },
   ): Promise<RenderedSetupGuide> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     const [row] = await this.latest("id", [itemId]);
@@ -713,7 +729,7 @@ export class PluginGuides {
     this.warnSkipped(row);
     const guide = guidesOf(row.manifest).guides.find((g) => g.id === guideId);
     if (!guide) throw guideNotFound();
-    return this.renderPlatformDoc(row, guide, q.locale ?? "en");
+    return this.renderPlatformDoc(row, guide, q.locale ?? "en", { templateId: q.templateId });
   }
 
   /**
@@ -772,6 +788,7 @@ export class PluginGuides {
     row: ItemRow,
     guide: PluginSetupGuide,
     locale: "en" | "zh",
+    query: GuideTargetQuery = {},
   ): Promise<RenderedSetupGuide> {
     const docs = await this.documents(row, guide, locale);
     const resolution = await resolvePlace({
@@ -781,7 +798,7 @@ export class PluginGuides {
       guide,
       locale: docs.locale,
       org: null,
-      query: {},
+      query,
     });
     return this.renderDoc(row, guide, docs, resolution, {
       mode: undefined,
@@ -834,7 +851,8 @@ export class PluginGuides {
       version: row.latest_version,
       id: guide.id,
       place: guide.place,
-      template: guide.template ?? null,
+      template: resolution.template,
+      templates: guide.templates ?? [],
       locale: docs.locale,
       title: doc.title,
       modes: doc.modes,

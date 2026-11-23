@@ -180,6 +180,7 @@ export const keys = {
           connectionId: string;
           name: string;
           connectorId: string;
+          templateId: string;
           mode: string;
           audience: string;
           locale: string;
@@ -193,6 +194,7 @@ export const keys = {
         q.connectionId,
         q.name,
         q.connectorId,
+        q.templateId,
         q.mode,
         q.audience,
         q.locale,
@@ -580,13 +582,25 @@ export const keys = {
         "clientExtensions",
         plugin,
       ],
-      /** A template's setup guide as the super admin sees it (no org, no target), per language. */
+      /**
+       * A template's setup guide as the super admin sees it (no org, no target), per template
+       * shown and language.
+       */
       adminSetupGuide: (
         itemId: string,
         guideId: string,
         version: string,
+        templateId: string,
         locale: string,
-      ): readonly unknown[] => [...all, "adminSetupGuide", itemId, guideId, version, locale],
+      ): readonly unknown[] => [
+        ...all,
+        "adminSetupGuide",
+        itemId,
+        guideId,
+        version,
+        templateId,
+        locale,
+      ],
       /** An extension's platform setup guides (`extension-deployment`), per language. */
       deploymentGuides: (plugin: string, locale: string): readonly unknown[] => [
         ...all,

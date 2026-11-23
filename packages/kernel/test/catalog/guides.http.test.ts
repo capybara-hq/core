@@ -100,7 +100,7 @@ const connectorPlugin = () =>
   pluginTgz({
     manifest: {
       name: "gh-guide",
-      setupGuides: [{ id: "gh", place: "connector-template", template: "github-mcp" }],
+      setupGuides: [{ id: "gh", place: "connector-template", templates: ["github-mcp"] }],
     },
     files: {
       ...templateFiles("github-mcp", mcpTemplate(), {
@@ -565,6 +565,94 @@ describe("setup guides v2: rendering", () => {
     });
     expect(noGuide.json().error.code).toBe("catalog.guide_not_found");
     expect((await env.root({ method: "GET", url: `${url}?audience=member` })).statusCode).toBe(400);
+  });
+});
+
+describe("setup guides v2: several templates, sign-in callback (core#554)", () => {
+  it("the super admin's preview renders a multi-template guide for the template asked", async () => {
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "gh-multi-guide",
+          setupGuides: [
+            { id: "gh", place: "connector-template", templates: ["github-mcp", "gitlab-mcp"] },
+          ],
+        },
+        files: {
+          ...templateFiles("github-mcp", mcpTemplate(), {
+            displayName: { zh: "GitHub 连接器", en: "GitHub MCP" },
+          }),
+          ...templateFiles("gitlab-mcp", mcpTemplate(), {
+            displayName: { zh: "GitLab 连接器", en: "GitLab MCP" },
+          }),
+          "guides/gh.md": CONNECTOR_DOC,
+        },
+      }),
+    );
+    const url = `/api/v1/admin/catalog/${itemId}/guides/gh`;
+    const asked = await env.root({ method: "GET", url: `${url}?templateId=gitlab-mcp` });
+    expect(asked.statusCode, asked.body).toBe(200);
+    const g = (asked.json() as { guide: Rendered & { template: string; templates: string[] } })
+      .guide;
+    expect(g).toMatchObject({
+      title: "Set up the GitLab MCP connector",
+      template: "gitlab-mcp",
+      templates: ["github-mcp", "gitlab-mcp"],
+    });
+    expect(prose(g)).toContain("for gitlab-mcp;");
+    const bare = (
+      (await env.root({ method: "GET", url })).json() as {
+        guide: Rendered & { template: string | null };
+      }
+    ).guide;
+    expect(bare.template).toBeNull();
+    expect(bare.unresolved).toEqual([
+      { name: "orgName", reason: "no_org" },
+      { name: "templateId", reason: "no_template" },
+      { name: "templateName", reason: "no_template" },
+      { name: "connectorName", reason: "no_connector" },
+    ]);
+    const other = await env.root({ method: "GET", url: `${url}?templateId=jira-mcp` });
+    expect(other.statusCode).toBe(400);
+    // the org route takes the same parameter
+    const org = await render(itemId, "?templateId=github-mcp", env.boss, "gh");
+    expect(org.title).toBe("Set up the GitHub MCP connector");
+  });
+
+  it("an extension-deployment guide renders {{signInCallbackUrl}} from the SSO callback route", async () => {
+    const doc = "# Sign in with Acme ID\n\nRegister `{{signInCallbackUrl}}` as the redirect URI.\n";
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "acme-id",
+          setupGuides: [{ id: "login", place: "extension-deployment" }],
+        },
+        files: { "guides/login.md": doc },
+        extension: { manifest: { provides: ["identity-source@1"] } },
+      }),
+    );
+    const r = await env.root({
+      method: "GET",
+      url: `/api/v1/admin/catalog/${itemId}/guides/login`,
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    const g = (r.json() as { guide: Rendered }).guide;
+    expect(prose(g)).toContain(`${PUBLIC_URL}/api/v1/auth/sso/acme-id/callback`);
+    expect(g.unresolved).toEqual([]);
+    await withConfig(
+      (c) => ({ ...c, http: { ...c.http, publicUrl: undefined } }) as KernelConfig,
+      async () => {
+        const none = await env.root({
+          method: "GET",
+          url: `/api/v1/admin/catalog/${itemId}/guides/login`,
+        });
+        expect((none.json() as { guide: Rendered }).guide.unresolved).toEqual([
+          { name: "signInCallbackUrl", reason: "public_url" },
+        ]);
+      },
+    );
   });
 });
 

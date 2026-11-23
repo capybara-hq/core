@@ -51,7 +51,7 @@ const ghPlugin = (o: { version?: string; manifest?: string; prose?: string } = {
     manifest: {
       name: "gh-guide",
       ...(o.version !== undefined && { version: o.version }),
-      setupGuides: [{ id: "gh", place: "connector-template", template: TEMPLATE }],
+      setupGuides: [{ id: "gh", place: "connector-template", templates: [TEMPLATE] }],
     },
     files: {
       ...templateFiles(TEMPLATE, mcpTemplate(), {
@@ -237,7 +237,7 @@ describe("setup guides v2: connector templates", () => {
       await pluginTgz({
         manifest: {
           name: "gh-two",
-          setupGuides: [{ id: "gh", place: "connector-template", template: TEMPLATE }],
+          setupGuides: [{ id: "gh", place: "connector-template", templates: [TEMPLATE] }],
         },
         files: {
           ...templateFiles(TEMPLATE, mcpTemplate()),
@@ -270,6 +270,84 @@ describe("setup guides v2: connector templates", () => {
     const none = await ack(jira.id, adminHash(doc()));
     expect(none.statusCode).toBe(404);
     expect(none.json().error.code).toBe("catalog.guide_not_found");
+  });
+
+  it("one guide covers several templates: each connector renders its own template", async () => {
+    // `gh-multi`: one `gh` guide for `github-mcp` and `jira-mcp`, and the unguided `wiki-mcp`
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "gh-multi",
+          setupGuides: [
+            { id: "gh", place: "connector-template", templates: [TEMPLATE, "jira-mcp"] },
+          ],
+        },
+        files: {
+          ...templateFiles(TEMPLATE, mcpTemplate(), {
+            displayName: { zh: "GitHub 连接器", en: "GitHub MCP" },
+          }),
+          ...templateFiles("jira-mcp", mcpTemplate(), {
+            displayName: { zh: "Jira 连接器", en: "Jira MCP" },
+          }),
+          ...templateFiles("wiki-mcp", mcpTemplate()),
+          "guides/gh.md": doc(),
+        },
+      }),
+    );
+    const conn = (name: string) => ({
+      name,
+      endpoint: { url: env.mcp.url },
+      credential: { token: MCP_TOKEN },
+    });
+    const r = await install(env.boss, env, itemId, {
+      connectors: {
+        [TEMPLATE]: conn("GitHub"),
+        "jira-mcp": conn("Jira"),
+        "wiki-mcp": conn("Wiki"),
+      },
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    const idOf = async (name: string) =>
+      (
+        await env.db
+          .selectFrom("connectors")
+          .select("id")
+          .where("org_id", "=", env.orgId)
+          .where("name", "=", name)
+          .where("deleted_at", "is", null)
+          .executeTakeFirstOrThrow()
+      ).id;
+    const [github, jira, wiki] = [await idOf("GitHub"), await idOf("Jira"), await idOf("Wiki")];
+
+    const forJira = await render(itemId, `?connectorId=${jira}`);
+    expect(forJira.title).toBe("Set up the Jira MCP connector");
+    expect(forJira.target).toEqual({ kind: "connector", id: jira });
+    expect(forJira.unresolved).toEqual([]);
+    expect((await render(itemId, `?connectorId=${github}`)).title).toBe(
+      "Set up the GitHub MCP connector",
+    );
+    // both connectors share the guide (one ack hash), the unguided one has none
+    expect((await page(jira)).setupGuide?.guideId).toBe("gh");
+    expect((await page(github)).setupGuide?.guideId).toBe("gh");
+    expect((await page(wiki)).setupGuide).toBeNull();
+    expect((await ack(jira, adminHash(doc()))).statusCode).toBe(200);
+
+    // no target: the template asked for, else templateId and templateName have no value
+    expect((await render(itemId, "?templateId=jira-mcp")).title).toBe(
+      "Set up the Jira MCP connector",
+    );
+    const bare = await render(itemId, "");
+    expect(bare.title).toBe("Set up the {{templateName}} connector");
+    expect(bare.unresolved).toContainEqual({ name: "templateName", reason: "no_template" });
+    // a template the guide does not cover: 400; a connector of another template than asked: 404
+    const other = await renderReq(itemId, "?templateId=wiki-mcp");
+    expect(other.statusCode).toBe(400);
+    expect(other.json().error.code).toBe("validation_failed");
+    const mismatch = await renderReq(itemId, `?connectorId=${github}&templateId=jira-mcp`);
+    expect(mismatch.statusCode).toBe(404);
+    expect(mismatch.json().error.code).toBe("connector.not_found");
+    expect((await renderReq(itemId, `?connectorId=${wiki}`)).statusCode).toBe(404);
   });
 
   it("ack route refuses another org's connector (404 connector.not_found)", async () => {

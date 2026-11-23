@@ -528,7 +528,7 @@ describe("validatePluginPackageJsonFor", () => {
 
 describe("plugin.json setupGuides", () => {
   const channel = { id: "slack-app", place: "channel-connection" };
-  const connector = { id: "slack-connector", place: "connector-template", template: "slack" };
+  const connector = { id: "slack-connector", place: "connector-template", templates: ["slack"] };
   const slack = (guides: unknown[], over: Record<string, unknown> = {}) =>
     withExtension(
       {
@@ -557,24 +557,38 @@ describe("plugin.json setupGuides", () => {
     const many = Array.from({ length: 9 }, (_, i) => ({
       id: `g${i}`,
       place: "connector-template",
-      template: "slack",
+      templates: ["slack"],
     }));
     expect(errorsOf(slack(many)).length).toBeGreaterThan(0);
   });
 
-  it("template must name a connector template", () => {
-    expect(errorsOf(slack([{ ...connector, template: undefined }])).join()).toMatch(
-      /template is required/,
+  it("templates must name the plugin's connector templates", () => {
+    expect(errorsOf(slack([{ ...connector, templates: undefined }])).join()).toMatch(
+      /templates is required/,
     );
-    expect(errorsOf(slack([{ ...channel, template: "slack" }])).join()).toMatch(
+    expect(errorsOf(slack([{ ...connector, templates: [] }])).length).toBeGreaterThan(0);
+    expect(errorsOf(slack([{ ...channel, templates: ["slack"] }])).join()).toMatch(
       /only for connector-template/,
     );
-    expect(errorsOf(slack([{ ...connector, template: "teams" }])).join()).toMatch(
-      /not one of the plugin's connector templates/,
+    expect(errorsOf(slack([{ ...connector, templates: ["slack", "teams"] }])).join()).toMatch(
+      /template teams is not one of the plugin's connector templates/,
     );
     expect(errorsOf(slack([connector, { ...connector, id: "other" }])).join()).toMatch(
       /one setup guide per connector template/,
     );
+    expect(errorsOf(slack([{ ...connector, templates: ["slack", "slack"] }])).join()).toMatch(
+      /one setup guide per connector template \(slack is named twice\)/,
+    );
+  });
+
+  it("one guide covers several templates", () => {
+    const templates = Array.from({ length: 12 }, (_, i) => `t${i}`);
+    const r = parsePluginManifest(
+      slack([channel, { id: "google", place: "connector-template", templates }], {
+        connectorTemplates: templates.map((t) => ({ path: `./connectors/${t}.json` })),
+      }),
+    );
+    expect("errors" in r ? r.errors : []).toEqual([]);
   });
 
   it("one channel guide per plugin", () => {
@@ -622,7 +636,7 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["description unknown language", skillsOnly({ description: { en: "x", fr: "y" } })],
     [
       "setup guide",
-      skillsOnly({ setupGuides: [{ id: "a", place: "connector-template", template: "t" }] }),
+      skillsOnly({ setupGuides: [{ id: "a", place: "connector-template", templates: ["t"] }] }),
     ],
     [
       "setup guide v1 title",

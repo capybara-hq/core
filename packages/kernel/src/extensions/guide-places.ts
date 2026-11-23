@@ -13,6 +13,7 @@ import {
 import { webhookBase, webhookUrlOf } from "../channels/webhook-url.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
+import { ssoCallbackPath } from "../identity/sso-paths.js";
 import type { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { OAUTH_CALLBACK_PATH } from "../tools/oauth/flow-paths.js";
@@ -29,6 +30,8 @@ export type UnresolvedReason =
   | "webhook_base"
   /** No connector is made from the template yet. */
   | "no_connector"
+  /** The guide covers several templates and the rendering names none (no template, no connector). */
+  | "no_template"
   /** Rendered for the platform (the super admin's preview), not for an org. */
   | "no_org";
 
@@ -58,6 +61,8 @@ export interface GuideTargetQuery {
   connectionId?: string | undefined;
   name?: string | undefined;
   connectorId?: string | undefined;
+  /** connector-template: which of the guide's templates to render for (a guide covering several). */
+  templateId?: string | undefined;
 }
 
 /** What a place resolves for one rendering (the mode is the caller's: it picks it from these). */
@@ -69,6 +74,11 @@ export interface PlaceResolution {
   target: GuideTarget | null;
   /** The target's stored mode (a channel connection's `inbound_mode`), null without one. */
   storedMode: string | null;
+  /**
+   * connector-template: the template rendered for (the connector's, the one asked for, or the
+   * guide's only one); null otherwise or when a guide covering several names none.
+   */
+  template: string | null;
 }
 
 /** Where the values come from. */
@@ -93,7 +103,7 @@ const invalidQuery = (path: string, message: string) =>
 /** The target parameters each place takes; another place's parameter is 400. */
 const TARGET_PARAMS: Record<SetupGuidePlace, readonly (keyof GuideTargetQuery)[]> = {
   "channel-connection": ["connectionId", "name"],
-  "connector-template": ["connectorId"],
+  "connector-template": ["connectorId", "templateId"],
   "extension-deployment": [],
   "device-connection": [],
 };
@@ -120,12 +130,11 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
     pluginVersion: ctx.item.version,
   };
   const reasons: Record<string, UnresolvedReason> = {};
-  const signIn =
-    publicUrl === null
-      ? null
-      : `${publicUrl}/api/v1/auth/sso/${encodeURIComponent(ctx.item.name)}/callback`;
+  // every place offering it gets the same URL: the SSO controller's callback route
+  const signIn = publicUrl === null ? null : `${publicUrl}${ssoCallbackPath(ctx.item.name)}`;
   let target: GuideTarget | null = null;
   let storedMode: string | null = null;
+  let template: string | null = null;
 
   if (place === "channel-connection") {
     const connection =
@@ -146,20 +155,38 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
       storedMode = connection.inbound_mode;
     }
   } else if (place === "connector-template") {
+    const templates = ctx.guide.templates ?? [];
+    const asked = ctx.query.templateId;
+    if (asked !== undefined && !templates.includes(asked)) {
+      throw invalidQuery(
+        "templateId",
+        `templateId must be one of the guide's templates: ${templates.join(", ")}`,
+      );
+    }
     const connector =
       ctx.query.connectorId === undefined
         ? undefined
-        : await liveConnector(ctx, ctx.query.connectorId);
+        : await liveConnector(
+            ctx,
+            ctx.query.connectorId,
+            asked === undefined ? templates : [asked],
+          );
+    template =
+      connector?.template_id ?? asked ?? (templates.length === 1 ? (templates[0] ?? null) : null);
     values.oauthCallbackUrl = publicUrl === null ? null : `${publicUrl}${OAUTH_CALLBACK_PATH}`;
     values.signInCallbackUrl = signIn;
-    values.templateId = ctx.guide.template ?? null;
-    values.templateName = await templateName(ctx);
+    values.templateId = template;
+    values.templateName = template === null ? null : await templateName(ctx, template);
+    reasons.templateId = "no_template";
+    reasons.templateName = "no_template";
     values.connectorName = connector?.name ?? null;
     reasons.connectorName = "no_connector";
     if (connector !== undefined) target = { kind: "connector", id: connector.id };
+  } else if (place === "extension-deployment") {
+    values.signInCallbackUrl = signIn;
   }
-  // `extension-deployment`: the common variables only, no org and no target (the deployment);
-  // `device-connection`: the common ones and `orgId`, no target
+  // `extension-deployment`: the common variables and the sign-in callback URL, no org and no
+  // target (the deployment); `device-connection`: the common ones and `orgId`, no target
   reasons.publicUrl = "public_url";
   reasons.signInCallbackUrl = "public_url";
   reasons.oauthCallbackUrl = "public_url";
@@ -170,7 +197,7 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
   for (const name of Object.keys(reasons)) {
     if (!Object.hasOwn(known, name) || values[name] !== null) delete reasons[name];
   }
-  return { values, reasons, target, storedMode };
+  return { values, reasons, target, storedMode, template };
 }
 
 /** A live connection of the org on the guide's plugin; otherwise `channel.not_found`. */
@@ -190,23 +217,23 @@ async function liveConnection(ctx: PlaceContext, id: string) {
 }
 
 /**
- * A live connector of the org made from the guide's template (`connectors.platform_template_id` ->
- * the platform component of the item's template, org-owned plugins included); otherwise
- * `connector.not_found`, also for a custom connector or one made from another template.
+ * A live connector of the org made from one of `templates` (the guide's, or the one asked for;
+ * `connectors.platform_template_id` -> the platform component of the item's template, org-owned
+ * plugins included); otherwise `connector.not_found`, also for a custom connector or one made
+ * from another template.
  */
-async function liveConnector(ctx: PlaceContext, id: string) {
+async function liveConnector(ctx: PlaceContext, id: string, templates: readonly string[]) {
   const notFound = () => new ApiError("connector.not_found", "Connector not found");
-  const template = ctx.guide.template;
-  if (ctx.org === null || template === undefined || !UUID_RE.test(id)) throw notFound();
+  if (ctx.org === null || templates.length === 0 || !UUID_RE.test(id)) throw notFound();
   const c = await ctx.db
     .selectFrom("connectors as c")
     .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
-    .select(["c.id", "c.name"])
+    .select(["c.id", "c.name", "t.template_id"])
     .where("c.id", "=", id)
     .where("c.org_id", "=", ctx.org.orgId)
     .where("c.deleted_at", "is", null)
     .where("t.catalog_item_id", "=", ctx.item.id)
-    .where("t.template_id", "=", template)
+    .where("t.template_id", "in", [...templates])
     .executeTakeFirst();
   if (!c) throw notFound();
   return c;
@@ -216,9 +243,7 @@ async function liveConnector(ctx: PlaceContext, id: string) {
  * The template's display name in the document's language, from the platform component made from
  * it at import (`platform_connector_templates.file`); the template id when there is none.
  */
-async function templateName(ctx: PlaceContext): Promise<string | null> {
-  const id = ctx.guide.template;
-  if (id === undefined) return null;
+async function templateName(ctx: PlaceContext, id: string): Promise<string | null> {
   const row = await ctx.db
     .selectFrom("platform_connector_templates")
     .select("file")

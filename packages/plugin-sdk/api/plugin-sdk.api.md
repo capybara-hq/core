@@ -3120,7 +3120,7 @@ export const PluginManifestSchema: z.ZodType<PluginManifest>;
 export interface PluginSetupGuide {
     id: string;
     place: SetupGuidePlace;
-    template?: string;
+    templates?: string[];
 }
 
 // @public
@@ -3795,6 +3795,7 @@ export const SETUP_CHECK_LIMITS: Readonly<{
 // @public
 export const SETUP_GUIDE_LIMITS: {
     readonly guides: 8;
+    readonly templatesPerGuide: 64;
     readonly docBytes: 65536;
     readonly codeBlocks: 24;
     readonly checks: 16;

@@ -69,6 +69,7 @@ describe("places and paths", () => {
       pluginName: "text",
       pluginVersion: "token",
       mode: "token",
+      signInCallbackUrl: "url",
     });
     expect(ed.drift).toBe(false);
   });
@@ -284,6 +285,7 @@ describe("validateSetupGuide: the document", () => {
     const L = SETUP_GUIDE_LIMITS;
     expect(L).toEqual({
       guides: 8,
+      templatesPerGuide: 64,
       docBytes: 65536,
       codeBlocks: 24,
       checks: 16,

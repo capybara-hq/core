@@ -83,7 +83,7 @@ beforeAll(async () => {
     await pluginTgz({
       manifest: {
         name: PLUGIN,
-        setupGuides: [{ id: "gh", place: "connector-template", template: TEMPLATE }],
+        setupGuides: [{ id: "gh", place: "connector-template", templates: [TEMPLATE] }],
       },
       files: { ...templateFiles(TEMPLATE, mcpTemplate()), "guides/gh.md": DOC },
       extension: { manifest: { permissions: { setupChecks: ["target"] } }, entry: ENTRY },
@@ -284,7 +284,7 @@ describe("setup guides for connectors", () => {
     expect(guides[0]).toMatchObject({
       itemId,
       place: "connector-template",
-      template: TEMPLATE,
+      templates: [TEMPLATE],
       audience: "admin",
     });
     const [t] = guides[0]?.targets ?? [];

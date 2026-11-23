@@ -60,11 +60,12 @@ Rules that the schema cannot show:
   Besides schemes and `fonts`, it may set `logo` (`mark`, `wordmark`, `favicon`, `illustration`,
   `appIcon`, `appIconMaskable`), `decoration` (`dither` or `none`), `avatars` (at most 12 presets) and
   `hideAvatarPresets`; every file it names is checked and packed, and nothing else is served.
-- `setupGuides` (at most 8): `{ id, place, template? }`. Each guide is a Markdown document at
+- `setupGuides` (at most 8): `{ id, place, templates? }`. Each guide is a Markdown document at
   `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (Chinese, optional), shown where a
   person sets up what the plugin brings. `place` is `channel-connection` (New channel and the channel
   detail; the extension must provide `channel@1`; one per plugin), `connector-template`
-  (`template` names one of the plugin's `connectors/<id>.json`; one per template) or
+  (`templates` names one or more of the plugin's `connectors/<id>.json`, so one guide may serve
+  several templates; a template has at most one guide) or
   `extension-deployment` (the super admin's page of the extension; its checks get the extension's
   platform deployment config and `orgId: null`, for credentials such as a push provider's key) or
   `device-connection` (how a member connects a machine through a device provider). See "Setup
@@ -80,8 +81,9 @@ A guide is CommonMark + GFM:
 - `{{name}}` variables come from the place, and none is ever a secret: everywhere `publicUrl`,
   `orgName`, `pluginName`, `pluginVersion`, `mode`; `channel-connection` adds `webhookUrl`,
   `signInCallbackUrl`, `connectionName`; `connector-template` adds `oauthCallbackUrl`,
-  `signInCallbackUrl`, `templateId`, `templateName`, `connectorName`; `extension-deployment` adds
-  none (no modes, admin audience only); `device-connection` has only `publicUrl`, `orgId`,
+  `signInCallbackUrl`, `templateId`, `templateName` (the template the guide is shown for),
+  `connectorName`; `extension-deployment` adds `signInCallbackUrl` (no modes, admin audience
+  only); `device-connection` has only `publicUrl`, `orgId`,
   `orgName`, `pluginName` (no modes, member audience only). In `yaml` / `json` code put a
   variable inside double quotes. Directive lines and fence info strings hold no variables.
 - Sections: a line `::: mode webhook` (modes `long_connection`, `webhook`; channel guides) or

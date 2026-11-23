@@ -256,9 +256,14 @@ const setupGuide = z.strictObject({
     message: "id must match ^[a-z0-9][a-z0-9-]{0,63}$",
   }),
   place: z.enum(SETUP_GUIDE_PLACES),
-  template: z
-    .string()
-    .regex(CATALOG_ITEM_NAME_RE, { message: "template must match ^[a-z0-9][a-z0-9-]{0,63}$" })
+  templates: z
+    .array(
+      z.string().regex(CATALOG_ITEM_NAME_RE, {
+        message: "a template must match ^[a-z0-9][a-z0-9-]{0,63}$",
+      }),
+    )
+    .min(1)
+    .max(SETUP_GUIDE_LIMITS.templatesPerGuide)
     .optional(),
 });
 
@@ -431,28 +436,30 @@ const schema = z
       if (guideIds.has(g.id)) issue(["setupGuides", i, "id"], `duplicate setup guide id ${g.id}`);
       guideIds.add(g.id);
       if (g.place === "connector-template") {
-        if (g.template === undefined) {
+        if (g.templates === undefined) {
           issue(
-            ["setupGuides", i, "template"],
-            "template is required for a connector-template guide",
+            ["setupGuides", i, "templates"],
+            "templates is required for a connector-template guide",
           );
         } else {
-          if (m.connectorTemplates !== undefined && !ids.has(g.template)) {
-            issue(
-              ["setupGuides", i, "template"],
-              `template ${g.template} is not one of the plugin's connector templates`,
-            );
-          }
-          if (guideTemplates.has(g.template)) {
-            issue(
-              ["setupGuides", i, "template"],
-              `at most one setup guide per connector template (${g.template} has two)`,
-            );
-          }
-          guideTemplates.add(g.template);
+          g.templates.forEach((t, j) => {
+            if (m.connectorTemplates !== undefined && !ids.has(t)) {
+              issue(
+                ["setupGuides", i, "templates", j],
+                `template ${t} is not one of the plugin's connector templates`,
+              );
+            }
+            if (guideTemplates.has(t)) {
+              issue(
+                ["setupGuides", i, "templates", j],
+                `at most one setup guide per connector template (${t} is named twice)`,
+              );
+            }
+            guideTemplates.add(t);
+          });
         }
-      } else if (g.template !== undefined) {
-        issue(["setupGuides", i, "template"], "template is only for connector-template guides");
+      } else if (g.templates !== undefined) {
+        issue(["setupGuides", i, "templates"], "templates is only for connector-template guides");
       }
       if (g.place === "channel-connection") {
         channelGuides++;

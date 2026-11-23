@@ -514,8 +514,19 @@ async function contentFiles(
   // Setup guides (spec 2026-11-09-setup-guides-v2-design.md §4): guides/<id>.md (required) and
   // guides/<id>.zh.md (optional) of each declared guide, usable as text; the documents are
   // validated in packPlugin once the extension's manifest (permissions.setupChecks) is known
+  // a listed template is checked by the manifest parser; scanned ones only here (as at import)
+  const scannedTemplateIds = new Set(
+    templates.map((rel) => posix.basename(rel).replace(/\.json$/, "")),
+  );
   for (const g of m.setupGuides ?? []) {
     const at = `${label}: setupGuides ${g.id}`;
+    if (m.connectorTemplates === undefined) {
+      for (const t of g.templates ?? []) {
+        if (!scannedTemplateIds.has(t)) {
+          throw new Error(`${at}: template ${t} is not one of the plugin's connector templates`);
+        }
+      }
+    }
     for (const locale of ["en", "zh"] as const) {
       const rel = setupGuideDocPath(g.id, locale);
       const p = join(dir, rel);
