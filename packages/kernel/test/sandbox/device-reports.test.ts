@@ -30,7 +30,7 @@ import {
   readFakeSandboxOps,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { deviceReportsFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { deviceReportsFor, managedUse, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
  * The stored device report (device-provider spec §6.1, phase 1 Task 9): a create or a resume asks
@@ -148,9 +148,10 @@ beforeEach(async () => {
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
 });
 
-/** Runs `echo` in the device (a use). */
+/** Runs `echo` in the device (a use, on the managed route as a tool call does). */
 const run = (s: SandboxService, deviceId: string) =>
-  s.withSandbox(
+  managedUse(
+    s,
     {
       orgId,
       deviceId,
