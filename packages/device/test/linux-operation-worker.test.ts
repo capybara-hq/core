@@ -19,7 +19,7 @@ import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
-import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { type MacWorkerRequest, removePrivateTemp } from "../src/exec/operation-worker.js";
 import { privateTempParentName } from "../src/exec/read-model.js";
 
 /**
@@ -134,8 +134,8 @@ async function fakeTransport(behaviour: string) {
     transport,
     lines,
     temp,
-    // the device's tmp root on the host (a container's worker ignores it)
-    tmpRoot: TMP_ROOT,
+    // the device's own directory on the host (a container's worker ignores it)
+    privateTempBase: TMP_ROOT,
     spawned: () => spawned,
     filesLock: "/state/operation-files.lock",
   };
@@ -286,9 +286,9 @@ describe("Linux operation worker", () => {
     })(execRequest(false), new AbortController().signal);
     await expect(linkedHandle.completion).rejects.toThrow(/is a symbolic link/);
     expect(linked.spawned()).toBe(0);
-    // a host worker without the device's tmp root refuses rather than guess a shared one
+    // a host worker without the device's own directory refuses rather than guess a shared one
     const bare = await fakeTransport("exit");
-    const { tmpRoot: _none, ...withoutRoot } = bare;
+    const { privateTempBase: _none, ...withoutRoot } = bare;
     const bareHandle = await linuxOperationWorker({
       ...withoutRoot,
       baseEnv: env,
@@ -298,6 +298,71 @@ describe("Linux operation worker", () => {
       name: "SandboxPermissionUnsupportedError",
     });
     expect(bare.spawned()).toBe(0);
+  });
+
+  it("removes a private temp without following links, and never through a link", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "cap-temp-outside-"));
+    dirs.push(outside);
+    await writeFile(join(outside, "keep"), "x");
+    const temp = await mkdtemp(join(TMP_ROOT, "op-remove-"));
+    await mkdir(join(temp, "nested"));
+    await symlink(outside, join(temp, "nested", "link"));
+    await symlink(join(outside, "keep"), join(temp, "file-link"));
+    await removePrivateTemp("/usr/bin/python3", temp);
+    await expect(stat(temp)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(outside, "keep"), "utf8")).toBe("x");
+    // a link in the directory's place is left alone, its target untouched
+    const swapped = join(TMP_ROOT, "op-swapped");
+    await symlink(outside, swapped);
+    await expect(removePrivateTemp("/usr/bin/python3", swapped)).rejects.toThrow(
+      /not a directory of this user/,
+    );
+    expect(await readFile(join(outside, "keep"), "utf8")).toBe("x");
+    await rm(swapped);
+    // already gone: nothing to do
+    await removePrivateTemp("/usr/bin/python3", join(TMP_ROOT, "op-missing"));
+  });
+
+  it("refuses a restricted grant whose write root covers or lies inside the private temps", async () => {
+    const native = (writeRoots: string[]) =>
+      ({
+        ...execRequest(false, { grant: { ...grant(false), writeRoots } }),
+        kind: "native",
+        native: { method: "writeFile", path: join(writeRoots[0] as string, "f") },
+        purpose: "operation",
+      }) as unknown as MacWorkerRequest;
+    for (const writeRoots of [
+      // the device's own directory (a root holding the device's working directory, as machine
+      // or paths reach could name), the parent itself, a directory inside it
+      [TMP_ROOT],
+      [tempParent],
+      [join(tempParent, "op-1-x")],
+    ])
+      for (const request of [
+        execRequest(false, { grant: { ...grant(false), writeRoots } }),
+        native(writeRoots),
+      ]) {
+        const fake = await fakeTransport("exit");
+        const handle = await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+          request,
+          new AbortController().signal,
+        );
+        await expect(handle.completion, `${request.kind} ${writeRoots}`).rejects.toThrow(
+          /no sandboxed command may write/,
+        );
+        expect(fake.spawned()).toBe(0);
+      }
+    // the device's tmp root beside the parent is an ordinary write root
+    const tmpRoot = join(TMP_ROOT, "tmp");
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+        execRequest(false, { grant: { ...grant(false), writeRoots: [tmpRoot] } }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const { temp } = await fake.temp();
+    expect((await fake.lines())[0]).toMatchObject({ writeRoots: [tmpRoot, temp] });
   });
 
   it("a command in the device's container keeps its first write root as TMPDIR, nothing made here", async () => {
@@ -524,7 +589,8 @@ describe("Linux operation worker", () => {
     const [fullSent] = await full.lines();
     expect(fullSent).not.toHaveProperty("readRoots");
     expect(fullSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
-    // a container's worker (no toolHome) keeps the restricted env as it was
+    // a host worker without toolHome adds no version manager variables, files or roots (only
+    // its private temporary directory)
     const container = await fakeTransport("exit");
     await (
       await linuxOperationWorker({ ...container, baseEnv: env, acquireRuntime: gate })(

@@ -4,6 +4,7 @@
 // own machine, as a local-Docker device runs it (agents through `docker exec` into a container the
 // server stages). Only the runtime-hash gate is replaced (no installed package to verify in a
 // bundle): it still refuses any hash but the attested one.
+import { mkdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import {
   parseSandboxOperationScope,
@@ -56,7 +57,12 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         pythonPath: "/usr/bin/python3",
         runtimeHash: expected,
       };
+      // a host device's own directory (a real device's parent of its roots; this fixture's
+      // roots lie at the container's top level, which is read only): its private temps' base
+      const privateTempBase = `/home/sandbox/device-dirs/${deviceId}`;
+      if (message.mode !== "docker") mkdirSync(privateTempBase, { recursive: true, mode: 0o700 });
       const linux = {
+        ...(message.mode !== "docker" ? { privateTempBase } : {}),
         acquireRuntime: async (hash: string | undefined) => {
           if (hash !== expected)
             throw new SandboxPermissionUnsupportedError("Not the attested runtime");

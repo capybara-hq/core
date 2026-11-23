@@ -640,7 +640,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(second).toMatchObject({ exitCode: 0, stdout: "kept" });
   });
 
-  it("a restricted exec's TMPDIR is its own private directory in the device's tmp root, never the project", async () => {
+  it("a restricted exec's TMPDIR is its own private directory beside the device's roots, never the project", async () => {
     const root = project("temp");
     // another connection's working directory (its tmp root and private temps inside), which
     // every other connection's owner ceiling denies
@@ -681,7 +681,9 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     });
     expect(result.exitCode).toBe(0);
     const [tmp, tmpVar, tempVar, mode, ...rest] = result.stdout.trim().split(" ");
-    expect(tmp).toMatch(/^\/tmp\/capybara-op-device-temp\/op-\d+-[^/]+$/);
+    // the fixture's device directory (a real device's parent of its roots)
+    const parent = "/home/sandbox/device-dirs/device-temp/capybara-op-device-temp";
+    expect(tmp?.startsWith(`${parent}/op-`)).toBe(true);
     expect([tmpVar, tempVar]).toEqual([tmp, tmp]);
     expect(mode).toBe("700");
     expect(rest).toEqual(["wrote", "denied", "sibling", "tmpclosed"]);
@@ -689,7 +691,26 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(device.run(`ls -A ${root}`).trim()).toBe("");
     expect(device.run("test -e /tmp/outside && echo made || echo none").trim()).toBe("none");
     expect(device.run(`test -e ${tmp} && echo kept || echo gone`).trim()).toBe("gone");
-    expect(device.run("stat -c %a /tmp/capybara-op-device-temp").trim()).toBe("700");
+    expect(device.run(`stat -c %a ${parent}`).trim()).toBe("700");
+    // no grant may write around the private temps: a write root holding them is refused
+    const around = scopeFor(temps.deviceId, {
+      profile: "approve-for-me",
+      filesystem: {
+        kind: "scoped",
+        projectRoot: "/home/sandbox/device-dirs/device-temp",
+        writeRoots: ["/home/sandbox/device-dirs/device-temp"],
+      },
+      network: { kind: "none" },
+    });
+    await expect(
+      temps.operation(around, authorityFor(around.operationId)).exec({
+        command: "true",
+        cwd: "/home/sandbox/device-dirs/device-temp",
+        timeoutMs: 20_000,
+        maxOutputBytes: 4096,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/no sandboxed command may write/);
   });
 
   it("the allowlist proxy: its own token, web ports only, globally routable addresses only", async () => {

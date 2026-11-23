@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import {
   DEVICE_PROCESS_TOKEN,
@@ -52,6 +52,11 @@ export interface LinuxBackendDependencies {
   fakeIpDnsTest?: { endpoints: string[]; caPem: string };
   /** Test seam (trusted construction only): see the worker's `faultInjection`. */
   faultInjection?: LinuxFaultInjection;
+  /**
+   * The directory a restricted exec's private temporary directories are made in (default the
+   * device's own directory, the parent of its roots); see the worker's `privateTempBase`.
+   */
+  privateTempBase?: string;
   /** Called with a reap failure of a lost supervisor's session (default: ignored). */
   onReapError?: (error: unknown) => void;
 }
@@ -139,7 +144,8 @@ export async function createLinuxOperationBackend(
       baseEnv: dependencies.baseEnv ?? hostCommandEnv,
       toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
       ...(options.sandboxHome ? { sandboxHome: options.sandboxHome } : {}),
-      tmpRoot: options.roots.tmp,
+      // the device's own directory, holding its roots (`osRoots`): the private temps' base
+      privateTempBase: dependencies.privateTempBase ?? dirname(options.roots.tmp),
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
       ...(dependencies.fakeIpDnsTest ? { fakeIpDnsTest: dependencies.fakeIpDnsTest } : {}),
       ...(dependencies.faultInjection ? { faultInjection: dependencies.faultInjection } : {}),

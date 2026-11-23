@@ -166,7 +166,7 @@ Develocity `keys.properties`, and shell histories:
 `~/.config/capybara-device` when `XDG_CONFIG_HOME` moves it), every other connection's state and
 working directory on this machine (a logged-out connection's default working directory too), and the private temporary directories of other connections
 (on macOS `<userTemp>/capybara-op-<deviceId>/`; on Linux they lie in that connection's working
-directory, `<workDir>/tmp/capybara-op-<deviceId>/`; this connection's own operations use their own
+directory, `<workDir>/capybara-op-<deviceId>/`; this connection's own operations use their own
 such directory). An escalated call runs outside the sandbox and reads everything you can, and the owner
 report is unaffected by what follows.
 
@@ -217,8 +217,11 @@ the fake address. The open network decides on the address, not on where it route
 public WAN address reached by hairpin NAT, a VPN routing public addresses to an intranet, or an
 operator NAT64 prefix are not closed; such a machine should keep the allowlist. Restricted work also
 follows one write policy (below). Each restricted command also gets its own empty temporary directory
-(`TMPDIR`, `TMP`, `TEMP`; 0700), removed when the command ends: on macOS in the user's temporary
-directory, on a Linux host in the device's tmp root (`<workDir>/tmp/capybara-op-<deviceId>/`). On
+(`TMPDIR`, `TMP`, `TEMP`; 0700), removed when the command ends without following links: on macOS
+in the user's temporary directory, on a Linux host beside the device's roots
+(`<workDir>/capybara-op-<deviceId>/`, which no sandboxed command may write: a write root covering or
+inside it is refused). It is private to the device, not to the command: under `machine` reach other
+operations of the same device can read it. On
 macOS `mktemp` without a template writes to the user's shared temporary directory instead, which
 stays closed, so give it one (`mktemp "$TMPDIR/x.XXXXXX"`). A command in a local-Docker device's
 container keeps its first write root as `TMPDIR`. When the restricted runtime is

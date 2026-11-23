@@ -10,7 +10,6 @@ import {
   open,
   readdir,
   realpath,
-  rm,
   stat,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -612,11 +611,50 @@ export async function privateTempParent(
   return parent;
 }
 /**
- * Removes the private temporary directories (`op-<pid>-…`) in this device's own parent whose
- * device process is gone (this process removes its own when each operation ends). Nothing outside
- * the parent is touched: another device's temps are its own. Best effort.
+ * Removes a private temporary directory without ever following a link: Python's `shutil.rmtree`
+ * on descriptors (openat / unlinkat relative to each opened directory, no-follow), refused unless
+ * the interpreter reports it resists symbolic link attacks, and only for a real directory of this
+ * user. A command that swaps an entry for a link while it runs cannot redirect the removal
+ * outside the directory. A missing directory is already removed.
  */
-export async function sweepPrivateTemps(parent: string): Promise<void> {
+const REMOVE_PRIVATE_TEMP = String.raw`
+import os, shutil, stat, sys
+if not shutil.rmtree.avoids_symlink_attacks:
+    sys.exit("shutil.rmtree cannot avoid symbolic link attacks here")
+path = sys.argv[1]
+try:
+    info = os.lstat(path)
+except FileNotFoundError:
+    sys.exit(0)
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+    sys.exit("not a directory of this user: left in place")
+shutil.rmtree(path)
+`;
+export async function removePrivateTemp(pythonPath: string, path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(pythonPath, ["-I", "-c", REMOVE_PRIVATE_TEMP, path], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    });
+    let stderr = "";
+    child.stderr?.on("data", (b: Buffer) => {
+      if (stderr.length < 1000) stderr += b.toString("utf8");
+    });
+    child.once("error", reject);
+    child.once("close", (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`Removing ${path} failed: ${stderr.trim().slice(-300) || code}`)),
+    );
+  });
+}
+/**
+ * Removes the private temporary directories (`op-<pid>-…`) in this device's own parent whose
+ * device process is gone (this process removes its own when each operation ends), each with
+ * {@link removePrivateTemp}. Nothing outside the parent is touched: another device's temps are
+ * its own. Best effort.
+ */
+export async function sweepPrivateTemps(parent: string, pythonPath: string): Promise<void> {
   try {
     for (const name of await readdir(parent)) {
       const pid = Number(/^op-(\d+)-[^/]+$/.exec(name)?.[1]);
@@ -627,7 +665,7 @@ export async function sweepPrivateTemps(parent: string): Promise<void> {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
       }
-      await rm(join(parent, name), { recursive: true, force: true });
+      await removePrivateTemp(pythonPath, join(parent, name));
     }
   } catch {
     // a failed sweep only leaves empty scratch directories behind
@@ -815,7 +853,7 @@ export async function startMacOperationWorker(
           request.scope.deviceId,
           request.grant.deniedReadRoots,
         );
-        await sweepPrivateTemps(parent);
+        await sweepPrivateTemps(parent, request.pythonPath);
         privateTmp = await mkdtemp(join(parent, `op-${process.pid}-`));
       }
       let wrap = async (script: string) => script;
@@ -1186,7 +1224,7 @@ export async function startMacOperationWorker(
       if (request.kind === "exec" && !request.grant.full && execStarted)
         removeEmptySequencers(request.grant.writeRoots, request.pythonPath, request.onDiagnostic);
       if (privateTmp)
-        await rm(privateTmp, { recursive: true, force: true }).catch((error) =>
+        await removePrivateTemp(request.pythonPath, privateTmp).catch((error) =>
           request.onDiagnostic?.(`Private temporary directory: ${(error as Error).message}`),
         );
     }

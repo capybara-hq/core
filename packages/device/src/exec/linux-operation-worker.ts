@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
@@ -25,10 +25,12 @@ import {
   type MacWorkerHandle,
   type MacWorkerRequest,
   privateTempParent,
+  removePrivateTemp,
   sweepPrivateTemps,
   type TrustedLaunchIdentity,
 } from "./operation-worker.js";
 import { onDisk, protectedChain } from "./protected-targets.js";
+import { privateTempParentName } from "./read-model.js";
 import { acquireSealedRuntime } from "./runtime-source.js";
 import {
   ENV_NAME_RE,
@@ -77,12 +79,14 @@ export interface LinuxWorkerOptions {
    */
   sandboxHome?: string;
   /**
-   * The device's own tmp root on the host (`<dir>/tmp`, see `osRoots`): a restricted exec's private
-   * temporary directory is made in it. It is the device's alone (another connection's working
-   * directory, this one included, is denied to every other connection) and outside the system's
-   * shared temporary directory. Host only; without it a host worker refuses restricted exec.
+   * The device's own directory on the host (`<dir>`, holding the workspace, skills and tmp roots):
+   * a restricted exec's private temporary directory is made in its `capybara-op-<deviceId>`
+   * parent, beside the roots. It is the device's alone (a connection's working directory is
+   * denied to every other connection) and outside the system's shared temporary directory; no
+   * restricted grant may write there (see the refusal below). Host only; without it a host worker
+   * refuses restricted exec.
    */
-  tmpRoot?: string;
+  privateTempBase?: string;
   /**
    * The runtime-hash gate (W1-B) every restricted launch passes before anything starts: the
    * binding's attested runtime must be the one verified and sealed in this process, unchanged.
@@ -247,27 +251,43 @@ export function linuxOperationWorker(
             "A container device's restricted grant cannot carve owner-denied paths",
           );
         // A restricted command's own temporary directory on the host (TMPDIR, TMP, TEMP), as on
-        // macOS: created empty for this operation alone in a private parent in the device's own
-        // tmp root (`<dir>/tmp/capybara-op-<deviceId>/op-<pid>-…`, 0700), granted read and write
-        // for this command only, and removed once the operation ends (a crashed device leaves it
-        // behind: the next operation of this device removes it). Never the grant's first write
-        // root, so temporary files stay out of the project. The tmp root lies in this connection's
-        // working directory, which every other connection's ceiling already denies, and not in
-        // the system's shared /tmp. A command in the device's container keeps its first write
+        // macOS: created empty for this operation alone in the device's private parent beside its
+        // roots (`<dir>/capybara-op-<deviceId>/op-<pid>-…`, 0700), granted read and write for this
+        // command only, and removed once the operation ends without following links (a crashed
+        // device leaves it behind: the next operation of this device removes it). Never the
+        // grant's first write root, so temporary files stay out of the project. `<dir>` is this
+        // connection's working directory, which every other connection's ceiling already denies,
+        // not the system's shared /tmp. A command in the device's container keeps its first write
         // root (the container is the device's alone).
+        if (!request.grant.full && options.transport.kind === "host" && options.privateTempBase) {
+          // No restricted grant (exec or native, of any operation of this device) writes the
+          // parent, an operation's own directory or anything around them: otherwise one operation
+          // could plant entries in another's directory and swap them for links while the device
+          // process removes it.
+          const parent = join(
+            options.privateTempBase,
+            privateTempParentName(request.scope.deviceId),
+          );
+          const parentForms = withCanonicalForms([parent]);
+          const overlap = withCanonicalForms(request.grant.writeRoots).find((root) =>
+            parentForms.some((form) => within(form, root) || within(root, form)),
+          );
+          if (overlap !== undefined)
+            throw new SandboxScopeDeniedError(
+              `The write root ${overlap} covers or lies inside ${parent}, the device's private temporary directories, which no sandboxed command may write; choose a write root inside the workspace, the device's tmp root or a project directory`,
+            );
+        }
         if (request.kind === "exec" && !request.grant.full && options.transport.kind === "host") {
-          if (!options.tmpRoot)
+          if (!options.privateTempBase)
             throw new SandboxPermissionUnsupportedError(
-              "This device has no tmp root for a restricted command's temporary directory",
+              "This device has no directory for a restricted command's temporary directory",
             );
           const parent = await privateTempParent(
-            options.tmpRoot,
+            options.privateTempBase,
             request.scope.deviceId,
             request.grant.deniedReadRoots,
           );
-          // a parent inside a write root could be swapped by a command: never swept through then
-          if (!request.grant.writeRoots.some((root) => within(parent, root)))
-            await sweepPrivateTemps(parent);
+          await sweepPrivateTemps(parent, request.pythonPath);
           privateTmp = await mkdtemp(join(parent, `op-${process.pid}-`));
         }
         const tempRoots = privateTmp ? [privateTmp] : [];
@@ -502,7 +522,7 @@ export function linuxOperationWorker(
           );
         }
         if (privateTmp)
-          await rm(privateTmp, { recursive: true, force: true }).catch((error) =>
+          await removePrivateTemp(request.pythonPath, privateTmp).catch((error) =>
             request.onDiagnostic?.(`Private temporary directory: ${(error as Error).message}`),
           );
       }
