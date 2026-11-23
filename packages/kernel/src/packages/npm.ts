@@ -22,11 +22,19 @@ import { safeFetch } from "../net/safe-fetch.js";
  *   token unless it is on the registry's origin.
  */
 
-/** 下载或校验失败（HTTP 层映射为 `packages.npm_failed`，502）。消息为英文，不含令牌。 */
+/**
+ * A download or verification failed (the HTTP layer maps it to `packages.npm_failed`, 502). The
+ * message is English and never carries the token. `transient`: the failure may go away on its own
+ * (a network error such as a reset, a DNS failure, a timeout, HTTP 408 / 429 / 5xx, a body cut off
+ * while read), so a caller may retry; never set for a refused connection (nothing listens), a
+ * refusal by the network rules, another 4xx such as 404, bad metadata or a mismatch.
+ */
 export class NpmFetchError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  readonly transient: boolean;
+  constructor(message: string, options?: { cause?: unknown; transient?: boolean }) {
     super(message, options);
     this.name = "NpmFetchError";
+    this.transient = options?.transient === true;
   }
 }
 
@@ -136,13 +144,41 @@ export async function npmGet(
         { cause: e },
       );
     }
-    throw new NpmFetchError(`cannot fetch the ${what}: ${errMsg(e)}`, { cause: e });
+    // A refusal by the network rules stays a refusal (a DNS failure may be a passing one), and so
+    // does a refused connection: nothing listens there, a wrong URL or a registry that is down
+    const transient =
+      e instanceof NetDeniedError ? e.code === "net.dns_failed" : !hasErrorCode(e, "ECONNREFUSED");
+    throw new NpmFetchError(`cannot fetch the ${what}: ${errMsg(e)}`, { cause: e, transient });
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
-    throw new NpmFetchError(`the ${what} responded with HTTP ${res.status}`);
+    const transient = res.status === 408 || res.status === 429 || res.status >= 500;
+    throw new NpmFetchError(`the ${what} responded with HTTP ${res.status}`, { transient });
   }
   return res;
+}
+
+/** Whether `e`, its `cause` chain or an `AggregateError`'s errors carry the system error `code`. */
+function hasErrorCode(e: unknown, code: string, depth = 0): boolean {
+  if (depth > 8 || typeof e !== "object" || e === null) return false;
+  if ((e as { code?: unknown }).code === code) return true;
+  const errors = e instanceof AggregateError ? e.errors : [];
+  return [(e as { cause?: unknown }).cause, ...errors].some((x) => hasErrorCode(x, code, depth + 1));
+}
+
+/** {@link readCapped}, with a body cut off while read as a transient {@link NpmFetchError}. */
+async function readBody(
+  res: Response,
+  max: number,
+  onTooLarge: () => Error,
+  what: string,
+): Promise<Buffer> {
+  try {
+    return await readCapped(res, max, onTooLarge);
+  } catch (e) {
+    if (e instanceof NpmFetchError || e instanceof PackageTooLargeError) throw e;
+    throw new NpmFetchError(`cannot read the ${what}: ${errMsg(e)}`, { cause: e, transient: true });
+  }
 }
 
 /** `sha512-<base64>` 形式的 SRI；可能有空格分隔的多个，取其中的 sha512。 */
@@ -225,10 +261,11 @@ export async function fetchNpmPackage(
       signal,
       "npm registry",
     );
-    const raw = await readCapped(
+    const raw = await readBody(
       res,
       MAX_METADATA_BYTES,
       () => new NpmFetchError("the npm package metadata is too large"),
+      "npm package metadata",
     );
     let doc: {
       "dist-tags"?: Record<string, unknown>;
@@ -279,7 +316,7 @@ export async function fetchNpmPackage(
   }
 
   const res = await npmGet(cfg, tarball, tarballHeaders, signal, "package tarball");
-  const bytes = await readCapped(res, cfg.maxBytes, tooLarge);
+  const bytes = await readBody(res, cfg.maxBytes, tooLarge, "package tarball");
   verify(
     bytes,
     integrity,

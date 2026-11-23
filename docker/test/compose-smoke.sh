@@ -8,7 +8,9 @@
 #      done and does nothing); log in through web;
 #   3. install model-fake from a local tgz with `compose run api extensions install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
-#   4. a third `up`: init exits 0 again, bootstrap still ran only once, and there is still exactly
+#   4. the upgrade order (`run --rm init`, then `up -d`): a failing one-off init exits with its
+#      code and leaves api running untouched, a passing one skips the done bootstrap; then a third
+#      `up`: init exits 0 again, bootstrap still ran only once, and there is still exactly
 #      one super admin;
 #   5. object storage on the web origin (the bootstrap plugin object-store-s3): an attachment's
 #      presigned upload and download go through web's proxy (the client uses another Host than the
@@ -326,6 +328,21 @@ grep -qi '^content-security-policy: sandbox' "$TMP/dl-headers" || fail "download
 st="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT --data x "$WEB/capybara/kernel/x")"
 [ "$st" = "405" ] || fail "PUT through the object-store proxy: $st (expected 405)"
 echo "    presigned upload and download through web (other Host than signed); PUT 405; nosniff, CSP"
+
+echo "==> upgrade order: one-off init first; a failing one leaves the serving containers alone"
+api_id="$(dc ps -q api)"
+api_started="$(docker inspect -f '{{.State.StartedAt}}' "$api_id")"
+code=0
+dc run --rm -T --entrypoint /bin/sh init -c 'exit 3' >/dev/null 2>&1 || code=$?
+[ "$code" = "3" ] || fail "a failing one-off init exited with $code (expected 3)"
+[ "$(dc ps -q api)" = "$api_id" ] || fail "a failing one-off init replaced api"
+[ "$(docker inspect -f '{{.State.StartedAt}}' "$api_id")" = "$api_started" ] \
+  || fail "a failing one-off init restarted api"
+wait_healthy api worker gateway web
+run_log="$(dc run --rm -T init 2>&1)" || fail "the one-off init failed: $run_log"
+grep -qF "Bootstrap already done" <<<"$run_log" || fail "the one-off init did not skip the bootstrap"
+[ "$(dc ps -q api)" = "$api_id" ] || fail "the one-off init replaced api"
+echo "    run --rm init exits with init's code and never touches api"
 
 echo "==> third up: init exits 0, still one super admin"
 dc up -d --scale worker=2

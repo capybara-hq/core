@@ -3,6 +3,10 @@
 #   cp .env.example .env        # then fill in the required values (see the comments in it)
 #   docker compose up -d        # web on http://localhost:${CAPYBARA_WEB_PORT:-3000}
 #
+# Upgrading a running deployment: run init on its own first, so a failing migration or bootstrap
+# leaves the running containers serving (a plain `up -d` replaces them before init has run):
+#   docker compose pull && docker compose run --rm init && docker compose up -d
+#
 # This file and .env are all you need on the host (images come from ghcr.io); the optional sandbox
 # profile builds two more images from the capybara-hq/plugins repository (see below).
 # Local build from a checkout instead of pulling:
@@ -174,7 +178,8 @@ services:
 
   # One-shot, on every `up`: migrate (fails on PostgreSQL older than 15), bootstrap, then create the
   # super admin if the password file exists and no admin exists yet. A failure here keeps
-  # api, worker and gateway from starting. The first bootstrap downloads the pinned plugins from
+  # api, worker and gateway from starting (on an upgrade, run `docker compose run --rm init`
+  # before `up -d`: see the top of this file). The first bootstrap downloads the pinned plugins from
   # npm (CAPYBARA_PACKAGES__NPM_REGISTRY for a mirror, in a compose.override.yaml); offline, mount
   # a host directory holding the pinned tgz files (any names) at /app/bootstrap, e.g.
   #   volumes: ["./bootstrap:/app/bootstrap:ro"]
