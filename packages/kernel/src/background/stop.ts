@@ -167,6 +167,7 @@ export class BackgroundTaskStopper {
         .selectFrom("conversations")
         .select(["id", "deleted_at"])
         .where("id", "in", ids)
+        .where("org_id", "=", cur.orgId)
         .execute(),
       this.db.db
         .selectFrom("orgs")
@@ -292,6 +293,7 @@ export class BackgroundTaskStopper {
    */
   async stopSubagentTasks(conversationId: string, runId?: string): Promise<void> {
     try {
+      // org-filter: conversationId is kernel-supplied (the run that just ended), not caller input
       const conv = await this.db
         .selectFrom("conversations")
         .select("kind")

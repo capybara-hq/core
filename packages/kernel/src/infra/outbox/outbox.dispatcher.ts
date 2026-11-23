@@ -110,6 +110,8 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
  * process that has it.
  */
 @Injectable()
+// org-filter: deployment-wide relay; it claims and delivers due outbox rows of every org by row id
+// (kernel-written ids, never caller input), each job carrying its own org in its data
 export class OutboxDispatcher {
   /** The owners' queue instances resolved so far (a per-process handle cache). */
   private readonly queues = new Map<KernelQueueName, OutboxQueue>();

@@ -374,6 +374,8 @@ export class PermissionConfigPublication {
     // a B1 snapshot an older replica wrote after migration 0167 becomes the device's own network
     // at every activation, before anything reads it (as 0165 and 0167 copy it: never wider)
     await copyCloudSnapshotNetworks(this.db.db);
+    // org-filter: platform publication under the platform write lock: pins devices of every org,
+    // each judged against its own org's settings
     if (pinDevices) {
       const stored = await readStoredDeviceSandbox(this.db.db, this.log, configuredCeiling);
       const view = resolveDeviceSandboxSettings(configuredView(projection), stored);
@@ -481,6 +483,7 @@ export class PermissionConfigPublication {
       orgs.map((org) => [org.id, orgDeviceSandboxOf(org.settings).deviceNetwork] as const),
     );
     // the kill switch lifted is a widening for every device (closing it only narrows)
+    // org-filter: platform publication: the kill switch is deployment-wide, every org's devices
     if (before.egress === "none" && next.egress !== "none")
       await this.ceilings.invalidateDeviceConsentUnderPlatform(
         (await this.db.selectFrom("devices").select("id").execute()).map((device) => device.id),
@@ -564,6 +567,7 @@ export class PermissionConfigPublication {
  * permission locks), so the publication must never hold the platform lock while it waits for a
  * device row.
  */
+// org-filter: platform publication: locks the devices of every org that follow their org
 export async function lockDevicesFollowingTheirOrg(db: KernelSchemaDb): Promise<void> {
   await db
     .selectFrom("devices")
@@ -580,6 +584,7 @@ export async function lockDevicesFollowingTheirOrg(db: KernelSchemaDb): Promise<
  * stays that allowlist, an empty or unreadable one ran closed and becomes `none`; an open snapshot
  * follows the org. Idempotent: only rows still following the org are written.
  */
+// org-filter: deployment-wide idempotent copy (migrations 0165/0167, publication) over every org
 export async function copyCloudSnapshotNetworks(db: KernelSchemaDb): Promise<void> {
   const readable = sql<boolean>`jsonb_typeof(outer_network -> 'hosts') = 'array'
     AND NOT EXISTS (

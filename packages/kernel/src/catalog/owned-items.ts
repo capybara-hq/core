@@ -189,12 +189,18 @@ export class OwnedItems {
     );
     const row = await this.ownedComponent(orgId, kind, id, true);
     if (kind === "skill") {
-      await this.db.updateTable("skills").set({ shareable }).where("id", "=", row.id).execute();
+      await this.db
+        .updateTable("skills")
+        .set({ shareable })
+        .where("id", "=", row.id)
+        .where("org_id", "=", orgId)
+        .execute();
     } else {
       await this.db
         .updateTable("agent_templates")
         .set({ shareable })
         .where("id", "=", row.id)
+        .where("org_id", "=", orgId)
         .execute();
     }
     // promoted: the platform row is the one every gate reads (ruling P3-2), written in this
@@ -543,6 +549,7 @@ export class OwnedItems {
       .where("id", "=", item.id)
       .execute();
     if (item.scope === "all") {
+      // org-filter: the ownership transfer rewrites the item's whole named list (every org using it)
       await t.deleteFrom("catalog_item_scope_orgs").where("item_id", "=", item.id).execute();
       await t
         .insertInto("catalog_item_scope_orgs")
@@ -585,6 +592,7 @@ export class OwnedItems {
         .set({ scope: "named", updated_at: now })
         .where("id", "=", c.id)
         .execute();
+      // org-filter: the ownership transfer narrows the component's whole named list to the orgs on
       await t
         .deleteFrom("component_scope_orgs")
         .where("kind", "=", c.kind)
@@ -753,6 +761,7 @@ export class OwnedItems {
       .where("id", "=", id)
       .execute();
     if (narrowTo !== null) {
+      // org-filter: the ownership transfer narrows the component's whole named list to the orgs on
       await t
         .deleteFrom("component_scope_orgs")
         .where("kind", "=", kind)

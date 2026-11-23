@@ -376,6 +376,7 @@ export class ConversationDevices {
       .selectFrom("conversations")
       .select("device_id")
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     if (before.device_id !== null) return before.device_id;
     await this.ceilings.publishLocked(subject, "root", false, true);
@@ -383,12 +384,14 @@ export class ConversationDevices {
       .updateTable("conversations")
       .set({ device_id: deviceId })
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .where("device_id", "is", null)
       .execute();
     const row = await this.db
       .selectFrom("conversations")
       .select("device_id")
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     return row.device_id ?? deviceId;
   }

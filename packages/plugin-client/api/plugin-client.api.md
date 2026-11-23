@@ -314,6 +314,19 @@ export interface StackProps {
 }
 
 // @public
+export const Switch: ComponentType<SwitchProps>;
+
+// @public
+export interface SwitchProps {
+    "aria-describedby"?: string;
+    checked: boolean;
+    disabled?: boolean;
+    id?: string;
+    label: string;
+    onChange: (next: boolean) => void;
+}
+
+// @public
 const Text_2: ComponentType<TextProps>;
 export { Text_2 as Text }
 

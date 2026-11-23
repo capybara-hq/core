@@ -478,7 +478,7 @@ export class CommandReviewService implements CommandReview {
     // caller named (a sub-agent's conversation carries agent-authored task text, never shown here)
     let root: string | undefined;
     const rootOf = async (): Promise<string> =>
-      (root ??= await this.rootConversationOf(input.conversationId));
+      (root ??= await this.rootConversationOf(input.orgId, input.conversationId));
     const facts = {
       workspace,
       cwd: workspace,
@@ -492,7 +492,7 @@ export class CommandReviewService implements CommandReview {
       ? reviewWrites(paths, facts)
       : reviewRules(target, {
           ...facts,
-          written: await this.writtenInTree(await rootOf(), facts),
+          written: await this.writtenInTree(input.orgId, await rootOf(), facts),
         });
     let hit = decidingHit(result.hits, result.outcome);
 
@@ -612,7 +612,7 @@ export class CommandReviewService implements CommandReview {
    * that names a sub-agent's conversation still reviews against what the person asked for, never
    * against agent-authored task text. The input is normally the root already (one query).
    */
-  private async rootConversationOf(conversationId: string): Promise<string> {
+  private async rootConversationOf(orgId: string, conversationId: string): Promise<string> {
     let id = conversationId;
     // a tree is shallow (`subagents.maxDepth`); the cap only guards a corrupted parent chain
     for (let depth = 0; depth < 64; depth++) {
@@ -620,6 +620,7 @@ export class CommandReviewService implements CommandReview {
         .selectFrom("conversations")
         .select(["kind", "parent_conversation_id"])
         .where("id", "=", id)
+        .where("org_id", "=", orgId)
         .executeTakeFirst();
       // a missing conversation (or one deleted meanwhile) is left to the reads that follow
       if (row === undefined || row.kind !== "subagent" || row.parent_conversation_id === null) {
@@ -655,6 +656,7 @@ export class CommandReviewService implements CommandReview {
    * whoever runs it (hardening spec R1).
    */
   private async writtenInTree(
+    orgId: string,
     rootConversationId: string,
     facts: {
       workspace: string;
@@ -671,11 +673,13 @@ export class CommandReviewService implements CommandReview {
           .selectFrom("conversations")
           .select("id")
           .where("id", "=", rootConversationId)
+          .where("org_id", "=", orgId)
           .unionAll((q) =>
             q
               .selectFrom("conversations as c")
               .innerJoin("tree", "tree.id", "c.parent_conversation_id")
-              .select("c.id"),
+              .select("c.id")
+              .where("c.org_id", "=", orgId),
           ),
       )
       .selectFrom("conversation_events")

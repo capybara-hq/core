@@ -1742,11 +1742,10 @@
     "download": "Download",
     "previewTruncated": "Showing the beginning only; download for the full file.",
     "previewFailed": "Preview failed to load.",
-    "deviceLine": "Device: {name} · {state}",
+    "deviceLine": "{name} · {state}",
     "deviceNone": "No device",
     "deviceDeleted": "Device deleted",
-    "deviceFailed": "Device status unavailable",
-    "lastRun": "Last run · {parts}"
+    "deviceFailed": "Device status unavailable"
   },
   "pluginPage": {
     "pathLabel": "Extension page",
@@ -5753,7 +5752,7 @@
       "toolsNone": "None",
       "loadFailed": "The sub-agent cannot be opened."
     },
-    "contextTotal": "Total tokens with sub-agents {n}",
+    "contextTotal": "{n} tokens incl. sub-agents",
     "background": "Background tasks",
     "startingGrant": "Running work keeps the permissions it started with; a permission change applies to new operations. Revoked device or organization access can still stop it."
   },

@@ -41,6 +41,8 @@ interface TaskRunRow {
  * end was missed and releases one whose queued message is gone.
  */
 @Injectable()
+// org-filter: kernel-internal (run finish, fire job, settle job): task run ids come from a kernel
+// run's scheduled_task_run_id or from a task run row the caller already holds, never from input
 export class ScheduledTaskRunTracker {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
@@ -143,6 +145,7 @@ export class ScheduledTaskRunTracker {
         await t
           .selectFrom("conversations")
           .select("id")
+          .where("org_id", "=", tr.org_id)
           .where("scheduled_task_id", "=", tr.task_id)
           .where("create_request_id", "=", tr.id)
           .executeTakeFirst()
@@ -161,6 +164,7 @@ export class ScheduledTaskRunTracker {
           .updateTable("scheduled_task_runs")
           .set({ status: "running", run_id: run.id, conversation_id: conv })
           .where("id", "=", tr.id)
+          .where("org_id", "=", tr.org_id)
           .execute();
         if (!RUN_TERMINAL.has(run.status)) return true;
         await this.settle(tr, run.status as RunOutcome);
@@ -179,6 +183,7 @@ export class ScheduledTaskRunTracker {
           .selectFrom("conversations")
           .select("consumed_seq")
           .where("id", "=", conv)
+          .where("org_id", "=", tr.org_id)
           .executeTakeFirst();
         // posted, its run still to be created (`ensureRun`)
         if (c === undefined || Number(message.seq) > Number(c.consumed_seq)) return true;
@@ -194,6 +199,7 @@ export class ScheduledTaskRunTracker {
       .updateTable("scheduled_task_runs")
       .set({ status: "skipped", skip_reason: "removed", fired_at: null })
       .where("id", "=", tr.id)
+      .where("org_id", "=", tr.org_id)
       .where("status", "=", "pending")
       .execute();
     return false;
@@ -231,6 +237,7 @@ export class ScheduledTaskRunTracker {
         ...(failed && { error: error ?? "The run failed" }),
       })
       .where("id", "=", tr.id)
+      .where("org_id", "=", tr.org_id)
       .execute();
     await this.push.oweScheduleRun(tr.id, tr.org_id);
     if (tr.trial) return;
@@ -239,6 +246,7 @@ export class ScheduledTaskRunTracker {
         .updateTable("scheduled_tasks")
         .set({ consecutive_failures: 0 })
         .where("id", "=", tr.task_id)
+        .where("org_id", "=", tr.org_id)
         .where("consecutive_failures", "!=", 0)
         .execute();
       return;
@@ -247,6 +255,7 @@ export class ScheduledTaskRunTracker {
       .updateTable("scheduled_tasks")
       .set({ consecutive_failures: sql<number>`consecutive_failures + 1` })
       .where("id", "=", tr.task_id)
+      .where("org_id", "=", tr.org_id)
       .where("deleted_at", "is", null)
       .returning("consecutive_failures")
       .executeTakeFirst();
@@ -264,6 +273,8 @@ export class ScheduledTaskRunTracker {
  * transaction (`RunQueue.ensureRunIn`, which inserts the run). A task run already linked (a
  * sub-agent or wake run inheriting the marker) is left alone.
  */
+// org-filter: the task run id is the kernel-written schedule marker of the run's trigger message
+// (scheduledTaskRunAt), set only through the kernel-internal schedule option, never by a person
 export async function linkStartedRunIn(
   t: KernelSchemaDb,
   taskRunId: string,
@@ -288,6 +299,8 @@ export async function linkStartedRunIn(
  * marker, or null): its task run will never run as the task's, so it becomes `skipped`
  * (`removed`) in the caller's transaction, and the next tick is not held by the overlap check.
  */
+// org-filter: the marker is the queued item's stored schedule column, written only through the
+// kernel-internal schedule option of the queue (never from a request body)
 export async function releaseQueuedTaskRunIn(t: KernelSchemaDb, schedule: unknown): Promise<void> {
   const taskRunId = (schedule as { taskRunId?: unknown } | null)?.taskRunId;
   if (typeof taskRunId !== "string") return;
@@ -305,6 +318,7 @@ export async function releaseQueuedTaskRunIn(t: KernelSchemaDb, schedule: unknow
  * run and the task takes the task row first: the fire job's claim, the run tracker, the scan's
  * repair (a run finishing while the next tick's claim checks overlap must not deadlock).
  */
+// org-filter: a row lock by the task id of a task or task run row the kernel caller already holds
 export async function lockTaskRow(t: KernelSchemaDb, taskId: string): Promise<void> {
   await t
     .selectFrom("scheduled_tasks")

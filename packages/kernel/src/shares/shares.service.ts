@@ -391,6 +391,7 @@ export class SharesService {
         updated_at: sql<Date>`now()`,
       })
       .where("id", "=", at.shareId)
+      .where("org_id", "=", at.orgId)
       .execute();
     if (row.object_key !== null) await this.oweDelete(at.orgId, at.shareId, at.from);
     await audit(this.db.db, {
@@ -452,6 +453,7 @@ export class SharesService {
         updated_at: sql<Date>`now()`,
       })
       .where("id", "=", shareId)
+      .where("org_id", "=", orgId)
       .execute();
     if (s.object_key !== null) await this.oweDelete(orgId, shareId, s.generation);
     await audit(this.db.db, {

@@ -53,6 +53,8 @@ export class PermissionCeilingWrites {
         )
         .execute();
     if (deviceIds.length) {
+      // org-filter: platform-level writer under the exclusive platform lock: the devices whose
+      // Full reach changed may lie in any org, each root is reset in its own org
       const roots = await this.db
         .selectFrom("conversations")
         .selectAll()
@@ -139,12 +141,14 @@ export class PermissionCeilingWrites {
           updated_at: new Date(),
         })
         .where("operation_id", "=", row.operation_id)
+        .where("org_id", "=", row.org_id)
         .execute();
       if (row.state === "background-running")
         await this.db
           .updateTable("background_tasks")
           .set({ launch_state: "cancel-pending", cancel_requested_at: new Date() })
           .where("operation_id", "=", row.operation_id)
+          .where("org_id", "=", row.org_id)
           .where("launch_state", "=", "acknowledged")
           .execute();
       await this.outbox.add({
@@ -169,6 +173,7 @@ export class PermissionCeilingWrites {
         permission_revision: revision,
       })
       .where("id", "=", root.id)
+      .where("org_id", "=", root.org_id)
       .execute();
     await this.transitions.recordLocked(
       {

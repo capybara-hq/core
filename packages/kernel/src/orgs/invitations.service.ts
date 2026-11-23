@@ -189,6 +189,7 @@ export class InvitationsService {
       .updateTable("invitations")
       .set({ revoked_at: sql<Date>`now()` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(this.db.db, {
       actorAccountId,
@@ -246,6 +247,7 @@ export class InvitationsService {
       .updateTable("invitations")
       .set({ accepted_at: sql<Date>`now()`, accepted_by: account.id })
       .where("id", "=", inv.id)
+      .where("org_id", "=", inv.org_id)
       .where("accepted_at", "is", null)
       .where("revoked_at", "is", null)
       .where(sql<boolean>`expires_at > now()`)

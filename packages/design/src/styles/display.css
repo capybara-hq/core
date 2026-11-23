@@ -346,6 +346,8 @@
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+  /* a hint's sentence wraps instead of running across the screen */
+  max-width: min(320px, calc(100vw - 2 * var(--cb-space-4)));
 }
 
 /* Logo */

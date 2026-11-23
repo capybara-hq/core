@@ -106,6 +106,7 @@ export class AgentProfileService {
         ),
       )
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     if (current.at !== expectedUpdatedAt) {
       throw new ApiError(
@@ -136,6 +137,7 @@ export class AgentProfileService {
         profile_updated_at: sql`greatest(date_trunc('milliseconds', now()), profile_updated_at + interval '1 millisecond')`,
       })
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .execute();
     if (patch.avatar !== undefined) {
       // the avatar changed: every other upload bound to this agent is garbage; the cleanup job
@@ -143,6 +145,7 @@ export class AgentProfileService {
       await t
         .updateTable("attachments")
         .set({ expires_at: sql<Date>`now()` })
+        .where("org_id", "=", orgId)
         .where("agent_id", "=", agentId)
         .where("purpose", "=", "agent-avatar")
         .$if(patch.avatar?.kind === "upload", (q) =>

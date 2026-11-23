@@ -216,6 +216,7 @@ export class EvalReplaySeeder {
       .selectFrom("eval_runs")
       .select("id")
       .where("id", "=", evalRunId)
+      .where("org_id", "=", p.orgId)
       .where("status", "in", [...ACTIVE_EVAL_STATUSES])
       .forShare()
       .executeTakeFirst();
@@ -407,6 +408,8 @@ export function runBaseline(s: CaseSnapshot): RunBaseline {
  * 删掉一个评测对话（崩溃重跑前清掉上一次的残留）：先删它各次运行的 checkpoint，再删对话（事件、运行随之级联删除）。
  * 只删 `kind = 'eval'` 的对话。
  */
+// org-filter: the id is an eval result's own eval_conversation_id (kernel-written, read by the worker
+// from the claimed result row), and only `kind = 'eval'` rows are deleted
 export async function deleteEvalConversation(
   d: Pick<RunReplayDeps, "db" | "checkpoints" | "hooks">,
   conversationId: string,
@@ -497,6 +500,7 @@ export async function replayRun(
     .selectFrom("eval_runs")
     .select("created_by")
     .where("id", "=", evalRunId)
+    .where("org_id", "=", s.orgId)
     .executeTakeFirstOrThrow();
   const accountId = run.created_by;
   const R = start.seq;

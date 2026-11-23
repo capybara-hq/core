@@ -118,6 +118,8 @@ export function supportOf(value: unknown): SandboxPermissionSupport | null {
 }
 
 /** The revision of the device's stored report (`devices.report`), or null when none is stored. */
+// org-filter: device-id helper; every caller (PermissionFacts, SandboxService) first read this
+// device with its org filter, so the id is already proven to be the caller's org
 async function storedReportRevision(db: KernelSchemaDb, deviceId: string): Promise<string | null> {
   const row = await db
     .selectFrom("devices")
@@ -197,6 +199,8 @@ export async function readRuntimeReport(
  * current, which names the installed evidence) and the support it recorded (null unless it is
  * current), whatever availability that support gives.
  */
+// org-filter: device-id helper; every caller (PermissionFacts, SandboxService) first read this
+// device with its org filter, so the id is already proven to be the caller's org
 export async function readCurrentReport(
   db: KernelSchemaDb,
   deviceId: string,
@@ -278,6 +282,8 @@ export async function readCurrentReport(
  * applied limits) but no current report is recorded for it (none yet, or one recorded under an
  * earlier report revision). Database reads only.
  */
+// org-filter: device-id helper; every caller (PermissionFacts, SandboxService) first read this
+// device with its org filter, so the id is already proven to be the caller's org
 export async function reportOwed(
   db: KernelSchemaDb,
   deviceId: string,
@@ -298,6 +304,8 @@ export async function reportOwed(
   return (await readCurrentReport(db, deviceId, provider, version)).identityHash === null;
 }
 @Injectable()
+// org-filter: every write asserts the device authority writer lock held exclusively, which
+// PermissionAuthorityLock.acquire grants only after checking the device belongs to the subject org
 export class PermissionRuntimeReports {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,

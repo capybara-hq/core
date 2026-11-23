@@ -281,7 +281,7 @@ export class ConversationFiles {
       start = at + 1;
     }
     const page = ordered.slice(start, start + opts.limit);
-    const shares = await this.viewerShares(conversationId, viewer);
+    const shares = await this.viewerShares(orgId, conversationId, viewer);
     const store = this.storage.kernel(orgId);
     const files = await mapLimit(page, HEAD_CONCURRENCY, async (e): Promise<FileOutput> => {
       if (e.origin === "uploaded") {
@@ -430,12 +430,14 @@ export class ConversationFiles {
    * revoked or expired ({@link FileOutput.shared}).
    */
   private async viewerShares(
+    orgId: string,
     conversationId: string,
     viewer: string,
   ): Promise<{ paths: Set<string>; uploads: Set<string> }> {
     const rows = await this.db
       .selectFrom("file_shares")
       .select(["source_path", "file_id"])
+      .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
       .where("created_by", "=", viewer)
       .where("revoked_at", "is", null)

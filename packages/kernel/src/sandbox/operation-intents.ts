@@ -226,6 +226,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", ctx.orgId)
       .executeTakeFirst();
     if (previous) {
       this.assertIdentity(previous, ctx, instance, method, hash);
@@ -331,6 +332,7 @@ export class SandboxOperationIntents {
           updated_at: new Date(),
         })
         .where("operation_id", "=", id)
+        .where("org_id", "=", ctx.orgId)
         .where("state", "=", "pending")
         .execute();
     const row = await this.read(id);
@@ -514,6 +516,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     if (
@@ -549,6 +552,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "dispatching", updated_at: new Date() })
       .where("operation_id", "=", id)
+      .where("org_id", "=", row.org_id)
       .execute();
     return { ...row, state: "dispatching" };
   }
@@ -558,6 +562,8 @@ export class SandboxOperationIntents {
     id: string,
   ): Promise<OperationIntent> {
     await this.locks.acquire({ orgId: ctx.orgId, deviceId: ctx.deviceId }, { kind: "admit" });
+    // org-filter: org_id is compared with ctx.orgId right below (denied on a mismatch); the id is
+    // the one admitBrowse returned to the kernel caller
     const row = await this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
@@ -578,6 +584,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "dispatching", updated_at: new Date() })
       .where("operation_id", "=", id)
+      .where("org_id", "=", row.org_id)
       .execute();
     return { ...row, state: "dispatching" };
   }
@@ -607,6 +614,9 @@ export class SandboxOperationIntents {
       );
   }
   async read(id: string): Promise<OperationIntent> {
+    // org-filter: operation ids are kernel-minted (operationIdFor over the run claim, or a random
+    // scope id) and reach here only from the tool worker, the sandbox lifecycle and the kernel's
+    // reconcile and revoke jobs; no route or tool input names one
     return this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
@@ -623,6 +633,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     if (r.state === "revoked") {
@@ -670,6 +681,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "admitted", updated_at: new Date() })
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .execute();
     await this.outbox.add({
       queue: "cap-kernel-maintenance",
@@ -696,6 +708,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     if (r.state === "completed" || r.state === "background-running") return r;
@@ -721,6 +734,7 @@ export class SandboxOperationIntents {
           .updateTable("sandbox_operation_intents")
           .set({ state: "revoked", outcome_unknown: false, updated_at: new Date() })
           .where("operation_id", "=", id)
+          .where("org_id", "=", r.org_id)
           .execute();
         return { ...r, state: "revoked", outcome_unknown: false };
       }
@@ -734,6 +748,7 @@ export class SandboxOperationIntents {
         updated_at: new Date(),
       })
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .execute();
     return {
       ...r,
@@ -795,6 +810,7 @@ export class SandboxOperationIntents {
         stopping_at: null,
       })
       .where("id", "=", b.taskId)
+      .where("org_id", "=", r.org_id)
       .where("operation_id", "=", r.operation_id)
       .where("launch_state", "=", "pending")
       .where("status", "=", "running")
@@ -823,6 +839,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     const ref = parseSandboxExecutionRef(result);
@@ -844,6 +861,7 @@ export class SandboxOperationIntents {
       .selectFrom("background_tasks")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .forUpdate()
       .executeTakeFirst();
     if (!task || task.instance_id !== instanceId)
@@ -874,6 +892,7 @@ export class SandboxOperationIntents {
           updated_at: new Date(),
         })
         .where("operation_id", "=", id)
+        .where("org_id", "=", r.org_id)
         .execute();
       await this.db
         .updateTable("background_tasks")
@@ -883,6 +902,7 @@ export class SandboxOperationIntents {
           sandbox_created_at: new Date(Number(r.instance_generation)),
         })
         .where("id", "=", task.id)
+        .where("org_id", "=", r.org_id)
         .execute();
       return "acknowledged";
     }
@@ -897,6 +917,7 @@ export class SandboxOperationIntents {
         updated_at: new Date(),
       })
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .execute();
     await this.db
       .updateTable("background_tasks")
@@ -909,6 +930,7 @@ export class SandboxOperationIntents {
         stopping_at: null,
       })
       .where("id", "=", task.id)
+      .where("org_id", "=", r.org_id)
       .where("launch_state", "in", ["dispatched", "cancel-pending"])
       .execute();
     await this.outbox.add({
@@ -936,6 +958,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     if (
@@ -948,6 +971,7 @@ export class SandboxOperationIntents {
       .selectFrom("background_tasks")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .forUpdate()
       .executeTakeFirst();
     if (!task) {
@@ -960,6 +984,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ execution_id: executionId, outcome_unknown: true, updated_at: new Date() })
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .execute();
     return { ...r, execution_id: executionId, outcome_unknown: true };
   }
@@ -987,6 +1012,7 @@ export class SandboxOperationIntents {
           cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
         })
         .where("id", "=", task.id)
+        .where("org_id", "=", r.org_id)
         .execute();
     return false;
   }
@@ -1001,6 +1027,7 @@ export class SandboxOperationIntents {
         updated_at: new Date(),
       })
       .where("operation_id", "=", r.operation_id)
+      .where("org_id", "=", r.org_id)
       .execute();
     await this.outbox.add({
       queue: "cap-kernel-maintenance",
@@ -1029,6 +1056,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     if (r.state !== "admitted") return;
@@ -1050,6 +1078,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .where("execution_id", "=", executionId)
       .where("state", "=", "started-or-unknown")
       .forUpdate()
@@ -1066,6 +1095,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "completed", result: payload, outcome_unknown: false, updated_at: new Date() })
       .where("operation_id", "=", r.operation_id)
+      .where("org_id", "=", r.org_id)
       .execute();
     await this.db
       .updateTable("background_tasks")
@@ -1077,6 +1107,7 @@ export class SandboxOperationIntents {
         stopping_at: null,
       })
       .where("operation_id", "=", r.operation_id)
+      .where("org_id", "=", r.org_id)
       .where("launch_state", "=", from)
       .where("status", "=", "running")
       .execute();
@@ -1096,6 +1127,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     if (r.method !== "backgroundStart") return;
@@ -1103,6 +1135,7 @@ export class SandboxOperationIntents {
       .selectFrom("background_tasks")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .forUpdate()
       .executeTakeFirst();
     if (r.state === "pending" || r.state === "admitted") {
@@ -1110,6 +1143,7 @@ export class SandboxOperationIntents {
         .updateTable("sandbox_operation_intents")
         .set({ state: "revoked", outcome_unknown: false, updated_at: new Date() })
         .where("operation_id", "=", id)
+        .where("org_id", "=", r.org_id)
         .execute();
       if (task?.launch_state === "pending")
         await this.db
@@ -1122,6 +1156,7 @@ export class SandboxOperationIntents {
             stopping_at: null,
           })
           .where("id", "=", task.id)
+          .where("org_id", "=", r.org_id)
           .where("status", "=", "running")
           .execute();
       return;
@@ -1153,6 +1188,7 @@ export class SandboxOperationIntents {
           stopping_at: null,
         })
         .where("id", "=", task.id)
+        .where("org_id", "=", r.org_id)
         .execute();
     // a finished task whose stop was verified by its acknowledged operation revoke only (no ref
     // ever attached): nothing is owed any more once its start can no longer be acknowledged
@@ -1183,6 +1219,8 @@ export class SandboxOperationIntents {
    */
   @Transactional({ propagation: "requires_new" })
   async deferBackgroundRecovery(id: string): Promise<void> {
+    // org-filter: by the kernel-minted operation id of the reconcile job's payload (written by this
+    // service), not caller input
     const row = await this.db
       .updateTable("sandbox_operation_intents")
       .set((eb) => ({ reconcile_attempt: eb("reconcile_attempt", "+", 1), updated_at: new Date() }))
@@ -1223,6 +1261,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .where("execution_id", "=", executionId)
       .where("state", "in", ["dispatching", "started-or-unknown"])
       .forUpdate()
@@ -1245,6 +1284,7 @@ export class SandboxOperationIntents {
           stopping_at: null,
         })
         .where("operation_id", "=", id)
+        .where("org_id", "=", row.org_id)
         .where("launch_state", "=", "dispatched")
         .where("status", "=", "running")
         .execute();
@@ -1257,6 +1297,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "completed", result: payload, outcome_unknown: false, updated_at: new Date() })
       .where("operation_id", "=", id)
+      .where("org_id", "=", row.org_id)
       .execute();
   }
   async result(row: OperationIntent): Promise<unknown> {
@@ -1269,6 +1310,8 @@ export class SandboxOperationIntents {
    */
   @Transactional({ propagation: "requires_new" })
   async unknown(id: string, executionId?: string): Promise<void> {
+    // org-filter: by the kernel-minted operation id held by its dispatcher or the reconcile job,
+    // not caller input
     let q = this.db
       .updateTable("sandbox_operation_intents")
       .set({ state: "started-or-unknown", outcome_unknown: true, updated_at: new Date() })
@@ -1295,6 +1338,7 @@ export class SandboxOperationIntents {
       .selectFrom("sandbox_operation_intents")
       .selectAll()
       .where("operation_id", "=", id)
+      .where("org_id", "=", initial.org_id)
       .forUpdate()
       .executeTakeFirstOrThrow();
     this.assertIdentity(
@@ -1325,6 +1369,7 @@ export class SandboxOperationIntents {
         .selectFrom("background_tasks")
         .selectAll()
         .where("operation_id", "=", id)
+        .where("org_id", "=", r.org_id)
         .forUpdate()
         .executeTakeFirst();
       if (!task) await this.revokeUnknownLocked(r, "retry");
@@ -1344,6 +1389,7 @@ export class SandboxOperationIntents {
         updated_at: new Date(),
       })
       .where("operation_id", "=", id)
+      .where("org_id", "=", r.org_id)
       .execute();
     return {
       ...r,
@@ -1364,6 +1410,8 @@ export class SandboxOperationIntents {
   /** Keep the consumed ID/hash and cleanup obligations; expired bytes cannot authorize replay. */
   @Transactional({ propagation: "requires_new" })
   async expirePayload(id: string): Promise<void> {
+    // org-filter: by the kernel-minted operation id of the expiry job's payload (written by this
+    // service), not caller input
     const expired = await this.db
       .updateTable("sandbox_operation_intents")
       .set({ input: "null", result: JSON.stringify({ $expired: true }), updated_at: new Date() })
@@ -1383,6 +1431,8 @@ export class SandboxOperationIntents {
   async oweHolderRevocations(deviceId: string, tokens: readonly string[]): Promise<void> {
     if (!tokens.length) return;
     // the device's org, as every intent outbox row carries it: the org's deletion removes them
+    // org-filter: reads the device's own org for the outbox rows; deviceId is the lifecycle
+    // holder's leased device, not caller input
     const device = await this.db
       .selectFrom("devices")
       .select("org_id")
@@ -1433,6 +1483,8 @@ export class SandboxOperationIntents {
       eb: ExpressionBuilder<KernelDatabase, "sandbox_operation_intents">,
     ) => Expression<SqlBool>,
   ): Promise<void> {
+    // org-filter: reads the device's own org to lock its subject; deviceId is the lifecycle
+    // holder's leased device, not caller input
     const device = await this.db
       .selectFrom("devices")
       .select("org_id")
@@ -1444,6 +1496,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "revoked", outcome_unknown: true, updated_at: new Date() })
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", device.org_id)
       .where(where)
       .returning(["operation_id", "method"])
       .execute();
@@ -1462,6 +1515,7 @@ export class SandboxOperationIntents {
           stopping_at: null,
         })
         .where("operation_id", "in", starts)
+        .where("org_id", "=", device.org_id)
         .where("status", "=", "running")
         .where("execution_ref", "is", null)
         .where("launch_state", "in", ["pending", "dispatched", "cancel-pending"])
@@ -1485,6 +1539,8 @@ export class SandboxOperationIntents {
     instance: RevokedIncarnation,
     limit: number,
   ): Promise<{ operationId: string; deadline: Date }[]> {
+    // org-filter: by the leased device of the lifecycle holder (SandboxService under its exclusive
+    // lease), not caller input
     const rows = await this.db
       .selectFrom("sandbox_operation_intents")
       .select(["operation_id", "deadline"])
@@ -1543,6 +1599,8 @@ export class SandboxOperationIntents {
   }
   @Transactional({ propagation: "requires_new" })
   async acknowledgeRevocation(id: string): Promise<void> {
+    // org-filter: by the kernel-minted operation id of the revoke job's payload (written by this
+    // service), not caller input
     await this.db
       .updateTable("sandbox_operation_intents")
       .set({ revoke_acknowledged: true, updated_at: new Date() })

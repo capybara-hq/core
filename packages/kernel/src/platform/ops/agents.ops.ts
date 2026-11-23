@@ -691,6 +691,7 @@ export class AgentsOperations implements OnModuleInit {
             .selectFrom("conversations")
             .select("agent_id")
             .where("id", "=", rootId)
+            .where("org_id", "=", ctx.orgId)
             .executeTakeFirst();
           if (i.agentId === ctx.agentId || i.agentId === root?.agent_id) {
             return {

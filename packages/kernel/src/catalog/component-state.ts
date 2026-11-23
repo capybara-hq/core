@@ -275,6 +275,8 @@ const groupBy = <T>(rows: T[], key: (r: T) => string, value: (r: T) => string) =
 };
 
 /** Reads the {@link ScopeState} of `comps` (all of one kind), one query after the other. */
+// org-filter: the scope state of platform components and their plugins for every org (named lists,
+// installs, switches keyed by platform ids); callers pick their own org out of it
 export async function loadScopeState(
   db: KernelSchemaDb,
   kind: ComponentKind,

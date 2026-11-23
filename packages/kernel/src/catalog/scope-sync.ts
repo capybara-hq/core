@@ -402,7 +402,7 @@ export class PluginScopeSync {
     // Wanted off: only a settled install is removed (one still installing waits for the next
     // enqueue)
     if (live?.status !== "installed") return "unchanged";
-    const deps = await this.createdDependencies(live.id);
+    const deps = await this.createdDependencies(orgId, live.id);
     try {
       await this.installer.uninstall(orgId, null, live.id, { via: "scope" });
     } catch (e) {
@@ -433,8 +433,8 @@ export class PluginScopeSync {
     return row !== undefined;
   }
 
-  /** The items of the dependency installs this install created. */
-  private async createdDependencies(installId: string): Promise<string[]> {
+  /** The items of the dependency installs this install (of `orgId`) created. */
+  private async createdDependencies(orgId: string, installId: string): Promise<string[]> {
     // `ref` is text: the child install ids are read first, then their items
     const refs = await this.db
       .selectFrom("plugin_install_components")
@@ -447,6 +447,7 @@ export class PluginScopeSync {
     const rows = await this.db
       .selectFrom("plugin_installs")
       .select("item_id")
+      .where("org_id", "=", orgId)
       .where(
         "id",
         "in",

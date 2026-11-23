@@ -28,6 +28,8 @@ async function liveOrgIds(db: KernelSchemaDb): Promise<string[]> {
  * `catalog.scope_changed`; returns whether the scope changed (the caller enqueues the item's
  * scope sync after the commit).
  */
+// org-filter: unsharing narrows the item to every org where it is on now, so it reads and rewrites
+// the item's installs, switches and named list across orgs (keyed by the locked item id)
 export async function narrowItemOnUnshare(
   db: KernelSchemaDb,
   actor: string | null,
@@ -85,6 +87,7 @@ export async function narrowItemOnUnshare(
  * to `named` = owner + the live orgs where it is on now ({@link componentOn}). A component that
  * follows its plugin is narrowed with the plugin. Audits `component.scope_changed`.
  */
+// org-filter: unsharing narrows the component's whole named list to every org where it is on now
 export async function narrowComponentOnUnshare(
   db: KernelSchemaDb,
   actor: string | null,

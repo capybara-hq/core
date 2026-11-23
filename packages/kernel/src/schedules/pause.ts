@@ -9,6 +9,8 @@ import type { SchedulePauseReason } from "./types.js";
  * already paused or ended keeps its state and reason. A plain function so the run tracker, which
  * the runtime imports, needs no service of the schedules domain.
  */
+// org-filter: only kernel paths call it (fire job, run tracker, scan job, channel outbound), each
+// with the task id of a task row or task run row it already holds, never a caller-supplied id
 export async function pauseTaskIn(
   t: KernelSchemaDb,
   taskId: string,

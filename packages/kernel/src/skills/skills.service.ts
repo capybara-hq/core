@@ -473,6 +473,8 @@ const platformSummary = (
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
  * source format and manifest.
  */
+// org-filter: a builder only; every caller adds the org filter or narrows to the id of a skill it
+// read or wrote in its org just before
 const summaryQuery = (db: KernelSchemaDb) =>
   db
     .selectFrom("skills as s")
@@ -867,6 +869,7 @@ export class SkillsService {
           updated_at: sql`now()`,
         })
         .where("id", "=", id)
+        .where("org_id", "=", orgId)
         .execute();
     } else {
       await this.db
@@ -956,6 +959,7 @@ export class SkillsService {
         updated_at: sql`now()`,
       })
       .where("id", "=", skillId)
+      .where("org_id", "=", orgId)
       .execute();
     await this.db
       .deleteFrom("skill_versions")

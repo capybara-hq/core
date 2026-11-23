@@ -23,6 +23,7 @@ export class OutboxOperations implements OnModuleInit {
   ) {}
 
   /** The dead row's job (queue and name) for a card, or null when no dead row has the id. */
+  // org-filter: super-admin operations (authz superAdmin); dead outbox rows of every org are listed
   private async jobOf(id: string): Promise<{ queue: string; job_name: string } | null> {
     const row = await this.kdb.db
       .selectFrom("outbox")
