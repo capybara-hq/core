@@ -1494,7 +1494,11 @@ describe("出站投递：发送失败", () => {
             .executeTakeFirst()
         )?.fail_count ?? 0,
       );
-    im.push(noEditId, group("p1", "u-owner", "echo:poison one", { chatId: chat }));
+    // Each push must reach the live long connection: a push while it is down is lost, and the test
+    // would only time out waiting for a reply that was never asked for.
+    const push = (e: Parameters<typeof im.push>[1]) =>
+      expect(im.push(noEditId, e), "pushes reached a live long connection").toBe(1);
+    push(group("p1", "u-owner", "echo:poison one", { chatId: chat }));
     const conv = await convOf(noEditId, chat);
     const phraseSent = () =>
       sentTo("cli_noedit", chat).some((s) => s.message.text.startsWith("A request is waiting"));
@@ -1503,20 +1507,14 @@ describe("出站投递：发送失败", () => {
     while (!phraseSent() && i <= 5) {
       await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
       if (phraseSent()) break;
-      im.push(
-        noEditId,
-        group(`p${i}`, "u-owner", `echo:reply ${i}`, { chatId: chat, threadId: "p1" }),
-      );
+      push(group(`p${i}`, "u-owner", `echo:reply ${i}`, { chatId: chat, threadId: "p1" }));
       i++;
       // The new message pulls the next retry of the stuck event: wait for that attempt to fail
       // before pushing the next message (one failure per message).
       await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
     }
     await waitFor(async () => phraseSent(), 15_000, "skip notice");
-    im.push(
-      noEditId,
-      group("p-after", "u-owner", "echo:after skip", { chatId: chat, threadId: "p1" }),
-    );
+    push(group("p-after", "u-owner", "echo:after skip", { chatId: chat, threadId: "p1" }));
     await waitFor(
       async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after skip"),
       15_000,
