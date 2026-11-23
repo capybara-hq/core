@@ -141,7 +141,8 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, " +
+      "capybara.extension_installs, capybara.extension_packages",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-"));
@@ -1287,7 +1288,14 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     expect(await ops()).toEqual([]);
     expect(await row()).toBeUndefined();
 
-    // its provider is not loaded: nothing is destroyed, the row stays for a retry
+    // its provider is installed but not loaded: nothing is destroyed, the row stays for a retry
+    const sha = "b".repeat(64);
+    await sql`INSERT INTO capybara.extension_packages
+      (sha256, name, package_name, version, size, section, blob_store, source, source_ref)
+      VALUES (${sha}, 'sandbox-old', '@test/plugin-sandbox-old', '1.0.0', 1, '{}'::jsonb, 'pg',
+        'file', 'old.tgz')`.execute(raw);
+    await sql`INSERT INTO capybara.extension_installs (name, sha256, version, source)
+      VALUES ('sandbox-old', ${sha}, '1.0.0', 'file')`.execute(raw);
     const e2 = await newDevice();
     await bind(e2);
     const b = await use(
