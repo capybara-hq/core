@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "80dbc32d9fa23df5bf61ed7cc764cb996de0773b"
+    "commit": "1c9b0dd4ae64d1f199afa3a17d35de4810ab08e5"
   },
   "plugins": [
     {
@@ -98,8 +98,8 @@
       "name": "device-local",
       "source": "npm",
       "npm": "@capybara-hq/plugin-device-local",
-      "version": "0.1.0-rc.3",
-      "integrity": "sha512-/Xqh/qqWiIbLWHHV/5/p1bGRi76dGH/0V0u4ZyT8L0ZL3rKz+Bq4o9QrNyEf56ojNcp3LIbIP8H3bSxbMaSNqw==",
+      "version": "0.1.0-rc.5",
+      "integrity": "sha512-HaR5VFeK2AqMy4EM6glwGd0cZtgjMMS8AsOqimUCYPMT/eubrP/VuxB3eAFpR007xvommVIv5jd5XnXLbiYanw==",
       "required": false,
       "scope": "all"
     },
