@@ -430,8 +430,16 @@ It costs one extra fenced write per network change (rare) and, after a stale hol
 4. Instances of the previous plugin version recreate at their first allowlist change (no unfenced
    swap for widening).
 5. The E2B residual (reapply when the installed evidence is wider than the record) becomes a
-   separate kernel issue.
+   separate kernel issue: #766.
 6. `destroyFileSystem` is not fenced.
+
+Implementation notes (core PR): `destroy` / `destroyByName` take `DeviceFence | null` (the
+legacy cleanup holds no device lease and passes `null`); `destroyRow` and `resetFileSystem` do a
+fenced increment before their destroys so the token is the holder's own; the record write after an
+`updated` answer moved out of the `update` try, and the recreate path does a fenced write before
+its `destroy`, so a stale holder never falls into the recreate branch and destroys a newer holder's
+instance (the dual-replica test found it). `instance_limits.pending` lives in the existing JSON
+column: no migration.
 
 The questions as asked:
 
