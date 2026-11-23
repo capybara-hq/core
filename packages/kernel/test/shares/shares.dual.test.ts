@@ -16,6 +16,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { scheduledTick } from "../../src/infra/schedule/cron-tick.js";
+import { ScheduledRuns } from "../../src/infra/schedule/scheduled-runs.js";
 import { createLogger } from "../../src/log.js";
 import { ShareLiveness } from "../../src/shares/liveness.js";
 import { ShareObjects, shareRefreshLockKey } from "../../src/shares/share-objects.js";
@@ -384,9 +385,16 @@ describe("the daily share sweep on two replicas", () => {
       ]),
       { head: true },
     );
-    // the replicas' own schedulers fire the same daily tick (03:40): stop them and clear a tick
-    // marker one of them may already have set, so the two calls below are the tick's only takers
+    // the replicas' own schedulers fire the same daily tick (03:40): stop them, wait out a run
+    // one of them may have started (it holds the run lock, so both calls below would skip), and
+    // clear the tick marker it set, so the two calls below are the tick's only takers. A run is
+    // tracked from the moment its timer fires, and no new one starts once the jobs are deleted:
+    // any moment with no run in flight on a replica is past it.
     for (const k of [a, b]) k.app.get(SchedulerRegistry).deleteCronJob(SHARE_SWEEP_JOB);
+    for (const k of [a, b]) {
+      const scheduled = k.app.get(ScheduledRuns);
+      await expect.poll(() => scheduled.inFlightCount, { timeout: 30_000 }).toBe(0);
+    }
     const locks = a.app.get(LockService);
     const marker = `cron:${SHARE_SWEEP_JOB}:${scheduledTick(SHARE_SWEEP_CRON, Date.now()).tick}`;
     const holder = await locks.holderOf(marker);

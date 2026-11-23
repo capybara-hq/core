@@ -297,6 +297,53 @@ async function deliverySettled(conversationId: string): Promise<void> {
   );
 }
 
+/**
+ * What a delivery test needs to explain a timeout: the conversation's log (seq, type, text, time),
+ * its runs, its delivery row, its jobs left in the channel queue and what the fake IM received.
+ */
+async function deliveryState(conversationId: string, chatId: string): Promise<string> {
+  const events = await sql<{ seq: string; type: string; payload: unknown; created_at: Date }>`
+    SELECT seq, type, payload, created_at FROM capybara.conversation_events
+    WHERE conversation_id = ${conversationId} ORDER BY seq`.execute(raw);
+  const textOf = (payload: unknown) =>
+    (payload as { content?: { text?: string }[] } | null)?.content?.[0]?.text;
+  const runs = await db
+    .selectFrom("runs")
+    .select(["status", "trigger_seq"])
+    .where("conversation_id", "=", conversationId)
+    .execute();
+  const jobs = await channelQueue.getJobs([
+    "active",
+    "waiting",
+    "prioritized",
+    "delayed",
+    "failed",
+  ]);
+  const state = {
+    events: events.rows.map((e) => [
+      Number(e.seq),
+      e.type,
+      textOf(e.payload),
+      e.created_at.toISOString().slice(11, 23),
+    ]),
+    runs,
+    delivery: await db
+      .selectFrom("channel_deliveries")
+      .select(["last_seq", "fail_seq", "fail_count", "draft_message_id"])
+      .where("conversation_id", "=", conversationId)
+      .executeTakeFirst(),
+    jobs: await Promise.all(
+      jobs
+        .filter((j) => (j.data as { conversationId?: string }).conversationId === conversationId)
+        .map(async (j) => [j.id, await j.getState(), j.attemptsMade, j.failedReason]),
+    ),
+    sent: im.sent
+      .filter((x) => chatOf(x) === chatId)
+      .map((x) => [x.message.text, new Date(x.at).toISOString().slice(11, 23)]),
+  };
+  return JSON.stringify(state);
+}
+
 async function failCountOf(conversationId: string): Promise<number> {
   const r = await db
     .selectFrom("channel_deliveries")
@@ -1515,11 +1562,16 @@ describe("出站投递：发送失败", () => {
     }
     await waitFor(async () => phraseSent(), 15_000, "skip notice");
     push(group("p-after", "u-owner", "echo:after skip", { chatId: chat, threadId: "p1" }));
+    // #382: this wait has timed out in CI (never locally), each time about 0.3 s into the test
+    // (passing runs take 0.7–1 s), so the skip came before the loop's extra pushes; on a timeout
+    // the error carries the conversation's state for the next diagnosis
     await waitFor(
       async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after skip"),
       15_000,
       "later reply delivered",
-    );
+    ).catch(async (err: unknown) => {
+      throw new Error(`${String(err)}; pushes ${i - 1}; ${await deliveryState(conv, chat)}`);
+    });
     await deliverySettled(conv);
     expect(sentTo("cli_noedit", chat).some((s) => s.message.text === "poison one")).toBe(false);
     expect(await failCount(conv)).toBe(0);
