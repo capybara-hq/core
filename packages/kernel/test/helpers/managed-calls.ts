@@ -111,8 +111,9 @@ export async function runClaimed(
  * ({@link recordCallStarted}), then the use under the run's claim fence. Every provider call in
  * `fn` is admitted by the real operation intents for that conversation's permission profile.
  * The holder must be a root conversation of the actor's account in the device's org; an unbound
- * holder is bound to the device first (admission enters only the conversation's own device). Its
- * run is left running (a test that later runs the conversation finishes or deletes it).
+ * holder is bound to the device first (admission enters only the conversation's own device). The
+ * run it starts is settled (`completed`) when the use ends, so the holder can be used again.
+ * `opts.run` reuses a running run the test already claimed instead (left as it is).
  */
 export async function managedUseOn<T>(
   k: TestKernel,
@@ -120,33 +121,36 @@ export async function managedUseOn<T>(
   use: SandboxUseContext,
   fn: (h: SandboxHandle, p: HeldProvider, info: SandboxUseInfo, signal: AbortSignal) => Promise<T>,
   signal: AbortSignal = AbortSignal.timeout(30_000),
+  opts: { run?: { runId: string; claim: ExecutionClaim } } = {},
 ): Promise<T> {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
-  await kernelDb(raw as Kysely<any>)
+  const db = kernelDb(raw as Kysely<any>);
+  await db
     .updateTable("conversations")
     .set({ device_id: use.deviceId })
     .where("id", "=", use.holderConversationId)
     .where("device_id", "is", null)
     .execute();
-  const { runId, claim } = await startClaimedRun(
-    k,
-    raw,
-    use.holderConversationId,
-    use.actor.accountId,
-  );
-  const callId = randomUUID();
-  await recordCallStarted(raw, use.holderConversationId, runId, callId, "Bash");
-  return k.app.get(RunExecution).withClaim(
-    claim,
-    () => true,
-    () =>
-      k.app
-        .get(SandboxService)
-        .withOperations(
-          { ...use, actor: { ...use.actor, runId } },
-          { claim, callId, deadlineMs: Date.now() + 30_000 },
-          fn,
-          signal,
-        ),
-  );
+  const { runId, claim } =
+    opts.run ?? (await startClaimedRun(k, raw, use.holderConversationId, use.actor.accountId));
+  try {
+    const callId = randomUUID();
+    await recordCallStarted(raw, use.holderConversationId, runId, callId, "Bash");
+    return await k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () =>
+        k.app
+          .get(SandboxService)
+          .withOperations(
+            { ...use, actor: { ...use.actor, runId } },
+            { claim, callId, deadlineMs: Date.now() + 30_000 },
+            fn,
+            signal,
+          ),
+    );
+  } finally {
+    if (!opts.run)
+      await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
+  }
 }
