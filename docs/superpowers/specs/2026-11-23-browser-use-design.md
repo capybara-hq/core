@@ -101,8 +101,8 @@ Anti-goals (a failure even if it works)
 - **Kernel (core)**: the device stream (provider capability + relay + viewer endpoint),
   `ctx.deviceAccess` for extensions (a service and streams in the conversation's device, under the
   command review, the owner rule and the device network rules, §7).
-- **`browser` plugin (plugins repo)**: the daemon, the agent tools, the panel (client component in the
-  `conversation.panel` slot), the handoff tool.
+- **`browser` plugin (plugins repo)**: the daemon, the agent tools, the panel (an embed page in the
+  `conversation.panel` slot, like `example-board`), the handoff tool.
 - **Device providers**: `device-docker`, `device-e2b`, `device-local` + `packages/device` implement
   `openStream`. A provider without it: the browser button shows disabled with the reason.
 
@@ -264,13 +264,20 @@ by `actor.runId`). The browser is a long-lived service, so:
 ## 8. The panel
 
 - A browser button in the conversation's right area opens the plugin's panel (`conversation.panel`,
-  client component).
+  `kind: "embed"`; amended 2026-11-23: embed routes get the caller's account and conversation
+  (`RouteCaller`), which the ticket, network and handback routes need, and a client component's
+  actions can return no data). Takeover, hand back and every input event go over the viewer stream
+  straight to the daemon; the plugin's embed routes serve only `stream-ticket`, `network-hosts` and
+  `handoff-answer`.
+- Before the service runs (no browser tool call yet) the panel shows an empty state; the panel
+  never starts the service itself, so every start passes through a tool call and its review.
 - **Watch state (side panel, default)**: tab strip, address bar, back / forward / reload, the picture
   scaled to the panel width at 16:10 with letterboxing, a status line ("agent: filling the form…"),
   the agent's clicks flashed on the picture. Clicking in the small view works (closing a popup).
 - **Expanded state**: the right area's existing full-screen mode (`RightArea` `full`: the panel
-  maximised inside the page) at near 1:1; 接管 switches to it, 交还智能体 and `Esc` restore. No new
-  overlay. (amended 2026-11-23)
+  maximised inside the page) at near 1:1; 接管 asks the host to switch to it through the embed bridge
+  (a new bridge message if none exists), 交还智能体 and `Esc` restore. No new overlay. (amended
+  2026-11-23)
 - Input coordinates are mapped back through the scale. The viewport stays fixed (default 1280×800);
   resizing or closing the panel never changes it. A viewport switch (desktop / tablet / phone via
   `Emulation.setDeviceMetricsOverride`) is phase 2.
@@ -397,9 +404,9 @@ takeover (§9).
   published socket or port.
 - **Extensions (dial-in)**: `ctx.dialIn.openStream` carries stream frames directly on the gateway
   replica holding the machine's socket, outside the Redis request relay.
-- **Extension UI**: the browser panel is a client component in `conversation.panel`; a new kernel
+- **Extension UI**: the browser panel is an embed page in `conversation.panel`; a new kernel
   WebSocket endpoint for device streams with single-use tickets (embed tokens still never valid for
-  `/api`).
+  `/api`); the embed bridge may ask the host to enter or leave the panel's full mode.
 - **Multi-replica discipline**: frames never through Redis / PG; takeover state lives in the daemon (no kernel record); the dial-in holder records its internal address next to the lease.
 - **Tools**: new browser tools follow writing-tools; snapshot / screenshot outputs follow output
   archiving and media limits.
