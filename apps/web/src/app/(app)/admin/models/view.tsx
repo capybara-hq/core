@@ -3,11 +3,13 @@
 import {
   Button,
   type Column,
+  EmptyState,
   ErrorDetail,
   Field,
   FormSection,
   Input,
   ListPage,
+  LoadingFormSection,
   type PageHeaderProps,
   Stack,
   Text,
@@ -80,15 +82,22 @@ function usePutPrice() {
 }
 
 /**
- * The purposes while they load, as PurposeEditor draws them at the deployment scope: the kernel's
- * seven (eval, title, command review, web extraction and the three sub-agent tiers), each a row
- * with its one hint (what happens while it is unset) over the model select.
+ * The purposes while they load, as PurposeEditor draws them: the kernel's nine (eval, title,
+ * command review, web extraction, the three sub-agent tiers, image generation, vision), each its
+ * own section (a title and its one line over the model select), so the count, and with it the
+ * template's columns, does not change on load.
  */
-const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1, 1].map((lines) => ({
-  lines,
-  lineSize: "small" as const,
-  field: { control: "select" as const },
-}));
+const LOADING_PURPOSES = [
+  "eval",
+  "title",
+  "review",
+  "web_fetch",
+  "subagent_fast",
+  "subagent_standard",
+  "subagent_capable",
+  "image",
+  "vision",
+];
 
 /** The chat table's columns on this page (the loading table draws the same header). */
 const CHAT_COLUMNS = [
@@ -160,6 +169,8 @@ function AdminModelsRead({
       onSelect: () => setTab(id),
     })),
     activeTab: tab,
+    // The purposes tab's one description: each purpose is its own section under it
+    ...(tab === "purposes" ? { description: t("admin.purposes.description") } : {}),
   };
   const reads = [models, purposes, extensions] as const;
   if (reads.some((r) => r.kind === "notFound")) return <NotFound />;
@@ -186,13 +197,9 @@ function AdminModelsRead({
             />
           </Stack>
         ) : (
-          <FormSection
-            id="purposes"
-            layout="stacked"
-            title={t("admin.purposes.title")}
-            description={t("admin.purposes.description")}
-            loading={{ items: LOADING_PURPOSES }}
-          />
+          LOADING_PURPOSES.map((key) => (
+            <LoadingFormSection key={key} fields={[{ control: "select" }]} />
+          ))
         )}
       </ListPage>
     );
@@ -263,7 +270,7 @@ function ModelsBody({
         ? d
         : { ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) },
     );
-  const { list, actionRow } = usePurposeDrafts({
+  const { sections, actionRow } = usePurposeDrafts({
     purposes: data.purposes,
     providers: okProviders,
     scope: "deployment",
@@ -272,19 +279,11 @@ function ModelsBody({
   });
 
   if (tab === "purposes") {
-    // The drafts live in this component: a switch to 模型 and back keeps them. The tab's one
-    // section is stacked: its title and description above a card of the full content width.
+    // The drafts live in this component: a switch to 模型 and back keeps them. One section per
+    // purpose, siblings, so the template counts them (three or more stand in columns).
     return (
       <ListPage header={header} {...(actionRow !== undefined ? { actionRow } : {})}>
-        <FormSection
-          id="purposes"
-          layout="stacked"
-          title={t("admin.purposes.title")}
-          description={t("admin.purposes.description")}
-          flush
-        >
-          {list(t("admin.purposes.title"))}
-        </FormSection>
+        {sections.length > 0 ? sections : <EmptyState text={t("purpose.none")} />}
       </ListPage>
     );
   }

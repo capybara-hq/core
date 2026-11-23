@@ -358,13 +358,11 @@ describe("/settings/models: the org's catalog", () => {
   it("the purpose editor lists only models of the purpose's kind", async () => {
     orgRoutes("following");
     await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes());
-    await screen.findByRole("list", { name: en.models.org.title });
-    // rows are found by their title (purpose ids never show)
+    await screen.findByRole("region", { name: "Eval judge" });
+    // each purpose is its own section, found by its title (purpose ids never show)
     const TITLES: Record<string, string> = { eval: "Eval judge", "embed.docs": "Embeddings" };
     const rowOf = (purpose: string) =>
-      [...document.querySelectorAll('[data-part="item-list-title"]')]
-        .find((el) => el.textContent === TITLES[purpose])
-        ?.closest('[data-part="item-list-row"]') as HTMLElement;
+      screen.getByRole("region", { name: TITLES[purpose] as string });
     const evalBox = within(rowOf("eval"));
     expect(
       await optionValues(evalBox.getByRole("combobox", { name: en.models.purpose.model })),
@@ -481,13 +479,14 @@ describe("the models pages' tabs and provider selection", () => {
       const providers = () => screen.queryByRole(role, { name: en.models.providers.label });
       expect(await screen.findByRole(role, { name: en.models.providers.label })).toBeTruthy();
       expect(tabOf(en.models.tabs.models).getAttribute("aria-selected")).toBe("true");
-      const purposesTitle =
-        path === "/admin/models" ? en.models.admin.purposes.title : en.models.org.title;
-      expect(screen.queryByRole("region", { name: purposesTitle })).toBeNull();
+      // the purposes tab's description heads it
+      const purposesText =
+        path === "/admin/models" ? en.models.admin.purposes.description : en.models.org.description;
+      expect(screen.queryByText(purposesText)).toBeNull();
       const user = userEvent.setup();
       await user.click(tabOf(en.models.tabs.purposes));
       expect(window.location.search).toBe("?tab=purposes");
-      expect(screen.getByRole("region", { name: purposesTitle })).toBeTruthy();
+      expect(screen.getByText(purposesText)).toBeTruthy();
       expect(providers()).toBeNull();
       await user.click(tabOf(en.models.tabs.models));
       expect(window.location.search).toBe("");
