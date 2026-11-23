@@ -3,8 +3,9 @@
  * to `~` (spec §13.6, extended by ruling R19): SSH keys, cloud CLI credentials, container and
  * Kubernetes credentials, netrc, GnuPG, git / npm / PyPI tokens, the macOS keychains, the
  * browser profile directories, other tool credential stores (cargo, 1Password, Vault, Terraform,
- * Claude, Codex, keyrings, pass, rclone, s3cmd), the env files mise loads from the home (an `[env]`
- * section may hold tokens), Maven and Gradle credential files, and shell histories. One source for
+ * Claude, Codex, keyrings, pass, rclone, s3cmd), mise's config directory and the config files it
+ * loads from the home (an `[env]` section may hold tokens; globbed names like `~/mise.<env>.toml`
+ * are not listed), Maven and Gradle credential files, and shell histories. One source for
  * the device, which denies them (and its own state directory), and the kernel, which never proposes
  * an approval for a path under one. Full access and auto mode run as the owner and do not apply
  * them: the command review does.
@@ -48,17 +49,26 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.password-store",
   "~/.config/rclone",
   "~/.s3cfg",
-  // mise's global and home-level config files, each of which may carry an [env] section
-  "~/.config/mise/config.toml",
-  "~/.config/mise/config.local.toml",
-  "~/.config/mise/conf.d",
+  // mise: its whole config directory (config files with [env] sections, the sops age key; its
+  // data lives in ~/.local/share/mise) and the config files it walks up to in the home. Globbed
+  // spellings such as ~/mise.<env>.toml cannot be listed here and stay readable.
+  "~/.config/mise",
   "~/.config/mise.toml",
   "~/.mise.toml",
   "~/.mise.local.toml",
-  // Maven server passwords (and their master key) and Gradle repository credentials
+  "~/.mise",
+  "~/mise.toml",
+  "~/mise.local.toml",
+  "~/mise/config.toml",
+  "~/mise/conf.d",
+  // Maven server passwords (and their master keys), Gradle repository credentials and Develocity
+  // (Gradle Enterprise) access keys
   "~/.m2/settings.xml",
   "~/.m2/settings-security.xml",
+  "~/.m2/settings-security4.xml",
   "~/.gradle/gradle.properties",
+  "~/.gradle/develocity/keys.properties",
+  "~/.gradle/enterprise/keys.properties",
   "~/.bash_history",
   "~/.zsh_history",
 ]);

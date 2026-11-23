@@ -219,19 +219,40 @@ describe("projectPathRefusal", () => {
   it("refuses mise's env files and Maven and Gradle credentials from the shared deny list", () => {
     const withShared = { ...input("machine"), secretAndStateDenies: deniedSecretPaths(home) };
     for (const rel of [
+      ".config/mise",
       ".config/mise/config.toml",
       ".config/mise/config.local.toml",
+      ".config/mise/config.production.toml",
       ".config/mise/conf.d/tokens.toml",
+      ".config/mise/age.txt",
       ".config/mise.toml",
       ".mise.toml",
       ".mise.local.toml",
+      ".mise/config.toml",
+      "mise.toml",
+      "mise.local.toml",
+      "mise/config.toml",
+      "mise/conf.d/tokens.toml",
       ".m2/settings.xml",
       ".m2/settings-security.xml",
+      ".m2/settings-security4.xml",
       ".gradle/gradle.properties",
+      ".gradle/develocity/keys.properties",
+      ".gradle/enterprise/keys.properties",
     ])
       expect(projectPathRefusal(join(home, rel), withShared), rel).toBe("denied");
-    // their neighbours stay readable: the local repository and Gradle's caches
-    for (const rel of [".m2/repository", ".gradle/caches", ".config/mise-other"])
+    // their neighbours stay readable: mise's data and a ~/mise checkout, the local repository,
+    // Gradle's caches
+    for (const rel of [
+      ".local/share/mise",
+      ".local/share/mise/installs/node",
+      ".config/mise-other",
+      "mise",
+      "mise/src",
+      ".m2/repository",
+      ".gradle/caches",
+      ".gradle/develocity",
+    ])
       expect(projectPathRefusal(join(home, rel), withShared), rel).toBeNull();
   });
 
