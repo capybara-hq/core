@@ -19,6 +19,7 @@ import type {
 import { machineDirOfConnection, scanConnections } from "../connections.js";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
 import { policyPath, readPolicyFile } from "../state.js";
+import { fsNameBytes, fsNameString, homeFsName } from "./fs-names.js";
 import {
   linuxMountReexposures,
   type MountReexposures,
@@ -238,7 +239,7 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
       ),
   ].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
   const macTempBases = input.macTempBases ?? defaultMacTempBases();
-  const home = resolve(input.home ?? homedir());
+  const home = resolve(input.home ?? homeFsName(homedir()));
   const otherDirs = otherConnectionDenies({
     ownDeviceId: input.deviceId,
     connections: others.filter((c) => isAbsolute(c.workDir)),
@@ -303,7 +304,8 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
 /**
  * Each path plus its canonical form (the native real path of its nearest existing ancestor, in
  * its on-disk case so a case variant on a case-insensitive volume matches, with the
- * missing names appended), so a denied path is matched whether a grant names it through a link
+ * missing names appended; read as bytes and named like the Linux carve's entries, see
+ * `fsNameString`), so a denied path is matched whether a grant names it through a link
  * (a symlinked home, a symlinked ~/.aws) or by its real location.
  */
 export function withCanonicalForms(paths: readonly string[]): string[] {
@@ -314,7 +316,9 @@ export function withCanonicalForms(paths: readonly string[]): string[] {
     const missing: string[] = [];
     for (;;) {
       try {
-        out.add(join(realpathSync.native(anchor), ...missing));
+        // as bytes, mapped like the carve's names, so a target that is not UTF-8 still matches
+        const real = realpathSync.native(fsNameBytes(anchor), { encoding: "buffer" });
+        out.add(join(fsNameString(real), ...missing));
         break;
       } catch {
         if (anchor === dirname(anchor)) break;

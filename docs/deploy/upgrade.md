@@ -330,10 +330,11 @@ kernel and no fallback: upgrade the kernel first, then the programs.
   (workspace reach, allowlist network, nothing outside the sandbox, keep-awake off) and prints what
   it reset. Set the allowed domains, credentials, resource limits and keep-awake again, and widen
   the reach if you want it.
-- **Linux.** Files directly inside a directory on the path to a denied one (`~/.bashrc` when
-  `~/.ssh` is denied; `~/.cargo/config.toml` and other files directly in `~/.cargo`, `~/.claude`,
-  `~/.codex`, `~/.terraform.d`, `~/.local`, `~/mise`, `~/.m2` and `~/.gradle`) are unreadable under `machine` reach, and a bind mount of a denied directory
-  stays readable. See the device README.
+- **Linux.** Under `machine` reach, a directory on the path to a denied one cannot be listed, and
+  a bind mount of a denied directory stays readable. The first protocol 6 release also left the
+  files directly inside such a directory unreadable (`~/.bashrc` when `~/.ssh` is denied,
+  `~/.cargo/config.toml` beside `~/.cargo/credentials`); a later `capybara-device` grants each
+  non-denied regular file there as an exact file read. See the device README.
 - **Old temporary directories.** Earlier versions left flat temporary directories
   `capybara-op-<pid>-*` in the user temp dir (`getconf DARWIN_USER_TEMP_DIR` on macOS); this version
   no longer sweeps them. Remove them by hand once no older `capybara-device` runs.
