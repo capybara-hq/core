@@ -43,13 +43,18 @@ export const skillFiles = (
 export const templateFiles = (
   id: string,
   template: ConnectorTemplateSpec = mcpTemplate(),
-  o: { icon?: string | null; displayName?: { zh: string; en: string } } = {},
+  o: {
+    icon?: string | null;
+    displayName?: { zh: string; en: string };
+    /** null: none. */
+    description?: string | { zh: string; en: string } | null;
+  } = {},
 ): Record<string, string> => {
   const icon = o.icon === undefined ? SVG_ICON : o.icon;
   return {
     [`connectors/${id}.json`]: JSON.stringify({
       displayName: o.displayName ?? { zh: "GitHub", en: "GitHub" },
-      description: "GitHub over MCP",
+      ...(o.description !== null && { description: o.description ?? "GitHub over MCP" }),
       ...(icon !== null && { icon: `./icons/${id}.svg` }),
       template,
     }),

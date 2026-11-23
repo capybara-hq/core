@@ -47,6 +47,7 @@ import { SetupGuideSection } from "../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { displayNameOf } from "../../../../lib/catalog";
+import { componentDescription } from "../../../../lib/components";
 import {
   ackConnectorGuide,
   type ConnectorDetail,
@@ -372,8 +373,14 @@ function GuideTab({
  */
 function ConnectorFacts({ app }: { app: ConnectorDetail }) {
   const t = useTranslations("connectors");
+  const locale = useLocale();
   const ownership = app.auth.type === "none" ? null : app.auth.ownership;
-  return (
+  // its template's description, line breaks kept, over the facts (none for a custom connector)
+  const description = componentDescription(
+    { description: app.description ?? null, descriptionZh: app.descriptionZh ?? null },
+    locale,
+  );
+  const facts = (
     <KeyValue
       keyWidth="10ch"
       rows={[
@@ -390,6 +397,15 @@ function ConnectorFacts({ app }: { app: ConnectorDetail }) {
         },
       ]}
     />
+  );
+  if (description === null) return facts;
+  return (
+    <Stack gap={12}>
+      <Text variant="prose" tone="muted" pre>
+        {description}
+      </Text>
+      {facts}
+    </Stack>
   );
 }
 

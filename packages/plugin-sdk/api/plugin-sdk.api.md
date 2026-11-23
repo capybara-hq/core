@@ -783,7 +783,7 @@ export interface ConnectorSession {
 // @public
 export interface ConnectorTemplateFile {
     defaultEnabled?: boolean;
-    description?: string;
+    description?: string | LocalizedName;
     displayName: LocalizedName;
     icon?: string;
     template: ConnectorTemplateSpec;

@@ -299,6 +299,75 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(within(gh).queryByRole("link", { name: en.connectors.templates.configure })).toBeNull();
   });
 
+  it.each(LOCALES)(
+    "template and connector cards show the description in the page language; a plain one in both (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const zhOrEn = (zhText: string, enText: string) => (locale === "zh" ? zhText : enText);
+      stubApi({
+        "GET /api/v1/orgs/o1/connectors": () =>
+          json(200, {
+            connectors: [
+              summary({
+                id: "c-gh",
+                name: "GitHub",
+                platformTemplateId: "t-gh",
+                description: "Issues and pull requests.",
+                descriptionZh: "议题与拉取请求。",
+              }),
+              summary({
+                id: "c-jira",
+                name: "Jira",
+                platformTemplateId: "t-jira",
+                description: "Jira issues.",
+                descriptionZh: null,
+              }),
+              summary({ id: "c-own", name: "Own server" }),
+            ],
+          }),
+        [COMPONENTS]: () =>
+          json(200, {
+            components: [
+              template({
+                description: "Read and post Slack messages.",
+                descriptionZh: "读写 Slack 消息。",
+              }),
+              template({
+                id: "t-drive",
+                name: "drive",
+                displayName: { zh: "云盘", en: "Drive" },
+                description: "Files in Drive.",
+                descriptionZh: null,
+              }),
+            ],
+          }),
+      });
+      await renderList({ locale });
+      const title = m.connectors.title;
+      const slack = await cardOf(zhOrEn("Slack 工作区", "Slack workspace"), title);
+      expect(
+        within(slack).getByText(zhOrEn("读写 Slack 消息。", "Read and post Slack messages.")),
+      ).toBeTruthy();
+      expect(
+        within(slack).queryByText(zhOrEn("Read and post Slack messages.", "读写 Slack 消息。")),
+      ).toBeNull();
+      const drive = await cardOf(zhOrEn("云盘", "Drive"), title);
+      expect(within(drive).getByText("Files in Drive.")).toBeTruthy();
+      const gh = await cardOf("GitHub", title);
+      expect(
+        within(gh).getByText(zhOrEn("议题与拉取请求。", "Issues and pull requests.")),
+      ).toBeTruthy();
+      expect(
+        within(gh).queryByText(zhOrEn("Issues and pull requests.", "议题与拉取请求。")),
+      ).toBeNull();
+      const jira = await cardOf("Jira", title);
+      expect(within(jira).getByText("Jira issues.")).toBeTruthy();
+      // a custom connector has no description: its card's text is its name and facts only
+      const own = await cardOf("Own server", title);
+      expect(own.querySelector('[data-part="object-card-description"]')).toBeNull();
+    },
+  );
+
   it("a personal OAuth connector: one button each; 连接 starts the connect flow; once connected 权限, the rest in ⋯", async () => {
     let connected = false;
     const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH, icon: ICON });
@@ -591,6 +660,22 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     const mark = document.querySelector('[data-part="object-mark"]');
     expect(mark?.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(ICON);
   });
+
+  it.each(LOCALES)(
+    "the connector detail leads its facts with its template's description in the page language (%s)",
+    async (locale) => {
+      stubApi({
+        "GET /api/v1/orgs/o1/connectors/app1": () =>
+          json(200, {
+            connector: detail({ description: "Fixture tools.", descriptionZh: "测试工具。" }),
+          }),
+      });
+      await renderDetail({ locale });
+      expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+      expect(screen.getByText(locale === "zh" ? "测试工具。" : "Fixture tools.")).toBeTruthy();
+      expect(screen.queryByText(locale === "zh" ? "Fixture tools." : "测试工具。")).toBeNull();
+    },
+  );
 
   it("guests see the connectors only: no template read", async () => {
     const GUEST_ME: Me = {

@@ -1133,6 +1133,115 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     expect((await env.root({ method: "GET", url: adminTplUrl("mail") })).statusCode).toBe(200);
   });
 
+  it("connector template descriptions in zh and en reach the template views and their connectors", async () => {
+    const both = { zh: "邮件与日历", en: "Mail and calendar" };
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "described",
+          connectorTemplates: ["mail", "drive", "bare"].map((t) => ({
+            path: `./connectors/${t}.json`,
+          })),
+        },
+        files: {
+          ...templateFiles("mail", mcpTemplate(), { icon: null, description: both }),
+          ...templateFiles("drive", mcpTemplate(), { icon: null, description: "Files over MCP" }),
+          ...templateFiles("bare", mcpTemplate(), { icon: null, description: null }),
+        },
+      }),
+    );
+    const expected = {
+      mail: { description: both.en, descriptionZh: both.zh },
+      drive: { description: "Files over MCP", descriptionZh: null },
+      bare: { description: null, descriptionZh: null },
+    };
+    type Described = { description: string | null; descriptionZh: string | null };
+    const pick = (x: Described) => ({ description: x.description, descriptionZh: x.descriptionZh });
+    // the component lists (org and admin)
+    for (const [req, url] of [
+      [env.mem, `/api/v1/orgs/${env.orgId}/components?kind=connector_template&itemId=${itemId}`],
+      [env.root, "/api/v1/admin/components?kind=connector_template"],
+    ] as const) {
+      const r = await req({ method: "GET", url });
+      expect(r.statusCode, r.body).toBe(200);
+      const byName = Object.fromEntries(
+        (r.json() as { components: (Described & { name: string })[] }).components
+          .filter((c) => c.name in expected)
+          .map((c) => [c.name, pick(c)]),
+      );
+      expect(byName, url).toEqual(expected);
+    }
+    // the install wizard's templates ("" rather than null without one)
+    const detail = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+    });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(
+      Object.fromEntries(
+        (detail.json() as { templates: (Described & { id: string })[] }).templates.map((t) => [
+          t.id,
+          pick(t),
+        ]),
+      ),
+    ).toEqual({ ...expected, bare: { description: "", descriptionZh: null } });
+    // connectors made from the templates carry their template's description; a custom one none
+    const made = await install(env.boss, env, itemId, {
+      connectors: Object.fromEntries(
+        ["mail", "drive", "bare"].map((t) => [
+          t,
+          { name: `d-${t}`, endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } },
+        ]),
+      ),
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const custom = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connectors`,
+      payload: {
+        name: "d-custom",
+        connector: "fake",
+        endpoint: { url: env.mcp.url },
+        auth: { type: "bearer", ownership: "org" },
+        credential: { token: MCP_TOKEN },
+      },
+    });
+    expect(custom.statusCode, custom.body).toBe(201);
+    const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    expect(list.statusCode, list.body).toBe(200);
+    const conns = (list.json() as { connectors: (Described & { id: string; name: string })[] })
+      .connectors;
+    expect(
+      Object.fromEntries(
+        conns.filter((c) => c.name.startsWith("d-")).map((c) => [c.name, pick(c)]),
+      ),
+    ).toEqual({
+      "d-mail": expected.mail,
+      "d-drive": expected.drive,
+      "d-bare": expected.bare,
+      "d-custom": { description: null, descriptionZh: null },
+    });
+    const mail = conns.find((c) => c.name === "d-mail") as { id: string };
+    const one = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
+    });
+    expect(pick(one.json().connector)).toEqual(expected.mail);
+    // a plugin the org's catalog no longer shows: the description goes with the icon
+    await setScope(env, itemId, "named", []);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    const hidden = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
+    });
+    expect(pick(hidden.json().connector)).toEqual({ description: null, descriptionZh: null });
+  });
+
   it("the org extensions list carries each extension's plugin icon (null without one)", async () => {
     const itemId = await seedPluginItem(env, "fake-tools-ui");
     const list = async () => {

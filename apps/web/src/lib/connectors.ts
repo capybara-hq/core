@@ -109,6 +109,13 @@ export interface ConnectorSummary {
   /** The icon of the plugin its template came from (an org icon route; null or absent: none). */
   icon?: string | null;
   /**
+   * Its platform template's description (the English or only text; null or absent: none, e.g. a
+   * custom connector); show it with `componentDescription`.
+   */
+  description?: string | null;
+  /** That description's Chinese text; null: `description` serves both languages. */
+  descriptionZh?: string | null;
+  /**
    * Its template's setup guide the org may see, at the item's latest version (setup guides v2
    * spec §9.3); null for a custom connector or a template without one (older: absent).
    */
