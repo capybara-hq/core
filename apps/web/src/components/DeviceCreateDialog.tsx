@@ -31,7 +31,7 @@ import { FormError } from "./form-error";
 import { SetupGuideSection } from "./SetupGuideSection";
 
 /** How often the dialog reads the devices while it waits for a machine to connect. */
-const WAIT_POLL_MS = 3000;
+export const WAIT_POLL_MS = 3000;
 
 /**
  * New device on the Devices page: a card per device provider on in the org (the org's default

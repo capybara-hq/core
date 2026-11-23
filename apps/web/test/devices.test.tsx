@@ -2,6 +2,8 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { WAIT_POLL_MS } from "../src/components/DeviceCreateDialog";
+import { RESET_POLL_MS } from "../src/lib/devices";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -147,10 +149,21 @@ const openNetwork = async () => {
   return user;
 };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+/**
+ * Fakes the timers a poll runs on (TanStack's refetchInterval), still moving with real time so the
+ * renders and the user events go on as usual; {@link nextPoll} then jumps to the next read.
+ */
+const fakePollTimers = () =>
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+    shouldAdvanceTime: true,
+  });
+const nextPoll = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 
 beforeEach(() => resetNavigation("/devices"));
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -215,9 +228,16 @@ describe("devices list", () => {
     await vi.waitFor(() => expect(template("ListPage")).not.toBeNull());
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Build box")).toBeNull();
+    // New device is not known yet: a placeholder holds its slot, so it does not pop in after load
+    const slots = document.querySelector('[data-part="page-header-action-slots"]');
+    expect(slots).not.toBeNull();
+    expect(slots?.querySelectorAll('[data-part="skeleton-box"]').length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: E.new })).toBeNull();
     await act(async () => release());
     expect(await screen.findByText("Build box")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(screen.getByRole("button", { name: E.new })).toBeTruthy();
+    expect(document.querySelector('[data-part="page-header-action-slots"]')).toBeNull();
   });
 
   it("no provider shows the empty state and offers no 新建设备", async () => {
@@ -529,6 +549,7 @@ describe("device detail", () => {
   });
 
   it("a scheduled file reset polls the device until its files are back", async () => {
+    fakePollTimers();
     const lost = env("e1", "Build box", { filesLost: true });
     let reads = 0;
     let posted = false;
@@ -553,9 +574,10 @@ describe("device detail", () => {
     expect(
       await screen.findByText(E.detail.resetScheduled.replace("{name}", "Build box")),
     ).toBeTruthy();
-    await vi.waitFor(() => expect(screen.queryByText(E.detail.filesLostNote)).toBeNull(), {
-      timeout: 5000,
-    });
+    // the first poll still reads the files lost, the second reads them back
+    await nextPoll(RESET_POLL_MS);
+    await nextPoll(RESET_POLL_MS);
+    await vi.waitFor(() => expect(screen.queryByText(E.detail.filesLostNote)).toBeNull());
     expect(reads).toBeGreaterThan(1);
   });
 
@@ -646,6 +668,7 @@ describe("local devices (environments spec §6, §9)", () => {
 
   /** The dialog on a list of the given providers, the local one picked. */
   const openLocal = async (items: unknown[] | (() => unknown[])) => {
+    fakePollTimers();
     const calls = stubApi({
       [`GET ${BASE}`]: () =>
         json(
@@ -678,9 +701,8 @@ describe("local devices (environments spec §6, §9)", () => {
       0,
     );
     connected = true;
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
-      timeout: 6000,
-    });
+    await nextPoll(WAIT_POLL_MS);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"));
   });
 
   it("a dial-in provider without a guide says to ask an org admin", async () => {
@@ -716,9 +738,8 @@ describe("local devices (environments spec §6, §9)", () => {
     win.setWidth(1440);
     await screen.findByText(LOCAL_GUIDE_TEXT);
     win.setWidth(390);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
-      timeout: 6000,
-    });
+    await nextPoll(WAIT_POLL_MS);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"));
   });
 
   it("a device that was there when the wait began is not taken as new", async () => {
@@ -734,7 +755,8 @@ describe("local devices (environments spec §6, §9)", () => {
     // a poll after the switch back has read the list that holds d7
     const reads = () => calls.filter((c) => c.method === "GET" && c.url === BASE).length;
     const before = reads();
-    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before), { timeout: 4500 });
+    await nextPoll(WAIT_POLL_MS);
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before));
     expect(router.push).not.toHaveBeenCalledWith("/devices/d7");
   });
 
@@ -748,9 +770,8 @@ describe("local devices (environments spec §6, §9)", () => {
     await settle();
     expect(router.push).not.toHaveBeenCalled();
     replaced = true;
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
-      timeout: 6000,
-    });
+    await nextPoll(WAIT_POLL_MS);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"));
   });
 
   describe("the shell-action block (连接本机)", () => {
