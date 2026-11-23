@@ -165,8 +165,9 @@ Develocity `keys.properties`, and shell histories:
 `DEVICE_DENIED_SECRET_PATHS` in the plugin SDK), this program's state directory (and the default
 `~/.config/capybara-device` when `XDG_CONFIG_HOME` moves it), every other connection's state and
 working directory on this machine (a logged-out connection's default working directory too), and the private temporary directories of other connections
-(`<userTemp>/capybara-op-<deviceId>/`; this connection's own operations use their own such
-directory). An escalated call runs outside the sandbox and reads everything you can, and the owner
+(on macOS `<userTemp>/capybara-op-<deviceId>/`; on Linux they lie in that connection's working
+directory, `<workDir>/tmp/capybara-op-<deviceId>/`; this connection's own operations use their own
+such directory). An escalated call runs outside the sandbox and reads everything you can, and the owner
 report is unaffected by what follows.
 
 If another connection's state cannot be read (a broken or half-removed credential), this
@@ -215,10 +216,12 @@ lookup fails the connection is refused with a reason naming the fake-IP resolver
 the fake address. The open network decides on the address, not on where it routes: a router's
 public WAN address reached by hairpin NAT, a VPN routing public addresses to an intranet, or an
 operator NAT64 prefix are not closed; such a machine should keep the allowlist. Restricted work also
-follows one write policy (below). On macOS each restricted command also gets its own empty temporary
-directory (`TMPDIR`, `TMP`, `TEMP`), removed when the command ends; `mktemp` without a template
-writes to the user's shared temporary directory instead, which stays closed, so give it one (`mktemp
-"$TMPDIR/x.XXXXXX"`). On Linux `TMPDIR` is the first write root. When the restricted runtime is
+follows one write policy (below). Each restricted command also gets its own empty temporary directory
+(`TMPDIR`, `TMP`, `TEMP`; 0700), removed when the command ends: on macOS in the user's temporary
+directory, on a Linux host in the device's tmp root (`<workDir>/tmp/capybara-op-<deviceId>/`). On
+macOS `mktemp` without a template writes to the user's shared temporary directory instead, which
+stays closed, so give it one (`mktemp "$TMPDIR/x.XXXXXX"`). A command in a local-Docker device's
+container keeps its first write root as `TMPDIR`. When the restricted runtime is
 unavailable here, the device reports it to the deployment and refuses restricted work with the
 reason; nothing falls back to running unconfined.
 

@@ -1,7 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
@@ -20,7 +19,7 @@ import {
   reapLinuxSession,
 } from "./linux-runtime.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
-import { withCanonicalForms } from "./operation-types.js";
+import { withCanonicalForms, within } from "./operation-types.js";
 import {
   createCancellationAttempt,
   type MacWorkerHandle,
@@ -77,6 +76,13 @@ export interface LinuxWorkerOptions {
    * the device's container keeps HOME at its working directory.
    */
   sandboxHome?: string;
+  /**
+   * The device's own tmp root on the host (`<dir>/tmp`, see `osRoots`): a restricted exec's private
+   * temporary directory is made in it. It is the device's alone (another connection's working
+   * directory, this one included, is denied to every other connection) and outside the system's
+   * shared temporary directory. Host only; without it a host worker refuses restricted exec.
+   */
+  tmpRoot?: string;
   /**
    * The runtime-hash gate (W1-B) every restricted launch passes before anything starts: the
    * binding's attested runtime must be the one verified and sealed in this process, unchanged.
@@ -241,20 +247,27 @@ export function linuxOperationWorker(
             "A container device's restricted grant cannot carve owner-denied paths",
           );
         // A restricted command's own temporary directory on the host (TMPDIR, TMP, TEMP), as on
-        // macOS: created empty for this operation alone in this device's private parent in this
-        // process's temporary directory (`capybara-op-<deviceId>/op-<pid>-…`, 0700), granted read
-        // and write for this command only, and removed once the operation ends (a crashed device
-        // leaves it behind: the next operation of this device removes it). Never a write root of
-        // the grant, so temporary files stay out of the project. Every other connection's parent
-        // is a denied read root (the owner ceiling), carved out of the reads. A command in the
-        // device's container keeps its first write root (the container is the device's alone).
+        // macOS: created empty for this operation alone in a private parent in the device's own
+        // tmp root (`<dir>/tmp/capybara-op-<deviceId>/op-<pid>-…`, 0700), granted read and write
+        // for this command only, and removed once the operation ends (a crashed device leaves it
+        // behind: the next operation of this device removes it). Never the grant's first write
+        // root, so temporary files stay out of the project. The tmp root lies in this connection's
+        // working directory, which every other connection's ceiling already denies, and not in
+        // the system's shared /tmp. A command in the device's container keeps its first write
+        // root (the container is the device's alone).
         if (request.kind === "exec" && !request.grant.full && options.transport.kind === "host") {
+          if (!options.tmpRoot)
+            throw new SandboxPermissionUnsupportedError(
+              "This device has no tmp root for a restricted command's temporary directory",
+            );
           const parent = await privateTempParent(
-            await realpath(tmpdir()),
+            options.tmpRoot,
             request.scope.deviceId,
             request.grant.deniedReadRoots,
           );
-          await sweepPrivateTemps(parent);
+          // a parent inside a write root could be swapped by a command: never swept through then
+          if (!request.grant.writeRoots.some((root) => within(parent, root)))
+            await sweepPrivateTemps(parent);
           privateTmp = await mkdtemp(join(parent, `op-${process.pid}-`));
         }
         const tempRoots = privateTmp ? [privateTmp] : [];

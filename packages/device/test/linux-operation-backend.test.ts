@@ -640,11 +640,16 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(second).toMatchObject({ exitCode: 0, stdout: "kept" });
   });
 
-  it("a restricted exec's TMPDIR is its own private directory, never the project; another connection's stays unreadable", async () => {
+  it("a restricted exec's TMPDIR is its own private directory in the device's tmp root, never the project", async () => {
     const root = project("temp");
-    // another connection's private temporary parent on this machine, denied by the owner ceiling
-    const other = "/tmp/capybara-op-device-other";
-    device.run(`mkdir -p -m 700 ${other}/op-1-x && printf secret > ${other}/op-1-x/file`);
+    // another connection's working directory (its tmp root and private temps inside), which
+    // every other connection's owner ceiling denies
+    const other = "/home/sandbox/other-connection";
+    device.run(
+      `mkdir -p -m 700 ${other}/tmp/capybara-op-other/op-1-x && printf secret > ${other}/tmp/capybara-op-other/op-1-x/file`,
+    );
+    // a loose file beside the device's temps in its tmp root (this fixture's tmp root is /tmp)
+    device.run("printf sibling > /tmp/temp-sibling");
     device.run("mkdir -m 700 /home/sandbox/state-temp");
     const tempServer = new HostServer(device);
     servers.push(tempServer);
@@ -652,6 +657,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       stateDir: "/home/sandbox/state-temp",
       deviceId: "device-temp",
       deniedReadRoots: [other],
+      projectReach: "machine",
     });
     const scope = scopeFor(temps.deviceId, {
       profile: "approve-for-me",
@@ -663,8 +669,10 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
         'printf "%s %s %s " "$TMPDIR" "$TMP" "$TEMP"',
         'printf "%s " "$(stat -c %a "$TMPDIR")"',
         '(printf t > "$TMPDIR/made" && printf "wrote ") || printf "unwritable "',
-        `(cat ${other}/op-1-x/file 2>/dev/null && printf " leaked ") || printf "denied "`,
-        `(ls ${other} 2>/dev/null && printf " listed") || printf "unlisted"`,
+        `(cat ${other}/tmp/capybara-op-other/op-1-x/file >/dev/null 2>&1 && printf "leaked ") || printf "denied "`,
+        // the positive control: machine reach still reads a sibling in the tmp root
+        '(cat /tmp/temp-sibling 2>/dev/null && printf " ") || printf "unread "',
+        '(printf x > /tmp/outside 2>/dev/null && printf "tmpwrite") || printf "tmpclosed"',
       ].join("; "),
       cwd: root,
       timeoutMs: 20_000,
@@ -676,9 +684,10 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(tmp).toMatch(/^\/tmp\/capybara-op-device-temp\/op-\d+-[^/]+$/);
     expect([tmpVar, tempVar]).toEqual([tmp, tmp]);
     expect(mode).toBe("700");
-    expect(rest).toEqual(["wrote", "denied", "unlisted"]);
-    // nothing landed in the project, and the directory went with the operation
+    expect(rest).toEqual(["wrote", "denied", "sibling", "tmpclosed"]);
+    // nothing landed in the project or beside it, and the directory went with the operation
     expect(device.run(`ls -A ${root}`).trim()).toBe("");
+    expect(device.run("test -e /tmp/outside && echo made || echo none").trim()).toBe("none");
     expect(device.run(`test -e ${tmp} && echo kept || echo gone`).trim()).toBe("gone");
     expect(device.run("stat -c %a /tmp/capybara-op-device-temp").trim()).toBe("700");
   });

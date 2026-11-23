@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -12,9 +12,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-operations.js";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
@@ -95,9 +95,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-/** This file's device: its private temporary parent lies in this process's temp dir. */
+/** This file's device: its private temporary parent lies in the device's own tmp root. */
 const DEVICE = `linux-worker-${process.pid}`;
-const tempParent = join(realpathSync(tmpdir()), privateTempParentName(DEVICE));
+const TMP_ROOT = realpathSync(mkdtempSync(join(tmpdir(), "cap-device-tmp-root-")));
+const tempParent = join(TMP_ROOT, privateTempParentName(DEVICE));
+afterAll(() => rmSync(TMP_ROOT, { recursive: true, force: true }));
 const dirs: string[] = [tempParent];
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
@@ -132,6 +134,8 @@ async function fakeTransport(behaviour: string) {
     transport,
     lines,
     temp,
+    // the device's tmp root on the host (a container's worker ignores it)
+    tmpRoot: TMP_ROOT,
     spawned: () => spawned,
     filesLock: "/state/operation-files.lock",
   };
@@ -235,7 +239,7 @@ describe("Linux operation worker", () => {
     expect((await stat(live)).isDirectory()).toBe(true);
   });
 
-  it("refuses a restricted exec whose private temp parent is denied, a link, or another's", async () => {
+  it("refuses a restricted exec whose private temp parent is denied (in any form) or a link", async () => {
     // the owner denies the parent: refused before anything is made there or an agent runs
     const denied = await fakeTransport("exit");
     const deniedHandle = await linuxOperationWorker({
@@ -251,6 +255,25 @@ describe("Linux operation worker", () => {
     });
     expect(denied.spawned()).toBe(0);
     await expect(stat(tempParent)).rejects.toMatchObject({ code: "ENOENT" });
+    // denied through another name of the same place (its canonical form is checked too)
+    const alias = join(await mkdtemp(join(tmpdir(), "cap-temp-alias-")), "root");
+    dirs.push(dirname(alias));
+    await symlink(TMP_ROOT, alias);
+    const aliased = await fakeTransport("exit");
+    const aliasedHandle = await linuxOperationWorker({
+      ...aliased,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(
+      execRequest(false, {
+        grant: { ...grant(false), deniedReadRoots: [join(alias, privateTempParentName(DEVICE))] },
+      }),
+      new AbortController().signal,
+    );
+    await expect(aliasedHandle.completion).rejects.toMatchObject({
+      name: "SandboxScopeDeniedError",
+    });
+    expect(aliased.spawned()).toBe(0);
     // a link in its place (another process could point it anywhere)
     const elsewhere = await mkdtemp(join(tmpdir(), "cap-temp-elsewhere-"));
     dirs.push(elsewhere);
@@ -263,6 +286,18 @@ describe("Linux operation worker", () => {
     })(execRequest(false), new AbortController().signal);
     await expect(linkedHandle.completion).rejects.toThrow(/is a symbolic link/);
     expect(linked.spawned()).toBe(0);
+    // a host worker without the device's tmp root refuses rather than guess a shared one
+    const bare = await fakeTransport("exit");
+    const { tmpRoot: _none, ...withoutRoot } = bare;
+    const bareHandle = await linuxOperationWorker({
+      ...withoutRoot,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(execRequest(false), new AbortController().signal);
+    await expect(bareHandle.completion).rejects.toMatchObject({
+      name: "SandboxPermissionUnsupportedError",
+    });
+    expect(bare.spawned()).toBe(0);
   });
 
   it("a command in the device's container keeps its first write root as TMPDIR, nothing made here", async () => {

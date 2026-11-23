@@ -571,8 +571,8 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
   });
 }
 /**
- * This device's private temporary parent in a temporary directory `base` (macOS: the user's
- * temporary directory; a Linux host: this process's; a local-Docker device: its tmp root)
+ * This device's private temporary parent in a directory `base` (macOS: the user's temporary
+ * directory; a Linux host: the device's own tmp root, `<dir>/tmp`)
  * (`capybara-op-<deviceId>`, {@link privateTempParentName}), ready for an operation's own temp:
  * created private (0700) when missing; an existing one must be a directory of this user, never a
  * link, and is narrowed back to 0700 when its mode is wider. Anything else is refused: a parent
@@ -585,8 +585,8 @@ export async function privateTempParent(
   deniedReadRoots: readonly string[],
 ): Promise<string> {
   const parent = join(base, privateTempParentName(deviceId));
-  // checked before anything is created or changed there
-  if (deniedReadRoots.some((d) => within(parent, d) || within(d, parent)))
+  // checked before anything is created or changed there, against every form of each denied path
+  if (withCanonicalForms(deniedReadRoots).some((d) => within(parent, d) || within(d, parent)))
     throw new SandboxScopeDeniedError(
       `The device's private temporary parent ${parent} is, or contains, a denied path`,
     );
