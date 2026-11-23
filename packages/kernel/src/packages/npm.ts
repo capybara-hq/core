@@ -163,7 +163,9 @@ function hasErrorCode(e: unknown, code: string, depth = 0): boolean {
   if (depth > 8 || typeof e !== "object" || e === null) return false;
   if ((e as { code?: unknown }).code === code) return true;
   const errors = e instanceof AggregateError ? e.errors : [];
-  return [(e as { cause?: unknown }).cause, ...errors].some((x) => hasErrorCode(x, code, depth + 1));
+  return [(e as { cause?: unknown }).cause, ...errors].some((x) =>
+    hasErrorCode(x, code, depth + 1),
+  );
 }
 
 /** {@link readCapped}, with a body cut off while read as a transient {@link NpmFetchError}. */
