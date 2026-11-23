@@ -78,7 +78,7 @@ export function deploymentForm(view: DeploymentConfigView): DeploymentForm {
       ...(f.secret && { secretSet: f.set === true }),
       ...(f.keys !== undefined && { secretKeys: f.keys }),
       hot: f.hot,
-      level: f.org ?? "hidden",
+      level: f.level,
     };
   }
   return { schema: view.schema ?? fieldsSchema(view.fields), value, meta };

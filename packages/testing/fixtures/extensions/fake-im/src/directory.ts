@@ -1,25 +1,49 @@
-import type { Directory, DirectoryMember } from "@capybara-hq/plugin-sdk";
+import {
+  configUrlFetch,
+  type Directory,
+  type DirectoryMember,
+  type ExtensionNet,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
-/** 组织级配置：假平台上一份通讯录的地址（startFakeChannelServer().book(key).url）。 */
-export const FakeImOrgConfig = z.object({ url: z.string().url() });
+/**
+ * The directory part of the deployment config: the address of a directory book on the fake
+ * platform (startFakeChannelServer().book(key).url). Org-overridable: each org sets its own book
+ * in its copy. Unset means the directory is not configured (`configured()` false).
+ */
+export const FakeImDirectoryConfig = z.object({ directoryUrl: z.string().url().optional() });
 
 /**
- * 假 IM 平台的 `directory@1`：`listMembers` 按游标 GET `<url>/members?cursor=<c>`（请求头 `x-pid`），
- * 非 200 抛错（内核把整轮当作不完整，不移除任何人）。dir-mini 复用它。
+ * `directory@1` of the fake IM platform, built in setup from the extension's `ctx.net` and its
+ * platform config: `listMembers` GETs `<directoryUrl>/members?cursor=<c>` (header `x-pid`) from the
+ * effective config it is given, and throws on anything but 200 (the kernel then treats the round as
+ * incomplete and removes nobody). An org's own `directoryUrl` goes through `configUrlFetch`, so it
+ * reaches the network through `ctx.net` with the call's `orgId` (the platform's value is fetched
+ * directly), so the org's network rules apply. `configured()` is true iff
+ * `directoryUrl` is set. dir-mini and dir-opt reuse it.
  */
-export const fakeImDirectory: Directory = {
-  async listMembers({ orgConfig, cursor, signal }) {
-    const c = FakeImOrgConfig.parse(orgConfig);
-    const q = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-    const res = await fetch(`${c.url}/members${q}`, {
-      signal,
-      headers: { "x-pid": String(process.pid) },
-    });
-    if (res.status !== 200) {
-      await res.body?.cancel();
-      throw new Error(`directory returned ${res.status}`);
-    }
-    return (await res.json()) as { members: DirectoryMember[]; next?: string };
-  },
-};
+export function makeFakeImDirectory(ctx: {
+  net: Pick<ExtensionNet, "fetch">;
+  config: unknown;
+}): Directory {
+  return {
+    configured: (config) =>
+      FakeImDirectoryConfig.safeParse(config).data?.directoryUrl !== undefined,
+    async listMembers({ config, orgId, cursor, signal }) {
+      const directoryUrl = FakeImDirectoryConfig.parse(config).directoryUrl;
+      if (directoryUrl === undefined) throw new Error("fake-im directory: directoryUrl is not set");
+      const platform = FakeImDirectoryConfig.safeParse(ctx.config).data?.directoryUrl;
+      const get = configUrlFetch(ctx.net, { url: directoryUrl, platform, orgId });
+      const q = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+      const res = await get(`${directoryUrl}/members${q}`, {
+        signal,
+        headers: { "x-pid": String(process.pid) },
+      });
+      if (res.status !== 200) {
+        await res.body?.cancel();
+        throw new Error(`directory returned ${res.status}`);
+      }
+      return (await res.json()) as { members: DirectoryMember[]; next?: string };
+    },
+  };
+}

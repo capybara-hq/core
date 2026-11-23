@@ -5,8 +5,7 @@ const T = (zh: string, en: string) => ({ zh, en });
 
 /**
  * A hand-made extension whose deployment config hints are invalid (an option outside the enum, which
- * the packer would refuse): it still loads, without `x-ui` in its deployment schema. Its org config
- * hints are valid and pass through.
+ * the packer would refuse): it still loads, without `x-ui` in its deployment schema.
  */
 export default defineExtension({
   name: "badhints",
@@ -21,14 +20,6 @@ export default defineExtension({
       }),
       greeting: z.string().default("hi").meta({ hot: true }),
     }),
-    org: ui(
-      z
-        .object({
-          team: ui(z.string().default("core").meta({ hot: true }), { label: T("团队", "Team") }),
-        })
-        .refine((v) => v.team !== "taken", { params: { ui: "taken" } }),
-      { messages: { taken: T("已被占用", "Already taken") } },
-    ),
   },
   setup() {},
 });

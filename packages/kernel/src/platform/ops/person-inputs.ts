@@ -72,20 +72,6 @@ export function afterTaken(e: unknown, entered: Readonly<Record<string, string>>
 }
 
 /**
- * The values under `prefix` (`connectors.<templateId>.`), keyed by the rest of their path.
- */
-export function enteredUnder(
-  entered: Readonly<Record<string, string>>,
-  prefix: string,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(entered)
-      .filter(([p]) => p.startsWith(prefix))
-      .map(([p, v]) => [p.slice(prefix.length), v]),
-  );
-}
-
-/**
  * The `values` of a config route keyed by field dot path (deployment config, the org's copy): the
  * model's non-secret values, the person's entered secrets, and `null` (clear) for each path in
  * `clear`. A secret left out keeps its stored value, as on the web form.

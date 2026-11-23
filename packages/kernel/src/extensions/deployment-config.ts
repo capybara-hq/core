@@ -93,10 +93,11 @@ export interface DeploymentConfigField {
    */
   keys?: string[];
   /**
-   * What orgs may do with the field (spec A §5.1, the level of its top-level key): `readonly` (they
-   * see it) or `override` (they may bring their own value); absent = hidden from orgs.
+   * The field's org level (unified config spec §5.1, the level of its top-level key): `override`
+   * (orgs follow the platform's value or bring their own) or `platform` (platform-only, orgs never
+   * see it).
    */
-  org?: "readonly" | "override";
+  level: FieldLevel;
 }
 
 /**
@@ -608,14 +609,14 @@ export class ExtensionDeploymentConfigService {
         if (value === undefined && d.has) value = d.value;
         source = value === undefined ? "unset" : "default";
       }
-      const level = levels.get(f.path.split(".")[0] as string);
       const base = {
         path: f.path,
         secret: f.secret,
         hot: f.hot,
         source,
         readonly: from !== undefined,
-        ...(level !== undefined && level !== "hidden" && { org: level }),
+        // a schema with no top-level keys (not an object) has nothing an org could override
+        level: levels.get(f.path.split(".")[0] as string) ?? ("platform" as const),
       };
       // a schema default (e.g. `secret(record).default({})`) is no secret anybody set
       const set = value !== undefined && source !== "default";
@@ -695,7 +696,7 @@ function levelsOf(info: DeploymentSchemaInfo): Map<string, FieldLevel> {
 
 /**
  * The required `override` keys `raw` leaves empty: by the zod schema, else (a static form schema)
- * the `required` keys marked `override` that have no value.
+ * the `required` keys that are not platform-only and have no value.
  */
 function orgMustConfigureOf(
   info: DeploymentSchemaInfo,

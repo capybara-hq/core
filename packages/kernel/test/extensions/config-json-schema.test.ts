@@ -49,7 +49,7 @@ describe("configFormSchema", () => {
   });
 
   it("invalid hints: every x-ui is stripped and the problems are reported", () => {
-    const r = configFormSchema(bad, "org");
+    const r = configFormSchema(bad, "connection");
     expect(r.problems.length).toBeGreaterThan(0);
     expect(r.problems[0]?.path).toBe("mode");
     expect(JSON.stringify(r.schema)).not.toContain("x-ui");

@@ -32,7 +32,6 @@ import { pluginInstallsQuery } from "../lib/query/settings";
 import { skillsQuery } from "../lib/query/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
-import { hasConfigFields } from "./config-form/model";
 import { FormError } from "./form-error";
 import { useOrgThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
@@ -86,17 +85,11 @@ export const ownExtension = (
 
 /**
  * Whether switching a plugin on asks for input first (the wizard at `/plugins/<id>/enable`): its
- * connector templates, an org config the kernel still misses (`needs_config`), or its extension's
- * org config form when the extension is off (unknown extensions: ask, the wizard says when there
- * is nothing to fill in).
+ * connector templates (the only input the wizard collects; an extension's config is set from its
+ * Sheet on the extensions page, see the `configure` action).
  */
-export function needsInput(item: OrgCatalogItem, extensions: OrgExtension[] | undefined): boolean {
-  if (item.state === "needs_config") return true;
-  if (item.componentCounts.connectorTemplates > 0) return true;
-  if (item.componentCounts.extension === 0) return false;
-  if (extensions === undefined) return true;
-  const own = ownExtension(item, extensions);
-  return own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema);
+export function needsInput(item: OrgCatalogItem): boolean {
+  return item.componentCounts.connectorTemplates > 0;
 }
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
@@ -140,7 +133,7 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
       menu: danger.map((a) => ({
         label: a.label,
         ...(a.danger === true && { danger: true }),
-        onSelect: a.onSelect ?? (() => {}),
+        ...(a.href !== undefined ? { href: a.href } : { onSelect: a.onSelect ?? (() => {}) }),
       })),
     }),
   };
@@ -326,6 +319,22 @@ export function usePluginActions({
     if (i.awaitingConfirmation === true) return withdrawAction;
     return [...stateActions(i), ...withdrawAction];
   };
+  /**
+   * Configure for an extension whose effective config is not valid: its Sheet on the extensions
+   * page.
+   */
+  const configureWhenNeeded = (i: OrgCatalogItem): PluginAction[] => {
+    const own = ownExtension(i, extensions);
+    return own?.needsConfig === true
+      ? [
+          {
+            id: "configure",
+            label: t("action.configure"),
+            href: `/extensions#plugin=${encodeURIComponent(own.plugin)}`,
+          },
+        ]
+      : [];
+  };
   const stateActions = (i: OrgCatalogItem): PluginAction[] => {
     if (i.request !== null || i.state === "unavailable") return [];
     if (!admin) {
@@ -344,9 +353,10 @@ export function usePluginActions({
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
       ];
     }
-    // Installed but a connector template on here misses its connector (P2-10): 补充配置
+    // Installed but a connector template on here misses its connector (P2-10): Complete setup
     if (i.state === "needs_config" && i.installed !== null) {
       return [
+        ...configureWhenNeeded(i),
         {
           id: "connectors",
           label: t("action.connectors"),
@@ -367,24 +377,26 @@ export function usePluginActions({
     if (i.state === "off" || i.state === "needs_config") {
       if (i.notDeployed) return [];
       return [
-        needsInput(i, extensions)
+        needsInput(i)
           ? {
               id: "enable",
               label: t("action.enable"),
               href: `/plugins/${encodeURIComponent(i.id)}/enable`,
             }
           : { id: "enable", label: t("action.enable"), onSelect: () => void enable(i) },
+        ...configureWhenNeeded(i),
       ];
     }
-    // On: the extension's org config when it has a form; 停用 unless the platform turned it on
+    // On: the extension's org config when it has overridable fields; Disable unless the platform
+    // turned it on
     const own = ownExtension(i, extensions);
     return [
-      ...(own?.configurable === true && hasConfigFields(own.orgConfigSchema)
+      ...(own?.configurable === true
         ? [
             {
               id: "configure" as const,
               label: t("action.configure"),
-              href: `/extensions#plugin-${encodeURIComponent(own.plugin)}`,
+              href: `/extensions#plugin=${encodeURIComponent(own.plugin)}`,
             },
           ]
         : []),

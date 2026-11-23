@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "name": "openai-compatible",
+      "source": "workspace",
+      "path": "plugins/demo",
+      "version": "1.2.3",
+      "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "required": true
+    },
+    {
+      "name": "object-store-s3",
+      "source": "workspace",
+      "path": "plugins/demo",
+      "version": "1.2.3",
+      "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "required": true
+    },
+    {
+      "name": "skills-core",
+      "source": "workspace",
+      "path": "plugins/demo",
+      "version": "1.2.3",
+      "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "required": false,
+      "builtin": true
+    }
+  ]
+}

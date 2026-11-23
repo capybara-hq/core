@@ -111,7 +111,7 @@ export interface PluginExtensionSection {
    * extension not loaded on a replica still gets its form; each ≤
    * {@link CONFIG_UI_LIMITS}`.configSchemaBytes`. Not part of the `manifest_mismatch` comparison.
    */
-  configSchemas?: { deployment?: JsonSchema; org?: JsonSchema };
+  configSchemas?: { deployment?: JsonSchema };
   /** Browser code, styles and assets (needs `permissions.client: true`); see {@link PluginClientSection}. */
   client?: PluginClientSection;
 }
@@ -230,6 +230,35 @@ const configFields = z
   .array(z.strictObject({ path: z.string().max(1000), secret: z.boolean(), hot: z.boolean() }))
   .max(1000);
 
+const configSchemaJson = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
+    {
+      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
+    },
+  );
+
+/**
+ * Transition only: packages packed before core#720 carry the old org-only config in plugin.json:
+ * `extension.manifest.config.org` (the org config field list, often `[]`) and
+ * `extension.configSchemas.org` (its form schema). Published tarballs are immutable, so the reader
+ * accepts both and drops them: they never reach the parsed manifest, the permission set, the
+ * config levels or the views. Nothing else reads them, `defineExtension` still refuses
+ * `config.org`, and the packer never writes either. Removed once the official plugins are
+ * republished and re-pinned (core#720 plan Task 17).
+ */
+const legacyPackedBeforeCore720 = {
+  configOrg: configFields.optional().meta({
+    deprecated: true,
+    description: "Ignored: written only by packers before core#720.",
+  }),
+  configSchemasOrg: configSchemaJson.optional().meta({
+    deprecated: true,
+    description: "Ignored: written only by packers before core#720.",
+  }),
+};
+
 const staticExtensionManifest = z.strictObject({
   name: z.string(),
   version: z.string(),
@@ -239,17 +268,10 @@ const staticExtensionManifest = z.strictObject({
   optional: z.array(z.string()),
   permissions: z.record(z.string(), z.unknown()),
   ui: z.array(z.record(z.string(), z.unknown())).optional(),
-  config: z.strictObject({ deployment: configFields, org: configFields }),
+  config: z
+    .strictObject({ deployment: configFields, org: legacyPackedBeforeCore720.configOrg })
+    .transform(({ org: _legacyOrg, ...config }) => config),
 });
-
-const configSchemaJson = z
-  .record(z.string(), z.unknown())
-  .refine(
-    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
-    {
-      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
-    },
-  );
 
 const setupGuide = z.strictObject({
   id: z.string().regex(CATALOG_ITEM_NAME_RE, {
@@ -296,7 +318,11 @@ const extensionSection = z.strictObject({
   migrations: dotPath("migrations").optional(),
   ui: dotPath("ui").optional(),
   configSchemas: z
-    .strictObject({ deployment: configSchemaJson.optional(), org: configSchemaJson.optional() })
+    .strictObject({
+      deployment: configSchemaJson.optional(),
+      org: legacyPackedBeforeCore720.configSchemasOrg,
+    })
+    .transform(({ org: _legacyOrg, ...schemas }) => schemas)
     .optional(),
   client: clientSection.optional(),
 });
@@ -594,14 +620,15 @@ const schema = z
         `"${em.sdk}" has no upper bound: use a range such as ^0.1.0 so a future major SDK is not assumed compatible`,
       );
     }
-    for (const k of ["deployment", "org"] as const) {
-      const seen = new Set<string>();
-      for (const f of em.config[k]) {
-        if (seen.has(f.path)) {
-          issue(["extension", "manifest", "config", k], `duplicate config path "${f.path}"`);
-        }
-        seen.add(f.path);
+    const seen = new Set<string>();
+    for (const f of em.config.deployment) {
+      if (seen.has(f.path)) {
+        issue(
+          ["extension", "manifest", "config", "deployment"],
+          `duplicate config path "${f.path}"`,
+        );
       }
+      seen.add(f.path);
     }
     // Name, version, sdk range, extension point refs, permissions, UI contributions: the same
     // rules as defineExtension (with a placeholder setup).

@@ -206,7 +206,7 @@ describe("ExtensionHost", () => {
 
   it("secret 不在对象路径叶子上（discriminatedUnion 内）：加载失败，点名插件与路径", async () => {
     await expect(host().load([fx("secretunion")])).rejects.toThrow(
-      /plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/,
+      /plugin secretunion: config\.deployment: secret\(\) at "auth<union#1>\.token"/,
     );
   });
 
@@ -428,7 +428,9 @@ describe("ExtensionHost.migrateOnly", () => {
         dbUrl: deps.dbUrl,
         autoApprove: true,
       }),
-    ).rejects.toThrow(/plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/);
+    ).rejects.toThrow(
+      /plugin secretunion: config\.deployment: secret\(\) at "auth<union#1>\.token"/,
+    );
   });
 
   it("依赖解析失败同样报错（不迁移）", async () => {

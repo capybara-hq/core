@@ -16,17 +16,14 @@ import { z } from "zod";
  * Every call is recorded (the request without its signal) on `globalThis.__fakeContext`
  * ({@link fakeContextProbe}; in-process kernels only). It also registers the tool `note` (default
  * policy allow, `sources: ["web", "channel_dm"]`), so `tools` in a request lists
- * `plugin__fake-context__note` only in one-to-one conversations. Its org config (`label`, default
- * "") exists only so a test can store an org copy that no longer validates.
+ * `plugin__fake-context__note` only in one-to-one conversations. Both deployment fields are
+ * org-overridable, so a test can store an org copy (or one that no longer validates).
  */
 
 const DeploymentConfig = z.object({
   text: z.string().default("fake context"),
   mode: z.enum(["ok", "null", "throw", "hang"]).default("ok"),
 });
-
-/** An org-only config (all defaults), so a test can make the org's stored copy invalid. */
-const OrgConfig = z.object({ label: z.string().default("") });
 
 /** One `provide` call: the request the kernel sent, without its signal. */
 export type FakeContextCall = Omit<ContextRequest, "signal">;
@@ -72,7 +69,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["context@1"],
-  config: { deployment: DeploymentConfig, org: OrgConfig },
+  config: { deployment: DeploymentConfig },
   permissions: { tools: ["note"] },
   setup(ctx) {
     ctx.provide("context@1", provider);

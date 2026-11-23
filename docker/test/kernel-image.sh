@@ -180,7 +180,7 @@ const conn = () => new (IORedis.default ?? IORedis)(process.env.REDIS_URL, { max
 echo "==> extensions list"
 LIST="$(run "$API_IMAGE" extensions list)"
 echo "$LIST"
-[ "$(echo "$LIST" | grep -c "	bootstrap	required	")" -eq 2 ] || fail "expected two required bootstrap plugins"
+[ "$(echo "$LIST" | grep -c "	bootstrap	required	")" -eq 1 ] || fail "expected one required bootstrap plugin"
 echo "$LIST" | grep -q "^openai-compatible	$(pin openai-compatible)	bootstrap	" || fail "openai-compatible missing"
 echo "$LIST" | grep -q "^object-store-s3	$(pin object-store-s3)	bootstrap	" || fail "object-store-s3 missing"
 

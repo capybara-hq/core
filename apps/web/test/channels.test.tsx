@@ -92,8 +92,6 @@ const PLUGINS = [
     version: "0.1.0",
     enabled: true,
     configurable: true,
-    config: null,
-    secrets: [],
     permissions: [
       {
         category: "provides",
@@ -106,15 +104,12 @@ const PLUGINS = [
       },
     ],
     provides: ["channel@1", "directory@1"],
-    orgConfigSchema: null,
   },
   {
     plugin: "todo",
     version: "0.1.0",
     enabled: true,
     configurable: false,
-    config: null,
-    secrets: [],
     permissions: [
       {
         category: "tools",
@@ -124,15 +119,12 @@ const PLUGINS = [
       },
     ],
     provides: [],
-    orgConfigSchema: null,
   },
   {
     plugin: "slack",
     version: "0.1.0",
     enabled: false,
     configurable: false,
-    config: null,
-    secrets: [],
     permissions: [
       {
         category: "provides",
@@ -142,7 +134,6 @@ const PLUGINS = [
       },
     ],
     provides: ["channel@1"],
-    orgConfigSchema: null,
   },
 ];
 

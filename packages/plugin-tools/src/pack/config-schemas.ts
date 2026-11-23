@@ -7,23 +7,16 @@ import {
 } from "@capybara-hq/plugin-sdk";
 
 /**
- * The config JSON Schemas an extension's package carries (extension config forms spec §4.5) and
+ * The config JSON Schema an extension's package carries (extension config forms spec §4.5) and
  * the checks the packer and `capybara-plugin check` ("Config forms") run on them.
  */
 
-/** The config levels an extension declares a schema for. */
-export type ConfigSchemaLevel = "deployment" | "org";
+/** A problem of the deployment schema (`path`: dot path of the node, `""` the root). */
+export type ConfigSchemaProblem = ConfigUiProblem;
 
-const LEVELS: ConfigSchemaLevel[] = ["deployment", "org"];
-
-/** A problem of one level's schema (`path`: dot path of the node, `""` the root). */
-export interface ConfigSchemaProblem extends ConfigUiProblem {
-  level: ConfigSchemaLevel;
-}
-
-/** The JSON Schemas of an extension's config levels and the problems of their hints. */
+/** The JSON Schema of an extension's deployment config and the problems of its hints. */
 export interface ExtensionConfigSchemas {
-  schemas: { deployment?: JsonSchema; org?: JsonSchema };
+  schemas: { deployment?: JsonSchema };
   problems: ConfigSchemaProblem[];
 }
 
@@ -79,29 +72,25 @@ function secretValueHints(schema: unknown): ConfigUiProblem[] {
 }
 
 /**
- * The JSON Schemas (`configJsonSchema`) of an extension's deployment and org config, with every
- * problem of their hints: `validateConfigUi` at the level, plus value hints on secrets
- * ({@link secretValueHints}). The packer refuses a plugin with problems.
+ * The JSON Schema (`configJsonSchema`) of an extension's deployment config, with every problem of
+ * its hints: `validateConfigUi`, plus value hints on secrets ({@link secretValueHints}). The
+ * packer refuses a plugin with problems.
  */
 export function extensionConfigSchemas(
   config: ExtensionManifest["config"] | undefined,
 ): ExtensionConfigSchemas {
-  const result: ExtensionConfigSchemas = { schemas: {}, problems: [] };
-  for (const level of LEVELS) {
-    const zod = config?.[level];
-    if (zod === undefined) continue;
-    const schema = configJsonSchema(zod);
-    result.schemas[level] = schema;
-    for (const p of [...validateConfigUi(schema, level), ...secretValueHints(zod)]) {
-      result.problems.push({ level, ...p });
-    }
-  }
-  return result;
+  const zod = config?.deployment;
+  if (zod === undefined) return { schemas: {}, problems: [] };
+  const schema = configJsonSchema(zod);
+  return {
+    schemas: { deployment: schema },
+    problems: [...validateConfigUi(schema, "deployment"), ...secretValueHints(zod)],
+  };
 }
 
-/** `<level> config: <path>: <message>` (the root as `(root)`). */
+/** `deployment config: <path>: <message>` (the root as `(root)`). */
 export const formatConfigSchemaProblem = (p: ConfigSchemaProblem) =>
-  `${p.level} config: ${p.path === "" ? "(root)" : p.path}: ${p.message}`;
+  `deployment config: ${p.path === "" ? "(root)" : p.path}: ${p.message}`;
 
 /** The non-null shape of a node: itself, or the one non-null branch of a nullable `anyOf`. */
 function shapeOf(node: JsonSchema): JsonSchema {

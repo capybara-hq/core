@@ -13,7 +13,7 @@ An IM platform is usually provided by one extension offering all three extension
 |---|---|---|---|
 | `channel@1` (bot) | `packages/plugin-sdk/src/channel.ts`, cards in `cards.ts` | one per **channel connection** (`connectionSchema`, created by an org admin under "Channels" in the web app) | yes (`orgScoped`) |
 | `identity-source@1` (web login) | `identity.ts` | **deployment-level** (`config.deployment`, enabled through `auth.loginSources`) | no (Ruling P1) |
-| `directory@1` (directory sync) | `directory.ts` | **org-level** (`config.org`) | yes (`orgScoped`) |
+| `directory@1` (directory sync) | `directory.ts` | **effective config** (org copy of overridable fields) | yes (`orgScoped`) |
 
 For the extension host (manifest, two-level config, the multi-replica prohibitions, permission approval) see `.agents/skills/writing-extensions`.
 
@@ -284,13 +284,13 @@ interface IdentitySource {
 
 ```ts
 interface Directory {
-  configured?(orgConfig: unknown): boolean;
-  listMembers(args: { orgConfig; cursor?; signal }): Promise<{ members: DirectoryMember[]; next?: string }>;
+  configured?(config: unknown): boolean;
+  listMembers(args: { config; cursor?; signal }): Promise<{ members: DirectoryMember[]; next?: string }>;
 }
 ```
 
 - **Pagination**: each call returns one page and the next-page cursor `next`, and the last page has no `next`. The kernel gives each page a 60-second limit and a round at most 10000 pages. Put everything needed to continue in the cursor (the extension is stateless).
-- **`configured(orgConfig)`** (Ruling A28): implement it when the same extension also provides channel and other extension points and the directory fields are optional in the org-level config. When it returns false, the kernel silently skips the hourly scan, `directory_changed` and the pre-removal re-check, and a manual sync returns 409 `directory.not_configured`. It must be a pure function (no requests, no throwing).
+- **`configured(config)`** (Ruling A28): implement it when the same extension also provides channel and other extension points and the directory fields are optional in the effective config. When it returns false, the kernel silently skips the hourly scan, `directory_changed` and the pre-removal re-check, and a manual sync returns 409 `directory.not_configured`. It must be a pure function (no requests, no throwing).
 - **Throw when not configured or the credentials are wrong, and never return an empty list**: an empty list equals "everyone has left".
 - **If the listing is incomplete it must fail**: any page that can't be fetched in full (insufficient permission, rate-limit waiting over budget, the department structure changing mid-sync, the tenant changing within a round, a status field unavailable for lack of permission) throws. The kernel removes people only when the whole round completes successfully; on a mid-round failure it only adds and doesn't remove. Don't "return whatever you could get on a best-effort basis".
 - **Rate limiting**: within the page, retry for the wait time the platform gives, with a budget on cumulative waiting (the official extensions use 30 seconds per page and at most 3 per request); beyond it throw "rate limited", and this round is treated as incomplete.

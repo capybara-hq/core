@@ -35,6 +35,7 @@ import {
   parseSandboxOperationRef,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
+  platformOnly,
   SANDBOX_TAG_RE,
   type SandboxBackground,
   type SandboxExecutionRef,
@@ -137,14 +138,17 @@ import { z } from "zod";
  * operation at once.
  */
 
-const Deployment = z.object({
-  root: z.string().min(1),
-  updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
-  limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
-  list: z.boolean().optional(),
-  refusePaths: z.array(z.string()).optional(),
-  fencing: z.enum(["enforce", "ignore"]).optional(),
-});
+/** Platform-only: device-provider@1 calls carry no org config (spec §5.3). */
+const Deployment = platformOnly(
+  z.object({
+    root: z.string().min(1),
+    updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
+    limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
+    list: z.boolean().optional(),
+    refusePaths: z.array(z.string()).optional(),
+    fencing: z.enum(["enforce", "ignore"]).optional(),
+  }),
+);
 
 /** Whether `path` is one of `refused` or below one (device paths, compared normalized). */
 function isRefused(refused: string[] | undefined, path: string): boolean {

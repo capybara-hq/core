@@ -89,10 +89,7 @@ beforeAll(async () => {
   const orgId = (org.json.org as { id: string }).id;
   await enableExtensions(raw, orgId, "model-fake");
   base = `/api/v1/orgs/${orgId}`;
-  const en = await call("PUT", `${base}/extensions/fake-im`, {
-    enabled: true,
-    config: { url: im.book("acme").url },
-  });
+  const en = await call("PUT", `${base}/extensions/fake-im`, { enabled: true });
   expect(en.status, JSON.stringify(en.json)).toBe(200);
   const ag = await call("POST", `${base}/agents`, {
     definition: {

@@ -5,7 +5,6 @@ import { CatalogScopeService } from "../../catalog/catalog-scope.service.js";
 import {
   CatalogConnectorInput,
   CatalogItemPathParams,
-  OrgPluginInstallBody,
   PluginInstallPathParams,
 } from "../../catalog/org-catalog.schemas.js";
 import { OrgCatalogService } from "../../catalog/org-catalog.service.js";
@@ -20,7 +19,6 @@ import {
 import { OwnedItems } from "../../catalog/owned-items.js";
 import { PluginInstaller, type PluginInstallView } from "../../catalog/plugin-install.js";
 import { ApiError } from "../../errors.js";
-import { OrgExtensionConfigs } from "../../extensions/org-config.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { ThemesService } from "../../themes/themes.service.js";
@@ -40,19 +38,12 @@ import {
   type OperationContext,
   type PrecheckResult,
 } from "../operation.js";
-import {
-  type PersonFieldSpec,
-  PersonFieldsRefused,
-  type PersonFieldTarget,
-  personFieldParams,
-  planPersonFields,
-  secretFieldsOf,
-} from "../person-fields.js";
+import { type PersonFieldTarget, personFieldParams } from "../person-fields.js";
 import { PlatformOperations } from "../registry.js";
 import { appearanceSummary, reviewBrief } from "./catalog-admin.ops.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-import { afterTaken, enteredUnder, nestedConfig, takePersonInputs } from "./person-inputs.js";
+import { afterTaken, takePersonInputs } from "./person-inputs.js";
 import { localized, named, orElse } from "./summary.js";
 
 const InstallId = PluginInstallPathParams.shape.installId.max(100);
@@ -84,9 +75,6 @@ const InstallInput = z
     itemId: ItemId,
     templates: Templates.optional().describe(
       "Per connector template id (plugins.get lists them), the connector's name, slug, endpoint fields and OAuth client id; never a credential.",
-    ),
-    extensionConfig: OrgPluginInstallBody.shape.extensionConfig.describe(
-      "The plugin's extension org config without its secret fields (extensions.org-config shows the schema).",
     ),
     askPerson: personFieldParams.askPerson,
   })
@@ -212,51 +200,18 @@ export class OrgPluginsOperations implements OnModuleInit {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
     @Inject(ThemesService) private readonly themes: ThemesService,
-    @Inject(OrgExtensionConfigs) private readonly extensions: OrgExtensionConfigs,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /**
    * What installing a plugin asks the person for (platform web parity spec §7.2): the connector
    * templates whose connector the install creates (on in the org, none kept from an earlier
-   * switch-off, as the install wizard asks), and the secret fields of its extension's org config
-   * under `extensionConfig.` (stored ones count as set; one the schema walk cannot address is web
-   * only). An extension whose org view cannot be read refuses the call: its secrets are unknown.
+   * switch-off, as the install wizard asks). The extension's config for the org is its copy of the
+   * overridable fields, saved apart (`extensions.save-org-config`).
    */
   private async installTargets(ctx: OperationContext, itemId: string) {
     const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, itemId);
     const templates = d.templates.filter((t) => t.on && !t.connected).map(targetOf);
-    let fields: PersonFieldSpec[] = [];
-    let recordOnly: string[] = [];
-    if (d.extension !== null) {
-      const views = await this.extensions.list(ctx.orgId);
-      // the view of this catalog item; by plugin name only when that name is unambiguous
-      const byName = views.filter((e) => e.plugin === d.extension);
-      const v =
-        views.find((e) => e.catalogItem?.itemId === itemId) ??
-        (byName.length === 1 ? byName[0] : undefined);
-      if (v === undefined && byName.length > 1) {
-        throw new PersonFieldsRefused(
-          `Several extensions named ${d.extension} are in this org, so the secret fields of this plugin's extension are not known; install the plugin on the web (Plugins page).`,
-        );
-      }
-      if (v === undefined) {
-        throw new PersonFieldsRefused(
-          `Cannot read the config schema of the plugin's extension ${d.extension} now, so its secret fields are unknown; try again, or install the plugin on the web (Plugins page).`,
-        );
-      } else {
-        const stored = new Set(v.secrets.filter((x) => x.set).map((x) => x.path));
-        const found = secretFieldsOf(v.orgConfigSchema, stored);
-        const asked = new Set(found.fields.map((f) => f.path));
-        fields = found.fields.map((f) => ({ ...f, path: `extensionConfig.${f.path}` }));
-        recordOnly = [
-          ...new Set([
-            ...found.recordOnly,
-            ...v.secrets.map((x) => x.path).filter((p) => !asked.has(p)),
-          ]),
-        ].map((p) => `extensionConfig.${p}`);
-      }
-    }
     return {
       item: d.item,
       templates,
@@ -265,8 +220,8 @@ export class OrgPluginsOperations implements OnModuleInit {
           zh: `插件「${localized(d.item.displayName, d.item.name).zh}」的安装`,
           en: `${localized(d.item.displayName, d.item.name).en}: install`,
         },
-        fields: [...templatePersonFields(templates), ...fields],
-        recordOnly,
+        fields: templatePersonFields(templates),
+        recordOnly: [],
       } satisfies PersonFieldTarget,
     };
   }
@@ -709,7 +664,7 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof InstallInput>>({
         id: "plugins.install",
         description:
-          "Install a plugin in this org with its inputs (org admins; the web's install wizard): per connector template the connector's name, slug, endpoint fields and OAuth client id (templates), and the extension's org config without secrets (extensionConfig). Secrets are never params: the person enters them in a secure input request, at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret) and extensionConfig.<field>. Required ones are asked even when not listed in askPerson. A plugin that needs no input is switched on with plugins.set-enabled instead.",
+          "Install a plugin in this org with its inputs (org admins; the web's install wizard): per connector template the connector's name, slug, endpoint fields and OAuth client id (templates). Secrets are never params: the person enters them in a secure input request, at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret). The extension's config for the org is its copy of the overridable fields (extensions.save-org-config). Required ones are asked even when not listed in askPerson. A plugin that needs no input is switched on with plugins.set-enabled instead.",
         input: InstallInput,
         example: {
           itemId: EXAMPLE_ID,
@@ -740,7 +695,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           },
           {
             code: "validation_failed",
-            next: "The error's details name the fields (connectors.<templateId>.… or extensionConfig.…); correct the params and call again.",
+            next: "The error's details name the fields (connectors.<templateId>.…); correct the params and call again.",
           },
           {
             code: "platform.secret_record_web_only",
@@ -762,17 +717,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           }
           return templatesRefusal(r.templates, i.templates);
         },
-        personFields: async (i, ctx) => {
-          const { target } = await this.installTargets(ctx, i.itemId);
-          // the extension config is a dynamic record: its secrets are checked like values
-          const plan = planPersonFields(target, {
-            values: { extensionConfig: i.extensionConfig ?? {} },
-            askPerson: [],
-            clearSecrets: [],
-          });
-          if (!plan.ok) throw new PersonFieldsRefused(plan.message);
-          return target;
-        },
+        personFields: async (i, ctx) => (await this.installTargets(ctx, i.itemId)).target,
         summary: async (i, ctx) => {
           const { item, templates } = await this.installTargets(ctx, i.itemId);
           const n = localized(item.displayName, item.name);
@@ -788,20 +733,14 @@ export class OrgPluginsOperations implements OnModuleInit {
           // values are taken first (takePersonInputs)
           const { entered, auditDetail } = await takePersonInputs("plugins.install", ctx);
           const connectors = connectorInputs(templates, input.templates, entered);
-          const ext = enteredUnder(entered, "extensionConfig.");
-          const extensionConfig =
-            input.extensionConfig !== undefined || Object.keys(ext).length > 0
-              ? nestedConfig(input.extensionConfig ?? {}, ext, [])
-              : undefined;
           const r = await this.orgCatalog
             .install(
               ctx.orgId,
               ctx.actorAccountId,
               input.itemId,
-              {
-                ...(connectors !== undefined && { connectors }),
-                ...(extensionConfig !== undefined && { extensionConfig }),
-              } as Parameters<OrgCatalogService["install"]>[3],
+              (connectors !== undefined ? { connectors } : {}) as Parameters<
+                OrgCatalogService["install"]
+              >[3],
               undefined,
               auditDetail,
             )
@@ -834,7 +773,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           },
           {
             code: "validation_failed",
-            next: "The error's details name the fields (connectors.<templateId>.… or extensionConfig.…); correct the params and call again.",
+            next: "The error's details name the fields (connectors.<templateId>.…); correct the params and call again.",
           },
           {
             code: "platform.secret_record_web_only",

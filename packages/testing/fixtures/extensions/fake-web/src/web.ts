@@ -13,10 +13,11 @@ import { z } from "zod";
 // own directory); test/fixtures.test.ts of @capybara-hq/testing keeps them equal.
 
 /**
- * Org config of the fake web providers: `configured()` is true iff `token` is set (and throws for
- * the token `throw:configured`).
+ * Deployment config of the fake web providers: a required, org-overridable secret `token`. The
+ * platform may leave it empty (orgs then need their own copy); `configured()` is false for the
+ * token `unconfigured` and throws for the token `throw:configured`.
  */
-export const FakeWebOrgConfig = z.object({ token: secret(z.string().min(1)).optional() });
+export const FakeWebConfig = z.object({ token: secret(z.string().min(1)) });
 
 /** One provider call, recorded on `globalThis.__fakeWeb` (in-process kernels only). */
 export interface FakeWebCall {
@@ -43,11 +44,14 @@ const KINDS: readonly WebProviderErrorKind[] = [
   "invalid",
 ];
 
-/** True iff the token is set; the token `throw:configured` makes it throw. */
-const configured = (orgConfig: unknown): boolean => {
-  const token = (orgConfig as { token?: unknown } | null)?.token;
+/**
+ * True iff the effective config's token is set and is not `unconfigured`; the token
+ * `throw:configured` makes it throw.
+ */
+const configured = (config: unknown): boolean => {
+  const token = (config as { token?: unknown } | null)?.token;
   if (token === "throw:configured") throw new Error("fake web: configured() failed");
-  return typeof token === "string" && token.length > 0;
+  return typeof token === "string" && token.length > 0 && token !== "unconfigured";
 };
 
 /** The script of a fetch: the decoded URL path (and query) after the first `/`. */
