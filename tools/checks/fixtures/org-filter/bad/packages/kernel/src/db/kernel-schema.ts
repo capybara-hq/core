@@ -16,6 +16,6 @@ export interface OrgsTable {
 }
 export interface KernelDatabase {
   things: ThingsTable;
-  notes: NotesTable;
+  notes: NotesTable; // expect: org-filter-policy
   orgs: OrgsTable;
 }
