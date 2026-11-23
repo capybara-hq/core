@@ -98,7 +98,7 @@ interface Common {
   onLaunch: (identity: TrustedLaunchIdentity) => Promise<void>;
   onOutput?: (bytes: Buffer, stream?: "stdout" | "stderr") => void | Promise<void>;
   /** Trusted background-only artifact configuration; never decoded from command text. */
-  managedOutput?: { outputPath: string; artifactRoot: string };
+  managedOutput?: { outputPath: string; artifactRoot: string; artifactMount?: string };
   onDiagnostic?: (text: string) => void;
   onOutputFlow?: (info: {
     frameBytes: number;

@@ -8,8 +8,9 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
+import type { HelperLauncher } from "./helper-launcher.js";
 import { LINUX_DEVICE_AGENT } from "./linux-agent.js";
-import { PRELUDE } from "./native-helper-client.js";
+import { CONTAINER_PRELUDE, PRELUDE } from "./native-helper-client.js";
 import { WORKER } from "./operation-worker.js";
 import { OUTPUT_SPOOL_HELPER } from "./output-spool-helper.js";
 import {
@@ -75,6 +76,8 @@ export const manifestHash = (kind: "runtime" | "helpers", entries: readonly Mani
   sha256(canonicalManifest(kind, entries));
 
 export interface EnvironmentFacts {
+  /** Where the trusted helpers' interpreter and shell are: this host, or the pinned image. */
+  place: "host" | "image";
   platform: string;
   arch: string;
   osBuild: string;
@@ -93,8 +96,9 @@ export interface EnvironmentFacts {
 }
 export function canonicalEnvironment(f: EnvironmentFacts): string {
   return JSON.stringify([
-    1,
+    2,
     "environment",
+    f.place,
     f.platform,
     f.arch,
     f.osBuild,
@@ -173,6 +177,7 @@ const HELPER_MODULES = [
   "linux-agent",
   "docker-operations",
   "docker-image",
+  "helper-launcher",
   "operation-supervisor",
   "operation-worker",
   "native-helper-client",
@@ -200,6 +205,7 @@ export function installedLayout(): ManifestLayout {
     inline: {
       "inline/native-files.py": native.source,
       "inline/native-helper-prelude.py": PRELUDE,
+      "inline/native-helper-container-prelude.py": CONTAINER_PRELUDE,
       "inline/output-spool-helper.py": OUTPUT_SPOOL_HELPER,
       "inline/mac-worker.mjs": WORKER,
       // the Linux backend stages these next to native-files.py (linux-runtime.ts)
@@ -633,8 +639,34 @@ const PYTHON_PROBE = [
   "print(json.dumps({'executable':os.path.realpath(sys.executable),'version':sys.version,'base':os.path.realpath(sys.base_prefix),'files':files}))",
 ].join("\n");
 
+/**
+ * The image probe: the same imports as {@link PYTHON_PROBE}, run with the image's interpreter in a
+ * helper container, and the sha256 of every file it reports (the host cannot read the image's
+ * files) plus the image's shell.
+ */
+const IMAGE_PYTHON_PROBE = [
+  PYTHON_PROBE.split("\n").slice(0, -1).join("\n"),
+  "import hashlib",
+  "def h(p):",
+  "    d=hashlib.sha256()",
+  "    with open(p,'rb') as f:",
+  "        for b in iter(lambda:f.read(1<<20),b''): d.update(b)",
+  "    return [os.path.getsize(p),d.hexdigest()]",
+  "exe=os.path.realpath(sys.executable)",
+  "shell=os.path.realpath('/bin/bash')",
+  "print(json.dumps({'executable':exe,'version':sys.version,'base':os.path.realpath(sys.base_prefix),'files':files,'hashes':{p:h(p) for p in set(files+[exe,shell])},'shell':shell}))",
+].join("\n");
+
 /** Trusted inputs of the environment fingerprint; never decoded from a request. */
 export interface EnvironmentInputs {
+  /**
+   * `host` (default): the host interpreter at `pythonPath` and the host shell. `image` (docker
+   * mode): the pinned image's interpreter and shell, probed in a helper container (`helpers`);
+   * the host's are never touched.
+   */
+  place?: "host" | "image";
+  /** The helper containers an `image` probe runs in. */
+  helpers?: HelperLauncher;
   pythonPath: string;
   shellPath?: string;
   roots: { workspace: string; skills: string; tmp: string };
@@ -643,7 +675,84 @@ export interface EnvironmentInputs {
   /** The Python helper sources whose imports are fingerprinted (default: the shipped helpers). */
   pythonSources?: readonly string[];
 }
+/** The interpreter and shell facts of the pinned image, from a helper container. */
+async function imageFacts(input: EnvironmentInputs, imports: string[]) {
+  if (!input.helpers)
+    throw new RuntimeManifestError("An image environment needs helper containers");
+  const r = input.helpers.run(
+    IMAGE_PYTHON_PROBE,
+    [JSON.stringify(imports)],
+    [],
+    "",
+    4 * 1024 * 1024,
+  );
+  if (r.error || r.status !== 0)
+    throw new RuntimeManifestError(
+      `Cannot probe the sandbox image's interpreter: ${r.error?.message ?? `exit ${r.status}`}`,
+    );
+  const probe = JSON.parse(r.stdout) as {
+    executable: string;
+    version: string;
+    base: string;
+    files: string[];
+    hashes: Record<string, [number, string]>;
+    shell: string;
+  };
+  const hashOf = (path: string) => {
+    const h = probe.hashes[path];
+    if (!h || !Number.isSafeInteger(h[0]) || !/^[a-f0-9]{64}$/.test(h[1]))
+      throw new RuntimeManifestError(`The image probe did not hash ${path}`);
+    return { size: h[0], sha256: h[1] };
+  };
+  return {
+    probe,
+    python: { realPath: probe.executable, ...hashOf(probe.executable) },
+    shell: { realPath: probe.shell, ...hashOf(probe.shell) },
+    hashOf,
+  };
+}
+
 export async function collectEnvironment(input: EnvironmentInputs): Promise<EnvironmentFacts> {
+  const place = input.place ?? "host";
+  const imports = [
+    ...new Set((input.pythonSources ?? helperPythonSources()).flatMap(pythonImports)),
+  ];
+  if (place === "image") {
+    const nodeRealPath = await realpath(process.execPath);
+    const { probe, python, shell, hashOf } = await imageFacts(input, imports);
+    const libraries: ManifestEntry[] = [];
+    for (const file of [probe.executable, ...probe.files]) {
+      const name = file.startsWith(`${probe.base}/`)
+        ? `python/${relative(probe.base, file)}`
+        : `python-abs${file}`;
+      if (libraries.some((e) => e[0] === name)) continue;
+      const { size, sha256: hash } = hashOf(file);
+      libraries.push([name, size, hash]);
+    }
+    const uid = process.geteuid?.() ?? -1;
+    const node = await hashRegularFile(nodeRealPath);
+    return {
+      place,
+      platform: platform(),
+      arch: arch(),
+      osBuild:
+        platform() === "darwin"
+          ? (await run("/usr/bin/sw_vers", ["-buildVersion"])).stdout.trim()
+          : `${release()} ${version()}`,
+      effectiveUid: uid,
+      nodeRealPath,
+      nodeSha256: node.sha256,
+      nodeVersion: process.version,
+      pythonRealPath: python.realPath,
+      pythonSha256: python.sha256,
+      pythonVersion: probe.version,
+      shellRealPath: shell.realPath,
+      shellSha256: shell.sha256,
+      providerImageDigest: input.providerImageDigest ?? null,
+      interpreterLibraryEntries: checkEntries(libraries),
+      environmentBoundaryDigest: boundaryDigest(input, uid, place),
+    };
+  }
   const nodeRealPath = await realpath(process.execPath);
   const pythonRealPath = await realpath(input.pythonPath);
   const shellRealPath = await realpath(input.shellPath ?? "/bin/bash");
@@ -652,20 +761,8 @@ export async function collectEnvironment(input: EnvironmentInputs): Promise<Envi
       ? (await run("/usr/bin/sw_vers", ["-buildVersion"])).stdout.trim()
       : `${release()} ${version()}`;
   const probe = JSON.parse(
-    (
-      await run(
-        pythonRealPath,
-        [
-          "-I",
-          "-c",
-          PYTHON_PROBE,
-          JSON.stringify([
-            ...new Set((input.pythonSources ?? helperPythonSources()).flatMap(pythonImports)),
-          ]),
-        ],
-        { env: {} },
-      )
-    ).stdout,
+    (await run(pythonRealPath, ["-I", "-c", PYTHON_PROBE, JSON.stringify(imports)], { env: {} }))
+      .stdout,
   ) as { executable: string; version: string; base: string; files: string[] };
   const libraries: ManifestEntry[] = [];
   const add = async (file: string) => {
@@ -685,6 +782,7 @@ export async function collectEnvironment(input: EnvironmentInputs): Promise<Envi
     hashRegularFile(shellRealPath),
   ]);
   return {
+    place,
     platform: platform(),
     arch: arch(),
     osBuild,
@@ -699,18 +797,26 @@ export async function collectEnvironment(input: EnvironmentInputs): Promise<Envi
     shellSha256: shell.sha256,
     providerImageDigest: input.providerImageDigest ?? null,
     interpreterLibraryEntries: checkEntries(libraries),
-    // trusted instance roots, the execution uid and the absolute host boundary; never the
-    // restricted-profile domains or projects, so restricted-only edits are not a changed runtime
-    environmentBoundaryDigest: sha256(
-      JSON.stringify([
-        1,
-        "boundary",
-        [input.roots.workspace, input.roots.skills, input.roots.tmp],
-        uid,
-        input.providerImageDigest ? "provider" : "host-same-user",
-      ]),
-    ),
+    environmentBoundaryDigest: boundaryDigest(input, uid, place),
   };
+}
+
+/**
+ * The trusted instance roots, the execution uid, where the helpers run and the absolute host
+ * boundary; never the restricted-profile domains or projects, so restricted-only edits are not a
+ * changed runtime.
+ */
+function boundaryDigest(input: EnvironmentInputs, uid: number, place: "host" | "image"): string {
+  return sha256(
+    JSON.stringify([
+      2,
+      "boundary",
+      [input.roots.workspace, input.roots.skills, input.roots.tmp],
+      uid,
+      place,
+      input.providerImageDigest ? "provider" : "host-same-user",
+    ]),
+  );
 }
 
 export interface VerifiedRuntime {

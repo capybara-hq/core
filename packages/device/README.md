@@ -422,13 +422,15 @@ platform (JSON error code `docker_unsupported_architecture`). To pull from a mir
 no tag or digest); the digest stays pinned, so the mirror must preserve it (`crane copy`,
 `docker buildx imagetools create`).
 
-Docker mode also needs the host's `/usr/bin/python3` (macOS: with the command line tools, `xcode-select --install`; Debian or
-Ubuntu: `sudo apt install python3`; Fedora or RHEL: `sudo dnf install python3`): the program runs its
-trusted helpers on the host with it, by absolute path, even though the work runs in the container.
-`login --mode docker` and `start` check for it first and refuse with that hint; a refused login
-stores nothing (JSON error code `host_python_missing`; a re-login of an existing docker device
-writes its credential and warns instead). A login service keeps failing to start until it is
-installed.
+Docker mode needs no interpreter on the host. The program's trusted helpers (the retained
+output of background tasks, skills preparation, and the probe of the image's interpreter for the
+environment fingerprint) run in short-lived helper containers of the same pinned image
+(`capybara-helper-<deviceId>-…`, label `capybara.device.helper`): no network, a read-only root,
+`--cap-drop ALL`, `no-new-privileges`, no log driver, as the device container's user, with only
+the step's host directories mounted at the same paths (skills preparation: `<dir>/skills`; a
+background task's output: the connection's `output` directory and `<dir>/workspace` or
+`<dir>/tmp`). A link the work plants in the workspace can reach only those mounts, never the rest
+of the host. Leftover helper containers of a killed run are removed at the next start.
 
 The container is always on Docker's default bridge: an escalated call has the container's whole network.
 Restricted work inside it is confined by the Linux launcher (Landlock, the seccomp broker and the

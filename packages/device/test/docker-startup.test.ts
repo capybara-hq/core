@@ -42,7 +42,11 @@ describe("the docker-mode device container at startup", () => {
       deviceId: "dev1",
       policy: () => DEFAULT_POLICY,
     });
-    expect(calls).toEqual([["docker", "info", "--format", "{{.Architecture}}"]]);
+    expect(calls).toEqual([
+      ["docker", "info", "--format", "{{.Architecture}}"],
+      // helper containers an earlier run left, by this device's label
+      ["docker", "ps", "-aq", "--filter", "label=capybara.device.helper=dev1"],
+    ]);
     // the daemon's architecture picks the pinned digests the bind accepts
     expect(container.imagePlatform).toBe("arm64");
     // nothing to kill at stop either: the operation backend stops its own work exactly

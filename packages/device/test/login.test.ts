@@ -81,7 +81,6 @@ let err: string[];
 let sleeps: number[];
 let opened: string[];
 /** Whether the host's /usr/bin/python3 is executable, as the docker-mode check sees it. */
-let hostPython = true;
 let hostArch = "x64";
 
 const pending = {
@@ -96,7 +95,6 @@ beforeEach(async () => {
   err = [];
   sleeps = [];
   opened = [];
-  hostPython = true;
   hostArch = "x64";
   tokenAnswers = [];
   server = createServer((req, res) => {
@@ -153,11 +151,7 @@ const run = (
     ...(kill && { kill }),
     ps: ourPs,
     sandboxAvailable: () => sandbox,
-    hostProbes: {
-      isExecutable: () => hostPython,
-      commandLineTools: () => hostPython,
-      arch: hostArch,
-    },
+    hostProbes: { arch: hostArch },
     env: { XDG_CONFIG_HOME: join(home, "cfg") },
     home,
     platform,
@@ -642,21 +636,11 @@ describe("login", () => {
     expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
   });
 
-  it("--mode docker without the host python3: refused with the fix, before the deployment is asked", async () => {
-    hostPython = false;
+  it("--mode docker needs no host python3: the helpers run in the pinned image", async () => {
     tokenAnswers = [granted];
-    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(1);
-    expect(err.join("\n")).toContain("/usr/bin/python3");
-    expect(err.join("\n")).toContain("sudo apt install python3");
-    expect(seen).toEqual([]);
-    expect(existsSync(credFile())).toBe(false);
-    out.length = 0;
-    err.length = 0;
-    expect(await run(["login", "--url", base, "--mode", "docker"], "darwin")).toBe(1);
-    expect(err.join("\n")).toContain("xcode-select --install");
-    // OS mode never needs it
-    err.length = 0;
-    expect(await run(["login", "--url", base])).toBe(0);
+    expect(await run(["login", "--url", base, "--mode", "docker"], "darwin")).toBe(0);
+    expect([...out, ...err].join("\n")).not.toContain("python3");
+    expect(JSON.parse(readFileSync(credFile(), "utf8"))).toMatchObject({ mode: "docker" });
   });
 
   it("--mode docker on an architecture without a pinned image platform: refused, nothing stored", async () => {
@@ -671,42 +655,22 @@ describe("login", () => {
     expect(await run(["login", "--url", base])).toBe(0);
   });
 
-  it("--mode docker on macOS without the command line tools: refused though the shim exists", async () => {
-    hostPython = true;
-    const tools = false;
-    const r = await runCli(["login", "--url", base, "--mode", "docker"], {
-      ps: ourPs,
-      sandboxAvailable: () => sandbox,
-      hostProbes: { isExecutable: () => true, commandLineTools: () => tools },
-      env: { XDG_CONFIG_HOME: join(home, "cfg") },
-      home,
-      platform: "darwin",
-      out: (l) => out.push(l),
-      err: (l) => err.push(l),
-      sleep: async () => {},
-      openBrowser: () => {},
-    });
-    expect(r).toBe(1);
-    expect(err.join("\n")).toContain("xcode-select --install");
-    expect(seen).toEqual([]);
-  });
-
-  it("re-login of a docker device without python3 writes the credential and warns", async () => {
+  it("re-login of a docker device on an unpinned architecture writes the credential and warns", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
-    hostPython = false;
+    hostArch = "s390x";
     out.length = 0;
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(out.join("\n")).toContain("Warning:");
-    expect(out.join("\n")).toContain("/usr/bin/python3");
+    expect(out.join("\n")).toContain("not available on this architecture");
     expect(JSON.parse(readFileSync(credFile(), "utf8"))).toMatchObject({ mode: "docker" });
   });
 
   it("a new docker device beside another connection is refused late, leaving no directory", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    hostPython = false;
+    hostArch = "s390x";
     err.length = 0;
     tokenAnswers = [grantedAs({ deviceId: "env-2" })];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(1);
@@ -717,7 +681,7 @@ describe("login", () => {
   it("re-login of an os device passing --mode docker is not refused or warned", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    hostPython = false;
+    hostArch = "s390x";
     out.length = 0;
     tokenAnswers = [granted];
     const code = await run(["login", "--url", base, "--mode", "docker"]);

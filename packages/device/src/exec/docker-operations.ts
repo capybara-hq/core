@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
+import { chmodSync, constants, lstatSync, mkdirSync } from "node:fs";
 import { type FileHandle, open, realpath } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -9,6 +9,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import type { PinnedPlatform } from "./docker-image.js";
+import type { HelperLauncher } from "./helper-launcher.js";
 import {
   checkLinuxRestrictedGrant,
   type LinuxBackendDependencies,
@@ -28,9 +29,9 @@ import {
   type MacOperationBackendOptions,
 } from "./mac-operation-backend.js";
 import {
+  type ContainerNativeRoot,
   type NativeHelperResult,
-  type PinnedNativeRoot,
-  runNativeHelper,
+  runContainerNativeHelper,
 } from "./native-helper-client.js";
 import { type DeviceOwnerCeiling, within } from "./operation-types.js";
 import {
@@ -38,10 +39,15 @@ import {
   type MacWorkerHandle,
   type MacWorkerRequest,
 } from "./operation-worker.js";
-import { acquireSealedRuntime, stageRuntimeSource } from "./runtime-source.js";
+import { acquireSealedRuntime } from "./runtime-source.js";
 
 /** What the device container lends one operation: its running container, held until release. */
 export interface OperationContainerHost {
+  /**
+   * Runs the trusted helpers (output spool, skills preparation, the image probe) in helper
+   * containers of the device's pinned image.
+   */
+  readonly helpers?: HelperLauncher;
   /** The image platform the daemon runs (default: this host's), for the bind-time image check. */
   readonly imagePlatform?: PinnedPlatform | undefined;
   operationContainer(
@@ -227,14 +233,16 @@ export function hostPathOf(path: string, hostRoots: SandboxRoots): string | unde
 
 /**
  * Trusted skill preparation for a container device: the skills mount is read-only inside the
- * container, so the fixed native helper writes the host directory behind it on pinned
- * descriptors (descriptor-relative, no-follow; missing roots established component by component).
+ * device container, so the fixed native helper writes the host directory behind it, in a helper
+ * container of the pinned image that mounts only that directory (read-write, at the same path).
+ * The host checks each root's anchor (its own real path, opened no-follow); the helper opens the
+ * same anchor no-follow inside its container, checks its identity where the mount preserves it,
+ * and works descriptor-relative from there (missing roots established component by component).
  */
 function hostSkillsPreparation(
   request: MacWorkerRequest & { kind: "native" },
   hostRoots: SandboxRoots,
-  pythonPath: string,
-  stateDir: string,
+  helpers: HelperLauncher,
   acquire: (runtimeHash: string | undefined) => Promise<{ release(): void }>,
   signal: AbortSignal,
 ): MacWorkerHandle {
@@ -252,7 +260,7 @@ function hostSkillsPreparation(
   const completion = (async (): Promise<NativeHelperResult> => {
     try {
       (await acquire(request.runtimeHash)).release();
-      const roots: PinnedNativeRoot[] = [];
+      const roots: ContainerNativeRoot[] = [];
       for (const root of request.grant.writeRoots) {
         const host = hostPathOf(root, hostRoots);
         if (!host || !within(root, DEFAULT_SANDBOX_ROOTS.skills))
@@ -276,16 +284,24 @@ function hostSkillsPreparation(
           constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
         );
         files.push(file);
-        roots.push({ path: host, fd: file.fd, access: "write", components });
+        const st = await file.stat();
+        roots.push({
+          path: host,
+          access: "write",
+          anchor,
+          // Docker Desktop's file sharing shows other device and inode numbers inside the VM
+          identity: process.platform === "linux" ? [st.dev, st.ino] : null,
+          components,
+        });
       }
       const path = hostPathOf(request.native.path, hostRoots);
       if (!path) throw new SandboxScopeDeniedError("Preparation path is outside the mounts");
-      return await runNativeHelper(
+      return await runContainerNativeHelper(
         { ...request.native, path },
         roots,
         {
-          pythonPath,
-          helperPath: await stageRuntimeSource(stateDir),
+          launcher: helpers,
+          paths: [hostRoots.skills],
           ...(request.onDiagnostic ? { onDiagnostic: request.onDiagnostic } : {}),
           onLaunch: async (pid) => {
             await request.onLaunch({ pid, token: "skills", process: DEVICE_PROCESS_TOKEN });
@@ -311,6 +327,22 @@ function hostSkillsPreparation(
     await completion.catch(() => {});
   });
   return { ready, completion, cancel: async (_reason, graceMs = 0) => cancel(graceMs) };
+}
+
+/**
+ * The private directory retained output spools live in: created owner-only, and refused when it
+ * is a link or not a directory (it is mounted into helper containers at its own path).
+ */
+function ensurePrivateDir(path: string): void {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const st = lstatSync(path);
+  if (!st.isDirectory() || st.isSymbolicLink())
+    throw new Error(`${path} must be a directory of the device's state`);
+  if ((st.mode & 0o077) !== 0) chmodSync(path, 0o700);
 }
 
 /** Construction input of the local-Docker operation backend (trusted; never from a request). */
@@ -355,6 +387,11 @@ export async function createDockerOperationBackend(
           ? "Restricted execution needs an instance binding with an attested runtime"
           : undefined;
   const acquire = dependencies.acquireRuntime ?? acquireSealedRuntime;
+  // no host interpreter: every trusted helper runs in a helper container of the pinned image
+  const helpers = options.container.helpers;
+  if (!helpers) throw new Error("A docker-mode device needs its helper containers");
+  const outputDir = join(options.stateDir, "output");
+  ensurePrivateDir(outputDir);
   const worker =
     dependencies.startWorker ??
     linuxOperationWorker({
@@ -377,18 +414,14 @@ export async function createDockerOperationBackend(
     request.purpose === "preparation" &&
     request.grant.writeRoots.length > 0 &&
     request.grant.writeRoots.every((root) => within(root, DEFAULT_SANDBOX_ROOTS.skills))
-      ? hostSkillsPreparation(
-          request,
-          options.hostRoots,
-          options.pythonPath,
-          options.stateDir,
-          acquire,
-          signal,
-        )
+      ? hostSkillsPreparation(request, options.hostRoots, helpers, acquire, signal)
       : worker(request, signal);
   return createLocalOperationBackend(
     {
       ...options,
+      helpers,
+      // only this directory of the state directory is ever mounted into a helper container
+      outputDir,
       roots: DEFAULT_SANDBOX_ROOTS,
       readOwnerCeiling: async () => containerCeiling(await options.readOwnerCeiling()),
     },
@@ -419,7 +452,9 @@ export async function createDockerOperationBackend(
         const root = within(artifactRoot, DEFAULT_SANDBOX_ROOTS[mount])
           ? (hostPathOf(artifactRoot, options.hostRoots) as string)
           : options.hostRoots[mount];
-        return { outputPath: path, artifactRoot: root };
+        // the helper container mounts the program-made mount root, never a directory inside it
+        // (the container controls those: a swapped link would make Docker mount its target)
+        return { outputPath: path, artifactRoot: root, artifactMount: options.hostRoots[mount] };
       },
       reapOrphan: (identity) => {
         if (!identity.session || identity.process === DEVICE_PROCESS_TOKEN) return;

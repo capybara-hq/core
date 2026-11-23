@@ -25,6 +25,7 @@ import {
 import { connectionDir, machineDirOfConnection } from "../src/connections.js";
 import { SANDBOX_IMAGE_PIN } from "../src/exec/docker-image.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
+import { hostHelperLauncher } from "../src/exec/helper-launcher.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
@@ -459,6 +460,8 @@ describe("staged device parts: fix round", () => {
     const released: string[] = [];
     const container: OperationContainerHost = {
       imagePlatform: "amd64",
+      // the binder only builds the backend here: no helper runs
+      helpers: hostHelperLauncher("/nonexistent/python3"),
       operationContainer: async () => ({
         name: "capybara-device-d",
         user: "1000:1000",
@@ -473,7 +476,11 @@ describe("staged device parts: fix round", () => {
       imageDigest: digest,
     });
     await s.device.binder.bind(request(G1, B1, null), signal());
-    expect(s.environments[0]?.providerImageDigest).toBe(digest);
+    // recorded as the pinned index, whichever pinned digest the image store reported; the
+    // interpreter and shell are the image's (probed in a helper container), never the host's
+    expect(s.environments[0]?.providerImageDigest).toBe(SANDBOX_IMAGE_PIN.index);
+    expect(s.environments[0]?.place).toBe("image");
+    expect(s.environments[0]?.helpers).toBe(container.helpers);
     expect(s.environments[0]?.roots).toEqual({
       workspace: "/workspace",
       skills: "/skills",
@@ -519,7 +526,7 @@ describe("staged device parts: fix round", () => {
         imageDigest,
       });
       await ok.device.binder.bind(request(G1, B1, null), signal());
-      expect(ok.environments[0]?.providerImageDigest).toBe(imageDigest);
+      expect(ok.environments[0]?.providerImageDigest).toBe(SANDBOX_IMAGE_PIN.index);
     }
   });
 

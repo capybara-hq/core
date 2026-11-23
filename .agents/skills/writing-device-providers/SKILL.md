@@ -689,9 +689,11 @@ suite in `@capybara-hq/testing` checks it):
 
 ## Known limitations (permission activation)
 
-- **Local Docker mode needs the host's `/usr/bin/python3`.** A `capybara-device` in Docker mode runs the
-  restricted output helper with the host interpreter; without it the device reports restricted support
-  unavailable.
+- **Local Docker mode runs its trusted helpers in helper containers.** A `capybara-device` in Docker mode
+  needs no host interpreter: the output spool, recovered-output finalization, skills preparation and the
+  environment probe run in helper containers of the digest-pinned sandbox image (no network, read-only
+  root, no capabilities, only the step's host paths mounted at the same paths). Spec:
+  `docs/superpowers/specs/2026-11-23-docker-device-without-host-python-design.md`.
 - **Cloud providers must ship with the kernel.** A cloud provider that still reports `permissionSupport` version 1 or
   reads `limits.mode` reads unprobed against an R3 kernel and admits nothing: release `sandbox-docker` / `sandbox-e2b`
   with support v2 (`boundary: "instance"`) together with the kernel and its bootstrap pins.

@@ -11,6 +11,11 @@ import {
   sandboxImageReference,
 } from "./docker-image.js";
 import type { OperationContainerHost } from "./docker-operations.js";
+import {
+  containerHelperLauncher,
+  type HelperLauncher,
+  removeLeftoverHelpers,
+} from "./helper-launcher.js";
 import { osRoots } from "./shared.js";
 import { DeviceOpError } from "./types.js";
 
@@ -158,6 +163,8 @@ export class DockerContainer implements OperationContainerHost {
   readonly name: string;
   /** The image platform the daemon runs: the pinned digests a container's image id may match. */
   readonly imagePlatform: PinnedPlatform | undefined;
+  /** The device's trusted helpers, in helper containers of the same pinned image. */
+  readonly helpers: HelperLauncher;
   private readonly dir: string;
   private readonly hostRoots: SandboxRoots;
   private chain: Promise<unknown> = Promise.resolve();
@@ -173,6 +180,11 @@ export class DockerContainer implements OperationContainerHost {
     this.hostRoots = osRoots(this.dir);
     this.name = containerName(opts.deviceId);
     this.imagePlatform = opts.platform ?? pinnedPlatform(process.arch);
+    this.helpers = containerHelperLauncher({
+      deviceId: opts.deviceId,
+      image: sandboxImageReference(opts.env),
+      user: containerUser(),
+    });
   }
 
   private serial<T>(f: () => Promise<T>): Promise<T> {
@@ -398,5 +410,7 @@ export async function createDockerContainer(
   if (!available.ok) throw new Error(available.reason);
   // an invalid repository override fails here, at start, not at the first operation
   sandboxImageReference(opts.env);
+  // helper containers a killed earlier run left hold nothing the journal relies on
+  await removeLeftoverHelpers(opts.deviceId);
   return new DockerContainer({ ...opts, platform: available.platform });
 }

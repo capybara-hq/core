@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { hostHelperLauncher } from "../src/exec/helper-launcher.js";
 import {
   finalizeRecoveredOutput,
   ManagedOutputSpool,
@@ -48,7 +49,7 @@ async function fixture(hook?: OutputSpoolOptions["barrier"]) {
     artifactRoot: join(root, "project"),
     outputPath: join(root, "project", "nested", "task.out"),
     ref,
-    pythonPath: "/usr/bin/python3",
+    helpers: hostHelperLauncher("/usr/bin/python3"),
     barrier: hook,
     publish: async (record) => {
       locator = structuredClone(record);
@@ -446,7 +447,7 @@ it("recovery verifies the exact pinned prefix and finalizes spool durability wit
   await spool.append(Buffer.from("prefix"), signal);
   await spool.close();
   expect(() =>
-    finalizeRecoveredOutput(f.opts.privateRoot, f.opts.pythonPath, f.locator()),
+    finalizeRecoveredOutput(f.opts.privateRoot, f.opts.helpers, f.locator()),
   ).not.toThrow();
   expect(await readFile(join(f.opts.privateRoot, f.locator().name))).toEqual(Buffer.from("prefix"));
   expect(await readFile(f.opts.outputPath)).toEqual(Buffer.from("prefix"));
@@ -463,6 +464,6 @@ it.each(["short", "identity", "directory", "reference"])(
     if (kind === "identity") locator.identity.ino++;
     if (kind === "directory") locator.directory.ino++;
     if (kind === "reference") locator.ref = { ...locator.ref, instanceGeneration: "other" };
-    expect(() => finalizeRecoveredOutput(f.opts.privateRoot, f.opts.pythonPath, locator)).toThrow();
+    expect(() => finalizeRecoveredOutput(f.opts.privateRoot, f.opts.helpers, locator)).toThrow();
   },
 );
