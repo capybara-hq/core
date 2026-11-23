@@ -134,6 +134,19 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest {
       fail(`field "optional" entry "${r}" overlaps with "provides" or "requires"`);
     }
   }
+  if (m.config !== undefined) {
+    if (typeof m.config !== "object" || m.config === null || Array.isArray(m.config)) {
+      fail(`field "config" must be an object`);
+    }
+    for (const key of Object.keys(m.config)) {
+      if (key === "deployment") continue;
+      fail(
+        key === "org"
+          ? `config.org was removed: move org fields into config.deployment (every field an org may override is a deployment field without platformOnly)`
+          : `config.${key} is not a config level: the only one is config.deployment`,
+      );
+    }
+  }
   if (m.permissions !== undefined) {
     const errs = validatePermissions(plugin, m.permissions, m.provides);
     if (errs.length > 0) fail(`invalid permissions: ${errs.join("; ")}`);
