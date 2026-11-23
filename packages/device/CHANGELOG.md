@@ -1,5 +1,22 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.34
+
+### Patch Changes
+
+- 53a09aa: Docker mode no longer needs the host's `/usr/bin/python3`: the trusted helpers (background output
+  spool, recovered-output finalization, skills preparation, the interpreter probe of the environment
+  fingerprint) run in short-lived helper containers of the pinned sandbox image with no network, a
+  read-only root, no capabilities and only the step's host paths mounted. The environment
+  fingerprint moves to version 2 (docker mode fingerprints the image's interpreter and shell), so
+  every docker device re-binds once after the upgrade; retained output of background tasks started
+  before the upgrade reads as lost (spools now live in the connection's `output` directory). The
+  `host_python_missing` login error is gone.
+- e90bc58: Docker mode runs the sandbox image by a pinned digest instead of a tag and attests the device
+  container's image against the pin at every bind (fail closed). `CAPYBARA_DEVICE_IMAGE_REPOSITORY`
+  points the repository at a digest-preserving mirror. An architecture without a pinned image
+  platform is refused at login and start (`docker_unsupported_architecture`).
+
 ## 0.1.0-rc.33
 
 ### Patch Changes
