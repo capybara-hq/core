@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
+  isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  SandboxGoneError,
   type SandboxHandle,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -29,7 +32,7 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { type SandboxServiceDeps, sandboxServiceFor } from "../helpers/sandbox.js";
+import { managedUse, type SandboxServiceDeps, sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Concurrent commands in one sandbox under shared leases (sub-agents spec §10, Task 4), on the
@@ -146,9 +149,10 @@ const until = (what: string, check: () => Promise<boolean>) =>
     { timeout: 10_000 },
   );
 
-/** Runs one command in the sandbox through the service. */
+/** Runs one command in the sandbox through the service, as a managed operation. */
 const run = (s: SandboxService, command: string) =>
-  s.withSandbox(
+  managedUse(
+    s,
     ctx(),
     async (h, p, info, sig) => ({
       info,
@@ -181,6 +185,9 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
   const r = (h: SandboxHandle) => ({ id: byName.get(h.id as string) ?? "missing" });
   const killAll = inner.killAll.bind(inner);
   const killTagged = inner.killTagged.bind(inner);
+  const { permissionSupport, operation, revokeOperation } = inner;
+  if (!permissionSupport || !operation || !revokeOperation)
+    throw new Error("the inner provider opens operations");
   return {
     concurrentExec: true,
     networkAllowlist: true,
@@ -204,6 +211,10 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
     stat: (h, p, s) => inner.stat(r(h), p, s),
     killAll: (h, s) => killAll(r(h), s),
     killTagged: (h, t, s) => killTagged(r(h), t, s),
+    // the permission surface of the managed route, on the instance behind the name
+    permissionSupport: (h, s) => permissionSupport(r(h), s),
+    operation: (h, scope, s) => operation(r(h), scope, s),
+    revokeOperation: (h, ref, s) => revokeOperation(r(h), ref, s),
   };
 }
 
@@ -217,7 +228,7 @@ describe("concurrent commands (fake sandbox)", () => {
     const xs = (await execIntervals()).slice(1);
     expect(xs).toHaveLength(3);
     expect(allOverlap(xs)).toBe(true);
-    // every command carries its own holder tag
+    // every command carries its own operation's tag (the admitted scope's)
     expect(new Set(xs.map((x) => x.tag)).size).toBe(3);
   });
 
@@ -244,63 +255,87 @@ describe("concurrent commands (fake sandbox)", () => {
     const a = run(s, "sleep 0.8").then(() => Date.now());
     await until("A's command", async () => (await fakeSandboxRunningTags(root, id)).length > 0);
     await removeFakeSandbox(root, id);
-    // B finds the instance gone and needs the exclusive lease to rebuild: it waits with its intent
-    const b = run(s, "echo b");
+    // B's dispatched command finds the instance gone: its outcome stays unknown and it is not
+    // retried (final review m4), but B rebuilds the instance before it answers, and the rebuild
+    // needs the exclusive lease: it waits with its intent
+    const b = run(s, "echo b").catch((e: unknown) => e);
     await until("B's intent", async () => (await redis.exists(`capk:sandbox-intent:${envId}`)) > 0);
     // C arrives while B waits: the intent keeps it out until B has rebuilt
     let cEntered = 0;
-    const c = s.withSandbox(
+    const c = managedUse(
+      s,
       ctx(),
-      async (_h, _p, info) => {
+      async (h, _p, info) => {
         cEntered = Date.now();
-        return info;
+        return { h, info };
       },
       signal(),
     );
     const [aEnded, rb, ci] = await Promise.all([a, b, c]);
-    expect(rb.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
-    expect(rb.r.stdout).toBe("b\n");
+    expect(isSandboxOperationOutcomeUnknownError(rb)).toBe(true);
+    expect(isSandboxGoneError((rb as { cause?: unknown }).cause)).toBe(true);
     expect(cEntered).toBeGreaterThanOrEqual(aEnded - 50);
-    expect(ci.restarted).toBe(false);
+    // C runs on the instance B rebuilt, and is told of the restart (the holder's seen record still
+    // names the gone instance: B's rebuild marked nothing seen)
+    expect(ci.h.id).not.toBe(id);
+    expect(ci.info).toEqual({ fresh: false, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(await ops("create")).toHaveLength(2);
   });
 
-  it("gone with three running holders rebuilds once and all three see restarted", async () => {
-    withCap(3);
-    const s = service();
-    const first = await run(s, "true");
-    expect(first.info.fresh).toBe(true);
-    const id = (await ops("create"))[0]?.[1] as string;
-    let entered = 0;
-    let allIn!: () => void;
-    const together = new Promise<void>((r) => {
-      allIn = r;
-    });
-    const holder = () =>
-      s.withSandbox(
-        ctx(),
-        async (h, p, info, sig) => {
-          if (!info.restarted) {
+  it.each([
+    ["its own handle per instance", false],
+    ["the instance name as its handle", true],
+  ])(
+    "gone under three running holders' operations rebuilds once, on a provider with %s; none is retried, the next use sees restarted",
+    async (_, byName) => {
+      withCap(3);
+      // Docker-like when `byName`: handle = { id: name }, the same across the rebuild
+      const impl = byName ? sameNameProvider(provider) : provider;
+      const s = service(() => impl);
+      const first = await run(s, "true");
+      expect(first.info.fresh).toBe(true);
+      const id = (await ops("create"))[0]?.[1] as string;
+      const before = await managedUse(s, ctx(), async (h) => h, signal());
+      let entered = 0;
+      let allIn!: () => void;
+      const together = new Promise<void>((r) => {
+        allIn = r;
+      });
+      let calls = 0;
+      const holder = () =>
+        managedUse(
+          s,
+          ctx(),
+          async (h, p, _info, sig) => {
+            calls++;
             if (++entered === 3) {
               await removeFakeSandbox(root, id);
               allIn();
             }
             await together;
-          }
-          await p.stat(h, "/workspace", sig);
-          return { info, h };
-        },
-        signal(),
-      );
-    const out = await Promise.all([holder(), holder(), holder()]);
-    for (const o of out)
-      expect(o.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
-    expect(new Set(out.map((o) => o.h.id)).size).toBe(1);
-    expect(out[0]?.h.id).not.toBe(id);
-    expect(await ops("create")).toHaveLength(2);
-  });
+            await p.stat(h, "/workspace", sig);
+          },
+          signal(),
+        ).catch((e: unknown) => e);
+      const out = await Promise.all([holder(), holder(), holder()]);
+      // each dispatched stat found the instance gone: its outcome stays unknown, never retried
+      for (const err of out) {
+        expect(isSandboxOperationOutcomeUnknownError(err)).toBe(true);
+        expect(isSandboxGoneError((err as { cause?: unknown }).cause)).toBe(true);
+      }
+      expect(calls).toBe(3);
+      // the first to rebuild made the new instance; the other two found it already rebuilt (by the
+      // instance's creation time, not its handle, which a named provider keeps)
+      expect(await ops("create")).toHaveLength(2);
+      expect(await ops("destroy")).toHaveLength(0);
+      const next = await managedUse(s, ctx(), async (h, _p, info) => ({ h, info }), signal());
+      if (byName) expect(next.h).toEqual(before);
+      else expect(next.h.id).not.toBe(id);
+      expect(next.info).toEqual({ fresh: false, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
+    },
+  );
 
-  it("gone with three holders on a provider whose handle is the instance name rebuilds once", async () => {
+  it("gone found outside an operation by three holders, on a provider whose handle is the instance name, rebuilds once", async () => {
     withCap(3);
     // Docker-like: handle = { id: name }, and create replaces an instance of the same name
     const named = sameNameProvider(provider);
@@ -313,7 +348,8 @@ describe("concurrent commands (fake sandbox)", () => {
       allIn = r;
     });
     const holder = (i: number) =>
-      s.withSandbox(
+      managedUse(
+        s,
         ctx(),
         async (h, p, info, sig) => {
           if (!info.restarted) {
@@ -322,6 +358,9 @@ describe("concurrent commands (fake sandbox)", () => {
               allIn();
             }
             await together;
+            // found gone outside a dispatched operation (as staging does): rebuilt and fn retried
+            // once (a dispatched operation's gone is never retried, see the test above)
+            throw new SandboxGoneError(`fake sandbox ${String(h.id)} is gone`);
           }
           await p.writeFile(h, `/workspace/f${i}`, Buffer.from(`${i}`), sig);
           await p.exec(h, {
@@ -340,7 +379,8 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(await ops("create")).toHaveLength(2);
     expect(await ops("destroy")).toHaveLength(0);
     // no holder's file was wiped by a second rebuild, and a later use is not "restarted"
-    const after = await s.withSandbox(
+    const after = await managedUse(
+      s,
       ctx(),
       async (h, p, info, sig) => ({
         info,
@@ -390,7 +430,7 @@ describe("concurrent commands (fake sandbox)", () => {
     const s = service();
     await run(s, "true");
     await run(s, "true");
-    await s.withSandbox(ctx(), async (h, p, _i, sig) => p.stat(h, "/workspace", sig), signal());
+    await managedUse(s, ctx(), async (h, p, _i, sig) => p.stat(h, "/workspace", sig), signal());
     expect((await ops()).map((o) => o[0])).toEqual(["create-fs", "create", "exec", "exec"]);
     // no lease key is left; only the holder's last-seen instance (final review m5), with a TTL
     const seen = `capk:sandbox-seen:${envId}:${conversationId}`;
@@ -400,7 +440,8 @@ describe("concurrent commands (fake sandbox)", () => {
 
   it("the device's keys carry TTLs while held", async () => {
     const s = service();
-    const keys = await s.withSandbox(
+    const keys = await managedUse(
+      s,
       ctx(),
       async () => {
         const ks = await redis.keys("capk:*");
@@ -522,11 +563,12 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(revoked).toHaveLength(1);
   });
 
-  it("every tagged exec refreshes the holder's record", async () => {
+  it("every managed operation refreshes the holder's record", async () => {
     const s = service();
     await run(s, "true");
     const key = `capk:sandbox-holders:${envId}`;
-    const seen = await s.withSandbox(
+    const seen = await managedUse(
+      s,
       ctx(),
       async (h, p, _i, sig) => {
         const [token] = await redis.hkeys(key);
@@ -596,7 +638,8 @@ describe("path leases in the sandbox tools", () => {
         append: async () => [],
         readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async (_conv: string, path: string) =>
-          s.withSandbox(
+          managedUse(
+            s,
             ctx(),
             async (h, p, _i, sig) => {
               const st = await p.stat(h, path, sig);
@@ -628,7 +671,8 @@ describe("path leases in the sandbox tools", () => {
       edit.run({ file_path: "/workspace/f.txt", old_string: "a\n", new_string: "A\n" }, callCtx()),
       edit.run({ file_path: "/workspace/f.txt", old_string: "b\n", new_string: "B\n" }, callCtx()),
     ]);
-    const got = await s.withSandbox(
+    const got = await managedUse(
+      s,
       ctx(),
       (h, p, _i, sig) => p.readFile(h, "/workspace/f.txt", { maxBytes: 100, signal: sig }),
       signal(),
@@ -647,7 +691,8 @@ describe("path leases in the sandbox tools", () => {
     await expect(
       tool(s, "Write").run({ file_path: "/workspace/lost.txt", content: "x" }, callCtx()),
     ).rejects.toThrow(/lock was lost/);
-    const st = await s.withSandbox(
+    const st = await managedUse(
+      s,
       ctx(),
       (h, p, _i, sig) => p.stat(h, "/workspace/lost.txt", sig),
       signal(),
