@@ -63,6 +63,10 @@ boundary and the `device` edge are checked automatically (`pnpm check:deps`); th
 
 - `ctx` provides no timers and no in-process shared objects; periodic and delayed work goes through
   queues. Every `ctx.kv` write has a TTL.
+- Every query on a kernel table with `org_id` runs under an org scope, set only at entry points (org
+  guard, `runJob`, run claims, gateway events), or inside `asPlatform(reason)` for deployment-wide work
+  (a `// org-filter: deployment-wide …` marker sits in one: `check:org-filter`); the kernel pool puts
+  the scope on each connection for the RLS policies (`db.rls`).
 - State whose writer and reader may be in different requests or processes never lives in process
   memory (no in-process Maps, timers, local events); use Redis / PG.
 - BullMQ queue names and job ids contain no `:`. One-off and delayed work is a BullMQ job with a
@@ -92,7 +96,9 @@ Each line is the rule you must not miss; the skill has the rest.
   unit or container test joins its checked-in list in the same change (integration is the default).
   [test-portfolio](docs/superpowers/specs/2026-11-14-test-portfolio-design.md)
 - **Migrations:** plain SQL `NNNN_<snake_desc>.sql`, `IF [NOT] EXISTS`, applied files are immutable,
-  kernel schema `capybara`, extension schema `plugin_<name>`.
+  kernel schema `capybara`, extension schema `plugin_<name>`; a kernel table with `org_id` ships its
+  RLS policy (`org_scope` through `rls_admits(org_id)`; RLS stays disabled until phase 5) in the same
+  migration (`check:org-filter`).
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
 - **Config:** env prefix `CAPYBARA_`, nesting with `__`, env wins; extension deployment config may
   also live in PG (env > file / Nacos > PG > default); invalid extension config never fails startup.

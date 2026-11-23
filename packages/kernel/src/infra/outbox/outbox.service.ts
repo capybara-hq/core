@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { Inject, Injectable } from "@nestjs/common";
 import { afterCommit } from "../database/after-commit.js";
 import { KernelDb } from "../database/kernel-db.js";
+import { asPlatform } from "../database/org-scope.js";
 import { currentStore, TransactionHost } from "../database/transaction-host.js";
 import { Transactional } from "../database/transactional.decorator.js";
 import type { KernelQueueName } from "../queue/queue-names.js";
@@ -103,31 +104,35 @@ export class OutboxService {
    */
   @Transactional({ propagation: "mandatory" })
   async add<T>(job: OutboxJob<T>): Promise<boolean> {
-    const json = JSON.stringify(job.data ?? null);
-    const row = await this.db
-      .insertInto("outbox")
-      .values(rowOf(job))
-      .onConflict((oc) => oc.columns(["queue", "job_id"]).where("dead_at", "is", null).doNothing())
-      .returning("id")
-      .executeTakeFirst();
-    if (row) {
-      if (dueNow(job)) this.deliverAfterCommit(row.id);
-      return true;
-    }
-    // org-filter: by the unique (queue, job_id) of the conflicting insert just above; job ids are
-    // kernel-built and the outbox is deployment-wide
-    const stored = await this.db
-      .selectFrom("outbox")
-      .select(["job_name", "data"])
-      .where("queue", "=", job.queue)
-      .where("job_id", "=", job.jobId)
-      .where("dead_at", "is", null)
-      .executeTakeFirst();
-    // no row: the owed one was delivered (and deleted) since the conflict; BullMQ dedupes the id
-    if (stored && !isDeepStrictEqual(stored.data, JSON.parse(json))) {
-      throw new OutboxConflictError(job.queue, job.jobId, job.name, stored.job_name);
-    }
-    return false;
+    return asPlatform("the outbox is a deployment-wide table", async () => {
+      const json = JSON.stringify(job.data ?? null);
+      const row = await this.db
+        .insertInto("outbox")
+        .values(rowOf(job))
+        .onConflict((oc) =>
+          oc.columns(["queue", "job_id"]).where("dead_at", "is", null).doNothing(),
+        )
+        .returning("id")
+        .executeTakeFirst();
+      if (row) {
+        if (dueNow(job)) this.deliverAfterCommit(row.id);
+        return true;
+      }
+      // org-filter: by the unique (queue, job_id) of the conflicting insert just above; job ids are
+      // kernel-built and the outbox is deployment-wide
+      const stored = await this.db
+        .selectFrom("outbox")
+        .select(["job_name", "data"])
+        .where("queue", "=", job.queue)
+        .where("job_id", "=", job.jobId)
+        .where("dead_at", "is", null)
+        .executeTakeFirst();
+      // no row: the owed one was delivered (and deleted) since the conflict; BullMQ dedupes the id
+      if (stored && !isDeepStrictEqual(stored.data, JSON.parse(json))) {
+        throw new OutboxConflictError(job.queue, job.jobId, job.name, stored.job_name);
+      }
+      return false;
+    });
   }
 
   /**

@@ -16,6 +16,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -643,38 +644,44 @@ export class ToolDrift {
   // org-filter: deployment-wide sweep across all orgs (LockedInterval in ToolJobs); each job
   // carries its connector's own org_id
   async scan(): Promise<number> {
-    const interval = this.intervalMs();
-    const bucket = Math.floor(Date.now() / interval);
-    const apps = await this.db
-      .selectFrom("connectors")
-      .select(["id", "org_id"])
-      .where("deleted_at", "is", null)
-      .where("status", "=", "active")
-      .where((eb) =>
-        eb.or([
-          eb("tools_synced_at", "is", null),
-          eb(
-            "tools_synced_at",
-            "<",
-            sql<Date>`now() - ${Math.floor(interval / 2)}::bigint * interval '1 millisecond'`,
-          ),
-        ]),
-      )
-      .orderBy("id")
-      .execute();
-    for (const a of apps) {
-      if (a.id.includes(":")) continue;
-      await this.queue.add(
-        DRIFT_CONNECTOR_JOB,
-        { orgId: a.org_id, connectorId: a.id, trigger: "schedule" } satisfies DriftConnectorJobData,
-        {
-          jobId: driftScanJobId(a.id, bucket),
-          attempts: 1,
-          removeOnComplete: { age: Math.ceil(interval / 1000) },
-          removeOnFail: KEEP_FAILED,
-        },
-      );
-    }
-    return apps.length;
+    return asPlatform("deployment-wide sweep across all orgs", async () => {
+      const interval = this.intervalMs();
+      const bucket = Math.floor(Date.now() / interval);
+      const apps = await this.db
+        .selectFrom("connectors")
+        .select(["id", "org_id"])
+        .where("deleted_at", "is", null)
+        .where("status", "=", "active")
+        .where((eb) =>
+          eb.or([
+            eb("tools_synced_at", "is", null),
+            eb(
+              "tools_synced_at",
+              "<",
+              sql<Date>`now() - ${Math.floor(interval / 2)}::bigint * interval '1 millisecond'`,
+            ),
+          ]),
+        )
+        .orderBy("id")
+        .execute();
+      for (const a of apps) {
+        if (a.id.includes(":")) continue;
+        await this.queue.add(
+          DRIFT_CONNECTOR_JOB,
+          {
+            orgId: a.org_id,
+            connectorId: a.id,
+            trigger: "schedule",
+          } satisfies DriftConnectorJobData,
+          {
+            jobId: driftScanJobId(a.id, bucket),
+            attempts: 1,
+            removeOnComplete: { age: Math.ceil(interval / 1000) },
+            removeOnFail: KEEP_FAILED,
+          },
+        );
+      }
+      return apps.length;
+    });
   }
 }

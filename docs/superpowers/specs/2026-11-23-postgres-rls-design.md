@@ -1,7 +1,7 @@
 # Postgres row level security as the tenant backstop
 
-Issue: #115 (part 2). Status: draft for review; the maintainer decides whether to build it, with the
-cost measured first (§8). Written against core `main` at `d0860858c`. Part 1 of the issue, the static
+Issue: #115 (part 2). Status: phases 2–3 approved and being built (decisions in §10, 2026-11-24);
+phases 4–5 wait for the numbers of §8. Written against core `main` at `d0860858c`. Part 1 of the issue, the static
 check `check:org-filter`, is its own PR (see §2).
 
 Related: the Nest kernel spec (`2026-10-28-nest-kernel-design.md`: `KernelDb`, `@Transactional`,
@@ -243,6 +243,104 @@ read-only transactions over time).
 9. **Extension schemas** (`plugin_<name>` tables with an org column, through `ctx.db`):
    Recommendation: out of scope; extensions are full trust (AGENTS.md), and the kernel cannot know
    their columns. A later SDK helper could add the same policy to a table an extension declares.
+
+## 10. Decisions (maintainer, 2026-11-24)
+
+The maintainer approved the nine recommendations of §9:
+
+1. **Build phases 2–3 now**, with no behaviour change: the scope plumbing and the policies ship
+   dark (the `capybara.rls` setting off, the kernel config default off). Phases 4–5 are decided
+   later from the numbers of §8, against the bar: p95 of each HTTP flow +5 %, a run turn +3 %,
+   database CPU +10 %.
+2. **No PgBouncer transaction mode with RLS on**: accepted and documented (the config field's
+   description and `docs/config.md`).
+3. **Bypass by setting** (`capybara.scope = platform`) on the existing role now; the non-owner
+   runtime role stays phase 6.
+4. **Nullable `org_id` per table** as listed in §9.4: `model_purpose_mappings` and `model_disabled`
+   admit `org_id IS NULL` on read; `outbox`, `plugin_import_staging`, `extension_client_reports`,
+   platform `audit_events` and personal `api_tokens` are platform-only (the token lookup by hash
+   runs under `asPlatform`).
+5. **Share-gated `owner_org_id` tables**: out of scope.
+6. **Child tables without `org_id`**: no policy for now.
+7. **Keep `check:org-filter`**, with a new rule: a marker whose reason says "deployment-wide" sits
+   inside an `asPlatform` call (rule `org-filter-platform`), and a second one: every org-scoped table
+   has its policy in a migration (rule `org-filter-policy`).
+8. **Remove the switch** one release after prod has run enforced cleanly.
+9. **Extension schemas**: out of scope.
+
+Made while building phases 2–3 (within the decisions above):
+
+- **The switch is `db.rls`** (`CAPYBARA_DB__RLS`), in the existing `db` section of the kernel
+  config rather than a new `database` section, with three values: `off` (default: the pool sends
+  nothing, so phase 2 costs nothing until a deployment opts in), `scoped` (every connection carries
+  the scope with `capybara.rls = off`: the policies admit every row; this is the mode that measures
+  the round-trip cost of §8 and runs the unscoped-query check) and `enforce` (`capybara.rls =
+  enforce`), which filters only once phase 5 has enabled RLS on the tables: until then the kernel
+  logs an error at start (`rlsEnforceProblem`) and nothing is filtered. `enforce` stays in the enum
+  so the enforce tests drive the real config. Not hot. Phase 5 changes the default, not the field.
+- **One mechanism on the driver** carries both cases of §5.2: a Kysely driver wrapper on the kernel
+  pool (`infra/database/scoped-dialect.ts`) sets the scope transaction-local as the first statement
+  after `BEGIN`, and session-level before the first query of a checkout outside a transaction. Every
+  checkout starts with an unknown scope, so its first statement always writes all three settings;
+  `TransactionHost` and the services do not change.
+- **A scope entered inside a transaction applies to the queries run in it** instead of being refused
+  (§5.2 said "refused"): the connection is re-scoped (`set_config(…, true)`) before the first query
+  in the new scope and again when the old one resumes. The deployment-wide markers inside org
+  transactions (an existence check across orgs during an org's write, the platform publication)
+  need `asPlatform` there, and the refusal would have forced them out of their transactions. Queries
+  on one connection run one after another, so a re-scope and its query are never split.
+- **The test assertion of phase 2** (an unscoped query on an org-scoped table fails the test) is a
+  seam, `setUnscopedQueryCheck`, called by the scoped pool; phase 4 installs it in the integration
+  setup together with `enforce`, when the unscoped paths it finds get fixed. Turning it on for the
+  whole suite now would be phase 4 itself.
+- **HTTP requests** get an empty scope slot in the Fastify `onRequest` hook (where the log context
+  starts); `OrgGuard` binds the guarded org, `AuthGuard` binds platform on a `@SuperAdmin` route
+  without `@OrgAction`, and an extension route binds its caller's org (or platform for a super
+  admin's embed). A Nest guard cannot wrap the handler in an ALS run, hence the slot.
+- **Platform is never a silent fallback** (security review of phase 2): `runJob` scopes a job to
+  its data's `orgId`; a queue whose work is deployment-wide says so (`runJob(…, { platform: reason
+  })`: maintenance, plugin scope sync, extension lifecycle hooks); any other job runs with no scope
+  (§5.1's "else platform" is dropped), so a missing org fails closed and the unscoped-query check
+  reports it in phase 4. Callbacks that outlive their registrant start with no scope: the bus
+  subscriber's shared connection, like it already drops the transaction and the log context.
+- **Left for phase 4** (found by the review, all fail closed or stay as they are while `db.rls` is
+  not `enforce`): the kernel services behind org-bound extension calls (`ctx.models.embed({ orgId
+  })` and the like) enter that org; what the start sequence starts keeps the platform scope
+  (extension timers, the gateway's channel sockets, whose events only enqueue); the run worker's
+  claim reads, the route-access check of extension routes and the session lookup run unscoped;
+  `@Cacheable` keys of org data must carry the org before `enforce`, or one org's filtered view is
+  cached for another.
+- **A superuser or a BYPASSRLS role is never subject to RLS**, `FORCE` or not. The official compose
+  file connects as its `POSTGRES_USER`, a superuser, so on such a deployment `enforce` changes
+  nothing: enforcing needs a role without `SUPERUSER` and `BYPASSRLS` first (it may still own the
+  schema; `FORCE` covers the owner), which makes part of phase 6 a prerequisite of phase 5. The
+  kernel logs an error at start when `db.rls` is `enforce` on such a role or while RLS is not yet
+  enabled on the tables (it never fails the start), and the enforce tests connect as a
+  non-superuser owner of their database.
+- **Phase 3 ships truly dark** (maintainer decision 2026-11-24): migration `0182_rls_policies.sql`
+  creates the helper `capybara.rls_admits` and one `org_scope` policy per table (`DROP POLICY IF
+  EXISTS` + `CREATE POLICY`, since Postgres has no `CREATE POLICY IF NOT EXISTS`) and enables RLS on
+  no table, so nothing applies them and nothing changes for any role. Phase 5 runs `ENABLE` and
+  `FORCE ROW LEVEL SECURITY` in a migration of its own. The enforce tests enable and force RLS on
+  their own database in setup (`test/helpers/rls.ts`, `enableRlsForTest`), as phase 5 will. The measurement of §8 is `tools/dev/rls-measure.ts`, run against
+  a kernel once per `db.rls` value on the same commit.
+- **Platform defaults are read-only to orgs** (security review of phase 3): on
+  `model_purpose_mappings` and `model_disabled` the `org_scope` policy is the plain one, and a second,
+  `FOR SELECT` policy admits `org_id IS NULL`, so an org scope reads the defaults but cannot delete
+  one or update it into its own org (one combined `USING` would have admitted both).
+- **What phase 5's `ENABLE` / `FORCE` brings** (security review of phase 3), on a role subject to
+  RLS, even while the policies admit everything: `pg_dump` needs `--enable-row-security`, `COPY
+  FROM` into these tables is refused (data-only restores, bulk loads, logical replication), and a
+  predicate on a non-leakproof function (`lower(name)` of `devices_name_uq`, the `->>` expression
+  index of `skill_change_requests`) no longer serves as an index condition. This is why phase 3
+  ships without them; the measurement of §8 for phase 5 must run on such a role with RLS enabled,
+  since a superuser shows no cost at all.
+- **Known limits once enforced**: a unique or `ON CONFLICT` collision still reveals that another
+  org's row exists; foreign key checks and cascades bypass RLS (cascades stay within the parent's
+  org).
+- **Not on the scoped pool**, and so admitted whatever `db.rls` says: the migrator's own client, the
+  owned startup activation session (platform work at start, before the gate opens) and extension
+  pools (`ctx.db`, out of scope by decision 9).
 
 ## AGENTS.md rules touched
 

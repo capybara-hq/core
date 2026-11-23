@@ -419,9 +419,14 @@ function settingsBlocks(): ReactNode {
       {/* A section that lists items: rows in a flush card, never cards. */}
       <RefBlock id="template-settings-items" width={W} height={H}>
         <SettingsPage header={SETTINGS_HEADER} nav={SETTINGS_NAV} activeNav="org">
-          <FormSection id="purposes" title="模型用途" description="每个用途用哪个模型。" flush>
-            <ItemList label="用途" inset="flush">
-              {PURPOSES.map((p) => (
+          <FormSection
+            id="tool-policies"
+            title="工具策略"
+            description="每个工具的默认审批方式。"
+            flush
+          >
+            <ItemList label="工具" inset="flush">
+              {TOOLS.map((p) => (
                 <ItemListItem
                   key={p.code}
                   title={p.title}
@@ -432,7 +437,7 @@ function settingsBlocks(): ReactNode {
                     </Text>
                   ))}
                 >
-                  <Field label="模型">
+                  <Field label="审批">
                     <Select value="" onChange={noop} options={[{ value: "", label: "使用默认" }]} />
                   </Field>
                 </ItemListItem>
@@ -449,9 +454,9 @@ function settingsBlocks(): ReactNode {
           loading={{
             sections: [
               {
-                title: "模型用途",
-                description: "每个用途用哪个模型。",
-                items: PURPOSES.map((p) => ({
+                title: "工具策略",
+                description: "每个工具的默认审批方式。",
+                items: TOOLS.map((p) => ({
                   lines: p.lines.length,
                   lineSize: "small" as const,
                   field: { control: "select" as const },
@@ -465,13 +470,13 @@ function settingsBlocks(): ReactNode {
   );
 }
 
-/** The purposes of the `items` blocks: a title, its mono id and its small lines. */
-const PURPOSES = [
-  { title: "评测", code: "eval", lines: ["由内核声明"] },
+/** The tools of the `items` blocks: a title, its mono id and its small lines. */
+const TOOLS = [
+  { title: "网页搜索", code: "WebSearch", lines: ["内置工具"] },
   {
-    title: "子智能体 · 快",
-    code: "subagent_fast",
-    lines: ["由内核声明", "部署默认：deepseek-chat"],
+    title: "命令",
+    code: "Bash",
+    lines: ["内置工具", "平台默认：询问"],
   },
 ];
 

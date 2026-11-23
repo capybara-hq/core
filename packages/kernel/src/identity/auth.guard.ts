@@ -2,6 +2,8 @@ import { type CanActivate, type ExecutionContext, Inject, Injectable } from "@ne
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
+import { asPlatform, bindRequestScope } from "../infra/database/org-scope.js";
+import { ORG_ACTION_KEY } from "../orgs/org.guard.js";
 import { type Account, AccountsService } from "./accounts.js";
 import { ApiTokenService } from "./api-tokens.js";
 import { ACCESS_COOKIE } from "./cookies.js";
@@ -49,7 +51,8 @@ async function resolveBearer(
 ): Promise<Principal | undefined> {
   const bearer = BEARER_RE.exec(req.headers.authorization ?? "")?.[1];
   if (bearer === undefined) return undefined;
-  const rec = await s.tokens.authenticate(bearer);
+  // looked up by token hash before any org is known: personal tokens have no org (RLS spec §9.4)
+  const rec = await asPlatform("api token lookup by hash", () => s.tokens.authenticate(bearer));
   if (!rec) throw new ApiError("auth.required", "Authentication required");
   if (rec.kind === "service") {
     return {
@@ -204,8 +207,17 @@ export class AuthGuard implements CanActivate {
     if (p.kind === "user" && p.account.mustChangePassword && !flag(PASSWORD_CHANGE_KEY)) {
       throw passwordChangeRequired();
     }
-    if (flag(SUPER_ADMIN_KEY) && !(p.kind === "user" && p.account.isSuperAdmin)) {
-      throw new ApiError("forbidden", "Super admin required");
+    if (flag(SUPER_ADMIN_KEY)) {
+      if (!(p.kind === "user" && p.account.isSuperAdmin)) {
+        throw new ApiError("forbidden", "Super admin required");
+      }
+      // a super admin's route works across the deployment (RLS spec §5.1); one that also acts
+      // in an org (`@OrgAction`) is scoped to that org by OrgGuard instead
+      const orgRoute = this.reflector.getAllAndOverride<string | undefined>(
+        ORG_ACTION_KEY,
+        targets,
+      );
+      if (!orgRoute) bindRequestScope({ kind: "platform", reason: "super admin route" });
     }
     return true;
   }

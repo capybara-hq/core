@@ -225,7 +225,9 @@ export class LifecycleHooksProcessor extends WorkerHost<Worker<LifecycleJob>> {
   }
 
   process(job: Job<LifecycleJob>): Promise<void> {
-    return runJob(LIFECYCLE_QUEUE, job, () => this.hooks.process(job.data, this.stopping.signal));
+    return runJob(LIFECYCLE_QUEUE, job, () => this.hooks.process(job.data, this.stopping.signal), {
+      platform: "extension lifecycle hook (deployment-wide)",
+    });
   }
 
   /** Starts consuming (worker role, after the extensions loaded). */
