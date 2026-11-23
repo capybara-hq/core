@@ -316,9 +316,9 @@ export function ContextSection({
   /** Context usage in percent (0–100). */
   ratio: number;
   model: string;
-  /** The device and its state ("MacBook-Pro.local · 在线"), worded by the page. */
+  /** The device and its state ("MacBook-Pro.local · Online"), worded by the page. */
   device?: string;
-  /** A mode mark under the device, as a Badge (「可在沙箱外运行」). */
+  /** A mode mark under the device, as a Badge ("May run outside the sandbox"). */
   deviceBadge?: string;
   /** The mark's tone: `fail` for a danger mark, `default` for a quiet one; default `warn`. */
   deviceBadgeTone?: "default" | "warn" | "fail";
