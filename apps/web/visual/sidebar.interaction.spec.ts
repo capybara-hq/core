@@ -12,6 +12,10 @@ const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]
 
 async function open(page: Page) {
   await openInteractive(page, "/dev/ui/reference/sidebar");
+  // `sidebar-more-open` draws its More menu open, and Radix focuses a menu as it opens: that
+  // happens when the menu mounts after hydration and took away a focus a case had already placed
+  // (#380). Every case starts once it has happened.
+  await expect(page.getByRole("menu", { name: "更多" })).toBeFocused();
 }
 
 test("keyboard: Tab enters the nav at the current item, ↓ moves, Enter follows the link", async ({

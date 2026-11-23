@@ -10,7 +10,15 @@ import { signIn } from "./support/sign-in";
  * nonce (dev adds `'unsafe-eval'`). Next puts the server's nonce on its own scripts, so every page
  * boots without a single violation; a script without the nonce, or from a same-origin path outside
  * those prefixes, does not run.
+ *
+ * The specs run on the production build by default (`CAPYBARA_E2E_WEB`, e2e/global-setup.ts), as
+ * CI does: there every policy is checked to carry no `'unsafe-eval'` or `'unsafe-inline'`, and a
+ * script with the nonce still cannot eval, so the production policy itself is what the browser
+ * enforces here (#147).
  */
+
+/** The web tier is the production build (the default; `dev` is for local debugging only). */
+const PRODUCTION = process.env.CAPYBARA_E2E_WEB !== "dev";
 
 const VIOLATIONS = "__cspViolations";
 
@@ -45,6 +53,8 @@ async function visit(page: Page, path: string): Promise<string> {
   const nonce = /'nonce-([A-Za-z0-9+/]+={0,2})'/.exec(csp)?.[1];
   expect(nonce, `${path}: ${csp}`).toBeDefined();
   expect(csp.split("; ")[0]).not.toContain("'self'");
+  expect(csp).not.toContain("'unsafe-inline'");
+  if (PRODUCTION) expect(csp, `${path}: the production policy`).not.toContain("'unsafe-eval'");
   for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'self'"]) {
     expect(csp).toContain(d);
   }
@@ -154,6 +164,28 @@ test("an inline script without the nonce is blocked", async ({ page }) => {
   expect(ran).toEqual({ script: false, handler: false });
   const seen = await violations(page);
   expect(seen.some((v) => v.startsWith("script-src"))).toBe(true);
+});
+
+test("a script with the nonce cannot eval under the production policy", async ({ page }) => {
+  test.skip(!PRODUCTION, "the dev policy allows eval (React's dev Flight client)");
+  await recordViolations(page);
+  const nonce = await visit(page, "/login");
+  await expect(page.getByRole("textbox").first()).toBeVisible();
+  // Appended from a timer, outside the evaluate call: DevTools lets code it runs eval
+  // (`allowUnsafeEvalBlockedByCSP`), which a script run synchronously inside it would inherit.
+  await page.evaluate((n: string) => {
+    const s = document.createElement("script");
+    s.nonce = n;
+    s.textContent =
+      "try { window.__evalOutcome = eval('1 + 1') === 2 ? 'ran' : 'odd'; } catch (e) { window.__evalOutcome = e instanceof EvalError ? 'blocked' : String(e); }";
+    setTimeout(() => document.body.append(s), 0);
+  }, nonce);
+  const outcome = async () =>
+    page.evaluate(() => (window as unknown as Record<string, unknown>).__evalOutcome);
+  await expect.poll(outcome).not.toBeUndefined();
+  expect(await outcome()).toBe("blocked");
+  const seen = await violations(page);
+  expect(seen.some((v) => v.startsWith("script-src") && v.includes("eval"))).toBe(true);
 });
 
 test("a same-origin script outside the allowed paths is blocked", async ({ page }) => {

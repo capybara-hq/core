@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
+  animationsDone,
   CSRF,
   composer,
   conversationIdOf,
@@ -399,6 +400,9 @@ test("View all of an archived output; a model switch is logged and used", async 
   const group = toolGroup(page, "Bash");
   await expect(group).toHaveAttribute("data-tool-status", "done");
   await group.getByRole("button", { name: /Count to 60000/ }).click();
+  // The detail grows in under `overflow: hidden`: a click on View all before that ends landed on
+  // the output text the clipping box's scroll reset moved under the pointer (#638).
+  await animationsDone(group);
   await group.getByRole("button", { name: designZh("tool.viewAll") }).click();
   const panel = page.getByRole("complementary", { name: zh.chat.fullOutput });
   await expect(panel.getByText(/^59999$/m)).toBeVisible();
