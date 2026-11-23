@@ -1,3 +1,4 @@
+import { formSectionLayout } from "@capybara-hq/design";
 // The admin console reads from the query cache the layout prefetched (web query cache spec §3):
 // first paint complete without a browser read, the loading state on an empty cache, the
 // super-admin gate (only the session is read below it), R5's failures and the mutations'
@@ -591,7 +592,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   });
 
   it.each([
-    ["/admin/models?tab=purposes", "GET /api/v1/admin/models", 1],
+    ["/admin/models?tab=purposes", "GET /api/v1/admin/models", 9],
     ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces", 2],
   ])(
     "%s: the loading page announces once (its sections inside one busy region)",
@@ -620,7 +621,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/models: the purposes load as the kernel's seven item rows", async () => {
+  it("/admin/models: the purposes load as the kernel's nine sections, in columns", async () => {
     const { release } = await renderHeld(
       "/admin/models?tab=purposes",
       "GET /api/v1/admin/model-purposes",
@@ -628,9 +629,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => {
       if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
     });
-    expect(
-      document.querySelectorAll('[data-part="loading-item-list"] > [data-part="loading-item-row"]'),
-    ).toHaveLength(7);
+    const sections = document.querySelectorAll<HTMLElement>(".cb-form-section");
+    expect(sections).toHaveLength(9);
+    expect(formSectionLayout(sections[0] as HTMLElement)).toBe("columns");
     await release();
   });
 

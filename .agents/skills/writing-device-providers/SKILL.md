@@ -406,7 +406,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   records the new limits (for a narrowing a provider answers it only once no connection to a removed
   host survives and no new one can open, the SDK doc of `update`; Docker applies allowlist changes
   in place, its egress proxy closing what the new list no longer covers); `"recreate"`, a gone instance, or a provider without `update` destroys and
-  recreates the instance on the same files (the existing "recreated" notice). A non-gone `update`
+  recreates the instance on the same files (the existing "recreated" notice). `update` carries the
+  holder's fence token and its target is recorded as `pending` first, so a stale replica's late
+  `update` cannot leave the instance wider than the record (see "Fencing token" under Lifecycle;
+  providers that cannot fence, like E2B, state the residual race in their README). A non-gone `update`
   failure recreates on instance-bound providers; after an abort, or on a provider with
   `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance is quarantined
   (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful
@@ -533,6 +536,25 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
   serialized; the `Bash` description says other sub-agents may run commands at the same time.
 - **Fencing generation**: each lease acquisition (shared ones too) first increments `generation`, and later state writes (exclusive holders only; shared holders only move `last_used_at` forward with `GREATEST`) compare against it, so an old exclusive holder's writes necessarily fail (`SandboxLockLostError`).
+- **Fencing token** (design `2026-11-23-device-update-fencing-design.md`): the record fence protects the kernel's row,
+  not the provider's resources, so `update`, `create`, `destroy` and `destroyByName` made under the exclusive lease carry
+  `{ token: fence.gen }` (`DeviceFence`): the generation the holder's own last fenced write committed, strictly higher for
+  every later exclusive holder (`destroyRow` and `resetFileSystem` do a fenced increment before their destroys for that;
+  the legacy cleanup, which holds no lease, passes `null`). Every fenced write on this path commits on its own before the
+  provider call (no transaction around the lifecycle). A provider that can stores the highest token next to its state
+  and throws `StaleFenceError`; the kernel handles it as `SandboxLockLostError` (`staleHolder`, warned once with both
+  tokens), checked **before** the recreate fallback of `applyLimits`, and never recreates for it; when the holder's
+  fenced no-op still succeeds, the provider is ahead of the record and `staleHolder` raises the generation past
+  `StaleFenceError.current`, so the next use heals. Fenced writes run outside any ambient transaction. A record write that
+  fails after `updated` is outside the `update` try (a stale holder must not fall into the recreate branch and destroy
+  the newer holder's instance), and the recreate path does a fenced write before its `destroy`.
+  **Intent first**: `applyLimits` and `reconcileLimits` write the target as `instance_limits.pending` (fenced) before
+  calling `update`; `updated` records it and clears `pending`, a recreate writes a fresh record, a provider answer that
+  changed nothing restores the record, and a thrown or aborted update keeps `pending`. `mustApply` is true while
+  `pending` is present (the next exclusive holder re-sends the desired limits with its higher token, which wins whatever
+  the arrival order) and `limitsState` says `pendingNextUse`. Tests: the "device update fencing (two replicas)" cases of `test/sandbox/mode-limits.dual.test.ts` (the
+  fake's `fencing: "ignore"` shows the race without the fence; `holdNextFakeSandboxUpdate` holds a call in flight) and
+  the "fencing token and update intent" cases of `mode-limits.test.ts`.
 - **Access**: the kernel checks the conversation owner's access to the device when it acquires the instance for a tool call; a loss fails the tool with `device.forbidden` / `device.not_found`.
 - **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on instances idle (no command from any session of the device) longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
   (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`

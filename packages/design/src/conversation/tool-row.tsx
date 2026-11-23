@@ -78,7 +78,7 @@ export type ToolRowData = {
    * automatically" / "Approved by the review model" (`tool.approvedBy.*`) in `muted` (§6.16.9).
    */
   approvedBy?: "auto" | "review-model";
-  /** The error; its first line is shown after "Failed". */
+  /** The error; its first line is shown after the error dot. */
   error?: string;
   /** The extension whose policy hook denied the call. */
   blockedBy?: string;
@@ -118,7 +118,8 @@ export function keyArgPreview(s: string): string {
 }
 
 /**
- * "**name [tool]** preview · extra" plus the failure, one line with an ellipsis (§6.16.9). The
+ * "**name [tool]** preview · extra" plus the error dot and the error's first line, one line with
+ * an ellipsis (§6.16.9). The
  * status words are {@link ToolMeta}, drawn after it.
  */
 export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
@@ -159,13 +160,28 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {row.status === "failed" ? (
         <>
           {" "}
-          <span className="cb-fail-word" data-part="fail-word">
-            {t("tool.failed")}
-          </span>
+          <ErrorDot label={t("tool.errorMark")} />
           {reason ? <span className="cb-muted">{` · ${reason}`}</span> : null}
         </>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * The error dot (§6.16.9): a small `fail` dot after a call that returned an error, a status mark
+ * and not a word, so an ordinary step the agent corrects next does not read as an alarm. Never
+ * colour alone: `label` is its accessible name and its tooltip; the error text stays beside it.
+ */
+export function ErrorDot({ label }: { label: string }): JSX.Element {
+  return (
+    <span
+      className="cb-error-dot"
+      data-part="error-dot"
+      role="img"
+      aria-label={label}
+      title={label}
+    />
   );
 }
 

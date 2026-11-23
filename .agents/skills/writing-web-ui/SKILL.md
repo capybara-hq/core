@@ -24,7 +24,7 @@ headings, hairlines and space, never a second `Card`, `FormSection`, `ObjectList
 
 | Inside a box you want | Use |
 |---|---|
-| A list of things, each with lines or fields (purposes, quick actions, inline sub-agents, permission groups) | `<FormSection flush>` + `<ItemList label inset="flush">` of `<ItemListItem title code? marks? actions? meta?>{fields}</ItemListItem>` (`inset="card"`, the default, inside a padded box) |
+| A list of things, each with lines or fields (quick actions, inline sub-agents, permission groups) | `<FormSection flush>` + `<ItemList label inset="flush">` of `<ItemListItem title code? marks? actions? meta?>{fields}</ItemListItem>` (`inset="card"`, the default, inside a padded box) |
 | A nested group of fields (a config object, an advanced group) | `<Subsection title description?>` (h3, help, fields under the 1px guide) |
 | Several tables in one card | `<FormSection flush>` + one `<Subsection variant="flush" title>` per table, each holding a `DataTable` (unframed by itself) |
 | A list beside the open item's fields | `<Grid columns="list-detail" divided>`, the open item's name as `<Text variant="h3">` over its fields, no Card |
@@ -48,6 +48,15 @@ Render a page's sections as siblings (a fragment or one wrapper); three or more 
 wrappers throw in development and tests (`assertSectionGroups` in the template frame). A loading
 page passes the loaded page's section list, so the count and the layout do not change on load.
 A SettingsPage is always stacked. Tests read the layout with `formSectionLayout(template)`.
+
+**API types are checked against the kernel.** The types in `apps/web/src/lib/*.ts` are written by
+hand (the web never imports the kernel), and `pnpm check:web-api-parity` compares each
+`apiFetch<T>(path, init)` with the kernel route it reaches: a field the route does not return, a
+type it does not match, an enum value on one side only, a body field the route refuses. Type the
+call with what that route answers (a shared type's route-only field is optional; a response that
+differs per route gets its own `Pick` / `Omit`), call through `apiFetch` with a path built from
+constants and one-expression helpers so the check can resolve it, and tag a field the web fills
+itself `/** @clientOnly … */`. Details: [tools/checks/README.md](../../../tools/checks/README.md).
 
 **Icons are components.** Use `<Icon name="search" size={14} />` (or an `IconButton` with an `Icon` and an `aria-label`) from `@capybara-hq/design`; never a character as an icon (`▾ ✓ ✕ ⋯ ⠿ ▤ ●`…; rule `design-char-icon`) and never an icon library in `apps/web`. A missing icon is added to `packages/design/scripts/gen-icons.mjs` (`pnpm --filter @capybara-hq/design gen:icons`).
 
@@ -84,7 +93,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - `ListPage` takes `listLabel` (the list's accessible name), `callout` (a `Callout` between the title row and the tabs) and `empty` (an `EmptyState`, drawn instead of the rows: loading failed, nothing yet, no match). Use these instead of drawing your own notices; an object list is a `ul` (role `list` / `listitem`), not a table.
 - A failure whose cause is raw system text (a kernel message, a network error) is an `ErrorDetail`: one sentence in the reader's language mapped from the error, the raw text behind its 「原始错误」 toggle; never the raw English inline. A button that navigates is a `LinkButton` (a link drawn as the button), never a bare text link among buttons.
 - Create forms and dialogs (spec §5.3, §6.7): a new object's page is `FormPage create` (focus on the first field, no 「没有未保存的修改」), and its primary is `disabled` until the form is valid; a dialog that asks for input starts on its first field by itself. When the prerequisite is missing (no channel extension for 新建渠道) draw only the `EmptyState` with the next step, never the form. A dialog that can only explain (退出组织 as the only owner) is not `danger`: one 「知道了」; a dialog whose next step lives elsewhere offers it as a `LinkButton` primary, never a disabled dead end. Picking a file is the `FilePicker` drop zone (spec §6.25), with card radios (`RadioGroup variant="card"` in a `Card`) to choose between sources.
-- Model purposes (`components/PurposeEditor`, `usePurposeDrafts`): the rows have no save of their own; the page has one ActionRow that saves every changed purpose. A row shows the purpose's label (never its id); a kernel purpose has one muted hint saying what happens while it is unset, an extension's purpose 「来自 <display name>」; on the org page the deployment default rides on the select's default option 「使用部署默认（…）」.
+- Model purposes (`components/PurposeEditor`, `usePurposeDrafts`, spec §5.3 "Model purposes"): each purpose is its own `FormSection` (the page renders `sections` as siblings, so the template's count decides the columns), with no save of its own; the page has one ActionRow that saves every changed purpose. The head shows the purpose's label (never its id), 已覆盖 as `marks`, and one line as the description: a kernel purpose's hint saying what happens while it is unset, an extension's 「来自 <display name>」; warnings stay in the card above the model select; the parameters fold in a `Disclosure` (closed, the summary counts the customized ones, a parameter error opens it); on the org page the deployment default rides on the select's default option 「使用部署默认（…）」.
 - `ObjectRow.action` is the row's most common action (a link when it has `href`), `menu` holds the rest; the menu button is named 更多操作.
 - A header's `path` comes from `usePagePath("org" | "home" | "admin", ...)`; `web-ui-page-path` rejects a page head without it.
 

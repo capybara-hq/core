@@ -60,6 +60,7 @@
     "gen:agent-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-agent-docs.ts",
     "check:terms": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/terms.ts",
     "check:platform-ops": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/platform-ops.ts",
+    "check:web-api-parity": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/web-api-parity.ts",
     "check:kernel-conventions": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/kernel-conventions.ts",
     "check:outbox-registry": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/outbox-registry.ts",
     "check:org-filter": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/org-filter.ts",

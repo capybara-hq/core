@@ -2,16 +2,16 @@
 
 import {
   type ActionRowProps,
+  Disclosure,
   Field,
-  ItemList,
-  ItemListItem,
+  FormSection,
   Select,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   findModel,
   IMAGE_TOOL_PURPOSE,
@@ -89,12 +89,13 @@ const sameDraft = (a: PurposeDraft, b: PurposeDraft) =>
   a.model === b.model && sameParams(a.params, b.params);
 
 /**
- * The drafts of a page of purpose rows and the page's one ActionRow (spec §4.4): every row edits
+ * The drafts of a page of purposes and the page's one ActionRow (spec §4.4): every purpose edits
  * its draft, the ActionRow counts the changed purposes and saves them all (one PUT per changed
  * purpose; the unset / default option writes `null`, which clears the deployment default or
- * restores the org's default). A purpose that fails keeps its draft and shows its error in its row.
- * `list` draws the rows as one flush ItemList, the only content of a `flush` FormSection (spec §1
- * "One box is enough": the section card is the one box, a purpose is a row, not a card).
+ * restores the org's default). A purpose that fails keeps its draft and shows its error in its box.
+ * `sections` draws one FormSection per purpose (spec §5.3 "Model purposes": a purpose is its own
+ * box, so the eye finds each one; one box is enough inside it, §1), which the page renders as the
+ * template's sibling sections: the template decides stacked or columns from their count.
  */
 export function usePurposeDrafts({
   purposes,
@@ -197,25 +198,25 @@ export function usePurposeDrafts({
     />
   );
 
-  const list = (label: string) => (
-    <ItemList label={label} inset="flush">
-      {purposes.map(editor)}
-    </ItemList>
-  );
+  const sections = purposes.map(editor);
 
-  return { list, actionRow };
+  return { sections, actionRow };
 }
 
 /**
- * One model purpose's row (an ItemListItem; shared by the deployment defaults and the org overrides):
+ * One model purpose's section (a FormSection; shared by the deployment defaults and the org
+ * overrides). The head holds the label, the muted "overridden" mark and the one line under it; the card
+ * holds the warnings, the model select and the folded parameters:
  * - `scope: "deployment"`: edits the deployment default (`view.default`); 「未设置」 clears it;
  * - `scope: "org"`: edits the org's override (`view.override`); the default option
  *   「使用部署默认（<model or 未设置>）」 names the deployment default and restores it.
  * A kernel purpose has no source line, only its hint (what it does, what happens while unset); an
  * extension's purpose says 「来自 <extension display name>」. Purpose ids are never shown.
  * A chosen model renders its parameter declarations (ModelParams; switching models keeps the
- * parameters that are still valid, keepDeclared). A plugin purpose notes that plugins cannot call
- * models yet. The row has no save of its own: the page's ActionRow saves (usePurposeDrafts).
+ * parameters that are still valid, keepDeclared) in a Disclosure, closed by default, whose summary
+ * counts the parameters set away from the default; a save that fails on a parameter opens it. A
+ * model with no declarations draws no Disclosure. Warnings stay in the card, outside it. The
+ * section has no save of its own: the page's ActionRow saves (usePurposeDrafts).
  */
 function PurposeEditor({
   view,
@@ -272,7 +273,7 @@ function PurposeEditor({
   }
 
   // The eval purpose without a model (the deployment default, or what the org ends up with):
-  // evals cannot use a judge. A warn line on the eval row, where a notice above the rows stood.
+  // evals cannot use a judge. A warn line in the eval's box, never folded into its parameters.
   const evalUnmapped =
     view.purpose === EVAL_PURPOSE &&
     (scope === "deployment" ? view.default : view.effective) === null;
@@ -283,9 +284,25 @@ function PurposeEditor({
     (scope === "deployment" ? view.default : view.effective) === null &&
     providersOfKind(providers, "image_generation").some((p) => p.models.length > 0);
 
+  // The parameters fold away; a save that fails on one opens them, so its error is seen
+  const [paramsOpen, setParamsOpen] = useState(false);
+  useEffect(() => {
+    if (error !== undefined && Object.keys(error.params).length > 0) setParamsOpen(true);
+  }, [error]);
+  const customized = decl.filter((d) => Object.hasOwn(draft.params, d.key)).length;
+
+  const line = plugin
+    ? t("declaredByPlugin", {
+        plugin: extensionLabel({ name: view.declaredBy, displayName: view.declaredByName }, lang),
+      })
+    : hint !== undefined && hint !== null
+      ? t(hint)
+      : undefined;
+
   return (
-    <ItemListItem
-      // The purpose id is an internal identifier: never shown
+    <FormSection
+      // The purpose id is an internal identifier: only the anchor, never shown
+      id={`purpose-${view.purpose}`}
       title={label}
       // A state, not a call to act: muted text, never the accent
       marks={
@@ -295,37 +312,19 @@ function PurposeEditor({
           </Text>
         ) : undefined
       }
-      meta={
-        <>
-          {plugin ? (
-            <Text variant="small" tone="muted">
-              {t("declaredByPlugin", {
-                plugin: extensionLabel(
-                  { name: view.declaredBy, displayName: view.declaredByName },
-                  lang,
-                ),
-              })}
-            </Text>
-          ) : null}
-          {hint !== undefined && hint !== null ? (
-            <Text variant="small" tone="muted">
-              {t(hint)}
-            </Text>
-          ) : null}
-          {imageUnmapped ? (
-            <Text variant="small" tone="warn" icon="circle-alert">
-              {tm("imageUnmapped")}
-            </Text>
-          ) : null}
-          {evalUnmapped ? (
-            <Text variant="small" tone="warn" icon="circle-alert">
-              {tm("evalUnmapped")}
-            </Text>
-          ) : null}
-        </>
-      }
+      {...(line !== undefined ? { description: line } : {})}
     >
       <Stack gap={12}>
+        {imageUnmapped ? (
+          <Text variant="small" tone="warn" icon="circle-alert">
+            {tm("imageUnmapped")}
+          </Text>
+        ) : null}
+        {evalUnmapped ? (
+          <Text variant="small" tone="warn" icon="circle-alert">
+            {tm("evalUnmapped")}
+          </Text>
+        ) : null}
         <Field label={t("model")} {...(error?.model === true ? { error: t("modelInvalid") } : {})}>
           <Select
             value={draft.model}
@@ -345,23 +344,28 @@ function PurposeEditor({
           />
         </Field>
         {decl.length > 0 ? (
-          <Stack gap={12}>
-            <Text variant="small" tone="muted">
-              {t("params")}
-            </Text>
-            <ModelParams
-              parameters={decl}
-              value={draft.params}
-              onChange={(params) => onDraft({ model: draft.model, params })}
-              locale={locale}
-              errors={error?.params ?? {}}
-            />
-          </Stack>
+          <Disclosure
+            summary={
+              customized === 0 ? t("paramsAllDefault") : t("paramsCustomized", { n: customized })
+            }
+            open={paramsOpen}
+            onOpenChange={setParamsOpen}
+          >
+            <Stack gap={12}>
+              <ModelParams
+                parameters={decl}
+                value={draft.params}
+                onChange={(params) => onDraft({ model: draft.model, params })}
+                locale={locale}
+                errors={error?.params ?? {}}
+              />
+            </Stack>
+          </Disclosure>
         ) : null}
         {error?.message !== undefined ? (
           <FormError message={error.message} extra={error.extra} />
         ) : null}
       </Stack>
-    </ItemListItem>
+    </FormSection>
   );
 }

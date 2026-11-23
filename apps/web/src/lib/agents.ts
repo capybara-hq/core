@@ -1,7 +1,7 @@
 // Types only: the server layout imports this module, and the design root pulls in client-only
 // modules (createContext).
 import type { AvatarValue, PresetId } from "@capybara-hq/design";
-import { apiFetch } from "./api";
+import { apiFetch, clientError } from "./api";
 import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
@@ -152,6 +152,10 @@ export const AGENT_TIERS = [
   "capable",
 ] as const satisfies AgentTier[];
 
+/** The effort levels a model may take (SDK `Effort`). */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 /** A sub-agent template written in the agent definition (kernel `InlineAgentTemplate`). */
 export interface InlineAgentTemplate {
   name: string;
@@ -161,7 +165,7 @@ export interface InlineAgentTemplate {
   disallowedTools?: string[];
   toolPolicies?: Record<string, TightenedPolicy>;
   model?: AgentTier;
-  effort?: string;
+  effort?: Effort;
   maxSteps?: number;
   skills?: string[];
 }
@@ -661,11 +665,22 @@ export const updateAgentProfile = (
     },
   );
 
+/** The image types an agent avatar upload takes (kernel `AGENT_AVATAR_CONTENT_TYPES`). */
+export const AVATAR_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export type AvatarContentType = (typeof AVATAR_CONTENT_TYPES)[number];
+
+/** The file's type as an avatar type; another type is refused before it reaches the kernel. */
+export function avatarContentType(type: string): AvatarContentType {
+  const known = AVATAR_CONTENT_TYPES.find((t) => t === type);
+  if (known === undefined) throw clientError("attachment.type_not_allowed");
+  return known;
+}
+
 /** Register an avatar upload: the kernel checks type and size and returns a presigned upload. */
 export const createAvatarUpload = (
   orgId: string,
   agentId: string,
-  input: { name: string; contentType: string; size: number },
+  input: { name: string; contentType: AvatarContentType; size: number },
 ) =>
   apiFetch<CreatedAttachment>(
     `${base(orgId)}/agents/${encodeURIComponent(agentId)}/avatar/uploads`,
@@ -684,7 +699,7 @@ export async function uploadAvatar(
   const name = file instanceof File ? file.name : "avatar";
   const created = await createAvatarUpload(orgId, agentId, {
     name,
-    contentType: file.type,
+    contentType: avatarContentType(file.type),
     size: file.size,
   });
   await uploadToStorage(

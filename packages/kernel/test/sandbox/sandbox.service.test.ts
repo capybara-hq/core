@@ -300,6 +300,8 @@ describe("lazy creation", () => {
       image: null,
       fileSystem: expect.any(String),
       limits,
+      // the fence token create got (device update fencing design §6.3)
+      fence: expect.any(Number),
     });
     expect(await ops("create-fs")).toEqual([
       ["create-fs", meta?.fileSystem, `cap-device-${envId}`],
@@ -1296,6 +1298,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
       limits: tiny,
       fileSystem: fs,
       signal: signal(),
+      fence: { token: 0 },
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status,
         fs_handle, fs_status, last_used_at)

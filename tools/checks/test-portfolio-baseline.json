@@ -96,7 +96,7 @@
     "packages/kernel/test/sandbox/concurrent.dual.test.ts": "setTimeout wait: a 2 s wait after a replica crash is a real-time lease-expiry assertion (the crashed holder's TTL is 1.5 s)",
     "packages/kernel/test/sandbox/concurrent.test.ts": "setTimeout wait: a 200 ms slow read widens the read-modify-write window that the path lease must cover",
     "packages/kernel/test/sandbox/leases.test.ts": "fixed sleeps: lease TTL and renewal are real-time assertions (renew points, expiry, suspension timing) with no other marker",
-    "packages/kernel/test/sandbox/mode-limits.dual.test.ts": "small app file with a double boot (two replicas) and a 300 ms window proving a waiter is blocked on the exclusive lease while the mode changes",
+    "packages/kernel/test/sandbox/mode-limits.dual.test.ts": "small app file with double boots (replica pairs): a 300 ms window proving a waiter is blocked on the exclusive lease while the mode changes, and the update fencing race, whose red proof needs a second pair with the fake ignoring the fence (one provider config per kernel)",
     "packages/kernel/test/sandbox/mode-limits.test.ts": "setTimeout waits: in-flight windows around a slow update (a blocked waiter, an abort mid-update) and a lease that expires under it",
     "packages/kernel/test/sandbox/device-fake.test.ts": "setTimeout waits: the fixture's own timeout and truncation behaviors are the subject",
     "packages/kernel/test/sandbox/sandbox.dual.test.ts": "small app file with a double boot: two replicas are the subject",

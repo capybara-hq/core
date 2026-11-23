@@ -185,7 +185,8 @@ export type OrgSettingsPatch = Partial<
   >
 > & {
   /** The scheduled-task fields to change; the rest keep their value. */
-  scheduledTasks?: Partial<ScheduledTasksSettings>;
+  /** `forbiddenToolsUnreadable` is in responses only. */
+  scheduledTasks?: Partial<Omit<ScheduledTasksSettings, "forbiddenToolsUnreadable">>;
   /** null clears the theme setting (follow the platform, allowed). */
   theme?: OrgThemeSetting | null;
   /** null clears it (follow the platform). */

@@ -12,7 +12,7 @@ export {
 } from "./conversation-page";
 export { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "./desktop-only";
 export { DetailPage, type FactsShape } from "./detail-page";
-export { FormPage, FormSection, type FormSectionLayout } from "./form-page";
+export { FormPage, FormSection, type FormSectionLayout, LoadingFormSection } from "./form-page";
 export type { BlockShape, FieldShape, ItemShape } from "./frame";
 export { type InboxLoading, InboxPage } from "./inbox-page";
 export { type ListLoading, ListPage, type ListScope } from "./list-page";

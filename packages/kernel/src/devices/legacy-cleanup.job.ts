@@ -103,11 +103,12 @@ export class LegacySandboxCleanupJob {
           ? AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT_MS)])
           : AbortSignal.timeout(CALL_TIMEOUT_MS);
       try {
-        await impl.destroyByName(name, callSignal());
+        // no device lease holds a legacy row: nothing to fence the destroy with
+        await impl.destroyByName(name, callSignal(), null);
         await impl.destroyFileSystemByName(name, callSignal());
         if (row.prev_provider !== null && row.prev_provider !== row.provider) {
           const prev = this.providers.forDevice(row.prev_provider)?.impl;
-          if (prev !== undefined) await prev.destroyByName(name, callSignal());
+          if (prev !== undefined) await prev.destroyByName(name, callSignal(), null);
           else {
             this.log.warn("legacy sandbox of a replaced provider left: provider not loaded", {
               name,
