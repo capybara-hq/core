@@ -12,7 +12,7 @@ import { createLogger } from "../../src/log.js";
 import { accountsFor } from "../helpers/identity.js";
 import { PW, type Req, session, startKernel, type TestKernel } from "../helpers/runs.js";
 
-// RLS phase 3 (spec §4, §7): the policies of migration 0181, enforced. A kernel with
+// RLS phase 3 (spec §4, §7): the policies of migration 0182, enforced. A kernel with
 // `db.rls: enforce` migrates the database and serves HTTP; the database-level cases use pools of
 // their own in each mode. Rows are seeded through a pool that sets nothing (admitted: the
 // policies are off unless a connection enforces them). Everything connects as a role that is not

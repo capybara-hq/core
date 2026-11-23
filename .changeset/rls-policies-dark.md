@@ -2,7 +2,7 @@
 "@capybara-hq/kernel": minor
 ---
 
-RLS phase 3 (issue #115): migration 0181 enables and forces row level security on every kernel
+RLS phase 3 (issue #115): migration 0182 enables and forces row level security on every kernel
 table with an `org_id` column, with one policy per table through `capybara.rls_admits`. The
 policies admit every row unless the kernel pool enforces them (`db.rls: enforce`). On a database
 role that is subject to RLS (not a superuser, no BYPASSRLS; the compose file's role is a superuser)
