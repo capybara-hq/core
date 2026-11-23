@@ -2,6 +2,7 @@ import semver from "semver";
 import type { z } from "zod";
 import { ConnectorAuthSchema } from "./connector-auth.js";
 import { EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
+import { chainMeta, wrapperChain } from "./field-meta.js";
 import { type GitSource, validateGitSource } from "./git-hosts.js";
 import type { ExtensionPermissions } from "./permissions.js";
 import type { PluginManifest } from "./plugin-manifest.js";
@@ -130,13 +131,6 @@ export function checkEntryImports(specifiers: EntryImport[]): string[] {
   return out;
 }
 
-const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);
-
-interface FieldMeta {
-  secret?: unknown;
-  hot?: unknown;
-}
-
 type AnySchema = z.ZodTypeAny;
 const defOf = (s: AnySchema) =>
   s._zod.def as unknown as {
@@ -144,11 +138,11 @@ const defOf = (s: AnySchema) =>
     innerType?: AnySchema;
     shape?: Record<string, AnySchema>;
   };
-const metaOf = (s: AnySchema) => s.meta() as FieldMeta | undefined;
 
 /**
  * The same traversal as the kernel's `configFields`: objects are expanded recursively, wrappers
- * such as default / optional are stripped, and a secret on an object is inherited downward.
+ * such as default / optional are stripped (their meta merged, `secret` from any of them), and a
+ * secret on an object is inherited downward.
  */
 function configFieldsOf(
   schema: AnySchema | undefined,
@@ -156,20 +150,16 @@ function configFieldsOf(
   inheritedSecret = false,
 ): StaticConfigField[] {
   if (!schema) return [];
-  let node = schema;
-  let meta = metaOf(node);
-  while (WRAPPERS.has(defOf(node).type) && defOf(node).innerType) {
-    node = defOf(node).innerType as AnySchema;
-    meta ??= metaOf(node);
-  }
-  const secret = inheritedSecret || meta?.secret === true;
-  const def = defOf(node);
+  const chain = wrapperChain(schema);
+  const meta = chainMeta(schema);
+  const secret = inheritedSecret || meta.secret === true;
+  const def = defOf(chain[chain.length - 1] as AnySchema);
   if (def.type === "object" && def.shape) {
     return Object.entries(def.shape).flatMap(([k, v]) =>
       configFieldsOf(v, prefix ? `${prefix}.${k}` : k, secret),
     );
   }
-  return [{ path: prefix, secret, hot: meta?.hot === true }];
+  return [{ path: prefix, secret, hot: meta.hot === true }];
 }
 
 const byPath = (a: StaticConfigField, b: StaticConfigField) =>

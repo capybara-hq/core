@@ -70,15 +70,28 @@ export function describeSchema(schema: core.$ZodType): {
 
 const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);
 
-/** 剥掉 default / optional 等包装，返回内层 schema 与沿途遇到的第一个（最外层）元信息。 */
+/**
+ * Strips default / optional and the other wrappers: the inner schema and the meta merged across the
+ * chain (an outer key wins over an inner one), except `secret`, which holds when any node carries
+ * it, so a wrapper's meta (`platformOnly(secret(x).optional())`) never hides a secret.
+ */
 function unwrap(schema: core.$ZodType): { inner: core.$ZodType; meta: FieldMeta | undefined } {
+  const chain: core.$ZodType[] = [schema];
   let node = schema;
-  let found = z.globalRegistry.get(node) as FieldMeta | undefined;
   while (WRAPPERS.has(node._zod.def.type)) {
     node = (node._zod.def as unknown as { innerType: core.$ZodType }).innerType;
-    found ??= z.globalRegistry.get(node) as FieldMeta | undefined;
+    chain.push(node);
   }
-  return { inner: node, meta: found };
+  let merged: FieldMeta | undefined;
+  let secret = false;
+  for (const n of chain.reverse()) {
+    const m = z.globalRegistry.get(n) as FieldMeta | undefined;
+    if (!m) continue;
+    if (m.secret === true) secret = true;
+    merged = { ...merged, ...m };
+  }
+  if (merged && secret) merged.secret = true;
+  return { inner: node, meta: merged };
 }
 
 /** 列出 schema 的所有叶子字段（对象递归展开；数组、record 等视作叶子）。 */

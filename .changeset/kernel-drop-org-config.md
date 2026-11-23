@@ -17,3 +17,8 @@ platform-only. `plugins.set-enabled` switches a plugin on whose
 extension still needs the org's config (as the web does) and says so in `configNeeded`. A
 `platformOnly` mark below a top-level key (a hand-made package) makes that whole key platform-only,
 and a pipe or transform deployment root is read through to its input object.
+
+A config field's meta is merged across its default / optional / nullable / prefault / catch /
+readonly wrappers, and `secret` counts on any of them: a mark on a wrapper
+(`platformOnly(secret(x).optional())`) no longer hides the secret below it, which made the load
+fail as an unreachable secret.

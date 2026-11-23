@@ -1,17 +1,21 @@
 import type { z } from "zod";
+import { chainMeta, withMeta } from "./field-meta.js";
 
 /**
  * Marks a schema as a secret field (Zod 4 meta `{ secret: true }`), merging with existing meta
- * (`ui` hints, `hot`), so `secret(ui(x, …))` and `ui(secret(x), …)` are the same.
+ * (`ui` hints, `hot`, `platformOnly`), also the meta of the nodes under `.optional()` /
+ * `.default()` and the other wrappers, so `secret(ui(x, …))` and `ui(secret(x), …)` are the same.
  */
 export function secret<T extends z.ZodTypeAny>(schema: T): T {
-  return schema.meta({ ...(schema.meta() ?? {}), secret: true }) as T;
+  return withMeta(schema, "secret", true);
 }
 
 /**
- * Reads the schema's meta to tell whether it is sensitive; the kernel's `meta({secret:true})` is
- * recognized the same way.
+ * Whether a schema is sensitive: `secret: true` in its meta or in the meta of any node it wraps
+ * through `.optional()`, `.default()`, `.nullable()`, `.prefault()`, `.catch()` and `.readonly()`
+ * (fail-safe: an outer meta never hides the mark). The kernel's `meta({secret:true})` is recognized
+ * the same way.
  */
 export function isSecret(schema: z.ZodTypeAny): boolean {
-  return (schema.meta() as { secret?: unknown } | undefined)?.secret === true;
+  return chainMeta(schema).secret === true;
 }

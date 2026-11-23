@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { withMeta } from "./field-meta.js";
+import { isPlatformOnly } from "./platform-only.js";
 import type { LocalizedName } from "./plugin-package.js";
+import { isSecret } from "./secret.js";
 
 /**
  * Config UI hints (extension config forms spec §3): declarative presentation hints attached to an
@@ -132,11 +135,11 @@ export const CONFIG_UI_LIMITS = {
 
 /**
  * Attaches config UI hints to a schema (zod meta `ui`), merging with existing meta (`secret`,
- * `hot`, `description`). Returns the same schema type. Convention: put `ui()` outermost, after
+ * `hot`, `platformOnly`, `description`), also the meta of the nodes under its wrappers. Returns the same schema type. Convention: put `ui()` outermost, after
  * `.default()` / `.optional()`.
  */
 export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T {
-  return schema.meta({ ...(schema.meta() ?? {}), ui: hints }) as T;
+  return withMeta(schema, "ui", hints);
 }
 
 /** zod types JSON Schema cannot express: emitted as `{}` with `x-unsupported`. */
@@ -175,12 +178,17 @@ export function configJsonSchema(schema: z.ZodTypeAny): JsonSchema {
     unrepresentable: "any",
     override: (ctx) => {
       const js = ctx.jsonSchema as JsonSchema;
-      const def = (ctx.zodSchema as { _zod: { def: { type: string } } })._zod.def;
-      if (js.secret === true) js["x-secret"] = true;
+      const node = ctx.zodSchema as unknown as z.ZodTypeAny;
+      const def = node._zod.def as { type: string };
+      // A mark on a node under a wrapper (`secret(x).nullable()`) counts for the wrapper too:
+      // otherwise the wrapper's `default` would be published beside an `anyOf` branch.
+      if (js.secret === true || isSecret(node)) js["x-secret"] = true;
       delete js.secret;
       if (js.hot === true) js["x-hot"] = true;
       delete js.hot;
-      if (js.platformOnly === true) js["x-platform-only"] = true;
+      if (js.platformOnly === true || isPlatformOnly(node)) {
+        js["x-platform-only"] = true;
+      }
       delete js.platformOnly;
       if ("ui" in js) {
         // A JSON copy: hints are data, and the scrub must never mutate the schema's meta.

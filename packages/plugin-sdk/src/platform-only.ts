@@ -1,8 +1,10 @@
 import type { z } from "zod";
+import { withMeta, wrapperChain } from "./field-meta.js";
 
 /**
  * Marks a deployment config field, or the whole deployment schema, as platform-only (Zod 4 meta
- * `{ platformOnly: true }`), merging with existing meta (`secret`, `hot`, `ui`), so
+ * `{ platformOnly: true }`), merging with existing meta (`secret`, `hot`, `ui`), also the meta of
+ * the nodes under `.optional()` / `.default()` and the other wrappers, so
  * `platformOnly(secret(x))` and `secret(platformOnly(x))` are the same. `configJsonSchema`
  * publishes it as `"x-platform-only": true`; it is allowed on the root and on its top-level
  * properties (a nested field has the level of its top-level key).
@@ -18,11 +20,8 @@ import type { z } from "zod";
  * endpoint at a server it controls.
  */
 export function platformOnly<T extends z.ZodTypeAny>(schema: T): T {
-  return schema.meta({ ...(schema.meta() ?? {}), platformOnly: true }) as T;
+  return withMeta(schema, "platformOnly", true);
 }
-
-/** The wrappers the mark is read through, as `configJsonSchema` inherits meta. */
-const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);
 
 /**
  * Whether a schema carries the {@link platformOnly} mark. It sees through `.optional()`,
@@ -30,12 +29,9 @@ const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readon
  * wins), so it agrees with the `"x-platform-only"` that `configJsonSchema` publishes.
  */
 export function isPlatformOnly(schema: z.ZodTypeAny): boolean {
-  let node: z.ZodTypeAny | undefined = schema;
-  while (node) {
+  for (const node of wrapperChain(schema)) {
     const v = (node.meta() as { platformOnly?: unknown } | undefined)?.platformOnly;
     if (v !== undefined) return v === true;
-    const def = node._zod.def as { type: string; innerType?: z.ZodTypeAny };
-    node = WRAPPERS.has(def.type) ? def.innerType : undefined;
   }
   return false;
 }

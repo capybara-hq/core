@@ -58,6 +58,7 @@
   "extensions/permission-set.test.ts",
   "extensions/permission-view.test.ts",
   "extensions/resolve.test.ts",
+  "extensions/secret-wrappers.test.ts",
   "extensions/sync.test.ts",
   "extensions/tracked-calls.test.ts",
   "files/previewers.grant.test.ts",

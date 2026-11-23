@@ -15,3 +15,11 @@ to pass to `configUrlFetch` or `ctx.net.fetch`.
 `configUrlFetch(net, { url, platform, orgId })` returns the `fetch` for a config URL an org may
 override: the global `fetch` for the platform's own URL (trailing slashes ignored), `ctx.net.fetch`
 for any other.
+
+`secret`, `platformOnly` and `ui` keep each other's marks whatever their order and whichever
+wrapper (`.optional()`, `.default()`, `.nullable()`, `.prefault()`, `.catch()`, `.readonly()`) they
+sit on, and `isSecret` reads the mark through those wrappers (any node of the chain counts), so
+`platformOnly(ui(secret(x)).optional())` is a secret like `platformOnly(ui(secret(x))).optional()`.
+`configJsonSchema` sets `"x-secret"` (and `"x-platform-only"`) on a wrapper around a marked node
+too, so `secret(x).nullable().default(v)` no longer publishes its default, and the static manifest
+reads the marks the same way.
