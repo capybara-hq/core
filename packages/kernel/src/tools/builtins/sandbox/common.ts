@@ -565,9 +565,9 @@ export const ESCALATION_GRANT_MISSING_TEXT =
 /** {@link ESCALATION_GRANT_MISSING_TEXT} as the reason of a refused background start. */
 export const ESCALATION_GRANT_MISSING_LAUNCH_WHY =
   'its approval to run outside the sandbox no longer matches (the device, its outside-sandbox setting or the permission scope changed since it was approved); call Bash again with sandbox: "escalated" and a justification to ask again';
-/** A staged request the machine never got: it reconnected before the request was sent. */
+/** A request the machine never got: it reconnected, or its instance was gone, before it was sent. */
 export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
-  "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
+  "The device's machine reconnected or changed before this operation was sent, so nothing ran. Retry the tool call.";
 /** The device itself refused: it cannot enforce its sandbox (`SandboxPermissionUnsupportedError`). */
 export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
   "This device refused to run the operation because it cannot enforce its sandbox limits, so nothing ran. Ask the device's owner to update its device program (or a super admin to update its device plugin), or continue without the device.";

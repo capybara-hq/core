@@ -126,7 +126,10 @@ export interface ExecResult {
  * The instance is definitely gone on the provider's side (container removed, E2B sandbox expired).
  * `exec` / `readFile` / `writeFile` / `stat` must throw it (not a plain Error) when they find the
  * instance gone; the kernel then rebuilds the instance and retries once. A transient connection
- * failure throws a plain error.
+ * failure throws a plain error. In a managed operation (`operation()`), a gone instance found
+ * **before** the request reached the machine throws a `DeviceRequestNotSentError` with this error
+ * as its `cause`: the operation is then recorded as not started rather than as an unknown outcome,
+ * and the instance is still rebuilt, so the call can be retried on it.
  */
 export class SandboxGoneError extends Error {
   readonly sandboxGone = true as const;

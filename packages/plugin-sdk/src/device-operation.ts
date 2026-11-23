@@ -87,6 +87,12 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
  * every scope check treats it as the definite pre-effect failure it is) that the operation path
  * records as `not_sent`, never as an unknown outcome. It says nothing about an earlier request of
  * the same operation, so a recovery tells it apart ({@link isDeviceRequestNotSent}).
+ *
+ * A provider throws it too when it finds the instance gone before contacting the machine (for
+ * example the machine's runtime changed since the instance was created), with a
+ * `SandboxGoneError` as its `cause`: nothing ran, and the kernel also rebuilds the instance so a
+ * retry of the call runs on the new one. A gone instance found after the request was sent is a
+ * bare `SandboxGoneError` (its outcome is unknown).
  */
 export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
   readonly notSent = true as const;

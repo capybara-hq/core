@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
+  DeviceRequestNotSentError,
   isSandboxGoneError,
   isSandboxOperationOutcomeUnknownError,
   SandboxGoneError,
@@ -1125,6 +1126,43 @@ describe("gone after a durable dispatch (final review m4)", () => {
     expect(free).not.toBeNull();
     await free?.release();
     // the holder's next call runs on the rebuilt instance and is told of the restart
+    const next = await use(s);
+    expect(next.h).toEqual(rebuilt.handle);
+    expect(next.info).toMatchObject({ restarted: true });
+  });
+});
+
+describe("gone before the request was sent (#643)", () => {
+  it.each([
+    ["not sent", (gone: Error) => new DeviceRequestNotSentError("not sent", { cause: gone })],
+    [
+      "a reconciled operation left unknown",
+      (gone: Error) =>
+        new SandboxOperationOutcomeUnknownError("still unknown", {
+          cause: new DeviceRequestNotSentError("not sent", { cause: gone }),
+        }),
+    ],
+  ])("%s: the error is kept, fn is not retried, the instance is rebuilt", async (_, errorOf) => {
+    const s = service();
+    const a = await use(s);
+    let calls = 0;
+    const thrown = errorOf(new SandboxGoneError("the instance is gone"));
+    const err = await s
+      .withSandbox(
+        at(),
+        async (h) => {
+          calls++;
+          await removeFakeSandbox(root, h.id);
+          throw thrown;
+        },
+        signal(),
+      )
+      .catch((e: unknown) => e);
+    expect(err).toBe(thrown);
+    expect(calls).toBe(1);
+    const rebuilt = await row();
+    if (!rebuilt?.handle) throw new Error("expected the rebuilt instance");
+    expect(rebuilt.handle).not.toEqual(a.h);
     const next = await use(s);
     expect(next.h).toEqual(rebuilt.handle);
     expect(next.info).toMatchObject({ restarted: true });
