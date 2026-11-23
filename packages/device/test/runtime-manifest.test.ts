@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
+import type { HelperLauncher } from "../src/exec/helper-launcher.js";
 import {
   canonicalEnvironment,
   canonicalManifest,
@@ -244,6 +245,7 @@ describe("installed closure", () => {
       "inline/linux-sandbox.py",
       "inline/mac-worker.mjs",
       "inline/native-files.py",
+      "inline/native-helper-container-prelude.py",
       "inline/native-helper-prelude.py",
       "inline/output-spool-helper.py",
     ]);
@@ -518,6 +520,7 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
 
 describe("environment fingerprint", () => {
   const facts: EnvironmentFacts = {
+    place: "host",
     platform: "darwin",
     arch: "arm64",
     osBuild: "25A1",
@@ -538,6 +541,7 @@ describe("environment fingerprint", () => {
     const base = environmentHash(facts);
     expect(base).toBe(sha(canonicalEnvironment(facts)));
     for (const change of [
+      { place: "image" },
       { osBuild: "25A2" },
       { effectiveUid: 502 },
       { nodeSha256: "6".repeat(64) },
@@ -550,6 +554,66 @@ describe("environment fingerprint", () => {
     ])
       expect(environmentHash({ ...facts, ...change } as EnvironmentFacts)).not.toBe(base);
   });
+  it("docker mode takes the interpreter and shell facts from the image probe, never the host's", async () => {
+    const calls: { source: string; args: readonly string[]; paths: readonly string[] }[] = [];
+    const h = (n: string) => n.repeat(64);
+    const probe = {
+      executable: "/usr/bin/python3.12",
+      version: "3.12.3",
+      base: "/usr",
+      files: ["/usr/lib/python3.12/json/__init__.py"],
+      hashes: {
+        "/usr/bin/python3.12": [10, h("a")],
+        "/usr/lib/python3.12/json/__init__.py": [20, h("b")],
+        "/usr/bin/bash": [30, h("c")],
+      },
+      shell: "/usr/bin/bash",
+    };
+    const helpers: HelperLauncher = {
+      kind: "container",
+      spawn: () => {
+        throw new Error("not used");
+      },
+      run: (source, args, paths) => {
+        calls.push({ source, args, paths });
+        return { status: 0, stdout: JSON.stringify(probe) };
+      },
+    };
+    const collected = await collectEnvironment({
+      place: "image",
+      helpers,
+      // a host interpreter that does not exist: never touched
+      pythonPath: "/nonexistent/python3",
+      shellPath: "/nonexistent/bash",
+      roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
+      providerImageDigest: `sha256:${h("d")}`,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.paths).toEqual([]);
+    expect(collected).toMatchObject({
+      place: "image",
+      pythonRealPath: "/usr/bin/python3.12",
+      pythonSha256: h("a"),
+      pythonVersion: "3.12.3",
+      shellRealPath: "/usr/bin/bash",
+      shellSha256: h("c"),
+    });
+    expect(collected.interpreterLibraryEntries).toEqual([
+      ["python/bin/python3.12", 10, h("a")],
+      ["python/lib/python3.12/json/__init__.py", 20, h("b")],
+    ]);
+    // a probe that did not hash a file it reported fails closed
+    const partial = { ...probe, hashes: { "/usr/bin/python3.12": [10, h("a")] } };
+    await expect(
+      collectEnvironment({
+        place: "image",
+        helpers: { ...helpers, run: () => ({ status: 0, stdout: JSON.stringify(partial) }) },
+        pythonPath: "/nonexistent/python3",
+        roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
+      }),
+    ).rejects.toThrow(/did not hash/);
+  });
+
   it("collects real interpreter bytes and the modules the helpers load", async () => {
     const collected = await collectEnvironment(env);
     expect(collected.nodeRealPath).toBe(await realpath(process.execPath));

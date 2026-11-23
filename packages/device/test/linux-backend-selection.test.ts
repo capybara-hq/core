@@ -7,6 +7,7 @@ import {
   createDockerOperationBackend,
   hostPathOf,
 } from "../src/exec/docker-operations.js";
+import { hostHelperLauncher } from "../src/exec/helper-launcher.js";
 import {
   checkLinuxRestrictedGrant,
   createHostOperationBackend,
@@ -295,6 +296,8 @@ describe("local-Docker operation backend paths", () => {
           preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
         }),
         container: {
+          // never reached: the launch stops before any helper runs
+          helpers: hostHelperLauncher("/nonexistent/python3"),
           operationContainer: async () => {
             throw new Error("no container in this test");
           },

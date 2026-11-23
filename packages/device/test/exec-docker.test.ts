@@ -117,37 +117,40 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     const state = join(base, "state");
     mkdirSync(state, { mode: 0o700 });
     const hostRoots = osRoots(dir);
-    const backend = await createDockerOperationBackend(
-      {
-        deviceId: envId,
-        instanceGeneration: "g",
-        stateDir: state,
-        pythonPath: "/usr/bin/python3",
-        runtimeHash: "h",
-        hostRoots,
-        readOwnerCeiling: async () => ({
-          revision: "one",
-          outsideSandbox: true,
-          network: "allowlist",
-          roots: hostRoots,
-          projectReach: "workspace",
-          allowedDomains: [],
-          projectPaths: [],
-          secretAndStateDenies: [],
-          otherConnectionDenies: [],
-          unreadableConnections: [],
-          mountReexposedDenies: [],
-          mountReexposureProblem: null,
-          restrictedDeniedReadRoots: [],
-          preparation: {
-            skillsRoot: hostRoots.skills,
-            attachmentsBase: join(hostRoots.workspace, "attachments"),
-          },
-        }),
-        container: ex,
-      },
-      { acquireRuntime: async () => ({ release: () => {} }) },
-    );
+    const makeBackend = () =>
+      createDockerOperationBackend(
+        {
+          deviceId: envId,
+          instanceGeneration: "g",
+          stateDir: state,
+          // no host interpreter: every trusted helper runs in a helper container
+          pythonPath: "/nonexistent/python3",
+          runtimeHash: "h",
+          hostRoots,
+          readOwnerCeiling: async () => ({
+            revision: "one",
+            outsideSandbox: true,
+            network: "allowlist",
+            roots: hostRoots,
+            projectReach: "workspace",
+            allowedDomains: [],
+            projectPaths: [],
+            secretAndStateDenies: [],
+            otherConnectionDenies: [],
+            unreadableConnections: [],
+            mountReexposedDenies: [],
+            mountReexposureProblem: null,
+            restrictedDeniedReadRoots: [],
+            preparation: {
+              skillsRoot: hostRoots.skills,
+              attachmentsBase: join(hostRoots.workspace, "attachments"),
+            },
+          }),
+          container: ex,
+        },
+        { acquireRuntime: async () => ({ release: () => {} }) },
+      );
+    const backend = await makeBackend();
     const support = await backend.permissionSupport({ id: envId }, live);
     expect(support).toMatchObject({ outsideSandbox: true, background: true });
 
@@ -216,6 +219,33 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     expect(readFileSync(join(dir, "workspace", "proj", "full.log"), "utf8")).toBe(
       "full-background\n",
     );
+    // the retained output's spool lives in the state directory's output directory only
+    expect(readdirSync(join(state, "output")).some((n) => n.endsWith(".spool"))).toBe(true);
+    // after a restart (a new backend on the same state), the retained output is read back
+    // through a recovered spool in a new helper container
+    const restarted = await makeBackend();
+    const read = await restarted
+      .forExecution(authority(fs.operationId))
+      .background.readOutput({ id: envId }, fullRef, { offset: 0, maxBytes: 4096, signal: live });
+    expect("data" in read && Buffer.from(read.data).toString()).toBe("full-background\n");
+    // skills preparation writes the host skills directory behind the read-only mount (it needs
+    // restricted support; linux-operation-worker.test.ts runs it where Landlock is unavailable)
+    if (support.restricted !== null) {
+      const prep = await restarted.prepare(
+        { id: envId },
+        {
+          operationId: "prep-1",
+          deviceId: envId,
+          purpose: "skills",
+          writeRoots: ["/skills/new"],
+          tag: "s",
+        },
+        live,
+      );
+      await prep.writeFile("/skills/new/SKILL.md", new TextEncoder().encode("skill"), live);
+      expect(readFileSync(join(dir, "skills", "new", "SKILL.md"), "utf8")).toBe("skill");
+      expect(inContainer("cat /skills/new/SKILL.md")).toBe("skill");
+    }
     // Docker Desktop's file sharing drops Landlock's inode rules on the bind mounts: the
     // self-check reports restricted unavailable there instead of denying every command
     if (support.restricted === null)

@@ -11,6 +11,11 @@ import {
   sandboxImageReference,
 } from "./docker-image.js";
 import type { OperationContainerHost } from "./docker-operations.js";
+import {
+  containerHelperLauncher,
+  type HelperLauncher,
+  removeLeftoverHelpers,
+} from "./helper-launcher.js";
 import { osRoots } from "./shared.js";
 import { DeviceOpError } from "./types.js";
 
@@ -94,11 +99,14 @@ function docker(
  * daemon's architecture (the image platform it pulls), or a reason when the pin has none.
  */
 export async function dockerAvailability(): Promise<
-  { ok: true; platform: PinnedPlatform } | { ok: false; reason: string }
+  | { ok: true; platform: PinnedPlatform; mountsPreserveIdentity: boolean }
+  | { ok: false; reason: string }
 > {
   let r: DockerRun;
   try {
-    r = await docker(["info", "--format", "{{.Architecture}}"], { timeoutMs: 10_000 });
+    r = await docker(["info", "--format", "{{.Architecture}}|{{.OperatingSystem}}"], {
+      timeoutMs: 10_000,
+    });
   } catch {
     return { ok: false, reason: "the docker command was not found" };
   }
@@ -106,14 +114,21 @@ export async function dockerAvailability(): Promise<
     const why = r.stderr.toString("utf8").trim().split("\n")[0] ?? "";
     return { ok: false, reason: `Docker is not available${why ? `: ${why}` : ""}` };
   }
-  const arch = r.stdout.toString("utf8").trim();
+  const [arch = "", os = ""] = r.stdout.toString("utf8").trim().split("|");
   const platform = pinnedPlatform(arch);
   if (platform === undefined)
     return {
       ok: false,
       reason: `the Docker daemon's architecture (${arch || "unknown"}) has no pinned sandbox image`,
     };
-  return { ok: true, platform };
+  // a bind mount shows the host's device and inode numbers only from a native Linux daemon on
+  // this machine; Docker Desktop (a VM's file sharing) or a remote daemon shows others
+  const local = !process.env.DOCKER_HOST || process.env.DOCKER_HOST.startsWith("unix://");
+  return {
+    ok: true,
+    platform,
+    mountsPreserveIdentity: process.platform === "linux" && local && !/docker desktop/i.test(os),
+  };
 }
 
 /** The pids limit of a container (as the cloud sandbox). */
@@ -130,6 +145,8 @@ export interface DockerContainerOptions {
   policy: () => Policy;
   /** The daemon's image platform (from {@link dockerAvailability}); default: this host's. */
   platform?: PinnedPlatform;
+  /** Whether bind mounts show the host's device and inode numbers (default: false). */
+  mountsPreserveIdentity?: boolean;
   /** The environment the image repository override is read from (default: `process.env`). */
   env?: NodeJS.ProcessEnv;
 }
@@ -158,6 +175,10 @@ export class DockerContainer implements OperationContainerHost {
   readonly name: string;
   /** The image platform the daemon runs: the pinned digests a container's image id may match. */
   readonly imagePlatform: PinnedPlatform | undefined;
+  /** The device's trusted helpers, in helper containers of the same pinned image. */
+  readonly helpers: HelperLauncher;
+  /** Whether a helper container sees the host's identity of a mounted directory. */
+  readonly mountsPreserveIdentity: boolean;
   private readonly dir: string;
   private readonly hostRoots: SandboxRoots;
   private chain: Promise<unknown> = Promise.resolve();
@@ -173,6 +194,12 @@ export class DockerContainer implements OperationContainerHost {
     this.hostRoots = osRoots(this.dir);
     this.name = containerName(opts.deviceId);
     this.imagePlatform = opts.platform ?? pinnedPlatform(process.arch);
+    this.mountsPreserveIdentity = opts.mountsPreserveIdentity ?? false;
+    this.helpers = containerHelperLauncher({
+      deviceId: opts.deviceId,
+      image: sandboxImageReference(opts.env),
+      user: containerUser(),
+    });
   }
 
   private serial<T>(f: () => Promise<T>): Promise<T> {
@@ -398,5 +425,11 @@ export async function createDockerContainer(
   if (!available.ok) throw new Error(available.reason);
   // an invalid repository override fails here, at start, not at the first operation
   sandboxImageReference(opts.env);
-  return new DockerContainer({ ...opts, platform: available.platform });
+  // helper containers a killed earlier run left hold nothing the journal relies on
+  await removeLeftoverHelpers(opts.deviceId);
+  return new DockerContainer({
+    ...opts,
+    platform: available.platform,
+    mountsPreserveIdentity: available.mountsPreserveIdentity,
+  });
 }

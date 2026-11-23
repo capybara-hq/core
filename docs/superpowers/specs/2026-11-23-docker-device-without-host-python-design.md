@@ -146,6 +146,15 @@ docker run --rm -i --name capybara-helper-<deviceId>-<random> \
   that points at `/etc` or `~/.ssh` reaches the helper container's read-only root (or nothing),
   never the host. This is stronger than today, where the same helper ran with the host's whole file
   system behind it.
+- **Implementation notes (PR 2).** No descriptor crosses into a container, so the native helper's
+  container prelude opens each root's trusted anchor itself, walking from `/` with `O_NOFOLLOW` at
+  every component, and compares it with the host's `[dev, ino]` of that anchor on Linux (Docker
+  Desktop's file sharing reports other numbers inside its VM, so the check is Linux-only there).
+  The spool's private directory is `<state>/output` (created `0700`), the only part of the state
+  directory ever mounted. A background artifact's helper mounts the program-made mount root
+  (`<dir>/workspace` or `<dir>/tmp`), never the granted directory inside it: a directory the work
+  controls could be swapped for a link between the check and `docker run`, and Docker follows a
+  link in a bind source. Helpers run with `--log-driver none` (their stdout carries output bytes).
 - **What each step mounts.** B: the device's host `skills` directory, read-write. C: the program's
   spool directory under the state directory and the artifact's host mount root (`workspace` or
   `tmp`), read-write. D: the spool directory only. Nothing else of the host, never the state

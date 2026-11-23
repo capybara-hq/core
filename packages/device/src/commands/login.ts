@@ -17,11 +17,11 @@ import {
   listConnections,
   unreadableConnections,
 } from "../connections.js";
+import { dockerHostProblem, type HostProbes } from "../docker-host.js";
 import { withCanonicalForms, within } from "../exec/operation-types.js";
 import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
-import { dockerHostProblem, type HostProbes } from "../host-python.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
@@ -363,7 +363,7 @@ export async function login(
       1,
     );
   }
-  // Docker mode needs a pinned image platform and the host python3: refused before anything is
+  // Docker mode needs a pinned image platform for this architecture: refused before anything is
   // requested or stored.
   // (only when this machine has no connection yet: then the device is certainly a new one; with
   // others, an existing device keeps its mode and --mode is ignored, so it is checked below)
@@ -578,9 +578,7 @@ export async function login(
         if (noSandbox !== undefined)
           out(restrictedUnavailableLoginLine(noSandbox, deviceId, ceiling.outsideSandbox));
         if (dockerProblem !== undefined)
-          out(
-            `Warning: ${dockerProblem} Until then capybara-device start refuses to run this device.`,
-          );
+          out(`Warning: ${dockerProblem} capybara-device start refuses to run this device here.`);
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(

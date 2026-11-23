@@ -5,7 +5,7 @@ import { CommandLog } from "../command-log.js";
 import { DEVICE_ID_PATTERN } from "../connections.js";
 import type { LiveStatus } from "../control/protocol.js";
 import { startControlServer } from "../control/server.js";
-import { dockerHostProblem, type HostProbes } from "../host-python.js";
+import { dockerHostProblem, type HostProbes } from "../docker-host.js";
 import { KeepAwake } from "../keep-awake.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";

@@ -19,7 +19,7 @@ import {
   resolveConnection,
   unreadableConnections,
 } from "./connections.js";
-import type { HostProbes } from "./host-python.js";
+import type { HostProbes } from "./docker-host.js";
 import { stamped } from "./log-timestamp.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
@@ -48,7 +48,7 @@ export interface CliEnv {
   stdinIsTTY?: boolean;
   /** Whether the OS sandbox can run here, for `login` (default: the runtime's check). */
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
-  /** Whether a path is an executable file (default: the file system), for docker mode's python3. */
+  /** The host facts of the docker-mode check (default: this machine). */
   hostProbes?: HostProbes;
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
