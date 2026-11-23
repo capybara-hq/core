@@ -5,6 +5,7 @@ import en from "../messages/en.json";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { fieldOptionLabels, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 import { stubWindowWidth } from "./support/width";
 
@@ -282,7 +283,7 @@ describe("devices list", () => {
     });
   });
 
-  it("新建设备 with two providers: cards, the chosen guide, a name for a non-dial-in one", async () => {
+  it("新建设备 with two providers: a 设备类型 select, the chosen guide, a name for a non-dial-in one", async () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () =>
         json(
@@ -297,11 +298,13 @@ describe("devices list", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("radio", { name: /Docker sandbox/ })).toHaveProperty(
-      "checked",
-      true,
-    );
+    const select = within(dialog).getByRole("combobox", { name: E.create.providerLabel });
+    expect(select.textContent).toContain("Docker sandbox");
+    expect(fieldOptionLabels(select)).toEqual(["Docker sandbox", "Local machine"]);
+    expect(select.hasAttribute("disabled")).toBe(false);
+    // the chosen provider's description is the field's help
     expect(within(dialog).getByText("Runs in a container")).toBeTruthy();
+    expect(within(dialog).queryByText("Your own computer or server")).toBeNull();
     expect(await within(dialog).findByText(DOCKER_GUIDE_TEXT)).toBeTruthy();
     await user.type(within(dialog).getByRole("textbox"), "Box");
     await user.click(within(dialog).getByRole("button", { name: E.create.submit }));
@@ -310,6 +313,23 @@ describe("devices list", () => {
       name: "Box",
       provider: DOCKER.plugin,
     });
+  });
+
+  it("新建设备 with one provider: the 设备类型 select shows it, read-only", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(200, list([env("e1", null)], { providers: [DOCKER], defaultProvider: null })),
+      ...guide(DOCKER),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    const select = within(dialog).getByRole("combobox", { name: E.create.providerLabel });
+    expect(select.textContent).toContain("Docker sandbox");
+    expect(select.hasAttribute("disabled")).toBe(true);
+    expect(within(dialog).getByText("Runs in a container")).toBeTruthy();
+    expect(await within(dialog).findByText(DOCKER_GUIDE_TEXT)).toBeTruthy();
   });
 
   it("a refused create keeps the dialog open with the error copy", async () => {
@@ -662,7 +682,11 @@ describe("local devices (environments spec §6, §9)", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    await pickOption(
+      within(dialog).getByRole("combobox", { name: E.create.providerLabel }),
+      "Local machine",
+      user,
+    );
     return { user, dialog, calls };
   };
 
@@ -700,18 +724,24 @@ describe("local devices (environments spec §6, §9)", () => {
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByText(E.create.noGuide)).toBeNull();
-    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    await pickOption(
+      within(dialog).getByRole("combobox", { name: E.create.providerLabel }),
+      "Local machine",
+      user,
+    );
     expect(await within(dialog).findByText(E.create.noGuide)).toBeTruthy();
     expect(within(dialog).queryByRole("textbox")).toBeNull();
   });
 
   it("a machine that connects after the window crossed 600 is still detected as new", async () => {
-    const win = stubWindowWidth(390);
+    // the provider is picked from the anchored list, then the window narrows to the sheet
+    const win = stubWindowWidth(1440);
     let connected = false;
-    const { dialog } = await openLocal(() =>
+    await openLocal(() =>
       connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)],
     );
-    await within(dialog).findByText(LOCAL_GUIDE_TEXT);
+    win.setWidth(390);
+    await screen.findByText(LOCAL_GUIDE_TEXT);
     connected = true;
     win.setWidth(1440);
     await screen.findByText(LOCAL_GUIDE_TEXT);
@@ -727,9 +757,17 @@ describe("local devices (environments spec §6, §9)", () => {
       connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)],
     );
     await within(dialog).findByText(LOCAL_GUIDE_TEXT);
-    await user.click(within(dialog).getByRole("radio", { name: /Docker sandbox/ }));
+    await pickOption(
+      within(dialog).getByRole("combobox", { name: E.create.providerLabel }),
+      "Docker sandbox",
+      user,
+    );
     connected = true;
-    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    await pickOption(
+      within(dialog).getByRole("combobox", { name: E.create.providerLabel }),
+      "Local machine",
+      user,
+    );
     await within(dialog).findByText(LOCAL_GUIDE_TEXT);
     // a poll after the switch back has read the list that holds d7
     const reads = () => calls.filter((c) => c.method === "GET" && c.url === BASE).length;
