@@ -314,6 +314,22 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     expect(inspect("{{.HostConfig.Memory}}")).toBe(String(256 * 1024 * 1024));
   });
 
+  it("an idle acquire after `docker rm` or a stop (a daemon restart) recreates or restarts it", async () => {
+    await hold();
+    const id = inspect("{{.Id}}");
+    // removed behind the program's back: the next operation gets a new container
+    spawnSync("docker", ["rm", "-f", containerName(envId)], { stdio: "ignore" });
+    await hold();
+    const id2 = inspect("{{.Id}}");
+    expect(id2).not.toBe(id);
+    expect(inspect("{{.State.Running}}")).toBe("true");
+    // stopped (as after a daemon restart without a restart policy): started again
+    execFileSync("docker", ["stop", "-t", "0", containerName(envId)], { stdio: "ignore" });
+    await hold();
+    expect(inspect("{{.Id}}")).toBe(id2);
+    expect(inspect("{{.State.Running}}")).toBe("true");
+  });
+
   it("recreates a container found without the bridge, never reconnects it", async () => {
     await hold();
     const id = inspect("{{.Id}}");

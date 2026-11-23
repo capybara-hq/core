@@ -17,6 +17,7 @@ import {
   SERVICE_GONE_TIMEOUT_MS,
   SERVICE_POLL_MS,
   serviceCommand,
+  serviceEnv,
 } from "../src/commands/service.js";
 import { connectionDir } from "../src/connections.js";
 import { writePid } from "../src/pid.js";
@@ -46,6 +47,18 @@ const spec = {
   deviceId: id,
   env: { PATH: "/usr/local/bin:/usr/bin", XDG_CONFIG_HOME: "/home/u/.config" },
 };
+
+describe("serviceEnv", () => {
+  it("passes PATH and an absolute XDG_CONFIG_HOME, and drops a relative one", () => {
+    expect(serviceEnv({ PATH: "/bin", XDG_CONFIG_HOME: "/x" })).toEqual({
+      PATH: "/bin",
+      XDG_CONFIG_HOME: "/x",
+    });
+    // the service runs in another cwd: a relative value would name another directory there
+    expect(serviceEnv({ PATH: "/bin", XDG_CONFIG_HOME: "cfg" })).toEqual({ PATH: "/bin" });
+    expect(serviceEnv({ XDG_CONFIG_HOME: "" })).toEqual({ PATH: "/usr/local/bin:/usr/bin:/bin" });
+  });
+});
 
 describe("service files", () => {
   it("launchd plist runs start with the node path", () => {

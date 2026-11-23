@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, rmdirSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -16,6 +16,7 @@ import {
   ensureMachineFile,
   listConnections,
 } from "../connections.js";
+import { withCanonicalForms, within } from "../exec/operation-types.js";
 import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
@@ -260,6 +261,32 @@ function servedLine(machineDir: string, deviceId: string): string {
   return deviceId;
 }
 
+/** Whether two paths overlap: one contains the other (or they are the same), in any canonical form. */
+function overlaps(a: string, b: string): boolean {
+  const as = withCanonicalForms([a]);
+  const bs = withCanonicalForms([b]);
+  return as.some((x) => bs.some((y) => within(x, y) || within(y, x)));
+}
+
+/**
+ * Why a new connection's working directory cannot be `dir`: it contains, or lies inside, another
+ * connection's working directory or the machine directory. Each connection's files are denied to
+ * the others, so a shared or nested directory would break both. Undefined when it is free.
+ */
+function workDirOverlap(machineDir: string, deviceId: string, dir: string): string | undefined {
+  for (const c of listConnections(machineDir)) {
+    if (c.deviceId === deviceId || !overlaps(dir, c.workDir)) continue;
+    return (
+      `The working directory ${dir} overlaps the working directory ${c.workDir} of the ` +
+      `connection ${connectionLine(c)}`
+    );
+  }
+  if (overlaps(dir, machineDir)) {
+    return `The working directory ${dir} overlaps this program's state directory ${machineDir}`;
+  }
+  return undefined;
+}
+
 /** Normalises the deployment URL: http(s) origin plus optional path prefix, no trailing slash. */
 export function normalizeUrl(raw: string): string {
   let u: URL;
@@ -401,6 +428,26 @@ export async function login(
         } else {
           dir = asked ?? defaultWorkDir(deviceId, deps.home);
           mode = cmd.mode ?? "os";
+          let overlap: string | undefined;
+          try {
+            overlap = workDirOverlap(deps.machineDir, deviceId, dir);
+          } catch (e) {
+            return fail("machine_dir_unusable", (e as Error).message, 1);
+          }
+          if (overlap !== undefined) {
+            // the connection directory made above, while still empty, goes again
+            try {
+              rmdirSync(connDir);
+            } catch {
+              // not empty (a logged-out connection's kept files) or already gone
+            }
+            return fail(
+              "work_dir_overlap",
+              `${overlap}; nothing was stored. Log in again with another --dir, one that neither ` +
+                "contains nor lies inside another connection's directory.",
+              1,
+            );
+          }
         }
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);

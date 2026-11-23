@@ -263,6 +263,12 @@ export class DockerContainer implements OperationContainerHost {
     this.ready = true;
   }
 
+  /** Whether the container in use still exists, runs and carries the spec it was made with. */
+  private async stillRunning(): Promise<boolean> {
+    const c = await this.inspect();
+    return c !== null && c.State.Running && c.Config.Labels?.[SPEC_LABEL] === this.spec;
+  }
+
   /**
    * Whether a reused container's mounts still show this directory's roots: after the directory was
    * removed and recreated (`login` again), a Linux bind mount still holds the deleted one.
@@ -295,6 +301,11 @@ export class DockerContainer implements OperationContainerHost {
     const acquired = this.serial(async () => {
       // the policy changed the container's flags (cpu, memory): recreate it once nothing holds it
       if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) this.ready = false;
+      // nothing holds it: check it is still there and running. A `docker rm` or a daemon
+      // restart behind this program's back would otherwise fail every operation until it
+      // restarts; with operations in flight it is left alone (they fail on their own), and the
+      // next idle acquire repairs it
+      if (this.ready && this.inflight === 0 && !(await this.stillRunning())) this.ready = false;
       await this.ensureContainer();
       this.inflight++;
     });

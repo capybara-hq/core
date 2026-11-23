@@ -95,6 +95,9 @@ most recent first, at most 256; the other connections of the machine read it onl
 directories they share.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`, and `home/`, the sandboxed commands' home (created when missing).
+A new connection's working directory may neither contain nor lie inside another connection's
+working directory or the machine directory (compared by real path too): `login` refuses it
+(`work_dir_overlap`) and stores nothing; log in again with another `--dir`.
 
 ## Permissions
 

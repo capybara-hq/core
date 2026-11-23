@@ -30,6 +30,7 @@ import {
   unitWantsDir,
   unitWantsLink,
 } from "../service/systemd.js";
+import { xdgConfigHome } from "../state.js";
 
 export type ServiceAction = "install" | "uninstall" | "start" | "stop" | "restart" | "status";
 
@@ -68,8 +69,8 @@ export function serviceEnv(env: Record<string, string | undefined>): Record<stri
   const out: Record<string, string> = {};
   const path = env.PATH;
   out.PATH = path !== undefined && path !== "" ? path : "/usr/local/bin:/usr/bin:/bin";
-  const xdg = env.XDG_CONFIG_HOME;
-  if (xdg !== undefined && xdg !== "") out.XDG_CONFIG_HOME = xdg;
+  const xdg = xdgConfigHome(env);
+  if (xdg !== undefined) out.XDG_CONFIG_HOME = xdg;
   return out;
 }
 
