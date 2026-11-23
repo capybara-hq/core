@@ -9,7 +9,7 @@ import { safeFetch } from "../net/safe-fetch.js";
  * the config (trusted), but whatever it returns is external input:
  * - every request goes through `packages/kernel/src/net` ({@link safeFetch}) under `cfg.net`
  *   (the kernel passes `marketplaceNetPolicy`: the registry's origin is trusted, any other host
- *   must resolve to public addresses unless `marketplaces.allowPrivateHosts` exempts it, https
+ *   must resolve to public addresses unless `net.allowPrivateHosts` exempts it, https
  *   tunnels through `net.httpsProxy`, and the connection is pinned to the checked address);
  * - redirects are never followed (a 3xx fails): one registry redirect could otherwise send the
  *   download (and the token) anywhere;

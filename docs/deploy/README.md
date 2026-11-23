@@ -537,9 +537,11 @@ other plugins) go through the catalog:
   (manifests, mirrors, archive and git sources, git imports) is https only, follows no redirects and
   may reach only public addresses; the connection is pinned to the address that was checked. Two
   settings change that:
-  - `marketplaces.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
-    an internal GitLab or mirror. List an internal DNS name **by name**
-    (`CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
+  - `net.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
+    an internal GitLab, mirror or identity provider. It is the one list of internal hosts for every
+    outbound request the kernel resolves itself: these downloads, npm registry downloads, OAuth
+    requests (discovery, client registration, token endpoints) and git identity checks. List an internal DNS name **by name**
+    (`CAPYBARA_NET__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
     (`10.20.0.0/16`) match only URLs that use an IP literal (`https://10.20.0.5/…`), never a DNS name
     that resolves into the range. Link-local and cloud metadata addresses (`169.254.0.0/16`,
     `fe80::/10`) are always refused, and very broad prefixes (shorter than /8 for IPv4, /16 for IPv6)
@@ -559,20 +561,20 @@ other plugins) go through the catalog:
   - the kernel does **not** resolve the target's hostname: the proxy does. Blocking private,
     internal and metadata addresses for DNS names is then **the proxy's job**: configure it to refuse
     them (most corporate proxies do). The kernel still refuses IP-literal URLs in private ranges
-    (unless `marketplaces.allowPrivateHosts` lists them) and link-local IP literals, and still applies
+    (unless `net.allowPrivateHosts` lists them) and link-local IP literals, and still applies
     `marketplaces.allowedHosts`, https-only and no redirects.
   - `net.noProxy` (default `[]`; e.g. `CAPYBARA_NET__NO_PROXY='["gitlab.corp.example"]'`) lists
     hostnames or IPs that go direct (an entry also matches its subdomains). Those are resolved locally
-    and pinned as above, so an internal host listed there also needs `marketplaces.allowPrivateHosts`.
+    and pinned as above, so an internal host listed there also needs `net.allowPrivateHosts`.
     Loopback hosts never use the proxy.
   - npm registry downloads (`packages.npmRegistry`) use the proxy too; an internal https registry
-    goes in `net.noProxy` (its origin is trusted, so it needs no `marketplaces.allowPrivateHosts`
+    goes in `net.noProxy` (its origin is trusted, so it needs no `net.allowPrivateHosts`
     entry). An `http://` registry is fetched directly.
 
   This is also the fix for a fake-IP DNS resolver (one that answers every name with an address in
   `198.18.0.0/15`, as some proxy and VPN clients do): without a proxy every host looks private and
   downloads are refused, so either set `net.httpsProxy`, give the kernel real DNS, or list each host
-  by name in `marketplaces.allowPrivateHosts`.
+  by name in `net.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash

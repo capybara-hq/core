@@ -175,7 +175,7 @@ Deployment-level endpoints always go under `/api/v1/admin/*`, with `@SuperAdmin(
 
 - Super admins **cannot read conversations** by default: trajectories and evals go only to org admins and agent owners (C1); do not add endpoints under `/admin` that read conversation content.
 - The package upload route takes raw bytes (`application/octet-stream`, limit `packages.maxBytes`, with the bodyLimit raised separately in Fastify); the web layer proxy has its own limit `CAPYBARA_WEB_MAX_PACKAGE_BYTES`, see `docs/config.md`.
-- Every download from a URL a marketplace or an admin supplied (marketplace manifests, mirrors, archive and git sources, git marketplaces, direct git import) goes through `packages/kernel/src/net` (`safeFetch`: https, no redirects, public addresses only unless `marketplaces.allowPrivateHosts`, connection pinned to the checked address); never call `fetch` on such a URL directly. Refusals map to `marketplace.private_address` / `marketplace.redirect` (422), with the refused host in `details` when known.
+- Every download from a URL a marketplace or an admin supplied (marketplace manifests, mirrors, archive and git sources, git marketplaces, direct git import) goes through `packages/kernel/src/net` (`safeFetch`: https, no redirects, public addresses only unless `net.allowPrivateHosts`, connection pinned to the checked address); never call `fetch` on such a URL directly. Refusals map to `marketplace.private_address` / `marketplace.redirect` (422), with the refused host in `details` when known.
 - The CLI reuses the same providers (`capybara admin grant|revoke <login>`, `capybara extensions …`) through `openKernelCli`, so domain classes must not depend on request context.
 
 ### Audit and personal tokens

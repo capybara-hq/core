@@ -171,7 +171,7 @@ describe("OAuth round trips go through packages/kernel/src/net", () => {
     expect(err).toBeInstanceOf(OAuthSetupError);
     expect(err).toMatchObject({ reason: "address_refused" });
     expect((err as Error).message).toMatch(/private or reserved address/);
-    expect((err as Error).message).toMatch(/marketplaces\.allowPrivateHosts/);
+    expect((err as Error).message).toMatch(/net\.allowPrivateHosts/);
   });
 
   it("an authorization server that points into a private range is refused too", async () => {

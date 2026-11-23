@@ -17,7 +17,7 @@ import type { OAuthClientRecord, TokenAuthMethod } from "./tokens.js";
  * `OAuthClientProvider` and would pull the MCP SDK into a protocol-agnostic kernel.
  *
  * Every round trip goes through `packages/kernel/src/net` ({@link safeFetch}): the host must
- * resolve to public addresses (or be exempt by `marketplaces.allowPrivateHosts`), the connection is
+ * resolve to public addresses (or be exempt by `net.allowPrivateHosts`), the connection is
  * pinned to the checked address, `net.httpsProxy` tunnels https, and redirects are never followed.
  */
 
@@ -32,13 +32,13 @@ export interface OAuthHttpOptions {
 /**
  * The network rules of every OAuth round trip (discovery, registration, token endpoint, the setup
  * check's token probe): the deployment's egress proxy (`net.httpsProxy` / `net.noProxy`), its
- * private host exemptions (`marketplaces.allowPrivateHosts`, the one list of internal hosts the
+ * private host exemptions (`net.allowPrivateHosts`, the one list of internal hosts the
  * kernel may reach) and loopback http only under `tools.oauthAllowInsecureLoopback` (tests).
  */
 export function oauthNetPolicy(cfg: KernelConfig): NetPolicy {
   return {
     allowInsecureLoopback: cfg.tools.oauthAllowInsecureLoopback,
-    allowPrivateHosts: cfg.marketplaces.allowPrivateHosts,
+    allowPrivateHosts: cfg.net.allowPrivateHosts,
     trustedOrigins: [],
     ...(cfg.net.httpsProxy !== undefined && {
       proxy: { url: cfg.net.httpsProxy, noProxy: cfg.net.noProxy },

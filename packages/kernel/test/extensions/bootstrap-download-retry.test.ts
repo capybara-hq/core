@@ -99,8 +99,8 @@ const options = (over: Partial<BootstrapResolveOptions> = {}): BootstrapResolveO
   return {
     config: {
       packages: { npmRegistry: url, maxBytes: 1024 * 1024 },
-      marketplaces: { allowInsecureLoopback: true, allowPrivateHosts: [], tokens: {} },
-      net: {},
+      marketplaces: { allowInsecureLoopback: true, tokens: {} },
+      net: { allowPrivateHosts: [] },
     } as unknown as BootstrapResolveOptions["config"],
     // No waits in tests: the delays only space the attempts out
     retryDelaysMs: [0, 0, 0],
