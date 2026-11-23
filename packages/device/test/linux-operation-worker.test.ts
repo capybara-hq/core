@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import {
   mkdir,
@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { containerUser } from "../src/exec/docker.js";
 import { sandboxImageReference } from "../src/exec/docker-image.js";
 import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-operations.js";
@@ -906,6 +906,12 @@ describe("Linux runtime probe", () => {
 const dockerAvailable = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 
 describe.skipIf(!dockerAvailable)("local-Docker skill preparation", () => {
+  beforeAll(() => {
+    // the device container pulls the pinned image before any helper runs; helpers never pull
+    const image = sandboxImageReference({});
+    if (spawnSync("docker", ["image", "inspect", image], { stdio: "ignore" }).status !== 0)
+      execFileSync("docker", ["pull", image], { stdio: "ignore" });
+  });
   it("writes the host skills directory behind the read-only mount through the native helper", async () => {
     const dir = await realpath(await mkdtemp(join(tmpdir(), "cap-docker-skills-")));
     dirs.push(dir);

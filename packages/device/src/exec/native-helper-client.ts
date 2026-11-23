@@ -353,6 +353,7 @@ export async function runContainerNativeHelper(
   const child = launch.launcher.spawn(CONTAINER_PRELUDE, [NATIVE_FILES_SOURCE], launch.paths);
   let bytes = 0;
   let stderrBytes = 0;
+  let stderrHead = "";
   let pending = "";
   let ready = false;
   let response: string | undefined;
@@ -426,6 +427,7 @@ export async function runContainerNativeHelper(
   });
   child.stderr.on("data", (b: Buffer) => {
     stderrBytes += b.length;
+    if (stderrHead.length < 300) stderrHead += b.toString();
     if (stderrBytes <= 65536) launch.onDiagnostic?.(b.toString());
     if (stderrBytes > 65536) {
       failure = new Error("Native helper stderr exceeds the bounded transport");
@@ -448,7 +450,10 @@ export async function runContainerNativeHelper(
     recordTransferTiming(request.method, "helperIo", performance.now() - dispatchedAt);
   signal.throwIfAborted();
   if (failure) throw failure;
-  if (!ready) throw new SandboxPermissionUnsupportedError("Native helper container did not start");
+  if (!ready)
+    throw new SandboxPermissionUnsupportedError(
+      `Native helper container did not start${stderrHead ? `: ${stderrHead.trim().split("\n")[0]?.slice(0, 200)}` : ""}`,
+    );
   let parsed: { result?: NativeHelperResult; error?: { code: string; message: string } };
   try {
     parsed = timed(request.method, "parse", () => JSON.parse(response ?? ""));
