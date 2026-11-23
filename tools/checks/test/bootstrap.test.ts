@@ -97,6 +97,13 @@ describe("checkBootstrap", () => {
     expect(f.filter((x) => x.rule === "bootstrap-fixed-set")).toEqual([]);
   });
 
+  it("the pnpm check runner and the standalone CLI both enable the fixed-set rule", async () => {
+    for (const f of ["src/cli/runners.ts", "src/cli/bootstrap.ts"]) {
+      const text = await readFile(join(repoRoot, "tools/checks", f), "utf8");
+      expect(text, f).toMatch(/checkBootstrap\([\s\S]*?fixedSet: true/);
+    }
+  });
+
   it("a bootstrap plugin with client code is refused", async () => {
     const f = await checkBootstrap(fixture("client-code/bootstrap.json"), fixture("client-code"));
     expect(f.map((x) => x.rule)).toEqual(["bootstrap-client-code"]);
