@@ -228,7 +228,7 @@ describe("devices list", () => {
     await vi.waitFor(() => expect(template("ListPage")).not.toBeNull());
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Build box")).toBeNull();
-    // 新建设备 is not known yet: a placeholder holds its slot, so it does not pop in after load
+    // New device is not known yet: a placeholder holds its slot, so it does not pop in after load
     const slots = document.querySelector('[data-part="page-header-action-slots"]');
     expect(slots).not.toBeNull();
     expect(slots?.querySelectorAll('[data-part="skeleton-box"]').length).toBeGreaterThan(0);
