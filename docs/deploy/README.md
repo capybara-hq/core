@@ -833,7 +833,7 @@ extension's `egressProxyImage` to those tags.
 
 ## Row level security (`db.rls`)
 
-Every kernel table with an `org_id` column has a row level security policy (migration 0181; spec
+Every kernel table with an `org_id` column has a row level security policy (migration 0182; spec
 `docs/superpowers/specs/2026-11-23-postgres-rls-design.md`). `db.rls` (`CAPYBARA_DB__RLS`) decides what
 the kernel's connections carry: `off` (default) sends nothing and the policies admit every row;
 `scoped` sets each request's, job's or run's org on its connection (one extra round trip per pool
