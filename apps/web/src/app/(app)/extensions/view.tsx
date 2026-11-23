@@ -39,8 +39,8 @@ import {
   tabCounts,
 } from "../../../lib/extension-capabilities";
 import { capabilityGroups, type OrgExtension } from "../../../lib/extensions";
-import { roleAtLeast } from "../../../lib/members";
 import { useHashItem } from "../../../lib/hash-item";
+import { roleAtLeast } from "../../../lib/members";
 import { orgExtensionsQuery } from "../../../lib/query/channels";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";

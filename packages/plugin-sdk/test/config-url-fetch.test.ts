@@ -102,6 +102,7 @@ describe("configUrlFetch", () => {
     stubGlobal();
     const { net, calls } = fakeNet();
     await configUrlFetch(net, { url: "https://x" })(new Request("https://x/a"));
-    expect((calls[0]?.[1] as RequestInit).body).toBeUndefined();
+    const [, init] = calls[0] as [string, RequestInit];
+    expect(init.body).toBeUndefined();
   });
 });
