@@ -75,6 +75,44 @@ const stagedParts = (calls: string[] = []) =>
     },
   }) as unknown as StagedDevice;
 
+describe("start: docker mode needs the host python3", () => {
+  const attempt = async (mode: "os" | "docker", isExecutable: () => boolean) => {
+    writeCredential(dir, { ...cred, mode });
+    const err: string[] = [];
+    const created: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => err.push(l),
+      proc: Object.assign(new EventEmitter(), { pid: 4260 }) as never,
+      hostProbes: { isExecutable, commandLineTools: isExecutable },
+      createStaged: () => {
+        created.push("staged");
+        return stagedParts();
+      },
+      connectStaged: () => ({ done: Promise.resolve(0), drain: () => {}, stop: () => {} }),
+    });
+    return { code, err, created };
+  };
+
+  it("refuses with the install hint and builds nothing", async () => {
+    const r = await attempt("docker", () => false);
+    expect(r.code).toBe(1);
+    expect(r.err.join("\n")).toContain("/usr/bin/python3");
+    expect(r.err.join("\n")).toContain("install");
+    expect(r.err.join("\n")).toContain("keeps failing");
+    expect(r.created).toEqual([]);
+    expect(existsSync(pidPath(dir))).toBe(false);
+  });
+
+  it("starts when it is there, and OS mode never asks", async () => {
+    expect((await attempt("docker", () => true)).code).toBe(0);
+    const os = await attempt("os", () => false);
+    expect(os.code).toBe(0);
+    expect(os.err).toEqual([]);
+  });
+});
+
 describe("start: the policy file", () => {
   const run = async () => {
     const proc = Object.assign(new EventEmitter(), { pid: 4250 });

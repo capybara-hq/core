@@ -21,6 +21,11 @@ import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
 import { policyPath, readPolicyFile } from "../state.js";
 import { fsNameBytes, fsNameString, homeFsName } from "./fs-names.js";
 import {
+  linuxMountReexposures,
+  type MountReexposures,
+  machineReachMountRefusal,
+} from "./linux-mountinfo.js";
+import {
   otherConnectionDenies,
   type ProjectReach,
   projectPathRefusal,
@@ -62,7 +67,25 @@ export interface DeviceOwnerCeiling {
    * ({@link assertConnectionsReadable}); an escalated call and the owner report proceed.
    */
   readonly unreadableConnections: readonly Readonly<{ deviceId: string; reason: string }>[];
-  /** {@link secretAndStateDenies} ∪ {@link otherConnectionDenies}: what every sandboxed grant denies. */
+  /**
+   * Linux: every path where another mount (a bind mount, a mount of an ancestor's subtree, an
+   * overlay layer) shows one of {@link secretAndStateDenies} or {@link otherConnectionDenies}
+   * again (`linux-mountinfo.ts`), canonical forms included; empty elsewhere. Denied under every
+   * reach.
+   */
+  readonly mountReexposedDenies: readonly string[];
+  /**
+   * Linux: why the mount table cannot tell whether a denied path is re-exposed (unreadable,
+   * malformed, not settling), or null. While set, machine project reach is refused
+   * ({@link intersectOperation}); the narrower reaches proceed with {@link mountReexposedDenies},
+   * which then holds only what was found before the reading stopped (nothing when the table
+   * cannot be read): those reaches rely on the owner's listed paths holding no second view.
+   */
+  readonly mountReexposureProblem: string | null;
+  /**
+   * {@link secretAndStateDenies} ∪ {@link otherConnectionDenies} ∪ {@link mountReexposedDenies}:
+   * what every sandboxed grant denies.
+   */
   readonly restrictedDeniedReadRoots: readonly string[];
   readonly preparation: Readonly<{ skillsRoot: string; attachmentsBase: string }>;
 }
@@ -121,6 +144,13 @@ export interface OwnerCeilingInput {
    * the user temp dir and this process's temp dir (the worker's fallback), elsewhere none.
    */
   macTempBases?: readonly string[];
+  /**
+   * Where mounts re-expose the given denied paths (given and canonical forms), never denying a
+   * mount that holds one of `keep` (the device roots and listed project paths) wholesale; default
+   * on Linux {@link linuxMountReexposures} of this process's mount table, elsewhere none. Called on
+   * every read, so the answer is as of each operation start (and each owner reconcile).
+   */
+  mountReexposures?: (denied: readonly string[], keep: readonly string[]) => MountReexposures;
 }
 /** Strict additive reader: no absent-file defaults or last-good fallback. */
 export async function readStrictOwnerCeiling(
@@ -226,6 +256,17 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
   ]);
   const otherDenies = withCanonicalForms(otherDirs);
   const projectPaths = canonicalProjectPaths(policy.projectPaths);
+  const mounts = (
+    input.mountReexposures ??
+    (process.platform === "linux"
+      ? (denied: readonly string[], keep: readonly string[]) =>
+          linuxMountReexposures(denied, { keep })
+      : (): MountReexposures => ({ paths: [], problem: null }))
+  )(
+    [...new Set([...secretAndStateDenies, ...otherDenies])],
+    withCanonicalForms([roots.workspace, roots.skills, roots.tmp, ...projectPaths]),
+  );
+  const mountDenies = withCanonicalForms(mounts.paths);
   return Object.freeze({
     revision: digest({
       generation: version(after),
@@ -237,6 +278,8 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
       secretAndStateDenies,
       otherConnectionDenies: otherDenies,
       unreadableConnections: unreadable,
+      mountReexposedDenies: mountDenies,
+      mountReexposureProblem: mounts.problem,
     }),
     outsideSandbox: policy.ownerCeiling.outsideSandbox,
     network: policy.ownerCeiling.network,
@@ -247,8 +290,10 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
     secretAndStateDenies: Object.freeze(secretAndStateDenies),
     otherConnectionDenies: Object.freeze(otherDenies),
     unreadableConnections: Object.freeze(unreadable),
+    mountReexposedDenies: Object.freeze(mountDenies),
+    mountReexposureProblem: mounts.problem,
     restrictedDeniedReadRoots: Object.freeze([
-      ...new Set([...secretAndStateDenies, ...otherDenies]),
+      ...new Set([...secretAndStateDenies, ...otherDenies, ...mountDenies]),
     ]),
     preparation: Object.freeze({
       skillsRoot: roots.skills,
@@ -425,6 +470,10 @@ export function intersectOperation(
   // what the operation reads is this program's rule (the reach), never the scope
   const fs = scope.filesystem;
   checkRoots(fs.projectRoot === null ? [] : [fs.projectRoot], fs.writeRoots, ceiling);
+  // machine reach reads everything off the deny list: a deny list the mount table leaves open is
+  // refused rather than guessed (the narrower reaches name what they read)
+  if (ceiling.projectReach === "machine" && ceiling.mountReexposureProblem !== null)
+    throw new SandboxScopeDeniedError(machineReachMountRefusal(ceiling.mountReexposureProblem));
   const readRoots = readRootsFor({
     reach: ceiling.projectReach,
     projectPaths: ceiling.projectPaths,

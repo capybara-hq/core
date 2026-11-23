@@ -1,3 +1,4 @@
+import { formSectionLayout } from "@capybara-hq/design";
 import { findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -35,7 +36,7 @@ const REPORT = {
     zh: "在平台的 Docker 容器里运行",
   },
   home: null,
-  limits: [] as { label: { en: string; zh?: string }; value: string }[],
+  limits: [] as { label: { en: string; zh?: string }; value: { en: string; zh?: string } }[],
   reset: true,
 };
 const MACHINE = {
@@ -146,10 +147,10 @@ afterEach(() => {
 });
 
 describe("one device page for every provider", () => {
-  it("the page has 概览 / 网络 / 项目 and no per-provider section", async () => {
+  it("the page has 概览 / 项目 and no per-provider section", async () => {
     await renderDevice(dev({ provider: "device-local", online: true, report: REPORT }));
     await screen.findByRole("tab", { name: E.detail.tabOverview });
-    expect(tabs()).toEqual([E.detail.tabOverview, E.detail.tabNetwork, E.detail.tabProjects]);
+    expect(tabs()).toEqual([E.detail.tabOverview, E.detail.tabProjects]);
     expect(screen.queryByText(/capybara-device/)).toBeNull();
     expect(screen.queryByRole("button", { name: /断开|Disconnect this machine/ })).toBeNull();
     expect(findNestedBoxes(document.body)).toEqual([]);
@@ -160,13 +161,37 @@ describe("one device page for every provider", () => {
       dev({
         report: {
           ...REPORT,
-          limits: [{ label: { en: "Network", zh: "网络" }, value: "github.com" }],
+          limits: [{ label: { en: "Network", zh: "网络" }, value: { en: "github.com" } }],
         },
       }),
     );
     expect(await screen.findByText(REPORT.description.en)).toBeTruthy();
     expect(factRow("Network")?.textContent).toContain("github.com");
-    expect(screen.queryByRole("radiogroup")).toBeNull();
+    // the report is read only: the one control group is the network section's own
+    const about = document.getElementById("about") as HTMLElement;
+    expect(within(about).queryByRole("radiogroup")).toBeNull();
+    expect(within(about).queryByRole("button")).toBeNull();
+  });
+
+  it("概览 shows a limit's value in the UI language, English when it has no translation", async () => {
+    await renderDevice(
+      dev({
+        report: {
+          ...REPORT,
+          limits: [
+            {
+              label: { en: "Projects", zh: "项目" },
+              value: { en: "/a, +2 more", zh: "/a，另有 2 个" },
+            },
+            { label: { en: "Network", zh: "网络" }, value: { en: "github.com" } },
+          ],
+        },
+      }),
+      { locale: "zh" },
+    );
+    expect((await screen.findByText("/a，另有 2 个")).textContent).toBe("/a，另有 2 个");
+    expect(screen.queryByText("/a, +2 more")).toBeNull();
+    expect(factRow("网络")?.textContent).toContain("github.com");
   });
 
   it("概览 speaks the UI language and has no limits block without limits", async () => {
@@ -174,6 +199,36 @@ describe("one device page for every provider", () => {
     expect(await screen.findByText(REPORT.description.zh)).toBeTruthy();
     expect(document.querySelector('[data-part="key-value-row"]')).toBeNull();
     expect(screen.getByText(Z.detail.filesAndSuspendNote)).toBeTruthy();
+  });
+
+  it("概览 shows the provider's change hint in the page language, and none without one", async () => {
+    const changeHint = {
+      en: "Only the computer's owner changes these, on the computer.",
+      zh: "只有电脑的所有者能在电脑上更改这些。",
+    };
+    const { unmount } = await renderDevice(dev({ report: { ...REPORT, changeHint } }), {
+      locale: "zh",
+    });
+    expect(await screen.findByText(changeHint.zh)).toBeTruthy();
+    expect(screen.queryByText(changeHint.en)).toBeNull();
+    unmount();
+    await renderDevice(dev({ report: { ...REPORT, changeHint } }));
+    expect(await screen.findByText(changeHint.en)).toBeTruthy();
+  });
+
+  it("网络 names the machine's owner when its limit keeps the network on the allowlist", async () => {
+    await renderDevice(
+      dev({
+        sandbox: sandbox({
+          network: "allowlist",
+          networkCeiling: "allowlist",
+          layer: { network: "owner", outsideSandbox: "owner" },
+        }),
+      }),
+    );
+    await openTab(E.detail.tabOverview);
+    expect(radio(E.network.open).disabled).toBe(true);
+    expect(screen.getByText(E.network.limited.owner)).toBeTruthy();
   });
 
   it("a device without a report says its provider did not answer", async () => {
@@ -206,6 +261,31 @@ describe("one device page for every provider", () => {
       ),
     ).toBeTruthy();
     expect(plate().textContent).toContain(Z.state.unavailable);
+  });
+
+  it("概览 is sections in columns: about, network, files, then the danger zone", async () => {
+    await renderDevice(dev({ provider: "device-local", online: true, report: REPORT }));
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    const ids = [...document.querySelectorAll('[data-part="form-section"]')].map((s) => s.id);
+    expect(ids).toEqual(["about", "network", "files"]);
+    const template = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
+    // three sections: the template stands them in two columns (spec §5.3 "Columns by count")
+    expect(formSectionLayout(template)).toBe("columns");
+    // the danger zone is the sections' sibling, so it lines up with their field column
+    const zone = document.querySelector('[data-part="danger-zone"]') as HTMLElement;
+    expect(zone.parentElement).toBe(document.getElementById("files")?.parentElement);
+    expect(findNestedBoxes(document.body)).toEqual([]);
+  });
+
+  it("项目 is one section, so it stands stacked across the width", async () => {
+    await renderDevice(dev());
+    await openTab(E.detail.tabProjects);
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(1),
+    );
+    const template = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
+    expect(formSectionLayout(template)).toBe("stacked");
+    expect(findNestedBoxes(document.body)).toEqual([]);
   });
 
   it("概览 ends with the danger zone: one delete hint for every provider", async () => {
@@ -252,7 +332,7 @@ describe("网络", () => {
     await renderDevice(
       dev({ provider: "device-local", sandbox: sandbox({ networkCeiling: "open" }) }),
     );
-    await openTab(E.detail.tabNetwork);
+    await openTab(E.detail.tabOverview);
     await userEvent.click(screen.getByRole("radio", { name: E.network.open }));
     await userEvent.click(screen.getByRole("button", { name: E.network.save }));
     await vi.waitFor(() => expect(lastCall(`PATCH ${BASE}/e1`)).toBeDefined());
@@ -271,7 +351,7 @@ describe("网络", () => {
       }),
       { locale: "zh" },
     );
-    await openTab(Z.detail.tabNetwork);
+    await openTab(Z.detail.tabOverview);
     expect(radio(Z.network.open).disabled).toBe(true);
     expect(radio(Z.network.allowlist).disabled).toBe(false);
     expect(screen.getByText(Z.network.limited.org)).toBeTruthy();
@@ -288,7 +368,7 @@ describe("网络", () => {
         }),
       }),
     );
-    const user = await openTab(E.detail.tabNetwork);
+    const user = await openTab(E.detail.tabOverview);
     expect(radio(E.network.allowlist).checked).toBe(true);
     const input = screen.getByRole("textbox", { name: E.network.hostInput });
     await user.type(input, "Bad Host");
@@ -311,7 +391,7 @@ describe("网络", () => {
 
   it("following the organization again sends mode null", async () => {
     await renderDevice(dev({ sandbox: sandbox({ ownNetwork: "none", network: "none" }) }));
-    const user = await openTab(E.detail.tabNetwork);
+    const user = await openTab(E.detail.tabOverview);
     await user.click(radio(E.network.follow));
     await user.click(screen.getByRole("button", { name: E.network.save }));
     await vi.waitFor(() => expect(lastCall(`PATCH ${BASE}/e1`)).toBeDefined());
@@ -322,7 +402,7 @@ describe("网络", () => {
     await renderDevice(
       dev({ sandbox: sandbox({ pendingNextUse: true, pendingFilesReset: true }) }),
     );
-    await openTab(E.detail.tabNetwork);
+    await openTab(E.detail.tabOverview);
     expect(screen.getByText(E.network.pendingNextUse)).toBeTruthy();
     expect(screen.getByText(E.network.pendingFilesReset)).toBeTruthy();
   });
@@ -336,7 +416,7 @@ describe("网络", () => {
           }),
       },
     });
-    const user = await openTab(E.detail.tabNetwork);
+    const user = await openTab(E.detail.tabOverview);
     await user.click(radio(E.network.open));
     await user.click(screen.getByRole("button", { name: E.network.save }));
     const alert = await screen.findByRole("alert");
@@ -350,7 +430,7 @@ describe("网络", () => {
     const previews = [k.permissionPreview("e1"), k.permissionPreview("e1", "api")];
     const other = k.permissionPreview("e2");
     for (const key of [...previews, other]) client.setQueryData(key, { cached: true });
-    const user = await openTab(E.detail.tabNetwork);
+    const user = await openTab(E.detail.tabOverview);
     await user.click(radio(E.network.none));
     await user.click(screen.getByRole("button", { name: E.network.save }));
     await vi.waitFor(() =>
@@ -466,7 +546,7 @@ describe("the query cache", () => {
     expect(browser).toEqual([]);
   });
 
-  it("empty cache shows the template loading with three tabs, then the nameplate", async () => {
+  it("empty cache shows the template loading with two tabs, then the nameplate", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => {
       release = r;
@@ -482,7 +562,7 @@ describe("the query cache", () => {
       expect(document.querySelector('[data-template="DetailPage"]')).not.toBeNull(),
     );
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    expect(tabs()).toHaveLength(3);
+    expect(tabs()).toHaveLength(2);
     await act(async () => release());
     expect(await screen.findByRole("heading", { level: 1, name: "Build box" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

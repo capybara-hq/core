@@ -662,6 +662,8 @@ it.runIf(process.platform === "darwin")(
             secretAndStateDenies: [],
             otherConnectionDenies: [],
             unreadableConnections: [],
+            mountReexposedDenies: [],
+            mountReexposureProblem: null,
             restrictedDeniedReadRoots: [],
             preparation: { skillsRoot: f.root, attachmentsBase: join(f.root, "attachments") },
           };

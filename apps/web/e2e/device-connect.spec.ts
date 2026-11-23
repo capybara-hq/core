@@ -133,9 +133,7 @@ test("device-local is pinned, on in the org by default and takes a capybara-devi
   const orgId = await currentOrg(page);
   const meta = (await (await page.request.get("/api/v1/meta")).json()) as {
     protocols: { device: { min: number; max: number } };
-    features: { localDevices: boolean };
   };
-  expect(meta.features.localDevices).toBe(true);
   const protocol = `capybara-device/${meta.protocols.device.max}`;
   const name = `e2e-local-${Date.now().toString(36)}`;
   const program = await playwright.request.newContext({ baseURL: baseURL ?? "" });

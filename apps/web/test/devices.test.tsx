@@ -93,7 +93,7 @@ const LOCAL = {
 };
 const DOCKER_GUIDE_TEXT = "Docker needs nothing installed";
 const LOCAL_GUIDE_TEXT = "Run the connector on the machine";
-/** The catalog guide route of a provider: a markdown block, and for a dial-in one the shell action. */
+/** The catalog guide route of a provider: one markdown block. */
 const guide = (p: { plugin: string; guide: { itemId: string; guideId: string } }) => ({
   [`GET /api/v1/orgs/o1/catalog/${p.guide.itemId}/guides/${p.guide.guideId}`]: () =>
     json(200, {
@@ -109,17 +109,12 @@ const guide = (p: { plugin: string; guide: { itemId: string; guideId: string } }
         mode: null,
         audiences: ["member"],
         audience: "member",
-        blocks:
-          p.plugin === LOCAL.plugin
-            ? [
-                { kind: "markdown", text: LOCAL_GUIDE_TEXT },
-                {
-                  kind: "shell-action",
-                  action: "connect-this-machine",
-                  label: "Connect this machine",
-                },
-              ]
-            : [{ kind: "markdown", text: DOCKER_GUIDE_TEXT }],
+        blocks: [
+          {
+            kind: "markdown",
+            text: p.plugin === LOCAL.plugin ? LOCAL_GUIDE_TEXT : DOCKER_GUIDE_TEXT,
+          },
+        ],
         checks: [],
         unresolved: [],
         hash: "a".repeat(64),
@@ -143,10 +138,10 @@ const renderList = (opts: RenderOpts = {}) =>
 const renderDetail = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
-/** The device page's Network tab. */
+/** The device page's network section (on the Overview tab). */
 const openNetwork = async () => {
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("tab", { name: E.detail.tabNetwork }));
+  await user.click(await screen.findByRole("tab", { name: E.detail.tabOverview }));
   return user;
 };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
@@ -810,79 +805,6 @@ describe("local devices (environments spec §6, §9)", () => {
     replaced = true;
     await nextPoll(WAIT_POLL_MS);
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"));
-  });
-
-  describe("the shell-action block (连接本机)", () => {
-    function installShell(device: Record<string, unknown>) {
-      (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
-        version: 1,
-        capabilities: { "device@2": device },
-        on: () => () => {},
-      };
-    }
-    afterEach(() => Reflect.deleteProperty(window, "capybaraShell"));
-    const shellDevice = (connect: unknown, connections: unknown[] = []) => ({
-      status: vi.fn().mockResolvedValue({ connections }),
-      onStatus: () => () => {},
-      connect,
-    });
-
-    it("in the shell it is a primary button that calls connect({ orgId })", async () => {
-      const connect = vi.fn().mockResolvedValue("connected");
-      installShell(shellDevice(connect));
-      const { user, dialog } = await openLocal([env("e1", null)]);
-      const button = await within(dialog).findByRole("button", { name: "Connect this machine" });
-      expect(button.getAttribute("data-variant")).toBe("primary");
-      await user.click(button);
-      expect(connect).toHaveBeenCalledWith({ orgId: "o1" });
-    });
-
-    it("an existing connection into this org still offers it (device@2 adds one)", async () => {
-      const connection = {
-        deviceId: "d7",
-        orgId: "o1",
-        mode: "os",
-        connection: "online",
-        serviceInstalled: true,
-        keepAwake: { mode: "while-busy", held: false },
-      };
-      installShell(shellDevice(vi.fn(), [connection]));
-      const { dialog } = await openLocal([env("e1", null), device("d7", "grant-mbp")]);
-      expect(
-        await within(dialog).findByRole("button", { name: "Connect this machine" }),
-      ).toBeTruthy();
-    });
-
-    it("cancelled leaves the dialog as it was; a failure shows an error", async () => {
-      const connect = vi.fn().mockResolvedValue("cancelled");
-      installShell(shellDevice(connect));
-      const { user, dialog } = await openLocal([env("e1", null)]);
-      await user.click(await within(dialog).findByRole("button", { name: "Connect this machine" }));
-      await vi.waitFor(() => expect(connect).toHaveBeenCalled());
-      await settle();
-      expect(within(dialog).queryByRole("alert")).toBeNull();
-      expect(router.push).not.toHaveBeenCalled();
-      connect.mockRejectedValue({ code: "failed" });
-      await user.click(within(dialog).getByRole("button", { name: "Connect this machine" }));
-      expect((await within(dialog).findByRole("alert")).textContent).toContain(
-        E.create.connectFailed,
-      );
-    });
-
-    it("a connect answering an error shows an error, never the shell's text", async () => {
-      installShell(shellDevice(vi.fn().mockResolvedValue({ error: "login failed" })));
-      const { user, dialog } = await openLocal([env("e1", null)]);
-      await user.click(await within(dialog).findByRole("button", { name: "Connect this machine" }));
-      const alert = await within(dialog).findByRole("alert");
-      expect(alert.textContent).toContain(E.create.connectFailed);
-      expect(alert.textContent).not.toContain("login failed");
-    });
-
-    it("in a browser the block renders nothing", async () => {
-      const { dialog } = await openLocal([env("e1", null)]);
-      await within(dialog).findByText(LOCAL_GUIDE_TEXT);
-      expect(within(dialog).queryByRole("button", { name: "Connect this machine" })).toBeNull();
-    });
   });
 
   it("a dial-in device's page names its provider and its machine's version, with no machine block", async () => {

@@ -117,6 +117,8 @@ export class PermissionFacts {
       hostRefusal: sandbox.refusal,
       /** The provider's description of the device (its stored report, English), or null. */
       description: sandbox.description,
+      /** How to change the device's limits, in its provider's words (stored report, English). */
+      changeHint: sandbox.changeHint,
     };
   }
 
@@ -186,6 +188,7 @@ export class PermissionFacts {
       ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
     };
     const box = effectiveDeviceSandbox(platform, orgLayer, device, providerLayerOf(support));
+    const report = storedReport(row?.report);
     const hostCeiling = hostGrantCeiling(box, platform, orgLayer);
     return {
       box,
@@ -195,7 +198,9 @@ export class PermissionFacts {
       refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer),
       /** Why a host cannot be added to the device's own network list ({@link deviceListAddRefusal}). */
       listAddRefusal: (host: string) => deviceListAddRefusal(host, box, platform, orgLayer),
-      description: storedReport(row?.report)?.description.en ?? null,
+      description: report?.description.en ?? null,
+      /** How to change the device's limits, in its provider's words (English), or null. */
+      changeHint: report?.changeHint?.en ?? null,
       /**
        * The device's network is an allowlist with a host list of its own: only then can a host
        * join that list (`DevicesService.addNetworkHostsIn`); a device following its org's hosts

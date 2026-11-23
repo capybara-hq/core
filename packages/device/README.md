@@ -121,9 +121,13 @@ scope against the **owner ceiling** in `policy.json`, which only you widen, on t
   reach does not cover is refused with a reason (`project_refused`: another connection's directory,
   outside the reach, or a denied path), never shown as missing.
 
-A new login starts with outside-the-sandbox off, the open network and `machine` reach. `login`
-prints the ceiling and how to widen it; a widening (including a wider reach) prints the risk text
-and needs `--yes` or a `y` at the prompt. The organization and the platform have their own
+A new connection starts with outside-the-sandbox on, the open network and `machine` reach (aligned
+with Claude Code: commands run in the sandbox, and a call that asks to run outside it runs only
+as the conversation's permission profile decides: the person approves it, the review model does, or
+the Auto profile grants it). An existing connection keeps its stored ceiling. `login` prints the
+ceiling, the risk text when running outside the sandbox is on, and how to narrow or widen it
+(`capybara-device ceiling set -c <device id> --outside-sandbox off`); a widening (including a
+wider reach) prints the risk text and needs `--yes` or a `y` at the prompt. The organization and the platform have their own
 settings; the narrowest wins.
 
 **Upgrading from policy format 3.** This program reads only `policy.json` format 4. A format 3 file
@@ -192,8 +196,31 @@ reads the denied settings files. On Linux Java takes the home from the password 
 Landlock does not hide `stat`, so the build sees the files exist but cannot open them and may fail
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look
 absent. Repository credentials reach a build only through an escalated call. Gradle init scripts
-and a `GRADLE_USER_HOME` moved elsewhere are not covered. A bind mount or second
-mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
+and a `GRADLE_USER_HOME` moved elsewhere are not covered. Because the carve works on paths, a
+denied directory mounted again elsewhere would stay readable there, so the deny list is built
+with `/proc/self/mountinfo` and names every path where another mount may show a denied directory
+or something inside it: a bind mount of it or of a file in it, a mount of an ancestor's subtree (a
+second mount of the disk holding your home, content covered by a later mount included), a file
+system mounted inside it that is also mounted elsewhere, an overlay whose layer lies in or holds it,
+and a loop device whose image file lies in it (also under a dm-crypt or LVM device stacked on that
+loop device); a mount root or point naming it in another case (a case-folding directory) counts; those paths are denied under every reach. Mounts
+whose content cannot be told are denied as a whole: an automount point with nothing mounted on it
+yet (a lookup there would mount something; an indirect map such as `/home` that holds a denied
+directory or this device's own directories is left alone, and its keys not mounted yet are not
+seen), an overlay whose layer is relative or does not resolve, a loop device whose image cannot be
+read. When the table itself cannot be read or decided (unreadable, a line or escape it cannot parse,
+mounts that do not settle, unknown content holding this device's own directories), machine reach is
+refused with the cause; fixing it restores machine reach. Meanwhile `capybara-device ceiling set
+--project-reach paths` reads only the project directories you list, and listing a directory means
+you trust it not to hold a second view of a denied one: while the table is undecided, the
+`paths` and `workspace` reaches deny only the re-exposures found before the reading stopped (none
+when the table cannot be read at all), so a listed directory that contains a mount point is not
+checked; `ceiling` shows the cause. The table is read at each operation's start and
+about every second while operations run; when the deny list changes, running operations are revoked,
+so a mount made in between is readable until then. Not recognized: network file systems (NFS, CIFS)
+or FUSE file systems (bindfs) showing the same files under another device, a disk or image mounted
+twice under different devices, a file system no longer in the mount table, and snapshots (copies of
+a directory, not mounts of it). More than
 4096 carved directories refuses machine reach for that operation: use the `paths` reach instead;
 files fill what the directories leave of the 4096 and the rest stay unreadable. Every granted root
 is held open by the operation agent until the sandbox is set up; the agent raises its soft
@@ -384,6 +411,14 @@ image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir
 container has a read-only root file system, a pids limit of 1024, `--cap-drop ALL`,
 `no-new-privileges`, and the policy's `cpu` and `memoryMb` as `--cpus`, `--memory` and an equal
 `--memory-swap`.
+
+Docker mode also needs the host's `/usr/bin/python3` (macOS: with the command line tools, `xcode-select --install`; Debian or
+Ubuntu: `sudo apt install python3`; Fedora or RHEL: `sudo dnf install python3`): the program runs its
+trusted helpers on the host with it, by absolute path, even though the work runs in the container.
+`login --mode docker` and `start` check for it first and refuse with that hint; a refused login
+stores nothing (JSON error code `host_python_missing`; a re-login of an existing docker device
+writes its credential and warns instead). A login service keeps failing to start until it is
+installed.
 
 The container is always on Docker's default bridge: an escalated call has the container's whole network.
 Restricted work inside it is confined by the Linux launcher (Landlock, the seccomp broker and the

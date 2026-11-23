@@ -792,12 +792,13 @@ describe("SettingsPage loading", () => {
 
   it("every FormSection inside a SettingsPage is stacked (the sub-nav holds the title column)", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const rule =
-      css.match(/([^{}]*)\{[^{}]*grid-template-columns: minmax\(0, 1fr\);[^{}]*\}/g) ?? [];
-    expect(rule.some((r) => r.includes(".cb-settings-content .cb-form-section"))).toBe(true);
+    // the one columns rule excludes the SettingsPage; the base rule is one column
+    const columns = css.match(/([^{}]*)\{[^{}]*grid-template-columns: 240px minmax\(0, 1fr\);/g);
+    expect(columns?.length).toBe(1);
+    expect(columns?.[0]).toContain(':not([data-template="SettingsPage"])');
   });
 
-  it("FormSection layout: columns by default, stacked puts the head above a full-width card, loading too", () => {
+  it("FormSection layout: stacked by default, `stacked` keeps one section stacked among many, loading too", () => {
     zh(
       <>
         <FormSection id="a" title="默认">
@@ -809,7 +810,7 @@ describe("SettingsPage loading", () => {
       </>,
     );
     const [plain, stacked] = [...document.querySelectorAll('[data-part="form-section"]')];
-    // an existing section renders as before: no layout attribute, the two-column rule
+    // a plain section has no layout attribute: the template's count decides
     expect(plain?.hasAttribute("data-layout")).toBe(false);
     expect(stacked?.getAttribute("data-layout")).toBe("stacked");
     // the same parts in the same order: the head, then the card
@@ -825,29 +826,22 @@ describe("SettingsPage loading", () => {
         activeNav="general"
         loading={{
           sections: [
-            {
-              title: "提示词",
-              description: "说明",
-              layout: "stacked",
-              fields: [{ control: "list-editor" }],
-            },
+            { title: "提示词", description: "说明", fields: [{ control: "list-editor" }] },
             { title: "其他", fields: 1 },
           ],
         }}
       />,
     );
     const loading = [...document.querySelectorAll('[data-part="form-section"]')];
-    expect(loading[0]?.getAttribute("data-layout")).toBe("stacked");
     expect(loading[0]?.querySelector('[data-part="loading-list-editor"]')).not.toBeNull();
     expect(loading[1]?.hasAttribute("data-layout")).toBe(false);
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const at = css.indexOf('.cb-form-section[data-layout="stacked"],');
-    expect(css.slice(at, css.indexOf("}", at))).toContain("grid-template-columns: minmax(0, 1fr)");
-    // the default two-column rule is untouched
+    // the base rule is one column; a forced stacked section is excluded from the columns rule
     const base = css.indexOf(".cb-form-section {");
     expect(css.slice(base, css.indexOf("}", base))).toContain(
-      "grid-template-columns: 240px minmax(0, 1fr)",
+      "grid-template-columns: minmax(0, 1fr)",
     );
+    expect(css).toContain('.cb-form-section:not([data-layout="stacked"]) {');
   });
 
   it("the list-detail grid collapses to one column below its 580 fit; label-less rows keep their ends on their line", () => {

@@ -142,8 +142,16 @@ describe("project reach and other connections' directories", () => {
     expect(c.otherConnectionDenies).not.toContain(f.stateRoot);
     expect(c.secretAndStateDenies).toContain(f.stateRoot);
     expect(c.secretAndStateDenies).not.toContain(b);
+    // (on Linux the machine's own mount table may add re-exposed or unknown-content mounts, such
+    // as Docker's overlay roots whose layers this user cannot resolve)
     expect([...c.restrictedDeniedReadRoots].sort()).toEqual(
-      [...new Set([...c.secretAndStateDenies, ...c.otherConnectionDenies])].sort(),
+      [
+        ...new Set([
+          ...c.secretAndStateDenies,
+          ...c.otherConnectionDenies,
+          ...c.mountReexposedDenies,
+        ]),
+      ].sort(),
     );
   });
   it("the revision changes when a connection is added or removed", async () => {
@@ -662,5 +670,92 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     const full = { ...listed, full: true };
     expect(grantStillHolds(full, listed)).toBe(false);
     expect(grantStillHolds(full, full)).toBe(true);
+  });
+});
+
+describe("mounts that re-expose a denied directory (Linux mountinfo)", () => {
+  it("re-exposed paths join the deny list under every reach and refuse a project root there", async () => {
+    const f = await fixture();
+    const keys = join(f.dir, "mnt", "keys");
+    const seen: string[][] = [];
+    const kept: string[][] = [];
+    const input = {
+      ...f.input,
+      mountReexposures: (denied: readonly string[], keep: readonly string[]) => {
+        seen.push([...denied]);
+        kept.push([...keep]);
+        return { paths: [keys], problem: null };
+      },
+    };
+    const c = readStrictOwnerCeilingSync(input);
+    // never denied wholesale: the device's own roots
+    for (const root of [f.roots.workspace, f.roots.skills, f.roots.tmp])
+      expect(kept[0]).toContain(root);
+    // asked about every denied path the grant would deny
+    expect([...(seen[0] ?? [])].sort()).toEqual(
+      [...new Set([...c.secretAndStateDenies, ...c.otherConnectionDenies])].sort(),
+    );
+    expect(c.mountReexposedDenies).toContain(keys);
+    expect(c.mountReexposureProblem).toBeNull();
+    expect(
+      intersectOperation(scoped(f.roots, f.roots.workspace), c, open).deniedReadRoots,
+    ).toContain(keys);
+    expect(refusal(() => checkRoots([join(keys, "x")], [], c)).message).toBe(
+      PROJECT_REFUSAL_MESSAGES.denied,
+    );
+    // the revision follows the re-exposures
+    expect(c.revision).not.toBe((await f.read()).revision);
+    f.setPolicy({ ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: "paths" } });
+    const paths = readStrictOwnerCeilingSync(input);
+    expect(
+      intersectOperation(scoped(f.roots, f.roots.workspace), paths, open).deniedReadRoots,
+    ).toContain(keys);
+  });
+  it("a mount table it cannot read refuses machine reach only, naming the cause", async () => {
+    const f = await fixture();
+    const input = {
+      ...f.input,
+      mountReexposures: () => ({
+        paths: [],
+        problem: "/proc/self/mountinfo cannot be read (EACCES)",
+      }),
+    };
+    const machine = readStrictOwnerCeilingSync(input);
+    const message = refusal(() =>
+      intersectOperation(scoped(f.roots, f.roots.workspace), machine, open),
+    ).message;
+    expect(message).toContain("/proc/self/mountinfo cannot be read (EACCES)");
+    expect(message).toContain("capybara-device ceiling set --project-reach paths");
+    // an escalated call is not a sandboxed read
+    const escalated = scoped(f.roots, f.roots.workspace) as unknown as Parameters<
+      typeof intersectOperation
+    >[0];
+    expect(
+      intersectOperation(
+        {
+          ...escalated,
+          filesystem: { kind: "device" },
+          network: { kind: "environment" },
+        } as Parameters<typeof intersectOperation>[0],
+        machine,
+        open,
+      ).full,
+    ).toBe(true);
+    for (const reach of ["paths", "workspace"] as const) {
+      f.setPolicy({ ownerCeiling: { ...FULL_OWNER_CEILING, projectReach: reach } });
+      const g = intersectOperation(
+        scoped(f.roots, f.roots.workspace),
+        readStrictOwnerCeilingSync(input),
+        open,
+      );
+      expect(g.full).toBe(false);
+    }
+  });
+  it("reads this machine's own mount table by default (none outside Linux)", async () => {
+    const f = await fixture();
+    const c = await f.read();
+    // a real table parses: on Linux the answer is complete, elsewhere nothing is asked
+    expect(c.mountReexposureProblem).toBeNull();
+    if (process.platform !== "linux") expect(c.mountReexposedDenies).toEqual([]);
   });
 });

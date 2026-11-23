@@ -19,6 +19,7 @@ import {
   resolveConnection,
   unreadableConnections,
 } from "./connections.js";
+import type { HostProbes } from "./host-python.js";
 import { stamped } from "./log-timestamp.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
@@ -47,6 +48,8 @@ export interface CliEnv {
   stdinIsTTY?: boolean;
   /** Whether the OS sandbox can run here, for `login` (default: the runtime's check). */
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
+  /** Whether a path is an executable file (default: the file system), for docker mode's python3. */
+  hostProbes?: HostProbes;
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
   /** Test seam for `ceiling set`: runs between its read and its locked write. */
@@ -198,6 +201,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.sleep && { sleep: io.sleep }),
         ...(io.openBrowser && { openBrowser: io.openBrowser }),
         ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
+        ...(io.hostProbes && { hostProbes: io.hostProbes }),
       });
     case "logout": {
       let conn: { stateDir: string; deviceId: string };
@@ -269,6 +273,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.env && { env: io.env }),
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
+        ...(io.hostProbes && { hostProbes: io.hostProbes }),
       });
     }
     case "stop": {

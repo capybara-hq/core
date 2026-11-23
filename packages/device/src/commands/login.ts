@@ -15,11 +15,13 @@ import {
   DEVICE_ID_PATTERN,
   ensureMachineFile,
   listConnections,
+  unreadableConnections,
 } from "../connections.js";
 import { withCanonicalForms, within } from "../exec/operation-types.js";
 import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
+import { type HostProbes, hostPythonProblem } from "../host-python.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
@@ -109,29 +111,43 @@ export function projectReachLoginLine(
 }
 
 /**
- * The line `login` prints when the owner ceiling keeps every call in the sandbox (the default of a
- * new setup): commands run in the sandbox under every profile, Full access included.
+ * The line `login` prints when the owner ceiling keeps every call in the sandbox (the owner turned
+ * it off): commands run in the sandbox under every profile, Full access included.
  */
 export const sandboxOnlyLoginLine = (deviceId: string): string =>
   "This machine's owner ceiling keeps every command in the sandbox, Full access included: no " +
   `call runs outside it. ${widenCeilingHint(deviceId)}`;
 
-/** The line `login` prints when the owner ceiling allows running outside the sandbox. */
+/**
+ * The line `login` prints when the owner ceiling allows running outside the sandbox (the default of
+ * a new setup): commands run in the sandbox, and a call that asks to run outside it runs only when
+ * the conversation's permission profile approves it.
+ */
 export const outsideSandboxLoginLine = (deviceId: string): string =>
   "This machine's owner ceiling allows running outside the sandbox: commands still run in the " +
-  "sandbox, and one approved call may run as you. Turn it off with " +
-  `\`capybara-device ceiling set --outside-sandbox off -c ${deviceId}\`.`;
+  "sandbox, and a call that asks to run outside it runs as you only as the conversation's " +
+  "permission profile decides (the person approves it, the review model does, or the Auto " +
+  "profile grants it). " +
+  `Turn it off with \`capybara-device ceiling set --outside-sandbox off -c ${deviceId}\`.`;
 
 /** Added when the organization does not allow running outside the sandbox while the owner does. */
 export const OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE =
   "This organization does not allow running outside the sandbox, so every call stays in the " +
   "sandbox here.";
 
-/** The line `login` prints when sandboxed work cannot run here (no OS sandbox). */
-export function restrictedUnavailableLoginLine(reason: string, deviceId: string): string {
+/**
+ * The line `login` prints when sandboxed work cannot run here (no OS sandbox); with the ceiling
+ * still keeping every call in the sandbox (`outsideOn` false), how the owner widens it.
+ */
+export function restrictedUnavailableLoginLine(
+  reason: string,
+  deviceId: string,
+  outsideOn: boolean,
+): string {
   return (
     `The OS sandbox is unavailable on this machine (${reason}), so sandboxed work cannot run ` +
-    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker. ${widenCeilingHint(deviceId)}`
+    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker.` +
+    (outsideOn ? "" : ` ${widenCeilingHint(deviceId)}`)
   );
 }
 
@@ -149,6 +165,8 @@ export interface LoginDeps {
   hostname?: string;
   /** Whether the OS sandbox can run here (default: the runtime's check); injectable for tests. */
   sandboxAvailable?: SandboxCheck;
+  /** Whether a path is an executable file (default: the file system); for the docker-mode check. */
+  hostProbes?: HostProbes;
 }
 
 const SLOW_DOWN_STEP_SECONDS = 5;
@@ -167,8 +185,8 @@ function defaultOpen(platform: NodeJS.Platform) {
 }
 
 /**
- * A new setup writes the default policy: no running outside the sandbox, the open network and the
- * whole machine as the project reach. Written under the policy lock, and only while no policy file
+ * A new setup writes the default policy: running outside the sandbox per approved call, the open
+ * network and the whole machine as the project reach. Written under the policy lock, and only while no policy file
  * exists: an existing policy is the owner's choice and is never changed here (a file in another
  * format version is rewritten only by the owner's `capybara-device ceiling set`). Returns whether
  * this call created the file.
@@ -345,6 +363,18 @@ export async function login(
       1,
     );
   }
+  // Docker mode needs the host's python3: refused before anything is requested or stored.
+  // (only when this machine has no connection yet: then the device is certainly a new one; with
+  // others, an existing device keeps its mode and --mode is ignored, so it is checked below)
+  if (
+    cmd.mode === "docker" &&
+    listConnections(deps.machineDir).length === 0 &&
+    unreadableConnections(deps.machineDir).length === 0
+  ) {
+    const problem = hostPythonProblem(platform, deps.hostProbes);
+    if (problem !== undefined)
+      return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
+  }
   // Before the person approves anything: a credential the kernel issues must have a place here.
   try {
     prepareMachineDir(deps.machineDir);
@@ -456,6 +486,17 @@ export async function login(
             );
           }
         }
+        if (served === undefined && mode === "docker") {
+          const problem = hostPythonProblem(platform, deps.hostProbes);
+          if (problem !== undefined) {
+            try {
+              rmdirSync(connDir);
+            } catch {
+              // not empty or already gone
+            }
+            return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
+          }
+        }
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
         // A new connection gets the default written before the credential makes the login final
@@ -474,6 +515,12 @@ export async function login(
         } catch (e) {
           err(`Cannot read the local policy in ${connDir}: ${(e as Error).message}`);
         }
+        // an existing docker device keeps its mode: the requirement applies to it, but the new
+        // credential is still written (start refuses until the host has python3)
+        const hostPython =
+          served !== undefined && mode === "docker"
+            ? hostPythonProblem(platform, deps.hostProbes)
+            : undefined;
         /** Why sandboxed work cannot run here: the OS sandbox is missing (OS mode only). */
         let noSandbox: string | undefined;
         if (mode !== "docker") {
@@ -527,7 +574,12 @@ export async function login(
         }
         out(networkLoginLine(ceiling.network, deviceId));
         out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths, deviceId));
-        if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox, deviceId));
+        if (noSandbox !== undefined)
+          out(restrictedUnavailableLoginLine(noSandbox, deviceId, ceiling.outsideSandbox));
+        if (hostPython !== undefined)
+          out(
+            `Warning: ${hostPython} Until then capybara-device start refuses to run this device.`,
+          );
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(

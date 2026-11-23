@@ -202,6 +202,9 @@ export function containerCeiling(ceiling: DeviceOwnerCeiling): DeviceOwnerCeilin
     otherConnectionDenies: Object.freeze([]),
     // no other connection's directory is mounted, so an unreadable one hides nothing here
     unreadableConnections: Object.freeze([]),
+    // the container sees its own mount table and none of the host's denied paths
+    mountReexposedDenies: Object.freeze([]),
+    mountReexposureProblem: null,
     restrictedDeniedReadRoots: Object.freeze([]),
     preparation: Object.freeze({
       skillsRoot: roots.skills,

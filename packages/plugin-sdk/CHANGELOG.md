@@ -1,5 +1,49 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.60
+
+### Minor Changes
+
+- d68c9fc: Device reports can say how to change a device's limits: `DeviceReport.changeHint` (`{ en, zh? }`,
+  in the provider's words). The device page shows it under the limits, and the kernel appends it to
+  the refusals that cite the report (an escalated call the device does not allow now, a network the
+  device side keeps on the allowlist). A provider's permission support may name who keeps a closed
+  crossing closed (`limitedBy: { outsideSandbox?: "owner", openPublic?: "owner" }`): the kernel then
+  names the owner of the machine the device runs on instead of the provider.
+- ef9ac57: Desktop and native shells no longer manage local devices (maintainer decision 2026-11-23): local
+  devices are connected only with `capybara-device`. The SDK drops the shell capability `device@2`
+  (`SHELL_CAPABILITY_KEYS.device`, `DeviceCapabilityV2`, `ThisMachineConnection`, `DeviceRunningOp`,
+  `DeviceCeilingRequest`, `KeepAwakeMode`, `DeviceConnection`) and the setup-guide directive
+  `::shell-action` (`SetupGuideShellAction`, `SetupGuideShellActionLine`, the `shell-action` block,
+  `SetupGuidePlaceInfo.shellActions`, `SETUP_GUIDE_LIMITS.shellActions`); a leftover
+  `::shell-action` line is now plain text. `GET /api/v1/meta` no longer reports
+  `features.localDevices` (`protocols.device` stays). The web drops the 本机 block on the device
+  page, the 本机 mark in the device list and picker, and the 连接本机 button in 新建设备.
+
+### Patch Changes
+
+- 21c1852: `DEVICE_DENIED_SECRET_PATHS` denies mise's whole config directory `~/.config/mise` (config files
+  with `[env]` sections, the sops age key) and the config files mise loads from the home
+  (`~/.config/mise.toml`, `~/.config/mise.local.toml`, `~/.mise.toml`, `~/.mise.local.toml`,
+  `~/.mise`, `~/mise.toml`, `~/mise.local.toml`, `~/mise/config.toml`, `~/mise/config.local.toml`,
+  `~/mise/conf.d`, the legacy `~/.rtx.toml` and `~/.rtx.local.toml`; globbed names such as
+  `~/mise.<env>.toml` cannot be listed and stay readable), and the Maven and Gradle credential files
+  (`~/.m2/settings.xml`, `~/.m2/settings-security.xml`, `~/.m2/settings-security4.xml`,
+  `~/.gradle/gradle.properties`, `~/.gradle/develocity/keys.properties`,
+  `~/.gradle/enterprise/keys.properties`). Sandboxed work on a local device never reads them, and the
+  kernel never proposes an approval for them. A sandboxed Maven or Gradle build no longer gets those
+  settings: on Linux it sees the files exist but cannot open them and may fail (Maven: "Non-readable
+  settings"); on macOS they look absent. Gradle init scripts and a moved `GRADLE_USER_HOME` are not
+  covered. On Linux under `machine` reach, files directly in `~/mise`, `~/.m2` and `~/.gradle` become
+  unreadable too.
+- 0eb3412: `SetupGuidePlaceInfo` gains `checks`, whether guides of a place may use `::check` lines. It is
+  false for `device-connection` (a device guide has no target to check): `validateSetupGuide`, and so
+  `capybara-plugin check` / `pack` and the kernel's import, now refuse a check line there instead of
+  the web drawing nothing.
+- d649c6b: `DeviceReport` and `ctx.devices.reportChanged` docs: the revision must change whenever what was
+  approved against the report changes; display-only facts may change under the same revision and are
+  announced with `reportChanged`, which stores the new text without invalidating approvals.
+
 ## 0.1.0-rc.59
 
 ### Minor Changes

@@ -188,6 +188,39 @@ describe("effectiveDeviceSandbox", () => {
     expect([box.networkMode, box.layer.network]).toEqual(["allowlist", "provider"]);
   });
 
+  it("a crossing the machine's owner keeps closed names the owner layer, generically", () => {
+    const owned: DeviceSandboxProviderLayer = {
+      ...operation,
+      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      outsideSandbox: false,
+      limitedBy: { outsideSandbox: "owner", openPublic: "owner" },
+    };
+    const box = effectiveDeviceSandbox(platform(), NO_ORG, device(), owned);
+    expect(box.layer).toEqual({ network: "owner", outsideSandbox: "owner" });
+    expect([box.outsideSandbox, box.networkCeiling]).toEqual([false, "allowlist"]);
+    // the owner's clamp, like the provider's, is not a hard per-call host ceiling
+    expect(hostGrantCeiling(box, platform(), NO_ORG).kind).toBe("any");
+    // a narrower platform or org still names itself first
+    expect(
+      effectiveDeviceSandbox(platform({ outsideSandbox: "off" }), NO_ORG, device(), owned).layer,
+    ).toEqual({ network: "owner", outsideSandbox: "platform" });
+    // without limitedBy a closed crossing stays the provider's
+    const { limitedBy: _owner, ...unnamed } = owned;
+    const plain = effectiveDeviceSandbox(platform(), NO_ORG, device(), unnamed);
+    expect(plain.layer).toEqual({ network: "provider", outsideSandbox: "provider" });
+    expect(
+      providerLayerOf({
+        version: 2,
+        boundary: "operation",
+        restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
+        network: { openPublic: true, allowlist: true, perOperationHosts: true },
+        outsideSandbox: false,
+        background: true,
+        limitedBy: { outsideSandbox: "owner" },
+      }).limitedBy,
+    ).toEqual({ outsideSandbox: "owner" });
+  });
+
   it("the provider layer is its support; with none known, the same layer for every provider", () => {
     // no crossing: the networks open to the device's choice, no per-call host, nothing outside
     expect(providerLayerOf(null)).toEqual({

@@ -44,6 +44,8 @@ async function setup(
     secretAndStateDenies: [],
     otherConnectionDenies: [],
     unreadableConnections: [],
+    mountReexposedDenies: [],
+    mountReexposureProblem: null,
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
@@ -235,6 +237,8 @@ describe("local-Docker operation backend paths", () => {
       secretAndStateDenies: ["/home/u/.ssh"],
       otherConnectionDenies: ["/home/u/other"],
       unreadableConnections: [],
+      mountReexposedDenies: [],
+      mountReexposureProblem: null,
       restrictedDeniedReadRoots: ["/home/u/.ssh", "/home/u/other"],
       preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
     });
@@ -250,6 +254,8 @@ describe("local-Docker operation backend paths", () => {
       secretAndStateDenies: [],
       otherConnectionDenies: [],
       unreadableConnections: [],
+      mountReexposedDenies: [],
+      mountReexposureProblem: null,
       restrictedDeniedReadRoots: [],
       preparation: { skillsRoot: "/skills", attachmentsBase: "/workspace/attachments" },
     });
@@ -283,6 +289,8 @@ describe("local-Docker operation backend paths", () => {
           secretAndStateDenies: [],
           otherConnectionDenies: [],
           unreadableConnections: [],
+          mountReexposedDenies: [],
+          mountReexposureProblem: null,
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
         }),

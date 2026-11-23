@@ -895,6 +895,8 @@ describe("local-Docker skill preparation", () => {
           secretAndStateDenies: [],
           otherConnectionDenies: [],
           unreadableConnections: [],
+          mountReexposedDenies: [],
+          mountReexposureProblem: null,
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,
