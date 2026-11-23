@@ -814,20 +814,21 @@ export class DevicesService {
   }
 
   /**
-   * Adds `hosts` to one of the person's devices' own network list: a network approval decided
-   * "add to this device's list" (`via`: where it was decided). In a caller's transaction (the
-   * approval decision's) it joins it and requires the authority locks of that prelude already held
-   * there (platform and org shared, the device exclusive: {@link lockNetworkAddSubject} in the
-   * caller's ordered prelude; else it throws before locking or writing anything; the membership
-   * and device rows are locked again in the body); with no transaction it takes that prelude itself ({@link withOrderedLocks}). It
-   * takes no distributed lock. The write is a network change like `PATCH` ({@link networkLocked}:
-   * audited `device.network_changed` from → to, listed as a recent change, the device epoch bumped
-   * and the instance marked for its next use). Refuses with `device.network_not_allowed`, writing
-   * nothing, unless the stored network is `allowlist` with a host list of its own (a device
-   * following its org's hosts already allows every host its list could name) and every host may
-   * join that list (`deviceListAddRefusal`); its detail `reason` says which (`network_closed`,
-   * `follows_org`, `host_not_addable`), for the decision's copy. Hosts its list already covers change nothing; own
-   * hosts the org's hosts no longer cover (in effect nowhere) leave the list with the addition.
+   * Adds `hosts` to one of the person's devices' own network list: a network approval decided "add
+   * to this device's list" (`via`: where it was decided). In a caller's transaction (the approval
+   * decision's) it joins it and requires the authority locks of that prelude already held there
+   * (platform and org shared, the device exclusive: {@link lockNetworkAddSubject} in the caller's
+   * ordered prelude; else it throws before locking or writing anything; the membership and device
+   * rows are locked again in the body); with no transaction it takes that prelude itself
+   * ({@link withOrderedLocks}). It takes no distributed lock. The write is a network change like `PATCH`
+   * ({@link networkLocked}: audited `device.network_changed` from → to, listed as a recent change,
+   * the device epoch bumped and the instance marked for its next use). Refuses with
+   * `device.network_not_allowed`, writing nothing, unless the stored network is `allowlist` with a
+   * host list of its own (a device following its org's hosts already allows every host its list
+   * could name) and every host may join that list (`deviceListAddRefusal`); its detail `reason`
+   * says which (`network_closed`, `follows_org`, `host_not_addable`), for the decision's copy.
+   * Hosts its list already covers change nothing; own hosts the org's hosts no longer cover (in
+   * effect nowhere) leave the list with the addition.
    */
   async addNetworkHostsIn(
     orgId: string,
