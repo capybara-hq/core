@@ -87,6 +87,8 @@ beforeAll(async () => {
     (${ORG_A}, 'p', 'a-only'), (${ORG_B}, 'p', 'b-only'), (null, 'p', 'platform-default')`.execute(
     raw,
   );
+  await sql`insert into capybara.model_purpose_mappings (org_id, purpose, provider, model) values
+    (null, 'title', 'p', 'platform-title')`.execute(raw);
   root = await session(k, "root");
   aliceReq = await session(k, "alice");
 });
@@ -109,7 +111,12 @@ describe("RLS policies, dark", () => {
       where col.table_schema = 'capybara' and col.column_name = 'org_id' and c.relkind = 'r'
       order by 1`.execute(raw);
     expect(r.rows.length).toBeGreaterThanOrEqual(59);
-    expect(r.rows.filter((t) => !t.enabled || !t.forced || t.policies !== 1)).toEqual([]);
+    // the two tables whose platform defaults every org reads add a SELECT-only policy
+    const expected = (t: string) =>
+      t === "model_purpose_mappings" || t === "model_disabled" ? 2 : 1;
+    expect(
+      r.rows.filter((t) => !t.enabled || !t.forced || t.policies !== expected(t.table)),
+    ).toEqual([]);
   });
 
   it("are bypassed by a superuser, which the kernel reports when enforcing", async () => {
@@ -196,6 +203,26 @@ describe("RLS policies, enforced", () => {
           .where("action", "=", "rls.a")
           .execute(),
       ).rejects.toThrow(/row-level security/);
+      // a platform default an org reads is still not its own: no delete, no update, no takeover
+      const delDefault = await db
+        .withSchema("capybara")
+        .deleteFrom("model_disabled")
+        .where("org_id", "is", null)
+        .executeTakeFirst();
+      expect(delDefault.numDeletedRows).toBe(0n);
+      const takeOver = await db
+        .withSchema("capybara")
+        .updateTable("model_disabled")
+        .set({ org_id: ORG_A })
+        .where("model", "=", "platform-default")
+        .executeTakeFirst();
+      expect(takeOver.numUpdatedRows).toBe(0n);
+      const delMapping = await db
+        .withSchema("capybara")
+        .deleteFrom("model_purpose_mappings")
+        .where("org_id", "is", null)
+        .executeTakeFirst();
+      expect(delMapping.numDeletedRows).toBe(0n);
       // a platform default needs the platform scope to be written
       await expect(
         db
@@ -208,6 +235,9 @@ describe("RLS policies, enforced", () => {
     const roles = await sql<{ role: string }>`select role from capybara.memberships
       where org_id = ${ORG_B}`.execute(raw);
     expect(roles.rows).toEqual([{ role: "owner" }]);
+    const defaults = await sql<{ org_id: string | null }>`select org_id from capybara.model_disabled
+      where model = 'platform-default'`.execute(raw);
+    expect(defaults.rows).toEqual([{ org_id: null }]);
   });
 
   it("the platform scope reads and writes across orgs", async () => {

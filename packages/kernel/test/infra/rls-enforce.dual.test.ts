@@ -9,6 +9,7 @@ import { type Kysely, sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { rlsBypassReason } from "../../src/infra/database/rls-role.js";
 import { accountsFor } from "../helpers/identity.js";
 import { PW } from "../helpers/runs.js";
 
@@ -90,7 +91,25 @@ describe("RLS enforced on two replicas", () => {
     await pgc?.stop();
   });
 
+  it("the replicas' role is subject to the policies, which fail closed unscoped", async () => {
+    // a superuser would pass every case below with no policy at all
+    expect(await rlsBypassReason(raw)).toBeUndefined();
+    const probe = createDb(h.dbUrl, 1, () => {}, { rls: "enforce" });
+    try {
+      const rows = await probe
+        .withSchema("capybara")
+        .selectFrom("memberships")
+        .selectAll()
+        .execute();
+      expect(rows).toEqual([]);
+    } finally {
+      await probe.destroy();
+    }
+  });
+
   it("each org's people see only their org's rows, on both replicas, interleaved", async () => {
+    // under enforce an unscoped membership check finds nothing (404): a 200 shows the replica put
+    // the org scope on its connection, and the body that no other org's row came with it
     const calls = Array.from({ length: 24 }, (_, n) => {
       const who = n % 2 === 0 ? "alice" : "bob";
       const org = who === "alice" ? ORG_A : ORG_B;

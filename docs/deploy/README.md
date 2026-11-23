@@ -831,6 +831,25 @@ GitHub), or `docker build -t capybara-sandbox:latest https://github.com/capybara
 and `.../egress-proxy` for `capybara-sandbox-egress:latest`; then set `CAPYBARA_SANDBOX__IMAGE` and the
 extension's `egressProxyImage` to those tags.
 
+## Row level security (`db.rls`)
+
+Every kernel table with an `org_id` column has a row level security policy (migration 0181; spec
+`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`). `db.rls` (`CAPYBARA_DB__RLS`) decides what
+the kernel's connections carry: `off` (default) sends nothing and the policies admit every row;
+`scoped` sets each request's, job's or run's org on its connection (one extra round trip per pool
+query and per transaction) while still admitting every row; `enforce` makes the policies filter by it.
+
+- PostgreSQL never applies RLS to a **superuser** or a role with **BYPASSRLS**. The compose file's
+  `POSTGRES_USER` is a superuser, so `enforce` needs the kernel to connect as a role without either
+  (it may own the `capybara` schema); the kernel logs an error at start when it enforces on such a
+  role.
+- On a role that is subject to RLS, the policies are in place even with `db.rls: off`: `pg_dump` as
+  that role needs `--enable-row-security` (or dump as a superuser), and `COPY FROM` into these tables
+  (a data-only restore, a bulk load, logical replication into them) is refused for that role. A full
+  `pg_restore` is unaffected (the policies are restored after the data).
+- With `db.rls` other than `off`, no PgBouncer in transaction pooling mode in front of the kernel:
+  the scope of a read outside a transaction is a session setting.
+
 ## Rotating the master key
 
 `masterKey` (`CAPYBARA_MASTER_KEY`) wraps one data key per org, which in turn encrypts that org's

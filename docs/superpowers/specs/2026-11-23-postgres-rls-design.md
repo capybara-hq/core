@@ -318,6 +318,20 @@ Made while building phases 2–3 (within the decisions above):
   `org_scope` policy per table (`DROP POLICY IF EXISTS` + `CREATE POLICY`, since Postgres has no
   `CREATE POLICY IF NOT EXISTS`). The measurement of §8 is `tools/dev/rls-measure.ts`, run against
   a kernel once per `db.rls` value on the same commit.
+- **Platform defaults are read-only to orgs** (security review of phase 3): on
+  `model_purpose_mappings` and `model_disabled` the `org_scope` policy is the plain one, and a second,
+  `FOR SELECT` policy admits `org_id IS NULL`, so an org scope reads the defaults but cannot delete
+  one or update it into its own org (one combined `USING` would have admitted both).
+- **Dark only for exempt roles**: on a role subject to RLS the policies are in place even while they
+  admit everything: `pg_dump` needs `--enable-row-security`, `COPY FROM` into these tables is refused
+  (data-only restores, bulk loads, logical replication), and a predicate on a non-leakproof function
+  (`lower(name)` of `devices_name_uq`, the `->>` expression index of `skill_change_requests`) no
+  longer serves as an index condition. Documented in `docs/deploy/README.md`; the measurement of §8
+  must run on such a role, since a superuser shows no cost at all. If the maintainer prefers, phase 3
+  can instead create the policies without `ENABLE` / `FORCE`, moving those to phase 5.
+- **Known limits once enforced**: a unique or `ON CONFLICT` collision still reveals that another
+  org's row exists; foreign key checks and cascades bypass RLS (cascades stay within the parent's
+  org).
 - **Not on the scoped pool**, and so admitted whatever `db.rls` says: the migrator's own client, the
   owned startup activation session (platform work at start, before the gate opens) and extension
   pools (`ctx.db`, out of scope by decision 9).

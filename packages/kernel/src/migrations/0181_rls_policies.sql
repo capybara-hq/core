@@ -3,15 +3,18 @@
 -- The policies admit every row unless a connection set capybara.rls = 'enforce', which only the
 -- kernel pool does, under the kernel config db.rls = enforce. Connections that set nothing (the
 -- migrator, operators' psql, the startup activation session) are admitted as before.
--- FORCE: the kernel connects as the owner of the schema, which RLS otherwise exempts.
+-- FORCE: the kernel connects as the owner of the schema, which RLS otherwise exempts. A superuser
+-- or BYPASSRLS role is exempt whatever this says. On any other role the policies are in place even
+-- while they admit everything: pg_dump needs --enable-row-security, and COPY FROM into these
+-- tables (a data-only restore, a bulk load, logical replication) is refused for that role.
 
 -- The one rule: off unless enforcing; the platform scope sees every org; an org scope sees its
 -- own rows. An unscoped enforcing connection has empty settings and matches no row (fail closed).
 CREATE OR REPLACE FUNCTION rls_admits(row_org text) RETURNS boolean
 LANGUAGE sql STABLE PARALLEL SAFE AS $$
-  SELECT coalesce(current_setting('capybara.rls', true), '') <> 'enforce'
-      OR current_setting('capybara.scope', true) = 'platform'
-      OR row_org = current_setting('capybara.org_id', true)
+  SELECT coalesce(pg_catalog.current_setting('capybara.rls', true), '') <> 'enforce'
+      OR pg_catalog.current_setting('capybara.scope', true) = 'platform'
+      OR row_org = pg_catalog.current_setting('capybara.org_id', true)
 $$;
 
 ALTER TABLE device_retirement_obligations ENABLE ROW LEVEL SECURITY;
@@ -234,17 +237,23 @@ ALTER TABLE eval_results FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_scope ON eval_results;
 CREATE POLICY org_scope ON eval_results USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
 
--- model_purpose_mappings: platform defaults (org_id NULL) are read by every org; writing one needs the platform scope
+-- model_purpose_mappings: platform defaults (org_id NULL) are read by every org (a SELECT-only policy, so an org
+-- can neither delete nor update one); writing one needs the platform scope
 ALTER TABLE model_purpose_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_purpose_mappings FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_scope ON model_purpose_mappings;
-CREATE POLICY org_scope ON model_purpose_mappings USING (org_id IS NULL OR rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
+CREATE POLICY org_scope ON model_purpose_mappings USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
+DROP POLICY IF EXISTS platform_defaults_read ON model_purpose_mappings;
+CREATE POLICY platform_defaults_read ON model_purpose_mappings FOR SELECT USING (org_id IS NULL);
 
--- model_disabled: platform defaults (org_id NULL) are read by every org; writing one needs the platform scope
+-- model_disabled: platform defaults (org_id NULL) are read by every org (a SELECT-only policy, so an org
+-- can neither delete nor update one); writing one needs the platform scope
 ALTER TABLE model_disabled ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_disabled FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_scope ON model_disabled;
-CREATE POLICY org_scope ON model_disabled USING (org_id IS NULL OR rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
+CREATE POLICY org_scope ON model_disabled USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
+DROP POLICY IF EXISTS platform_defaults_read ON model_disabled;
+CREATE POLICY platform_defaults_read ON model_disabled FOR SELECT USING (org_id IS NULL);
 
 ALTER TABLE model_usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_usage FORCE ROW LEVEL SECURITY;
