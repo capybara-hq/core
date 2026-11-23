@@ -8,6 +8,7 @@ import type { DeploymentConfigView } from "../../src/extensions/deployment-confi
 import { DEPLOYMENT_SECRETS_ORG, secretKey } from "../../src/extensions/deployment-config-store.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { PLUGIN_DEPLOYMENT_CONFIG_TOPIC } from "../../src/extensions/lifecycle-topics.js";
+import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import type { OrgOverrideView } from "../../src/extensions/org-overrides.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
@@ -151,12 +152,20 @@ describe("registration", () => {
 });
 
 describe("plugins.set-enabled before the org config exists", () => {
-  it("returns plugin.needs_input whose next step names extensions.save-org-config", async () => {
+  it("switches on (as the web does) and its result names extensions.save-org-config", async () => {
     const o = op("plugins.set-enabled");
     const input = o.input.parse({ itemId, enabled: true });
-    const pre = await o.precheck?.(input, ctxOf(env.rootId));
-    expect(pre).toMatchObject({ ok: false, code: "plugin.needs_input" });
-    expect((pre as { message: string }).message).toContain("extensions.save-org-config");
+    expect(await o.precheck?.(input, ctxOf(env.rootId))).toEqual({ ok: true });
+    const out = (await run("plugins.set-enabled", input, ctxOf(env.rootId))) as {
+      item: { state: string };
+      configNeeded?: string;
+    };
+    expect(out.configNeeded).toContain(NAME);
+    expect(out.configNeeded).toContain("extensions.save-org-config");
+    const ext = (await env.k.app.get(OrgExtensionConfigs).list(env.orgId)).find(
+      (e) => e.plugin === NAME,
+    );
+    expect(ext).toMatchObject({ enabled: true, needsConfig: true });
   });
 });
 

@@ -43,9 +43,12 @@ const NOTHING_INSTALLED = "nothing-installed";
 export const NEEDS_INPUT =
   "This plugin needs connector input (endpoints, credentials): install it with plugins.install, or for an installed plugin missing connectors create them with plugins.configure-connectors; the person enters the credentials in a secure input request.";
 
-/** `plugin.needs_input` when what is missing is its extension's org config (an agent can set it). */
+/**
+ * What `plugins.set-enabled` adds to its result when the plugin is on but its extension's
+ * effective config for the org is not valid yet (switching on never waits for it, as on the web).
+ */
 export const needsOrgConfig = (extension: string): string =>
-  `This plugin's extension ${extension} needs its org config first: read what is missing with extensions.org-config, fill in the org's own copy of the overridable fields with extensions.save-org-config (the person enters secrets in a secure input request), then call plugins.set-enabled again.`;
+  `The plugin is on, but its extension ${extension} has no valid config for this org yet and gets no calls until it does: read what is missing with extensions.org-config, then fill in the org's own copy of the overridable fields with extensions.save-org-config (the person enters secrets in a secure input request). If only platform-only fields are missing, the super admin must set them.`;
 
 /** The English name of a plugin as next steps and messages name it. */
 const enName = (i: OrgCatalogItem): string => localized(i.displayName, i.name).en;
@@ -93,24 +96,25 @@ const row = (i: OrgCatalogItem, role: ErrorRole) => ({
 });
 
 /**
- * Why switching the plugin on needs input first, as the `plugin.needs_input` message, or null: its
- * extension's effective config for the org is not valid (an agent fills in the org's copy with
- * `extensions.save-org-config`), or connector templates without their connector, or anything else
- * the item's `needs_config` stands for (connector input: `plugins.install`,
- * `plugins.configure-connectors`).
+ * Why switching the plugin on needs input first, as the `plugin.needs_input` message, or null:
+ * connector input only (an installed plugin whose connector template misses its connector, or a
+ * plugin not installed yet that has connector templates: `plugins.install`,
+ * `plugins.configure-connectors`). Its extension's config never blocks the switch, as on the web
+ * and the route: the plugin goes on and its extension stays `needsConfig` until the org's copy
+ * (or the platform config) is valid ({@link configStillNeeded}).
  */
-function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[]): string | null {
+function needsInput(item: OrgCatalogItem): string | null {
+  if (item.installed !== null) return item.state === "needs_config" ? NEEDS_INPUT : null;
+  return item.componentCounts.connectorTemplates > 0 ? NEEDS_INPUT : null;
+}
+
+/** The note for a plugin switched on whose extension's effective config is not valid, or null. */
+function configStillNeeded(
+  item: OrgCatalogItem,
+  extensions: readonly OrgExtensionView[],
+): string | null {
   const own = extensions.find((e) => e.catalogItem?.itemId === item.id);
-  // `needs_config` also means connector templates without their connector
-  if (item.state === "needs_config") {
-    return own?.needsConfig === true ? needsOrgConfig(own.plugin) : NEEDS_INPUT;
-  }
-  if (item.installed !== null) return null;
-  if (item.componentCounts.connectorTemplates > 0) return NEEDS_INPUT;
-  if (item.componentCounts.extension === 0) return null;
-  return own !== undefined && !own.enabled && own.configurable && own.needsConfig
-    ? needsOrgConfig(own.plugin)
-    : null;
+  return own?.needsConfig === true ? needsOrgConfig(own.plugin) : null;
 }
 
 /**
@@ -230,7 +234,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.set-enabled",
         description:
-          "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs connector input is refused: install it with plugins.install instead. Switching off removes what the plugin brought and needs confirm: the value plugins.disable-preview returned with the preview the person saw.",
+          "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs connector input is refused: install it with plugins.install instead. A plugin whose extension has no valid config for the org yet is switched on anyway, and the result's configNeeded says how to fill in the org's copy (extensions.save-org-config). Switching off removes what the plugin brought and needs confirm: the value plugins.disable-preview returned with the preview the person saw.",
         input: z.discriminatedUnion("enabled", [
           z.object({ itemId: ItemId, enabled: z.literal(true) }).strict(),
           z.object({ itemId: ItemId, enabled: z.literal(false), confirm: Confirm }).strict(),
@@ -274,7 +278,7 @@ export class PluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.needs_input",
-            next: "When its extension's org config is missing, fill in the org's copy with extensions.save-org-config (secrets in askPerson), then call again; a plugin that needs connector input is installed with plugins.install (or plugins.configure-connectors once installed), the person entering the credentials on the card.",
+            next: "The plugin needs connector input: install it with plugins.install (or plugins.configure-connectors once installed), the person entering the credentials on the card.",
           },
           {
             code: "catalog.approval_required",
@@ -318,9 +322,7 @@ export class PluginsOperations implements OnModuleInit {
               next: unavailableNext(item.reason, name),
             };
           }
-          const missing = i.enabled
-            ? needsInput(item, await this.extensions.list(ctx.orgId))
-            : null;
+          const missing = i.enabled ? needsInput(item) : null;
           if (missing !== null) return { ok: false, code: "plugin.needs_input", message: missing };
           return { ok: true };
         },
@@ -348,7 +350,7 @@ export class PluginsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           if (input.enabled) {
             const [item] = await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId, input.itemId);
-            const missing = item ? needsInput(item, await this.extensions.list(ctx.orgId)) : null;
+            const missing = item ? needsInput(item) : null;
             if (missing !== null) throw new ToolError(missing);
           }
           const r = await this.orgCatalog.setSwitch(
@@ -360,8 +362,12 @@ export class PluginsOperations implements OnModuleInit {
             viaAgent("plugins.set-enabled", ctx),
           );
           if (r.kind === "done") {
+            const configNeeded = input.enabled
+              ? configStillNeeded(r.item, await this.extensions.list(ctx.orgId))
+              : null;
             return {
               item: brief(r.item, await roleFor(this.kdb.db, ctx)),
+              ...(configNeeded !== null && { configNeeded }),
             };
           }
           // unreachable: confirm is required when switching off

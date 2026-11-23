@@ -538,7 +538,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PUT /api/v1/orgs/:orgId/extensions/:extension",
     category: "internal",
     reason:
-      "The web's direct switch of an extension; an extension's org switch is its plugin's switch, which plugins.set-enabled mirrors (with its uninstall preview), and the org's config of an extension is its copy of the overridable fields (extensions.save-org-config)",
+      "The web's switch of an extension. For an extension shipped in one catalog plugin it is that plugin's switch, which plugins.set-enabled covers through the catalog switch route (with its uninstall preview). A direct-path extension (config-declared, or sourced from several catalog items) has no operation: an agent cannot switch it, a known gap (a required bootstrap plugin is on everywhere and has no switch); the org's config of any extension is its copy of the overridable fields (extensions.save-org-config)",
   },
   {
     route: "POST /api/v1/orgs/:orgId/extensions/:extension/directory/sync",

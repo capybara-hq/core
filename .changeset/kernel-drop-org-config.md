@@ -13,4 +13,7 @@ alone), the install body loses `extensionConfig`, `extension.no_org_config` and 
 setup checks get the org's effective config only. Deployment fields are org-overridable by default
 (`platformOnly` marks the rest). The testing fixtures move their org fields into `deployment`
 (fake-web's `token`, fake-im's `directoryUrl`) and mark the fixtures of points without org config
-platform-only.
+platform-only. `plugins.set-enabled` switches a plugin on whose
+extension still needs the org's config (as the web does) and says so in `configNeeded`. A
+`platformOnly` mark below a top-level key (a hand-made package) makes that whole key platform-only,
+and a pipe or transform deployment root is read through to its input object.
