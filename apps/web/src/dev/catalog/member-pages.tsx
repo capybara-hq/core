@@ -254,6 +254,7 @@ export function seeded(): QueryClient {
   qc.setQueryData(readinessQuery(ORG).queryKey, {
     modelProvider: "ready",
     orgFixableProviders: [],
+    unusableProviders: [],
     agents: AGENTS.length,
   });
   qc.setQueryData(authSourcesQuery().queryKey, []);

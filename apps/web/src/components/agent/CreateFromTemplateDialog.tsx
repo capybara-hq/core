@@ -10,6 +10,7 @@ import {
   Field,
   Input,
   ItemList,
+  LinkButton,
   PersonName,
   Select,
   Skeleton,
@@ -53,6 +54,7 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
+import { useNoModelsHint } from "../useModelProblem";
 import { decodeModel, encodeModel } from "./definition-parts";
 
 const NAME_MAX = 80;
@@ -188,6 +190,7 @@ export function CreateFromTemplateDialog({
   const ready = data !== undefined;
   const nameOk = name.trim() !== "";
   const noModels = models.data !== undefined && options.length === 0;
+  const noModelsHint = useNoModelsHint(orgId, noModels);
   const modelsLoading = models.data === undefined && models.error === null;
   const canCreate = ready && !gone && nameOk && !noModels && model !== "" && !create.isPending;
 
@@ -301,8 +304,13 @@ export function CreateFromTemplateDialog({
           <Field
             label={ta("form.modelLabel")}
             required
+            {...(noModelsHint?.href
+              ? {
+                  action: <LinkButton href={noModelsHint.href}>{ta("form.fixModels")}</LinkButton>,
+                }
+              : {})}
             {...(noModels
-              ? { error: ta("form.noModels") }
+              ? { error: noModelsHint?.error ?? ta("form.noModels") }
               : data?.model && picked === null
                 ? { help: t(`modelSource.${data.model.source}`) }
                 : {})}

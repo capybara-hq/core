@@ -99,7 +99,14 @@ describe("the floating row in the frame", () => {
 
   it("the setup frame has no bottom navigation and no drawer", () => {
     renderFrame(
-      shellOf(ME, { readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 } }),
+      shellOf(ME, {
+        readiness: {
+          modelProvider: "none",
+          orgFixableProviders: [],
+          unusableProviders: [],
+          agents: 0,
+        },
+      }),
     );
     expect(document.querySelector('[data-part="bottom-nav"]')).toBeNull();
     expect(menuButton()).toBeNull();

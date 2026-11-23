@@ -6,8 +6,8 @@ const Config = z.object({ apiKey: z.string().min(1) });
 
 /**
  * A model provider that needs configuration before it loads (the readiness tests: a provider
- * pending configuration does not make the org ready). `listModels` throws: readiness must never
- * call the vendor.
+ * pending configuration does not make the org ready). `listModels` throws a plain error (the
+ * vendor is down): configured and on, it still gives the org no model (`no_models`, `unknown`).
  */
 export default defineExtension({
   name: "model-needs-config",

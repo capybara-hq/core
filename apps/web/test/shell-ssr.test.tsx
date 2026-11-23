@@ -274,6 +274,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
     const notEnabled = {
       modelProvider: "org_fixable" as const,
       orgFixableProviders: [{ provider: "anthropic", reason: "not_enabled" as const }],
+      unusableProviders: [],
       agents: 0,
     };
     renderFrame(shellOf(as("admin"), { readiness: notEnabled }));

@@ -7,10 +7,13 @@ import {
   type ExtensionPointRef,
   type ImageGenerateRequest,
   type ImageGenerateResult,
+  isModelError,
   isValidImageGenerationInfo,
   type Logger,
   type ModelCallOptions,
   type ModelEmbeddingInfo,
+  ModelError,
+  type ModelErrorKind,
   type ModelInfo,
   type ModelKind,
   type ModelProvider,
@@ -70,6 +73,32 @@ const MODELS_CACHE_FORMAT = 2;
  */
 const modelsKey = (p: ProviderEntry, hash: string | undefined) =>
   `capk:models:${p.plugin}:f${MODELS_CACHE_FORMAT}:${p.version ?? "-"}:${hash ?? "-"}`;
+/**
+ * Why a provider's model list failed, as the views report it: the provider's `ModelError` kind
+ * (`timeout` too when the kernel's `models.listTimeoutMs` passed), else `unknown`.
+ */
+export type ListErrorKind = ModelErrorKind | "unknown";
+
+const MODEL_ERROR_KINDS: ReadonlySet<string> = new Set<ModelErrorKind>([
+  "rate_limited",
+  "overloaded",
+  "server",
+  "timeout",
+  "network",
+  "auth",
+  "invalid_request",
+  "context_overflow",
+  "refusal",
+  "aborted",
+]);
+
+/** The kind of a failed list (the `ProviderListError`'s cause, or a failure marker's value). */
+function listErrorKindOf(cause: unknown): ListErrorKind {
+  if (isModelError(cause)) return cause.kind;
+  if (typeof cause === "string" && MODEL_ERROR_KINDS.has(cause)) return cause as ModelErrorKind;
+  return "unknown";
+}
+
 /** 列表视图的失败标记（{@link LIST_FAILURE_TTL_SECONDS}），与模型列表同样按版本与配置摘要区分。 */
 const listFailedKey = (p: ProviderEntry, hash: string | undefined) =>
   `capk:models-failed:${p.plugin}:${p.version ?? "-"}:${hash ?? "-"}`;
@@ -189,8 +218,21 @@ export interface ProviderStatus {
   plugin: string;
   status: "ok" | "error" | "org_configured";
   error?: string;
+  /** With `error` from a failed list (not a provider that needs configuration): why it failed. */
+  errorKind?: ListErrorKind;
   models: ListedModelInfo[];
 }
+
+/**
+ * Whether a provider gives an agent something to pick in an org ({@link ProviderRegistry.chatUsability}):
+ * `usable`, at least one enabled chat model; `list_failed`, its list failed (`errorKind`);
+ * `no_chat_models`, it lists but no chat model is on in the org (`orgCanEnable`: a chat model the
+ * platform left on is on the org's own disabled list, so an org admin can switch one on).
+ */
+export type ProviderChatUsability =
+  | { provider: string; state: "usable" }
+  | { provider: string; state: "list_failed"; errorKind: ListErrorKind }
+  | { provider: string; state: "no_chat_models"; orgCanEnable: boolean };
 
 const positiveInt = (n: unknown): boolean => typeof n === "number" && Number.isInteger(n) && n > 0;
 
@@ -286,7 +328,10 @@ export class ProviderRegistry {
       return await Promise.race([
         call$,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`listModels timed out after ${ms}ms`)), ms);
+          timer = setTimeout(
+            () => reject(new ModelError("timeout", `listModels timed out after ${ms}ms`)),
+            ms,
+          );
         }),
       ]);
     } finally {
@@ -475,6 +520,34 @@ export class ProviderRegistry {
   }
 
   /**
+   * Whether each provider gives an agent a model to pick in `orgId` (org readiness): the same
+   * cached lists, time limit and failure markers as {@link catalog}, and the same rule as the
+   * agent form's list (`list(orgId, { kind: "chat" })`: a chat model neither the platform nor the
+   * org disabled). Only providers enabled in the org with a valid effective config there are
+   * listed (the {@link hasProvider} gate); the others are left out, never called.
+   */
+  async chatUsability(orgId: string): Promise<ProviderChatUsability[]> {
+    const out: ProviderChatUsability[] = [];
+    for (const p of await this.catalog(orgId)) {
+      if (p.status === "error") {
+        // a provider that needs configuration here is not past the gate
+        if (p.errorKind !== undefined) {
+          out.push({ provider: p.provider, state: "list_failed", errorKind: p.errorKind });
+        }
+        continue;
+      }
+      if (p.status !== "ok") continue;
+      const chat = p.models.filter((m) => m.kind === "chat");
+      out.push(
+        chat.some((m) => !m.disabled)
+          ? { provider: p.provider, state: "usable" }
+          : { provider: p.provider, state: "no_chat_models", orgCanEnable: chat.length > 0 },
+      );
+    }
+    return out;
+  }
+
+  /**
    * Every installed provider with its status (in plugin load order), for `orgId` (the providers it enabled, their enabled
    * models only), or the platform view when undefined (`/admin/models`: every model, `disabled`
    * from the platform's list only).
@@ -522,14 +595,15 @@ export class ProviderRegistry {
         const failed = listFailedKey(p, t.hash);
         // a provider that failed just now: mark it error for a while without waiting on it (each
         // provider has its own time limit too)
-        if ((await this.kv.get(failed)) !== null) {
-          throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
-        }
+        // the marker holds the failure's kind, so the views report it while they skip the call
+        const recent = await this.kv.get(failed);
+        if (recent !== null) throw new ProviderListError(p.plugin, listErrorKindOf(recent));
         try {
           return await this.models(p, t);
         } catch (err) {
           if (err instanceof ProviderListError) {
-            await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
+            const kind = listErrorKindOf(err.cause);
+            await this.kv.set(failed, kind, "EX", LIST_FAILURE_TTL_SECONDS);
           }
           throw err;
         }
@@ -552,7 +626,10 @@ export class ProviderRegistry {
         r.reason instanceof ApiError
           ? r.reason.message
           : `Model provider ${provider} failed to list its models`;
-      return { provider, plugin: provider, status: "error", error, models: [] };
+      const errorKind = listErrorKindOf(
+        r.reason instanceof ProviderListError ? r.reason.cause : r.reason,
+      );
+      return { provider, plugin: provider, status: "error", error, errorKind, models: [] };
     });
   }
 

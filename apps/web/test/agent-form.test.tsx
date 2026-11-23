@@ -203,6 +203,48 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("/agents/new: no model while a provider is on but its list fails says so, names it and links to the fix", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const noModels = {
+      modelProvider: "no_models" as const,
+      orgFixableProviders: [],
+      unusableProviders: [
+        {
+          provider: "deepseek",
+          displayName: { zh: "DeepSeek 模型", en: "DeepSeek models" },
+          orgCanFix: false,
+          reason: "list_failed" as const,
+          errorKind: "auth" as const,
+        },
+      ],
+      agents: 0,
+    };
+    await renderNewAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/models`]: ok({ providers: [] }) },
+      readiness: noModels,
+    });
+    const problem = en.setupLayout.model.problem.listFailed
+      .replace("{provider}", "DeepSeek models")
+      .replace("{cause}", en.setupLayout.model.problem.cause.auth);
+    expect(
+      screen.getByText(en.agents.form.noUsableModels.replace("{problem}", problem)),
+    ).toBeTruthy();
+    expect(screen.queryByText(en.agents.form.noModels)).toBeNull();
+    // ME is a super admin: the platform's key is fixed on /admin/models
+    expect(screen.getByRole("link", { name: en.agents.form.fixModels }).getAttribute("href")).toBe(
+      "/admin/models",
+    );
+    expect(browser).toEqual([]);
+    cleanup();
+    // no provider on at all: the install hint stays, no link
+    await renderNewAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/models`]: ok({ providers: [] }) },
+      readiness: { ...noModels, modelProvider: "none", unusableProviders: [] },
+    });
+    expect(screen.getByText(en.agents.form.noModels)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: en.agents.form.fixModels })).toBeNull();
+  });
+
   it("/agents/new: a guest gets no access and nothing is read; it is a setup step", async () => {
     const guest = await renderNewAgent({ routes: formRoutes, me: as("guest") });
     expect(new Set(guest.calls.map((c) => c.url))).toEqual(
