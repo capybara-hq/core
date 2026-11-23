@@ -1,7 +1,7 @@
 # Docker-mode local devices without the host python3
 
-Issue: #718 (split out of #396). Status: draft for review. Written against core `main` at
-`e729f0c1c` (`@capybara-hq/device` `0.1.0-rc.31`). Docs only: nothing here is implemented yet.
+Issue: #718 (split out of #396). Status: approved 2026-11-23 (decisions in §6). Written against
+core `main` at `e729f0c1c` (`@capybara-hq/device` `0.1.0-rc.31`).
 
 Related: #704 (login and start check for the host python3 early); the device provider spec
 (`2026-11-21-device-provider-design.md`); the permission runtime cutover (installed-byte manifest,
@@ -100,7 +100,7 @@ docker paths of login and start. No kernel, SDK, protocol or plugin contract cha
   `docker buildx imagetools inspect --raw` for the published version and writes the module. A
   check (`check:device-image-pin`) verifies the module's shape offline on every PR; the network
   half (the pinned digests resolve in the registry and match) runs in the release workflow before
-  `@capybara-hq/device` is published, so a pin that does not exist is never released (§6, Q3).
+  `@capybara-hq/device` is published, so a pin that does not exist is never released (§6, item 3).
 
 ### 3.2 Step A: the environment fingerprint in docker mode
 
@@ -210,11 +210,11 @@ plugins' device-docker version (today `SANDBOX_IMAGE_TAG` is `0.1.0-rc.5`).
   kernel or protocol change.
 - **The #704 check.** `hostPythonProblem` is no longer called for docker mode in `login` and
   `start`; the `host_python_missing` code and the README paragraph go (before 0.1.0: removed, not
-  deprecated). OS mode keeps using the host interpreter (out of scope; §6, Q5).
+  deprecated). OS mode keeps using the host interpreter (out of scope; §6, item 5).
 - **Pull.** The first docker-mode start pulls `repository@index` (a large image, as today). A pull
   failure is the existing readable "creating the container failed" error.
 - **Offline / air-gapped.** A digest-preserving mirror (`crane copy`, `docker buildx imagetools
-  create`) keeps the digest, so it works if the repository part can point at the mirror (§6, Q2).
+  create`) keeps the digest; `CAPYBARA_DEVICE_IMAGE_REPOSITORY` points the repository part at it (§6, item 2).
 - **Desktop client.** It runs the same device package; nothing to change beyond the version bump.
 
 ## 4. Tests
@@ -256,29 +256,32 @@ without it; new unit tests join their checked-in list).
    check, its error code and README text. Changeset bumping `@capybara-hq/device`.
 3. Plugins PR: the sandbox Dockerfile's contract comment gains the local-device lines (§3.5).
 
-## 6. Open questions for the maintainer
+## 6. Decisions (formerly open questions)
 
-1. **Helper containers vs. a writable root-only mount in the device container.** Recommended:
-   helper containers (§3.3). The alternative (a second, writable mount of skills and the spool
-   directory at a root-only path in the device container, written with `docker exec -u 0`) saves a
-   container start per preparation and per background task, but root without capabilities cannot
-   write the host user's files on Linux, and same-uid access would put skills and the retained
-   output in reach of escalated calls.
-2. **Mirrors and custom registries.** Recommended: an optional `CAPYBARA_DEVICE_IMAGE_REPOSITORY`
-   (repository only); the digest stays pinned, so a mirror must preserve it. No override of the
-   digest itself (a custom image is a different, unattested runtime).
-3. **Where the pin's network check runs.** Recommended: in the release workflow before publishing,
-   plus on PRs that touch `docker-image.ts`; never on every PR (network-dependent).
-4. **Background task cost.** One helper container per live background task (C), plus a container
-   start (typically well under a second) per skills preparation (B). Recommended: accept it (an
-   idle helper is one small Python process); revisit with a per-device long-lived helper only if
-   measurements show a problem.
-5. **OS mode on Linux.** The host transport still needs the host `/usr/bin/python3` (it runs the
-   launcher on the host by design). Recommended: out of scope here; if wanted, a separate design for
-   a shipped interpreter.
-6. **Containerd image store id.** Recommended: accept index or per-arch manifest or config digest
-   (all pinned) and record which one matched in a log line, so a Docker change in how image ids are
-   reported fails closed instead of silently passing.
+The maintainer approved every recommendation on 2026-11-23.
+
+1. **Helper containers vs. a writable root-only mount in the device container.** Decided
+   2026-11-23: helper containers (§3.3) for skills preparation (B), the background output spool (C)
+   and recovered-output finalization (D): `--network none`, a read-only root, `--cap-drop ALL`,
+   `no-new-privileges`, and same-path mounts of only the step's host paths. The rejected
+   alternative (a writable root-only mount in the device container written with `docker exec -u 0`)
+   cannot write the host user's files on Linux without capabilities, and same-uid access would put
+   skills and the retained output in reach of escalated calls.
+2. **Mirrors and custom registries.** Decided 2026-11-23: an optional
+   `CAPYBARA_DEVICE_IMAGE_REPOSITORY` overrides the repository only; the digest stays pinned, so a
+   mirror must preserve it. There is no override of the digest (a custom image is a different,
+   unattested runtime).
+3. **Where the pin's network check runs.** Decided 2026-11-23: in the release workflow before
+   `@capybara-hq/device` is published, and on PRs that touch the pin file; never on every PR
+   (network-dependent). Every PR runs the offline shape check `check:device-image-pin`.
+4. **Background task cost.** Decided 2026-11-23: accept one helper container per live background
+   task (C) and a container start per skills preparation (B); revisit with a per-device long-lived
+   helper only if measurements show a problem.
+5. **OS mode on Linux.** Decided 2026-11-23: out of scope; the host transport keeps the host
+   `/usr/bin/python3`. A shipped interpreter, if wanted, is a separate design.
+6. **Containerd image store id.** Decided 2026-11-23: accept the pinned index, per-arch manifest or
+   config digest, log which one matched, and fail closed on anything else, so a Docker change in
+   how image ids are reported fails closed instead of silently passing.
 
 ## AGENTS.md rules touched
 
