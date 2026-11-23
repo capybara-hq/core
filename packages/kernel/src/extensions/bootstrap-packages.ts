@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type BootstrapExtraMarketplace,
   type Logger,
@@ -38,6 +39,12 @@ import type {
 export const integrityOf = (bytes: Uint8Array) =>
   `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
+/**
+ * The waits before the second, third and fourth attempt of an npm download that failed
+ * transiently ({@link NpmFetchError.transient}): four attempts in about 8 s per package.
+ */
+export const BOOTSTRAP_DOWNLOAD_RETRY_DELAYS_MS: readonly number[] = [500, 2_000, 5_000];
+
 /** What {@link resolveBootstrapPackages} needs from the kernel config. */
 export interface BootstrapResolveOptions {
   /**
@@ -50,6 +57,11 @@ export interface BootstrapResolveOptions {
   log?: Pick<Logger, "warn">;
   /** The npm download (default {@link fetchNpmPackage}; tests replace it). */
   fetch?: typeof fetchNpmPackage;
+  /**
+   * The waits between attempts of an npm download that failed transiently (default
+   * {@link BOOTSTRAP_DOWNLOAD_RETRY_DELAYS_MS}; one more attempt than entries). Tests shorten them.
+   */
+  retryDelaysMs?: readonly number[];
   /**
    * Entries whose package failing to be obtained is that entry's failure only: the error goes into
    * `failed` (by entry name) and the other entries are still obtained. Every other entry's failure
@@ -93,7 +105,8 @@ export function bootstrapGitMarketplace(
 /**
  * Obtains every entry's tgz, checked against its pinned sha512: from the offline directory when a
  * file there has that sha512, else (a `source: "npm"` entry) downloaded from the npm registry and
- * verified against the pin (the packument's `dist.integrity` is not consulted), else (a
+ * verified against the pin (the packument's `dist.integrity` is not consulted; a transient failure
+ * is retried after each of `retryDelaysMs`; a 404, a refused connection or a mismatch is not), else (a
  * `source: "git"` entry) its marketplace's tree at the pinned commit, the files under `path`
  * re-rooted and packed with `packPackageTgz` (the pin is defined on that pack), refused unless the
  * pack's sha512 is the pin: nothing of an unverified tree is read, translated or imported. The
@@ -136,20 +149,41 @@ export async function resolveBootstrapPackages(
     }
     const registry = registryOrigin(npmRegistry);
     const offlineHint = `to install offline, put the package tgz (npm pack ${e.npm}@${e.version}, any file name) in ${where}`;
+    const delays = o.retryDelaysMs ?? BOOTSTRAP_DOWNLOAD_RETRY_DELAYS_MS;
+    let attempts = 0;
     try {
-      const r = await fetchPackage(
-        {
-          registry: npmRegistry,
-          ...(npmToken !== undefined && { token: npmToken }),
-          maxBytes,
-          net: marketplaceNetPolicy(o.config),
-        },
-        e.npm,
-        e.version,
-        signal,
-        { expectedIntegrity: e.integrity },
-      );
-      return r.bytes;
+      // The kernel's own download (not an extension's call): one registry hiccup must not fail a
+      // whole run of many packages, so a transient failure is retried; a 404, a refusal or a
+      // package that differs from its pin is final at once
+      for (;;) {
+        attempts++;
+        try {
+          const r = await fetchPackage(
+            {
+              registry: npmRegistry,
+              ...(npmToken !== undefined && { token: npmToken }),
+              maxBytes,
+              net: marketplaceNetPolicy(o.config),
+            },
+            e.npm,
+            e.version,
+            signal,
+            { expectedIntegrity: e.integrity },
+          );
+          return r.bytes;
+        } catch (err) {
+          const delay = delays[attempts - 1];
+          if (signal.aborted || delay === undefined || !isTransientDownloadError(err)) throw err;
+          o.log?.warn("bootstrap: a package download failed; retrying", {
+            plugin: e.name,
+            package: `${e.npm}@${e.version}`,
+            attempt: attempts,
+            retryInMs: delay,
+            error: errMsg(err),
+          });
+          await sleep(delay, undefined, { signal });
+        }
+      }
     } catch (err) {
       if (signal.aborted) throw err;
       if (err instanceof IntegrityMismatchError) {
@@ -166,7 +200,7 @@ export async function resolveBootstrapPackages(
             : String(err);
       throw new ApiError(
         "bootstrap.download_failed",
-        `Bootstrap plugin ${e.name} ${e.version}: cannot download ${e.npm}@${e.version} from ${registry} (${reason}); ${offlineHint}, or set packages.npmRegistry to a reachable mirror`,
+        `Bootstrap plugin ${e.name} ${e.version}: cannot download ${e.npm}@${e.version} from ${registry} (${reason}${attempts > 1 ? `; ${attempts} attempts` : ""}); ${offlineHint}, or set packages.npmRegistry to a reachable mirror`,
       );
     }
   }
@@ -233,6 +267,16 @@ export async function resolveBootstrapPackages(
 }
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * A download failure worth another attempt: an {@link NpmFetchError} marked transient (network
+ * error, timeout, HTTP 408 / 429 / 5xx, a body cut off). Never an integrity mismatch, a package
+ * over the size limit, a 404 or a refusal by the network rules.
+ */
+function isTransientDownloadError(err: unknown): boolean {
+  if (err instanceof IntegrityMismatchError || err instanceof PackageTooLargeError) return false;
+  return err instanceof NpmFetchError && err.transient;
+}
 
 /** The registry's origin, for messages (never its credentials or path). */
 function registryOrigin(registry: string): string {

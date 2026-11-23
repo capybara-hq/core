@@ -123,7 +123,9 @@ There are two ways to create the first super admin:
 
 A failing `init` (for example PostgreSQL older than 15, a bootstrap package that can't be downloaded,
 or one that doesn't match its pin) keeps `api`, `worker` and `gateway` from
-starting. Read its output with `docker compose logs init`.
+starting. Read its output with `docker compose logs init`. When upgrading a running deployment, run
+`docker compose run --rm init` before `docker compose up -d`, so a failing `init` doesn't take the
+serving containers down ([upgrade.md](upgrade.md#docker-compose)).
 
 ### Services, ports and networks
 
@@ -428,10 +430,12 @@ into the CLI any more.
 - `capybara bootstrap` installs them: compose's `init` runs it after `migrate` (`--dir <path>` overrides
   the offline directory). When the step is already done it reads nothing and needs no network.
   Otherwise, holding a PostgreSQL advisory lock (replicas starting together run it once, and download
-  once), it obtains and checks every package before writing anything: `bootstrap.download_failed`
-  (the registry could not be reached or refused, naming the registry and the offline directory),
-  `bootstrap.integrity_mismatch` (a download that differs from the pin) or `bootstrap.missing_file`
-  name the plugin. Each one is imported into the catalog with source
+  once), it obtains and checks every package before writing anything. A download that fails
+  transiently (a dropped connection, a timeout, HTTP 408 / 429 / 5xx) is retried up to three times,
+  about 8 seconds in all per package; then, or at once for a 404, a refused connection or a
+  refusal by the network rules, `bootstrap.download_failed` (naming the registry and the offline
+  directory), `bootstrap.integrity_mismatch` (a download that differs from the pin) or
+  `bootstrap.missing_file` name the plugin. Each one is imported into the catalog with source
   `bootstrap`, installed, approved (audited `extension.permissions_approved`, source `bootstrap`) and
   enabled. A run is recorded once per manifest (table `bootstrap_runs`, audit `bootstrap.completed`),
   so later runs print `Bootstrap already done ...; nothing to do.` If a required plugin fails to
