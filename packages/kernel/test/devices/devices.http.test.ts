@@ -185,21 +185,9 @@ async function useOf(accountId: string, deviceId: string): Promise<SandboxUseCon
   };
 }
 
-/**
- * Uses the device once on the managed route, as a tool call of the holder conversation does
- * (`managedUseOn`); the call's run is settled afterwards, so the holder's next use starts its own.
- */
-async function use<T>(
-  at: SandboxUseContext,
-  fn: Parameters<typeof managedUseOn<T>>[3],
-): Promise<T> {
-  try {
-    return await managedUseOn(k, raw, at, fn, ctl());
-  } finally {
-    await sql`UPDATE capybara.runs SET status = 'completed'
-      WHERE conversation_id = ${at.holderConversationId} AND status = 'running'`.execute(raw);
-  }
-}
+/** Uses the device once on the managed route, as a tool call of the holder conversation does. */
+const use = <T>(at: SandboxUseContext, fn: Parameters<typeof managedUseOn<T>>[3]): Promise<T> =>
+  managedUseOn(k, raw, at, fn, ctl());
 
 describe("devices API", () => {
   it("create, list, rename, delete a personal device", async () => {

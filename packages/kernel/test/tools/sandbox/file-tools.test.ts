@@ -24,7 +24,7 @@ import {
 } from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
-import { managedUseOn } from "../../helpers/managed-calls.js";
+import { managedUseOn, setupConversationOn } from "../../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -312,47 +312,25 @@ async function boundConversation(path: string): Promise<string> {
 
 /**
  * Writes files into the device's file system (paths relative to `/workspace`) on the managed
- * route, as a tool call does: a free setup conversation of the owner on the device holds the use
- * (a free conversation writes the workspace), so the conversation under test keeps no run or
- * call of the setup. The setup run is settled afterwards.
+ * route, as a tool call does, from a free setup conversation of the owner on the device.
  */
 async function put(deviceId: string, files: Record<string, string>): Promise<void> {
-  const holder = randomUUID();
-  await db
-    .insertInto("conversations")
-    .values({
-      id: holder,
-      org_id: orgId,
-      agent_id: agentId,
-      account_id: ownerId,
-      device_id: deviceId,
-      source: "web",
-    })
-    .execute();
-  try {
-    await managedUseOn(
-      k,
-      raw,
-      {
-        orgId,
-        deviceId,
-        holderConversationId: holder,
-        actor: { accountId: ownerId, conversationId: holder },
-      },
-      async (h, p, _info, signal) => {
-        for (const [path, text] of Object.entries(files)) {
-          await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
-        }
-      },
-    );
-  } finally {
-    await db
-      .updateTable("runs")
-      .set({ status: "completed" })
-      .where("conversation_id", "=", holder)
-      .where("status", "=", "running")
-      .execute();
-  }
+  const holder = await setupConversationOn(raw, { orgId, agentId, accountId: ownerId, deviceId });
+  await managedUseOn(
+    k,
+    raw,
+    {
+      orgId,
+      deviceId,
+      holderConversationId: holder,
+      actor: { accountId: ownerId, conversationId: holder },
+    },
+    async (h, p, _info, signal) => {
+      for (const [path, text] of Object.entries(files)) {
+        await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
+      }
+    },
+  );
 }
 
 /** The org follows the platform's mode again (auto): an earlier test switched auto mode off. */

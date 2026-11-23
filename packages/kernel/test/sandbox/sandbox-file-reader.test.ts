@@ -102,34 +102,24 @@ beforeEach(async () => {
 
 /**
  * Writes `data` at `rel` under the conversation's workspace on the managed route, as a tool call
- * of the conversation does; returns the workspace root. The call's run is settled afterwards, so
- * a later read starts its own run.
+ * of the conversation does; returns the workspace root.
  */
 async function put(rel: string, data: string): Promise<string> {
   const deviceId = await k.app.get(ConversationDevices).forTool(orgId, convId);
-  try {
-    return await managedUseOn(
-      k,
-      raw,
-      {
-        orgId,
-        deviceId,
-        holderConversationId: convId,
-        actor: { accountId: ownerId, conversationId: convId },
-      },
-      async (h, p, info, s) => {
-        await p.writeFile(h, `${info.roots.workspace}/${rel}`, new TextEncoder().encode(data), s);
-        return info.roots.workspace;
-      },
-    );
-  } finally {
-    await db
-      .updateTable("runs")
-      .set({ status: "completed" })
-      .where("conversation_id", "=", convId)
-      .where("status", "=", "running")
-      .execute();
-  }
+  return managedUseOn(
+    k,
+    raw,
+    {
+      orgId,
+      deviceId,
+      holderConversationId: convId,
+      actor: { accountId: ownerId, conversationId: convId },
+    },
+    async (h, p, info, s) => {
+      await p.writeFile(h, `${info.roots.workspace}/${rel}`, new TextEncoder().encode(data), s);
+      return info.roots.workspace;
+    },
+  );
 }
 
 const readInput = (path: string, maxBytes: number, callId?: string) => ({

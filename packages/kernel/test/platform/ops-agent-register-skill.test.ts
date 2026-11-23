@@ -26,7 +26,7 @@ import { AgentSkillsService } from "../../src/skills/agent-skills.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { managedUseOn } from "../helpers/managed-calls.js";
+import { managedUseOn, setupConversationOn } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -161,9 +161,8 @@ const zipOf = (name: string, extra: { name: string; data: string }[] = []) =>
 
 /**
  * Writes `data` at `rel` in the conversation's workspace on the managed route, as a tool call
- * does; returns the absolute path. A free setup conversation of the same account and agent on the
- * conversation's device holds the use, so the conversation under test keeps no run or call of
- * the setup; the setup run is settled afterwards.
+ * does, from a free setup conversation of the same account and agent on the conversation's
+ * device; returns the absolute path.
  */
 async function putFile(
   convId: string,
@@ -172,47 +171,22 @@ async function putFile(
   data: Uint8Array,
 ): Promise<string> {
   const deviceId = await k.app.get(ConversationDevices).forTool(orgId, convId);
-  const { agent_id } = await db
+  const { agent_id: agentId } = await db
     .selectFrom("conversations")
     .select("agent_id")
     .where("id", "=", convId)
     .executeTakeFirstOrThrow();
-  const holder = randomUUID();
-  await db
-    .insertInto("conversations")
-    .values({
-      id: holder,
-      org_id: orgId,
-      agent_id,
-      account_id: accountId,
-      device_id: deviceId,
-      source: "web",
-    })
-    .execute();
-  try {
-    return await managedUseOn(
-      k,
-      raw,
-      {
-        orgId,
-        deviceId,
-        holderConversationId: holder,
-        actor: { accountId, conversationId: holder },
-      },
-      async (h, p, info, s) => {
-        const path = `${info.roots.workspace}/${rel}`;
-        await p.writeFile(h, path, data, s);
-        return path;
-      },
-    );
-  } finally {
-    await db
-      .updateTable("runs")
-      .set({ status: "completed" })
-      .where("conversation_id", "=", holder)
-      .where("status", "=", "running")
-      .execute();
-  }
+  const holder = await setupConversationOn(raw, { orgId, agentId, accountId, deviceId });
+  return managedUseOn(
+    k,
+    raw,
+    { orgId, deviceId, holderConversationId: holder, actor: { accountId, conversationId: holder } },
+    async (h, p, info, s) => {
+      const path = `${info.roots.workspace}/${rel}`;
+      await p.writeFile(h, path, data, s);
+      return path;
+    },
+  );
 }
 
 const op = () => {

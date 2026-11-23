@@ -36,7 +36,7 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { managedUseOn, startClaimedRun } from "../helpers/managed-calls.js";
+import { managedUseOn, setupConversationOn, startClaimedRun } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -214,47 +214,25 @@ async function newMember(): Promise<{ id: string; req: Req; deviceId: string }> 
 
 /**
  * Writes files into the owner's device (paths relative to `/workspace`) on the managed route, as
- * a tool call does: a free setup conversation of the owner on the device holds the use (a free
- * conversation writes the workspace; a bound one only its project root), so the conversation
- * under test keeps no run or call of the setup. The setup run is settled afterwards.
+ * a tool call does, from a free setup conversation of the owner on the device.
  */
 async function put(deviceId: string, files: Record<string, string>): Promise<void> {
-  const holder = randomUUID();
-  await db
-    .insertInto("conversations")
-    .values({
-      id: holder,
-      org_id: orgId,
-      agent_id: agentId,
-      account_id: ownerId,
-      device_id: deviceId,
-      source: "web",
-    })
-    .execute();
-  try {
-    await managedUseOn(
-      k,
-      raw,
-      {
-        orgId,
-        deviceId,
-        holderConversationId: holder,
-        actor: { accountId: ownerId, conversationId: holder },
-      },
-      async (h, p, _info, signal) => {
-        for (const [path, text] of Object.entries(files)) {
-          await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
-        }
-      },
-    );
-  } finally {
-    await db
-      .updateTable("runs")
-      .set({ status: "completed" })
-      .where("conversation_id", "=", holder)
-      .where("status", "=", "running")
-      .execute();
-  }
+  const holder = await setupConversationOn(raw, { orgId, agentId, accountId: ownerId, deviceId });
+  await managedUseOn(
+    k,
+    raw,
+    {
+      orgId,
+      deviceId,
+      holderConversationId: holder,
+      actor: { accountId: ownerId, conversationId: holder },
+    },
+    async (h, p, _info, signal) => {
+      for (const [path, text] of Object.entries(files)) {
+        await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
+      }
+    },
+  );
 }
 
 const skill = (name: string, description: string) =>
