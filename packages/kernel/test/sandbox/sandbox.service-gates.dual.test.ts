@@ -10,6 +10,7 @@ import {
   type SandboxHandle,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
@@ -18,23 +19,25 @@ import { createLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
-import type { OperationSessionInvocation } from "../../src/sandbox/sandbox.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { managedUseOn } from "../helpers/managed-calls.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
-import { seedConversation } from "../helpers/tool-fixtures.js";
+import { seedConversation as seedRootConversation } from "../helpers/tool-fixtures.js";
 
 /**
  * The SandboxService acquire gates (permission activation plan W1-E), on two kernel replicas (two
  * independent kernels in one process: own PG pools, Redis connections and providers; shared PG and
  * Redis): the exclusive lifecycle lease serializes a race on one device (one instance is created
  * and both enter it); a device carrying `permission_reconcile_required` (B-11) is refused on every
- * acquire path (raw use, managed operations, trusted preparation, owner browse) before any provider
- * call, checked under the lease the B1 snapshot writer excludes, and a marker written under one
- * replica's exclusive lease refuses the next acquire on both.
+ * acquire path (managed operations, a managed call's start, trusted preparation, owner browse)
+ * before any provider call, checked under the lease the B1 snapshot writer excludes, and a marker
+ * written under one replica's exclusive lease refuses the next acquire on both. Uses go through
+ * the managed route a tool call takes (`managedUseOn`: a claimed run of the holder conversation,
+ * then `withOperations` under the real admission).
  */
 
 /** The in-process provider both replicas register for the racing device. */
@@ -82,6 +85,32 @@ beforeEach(async () => {
 });
 
 const db = () => kernelDb(raw);
+
+/** A root conversation of a member account (a managed call's actor must be an org member). */
+async function seedConversation(r: typeof raw) {
+  const seed = await seedRootConversation(r);
+  await kernelDb(r)
+    .insertInto("memberships")
+    .values({ org_id: seed.orgId, account_id: seed.accountId, role: "owner" })
+    .execute();
+  return seed;
+}
+
+/** Another root conversation of the holder's account on its device (a second holder). */
+async function secondHolder(ctx: UseCtx, agentId: string): Promise<UseCtx> {
+  const conversationId = randomUUID();
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+    VALUES (${conversationId}, ${ctx.orgId}, ${agentId}, ${ctx.actor.accountId},
+      ${ctx.deviceId})`.execute(raw);
+  return { ...ctx, holderConversationId: conversationId, actor: { ...ctx.actor, conversationId } };
+}
+
+interface UseCtx {
+  orgId: string;
+  deviceId: string;
+  holderConversationId: string;
+  actor: { accountId: string; conversationId: string };
+}
 const signal = () => AbortSignal.timeout(30_000);
 const ROOTS = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/Users/owner/capybara" };
 
@@ -176,14 +205,42 @@ function leaseAttempt(replica: number) {
   return tried.promise;
 }
 
-const use = (replica: number, ctx: Awaited<ReturnType<typeof device>>["ctx"]) =>
-  kernels[replica]?.app.get(SandboxService).withSandbox(ctx, async () => "entered", signal());
+/** The replica's kernel. */
+const kernel = (replica: number): TestKernel => {
+  const k = kernels[replica];
+  if (!k) throw new Error("missing replica");
+  return k;
+};
+
+/**
+ * One managed use of the device on `replica` (a tool call of a claimed run of the holder), whose
+ * run then ends: a conversation has one active run at most, so the holder's next use starts its
+ * own.
+ */
+const use = async <T = string>(
+  replica: number,
+  ctx: UseCtx,
+  fn: () => Promise<T> = async () => "entered" as T,
+): Promise<T> => {
+  try {
+    return await managedUseOn(kernel(replica), raw, ctx, fn, signal());
+  } finally {
+    await db()
+      .updateTable("runs")
+      .set({ status: "completed" })
+      .where("conversation_id", "=", ctx.holderConversationId)
+      .where("status", "=", "running")
+      .execute();
+  }
+};
 
 it("two replicas racing on a fresh device create one instance and both enter it", async () => {
   const f = await device();
+  // each replica's use is a tool call of its own conversation on the device
+  const other = await secondHolder(f.ctx, f.agentId);
   const tried = leaseAttempt(1);
   const first = use(0, f.ctx);
-  const second = use(1, f.ctx);
+  const second = use(1, other);
   await tried;
   expect(await Promise.all([first, second])).toEqual(["entered", "entered"]);
   expect(f.creates).toHaveLength(1);
@@ -203,19 +260,15 @@ it("a reconcile marker written under one replica's exclusive lease refuses both 
     if (!s) throw new Error("missing replica");
     return s;
   };
-  await sandbox(0).withSandbox(ctx, async () => "created", signal());
+  await sandbox(0).ensureRunning(ctx, signal());
   // replica 0 holds a shared use while replica 1 (the snapshot writer) waits for the exclusive lease
   const inUse = barrier();
   const done = barrier();
-  const holding = sandbox(0).withSandbox(
-    ctx,
-    async () => {
-      inUse.resolve();
-      await done.promise;
-      return "held";
-    },
-    signal(),
-  );
+  const holding = use(0, ctx, async () => {
+    inUse.resolve();
+    await done.promise;
+    return "held";
+  });
   await inUse.promise;
   const leases = kernels[1]?.app.get(SandboxLeases);
   if (!leases) throw new Error("missing replica");
@@ -231,10 +284,14 @@ it("a reconcile marker written under one replica's exclusive lease refuses both 
   await lease.release();
   const before = await readFakeSandboxOps(root);
   const fn = vi.fn(async () => "ran");
-  for (const replica of [0, 1])
-    await expect(sandbox(replica).withSandbox(ctx, fn, signal())).rejects.toMatchObject({
+  for (const replica of [0, 1]) {
+    await expect(use(replica, ctx, fn)).rejects.toMatchObject({
       code: "device.permission_reconcile_required",
     });
+    await expect(sandbox(replica).ensureRunning(ctx, signal())).rejects.toMatchObject({
+      code: "device.permission_reconcile_required",
+    });
+  }
   expect(fn).not.toHaveBeenCalled();
   expect(await readFakeSandboxOps(root)).toEqual(before);
 });
@@ -253,7 +310,7 @@ it("an acquire waiting while the snapshot writer holds the lease is refused once
     if (!s) throw new Error("missing replica");
     return s;
   };
-  await sandbox(0).withSandbox(ctx, async () => "created", signal());
+  await sandbox(0).ensureRunning(ctx, signal());
   const leases = kernels[1]?.app.get(SandboxLeases);
   if (!leases) throw new Error("missing replica");
   // replica 1 is the B1 snapshot writer: it holds the exclusive lease while it decides
@@ -261,7 +318,7 @@ it("an acquire waiting while the snapshot writer holds the lease is refused once
   const before = await readFakeSandboxOps(root);
   const tried = leaseAttempt(0);
   const fn = vi.fn(async () => "ran");
-  const waiting = sandbox(0).withSandbox(ctx, fn, signal());
+  const waiting = use(0, ctx, fn);
   await tried;
   await db()
     .updateTable("devices")
@@ -298,30 +355,15 @@ async function cloudDevice() {
   return { ...seed, deviceId, ctx };
 }
 
-/** A managed invocation shape; the gate refuses before anything reads it. */
-const invocation = (orgId: string, conversationId: string): OperationSessionInvocation => ({
-  claim: {
-    orgId,
-    conversationId,
-    rootId: conversationId,
-    runId: randomUUID(),
-    executionId: randomUUID(),
-  },
-  callId: "call",
-  deadlineMs: Date.now() + 60_000,
-});
-
 describe("the permission_reconcile_required marker refuses every acquire path (B-11)", () => {
-  it("raw use, managed operations and trusted preparation make no provider call", async () => {
+  it("managed operations, a managed call's start and trusted preparation make no provider call", async () => {
     const f = await cloudDevice();
     await marked(f.deviceId);
     const before = await ops();
     const sandbox = app().get(SandboxService);
     const fn = vi.fn(async () => "ran");
-    await expect(sandbox.withSandbox(f.ctx, fn, signal())).rejects.toMatchObject(RECONCILE);
-    await expect(
-      sandbox.withOperations(f.ctx, invocation(f.orgId, f.conversationId), fn, signal()),
-    ).rejects.toMatchObject(RECONCILE);
+    await expect(use(0, f.ctx, fn)).rejects.toMatchObject(RECONCILE);
+    await expect(sandbox.ensureRunning(f.ctx, signal())).rejects.toMatchObject(RECONCILE);
     await expect(
       sandbox.withPreparation(f.ctx, "skills", [DEFAULT_SANDBOX_ROOTS.skills], fn, signal()),
     ).rejects.toMatchObject(RECONCILE);
@@ -340,19 +382,20 @@ describe("the permission_reconcile_required marker refuses every acquire path (B
   it("a running or suspended instance is neither entered, killed nor resumed", async () => {
     const f = await cloudDevice();
     const sandbox = app().get(SandboxService);
-    await sandbox.withSandbox(f.ctx, async () => "created", signal());
+    await sandbox.ensureRunning(f.ctx, signal());
     await marked(f.deviceId);
     const before = await ops();
     const fn = vi.fn(async () => "ran");
     // running: the shared fast path
-    await expect(sandbox.withSandbox(f.ctx, fn, signal())).rejects.toMatchObject(RECONCILE);
+    await expect(use(0, f.ctx, fn)).rejects.toMatchObject(RECONCILE);
     // suspended: the exclusive path would resume it
     await db()
       .updateTable("device_instances")
       .set({ status: "suspended" })
       .where("device_id", "=", f.deviceId)
       .execute();
-    await expect(sandbox.withSandbox(f.ctx, fn, signal())).rejects.toMatchObject(RECONCILE);
+    await expect(use(0, f.ctx, fn)).rejects.toMatchObject(RECONCILE);
+    await expect(sandbox.ensureRunning(f.ctx, signal())).rejects.toMatchObject(RECONCILE);
     await expect(
       sandbox.withPreparation(f.ctx, "skills", [DEFAULT_SANDBOX_ROOTS.skills], fn, signal()),
     ).rejects.toMatchObject(RECONCILE);
@@ -360,13 +403,13 @@ describe("the permission_reconcile_required marker refuses every acquire path (B
     expect(await ops()).toEqual(before);
     // once a lifecycle action cleared the marker the device is usable again
     await marked(f.deviceId, false);
-    expect(await sandbox.withSandbox(f.ctx, async () => "ran", signal())).toBe("ran");
+    expect(await use(0, f.ctx, async () => "ran")).toBe("ran");
   });
 
   it("an owner browse refuses a marker that landed after its authority resolved", async () => {
     const f = await cloudDevice();
     const sandbox = app().get(SandboxService);
-    await sandbox.withSandbox(f.ctx, async () => "created", signal());
+    await sandbox.ensureRunning(f.ctx, signal());
     // the B1 snapshot commits the marker between the browse authority and the lease
     vi.spyOn(app().get(SandboxOperationAuthority), "resolveBrowse").mockImplementation(async () => {
       await marked(f.deviceId);
@@ -384,7 +427,7 @@ describe("the permission_reconcile_required marker refuses every acquire path (B
   it("an exact-ref drain still reaches the instance of a marked device", async () => {
     const f = await cloudDevice();
     const sandbox = app().get(SandboxService);
-    await sandbox.withSandbox(f.ctx, async () => "created", signal());
+    await sandbox.ensureRunning(f.ctx, signal());
     await marked(f.deviceId);
     const instance = await sandbox.currentInstance(f.deviceId);
     if (!instance) throw new Error("expected the running instance");

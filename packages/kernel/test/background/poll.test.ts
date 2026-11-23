@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SandboxOperationOutcomeUnknownError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -45,7 +47,7 @@ import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { managedTaskFixture } from "../helpers/managed-background.js";
-import { startClaimedRun } from "../helpers/managed-calls.js";
+import { recordCallStarted, startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -243,38 +245,39 @@ async function conversation(): Promise<Conv> {
   return { ...s, deviceId, ...(await startClaimedRun(k, raw, s.conversationId, s.accountId)) };
 }
 
-/** The device a conversation is bound to. */
-async function envOf(conversationId: string): Promise<string> {
-  const r = await db
-    .selectFrom("conversations")
-    .select("device_id")
-    .where("id", "=", conversationId)
-    .executeTakeFirstOrThrow();
-  if (r.device_id === null) throw new Error(`conversation ${conversationId} is not bound`);
-  return r.device_id;
-}
-
-/** Runs `command` in the conversation's device (creating or resuming its instance). */
+/**
+ * Runs `command` in the conversation's device (creating or resuming its instance) as a tool call
+ * of the conversation's claimed run does: its `tool_call_started`, then the managed route
+ * (`withOperations`) under the claim fence, the exec admitted by the real operation intents.
+ */
 async function inSandbox(
-  c: { orgId: string; conversationId: string },
+  c: Conv,
   command: string,
 ): Promise<{ exitCode: number | null; stdout: string }> {
-  return sandbox.withSandbox(
-    {
-      orgId: c.orgId,
-      deviceId: await envOf(c.conversationId),
-      holderConversationId: c.conversationId,
-      actor: { accountId: "test", conversationId: c.conversationId },
-    },
-    (h, p, _info, sig) =>
-      p.exec(h, {
-        command,
-        cwd: "/workspace",
-        timeoutMs: 20_000,
-        maxOutputBytes: 64_000,
-        signal: sig,
-      }),
-    signal(),
+  const callId = randomUUID();
+  await recordCallStarted(raw, c.conversationId, c.runId, callId, "Bash");
+  return k.app.get(RunExecution).withClaim(
+    c.claim,
+    () => true,
+    () =>
+      sandbox.withOperations(
+        {
+          orgId: c.orgId,
+          deviceId: c.deviceId,
+          holderConversationId: c.conversationId,
+          actor: { accountId: c.accountId, conversationId: c.conversationId, runId: c.runId },
+        },
+        { claim: c.claim, callId, deadlineMs: Date.now() + 30_000 },
+        (h, p, _info, sig) =>
+          p.exec(h, {
+            command,
+            cwd: "/workspace",
+            timeoutMs: 20_000,
+            maxOutputBytes: 64_000,
+            signal: sig,
+          }),
+        signal(),
+      ),
   );
 }
 
@@ -427,7 +430,17 @@ describe("polling", () => {
       .executeTakeFirstOrThrow();
     await killFakeExecution(root, t);
     await removeFakeSandbox(root, (row.handle as { id: string }).id);
-    // the next use finds the instance gone and rebuilds it
+    // the next call's dispatched exec finds the instance gone: its outcome stays unknown (never
+    // retried under a new identity) and the instance is rebuilt on the kept files (the gone
+    // after dispatch branch of SandboxService.withOperations)
+    await expect(inSandbox(c, "true")).rejects.toBeInstanceOf(SandboxOperationOutcomeUnknownError);
+    const rebuilt = await db
+      .selectFrom("device_instances")
+      .select(["handle", "status"])
+      .where("device_id", "=", c.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(rebuilt.status).toBe("running");
+    expect(rebuilt.handle).not.toEqual(row.handle);
     expect((await inSandbox(c, "true")).exitCode).toBe(0);
     expect(await job.pollOnce()).toBe(1);
     expect(await store.get(t.id)).toMatchObject({
