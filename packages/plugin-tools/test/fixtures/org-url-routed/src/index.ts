@@ -1,5 +1,5 @@
 // Green fixture: every overridable URL reaches the network through configUrlFetch, a top-level
-// `baseUrl` by member access and a nested `endpoints[].baseUrl` through a destructured binding.
+// `baseUrl` by member access and a nested `endpoints[].apiBase` through a destructured binding.
 import { configUrlFetch, defineExtension, ui } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
@@ -7,7 +7,7 @@ const label = { zh: "地址", en: "Base URL" };
 
 const deployment = z.object({
   baseUrl: ui(z.url().default("https://api.example.com"), { label }),
-  endpoints: ui(z.array(z.object({ baseUrl: ui(z.url(), { label }) })).default([]), {
+  endpoints: ui(z.array(z.object({ apiBase: ui(z.url(), { label }) })).default([]), {
     label: { zh: "端点", en: "Endpoints" },
   }),
 });
@@ -31,13 +31,13 @@ export default defineExtension({
           orgId,
         });
         await main(`${config.baseUrl}/search`);
-        for (const { baseUrl } of config.endpoints) {
+        for (const { apiBase } of config.endpoints) {
           const f = configUrlFetch(ctx.net, {
-            url: baseUrl,
-            platform: platform().endpoints.map((e) => e.baseUrl),
+            url: apiBase,
+            platform: platform().endpoints.map((e) => e.apiBase),
             orgId,
           });
-          await f(`${baseUrl}/search`);
+          await f(`${apiBase}/search`);
         }
       },
     });

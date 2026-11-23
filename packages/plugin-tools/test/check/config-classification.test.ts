@@ -20,6 +20,116 @@ const NAMES = [
 const found = new Map<string, Finding[]>();
 let tmp: string;
 
+/** A web-search extension variant: extra imports, deployment fields, and the `search` body. */
+interface Variant {
+  imports?: string;
+  top?: string;
+  fields: string;
+  body: string;
+}
+
+const ROUTER = `import { configUrlFetch } from "@capybara-hq/plugin-sdk";`;
+
+const VARIANTS: Record<string, Variant> = {
+  // red: `.origin` of a URL built from another field does not route a field named `origin`
+  origin: {
+    imports: ROUTER,
+    fields: "baseUrl: z.url(), origin: z.url()",
+    body: `const f = configUrlFetch(ctx.net, { url: config.baseUrl, orgId });
+        const g = configUrlFetch(ctx.net, { url: new URL(config.baseUrl).origin, orgId });
+        await f(config.baseUrl);
+        await g(config.origin);`,
+  },
+  // red: an intermediate member (`opts.config`) does not route a field named `config`
+  "config-named": {
+    imports: ROUTER,
+    fields: "baseUrl: z.url(), config: z.url()",
+    body: `const f = configUrlFetch(ctx.net, { url: opts.config.baseUrl, orgId });
+        await f(opts.config.config);`,
+  },
+  // red: a dropped configUrlFetch result next to the global fetch
+  dead: {
+    imports: ROUTER,
+    fields: "baseUrl: z.url()",
+    body: `configUrlFetch(ctx.net, { url: config.baseUrl, orgId });
+        await fetch(config.baseUrl);`,
+  },
+  // red: a configUrlFetch of the plugin's own, not the SDK's
+  local: {
+    top: "const configUrlFetch = (_n: unknown, o: { url: string }) => (u: string) => fetch(u || o.url);",
+    fields: "baseUrl: z.url()",
+    body: "await configUrlFetch(ctx.net, { url: config.baseUrl })(config.baseUrl);",
+  },
+  // green: a renamed import
+  renamed: {
+    imports: `import { configUrlFetch as cuf } from "@capybara-hq/plugin-sdk";`,
+    fields: "baseUrl: z.url()",
+    body: "await cuf(ctx.net, { url: config.baseUrl, orgId })(config.baseUrl);",
+  },
+  // green: a namespace import
+  namespace: {
+    imports: `import * as sdk from "@capybara-hq/plugin-sdk";`,
+    fields: "baseUrl: z.url()",
+    body: `const f = sdk.configUrlFetch(ctx.net, { url: config.baseUrl, orgId });
+        await f(config.baseUrl);`,
+  },
+  // green: a string-literal member
+  bracket: {
+    imports: ROUTER,
+    fields: "baseUrl: z.url()",
+    body: `const f = configUrlFetch(ctx.net, { url: config["baseUrl"], orgId });
+        await f(config.baseUrl);`,
+  },
+  // red: a tuple element (prefixItems) and a URL inside a recursive schema ($ref into $defs)
+  shapes: {
+    top: `const Node = z.object({
+  name: z.string(),
+  nodeUrl: z.url().optional(),
+  get children() {
+    return z.array(Node).optional();
+  },
+});`,
+    fields: "mirrors: z.tuple([z.url()]), tree: Node",
+    body: `await fetch("https://example.com");`,
+  },
+  // red: an array and a record of plain strings named like URLs; an enum host is not one
+  lists: {
+    fields: `mirrorUrls: z.array(z.string()),
+  regionEndpoint: z.record(z.string(), z.string()),
+  apiHost: z.enum(["a.example.com", "b.example.com"])`,
+    body: `await fetch("https://example.com");`,
+  },
+};
+
+const variantSource = (v: Variant) => `${v.imports ?? ""}
+import { defineExtension } from "@capybara-hq/plugin-sdk";
+import { z } from "zod";
+
+${v.top ?? ""}
+
+const deployment = z.object({
+  ${v.fields},
+});
+
+type Config = z.infer<typeof deployment>;
+
+export default defineExtension({
+  name: "fixture-org-url-variant",
+  version: "0.1.0",
+  sdk: "^0.1.0-rc.0",
+  provides: ["web-search@1"],
+  config: { deployment },
+  setup(ctx) {
+    ctx.provide("web-search@1", {
+      async search(_q: string, opts: { config: Config; orgId: string }) {
+        const { config, orgId } = opts;
+        ${v.body}
+      },
+    });
+  },
+});
+`;
+
 const lineOf = async (file: string, text: string) =>
   (await readFile(file, "utf8")).split("\n").findIndex((l) => l.includes(text)) + 1;
 
@@ -38,6 +148,16 @@ beforeAll(async () => {
   );
   for (const name of NAMES) found.set(name, await checkConfigClassification([fixture(name)]));
   found.set("tools", await checkConfigClassification([tmp]));
+  for (const [name, v] of Object.entries(VARIANTS)) {
+    const dir = await mkdtemp(join(fixtures, `.tmp-org-url-${name}-`));
+    try {
+      await cp(fixture("org-url-unrouted"), dir, { recursive: true });
+      await writeFile(join(dir, "src/index.ts"), variantSource(v));
+      found.set(name, await checkConfigClassification([dir]));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
 });
 
 afterAll(async () => {
@@ -92,5 +212,38 @@ describe("checkConfigClassification", () => {
 
   it("reports nothing when every overridable URL goes through configUrlFetch", () => {
     expect(found.get("org-url-routed")).toEqual([]);
+  });
+
+  const urlFindings = (name: string) =>
+    (found.get(name) ?? []).map((f) => [f.rule, f.message.split(" ")[4]]);
+
+  it("a name inside a call or new, or an intermediate member, routes nothing", () => {
+    expect(urlFindings("origin")).toEqual([["plugin-org-url-net", "origin"]]);
+    expect(urlFindings("config-named")).toEqual([["plugin-org-url-net", "config"]]);
+  });
+
+  it("a dropped configUrlFetch result routes nothing", () => {
+    expect(urlFindings("dead")).toEqual([["plugin-org-url-net", "baseUrl"]]);
+  });
+
+  it("only the SDK's configUrlFetch routes, imported named, renamed or as a namespace", () => {
+    expect(urlFindings("local")).toEqual([["plugin-org-url-net", "baseUrl"]]);
+    expect(found.get("renamed")).toEqual([]);
+    expect(found.get("namespace")).toEqual([]);
+    expect(found.get("bracket")).toEqual([]);
+  });
+
+  it("walks tuple elements and recursive $refs", () => {
+    expect(urlFindings("shapes")).toEqual([
+      ["plugin-org-url-net", "mirrors[]"],
+      ["plugin-org-url-net", "tree.nodeUrl"],
+    ]);
+  });
+
+  it("flags arrays and records of plain strings named like URLs, not an enum", () => {
+    expect(urlFindings("lists")).toEqual([
+      ["plugin-org-url-net", "mirrorUrls"],
+      ["plugin-org-url-net", "regionEndpoint"],
+    ]);
   });
 });
