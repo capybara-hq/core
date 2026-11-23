@@ -10,6 +10,7 @@ import {
   secretLeafPaths,
 } from "../../src/extensions/effective-config.js";
 import { assertSecretsReachable } from "../../src/extensions/host.js";
+import { fieldLevels } from "../../src/extensions/org-levels.js";
 
 const hints = { label: { zh: "密钥", en: "Key" } };
 
@@ -23,6 +24,11 @@ const platformSecrets: Record<string, () => z.ZodTypeAny> = {
   "secret(platformOnly(x).optional())": () => secret(platformOnly(z.string()).optional()),
   "platformOnly(secret(x).default())": () => platformOnly(secret(z.string()).default("dflt")),
   "secret(platformOnly(x).default())": () => secret(platformOnly(z.string()).default("dflt")),
+  "platformOnly(secret(x).nullable().optional())": () =>
+    platformOnly(secret(z.string()).nullable().optional()),
+  "secret(platformOnly(x).prefault())": () => secret(platformOnly(z.string()).prefault("dflt")),
+  "platformOnly(secret(x).catch(dflt).readonly())": () =>
+    platformOnly(secret(z.string()).catch("dflt").readonly()),
   // raw meta, as a hand-made schema or another SDK version writes it: no merge by the helpers
   "x.meta(secret).optional().meta(platformOnly)": () =>
     z.string().meta({ secret: true }).optional().meta({ platformOnly: true }),
@@ -73,6 +79,13 @@ describe("secret marks under or over wrappers (kernel)", () => {
         { config: { key: "hand-edited", open: "x" }, secrets: {} },
       ),
     ).toEqual({ open: "x" });
+  });
+
+  it("an inner platformOnly true is never cleared by an outer false", () => {
+    const schema = z.object({
+      key: platformOnly(z.string()).optional().meta({ platformOnly: false }),
+    });
+    expect(fieldLevels(schema).get("key")).toBe("platform");
   });
 
   it("a hot mark on the leaf survives a wrapper's meta", () => {
