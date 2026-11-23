@@ -160,7 +160,7 @@ export type NetPolicy = {
   /** Testing only: plain http and loopback addresses for loopback hosts. */
   allowInsecureLoopback: boolean;
   /**
-   * `marketplaces.allowPrivateHosts`: a hostname entry (exact, case-insensitive) exempts that host's
+   * `net.allowPrivateHosts`: a hostname entry (exact, case-insensitive) exempts that host's
    * resolved addresses; an IP or CIDR entry exempts IP-literal URL hosts inside it only, never a DNS
    * name that resolves there (an attacker's name could point into the range).
    */
@@ -229,7 +229,7 @@ const HOSTNAME =
   /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
 /**
- * Why a `marketplaces.allowPrivateHosts` entry is invalid (English), or null when it is a hostname,
+ * Why a `net.allowPrivateHosts` entry is invalid (English), or null when it is a hostname,
  * an IP address or a CIDR no broader than /8 (IPv4) or /16 (IPv6).
  */
 export function privateHostEntryProblem(entry: string): string | null {
@@ -246,7 +246,7 @@ export function privateHostEntryProblem(entry: string): string | null {
   return "must be a hostname, an IP address or a CIDR such as 10.1.0.0/16";
 }
 
-/** A valid `marketplaces.allowPrivateHosts` entry (see {@link privateHostEntryProblem}). */
+/** A valid `net.allowPrivateHosts` entry (see {@link privateHostEntryProblem}). */
 export function isPrivateHostEntry(entry: string): boolean {
   return privateHostEntryProblem(entry) === null;
 }
@@ -360,7 +360,7 @@ export async function resolvePublic(
   if (addrs.some(refused)) {
     const hint =
       policy.extension?.privateHint ??
-      "add the hostname to marketplaces.allowPrivateHosts to allow an internal host";
+      "add the hostname to net.allowPrivateHosts to allow an internal host";
     throw new NetDeniedError(
       "net.private_address",
       h,
