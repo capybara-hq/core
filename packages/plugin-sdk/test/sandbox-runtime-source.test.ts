@@ -31,16 +31,24 @@ describe("sandbox runtime source bundle", () => {
     );
     expect(digests).toEqual({
       "native-files.py": "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
-      "linux-sandbox.py": "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
+      "linux-sandbox.py": "ceb5bb0971437978a7695091792bfafcf3dbf2e7c74e8425d8aceb76e442f848",
     });
-    expect(sdk.SANDBOX_RUNTIME_SOURCE.files.every((file) => !file.features)).toBe(true);
+    // promoted: no runtime change is between its steps
+    expect(sdk.SANDBOX_RUNTIME_SOURCE.current).toBe(sdk.SANDBOX_RUNTIME_SOURCE.files);
   });
 
-  it("accepts exactly the staged and current digests of each file", () => {
+  it("accepts the staged and current digests of each file, plus one previous revision", () => {
     const bundle = sdk.SANDBOX_RUNTIME_SOURCE;
     expect(Object.isFrozen(bundle.accepted)).toBe(true);
     const expected: Record<string, string[]> = {};
-    for (const file of [...bundle.files, ...bundle.current]) {
+    // the launcher before exact file read roots, for instances of earlier device-docker images
+    const previous = [
+      {
+        name: "linux-sandbox.py",
+        sha256: "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
+      },
+    ];
+    for (const file of [...bundle.files, ...bundle.current, ...previous]) {
       const list = expected[file.name] ?? [];
       if (!list.includes(file.sha256)) list.push(file.sha256);
       expected[file.name] = list;
@@ -49,12 +57,10 @@ describe("sandbox runtime source bundle", () => {
     for (const list of Object.values(bundle.accepted)) expect(Object.isFrozen(list)).toBe(true);
   });
 
-  it("declares file read roots only on the launcher that enforces them", () => {
+  it("declares file read roots on the launcher that enforces them", () => {
     const current = sdk.SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "linux-sandbox.py");
-    const staged = sdk.SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
     expect(current?.features).toEqual(["fileReadRoots"]);
     expect(current?.source).toContain('"readFiles"');
-    expect(staged?.source).not.toContain("readFiles");
   });
 
   it("keeps SDK source packaging free of Node runtime imports and I/O", async () => {
@@ -62,7 +68,6 @@ describe("sandbox runtime source bundle", () => {
       "sandbox-runtime-source.ts",
       "sandbox-native-runtime-source.ts",
       "sandbox-linux-runtime-source.ts",
-      "sandbox-linux-staged-runtime-source.ts",
     ]) {
       const source = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
       expect(source).not.toMatch(/(?:from\s*|import\s*\()["'](?:node:|fs|child_process|crypto)/);

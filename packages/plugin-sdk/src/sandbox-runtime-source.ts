@@ -1,5 +1,4 @@
 import { LINUX_SANDBOX_SOURCE } from "./sandbox-linux-runtime-source.js";
-import { LINUX_SANDBOX_STAGED_SOURCE } from "./sandbox-linux-staged-runtime-source.js";
 import { NATIVE_FILES_SOURCE } from "./sandbox-native-runtime-source.js";
 
 /**
@@ -23,13 +22,6 @@ const NATIVE_FILES: SandboxRuntimeFile = Object.freeze({
   sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
 });
 
-/** The launcher every released image provider stages (`sandbox-linux-staged-runtime-source.ts`). */
-const LINUX_SANDBOX_STAGED: SandboxRuntimeFile = Object.freeze({
-  name: "linux-sandbox.py",
-  source: LINUX_SANDBOX_STAGED_SOURCE,
-  sha256: "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
-});
-
 const LINUX_SANDBOX: SandboxRuntimeFile = Object.freeze({
   name: "linux-sandbox.py",
   source: LINUX_SANDBOX_SOURCE,
@@ -37,11 +29,23 @@ const LINUX_SANDBOX: SandboxRuntimeFile = Object.freeze({
   features: Object.freeze(["fileReadRoots"] as const),
 });
 
-const STAGED = Object.freeze([NATIVE_FILES, LINUX_SANDBOX_STAGED]);
-const CURRENT = Object.freeze([NATIVE_FILES, LINUX_SANDBOX]);
+const STAGED = Object.freeze([NATIVE_FILES, LINUX_SANDBOX]);
+const CURRENT = STAGED;
+
+/**
+ * Digests of earlier revisions a staged copy may still have (one previous revision at most):
+ * device containers made from an earlier image keep their staged runtime until recreated. The
+ * launcher before exact file read roots (core#742); the next runtime change drops it.
+ */
+const PREVIOUS: readonly Pick<SandboxRuntimeFile, "name" | "sha256">[] = Object.freeze([
+  Object.freeze({
+    name: "linux-sandbox.py",
+    sha256: "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
+  }),
+]);
 
 function acceptedDigests(
-  ...sets: readonly (readonly SandboxRuntimeFile[])[]
+  ...sets: readonly (readonly Pick<SandboxRuntimeFile, "name" | "sha256">[])[]
 ): Readonly<Record<string, readonly string[]>> {
   const out: Record<string, string[]> = {};
   for (const set of sets)
@@ -80,7 +84,7 @@ function acceptedDigests(
  *
  * A runtime change therefore lands in three steps (tools/checks/README.md, "Changing the SDK
  * runtime sources"): `current` first, then the provider restages, then core promotes `current` to
- * `files` with the pin.
+ * `files` with the pin. Between changes, as now, `current` is `files`.
  */
 export const SANDBOX_RUNTIME_SOURCE: {
   readonly version: number;
@@ -91,5 +95,5 @@ export const SANDBOX_RUNTIME_SOURCE: {
   version: 2,
   files: STAGED,
   current: CURRENT,
-  accepted: acceptedDigests(STAGED, CURRENT),
+  accepted: acceptedDigests(STAGED, CURRENT, PREVIOUS),
 });
