@@ -215,9 +215,16 @@ describe("devices list", () => {
     await vi.waitFor(() => expect(template("ListPage")).not.toBeNull());
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Build box")).toBeNull();
+    // 新建设备 is not known yet: a placeholder holds its slot, so it does not pop in after load
+    const slots = document.querySelector('[data-part="page-header-action-slots"]');
+    expect(slots).not.toBeNull();
+    expect(slots?.querySelectorAll('[data-part="skeleton-box"]').length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: E.new })).toBeNull();
     await act(async () => release());
     expect(await screen.findByText("Build box")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(screen.getByRole("button", { name: E.new })).toBeTruthy();
+    expect(document.querySelector('[data-part="page-header-action-slots"]')).toBeNull();
   });
 
   it("no provider shows the empty state and offers no 新建设备", async () => {

@@ -52,6 +52,9 @@ function Devices({ orgId }: { orgId: string }) {
         { label: t("new"), variant: "primary" as const, onSelect: () => setCreating(true) },
       ],
     }),
+    // While loading, whether New device is offered is not known yet: a placeholder holds its slot
+    // so the action does not pop in after load
+    ...(list.kind === "loading" && { loading: { actions: 1 } }),
   };
   const common = { variant: "cards" as const, listLabel: t("listLabel") };
   if (list.kind === "loading")
