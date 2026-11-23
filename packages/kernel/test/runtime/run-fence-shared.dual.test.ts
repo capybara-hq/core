@@ -611,13 +611,25 @@ describe("conversation deletion during a run's hot-path write", () => {
   it("waits for the open transaction; the run's next write is refused", async () => {
     const { orgId, convs } = await orgWithConvs("Conv deletion", 1);
     const conv = convs[0] as string;
-    const h = holdIn(conv, { admission: "shared", afterwards: checkpoint });
+    // The run's next write comes after the deletion committed. Without the wait it races the
+    // deletion once the held transaction commits: it may lock the conversation row first, commit
+    // (rightly, as it precedes the deletion) and leave nothing for the fence to refuse.
+    const deleted = gate();
+    releasers.push(deleted.open);
+    const h = holdIn(conv, {
+      admission: "shared",
+      afterwards: async (env) => {
+        await deleted.promise;
+        return checkpoint(env);
+      },
+    });
     await postMessage(req, orgId, conv, "hi");
     const pid = await within(h.pid, 15_000, "run held");
     const runId = await runIdOf(conv);
     const deletion = track(
       req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/conversations/${conv}` }),
     );
+    void deletion.p.finally(deleted.open).catch(() => {});
     // the deletion takes the root row FOR UPDATE: it waits for the run's transaction
     await waitFor(
       () => blockedBy([pid], "conversations", "for update"),
