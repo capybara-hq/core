@@ -122,15 +122,11 @@ button.cb-tool-line:focus-visible {
   background: var(--cb-fail);
   vertical-align: middle;
 }
-.cb-tool-label > .cb-error-dot {
-  margin-inline-start: var(--cb-space-2);
-}
 /* The group header's mark: the dot and the count, in the header's own colour. */
 .cb-tool-errors {
   display: inline-flex;
   align-items: center;
   gap: var(--cb-space-1);
-  margin-inline-start: var(--cb-space-2);
 }
 
 /* The row's meta (§6.16.9): the status words after the label stay whole; the description yields

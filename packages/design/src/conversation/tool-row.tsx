@@ -159,6 +159,7 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {extra ? <span className="cb-faint">{` · ${extra}`}</span> : null}
       {row.status === "failed" ? (
         <>
+          {" "}
           <ErrorDot label={t("tool.errorMark")} />
           {reason ? <span className="cb-muted">{` · ${reason}`}</span> : null}
         </>

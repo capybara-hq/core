@@ -118,7 +118,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         : t.extra
           ? ` <span class="r-faint">· ${esc(t.extra)}</span>`
           : "";
-    const fail = t.status === "failed" ? `${errorDot()}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
+    const fail = t.status === "failed" ? ` ${errorDot()}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
     return `<span class="r-tlabel"${t.tooltip ? ` title="${esc(t.tooltip)}"` : ""}>${name}${key}${extra}${fail}</span>${toolMeta(t)}`;
   }
 
@@ -204,7 +204,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     else if (by.edit.length) parts.push(`已修改 ${by.edit.length} 个文件`);
     const failed = rows.filter((r) => r.status === "failed").length;
     const fail = failed
-      ? `<span class="r-tool-errors" data-part="tool-errors">${errorDot(`${failed} 个调用返回了错误`)}<span aria-hidden="true">${failed}</span></span>`
+      ? ` <span class="r-tool-errors" data-part="tool-errors">${errorDot(`${failed} 个调用返回了错误`)}<span aria-hidden="true">${failed}</span></span>`
       : "";
     const added = by.edit.reduce((n, r) => n + (r.added || 0), 0);
     const removed = by.edit.reduce((n, r) => n + (r.removed || 0), 0);

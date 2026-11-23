@@ -656,7 +656,7 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(dot.getAttribute("title")).toBe("2 个调用返回了错误");
     // the header names the mark once: the visible count is hidden from the accessible name
     expect(screen.getByRole("button", { name: /已使用 3 个工具/ }).textContent).toBe(
-      "已使用 3 个工具2",
+      "已使用 3 个工具 2",
     );
     expect(container.textContent).not.toContain("失败");
     expect(container.querySelector('[data-part="fail-word"]')).toBeNull();

@@ -1,4 +1,4 @@
-import { type JSX, type ReactNode, useId, useState } from "react";
+import { Fragment, type JSX, type ReactNode, useId, useState } from "react";
 import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { useDesignLocale } from "../provider";
@@ -141,12 +141,15 @@ export function ToolGroup({
   const isOpen = live || (open ?? own);
   const parts = summaryParts(rows, locale).map((p, i) =>
     p.errors ? (
-      // the error dot and the count; the dot names it, so the count is not read twice
+      // a space, then the error dot and the count; the dot names it, so the count is read once
       // biome-ignore lint/suspicious/noArrayIndexKey: the runs are positional
-      <span key={i} className="cb-tool-errors" data-part="tool-errors">
-        <ErrorDot label={p.errors.label} />
-        <span aria-hidden="true">{p.errors.count}</span>
-      </span>
+      <Fragment key={i}>
+        {" "}
+        <span className="cb-tool-errors" data-part="tool-errors">
+          <ErrorDot label={p.errors.label} />
+          <span aria-hidden="true">{p.errors.count}</span>
+        </span>
+      </Fragment>
     ) : (
       <span
         // biome-ignore lint/suspicious/noArrayIndexKey: the runs are positional

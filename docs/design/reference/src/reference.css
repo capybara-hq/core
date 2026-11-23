@@ -1499,14 +1499,10 @@ textarea {
   background: var(--cb-fail);
   vertical-align: middle;
 }
-.r-tlabel > .r-error-dot {
-  margin-inline-start: var(--cb-space-2);
-}
 .r-tool-errors {
   display: inline-flex;
   align-items: center;
   gap: var(--cb-space-1);
-  margin-inline-start: var(--cb-space-2);
 }
 .r-warn-word {
   color: var(--cb-warn);
