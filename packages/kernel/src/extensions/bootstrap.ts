@@ -212,7 +212,7 @@ const LOCK_RETRY_MS = 500;
 export type BootstrapImports = Pick<PluginImport, "prepare" | "prepareGit" | "confirm">;
 
 /**
- * What a run moves the platform to a raised pin of a plugin without an extension with (the
+ * What a run moves the platform to a raised pin with, with or without an extension (the
  * platform plugin update, acting as the kernel).
  */
 export type BootstrapUpdater = Pick<PlatformPluginUpdater, "preview" | "update">;
@@ -344,7 +344,7 @@ export class BootstrapService {
     packages?: ReadonlyMap<string, Uint8Array>;
     /** The plugin import a declarative entry (or an entry's catalog version) goes through. */
     imports: BootstrapImports;
-    /** The platform update a raised pin of a declarative entry goes through. */
+    /** The platform update a raised pin goes through (after the extension step, if any). */
     updater: BootstrapUpdater;
   }): Promise<BootstrapResult> {
     const manifestSha256 = bootstrapManifestSha256(o.manifest);
@@ -623,25 +623,18 @@ export class BootstrapService {
       if (live !== undefined) {
         // As the extension path does: a version the bootstrap put there is raised to the pin; one
         // the super admin moved to (another source, or a higher version) stays
-        if (live.source !== "bootstrap" || !isLower(live.version, e.version)) {
+        if (!raisable(live, e.version)) {
           return { name: e.name, action: "kept", version: live.version };
         }
         if (live.disabled) {
           // The update refuses a disabled item: the version waits in the catalog, and the super
           // admin applies it once they enable the plugin
           await this.importOnly(e, bytes, source, imports, git);
-          this.log.info(
-            "bootstrap: the plugin is disabled on the deployment; the pinned version is imported, not applied",
-            { plugin: e.name, version: e.version, current: live.version },
-          );
+          this.logDisabled(e, live.version);
           return { name: e.name, action: "kept", version: live.version };
         }
         await this.importOnly(e, bytes, source, imports, git, true);
-        const preview = await updater.preview(live.itemId, e.version);
-        await updater.update(null, live.itemId, {
-          version: e.version,
-          diffHash: preview.diffHash,
-        });
+        await this.applyPlatform(updater, live.itemId, e.version);
         return { name: e.name, action: "upgraded", version: e.version };
       }
       // A builtin entry a super admin removed is put back; an optional one stays out (Ruling 5)
@@ -711,7 +704,71 @@ export class BootstrapService {
       leftDisabled = await this.enableOrWarn(e);
     }
     await this.markBuiltin(e.name, builtin);
+    // The catalog version of the pin is imported now; the platform (its skills, templates, themes
+    // and org installs) follows the extension the same way a declarative entry does (core#727)
+    if (await this.raisePlatform(e, updater)) {
+      result = { name: e.name, action: "upgraded", version: e.version };
+    }
     return leftDisabled === undefined ? result : { ...result, leftDisabled };
+  }
+
+  /**
+   * After the extension step: when the install record runs the pin from `bootstrap` and the
+   * plugin's platform version came from `bootstrap` at a lower version (raised just now, or by a
+   * run before core#727 that moved only the extension), the platform update moves the platform to
+   * the pin, acting as the kernel. A version the super admin moved to stays; a disabled item gets
+   * none (the update refuses it; the super admin applies the version once they enable it).
+   * Returns whether the platform moved.
+   */
+  private async raisePlatform(
+    e: MergedBootstrapEntry,
+    updater: BootstrapUpdater,
+  ): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("extension_installs")
+      .select(["version", "source"])
+      .where("name", "=", e.name)
+      .executeTakeFirst();
+    if (row?.source !== "bootstrap" || row.version !== e.version) return false;
+    const live = await this.platformVersion(e.name);
+    if (live === undefined || !raisable(live, e.version)) return false;
+    if (live.disabled) {
+      this.logDisabled(e, live.version);
+      return false;
+    }
+    await this.applyPlatform(updater, live.itemId, e.version);
+    return true;
+  }
+
+  /**
+   * The platform update to the pin, acting as the kernel (actor `null`). The update recomputes its
+   * preview under the item's lock; a scope sync the extension step owed may run between the two
+   * and change the orgs the preview covers (409 `plugin.upgrade_stale`): previewed again, a few
+   * times.
+   */
+  private async applyPlatform(
+    updater: BootstrapUpdater,
+    itemId: string,
+    version: string,
+  ): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      const preview = await updater.preview(itemId, version);
+      try {
+        await updater.update(null, itemId, { version, diffHash: preview.diffHash });
+        return;
+      } catch (err) {
+        if (attempt >= 3 || !(err instanceof ApiError) || err.code !== "plugin.upgrade_stale") {
+          throw err;
+        }
+      }
+    }
+  }
+
+  private logDisabled(e: MergedBootstrapEntry, current: string): void {
+    this.log.info(
+      "bootstrap: the plugin is disabled on the deployment; the pinned version is imported, not applied",
+      { plugin: e.name, version: e.version, current },
+    );
   }
 
   /**
@@ -1065,3 +1122,10 @@ function carried(
 /** `installed` is below `pinned` (a version that is not semver is never upgraded). */
 const isLower = (installed: string, pinned: string): boolean =>
   semver.valid(installed) !== null && semver.valid(pinned) !== null && semver.lt(installed, pinned);
+
+/**
+ * A platform version the bootstrap raises to the pin: one the bootstrap put there, below the pin
+ * (one the super admin moved to, from another source or at a higher version, stays).
+ */
+const raisable = (live: { source: string | null; version: string }, pinned: string): boolean =>
+  live.source === "bootstrap" && isLower(live.version, pinned);
