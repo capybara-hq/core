@@ -357,16 +357,20 @@ function appliedFrom(v: unknown): AppliedLimits | null {
  * `device_instances.instance_limits` read leniently: `applied` is what the instance runs with
  * (null: unknown, e.g. an instance made before auto mode recorded tiers, which differs from every
  * effective value); `unapplied` is a newer value the provider could not apply without a file
- * reset.
+ * reset; `pending` is the target of an `update` the kernel sent and never heard back from (device
+ * update fencing design §7.2): the instance enforces `applied`, or `pending` if that update landed,
+ * so the next exclusive use applies the desired limits again.
  */
 export function readInstanceLimits(v: unknown): {
   applied: AppliedLimits | null;
   unapplied: AppliedLimits | null;
+  pending: AppliedLimits | null;
 } {
-  if (typeof v !== "object" || v === null) return { applied: null, unapplied: null };
+  if (typeof v !== "object" || v === null) return { applied: null, unapplied: null, pending: null };
   return {
     applied: appliedFrom(v),
     unapplied: appliedFrom((v as { unapplied?: unknown }).unapplied),
+    pending: appliedFrom((v as { pending?: unknown }).pending),
   };
 }
 
@@ -374,10 +378,12 @@ export function readInstanceLimits(v: unknown): {
 export function instanceLimitsJson(
   applied: AppliedLimits | null,
   unapplied?: AppliedLimits,
+  pending?: AppliedLimits,
 ): string | null {
-  if (applied === null && unapplied === undefined) return null;
+  if (applied === null && unapplied === undefined && pending === undefined) return null;
   return JSON.stringify({
     ...(applied !== null && appliedOf(applied)),
     ...(unapplied !== undefined && { unapplied: appliedOf(unapplied) }),
+    ...(pending !== undefined && { pending: appliedOf(pending) }),
   });
 }

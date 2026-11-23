@@ -46,7 +46,7 @@ const actor = { accountId: "acc-1", conversationId: "conv-1" };
 /** A file system and an instance attached to it. */
 async function mk(p: DeviceProvider, name: string): Promise<SandboxHandle> {
   const fileSystem = await p.createFileSystem({ name: `fs-${name}`, limits, signal: sig() });
-  return p.create({ name, image: "i", limits, fileSystem, signal: sig() });
+  return p.create({ name, image: "i", limits, fileSystem, signal: sig(), fence: { token: 0 } });
 }
 
 describe("device-fake", () => {
@@ -224,17 +224,29 @@ describe("device-fake processes", () => {
       async () =>
         (await readdir(join(root, "instances", h.id, "procs")).catch(() => [])).length > 0,
     );
-    await p.destroy(h, sig());
+    await p.destroy(h, sig(), null);
     expect(await running).toMatchObject({ exitCode: null });
   });
 
   it("destroy keeps the file system", async () => {
     const p = createFakeSandbox(root);
     const fileSystem = await p.createFileSystem({ name: "cap-device-keep", limits, signal: sig() });
-    const h1 = await p.create({ name: "keep-1", limits, fileSystem, signal: sig() });
+    const h1 = await p.create({
+      name: "keep-1",
+      limits,
+      fileSystem,
+      signal: sig(),
+      fence: { token: 0 },
+    });
     await p.writeFile(h1, "/workspace/a", new TextEncoder().encode("kept"), sig());
-    await p.destroy(h1, sig());
-    const h2 = await p.create({ name: "keep-2", limits, fileSystem, signal: sig() });
+    await p.destroy(h1, sig(), null);
+    const h2 = await p.create({
+      name: "keep-2",
+      limits,
+      fileSystem,
+      signal: sig(),
+      fence: { token: 0 },
+    });
     const f = await p.readFile(h2, "/workspace/a", { maxBytes: 100, signal: sig() });
     expect(new TextDecoder().decode(f?.data)).toBe("kept");
     expect((await fakeSandboxMeta(root, h2.id))?.image).toBeNull();
@@ -249,9 +261,9 @@ describe("device-fake processes", () => {
     const fileSystem = await p.createFileSystem({ name: "cap-device-gone", limits, signal: sig() });
     await removeFakeFileSystem(root, fileSystem.id);
     expect(await fakeFileSystems(root)).not.toContain(fileSystem.id);
-    await expect(p.create({ name: "gone-1", limits, fileSystem, signal: sig() })).rejects.toSatisfy(
-      isFileSystemGoneError,
-    );
+    await expect(
+      p.create({ name: "gone-1", limits, fileSystem, signal: sig(), fence: { token: 0 } }),
+    ).rejects.toSatisfy(isFileSystemGoneError);
   });
 
   it("exec records its actor", async () => {
