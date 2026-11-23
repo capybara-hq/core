@@ -289,7 +289,7 @@ describe("the token endpoint goes through packages/kernel/src/net", () => {
     );
     expect(err).toBeInstanceOf(OAuthSetupError);
     expect(err).toMatchObject({ reason: "address_refused" });
-    expect((err as Error).message).toMatch(/marketplaces\.allowPrivateHosts/);
+    expect((err as Error).message).toMatch(/net\.allowPrivateHosts/);
   });
 
   it("loopback http without allowInsecureLoopback is refused", async () => {

@@ -203,14 +203,23 @@ describe("resolvePublic", () => {
   });
 
   it("the config refuses a too-broad CIDR with a clear message", () => {
-    const marketplaces = KernelConfigSchema.shape.marketplaces;
-    const bad = marketplaces.safeParse({ allowPrivateHosts: ["gitlab.internal", "0.0.0.0/0"] });
+    const net = KernelConfigSchema.shape.net;
+    const bad = net.safeParse({ allowPrivateHosts: ["gitlab.internal", "0.0.0.0/0"] });
     expect(bad.success).toBe(false);
     expect(JSON.stringify(bad.error?.issues)).toContain(
       "the CIDR 0.0.0.0/0 is too broad: use a prefix of at least /8 for IPv4",
     );
-    const ok = marketplaces.safeParse({ allowPrivateHosts: ["gitlab.internal", "10.1.0.0/16"] });
+    const ok = net.safeParse({ allowPrivateHosts: ["gitlab.internal", "10.1.0.0/16"] });
     expect(ok.success).toBe(true);
+    expect(ok.data?.allowPrivateHosts).toEqual(["gitlab.internal", "10.1.0.0/16"]);
+  });
+
+  it("the old marketplaces.allowPrivateHosts key is an unknown key the strict config refuses", () => {
+    const old = KernelConfigSchema.shape.marketplaces.safeParse({
+      allowPrivateHosts: ["gitlab.internal"],
+    });
+    expect(old.success).toBe(false);
+    expect(JSON.stringify(old.error?.issues)).toContain("allowPrivateHosts");
   });
 
   it("allows loopback hosts only with allowInsecureLoopback", async () => {
