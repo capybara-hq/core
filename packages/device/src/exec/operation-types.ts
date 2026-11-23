@@ -116,8 +116,9 @@ export interface OwnerCeilingInput {
     credentialless?: readonly string[];
   };
   /**
-   * The macOS temp dirs that may hold a connection's private temporary parent; default on macOS
-   * the user temp dir and this process's temp dir (the worker's fallback), elsewhere none.
+   * The temp dirs that may hold a connection's private temporary parent; default on macOS the user
+   * temp dir and this process's temp dir (the worker's fallback), on Linux this process's temp dir
+   * (the Linux worker's base on a host), elsewhere none.
    */
   macTempBases?: readonly string[];
 }
@@ -127,13 +128,13 @@ export async function readStrictOwnerCeiling(
 ): Promise<DeviceOwnerCeiling> {
   return readStrictOwnerCeilingSync(input);
 }
-/** The macOS user temp dir the operation worker makes private temporary directories in. */
-function defaultMacTempBases(): string[] {
-  if (process.platform !== "darwin") return [];
-  // the worker's base: the user temp dir, else this process's temp dir (which depends on each
-  // process's TMPDIR): every form is denied
+/** The temp dirs the operation workers make private temporary directories in. */
+function defaultPrivateTempBases(): string[] {
+  if (process.platform !== "darwin" && process.platform !== "linux") return [];
+  // the macOS worker's base: the user temp dir, else this process's temp dir (which depends on
+  // each process's TMPDIR); the Linux worker's: this process's temp dir. Every form is denied
   const bases = new Set<string>();
-  const user = macUserTempDir();
+  const user = process.platform === "darwin" ? macUserTempDir() : undefined;
   if (user !== undefined) bases.add(user);
   try {
     bases.add(realpathSync(tmpdir()));
@@ -207,7 +208,7 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
         Object.freeze({ deviceId: c.deviceId, reason: "its working directory is not absolute" }),
       ),
   ].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
-  const macTempBases = input.macTempBases ?? defaultMacTempBases();
+  const macTempBases = input.macTempBases ?? defaultPrivateTempBases();
   const home = resolve(input.home ?? homedir());
   const otherDirs = otherConnectionDenies({
     ownDeviceId: input.deviceId,

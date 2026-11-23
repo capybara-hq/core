@@ -571,14 +571,15 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
   });
 }
 /**
- * This device's private temporary parent in the user's temporary directory
+ * This device's private temporary parent in a temporary directory `base` (macOS: the user's
+ * temporary directory; a Linux host: this process's; a local-Docker device: its tmp root)
  * (`capybara-op-<deviceId>`, {@link privateTempParentName}), ready for an operation's own temp:
  * created private (0700) when missing; an existing one must be a directory of this user, never a
  * link, and is narrowed back to 0700 when its mode is wider. Anything else is refused: a parent
  * another process controls could redirect or expose every temp of this device. Every other
  * connection's parent is denied to this device's commands (the owner ceiling), this one is not.
  */
-async function privateTempParent(
+export async function privateTempParent(
   base: string,
   deviceId: string,
   deniedReadRoots: readonly string[],
@@ -615,7 +616,7 @@ async function privateTempParent(
  * device process is gone (this process removes its own when each operation ends). Nothing outside
  * the parent is touched: another device's temps are its own. Best effort.
  */
-async function sweepPrivateTemps(parent: string): Promise<void> {
+export async function sweepPrivateTemps(parent: string): Promise<void> {
   try {
     for (const name of await readdir(parent)) {
       const pid = Number(/^op-(\d+)-[^/]+$/.exec(name)?.[1]);

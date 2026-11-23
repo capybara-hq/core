@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -19,6 +20,7 @@ import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { privateTempParentName } from "../src/exec/read-model.js";
 
 /**
  * A scripted stand-in for the Linux operation agent (a real child process speaking the agent's
@@ -38,6 +40,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (first) {
     first = false;
+    // the private temporary directory as the command would find it: its mode, and a file in it
+    const temp = message.env && message.env.TMPDIR;
+    if (temp && fs.existsSync(temp)) {
+      fs.writeFileSync(temp + "/made-by-command", "x");
+      fs.writeFileSync(process.env.LOG + ".temp", JSON.stringify({ temp, mode: fs.statSync(temp).mode & 0o777 }));
+    }
     if (message.op === "probe") {
       if (behaviour === "probe-garbage") process.stdout.write("not json\n");
       else if (behaviour === "probe-partial")
@@ -87,9 +95,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-const dirs: string[] = [];
+/** This file's device: its private temporary parent lies in this process's temp dir. */
+const DEVICE = `linux-worker-${process.pid}`;
+const tempParent = join(realpathSync(tmpdir()), privateTempParentName(DEVICE));
+const dirs: string[] = [tempParent];
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+  dirs.push(tempParent);
 });
 
 async function fakeTransport(behaviour: string) {
@@ -113,7 +125,16 @@ async function fakeTransport(behaviour: string) {
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l) as Record<string, unknown>);
-  return { transport, lines, spawned: () => spawned, filesLock: "/state/operation-files.lock" };
+  /** What the fake agent saw of the command's TMPDIR, if it was given one that existed. */
+  const temp = async () =>
+    JSON.parse(await readFile(`${log}.temp`, "utf8")) as { temp: string; mode: number };
+  return {
+    transport,
+    lines,
+    temp,
+    spawned: () => spawned,
+    filesLock: "/state/operation-files.lock",
+  };
 }
 
 const grant = (full: boolean) => ({
@@ -132,7 +153,7 @@ function execRequest(
   const identities: unknown[] = [];
   return {
     kind: "exec",
-    scope: { operationId: "op" } as never,
+    scope: { operationId: "op", deviceId: DEVICE } as never,
     grant: grant(full),
     stateDir: "/unused",
     pythonPath: "/usr/bin/python3",
@@ -170,15 +191,94 @@ describe("Linux operation worker", () => {
       expect.objectContaining({ session: { sid: 4242, start: 777 }, process: expect.any(String) }),
     ]);
     const [sent] = await fake.lines();
+    const seen = await fake.temp();
     expect(sent).toMatchObject({
       op: "exec",
       full: false,
-      writeRoots: ["/work"],
+      writeRoots: ["/work", seen.temp],
       network: { kind: "allowlist", hosts: [] },
-      env: { PATH: "/bin", HOME: "/work", TMPDIR: "/work" },
+      env: { PATH: "/bin", HOME: "/work", TMPDIR: seen.temp, TMP: seen.temp, TEMP: seen.temp },
       expect: { "linux-sandbox.py": "x" },
       filesLock: "/state/operation-files.lock",
     });
+    // its own directory, never the first write root: in the device's private parent, private
+    expect(seen.temp.startsWith(`${tempParent}/op-${process.pid}-`)).toBe(true);
+    expect(seen.mode).toBe(0o700);
+    expect((await stat(tempParent)).mode & 0o777).toBe(0o700);
+    expect(sent?.readRoots).toEqual([seen.temp]);
+    // removed with what the command left in it once the operation ended
+    await expect(stat(seen.temp)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("each restricted exec gets a fresh private temp; a dead device process's leftovers go", async () => {
+    // a crashed device process's temp (a PID above every system's maximum is never alive)
+    await mkdir(tempParent, { recursive: true, mode: 0o700 });
+    const stale = join(tempParent, "op-4194305-stale");
+    await mkdir(stale);
+    await writeFile(join(stale, "left"), "x");
+    // a live process's temp is kept
+    const live = join(tempParent, `op-${process.ppid}-live`);
+    await mkdir(live);
+    const seen: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const fake = await fakeTransport("exit");
+      await (
+        await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+          execRequest(false),
+          new AbortController().signal,
+        )
+      ).completion;
+      seen.push((await fake.temp()).temp);
+    }
+    expect(seen[0]).not.toBe(seen[1]);
+    await expect(stat(stale)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await stat(live)).isDirectory()).toBe(true);
+  });
+
+  it("refuses a restricted exec whose private temp parent is denied, a link, or another's", async () => {
+    // the owner denies the parent: refused before anything is made there or an agent runs
+    const denied = await fakeTransport("exit");
+    const deniedHandle = await linuxOperationWorker({
+      ...denied,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(
+      execRequest(false, { grant: { ...grant(false), deniedReadRoots: [tempParent] } }),
+      new AbortController().signal,
+    );
+    await expect(deniedHandle.completion).rejects.toMatchObject({
+      name: "SandboxScopeDeniedError",
+    });
+    expect(denied.spawned()).toBe(0);
+    await expect(stat(tempParent)).rejects.toMatchObject({ code: "ENOENT" });
+    // a link in its place (another process could point it anywhere)
+    const elsewhere = await mkdtemp(join(tmpdir(), "cap-temp-elsewhere-"));
+    dirs.push(elsewhere);
+    await symlink(elsewhere, tempParent);
+    const linked = await fakeTransport("exit");
+    const linkedHandle = await linuxOperationWorker({
+      ...linked,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(execRequest(false), new AbortController().signal);
+    await expect(linkedHandle.completion).rejects.toThrow(/is a symbolic link/);
+    expect(linked.spawned()).toBe(0);
+  });
+
+  it("a command in the device's container keeps its first write root as TMPDIR, nothing made here", async () => {
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        transport: { ...fake.transport, kind: "docker" },
+        baseEnv: env,
+        acquireRuntime: gate,
+      })(execRequest(false), new AbortController().signal)
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({ writeRoots: ["/work"], env: { TMPDIR: "/work" } });
+    expect(sent?.env).not.toHaveProperty("TMP");
+    await expect(stat(tempParent)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("a restricted exec gets the version manager variables and reads their directories", async () => {
@@ -200,11 +300,12 @@ describe("Linux operation worker", () => {
     })(request, new AbortController().signal);
     await handle.completion;
     const [sent] = await fake.lines();
+    const { temp } = await fake.temp();
     expect(sent).toMatchObject({
       // the carve returns its roots sorted by code point
-      readRoots: [join(home, ".asdf"), "/repo"].sort(),
+      readRoots: [join(home, ".asdf"), "/repo", temp].sort(),
       readFiles: [join(home, ".tool-versions")],
-      writeRoots: ["/work"],
+      writeRoots: ["/work", temp],
       env: {
         PATH: "/bin",
         HOME: "/work",
@@ -269,8 +370,11 @@ describe("Linux operation worker", () => {
         expect(root === d || root.startsWith(`${d}/`), `${root} inside ${d}`).toBe(false);
         expect(d.startsWith(`${root}/`), `${root} holds ${d}`).toBe(false);
       }
-    // beside the denied paths, and the tool homes (clear of every denied path) kept whole
-    expect(roots).toEqual(["/h/u/src", "/usr", join(home, ".asdf")].sort());
+    // beside the denied paths, and the tool homes and the private temp (clear of every denied
+    // path) kept whole
+    expect(roots).toEqual(
+      ["/h/u/src", "/usr", join(home, ".asdf"), (await fake.temp()).temp].sort(),
+    );
     // native work keeps the reach as granted: the agent checks each resolved path against denied
     const native = await fakeTransport("exit");
     await (
@@ -340,16 +444,17 @@ describe("Linux operation worker", () => {
       )
     ).completion;
     const [sent] = await fake.lines();
+    const { temp } = await fake.temp();
     expect(sent).toMatchObject({
-      readRoots: [home, "/repo"].sort(),
-      writeRoots: ["/work", home],
+      readRoots: [home, "/repo", temp].sort(),
+      writeRoots: ["/work", home, temp],
       env: {
         HOME: home,
         XDG_CACHE_HOME: "/repo/.cache",
         XDG_CONFIG_HOME: join(home, ".config"),
         XDG_DATA_HOME: join(home, ".local/share"),
         XDG_STATE_HOME: join(home, ".local/state"),
-        TMPDIR: "/work",
+        TMPDIR: temp,
       },
     });
     expect((await stat(home)).mode & 0o777).toBe(0o700);
@@ -393,7 +498,7 @@ describe("Linux operation worker", () => {
       )
     ).completion;
     const [containerSent] = await container.lines();
-    expect(containerSent).toMatchObject({ readRoots: [] });
+    expect(containerSent).toMatchObject({ readRoots: [(await container.temp()).temp] });
     expect(containerSent).not.toHaveProperty("readFiles");
     expect(containerSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
   });

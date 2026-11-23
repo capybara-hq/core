@@ -396,15 +396,16 @@ describe("project reach and other connections' directories", () => {
     expect(narrowed.deniedReadRoots).toEqual(listedGrant.deniedReadRoots);
     expect(grantStillHolds(listedGrant, narrowed)).toBe(false);
   });
-  it.runIf(process.platform === "darwin")(
-    "on macOS the default temp bases are the user temp dir and the process temp dir the worker may use",
+  it.runIf(process.platform === "darwin" || process.platform === "linux")(
+    "the default temp bases: macOS the user temp dir and the process temp dir, Linux the process temp dir",
     async () => {
       const f = await fixture();
       f.addOther("b");
       const { macTempBases: _bases, ...input } = f.input;
       const c = readStrictOwnerCeilingSync(input);
-      // the user temp dir and this process's temp dir: the worker's fallback base
-      const user = macUserTempDir();
+      // the user temp dir (macOS) and this process's temp dir: the Linux worker's base and the
+      // macOS worker's fallback
+      const user = process.platform === "darwin" ? macUserTempDir() : undefined;
       if (user) expect(c.otherConnectionDenies).toContain(join(user, privateTempParentName("b")));
       expect(c.otherConnectionDenies).toContain(
         join(realpathSync(tmpdir()), privateTempParentName("b")),

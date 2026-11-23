@@ -640,6 +640,49 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(second).toMatchObject({ exitCode: 0, stdout: "kept" });
   });
 
+  it("a restricted exec's TMPDIR is its own private directory, never the project; another connection's stays unreadable", async () => {
+    const root = project("temp");
+    // another connection's private temporary parent on this machine, denied by the owner ceiling
+    const other = "/tmp/capybara-op-device-other";
+    device.run(`mkdir -p -m 700 ${other}/op-1-x && printf secret > ${other}/op-1-x/file`);
+    device.run("mkdir -m 700 /home/sandbox/state-temp");
+    const tempServer = new HostServer(device);
+    servers.push(tempServer);
+    const temps = await hostBackend(tempServer, {
+      stateDir: "/home/sandbox/state-temp",
+      deviceId: "device-temp",
+      deniedReadRoots: [other],
+    });
+    const scope = scopeFor(temps.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
+      network: { kind: "none" },
+    });
+    const result = await temps.operation(scope, authorityFor(scope.operationId)).exec({
+      command: [
+        'printf "%s %s %s " "$TMPDIR" "$TMP" "$TEMP"',
+        'printf "%s " "$(stat -c %a "$TMPDIR")"',
+        '(printf t > "$TMPDIR/made" && printf "wrote ") || printf "unwritable "',
+        `(cat ${other}/op-1-x/file 2>/dev/null && printf " leaked ") || printf "denied "`,
+        `(ls ${other} 2>/dev/null && printf " listed") || printf "unlisted"`,
+      ].join("; "),
+      cwd: root,
+      timeoutMs: 20_000,
+      maxOutputBytes: 4096,
+      signal: new AbortController().signal,
+    });
+    expect(result.exitCode).toBe(0);
+    const [tmp, tmpVar, tempVar, mode, ...rest] = result.stdout.trim().split(" ");
+    expect(tmp).toMatch(/^\/tmp\/capybara-op-device-temp\/op-\d+-[^/]+$/);
+    expect([tmpVar, tempVar]).toEqual([tmp, tmp]);
+    expect(mode).toBe("700");
+    expect(rest).toEqual(["wrote", "denied", "unlisted"]);
+    // nothing landed in the project, and the directory went with the operation
+    expect(device.run(`ls -A ${root}`).trim()).toBe("");
+    expect(device.run(`test -e ${tmp} && echo kept || echo gone`).trim()).toBe("gone");
+    expect(device.run("stat -c %a /tmp/capybara-op-device-temp").trim()).toBe("700");
+  });
+
   it("the allowlist proxy: its own token, web ports only, globally routable addresses only", async () => {
     const root = project("proxy");
     // a local web server on port 80, which the granted name resolves to (a loopback address)

@@ -1,5 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
@@ -23,6 +25,8 @@ import {
   createCancellationAttempt,
   type MacWorkerHandle,
   type MacWorkerRequest,
+  privateTempParent,
+  sweepPrivateTemps,
   type TrustedLaunchIdentity,
 } from "./operation-worker.js";
 import { onDisk, protectedChain } from "./protected-targets.js";
@@ -181,6 +185,8 @@ export function linuxOperationWorker(
     let session: RecordedSession | undefined;
     let finished = false;
     let cancelled = false;
+    /** A restricted exec's own temporary directory on the host (see below). */
+    let privateTmp: string | undefined;
     let final: AgentEvent | undefined;
     const controller = new AbortController();
     const sendCancel = (graceMs: number) => {
@@ -223,9 +229,6 @@ export function linuxOperationWorker(
           !request.grant.full && options.toolHome
             ? protectedWriteTargets(options.toolHome.home)
             : [];
-        const readRoots = [
-          ...new Set([...request.grant.readRoots, ...(toolHomes?.readRoots ?? []), ...extra]),
-        ];
         if (
           !request.grant.full &&
           request.kind === "exec" &&
@@ -237,6 +240,32 @@ export function linuxOperationWorker(
           throw new SandboxScopeDeniedError(
             "A container device's restricted grant cannot carve owner-denied paths",
           );
+        // A restricted command's own temporary directory on the host (TMPDIR, TMP, TEMP), as on
+        // macOS: created empty for this operation alone in this device's private parent in this
+        // process's temporary directory (`capybara-op-<deviceId>/op-<pid>-…`, 0700), granted read
+        // and write for this command only, and removed once the operation ends (a crashed device
+        // leaves it behind: the next operation of this device removes it). Never a write root of
+        // the grant, so temporary files stay out of the project. Every other connection's parent
+        // is a denied read root (the owner ceiling), carved out of the reads. A command in the
+        // device's container keeps its first write root (the container is the device's alone).
+        if (request.kind === "exec" && !request.grant.full && options.transport.kind === "host") {
+          const parent = await privateTempParent(
+            await realpath(tmpdir()),
+            request.scope.deviceId,
+            request.grant.deniedReadRoots,
+          );
+          await sweepPrivateTemps(parent);
+          privateTmp = await mkdtemp(join(parent, `op-${process.pid}-`));
+        }
+        const tempRoots = privateTmp ? [privateTmp] : [];
+        const readRoots = [
+          ...new Set([
+            ...request.grant.readRoots,
+            ...(toolHomes?.readRoots ?? []),
+            ...extra,
+            ...tempRoots,
+          ]),
+        ];
         const roots = request.grant.full
           ? {}
           : {
@@ -251,7 +280,7 @@ export function linuxOperationWorker(
                       ...(options.carveFs ? [options.carveFs] : []),
                     )
                   : readRoots,
-              writeRoots: [...new Set([...request.grant.writeRoots, ...extra])],
+              writeRoots: [...new Set([...request.grant.writeRoots, ...extra, ...tempRoots])],
               ...(writeDenies.length ? { writeDenies } : {}),
             };
         let body: Record<string, unknown>;
@@ -277,7 +306,9 @@ export function linuxOperationWorker(
               ? {}
               : {
                   ...(sandboxHome ? sandboxHomeEnv(sandboxHome) : { HOME: args.cwd ?? "/" }),
-                  TMPDIR: request.grant.writeRoots[0] ?? "/tmp",
+                  ...(privateTmp
+                    ? { TMPDIR: privateTmp, TMP: privateTmp, TEMP: privateTmp }
+                    : { TMPDIR: request.grant.writeRoots[0] ?? "/tmp" }),
                 }),
             ...(args.env ?? {}),
           };
@@ -457,6 +488,10 @@ export function linuxOperationWorker(
             request.onDiagnostic?.(`Reaping the owned session failed: ${(error as Error).message}`),
           );
         }
+        if (privateTmp)
+          await rm(privateTmp, { recursive: true, force: true }).catch((error) =>
+            request.onDiagnostic?.(`Private temporary directory: ${(error as Error).message}`),
+          );
       }
     })();
     void completion.catch(() => {});
