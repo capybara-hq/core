@@ -238,12 +238,14 @@ def canonical_fd(fd, path):
 
 
 class TooManyRoots(Refused):
-    """Pinning a root ran out of descriptors (EMFILE / ENFILE): every root holds one open."""
+    """Pinning a root ran out of descriptors: the process's limit (EMFILE) or the system's file
+    table (ENFILE); every root holds one open."""
 
     def __init__(self):
         super().__init__(
             "SCOPE_DENIED",
-            "The granted roots need more open files than this process's open-file limit allows "
+            "The granted roots need more open files than the process or system open-file limit "
+            "allows "
             "(machine reach carves the deny list into one root per directory beside it); limit "
             "project reach to listed paths with capybara-device ceiling set --project-reach paths")
 
