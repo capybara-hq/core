@@ -1,6 +1,6 @@
 # Fencing token for device provider lifecycle calls
 
-Issue: #748. Status: draft for review. Written against core `main` at `d0860858c` and plugins
+Issue: #748. Status: approved (maintainer answers to §11 recorded 2026-11-23). Written against core `main` at `d0860858c` and plugins
 `main` at `cdc91b8` (`device-docker` with the in-place allowlist of plugins#186).
 
 Related: Docker in-place network update design (`2026-11-23-docker-in-place-network-update-design.md`,
@@ -420,6 +420,21 @@ It costs one extra fenced write per network change (rare) and, after a stale hol
    migration.
 
 ## 11. Open questions for the maintainer
+
+**Decisions (maintainer, 2026-11-23): every recommendation below is taken.**
+
+1. The Docker handle carries the creation fence and a mismatch answers `SandboxGoneError` (§5.3);
+   it ships with #748, in the same plugins PR.
+2. `ifDigest` is dropped from the control apply; `status` keeps the digest.
+3. No `fencing: true` capability flag.
+4. Instances of the previous plugin version recreate at their first allowlist change (no unfenced
+   swap for widening).
+5. The E2B residual (reapply when the installed evidence is wider than the record) becomes a
+   separate kernel issue.
+6. `destroyFileSystem` is not fenced.
+
+The questions as asked:
+
 
 1. **Ship the instance identity check (§5.3) with #748, or as a follow-up?** Recommended: with it, in
    the same plugins PR. Without it a stale `create` that pauses inside the provider can still leave B
