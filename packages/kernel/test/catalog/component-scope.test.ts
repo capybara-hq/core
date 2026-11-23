@@ -868,12 +868,14 @@ describe("fix round 1", () => {
     const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
     const [conn] = (list.json() as { connectors: { id: string; icon: string | null }[] })
       .connectors;
-    expect(conn?.icon).toBe(orgUrl);
+    // on the connector's own route (guests load it too), sourced from the plugin icon
+    const connUrl = `/api/v1/orgs/${env.orgId}/connectors/${conn?.id}/icon?v=p-1.0.0`;
+    expect(conn?.icon).toBe(connUrl);
     const one = await env.mem({
       method: "GET",
       url: `/api/v1/orgs/${env.orgId}/connectors/${conn?.id}`,
     });
-    expect(one.json().connector.icon).toBe(orgUrl);
+    expect(one.json().connector.icon).toBe(connUrl);
     // a plugin the org's catalog no longer shows (a hidden `named` list without the org): no icon
     // URL, the connector stays the org's own
     await setScope(env, itemId, "named", [org2]);

@@ -1,5 +1,18 @@
-import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
+import {
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Res,
+} from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { sendCatalogIcon } from "../catalog/org-catalog.controller.js";
 import type { ConnectionGuideState } from "../extensions/plugin-guides.js";
 import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
@@ -98,8 +111,9 @@ export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T &
   };
 
 /**
- * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
- * 组织凭据用 `connectors.manage`（管理员起）；两者都仅限用户主体。
+ * Connectors (`/api/v1/orgs/:orgId/connectors`): reads and personal credentials need
+ * `connectors.use` (guests and up); install / update / delete / refresh / org credentials need
+ * `connectors.manage` (admins and up); both are for user principals only.
  */
 @Controller("api/v1/orgs/:orgId/connectors")
 export class ConnectorsController {
@@ -111,20 +125,39 @@ export class ConnectorsController {
   ) {}
 
   /**
-   * Each connector with `icon` on the org's routes: the own icon of the platform connector template
-   * it was made from (its current version, the platform's one version of the template), else the
-   * icon of the plugin its template came from, else null (a custom connector, no icon, or one the
-   * reader's catalog does not show: the share gate holds; maintainer decision 2026-11-09).
+   * Each connector with `icon`, on its own icon route (`GET …/connectors/:id/icon`, so guests can
+   * load it too): the own icon of the platform connector template it was made from (its current
+   * version, the platform's one version of the template), else the icon of the plugin its template
+   * came from, else null (a custom connector, no icon, or one the reader's catalog does not show:
+   * the share gate holds; maintainer decision 2026-11-09).
    */
   private async withIcons<T extends ConnectorSummary>(
     org: OrgContext,
     rows: T[],
   ): Promise<(T & { icon: string | null })[]> {
-    const urls = await this.icons.ofTemplatesOrItems(
-      rows.map((r) => ({ templateId: r.platformTemplateId, itemId: r.catalogItemId })),
+    const urls = await this.icons.ofConnectors(
+      rows.map((r) => ({ id: r.id, templateId: r.platformTemplateId, itemId: r.catalogItemId })),
       orgIconScope(org),
     );
     return rows.map((r, i) => ({ ...r, icon: urls[i] ?? null }));
+  }
+
+  /**
+   * The icon the connector shows (svg or png, the catalog icon response headers): its template's
+   * own icon, else its plugin's, under the same visibility gate as the catalog icon routes. It is
+   * the connector pages' icon URL, so every role that reads connectors (`connectors.use`, guests
+   * included) may load it without reading the catalog. Unknown connector -> 404
+   * `connector.not_found`; no icon the reader may see -> 404 `catalog.icon_not_found`.
+   */
+  @Get(":connectorId/icon")
+  @OrgAction("connectors.use")
+  async icon(
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const ref = await this.connectors.iconRef(org.orgId, connectorId);
+    await sendCatalogIcon(reply, await this.icons.readConnectorIcon(ref, orgIconScope(org)));
   }
 
   @Get()

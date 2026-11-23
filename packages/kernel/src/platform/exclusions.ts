@@ -176,6 +176,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
+    route: "GET /api/v1/orgs/:orgId/connectors/:connectorId/icon",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/catalog-requests/network",
     category: "human-only",
     reason:

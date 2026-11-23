@@ -993,6 +993,19 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
         `/api/v1/orgs/${env.orgId}/components?kind=connector_template&itemId=${itemId}`,
       ),
     ).toEqual({ mail: orgTplUrl("mail"), drive: orgTplUrl("drive"), plain: orgPluginUrl });
+    // the install wizard's template list (the item detail) resolves them the same way
+    const detail = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+    });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(
+      Object.fromEntries(
+        (detail.json() as { templates: { id: string; icon: string | null }[] }).templates.map(
+          (t) => [t.id, t.icon],
+        ),
+      ),
+    ).toEqual({ mail: orgTplUrl("mail"), drive: orgTplUrl("drive"), plain: orgPluginUrl });
     const adminIcons = await iconsOf(env.root, "/api/v1/admin/components?kind=connector_template");
     expect(adminIcons.mail).toBe(adminTplUrl("mail"));
     expect(adminIcons.drive).toBe(adminTplUrl("drive"));
@@ -1041,18 +1054,59 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
     const conns = (list.json() as { connectors: { id: string; name: string; icon: string }[] })
       .connectors;
+    const connId = (name: string) => conns.find((c) => c.name === name)?.id as string;
+    // served on the connector's own route; `v` names the source (template / plugin) and version
+    const connUrl = (name: string, v: string) =>
+      `/api/v1/orgs/${env.orgId}/connectors/${connId(name)}/icon?v=${v}`;
     expect(Object.fromEntries(conns.map((c) => [c.name, c.icon]))).toEqual({
-      mail: orgTplUrl("mail"),
-      drive: orgTplUrl("drive"),
-      plain: orgPluginUrl,
+      mail: connUrl("mail", "t-1.0.0"),
+      drive: connUrl("drive", "t-1.0.0"),
+      plain: connUrl("plain", "p-1.0.0"),
     });
-    const mailConn = conns.find((c) => c.name === "mail");
     const one = await env.mem({
       method: "GET",
-      url: `/api/v1/orgs/${env.orgId}/connectors/${mailConn?.id}`,
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connId("mail")}`,
     });
-    expect(one.json().connector.icon).toBe(orgTplUrl("mail"));
-    // a plugin the org's catalog no longer shows: no template icon URL, the route says not found
+    expect(one.json().connector.icon).toBe(connUrl("mail", "t-1.0.0"));
+    // a guest reads the connector pages: every icon URL there loads, the catalog stays closed
+    await env.db
+      .updateTable("memberships")
+      .set({ role: "guest" })
+      .where("account_id", "=", env.memId)
+      .where("org_id", "=", env.orgId)
+      .execute();
+    try {
+      const guestList = await env.mem({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/connectors`,
+      });
+      expect(guestList.statusCode, guestList.body).toBe(200);
+      for (const c of (guestList.json() as { connectors: { name: string; icon: string }[] })
+        .connectors) {
+        const r = await env.mem({ method: "GET", url: c.icon });
+        expect(r.statusCode, r.body).toBe(200);
+        expect(r.headers["content-type"]).toBe("image/svg+xml");
+        expect(r.headers["x-content-type-options"]).toBe("nosniff");
+        // the template-less fallback is the plugin icon itself
+        expect(r.body).toBe(c.name === "plain" ? SVG_ICON : c.name === "mail" ? mailSvg : driveSvg);
+      }
+      for (const url of [
+        `/api/v1/orgs/${env.orgId}/catalog`,
+        `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+        `/api/v1/orgs/${env.orgId}/catalog/${itemId}/icon`,
+        `/api/v1/orgs/${env.orgId}/components?kind=connector_template`,
+      ]) {
+        expect((await env.mem({ method: "GET", url })).statusCode, url).toBe(403);
+      }
+    } finally {
+      await env.db
+        .updateTable("memberships")
+        .set({ role: "member" })
+        .where("account_id", "=", env.memId)
+        .where("org_id", "=", env.orgId)
+        .execute();
+    }
+    // a plugin the org's catalog no longer shows: no icon URL, the routes say not found
     await setScope(env, itemId, "named", []);
     await env.db
       .updateTable("catalog_items")
@@ -1066,6 +1120,14 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     const hidden = await env.boss({ method: "GET", url: orgTplUrl("mail") });
     expect(hidden.statusCode).toBe(404);
     expect(hidden.json().error.code).toBe("component.not_found");
+    const hiddenConn = await env.boss({ method: "GET", url: connUrl("plain", "p-1.0.0") });
+    expect(hiddenConn.statusCode).toBe(404);
+    expect(hiddenConn.json().error.code).toBe("catalog.icon_not_found");
+    const unknownConn = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${randomUUID()}/icon`,
+    });
+    expect(unknownConn.json().error.code).toBe("connector.not_found");
     const icons = env.k.app.get(PluginIcons);
     const member = { kind: "org", orgId: env.orgId, isAdmin: false } as const;
     expect((await icons.ofTemplates([tpl.mail as string], member)).size).toBe(0);
