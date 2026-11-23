@@ -57,16 +57,17 @@ import NotFound from "../not-found";
  * plugin's switch-off preview first (what it takes away, the agents that use it), confirmed in a
  * dialog with the preview's hash. Rows needing attention (待配置, a refused switch) come first,
  * then those on, then the rest, by name. An extension whose effective config for the org is not
- * valid (the kernel's `needsConfig`) is 待配置: while it is off its switch here is read-only, and
+ * valid (the kernel's `needsConfig`) is Needs config: while it is off its switch here is read-only, and
  * the Sheet says the org must fill in its own copy of the overridable fields first (the plugins
- * page may switch it on anyway; it then stays 待配置 until the copy is valid). A builtin plugin's
- * extension is on in every org (read-only switch); one the deployment cannot run now is 不可用.
+ * page may switch it on anyway; it then stays Needs config until the copy is valid). A builtin
+ * plugin's extension is on in every org (read-only switch); one the deployment cannot run now is
+ * Unavailable.
  *
  * A row opens a Sheet: the org's copy of the overridable deployment fields on top (following the
  * platform, or the org's saved copy; only for an extension with overridable fields), the state
  * line (with why a switch was refused: a missing dependency, dependents that remain, which can be
- * force-disabled, or the kernel's reason; a refused switch opens the Sheet by itself), 立即同步 for directory-sync
- * extensions, 应用此插件的外观 for a plugin on in the org that suggests an appearance (client
+ * force-disabled, or the kernel's reason; a refused switch opens the Sheet by itself), Sync now
+ * for directory-sync extensions, 应用此插件的外观 for a plugin on in the org that suggests an appearance (client
  * extensions spec §6.5: a dry run listed in a confirm dialog, then applied), and the permissions
  * folded into one line that opens the full blocks. Members read the
  * same list without the switch, and a Sheet with the capabilities and the state only (the kernel

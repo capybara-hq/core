@@ -400,12 +400,13 @@ restart.
 required entry, `skills-core` and `file-preview` as builtin entries (on in every organization; a
 change to this set is a maintainer decision, checked by `check:bootstrap`). The same manifest pins
 optional preinstalls: `openai-compatible`, `anthropic`, `openai`, `deepseek`, `bailian`, `ark`,
-`connector-mcp`, `connector-openapi`, `jina`, `device-docker`, `device-local` and `todo`. They are installed and enabled on the deployment, but each organization
-gets them off until an org admin switches them on (catalog scope `optional`), except `device-local`
-(local devices), which the manifest gives `scope: "all"`: on in every organization, and an org
-admin may switch it off. On a deployment where `openai-compatible` was still a required entry,
-it keeps scope `all` when it becomes optional: it stays on in every organization (now through an
-org install) until an org admin switches it off. A super admin may disable or uninstall any of them, and owns its scope
+`connector-mcp`, `connector-openapi`, `jina`, `device-docker`, `device-local` and `todo`. They are
+installed and enabled on the deployment, but each organization gets them off until an org admin
+switches them on (catalog scope `optional`), except `device-local` (local devices), which the
+manifest gives `scope: "all"`: on in every organization, and an org admin may switch it off. On a
+deployment where `openai-compatible` was still a required entry, it keeps scope `all` when it
+becomes optional: it stays on in every organization (now through an org install) until an org
+admin switches it off. A super admin may disable or uninstall any of them, and owns its scope
 after the first import; an uninstalled one is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
