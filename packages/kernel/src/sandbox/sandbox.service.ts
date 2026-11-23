@@ -3181,11 +3181,8 @@ export class SandboxService {
         } catch {
           return { failed: `revoked start ${m.refId} has no valid execution reference` };
         }
-        if (
-          ref.operationId !== m.refId ||
-          ref.instanceGeneration !== o.instanceGeneration ||
-          ref.instanceId !== live.handle.id
-        )
+        // the intent named the incarnation above; the ref's generation is the provider's own
+        if (ref.operationId !== m.refId || ref.instanceId !== live.handle.id)
           return { failed: `revoked start ${m.refId} names another instance` };
         owed.push(ref);
       }

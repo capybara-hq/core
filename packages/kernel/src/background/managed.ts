@@ -42,7 +42,11 @@ export const MANAGED_STOP_GRACE_MS = 5000;
 /** The most bytes a summary's tail asks for (the summary keeps 20 lines, 4,000 characters). */
 export const MANAGED_TAIL_BYTES = 12_000;
 
-/** The task's exact ref and instance generation, validated against its own recorded identity. */
+/**
+ * The task's exact ref and instance generation, validated against its own recorded identity. The
+ * generation is the kernel's (the task's recorded instance); the ref's own `instanceGeneration` is
+ * the provider's locator (device-local's machine names its bound generation) and is not compared.
+ */
 export function exactRefOf(task: BackgroundTaskRow): {
   ref: SandboxExecutionRef;
   deviceId: string;
@@ -69,7 +73,6 @@ export function exactRefOf(task: BackgroundTaskRow): {
     !Number.isSafeInteger(generation) ||
     ref.operationId !== task.operationId ||
     ref.instanceId !== task.instanceId ||
-    ref.instanceGeneration !== task.instanceGeneration ||
     (task.sandboxCreatedAt !== null && task.sandboxCreatedAt.getTime() !== generation)
   )
     throw bad();

@@ -193,7 +193,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   timeoutMs, maxOutputBytes, taskId, outputPath, retainUntilMs, instanceGeneration })` under the admitted operation scope; the
   output artifact is `${workingRoot}/.capybara/tasks/<taskId>.out` (never a caller path). The provider persists exact ownership
   before it acknowledges, returns a `SandboxExecutionRef` (a retry of the same generation, operation and input returns the same
-  ref) and keeps the starting grants for the execution's lifetime. The poll, `TaskOutput` and `TaskStop` act only by that exact
+  ref; the ref's `instanceGeneration` is the provider's own, e.g. device-local's bound machine generation, the kernel's only for a
+  provider that keeps none, so the kernel matches the ref by operation id and handle id and pins the task to its own recorded
+  generation, never the ref's: #765) and keeps the starting grants for the execution's lifetime. The poll, `TaskOutput` and `TaskStop` act only by that exact
   ref on its exact recorded generation, through `SandboxService.ifRunning` (a shared lease only on a running instance of that
   generation, never creating, resuming or rebuilding one): `status`, `readOutput` (an append-only prefix, at most 65,536 bytes
   a read), `tail` and `stop` (a persisted pending cancellation when unreachable, applied before an explicit resume runs
