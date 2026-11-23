@@ -162,6 +162,24 @@ export class OrgCatalogController {
   }
 
   /**
+   * A platform connector template's own icon (svg or png, same response headers as the item icon,
+   * see {@link sendCatalogIcon}); the connector pages show it for the template's cards and the
+   * connectors made from it (`PluginIcons.ofTemplatesOrItems`), so guests, who read connectors,
+   * may load it. A template the org's catalog does not show (its plugin hidden from the org, or
+   * another org's template behind the share gate) -> 404 `component.not_found`; no icon of its own
+   * -> 404 `catalog.icon_not_found`.
+   */
+  @Get("connector-templates/:templateId/icon")
+  @OrgAction("connectors.use")
+  async templateIcon(
+    @CurrentOrg() org: OrgContext,
+    @Param("templateId") templateId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendCatalogIcon(reply, await this.icons.readTemplateIcon(templateId, orgIconScope(org)));
+  }
+
+  /**
    * A setup guide of the item, rendered for this org (spec 2026-11-09-setup-guides-v2-design.md
    * §7.2): the document's blocks with the place's variables filled in, its modes, audiences and
    * checks, the unresolved variables with their reasons, the drift hash and the target. The item

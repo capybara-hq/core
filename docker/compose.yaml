@@ -34,7 +34,7 @@ name: capybara
 x-images:
   # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
   # (capybara-api:<version>, as built by compose.build.yaml).
-  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.100}
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.101}
 
 x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
@@ -246,7 +246,7 @@ services:
 
   worker:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.100}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.101}
     environment:
       <<: *kernel-env
     # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
@@ -256,7 +256,7 @@ services:
 
   gateway:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.100}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.101}
     environment:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
@@ -281,7 +281,7 @@ services:
       - devices
 
   web:
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.100}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.101}
     init: true
     restart: unless-stopped
     depends_on:
@@ -351,7 +351,7 @@ services:
   # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#a9c5d9c9328a855162c2bbaf758f261add863fa2:plugins/device-docker/image
+    build: https://github.com/capybara-hq/plugins.git#03a53c895cc9993306203fc0d41a6cc71acc3107:plugins/device-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -359,7 +359,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#a9c5d9c9328a855162c2bbaf758f261add863fa2:plugins/device-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#03a53c895cc9993306203fc0d41a6cc71acc3107:plugins/device-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

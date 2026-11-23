@@ -891,6 +891,11 @@ export interface OrgCatalogTemplate {
    * wizard shows it above the template's input. Null without one (absent for other kinds).
    */
   guide?: { itemId: string; guideId: string } | null;
+  /**
+   * The template's icon (its own, else its plugin's; a kernel icon route), null without one
+   * (absent for other kinds).
+   */
+  icon?: string | null;
 }
 
 /**

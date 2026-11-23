@@ -4920,7 +4920,7 @@
     },
     "source": {
       "manual": "手动安装",
-      "official": "官方市场",
+      "official": "Capybara",
       "removed": "已删除的市场"
     },
     "versionSource": {
@@ -5276,7 +5276,7 @@
         "search": "搜索市场源",
         "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
-        "official": "官方市场",
+        "official": "Capybara",
         "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
         "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
         "enabledLabel": "启用「{name}」",

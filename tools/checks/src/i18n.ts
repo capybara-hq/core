@@ -223,6 +223,10 @@ function zhBannedWords(file: string, text: string, json: unknown): Finding[] {
  */
 export const PRODUCT_NAME_ALLOWED: Readonly<Record<string, string>> = {
   "catalog.admin.detail.format.capybara": "the label of the capybara plugin source format",
+  "catalog.admin.marketplaces.official":
+    "the official marketplace lists the upstream project's plugins: it is named after the project, not the platform",
+  "catalog.source.official":
+    "the official marketplace lists the upstream project's plugins: it is named after the project, not the platform",
 };
 
 /** "Capybara" (the product name) in the text of a message outside {@link PRODUCT_NAME_ALLOWED}. */

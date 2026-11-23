@@ -1948,6 +1948,7 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
   it("a template the org already has a connector for has no step, says the connector is kept, and is not submitted", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
+    const GH_ICON = `/api/v1/orgs/o1/connector-templates/tpl-gh/icon?v=1.0.0`;
     const tpl = (id: string, extra: Record<string, unknown>) => ({
       id,
       displayName: { zh: id, en: id },
@@ -1970,12 +1971,14 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
               ownership: "org",
               defaultOff: false,
               connected: false,
+              icon: GH_ICON,
             }),
             tpl("github-pat", {
               auth: { type: "bearer", ownership: "personal" },
               ownership: "personal",
               defaultOff: false,
               connected: true,
+              icon: null,
             }),
           ],
           dependencies: [],
@@ -1997,6 +2000,14 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     // The confirm step says the existing connector is kept; both connectors count in the summary
     expect(screen.getByText(fill(t.connectorKept, { name: "github-pat" }))).toBeTruthy();
     expect(screen.getByText(fill(t.summaryTemplates, { n: 2 }))).toBeTruthy();
+    // Both templates are rows with their icon (the template's icon route), else the initial
+    const rows = within(
+      screen.getByRole("list", { name: en.catalog.components.templates }),
+    ).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
+    expect(rows[1]?.querySelector("img")).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await user.click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
     expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });

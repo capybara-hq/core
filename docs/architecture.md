@@ -34,7 +34,7 @@ File sharing and HTML rendering (spec `docs/superpowers/specs/2026-11-18-file-sh
 | `tools/release` | Image release planning (`pnpm release:images`); `pnpm release` (npm) is `packages/plugin-tools`' `capybara-plugin release`; both run by `.github/workflows/release.yml` |
 | `tools/ci` | CI plan for a diff (`tools/ci/src/affected.ts`, run by the `changes` job) and `test-plugins.json` |
 | `tools/worktree` | Worktree tool for starting work (`pnpm wt:new` / `wt:rm` / `wt:ls`), paired with `.claude/hooks/branch-safety.sh` |
-| `tools/dev` | Contributor tools (`pnpm doctor:env` checks the environment, `pnpm verify` runs the required checks locally; private) |
+| `tools/dev` | Contributor tools (`pnpm doctor:env` checks the environment, `pnpm verify` runs CI's checks for the branch locally, `--fast` the quick local check; private) |
 | `docker/` | Compose files (`compose.yaml`, `compose.build.yaml`, `compose.dev.yaml`), `kernel.Dockerfile` (api / worker / gateway by `ROLES`; carries no plugin packages: `/app/bootstrap` is the empty offline directory, `CAPYBARA_BOOTSTRAP__DIR`), `web.Dockerfile`, `sandbox-proxy/` (the socket proxy config; the sandbox images build from git contexts of `capybara-hq/plugins` at `marketplace.commit`), and `test/` (image and compose smoke tests; `compose-smoke.sh` packs `plugins/model-fake` with `pnpm pack-plugin`) |
 | `docs/` | Design docs and plans |
 | `.agents/skills/` | Agent-facing skills for working on this repo, read natively by Codex, Cursor, Copilot, Gemini CLI and others (`.claude/skills` symlinks here for Claude Code) |

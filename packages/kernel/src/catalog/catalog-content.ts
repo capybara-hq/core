@@ -132,6 +132,11 @@ export interface OrgCatalogTemplate {
    * :guideId`), null without one (spec 2026-11-09-setup-guides-v2-design.md §9.3).
    */
   guide: { itemId: string; guideId: string } | null;
+  /**
+   * The template's icon on the org's routes: its own icon, else its plugin's, else null
+   * (`PluginIcons.ofItemTemplates`).
+   */
+  icon: string | null;
 }
 
 /** `GET /orgs/:orgId/catalog/:itemId`: the item and what the install wizard needs (latest version). */
@@ -166,7 +171,12 @@ export interface OrgCatalogDetail {
 export function orgTemplateView(
   id: string,
   file: ConnectorTemplateFile,
-  o: { guide?: OrgCatalogTemplate["guide"]; on?: boolean; connected?: boolean } = {},
+  o: {
+    guide?: OrgCatalogTemplate["guide"];
+    on?: boolean;
+    connected?: boolean;
+    icon?: string | null;
+  } = {},
 ): OrgCatalogTemplate {
   const t = file.template;
   return {
@@ -185,6 +195,7 @@ export function orgTemplateView(
     on: o.on ?? true,
     connected: o.connected ?? false,
     guide: o.guide ?? null,
+    icon: o.icon ?? null,
   };
 }
 
