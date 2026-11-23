@@ -561,6 +561,24 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
     },
   );
 
+  it("on with the effective config invalid and a copy to fill in: the Sheet says so", async () => {
+    api({
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
+    });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    const sheet = await openSheet(userEvent.setup(), "fake-im");
+    expect(within(sheet).getByText(en.extensions.configFirstHint)).toBeTruthy();
+  });
+
+  it("the effective config invalid but nothing the org can override: no hint", async () => {
+    const platformOnly = { ...FAKE_IM, configurable: false, overrideState: "none" };
+    api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [platformOnly] }) });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    expect(await screen.findByText(en.extensions.needsConfig)).toBeTruthy();
+    const sheet = await openSheet(userEvent.setup(), "fake-im");
+    expect(within(sheet).queryByText(en.extensions.configFirstHint)).toBeNull();
+  });
+
   it("a valid effective config: the switch is on offer, no hint", async () => {
     api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }) });
     await renderRouteWithCache("/extensions", lastStubRoutes());

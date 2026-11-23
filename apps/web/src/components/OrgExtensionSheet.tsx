@@ -98,7 +98,10 @@ export function OrgExtensionSheet({
     >
       {/* One status line, then the regions (spec §6.7): Config, Status, Tools, Permissions */}
       <Stack gap={16}>
-        {canEdit && needsConfig && <Callout tone="warn">{t("configFirstHint")}</Callout>}
+        {/* Only where the org can fix it: its copy of the overridable fields, in the form below */}
+        {canEdit && needsConfig && overrides && (
+          <Callout tone="warn">{t("configFirstHint")}</Callout>
+        )}
         {overrides && (
           <Subsection title={t("overrides.title")} variant="divided">
             <OrgOverrideSection orgId={orgId} plugin={plugin.plugin} onDirty={setOverridesDirty} />

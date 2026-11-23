@@ -3036,8 +3036,7 @@
       "components": "Interface components",
       "dialIn": "Machine connections (protocol)"
     },
-    "save": "Save config",
-    "configFirstHint": "Fill in the organization config before enabling",
+    "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
     "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
@@ -3137,7 +3136,6 @@
       "embedRoutes": "Embed routes",
       "provides": "Extension points"
     },
-    "listSep": ", ",
     "toolSwitches": {
       "title": "Tools",
       "hint": "Turn off a tool to stop every agent in this organization from using it.",

@@ -3024,8 +3024,7 @@
       "components": "界面组件",
       "dialIn": "机器接入（协议）"
     },
-    "save": "保存配置",
-    "configFirstHint": "先填写组织配置再启用",
+    "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
@@ -3125,7 +3124,6 @@
       "embedRoutes": "嵌入页路由",
       "provides": "扩展点"
     },
-    "listSep": "、",
     "toolSwitches": {
       "title": "工具",
       "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
