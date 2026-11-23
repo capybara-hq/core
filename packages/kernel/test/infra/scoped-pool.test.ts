@@ -32,7 +32,8 @@ interface Settings {
 
 // biome-ignore lint/suspicious/noExplicitAny: the pools have no schema types
 async function settings(db: Kysely<any> | KernelDb): Promise<Settings> {
-  if (db instanceof KernelDb) return settings(db.db as Kysely<never>);
+  // biome-ignore lint/suspicious/noExplicitAny: the pools have no schema types
+  if (db instanceof KernelDb) return settings(db.db as unknown as Kysely<any>);
   const r = await sql<Settings>`select current_setting('capybara.org_id', true) as org,
     current_setting('capybara.scope', true) as scope,
     current_setting('capybara.rls', true) as rls`.execute(db);
