@@ -1,5 +1,41 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.103
+
+### Patch Changes
+
+- b22a19d: Connector template descriptions in zh and en: component lists, the install wizard's templates
+  (`OrgCatalogTemplate`) and the import review (`PluginReviewTemplate`) carry `descriptionZh` next to
+  `description` (null when the template has one text). Connectors made from a platform template return that template's description
+  (`templateDescription`, `templateDescriptionZh`; its current version, under the same visibility
+  gate as its icon; null for a custom connector). A connector may also carry its own description
+  (`description`, migration 0181 `connectors.description`, plain text up to 1024 characters): org
+  admins set it in the create body or by PATCH (null or blank clears it; audited in
+  `connector.updated`), and the Platform operations `connectors.create` / `connectors.update` take it
+  too. The web shows the own description, else the template's in the page language, on the connector
+  cards of /connectors and at the top of the connector's detail page; the add-connector wizard and the
+  connector's 设置 tab edit it (the template's text as the placeholder). Template cards, the admin
+  template page, the plugin page and the install wizard pick the text for the page language too.
+- efdeb87: Rename the deployment config key `marketplaces.allowPrivateHosts` to `net.allowPrivateHosts`
+  (environment variable `CAPYBARA_NET__ALLOW_PRIVATE_HOSTS`, was
+  `CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS`). It is the one list of internal hosts for every
+  outbound request the kernel resolves itself (marketplace, archive and git downloads, npm registry
+  downloads, OAuth discovery, registration and token requests, git identity), so it now sits next to
+  `net.httpsProxy` and `net.noProxy`. Refusal hints and the web's download error name the new key.
+  A config file that still sets `marketplaces.allowPrivateHosts` fails startup as an unknown key:
+  move the list to `net.allowPrivateHosts`.
+- 855e6d9: The conversation's properties panel reads more calmly: the Context section lays out labeled rows
+  (model, device with its mark under it, connectors, last run, total with sub-agents) instead of
+  dot-joined lines, and the last run no longer repeats the model when it is the current one. A
+  property section can carry a hint behind an info button with a tooltip (Background tasks' note on
+  the permissions running work keeps moves there). The right panel can be narrowed to 360 (was 520).
+  The client API forwards the design system's `Switch` (`checked`, `onChange`, `label`, `disabled`),
+  with a `role="switch"` stand-in in `@capybara-hq/plugin-client/testing`.
+- Updated dependencies [b22a19d]
+- Updated dependencies [efdeb87]
+- Updated dependencies [2b2b48c]
+  - @capybara-hq/kernel@0.1.0-rc.79
+
 ## 0.1.0-rc.102
 
 ### Patch Changes
