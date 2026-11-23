@@ -69,8 +69,8 @@ export type OrgExtensionItem = OrgExtensionView & {
 
 /**
  * What a member sees of an extension: its state and the points it provides (names only, what the
- * 扩展 page sorts by), never the permission list, the suggested appearance (members cannot apply
- * it) or the client build (part of the permission review).
+ * Extensions page sorts by), never the permission list, the suggested appearance (members cannot
+ * apply it) or the client build (part of the permission review).
  */
 export type OrgExtensionMemberItem = Omit<
   OrgExtensionItem,

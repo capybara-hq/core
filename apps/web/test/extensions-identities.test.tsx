@@ -288,7 +288,8 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       expect(
         within(sheet).getByRole("button", { name: msgs[locale].extensions.overrides.saveLabel }),
       ).toBeTruthy();
-      // The regions in order (spec §6.7): 配置, 状态, 权限; no status line on a valid config
+      // The regions in order (spec §6.7): Config, Status, Permissions; no status line on a valid
+      // config
       expect(
         within(sheet)
           .getAllByRole("heading", { level: 3 })

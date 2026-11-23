@@ -319,7 +319,10 @@ export function usePluginActions({
     if (i.awaitingConfirmation === true) return withdrawAction;
     return [...stateActions(i), ...withdrawAction];
   };
-  /** 配置 for an extension whose effective config is not valid: its Sheet on the extensions page. */
+  /**
+   * Configure for an extension whose effective config is not valid: its Sheet on the extensions
+   * page.
+   */
   const configureWhenNeeded = (i: OrgCatalogItem): PluginAction[] => {
     const own = ownExtension(i, extensions);
     return own?.needsConfig === true
@@ -350,7 +353,7 @@ export function usePluginActions({
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
       ];
     }
-    // Installed but a connector template on here misses its connector (P2-10): 补充配置
+    // Installed but a connector template on here misses its connector (P2-10): Complete setup
     if (i.state === "needs_config" && i.installed !== null) {
       return [
         ...configureWhenNeeded(i),
@@ -384,7 +387,8 @@ export function usePluginActions({
         ...configureWhenNeeded(i),
       ];
     }
-    // On: the extension's org config when it has overridable fields; 停用 unless the platform turned it on
+    // On: the extension's org config when it has overridable fields; Disable unless the platform
+    // turned it on
     const own = ownExtension(i, extensions);
     return [
       ...(own?.configurable === true

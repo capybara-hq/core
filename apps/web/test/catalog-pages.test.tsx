@@ -337,7 +337,8 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     await renderPlugins({ locale: "en" });
     const list = await screen.findByRole("list", { name: p.title });
     const off = rowOf(list, "cfg-off");
-    // enabling is not routed to the wizard (no extension step); 配置 is the lone menu item, drawn directly
+    // enabling is not routed to the wizard (no extension step); Configure is the lone menu item,
+    // drawn directly
     expect(actionsOf(off, "cfg-off")).toEqual([p.action.enable, p.action.configure]);
     expect(within(off).getByRole("link", { name: p.action.configure }).getAttribute("href")).toBe(
       "/extensions#plugin=cfg-off",

@@ -27,15 +27,16 @@ export type ToggleProblem =
   | { kind: "other"; message: string; extra: string[]; catalog?: boolean };
 
 /**
- * One extension of the org's 扩展 page in a right-side Sheet (spec §6.7: view or edit one object
- * without leaving the list). One status line on top (a pending config), then divided regions: 配置
- * (org admins: the overridable deployment fields, following the platform or the org's own copy,
- * with their own save); 状态 (the state and capabilities, one-line hints, why a
- * switch was refused: a missing dependency, dependents that remain with 仍然停用, the kernel's
- * reason with a link to 插件; 立即同步 for an enabled directory-sync extension); 权限 (org admins:
- * folded into one line that opens the full blocks); 工具 (the single-tool switches of an enabled
- * extension; members read the states); 外观 (org admins, a plugin that suggests an appearance:
- * 应用此插件的外观). Members get the 状态 and 工具 regions only.
+ * One extension of the org's Extensions page in a right-side Sheet (spec §6.7: view or edit one
+ * object without leaving the list). One status line on top (a pending config), then divided
+ * regions: Config (org admins: the overridable deployment fields, following the platform or the
+ * org's own copy, with their own save); Status (the state and capabilities, one-line hints, why a
+ * switch was refused: a missing dependency, dependents that remain with "Disable anyway", the
+ * kernel's reason with a link to Plugins; "Sync now" for an enabled directory-sync extension);
+ * Permissions (org admins: folded into one line that opens the full blocks); Tools (the single-tool
+ * switches of an enabled extension; members read the states); Appearance (org admins, a plugin that
+ * suggests an appearance: "Apply this plugin's appearance"). Members get the Status and Tools
+ * regions only.
  * The list page keeps the switch logic; this Sheet only reports the person's actions.
  */
 export function OrgExtensionSheet({
@@ -95,7 +96,7 @@ export function OrgExtensionSheet({
       width={overrides ? 720 : 480}
       dirty={overridesDirty}
     >
-      {/* One status line, then the regions (spec §6.7): 配置, 状态, 工具, 权限 */}
+      {/* One status line, then the regions (spec §6.7): Config, Status, Tools, Permissions */}
       <Stack gap={16}>
         {canEdit && needsConfig && <Callout tone="warn">{t("configFirstHint")}</Callout>}
         {overrides && (
