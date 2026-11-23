@@ -104,7 +104,9 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, " +
+      "capybara.extension_installs, capybara.extension_packages, capybara.catalog_items, " +
+      "capybara.audit_events",
   );
   for (const r of [rootA, rootB, localRoot]) if (r) await rm(r, { recursive: true, force: true });
   rootA = await mkdtemp(join(tmpdir(), "cap-device-a-"));
@@ -198,6 +200,44 @@ const opsOf = async (root: string, op?: string) =>
 
 const instanceRow = (id: string) =>
   db.selectFrom("device_instances").selectAll().where("device_id", "=", id).executeTakeFirst();
+
+/** Records `plugin` as installed on the deployment (from a catalog item when `itemId` is given). */
+const recordInstall = async (plugin: string, itemId: string | null = null) => {
+  await db
+    .insertInto("extension_packages")
+    .values({
+      sha256: "a".repeat(64),
+      name: plugin,
+      package_name: `@test/plugin-${plugin}`,
+      version: "1.0.0",
+      size: 1,
+      section: JSON.stringify({}),
+      blob_store: "pg",
+      source: "file",
+      source_ref: `${plugin}.tgz`,
+    })
+    .execute();
+  await db
+    .insertInto("extension_installs")
+    .values({
+      name: plugin,
+      sha256: "a".repeat(64),
+      version: "1.0.0",
+      source: itemId === null ? "file" : "catalog",
+      catalog_item_id: itemId,
+      installed_by: null,
+      updated_by: null,
+    })
+    .execute();
+};
+
+/** The audit events recording abandoned instances. */
+const abandonedEvents = () =>
+  db
+    .selectFrom("audit_events")
+    .selectAll()
+    .where("action", "=", "device.instance_abandoned")
+    .execute();
 
 describe("DeviceProviders", () => {
   const registry = (entries: { plugin: string; impl: DeviceProvider }[]) =>
@@ -305,7 +345,8 @@ describe("devices bound to their provider", () => {
     });
   });
 
-  it("an uninstalled provider: availableFor false, destroyDevice leaves the row for a retry", async () => {
+  it("a provider installed but not loaded: availableFor false, destroyDevice leaves the row for a retry", async () => {
+    await recordInstall("device-fake-b");
     const b = await seedCloud("device-fake-b");
     await run(service(), b);
     const onlyA = service(() => [fakeA]);
@@ -321,6 +362,55 @@ describe("devices bound to their provider", () => {
     expect(await service().destroyInactive(new Date())).toBe(1);
     expect(await instanceRow(b)).toBeUndefined();
     expect(await opsOf(rootB, "destroy-fs")).toHaveLength(1);
+  });
+
+  it("a provider no longer installed: destroyDevice abandons the instance once, names kept, nothing retries", async () => {
+    const b = await seedCloud("device-fake-b");
+    const handle = await run(service(), b);
+    const before = await instanceRow(b);
+    // uninstalled for good: not loaded and no install record
+    const onlyA = service(() => [fakeA]);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${b}`.execute(raw);
+    await onlyA.destroyDevice(b);
+    const row = await instanceRow(b);
+    expect(row).toMatchObject({ provider: "device-fake-b", sweep_failed_at: null });
+    expect(row?.abandoned_at).toBeInstanceOf(Date);
+    expect(row?.handle).toMatchObject({ id: handle });
+    expect(row?.fs_handle).toEqual(before?.fs_handle);
+    const events = await abandonedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ org_id: null, actor_account_id: null, target: b });
+    expect(events[0]?.detail).toMatchObject({
+      orgId,
+      provider: "device-fake-b",
+      handle: { id: handle },
+      fsHandle: before?.fs_handle,
+    });
+    // a retried job finishes again without a second record; no sweep touches it
+    await onlyA.destroyDevice(b);
+    expect(await abandonedEvents()).toHaveLength(1);
+    expect(await onlyA.destroyInactive(new Date())).toBe(0);
+    expect(await opsOf(rootA)).toEqual([]);
+    expect(await opsOf(rootB, "destroy")).toEqual([]);
+    // a plugin of that name installed again: the gone-sweep destroys what was left
+    expect(await service().destroyInactive(new Date())).toBe(1);
+    expect(await instanceRow(b)).toBeUndefined();
+    expect(await opsOf(rootB, "destroy-fs")).toHaveLength(1);
+  });
+
+  it("a provider whose catalog item was removed counts as no longer installed", async () => {
+    const itemId = randomUUID();
+    await sql`INSERT INTO capybara.catalog_items
+      (id, name, package_name, publisher, description, latest_version, scope, deleted_at)
+      VALUES (${itemId}, 'device-fake-b', '@acme/plugin-device-fake-b', 'Acme', 'B', '1.0.0',
+        'all', now())`.execute(raw);
+    await recordInstall("device-fake-b", itemId);
+    const b = await seedCloud("device-fake-b");
+    await run(service(), b);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${b}`.execute(raw);
+    await service(() => [fakeA]).destroyDevice(b);
+    expect((await instanceRow(b))?.abandoned_at).toBeInstanceOf(Date);
+    expect(await abandonedEvents()).toHaveLength(1);
   });
 
   it("destroyDevice and resetFileSystem run while the org has the provider off (they need it loaded only)", async () => {

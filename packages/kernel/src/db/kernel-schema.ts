@@ -1357,6 +1357,11 @@ export interface DeviceInstancesTable {
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
   /**
+   * 0180 (#675): when the device was deleted while its provider plugin was no longer installed
+   * (`SandboxService.destroyDevice`); the row is kept as the record of the provider-side names.
+   */
+  abandoned_at: TsNullable;
+  /**
    * 0117: the limits in force on the instance, `{ mode, network }`, plus `unapplied` when the
    * provider could not apply a newer value without a file reset; null = unknown (made before
    * 0117 or in the old `{ tier, egress }` shape). Read with `readInstanceLimits`
