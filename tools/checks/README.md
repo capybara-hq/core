@@ -134,13 +134,21 @@ A runtime change is three PRs, each leaving `main` and the release green:
    `@capybara-hq/plugin-sdk` and the consumers; release.
 2. **Plugins: restage device-docker** from the released SDK's `current` (`image/runtime`, its
    `SHA256SUMS`, the SDK override), checking staged copies against the host SDK's `accepted`
-   rather than one exact digest, so it works on kernels before and after step 3; release it.
+   rather than one exact digest, so it works on kernels before and after step 3; raise its
+   `@capybara-hq/plugin-sdk` range to the step-1 release, and report restricted support
+   unavailable (never throw) on a host SDK without `accepted`; release it. Until this step is
+   merged, no core PR moves `marketplace.commit` to a plugins commit whose image stages `current`:
+   `bootstrap-sandbox-runtime` accepts that digest, but an older device-docker's code at that
+   commit still checks `files` exactly (its own test, staged bytes against the installed SDK, is
+   the backstop).
 3. **Core: promote.** `files` becomes `current` (delete the staged copy), move
    `marketplace.commit` and the device-docker pin to the restaged release (the PR must pass
    `--network`), and keep the previous digest in `accepted` for one revision: device containers
    made from the earlier image keep their staged runtime until recreated, and dropping it would
    make them unavailable. The next runtime change's step 3 drops it. A security fix to a file a
    provider runs (`native-files.py`) keeps no previous digest: the old instances should stop.
+   Providers that upload `files` at runtime instead of baking them into an image (device-e2b)
+   need no restage, but are re-tested in this step since their staged bytes change.
 
 A change that only adds a file follows the same steps (it appears in `current` first; `files`
 gains it in step 3).

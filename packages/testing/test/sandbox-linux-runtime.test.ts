@@ -275,7 +275,7 @@ describe.skipIf(unavailable !== null)(
         try {
           const result = await run(
             restricted(),
-            `cat ${dir}/beside.txt; printf ran > ran`,
+            `cat ${dir}/beside.txt; printf ran > ran; echo FDS; ls /proc/self/fd`,
             { readFileRoots: [`${dir}/beside.txt`] },
             older,
           );
@@ -284,6 +284,9 @@ describe.skipIf(unavailable !== null)(
           };
           expect(launch.roots.map((r) => r.kind)).not.toContain("readFiles");
           expect(decode(result.stdout)).not.toContain(SECRET);
+          // no pinned O_PATH descriptor reaches the command: ls sees only stdio and its own listing
+          const fds = decode(result.stdout).split("FDS\n")[1]?.trim().split(/\s+/);
+          expect(fds).toEqual(["0", "1", "2", "3"]);
           expect(device.run(`cat ${root}/ran`)).toBe("ran");
         } finally {
           older.close();
