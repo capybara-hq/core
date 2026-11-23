@@ -62,6 +62,12 @@ export interface BackgroundTaskView {
   finishedAt: string | null;
   /** True while a stop has claimed the task and it is still running. */
   stopping: boolean;
+  /**
+   * True while the task's start was sent but not yet confirmed (a managed launch without its
+   * exact ref, still `running`): the kernel is reconciling it under its original identity, and it
+   * either becomes a confirmed running task or ends (`lost` when given up).
+   */
+  starting: boolean;
 }
 
 /**
@@ -179,6 +185,10 @@ export class BackgroundTasks {
       stopping:
         task.status === "running" &&
         (task.stoppingAt !== null || task.launchState === "cancel-pending"),
+      starting:
+        task.status === "running" &&
+        task.executionRef === null &&
+        (task.launchState === "pending" || task.launchState === "dispatched"),
     };
   }
 

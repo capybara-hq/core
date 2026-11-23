@@ -477,6 +477,31 @@ describe("ToolGroup (§6.16.8)", () => {
     );
   });
 
+  it("a background start being reconciled reads the neutral word, never the error dot (#790)", () => {
+    const reconciling = builtin("Bash", {
+      kind: "command",
+      description: "启动开发服务器",
+      notice: "reconciling",
+      link: { label: "查看「启动开发服务器」的输出", onOpen: () => {} },
+    });
+    const { container } = wrap(<ToolRow row={reconciling} />);
+    const word = container.querySelector('[data-part="notice-word"]');
+    expect(word?.textContent).toBe(" · 正在确认是否已启动");
+    expect(word?.getAttribute("data-notice")).toBe("reconciling");
+    expect(container.querySelector('[data-part="error-dot"]')).toBeNull();
+    expect(container.querySelector('[data-part="tool-link"]')).not.toBeNull();
+    expect(container.querySelector('[data-part="tool-row"]')?.getAttribute("data-status")).toBe(
+      "done",
+    );
+    // the group header counts it as a done command, no error mark
+    expect(summarizeTools([reconciling], "zh")).not.toContain("错误");
+    cleanup();
+    const en = wrap(<ToolRow row={reconciling} />, "en");
+    expect(en.container.querySelector('[data-part="notice-word"]')?.textContent).toBe(
+      " · Confirming whether it started",
+    );
+  });
+
   it("a command that ran outside the sandbox adds the neutral word on done and failed rows only", () => {
     const { container } = wrap(
       <ToolRow

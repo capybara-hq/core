@@ -172,6 +172,11 @@ export type ToolView =
   /** A call to a tool the step did not load: expected behaviour, a neutral notice, not a failure. */
   | { kind: "not_loaded" }
   /**
+   * A background `Bash` start the kernel sent but could not confirm: the row reads reconciling, not
+   * failed, until the task is confirmed running or ends (the model still got an error).
+   */
+  | { kind: "launch_unconfirmed"; taskId: string }
+  /**
    * A `Platform` operation whose result the run's person reads once, by call (the initial
    * password, the invitation link): the web draws the reveal under the tool row.
    */
@@ -818,6 +823,8 @@ export interface BackgroundTaskView {
   finishedAt: string | null;
   /** A stop is under way (another request is handling it); the task still runs. */
   stopping: boolean;
+  /** The start was sent but not confirmed yet: the kernel is reconciling it. */
+  starting: boolean;
 }
 
 /**

@@ -122,6 +122,7 @@ const task = (extra: Record<string, unknown> = {}) => ({
   startedAt: "2026-10-26T06:00:04.000Z",
   finishedAt: null,
   stopping: false,
+  starting: false,
   ...extra,
 });
 

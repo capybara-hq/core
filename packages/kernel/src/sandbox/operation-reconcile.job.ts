@@ -12,7 +12,8 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
-import { BackgroundTaskStore } from "../background/store.js";
+import { type BackgroundTaskRow, BackgroundTaskStore } from "../background/store.js";
+import { EventLog } from "../conversations/event-log.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -43,12 +44,19 @@ export class SandboxOperationReconcileJob {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     /** Where a recovered start's refusal keeps the provider's own message (never the task's). */
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: Pick<KernelLogger, "warn">,
+    /** Tells a page listing the task that reconciliation moved it (a hint, its loss harmless). */
+    @Optional() @Inject(EventLog) private readonly eventLog?: Pick<EventLog, "publishChanged">,
   ) {}
   async reconcile(operationId: string): Promise<void> {
     await this.intents.expirePayload(operationId);
     const row = await this.intents.read(operationId);
     if (row.method === "backgroundStart") {
-      await this.reconcileBackground(row);
+      const before = await this.tasks.byOperation(operationId);
+      try {
+        await this.reconcileBackground(row);
+      } finally {
+        await this.announceMoved(before, operationId);
+      }
       return;
     }
     if (row.state === "revoked") {
@@ -57,6 +65,29 @@ export class SandboxOperationReconcileJob {
     }
     // Existing run/tool claim recovery owns continuation. A failed orphan never gets new authority.
     if (row.state === "dispatching") await this.intents.unknown(operationId);
+  }
+  /**
+   * After reconciling a managed start (each step commits its own transaction): when the task's
+   * launch or status moved (confirmed running, refused, given up), the pages listing it read the
+   * list again (`changed: background`, the owner and, for a sub-agent's task, the conversation
+   * that owns the sandbox), so a thread row shown as reconciling settles without a reload. A
+   * failed publish only logs.
+   */
+  private async announceMoved(
+    before: BackgroundTaskRow | undefined,
+    operationId: string,
+  ): Promise<void> {
+    if (!before || !this.eventLog) return;
+    const after = await this.tasks.byOperation(operationId);
+    if (
+      !after ||
+      (after.status === before.status &&
+        after.launchState === before.launchState &&
+        (after.executionRef === null) === (before.executionRef === null))
+    )
+      return;
+    for (const c of new Set([after.conversationId, after.sandboxConversationId]))
+      await this.eventLog.publishChanged(c, "background");
   }
   /**
    * A managed start: past its retention an unresolved launch is given up (terminal task, owed

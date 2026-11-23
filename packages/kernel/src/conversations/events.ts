@@ -673,6 +673,7 @@ const HANDOFF_PATH = /^\/(?![/\\])[^\\\s]*$/;
  * name no tool has (ToolSearch mode, spec 5.5): expected behaviour, the model is told to load it
  * (or search for it) first. The result
  * stays `isError: true` for the model; the web shows it as a neutral outcome too.
+ * `launch_unconfirmed`: a background `Bash` start whose outcome is being reconciled (see below).
  * `handoff`: a `Platform` operation whose decision stays with a person on a web page (platform web
  * parity spec §4.4, §6): the card's title and either a relative web path (`link`, also in the
  * result text as `reviewUrl`) or a connector to connect (`connect`: the web's Connect button starts
@@ -722,6 +723,14 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     reason: z.enum(["not_read", "modified"]),
   }),
   z.object({ kind: z.literal("not_loaded") }),
+  /**
+   * A background `Bash` start the kernel sent but could not confirm (a transport loss after the
+   * dispatch): the task may be running, and the kernel reconciles it under its original identity.
+   * The result stays `isError: true` for the model with the same text; the web shows the row as
+   * reconciling, not failed, until the task is confirmed running, finishes, or is given up
+   * (`lost`). Display only.
+   */
+  z.object({ kind: z.literal("launch_unconfirmed"), taskId: z.string().min(1).max(64) }),
   /**
    * A `Platform` operation whose result is shown to the run's person once, read by call (the
    * initial password, the invitation link; profiles govern every approval, ruling R6): the web

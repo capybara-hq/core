@@ -25,9 +25,11 @@ export type ToolGuard = "not_read" | "modified";
 /**
  * A protocol notice on a done call (§6.16.9): `not_loaded`, the call named a tool that the step's
  * request did not carry (the catalog holds it), so the kernel answered "load it first" and the
- * model retried in the next step. Expected behaviour, not a failure: the row adds a neutral word.
+ * model retried in the next step; `reconciling`, a background start the kernel sent but could not
+ * confirm, which it is reconciling until the task is confirmed running or ends. Expected
+ * behaviour, not a failure: the row adds a neutral word.
  */
-export type ToolNotice = "not_loaded";
+export type ToolNotice = "not_loaded" | "reconciling";
 
 /**
  * The kind of a boundary crossing Auto granted by itself (§6.16.9): a directory outside the
