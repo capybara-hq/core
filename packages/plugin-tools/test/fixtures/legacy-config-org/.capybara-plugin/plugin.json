@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-legacy-org",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: the extension still declares config.org"
+}

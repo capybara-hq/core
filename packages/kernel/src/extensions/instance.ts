@@ -57,8 +57,8 @@ const canonical = (v: unknown): string => {
 /**
  * A reviewed static manifest without the `config.org` list that packages packed before core#720
  * carry (stored install records and catalog sections keep it as reviewed). The list is dropped, not
- * compared: the SDK no longer has org-only config, and the module's own `config.org` is refused by
- * `defineExtension` anyway. Removed with the other pre-core#720 readers once the official plugins are
+ * compared: the SDK no longer has org-only config, and `defineExtension` drops the module's own
+ * `config.org` the same way. Removed with the other pre-core#720 readers once the official plugins are
  * republished and re-pinned (core#720 plan Task 17).
  */
 function withoutLegacyOrgConfig(section: StaticExtensionManifest): StaticExtensionManifest {

@@ -244,8 +244,8 @@ const configSchemaJson = z
  * `extension.manifest.config.org` (the org config field list, often `[]`) and
  * `extension.configSchemas.org` (its form schema). Published tarballs are immutable, so the reader
  * accepts both and drops them: they never reach the parsed manifest, the permission set, the
- * config levels or the views. Nothing else reads them, `defineExtension` still refuses
- * `config.org`, and the packer never writes either. Removed once the official plugins are
+ * config levels or the views. Nothing else reads them, `defineExtension` drops a module's
+ * `config.org` the same way, and the packer refuses it and never writes either. Removed once the official plugins are
  * republished and re-pinned (core#720 plan Task 17).
  */
 const legacyPackedBeforeCore720 = {
