@@ -86,9 +86,9 @@ class ConnectorGuideAckBody extends createZodDto(
 ) {}
 
 /**
- * A connector as the org's pages show it: with its plugin's icon (`icon`, see `withIcons`), its
- * template's setup guide and the drift since it was set up (`setupGuide`, `guideDrift`; spec
- * 2026-11-09-setup-guides-v2-design.md §9.3, §11).
+ * A connector as the org's pages show it: with its template's or plugin's icon (`icon`, see
+ * `withIcons`), its template's setup guide and the drift since it was set up (`setupGuide`,
+ * `guideDrift`; spec 2026-11-09-setup-guides-v2-design.md §9.3, §11).
  */
 export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T &
   ConnectionGuideState & {
@@ -111,20 +111,20 @@ export class ConnectorsController {
   ) {}
 
   /**
-   * Each connector with `icon`: the icon of the plugin its template came from, on the org's catalog
-   * route (null for a custom connector, a plugin without an icon, or one the reader's catalog does
-   * not show: the share gate holds; maintainer decision 2026-11-09).
+   * Each connector with `icon` on the org's routes: the own icon of the platform connector template
+   * it was made from (its current version, the platform's one version of the template), else the
+   * icon of the plugin its template came from, else null (a custom connector, no icon, or one the
+   * reader's catalog does not show: the share gate holds; maintainer decision 2026-11-09).
    */
   private async withIcons<T extends ConnectorSummary>(
     org: OrgContext,
     rows: T[],
   ): Promise<(T & { icon: string | null })[]> {
-    const ids = rows.flatMap((r) => (r.catalogItemId === null ? [] : [r.catalogItemId]));
-    const urls = await this.icons.ofItems(ids, orgIconScope(org));
-    return rows.map((r) => ({
-      ...r,
-      icon: r.catalogItemId === null ? null : (urls.get(r.catalogItemId) ?? null),
-    }));
+    const urls = await this.icons.ofTemplatesOrItems(
+      rows.map((r) => ({ templateId: r.platformTemplateId, itemId: r.catalogItemId })),
+      orgIconScope(org),
+    );
+    return rows.map((r, i) => ({ ...r, icon: urls[i] ?? null }));
   }
 
   @Get()
