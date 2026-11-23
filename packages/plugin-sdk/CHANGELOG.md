@@ -1,5 +1,56 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.64
+
+### Patch Changes
+
+- 8bdbb9b: Device provider lifecycle calls carry a fence token (device update fencing design, #748). The SDK
+  adds `DeviceFence` and `StaleFenceError` (with `isStaleFenceError`): `update` and `create` get the
+  device's fencing generation as the calling holder last committed it, `destroy` and `destroyByName`
+  get it too (`null` when the kernel holds no device lease). A provider that keeps per-instance state
+  stores the highest token next to it and refuses a lower one, so a replica whose lease ended while
+  its call was in flight can no longer apply an older network list. The kernel records the target of
+  an `update` before sending it (`instance_limits.pending`), so the next exclusive holder applies the
+  desired limits again even when the record of what succeeded already matches them; it handles
+  `StaleFenceError` as a lost lease and never recreates for it; and a failed record write after an
+  `updated` answer no longer falls into the recreate branch (it used to let a stale holder destroy the
+  instance a newer holder was using).
+- 5d3e31b: Plugin modules packed before core#720 load again on a kernel from main. `orgAccess(schema, access)`
+  and the `OrgAccess` type are back as deprecated no-ops (the schema is returned unchanged, both
+  levels are ignored: the field stays overridable unless marked `platformOnly`), and
+  `defineExtension` drops a `config.org` key instead of refusing it (the manifest keeps only
+  `config.deployment`; other unknown `config` keys still throw). `capybara-plugin pack` and the
+  checks that import the module still refuse `config.org`. Temporary: removed in core#720 plan
+  Task 17 once the official plugins are republished.
+- 03fa6f6: Deployment config fields are org-overridable by default: `platformOnly(schema)` marks a field, or the
+  whole deployment schema, that only the platform sets (`"x-platform-only": true` in
+  `configJsonSchema`, allowed on the root and its top-level properties; `isPlatformOnly` reads it).
+  `orgAccess`, `orgAccessOf`, `OrgAccess` and `x-org` are removed, and so is the org-only config:
+  `defineExtension({ config })` takes `deployment` only, and the static manifest and
+  `extension.configSchemas` have no `org` entry. `web-search@1`, `web-fetch@1` and `directory@1`
+  drop `orgConfig`: `config` (the effective config for the org) is required and
+  `configured?(config)` takes it alone. Their call args gain `orgId` (the org the call is made for),
+  to pass to `configUrlFetch` or `ctx.net.fetch`.
+  
+  `configUrlFetch(net, { url, platform, orgId })` returns the `fetch` for a config URL an org may
+  override: the global `fetch` for the platform's own URL (trailing slashes ignored), `ctx.net.fetch`
+  for any other.
+  
+  `secret`, `platformOnly` and `ui` keep each other's marks whatever their order and whichever
+  wrapper (`.optional()`, `.default()`, `.nullable()`, `.prefault()`, `.catch()`, `.readonly()`) they
+  sit on, and `isSecret` reads the mark through those wrappers (any node of the chain counts), so
+  `platformOnly(ui(secret(x)).optional())` is a secret like `platformOnly(ui(secret(x))).optional()`.
+  `configJsonSchema` sets `"x-secret"` (and `"x-platform-only"`) on a wrapper around a marked node
+  too, so `secret(x).nullable().default(v)` no longer publishes its default, and the static manifest
+  reads the marks the same way.
+- 94ed9ef: `defineExtension` refuses any `config` key other than `deployment`; a leftover `config.org` gets
+  "config.org was removed: move org fields into config.deployment".
+  
+  Until the official plugins are republished, `parsePluginManifest` still reads plugin.json files
+  packed before this change: a legacy `extension.manifest.config.org` list and
+  `extension.configSchemas.org` schema are accepted and dropped (the parsed manifest has no `org`).
+  Nothing else reads them.
+
 ## 0.1.0-rc.63
 
 ### Patch Changes

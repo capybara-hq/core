@@ -1,5 +1,65 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.78
+
+### Patch Changes
+
+- ff74e46: The bootstrap step retries each npm package download (registry lookup and tarball) up to three
+  times with backoff when it fails transiently (a dropped connection, a timeout, HTTP 408 / 429 /
+  5xx), never on a 404 or a package that differs from its pin; the final error still names the
+  plugin. Docker Compose upgrades now run `docker compose run --rm init` before `docker compose up
+  -d`, so a failing migration or bootstrap no longer takes the serving containers down.
+- c0dc748: `openai-compatible` is an optional bootstrap preinstall, no longer required: only `object-store-s3`,
+  `skills-core` and `file-preview` are fixed in every org. On an existing deployment the
+  demoted plugin keeps scope `all`: the bootstrap owes its scope sync, which installs it in every org
+  that has not switched it off, so it stays on there.
+- 8bdbb9b: Device provider lifecycle calls carry a fence token (device update fencing design, #748). The SDK
+  adds `DeviceFence` and `StaleFenceError` (with `isStaleFenceError`): `update` and `create` get the
+  device's fencing generation as the calling holder last committed it, `destroy` and `destroyByName`
+  get it too (`null` when the kernel holds no device lease). A provider that keeps per-instance state
+  stores the highest token next to it and refuses a lower one, so a replica whose lease ended while
+  its call was in flight can no longer apply an older network list. The kernel records the target of
+  an `update` before sending it (`instance_limits.pending`), so the next exclusive holder applies the
+  desired limits again even when the record of what succeeded already matches them; it handles
+  `StaleFenceError` as a lost lease and never recreates for it; and a failed record write after an
+  `updated` answer no longer falls into the recreate branch (it used to let a stale holder destroy the
+  instance a newer holder was using).
+- c55f359: The kernel drops the org-only extension config: an org's config of an extension is its copy of the
+  overridable deployment fields. `PUT /orgs/:orgId/extensions/:extension` takes `{ enabled, force,
+  confirm }` only, the org extension view loses `config`, `secrets` and `orgConfigSchema`
+  (`configurable` now means "has an overridable field", `needsConfig` comes from the effective config
+  alone), the install body loses `extensionConfig`, `extension.no_org_config` and the
+  `extensions.set-org-config` operation are gone, and point providers, directory sync, web tools and
+  setup checks get the org's effective config only. Deployment fields are org-overridable by default
+  (`platformOnly` marks the rest). The testing fixtures move their org fields into `deployment`
+  (fake-web's `token`, fake-im's `directoryUrl`) and mark the fixtures of points without org config
+  platform-only. `plugins.set-enabled` switches a plugin on whose
+  extension still needs the org's config (as the web does) and says so in `configNeeded`. A
+  `platformOnly` mark below a top-level key (a hand-made package) makes that whole key platform-only,
+  and a pipe or transform deployment root is read through to its input object.
+  
+  A config field's meta is merged across its default / optional / nullable / prefault / catch /
+  readonly wrappers, and `secret` counts on any of them: a mark on a wrapper
+  (`platformOnly(secret(x).optional())`) no longer hides the secret below it, which made the load
+  fail as an unreachable secret.
+- 1ae08aa: Load installed plugins packed before core#720 again: the reviewed static manifest stored with
+  their install record still lists `config.org`, which the module's manifest no longer has, so every
+  such plugin was refused with `manifest_mismatch`. The legacy list is dropped before the comparison.
+  With the SDK's temporary `orgAccess` no-op and `defineExtension` dropping `config.org` (same
+  release), modules such as deepseek, jina, ark, bailian, lark and slack import and load again; their
+  org-only fields reach no permission set or view. Removed in core#720 plan Task 17.
+- 2c45b54: An approval asked by a member's own tool policy no longer fails to record (`approval_requested`
+  now takes `policy: "member"`). The web's API types now match the kernel routes they call
+  (checked by `check:web-api-parity`): plugins with themes, an org's upload awaiting confirmation,
+  migration-warning permissions, network grant refusals and skipped questions are typed and labeled,
+  the account avatar upload no longer sends a field the route refuses, and an agent avatar of another
+  image type is refused before the upload.
+- Updated dependencies [8bdbb9b]
+- Updated dependencies [5d3e31b]
+- Updated dependencies [03fa6f6]
+- Updated dependencies [94ed9ef]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.64
+
 ## 0.1.0-rc.77
 
 ### Patch Changes
