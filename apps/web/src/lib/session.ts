@@ -40,9 +40,15 @@ export interface SetupInput {
 
 const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
 
+/** What signing in answers (kernel `Account`): the account row, without the avatar fields of `/me`. */
+export type SignedInAccount = Omit<Account, "avatarUrl" | "avatarSource">;
+
 /** 本地登录；成功后内核通过代理设置会话 Cookie。 */
 export const login = (loginName: string, password: string) =>
-  apiFetch<{ account: Account }>("/api/v1/auth/login", post({ login: loginName, password }));
+  apiFetch<{ account: SignedInAccount }>(
+    "/api/v1/auth/login",
+    post({ login: loginName, password }),
+  );
 
 export const logout = () => apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 
@@ -70,4 +76,4 @@ export const getSetupStatus = () => apiFetch<{ needsSetup: boolean }>("/api/v1/s
 
 /** 完成初始化向导；成功后内核直接登录（设会话 Cookie）。 */
 export const completeSetup = (input: SetupInput) =>
-  apiFetch<{ account: Account }>("/api/v1/setup", post(input));
+  apiFetch<{ account: SignedInAccount }>("/api/v1/setup", post(input));

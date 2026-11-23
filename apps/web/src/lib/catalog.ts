@@ -25,7 +25,14 @@ export const PLUGIN_SCOPES = ["all", "optional", "named"] as const;
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
 
 /** The effective state of a plugin in one org (kernel `OrgPluginState`). */
-export type OrgPluginState = "on" | "off" | "needs_config" | "unavailable" | "not_offered";
+export type OrgPluginState =
+  | "on"
+  | "off"
+  | "needs_config"
+  | "unavailable"
+  | "not_offered"
+  /** The org's own upload, waiting for the super admin's confirmation (`awaitingConfirmation`). */
+  | "awaiting_confirmation";
 
 export interface LocalizedName {
   zh: string;
@@ -127,7 +134,15 @@ export interface StaticExtensionManifest {
     client?: boolean;
     ui?: { views?: string[]; embeds?: string[]; components?: string[] };
   };
-  config?: { deployment: { key: string }[]; org: { key: string }[] };
+  /** The config fields the extension declares (SDK `StaticConfigField`). */
+  config?: { deployment: StaticConfigField[]; org: StaticConfigField[] };
+}
+
+/** One declared config field (SDK `StaticConfigField`). */
+export interface StaticConfigField {
+  path: string;
+  secret: boolean;
+  hot: boolean;
 }
 
 /** A version's normalized plugin.json (SDK `PluginManifest`, the parts the web reads). */
@@ -142,7 +157,7 @@ export interface PluginManifest {
   license?: string;
   homepage?: string;
   dependencies?: { name: string; version: string }[];
-  skills?: { path: string; pinned?: boolean }[];
+  skills?: { path: string }[];
   connectorTemplates?: { path: string }[];
   /** Agent templates (`agents/<name>.md`, phase C). */
   agents?: { path: string }[];
@@ -429,7 +444,7 @@ export type Provenance =
 
 /** Where an import comes from (kernel `PluginImportSource`). */
 export interface PluginImportSource {
-  kind: "file" | "npm" | "marketplace" | "git";
+  kind: "file" | "npm" | "marketplace" | "git" | "bootstrap";
   ref: string;
   integrity?: string;
   marketplaceId?: string;
@@ -1011,8 +1026,14 @@ export interface ScopeConflict {
 /** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable). */
 export type ScopeTarget = { scope: PluginScope; orgs?: string[] } | { disabled: true };
 
-/** `plugin` is a dependency install (ref = its plugin install id). */
-export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
+/** `plugin` is a dependency install (ref = its plugin install id); kernel `ComponentKind`. */
+export type ComponentKind =
+  | "extension"
+  | "connector"
+  | "skill"
+  | "plugin"
+  | "agent_template"
+  | "theme";
 
 /** An installed plugin (kernel `PluginInstallView`). */
 export interface PluginInstall {
@@ -1399,7 +1420,8 @@ export const confirmOrgUpload = (
   body: { reviewHash: string; shareable?: boolean },
 ) =>
   apiFetch<{
-    item: OrgCatalogItem;
+    /** The org's plugin, admin view (kernel `CatalogItemView`). */
+    item: CatalogItem;
     outcome: OrgUploadOutcome;
     /** An update left the plugin's extension disabled (see `PlatformUpdateResult`). */
     extensionLeftDisabled?: SingleProviderNote;

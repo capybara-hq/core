@@ -22,7 +22,7 @@ export interface TrajectoryListItem {
   accountId: string;
   title: string | null;
   updatedAt: string;
-  lastRun: { runId: string; status: string; startedAt: string | null } | null;
+  lastRun: { runId: string; status: RunStatus; startedAt: string | null } | null;
 }
 
 export interface TrajectoryDetail {
@@ -216,7 +216,8 @@ export class TrajectoryService {
             ? null
             : {
                 runId: run.id,
-                status: run.status,
+                // `runs.status` holds only these (the column's check constraint)
+                status: run.status as RunStatus,
                 startedAt: run.started_at === null ? null : run.started_at.toISOString(),
               },
       };

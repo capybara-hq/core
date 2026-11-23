@@ -17,7 +17,8 @@ export interface SkillSummary {
   name: string;
   description: string;
   currentVersion: number;
-  createdBy: string;
+  /** null once the account is gone (or for a platform copy). */
+  createdBy: string | null;
   createdAt: string;
   updatedAt: string;
   /** The catalog item (plugin) the skill came from; null for the org's own (absent before phase B). */
@@ -74,7 +75,8 @@ export interface SkillVersion {
   version: number;
   description: string;
   files: SkillFile[];
-  createdBy: string;
+  /** null once the account is gone. */
+  createdBy: string | null;
   createdAt: string;
 }
 

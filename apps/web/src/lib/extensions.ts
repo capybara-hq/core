@@ -22,7 +22,8 @@ export type SensitiveReason =
   | "device_provider"
   | "object_store"
   | "push_provider"
-  | "context";
+  | "context"
+  | "migration_warnings";
 
 /** 权限清单的一项（内核 `PermissionItem`）：逐项的敏感标记与原因码。 */
 export interface PermissionItem {
@@ -167,8 +168,14 @@ export interface PutOrgExtensionInput {
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/extensions`;
 
+/** The fields a member's list leaves out (kernel `OrgExtensionMemberItem`). */
+type AdminOnlyField = "config" | "secrets" | "orgConfigSchema" | "permissions";
+
 export const listOrgExtensions = (orgId: string) =>
-  apiFetch<{ extensions: OrgExtension[] }>(base(orgId)).then((r) => ({
+  apiFetch<{
+    extensions: (Omit<OrgExtension, AdminOnlyField> &
+      Partial<Pick<OrgExtension, AdminOnlyField>>)[];
+  }>(base(orgId)).then((r) => ({
     // A member's list omits config, secrets, schema and permissions: fill the admin shape's empties
     extensions: r.extensions.map((e) => ({
       ...e,

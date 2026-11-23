@@ -28,6 +28,7 @@ import {
 import {
   type ComponentScopePreview,
   ComponentScopeService,
+  type ComponentSwitchResult,
   type ComponentVersionView,
   type ComponentView,
   type OrgComponentView,
@@ -294,10 +295,7 @@ export class OrgComponentsController {
     @ZBody(ComponentSwitchBody) body: z.infer<typeof SwitchBody>,
   ): Promise<
     | { component: OrgComponentView }
-    | {
-        preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
-        confirm: string;
-      }
+    | Omit<Extract<ComponentSwitchResult, { kind: "preview" }>, "kind">
   > {
     const actor = requireUser(principal);
     const r = await this.scope.setSwitch(

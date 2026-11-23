@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { LocalizedName, UiDropReason } from "@capybara-hq/plugin-sdk";
 import type { PluginScope } from "../catalog/scope.js";
+import type { ReportBodyInput } from "../client/client.schemas.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import {
@@ -398,7 +399,8 @@ export interface AdminExtensionView {
   clientReports: {
     orgId: string | null;
     contribution: string | null;
-    kind: string;
+    /** As the report was sent (`ReportBody.kind`). */
+    kind: ReportBodyInput["kind"];
     count: number;
     firstAt: string;
     lastAt: string;
