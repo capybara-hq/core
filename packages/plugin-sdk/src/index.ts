@@ -7,6 +7,7 @@ export * from "./channel.js";
 export * from "./client-css.js";
 export * from "./client-section.js";
 export * from "./config-ui.js";
+export * from "./config-url-fetch.js";
 export * from "./connector.js";
 export * from "./connector-auth.js";
 export * from "./context.js";

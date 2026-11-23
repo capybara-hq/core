@@ -627,6 +627,7 @@ describe("x-platform-only", () => {
 
   it("rejects a hand-written x-platform-only at the org level", () => {
     const js = { type: "object", properties: { k: { type: "string", "x-platform-only": true } } };
+    // Guards untyped callers (hand-written JSON): the type only allows "deployment".
     expect(validateConfigUi(js as JsonSchema, "org" as "deployment")).toHaveLength(1);
   });
 });

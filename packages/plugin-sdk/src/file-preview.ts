@@ -49,8 +49,7 @@ export interface FilePreviewArgsBase {
    * The extension's effective deployment config for this org: the platform's deployment config
    * with the org's copy applied to the overridable fields (every field not marked `platformOnly`),
    * or the platform's config (equal to `ctx.config`) while the org follows it. Use it, not
-   * `ctx.config`, for work done for this org. Optional in the type so older extensions compile;
-   * the kernel always passes it.
+   * `ctx.config`, for work done for this org.
    */
   config?: unknown;
 }

@@ -445,8 +445,8 @@ export class ModelError extends Error {
  * `config` is the extension's effective deployment config for this org: the platform's deployment
  * config with the org's copy applied to the overridable fields (every field not marked
  * `platformOnly`), or the platform's config (equal to `ctx.config`) while the org follows it. Use
- * it, not `ctx.config`, for work done for this org. Optional in the type so older providers compile;
- * the kernel always passes both.
+ * it, not `ctx.config`, for work done for this org. Both are absent on a call not made for an org,
+ * such as a conformance run.
  */
 export interface ModelCallOptions {
   orgId?: string;

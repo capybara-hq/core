@@ -634,6 +634,13 @@ export interface ConfigUiSection {
 }
 
 // @public
+export function configUrlFetch(net: Pick<ExtensionNet, "fetch">, opts: {
+    url: string;
+    platform?: string | readonly string[] | undefined;
+    orgId?: string | undefined;
+}): typeof fetch;
+
+// @public
 export type ConfigWidget = "text" | "textarea" | "url" | "number" | "select" | "radio" | "switch" | "checkbox" | "tristate" | "tags" | "json";
 
 // @public

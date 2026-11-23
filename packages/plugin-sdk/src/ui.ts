@@ -474,8 +474,7 @@ export interface UiRenderArgsBase {
    * The extension's effective deployment config: for an org, the platform's deployment config
    * with the org's copy applied to the overridable fields (every field not marked `platformOnly`),
    * or the platform's config (equal to `ctx.config`) while the org follows it; for the platform
-   * scope, the platform's config. Use it, not `ctx.config`, for work done for this org. Optional in
-   * the type so older extensions compile; the kernel always passes it.
+   * scope, the platform's config. Use it, not `ctx.config`, for work done for this org.
    */
   config?: unknown;
 }

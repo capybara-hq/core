@@ -10,3 +10,7 @@ whole deployment schema, that only the platform sets (`"x-platform-only": true` 
 `extension.configSchemas` have no `org` entry. `web-search@1`, `web-fetch@1` and `directory@1`
 drop `orgConfig`: `config` (the effective config for the org) is required and
 `configured?(config)` takes it alone.
+
+`configUrlFetch(net, { url, platform, orgId })` returns the `fetch` for a config URL an org may
+override: the global `fetch` for the platform's own URL (trailing slashes ignored), `ctx.net.fetch`
+for any other.
