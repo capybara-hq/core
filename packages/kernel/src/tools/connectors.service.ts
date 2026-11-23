@@ -644,8 +644,13 @@ export class ConnectorsService {
     if (!isOAuth(auth)) {
       if (credential === undefined) return { slug, endpoint };
       if (auth.type === "none") throw fail("credential", "Auth type none takes no credential");
+      if (auth.ownership !== "org" && actorAccountId === null) {
+        throw new Error("a member's credential needs the acting account");
+      }
       const owner: CredentialOwner =
-        auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
+        auth.ownership === "org"
+          ? { kind: "org" }
+          : { kind: "user", accountId: actorAccountId as string };
       this.credentials.validate(auth, owner, credential);
       return { slug, endpoint, owner, secret: credential };
     }
@@ -889,7 +894,7 @@ export class ConnectorsService {
    * outbound failure -> 502 `connector.connect_failed`). Writes nothing.
    */
   async prepareTemplateUpdate(
-    actorAccountId: string,
+    actorAccountId: string | null,
     connector: string,
     input: TemplateUpdateInput,
   ): Promise<PreparedTemplateUpdate> {
@@ -901,8 +906,13 @@ export class ConnectorsService {
     if (!isOAuth(auth)) {
       if (credential === undefined) return out;
       if (auth.type === "none") throw fail("credential", "Auth type none takes no credential");
+      if (auth.ownership !== "org" && actorAccountId === null) {
+        throw new Error("a member's credential needs the acting account");
+      }
       const owner: CredentialOwner =
-        auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
+        auth.ownership === "org"
+          ? { kind: "org" }
+          : { kind: "user", accountId: actorAccountId as string };
       this.credentials.validate(auth, owner, credential);
       return { ...out, owner, secret: credential };
     }
@@ -924,7 +934,8 @@ export class ConnectorsService {
   async applyTemplateIn(
     orgId: string,
     connectorId: string,
-    actorAccountId: string,
+    /** null: the kernel itself (a platform update the bootstrap step runs). */
+    actorAccountId: string | null,
     p: PreparedTemplateUpdate,
     actorTokenId?: string,
   ): Promise<void> {
