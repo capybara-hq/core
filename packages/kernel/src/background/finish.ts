@@ -54,7 +54,8 @@ export class BackgroundTaskFinisher {
    * task was no longer running, or, with `opts.unclaimed` (the poller), when a live stop claimed it:
    * the stop's finish is then the only one. `opts.stoppedBy` marks a stop that must never wake the
    * conversation: `"person"` (a person stopped it) or `"deletion"` (its conversation is being
-   * deleted).
+   * deleted). `opts.keepOwed` keeps a managed task's record `cancel-pending` whatever its finish
+   * (a stop verified by operation only: a ref attached later still owes its exact stop).
    *
    * A managed task (permission runtime cutover phase 8.3) settles its durable launch state in the
    * same transaction: a verified end (an exit, a stop) is `terminal` and retires its start intent's
@@ -68,10 +69,10 @@ export class BackgroundTaskFinisher {
     to: BackgroundFinish,
     lastLines: string,
     reported: boolean,
-    opts: { unclaimed?: boolean; stoppedBy?: BackgroundStoppedBy } = {},
+    opts: { unclaimed?: boolean; stoppedBy?: BackgroundStoppedBy; keepOwed?: boolean } = {},
   ): Promise<boolean> {
     const managed = isManagedTask(task)
-      ? to.status === "lost"
+      ? to.status === "lost" || opts.keepOwed
         ? ("cancel-pending" as const)
         : ("terminal" as const)
       : undefined;

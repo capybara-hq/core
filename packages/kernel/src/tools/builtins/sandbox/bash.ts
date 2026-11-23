@@ -359,10 +359,13 @@ export async function runInBackgroundManaged(
       { kind: "unavailable" },
     );
   }
-  // a retry of a call whose acknowledged task has since ended reports the start it made
+  // a retry of a call whose acknowledged task has since ended reports the start it made; a ref
+  // attached to an owed cancellation (a task stopped by its operation revoke before the ref was
+  // known) is a stop still being applied, not a start
   const started =
     task.executionRef !== null &&
-    (task.launchState === "acknowledged" || task.status !== "running");
+    (task.launchState === "acknowledged" ||
+      (task.status !== "running" && task.launchState !== "cancel-pending"));
   if (!started && launch.kind !== "refused" && task.status === "lost") {
     // revoked or given up before its start was confirmed: the process may have started, and its
     // exact revoke (owed with the revocation) stops it; never claim that nothing ran
