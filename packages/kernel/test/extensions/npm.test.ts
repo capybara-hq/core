@@ -178,7 +178,7 @@ describe("fetchNpmPackage", () => {
 describe("fetchNpmPackage goes through packages/kernel/src/net", () => {
   const o = (tarballUrl: string) => ({ expectedIntegrity: sri(A1), tarballUrl });
 
-  it("a tarballUrl on a private host is refused unless marketplaces.allowPrivateHosts lists it", async () => {
+  it("a tarballUrl on a private host is refused unless net.allowPrivateHosts lists it", async () => {
     // port 1: nothing listens there, so an allowed request fails fast at connect
     const url = "https://pkgs.corp.invalid:1/x.tgz";
     const refused = await fetchNpmPackage(
@@ -190,7 +190,7 @@ describe("fetchNpmPackage goes through packages/kernel/src/net", () => {
     ).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(NpmFetchError);
     expect((refused as Error).message).toMatch(/private or reserved address/);
-    expect((refused as Error).message).toMatch(/marketplaces\.allowPrivateHosts/);
+    expect((refused as Error).message).toMatch(/net\.allowPrivateHosts/);
 
     const allowed = await fetchNpmPackage(
       cfg({ lookup: toLoopback, net: net({ allowPrivateHosts: ["pkgs.corp.invalid"] }) }),
@@ -228,7 +228,7 @@ describe("fetchNpmPackage goes through packages/kernel/src/net", () => {
 
   it("the registry is trusted by origin: another port on its host is refused", async () => {
     // the trusted registry is registry.corp.invalid:1; a manifest tarball on port 2 of the same
-    // host that resolves privately needs marketplaces.allowPrivateHosts like any other host
+    // host that resolves privately needs net.allowPrivateHosts like any other host
     const registry = "https://registry.corp.invalid:1/";
     const e = await fetchNpmPackage(
       cfg({ registry, lookup: toLoopback, net: net({ trustedOrigins: [registry] }) }),

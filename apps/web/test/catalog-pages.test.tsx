@@ -2543,7 +2543,7 @@ describe("marketplaceErrorKind", () => {
     const git = "https://github.com/capybara-hq/plugins.git: cannot list the refs of x";
     expect(
       marketplaceErrorKind(
-        `${git}: Access to github.com is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).`,
+        `${git}: Access to github.com is refused: it resolves to a private or reserved address (add the hostname to net.allowPrivateHosts to allow an internal host).`,
       ),
     ).toBe("private_address");
     expect(marketplaceErrorKind("https://x.com/m.json: Cannot resolve x.com.")).toBe("dns");
@@ -3668,7 +3668,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
 
   it("an entry import refused by the network rules shows the copy and a localized line naming the host", async () => {
     const message =
-      "Access to git.internal is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).";
+      "Access to git.internal is refused: it resolves to a private or reserved address (add the hostname to net.allowPrivateHosts to allow an internal host).";
     stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
       "GET /api/v1/admin/marketplaces/entries": () =>

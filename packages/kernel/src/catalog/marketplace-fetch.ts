@@ -13,7 +13,7 @@ import { isLoopback, readCapped } from "../packages/npm.js";
  * - https only (`allowInsecureLoopback`, tests only, allows http on loopback addresses), no user
  *   info in the URL;
  * - every request goes through `net/safeFetch`: the host must resolve to public addresses (or be
- *   exempt by `marketplaces.allowPrivateHosts` / the npm registry origin) and the connection is
+ *   exempt by `net.allowPrivateHosts` / the npm registry origin) and the connection is
  *   pinned to the checked address;
  * - redirects are not followed (a 3xx fails): one redirect could otherwise send the request (and the
  *   token) elsewhere;
@@ -46,7 +46,7 @@ export function marketplaceNetPolicy(
 ): NetPolicy {
   return {
     allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
-    allowPrivateHosts: config.marketplaces.allowPrivateHosts,
+    allowPrivateHosts: config.net.allowPrivateHosts,
     trustedOrigins: [new URL(config.packages.npmRegistry).origin],
     ...(config.net.httpsProxy !== undefined && {
       proxy: { url: config.net.httpsProxy, noProxy: config.net.noProxy },
