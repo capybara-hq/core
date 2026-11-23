@@ -307,17 +307,28 @@ describe("instance limits", () => {
     expect(readInstanceLimits(JSON.parse(instanceLimitsJson(applied) as string))).toEqual({
       applied,
       unapplied: null,
+      pending: null,
     });
     expect(readInstanceLimits(JSON.parse(instanceLimitsJson(null, applied) as string))).toEqual({
       applied: null,
       unapplied: applied,
+      pending: null,
     });
+    // the intent of an update in flight (device update fencing design §7.2)
+    expect(
+      readInstanceLimits(JSON.parse(instanceLimitsJson(applied, undefined, applied) as string)),
+    ).toEqual({ applied, unapplied: null, pending: applied });
     expect(instanceLimitsJson(null)).toBeNull();
     // an instance made before auto mode recorded { tier, egress }: it differs from every value
     expect(readInstanceLimits({ tier: "open", egress: "open" })).toEqual({
       applied: null,
       unapplied: null,
+      pending: null,
     });
-    expect(readInstanceLimits("nonsense")).toEqual({ applied: null, unapplied: null });
+    expect(readInstanceLimits("nonsense")).toEqual({
+      applied: null,
+      unapplied: null,
+      pending: null,
+    });
   });
 });

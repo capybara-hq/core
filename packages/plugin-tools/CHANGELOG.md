@@ -1,5 +1,33 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.23
+
+### Patch Changes
+
+- 59d3bda: `capybara-plugin check` runs "Config classification": `plugin-config-unbound` (an error, replacing
+  the warning `plugin-org-override-unbound`) refuses an overridable deployment field on an extension
+  with no org-bound entry (mark it `platformOnly`), and `plugin-org-url-net` requires every
+  overridable URL field to reach the network through `configUrlFetch` and refuses URL-named string
+  fields not declared `z.url()`. The packer and "Config forms" read only the deployment config schema.
+- 5d3e31b: Plugin modules packed before core#720 load again on a kernel from main. `orgAccess(schema, access)`
+  and the `OrgAccess` type are back as deprecated no-ops (the schema is returned unchanged, both
+  levels are ignored: the field stays overridable unless marked `platformOnly`), and
+  `defineExtension` drops a `config.org` key instead of refusing it (the manifest keeps only
+  `config.deployment`; other unknown `config` keys still throw). `capybara-plugin pack` and the
+  checks that import the module still refuse `config.org`. Temporary: removed in core#720 plan
+  Task 17 once the official plugins are republished.
+- Updated dependencies [ff74e46]
+- Updated dependencies [c0dc748]
+- Updated dependencies [8bdbb9b]
+- Updated dependencies [c55f359]
+- Updated dependencies [1ae08aa]
+- Updated dependencies [5d3e31b]
+- Updated dependencies [03fa6f6]
+- Updated dependencies [94ed9ef]
+- Updated dependencies [2c45b54]
+  - @capybara-hq/kernel@0.1.0-rc.78
+  - @capybara-hq/plugin-sdk@0.1.0-rc.64
+
 ## 0.1.0-rc.22
 
 ### Patch Changes

@@ -765,6 +765,7 @@ export class AgentsService {
       .selectFrom("agents")
       .select("id")
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .where(visibleTo(actorAccountId))
       .executeTakeFirst();
     if (!visible) throw notFound();
@@ -809,6 +810,7 @@ export class AgentsService {
     orgId: string;
     agent: { owner_account_id: string; needs_reassignment: boolean };
   }> {
+    // org-filter: platform path (super admin, checked by the caller): finds the agent's org
     const found = await this.db.db
       .selectFrom("agents")
       .select("org_id")
@@ -913,6 +915,7 @@ export class AgentsService {
           .updateTable("agents")
           .set({ profile_description: definition.description ?? "" })
           .where("id", "=", agentId)
+          .where("org_id", "=", orgId)
           .execute();
       }
       // what the current version already turns off is not checked again (skills default-on §4)
@@ -970,6 +973,7 @@ export class AgentsService {
       .updateTable("agents")
       .set({ visibility, current_version: toVersion, updated_at: sql`now()` })
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(t, {
       actorAccountId,
@@ -1068,11 +1072,13 @@ export class AgentsService {
       .updateTable("agents")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .execute();
     // the avatar upload is garbage now: the cleanup job deletes it (and its object) once expired
     await t
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now()` })
+      .where("org_id", "=", orgId)
       .where("agent_id", "=", agentId)
       .where("purpose", "=", "agent-avatar")
       .execute();
@@ -1175,6 +1181,7 @@ export class AgentsService {
       .updateTable("agents")
       .set({ owner_account_id: newOwnerId, needs_reassignment: false, updated_at: sql`now()` })
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .execute();
     // the new owner hears about the agent's connector setup request (P4-T6-4)
     await this.setupRequests.retargetIn([agentId], newOwnerId);

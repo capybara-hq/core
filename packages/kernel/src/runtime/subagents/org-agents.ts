@@ -61,6 +61,7 @@ export async function checkOrgAgent(
  */
 export async function currentAgentDefinition(
   db: KernelSchemaDb,
+  orgId: string,
   agentId: string,
 ): Promise<AgentDefinition | null> {
   const row = await db
@@ -72,6 +73,7 @@ export async function currentAgentDefinition(
     )
     .select("agent_versions.definition")
     .where("agents.id", "=", agentId)
+    .where("agents.org_id", "=", orgId)
     // a deleted parent agent's running run allowlists nothing (batch 9 review M2)
     .where("agents.deleted_at", "is", null)
     .executeTakeFirst();

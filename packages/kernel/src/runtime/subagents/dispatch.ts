@@ -259,6 +259,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
       .selectFrom("conversations")
       .select("account_id")
       .where("id", "=", ctx.conversationId)
+      .where("org_id", "=", ctx.orgId)
       .executeTakeFirstOrThrow();
     await t
       .insertInto("conversations")
@@ -337,7 +338,7 @@ export async function orgAgentGates(
   resumed: boolean,
 ): Promise<{ checked: CheckedOrgAgent } | { refused: DispatchOutcome }> {
   const { ctx } = a;
-  const parentDefinition = (await currentAgentDefinition(db, ctx.agentId)) ?? {};
+  const parentDefinition = (await currentAgentDefinition(db, ctx.orgId, ctx.agentId)) ?? {};
   const check = await checkOrgAgent(db, {
     orgId: ctx.orgId,
     parentDefinition,
@@ -478,6 +479,7 @@ export async function commitDispatchIn(
     .selectFrom("conversations")
     .select("id")
     .where("id", "=", ctx.conversationId)
+    .where("org_id", "=", ctx.orgId)
     .forUpdate()
     .executeTakeFirst();
   const parent = await t
@@ -568,6 +570,7 @@ export async function commitDispatchIn(
       .selectFrom("agents")
       .select("id")
       .where("id", "in", [ctx.agentId, plan.agentId])
+      .where("org_id", "=", ctx.orgId)
       .orderBy("id")
       .forShare()
       .execute();
@@ -772,6 +775,7 @@ async function limitRefusal(
     .selectFrom("conversations as c")
     .select(sql<string>`count(*)`.as("n"))
     .where("c.parent_conversation_id", "=", ctx.conversationId)
+    .where("c.org_id", "=", ctx.orgId)
     .where("c.kind", "=", "subagent")
     .where("c.deleted_at", "is", null)
     .where(({ exists, selectFrom }) =>

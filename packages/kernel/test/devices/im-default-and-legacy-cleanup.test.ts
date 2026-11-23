@@ -166,7 +166,7 @@ async function legacySandbox(provider: string): Promise<{
   const conversationId = randomUUID();
   const name = `cap-${conversationId}`;
   const fileSystem = await fake.createFileSystem({ name, limits, signal: sig() });
-  const h = await fake.create({ name, limits, fileSystem, signal: sig() });
+  const h = await fake.create({ name, limits, fileSystem, signal: sig(), fence: { token: 0 } });
   await db
     .insertInto("sandboxes")
     .values({

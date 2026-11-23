@@ -53,6 +53,8 @@ export class LegacySandboxCleanupJob {
   }
 
   /** One run (see the class); `signal` (the stop, or a lost run lock) is read between rows. */
+  // org-filter: deployment-wide sweep of the legacy sandboxes table across all orgs
+  // (LockedInterval), each row keyed by its own conversation id
   async runOnce(now = new Date(), signal?: AbortSignal): Promise<LegacyCleanupResult> {
     const any = await this.db
       .selectFrom("sandboxes")
@@ -101,11 +103,12 @@ export class LegacySandboxCleanupJob {
           ? AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT_MS)])
           : AbortSignal.timeout(CALL_TIMEOUT_MS);
       try {
-        await impl.destroyByName(name, callSignal());
+        // no device lease holds a legacy row: nothing to fence the destroy with
+        await impl.destroyByName(name, callSignal(), null);
         await impl.destroyFileSystemByName(name, callSignal());
         if (row.prev_provider !== null && row.prev_provider !== row.provider) {
           const prev = this.providers.forDevice(row.prev_provider)?.impl;
-          if (prev !== undefined) await prev.destroyByName(name, callSignal());
+          if (prev !== undefined) await prev.destroyByName(name, callSignal(), null);
           else {
             this.log.warn("legacy sandbox of a replaced provider left: provider not loaded", {
               name,

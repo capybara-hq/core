@@ -104,6 +104,7 @@ export class RunContextService {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .forUpdate()
       .executeTakeFirst();
     if (await runEndedIn(t, input.runId)) return "ended";

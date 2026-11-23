@@ -88,23 +88,21 @@ export default function OrgModelsView({
 }
 
 /**
- * The purposes while they load, as PurposeEditor draws them: the kernel's seven (eval, title,
- * command review, web extraction and the three sub-agent tiers), each a row with its one hint (what
- * happens while it is unset) over the model select (its default option names the deployment
- * default).
+ * The purposes while they load, as PurposeEditor draws them: the kernel's nine (eval, title,
+ * command review, web extraction, the three sub-agent tiers, image generation, vision), each its
+ * own section (a title and its one line over the model select, whose default option names the
+ * deployment default).
  */
-const purposeRow = (lines: number) => ({
-  lines,
-  lineSize: "small" as const,
-  field: { control: "select" as const },
-});
-const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1, 1].map(purposeRow);
+const LOADING_PURPOSES = Array.from({ length: 9 }, () => ({
+  fields: [{ control: "select" as const }],
+}));
 
 type Header = {
   path: { label: string; href?: string }[];
   title: string;
   tabs: NonNullable<PageHeaderProps["tabs"]>;
   activeTab: ModelsTab;
+  description?: string;
 };
 
 /** The Model services rows while they load: a name over its id and version. */
@@ -139,6 +137,8 @@ function OrgModels({
       onSelect: () => setTab(id),
     })),
     activeTab: tab,
+    // The purposes tab's one description: each purpose is its own section under it
+    ...(tab === "purposes" ? { description: t("org.description") } : {}),
   };
   const reads = [purposes, models, catalog, extensions] as const;
   if (reads.some((r) => r.kind === "notFound")) return <NotFound />;
@@ -175,11 +175,7 @@ function OrgModels({
         header={header}
         nav={nav}
         activeNav="models"
-        loading={{
-          sections: [
-            { items: LOADING_PURPOSES, title: t("org.title"), description: t("org.description") },
-          ],
-        }}
+        loading={{ sections: LOADING_PURPOSES }}
       />
     );
   }
@@ -248,7 +244,7 @@ function ModelsBody({
         ? d
         : { ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) },
     );
-  const { list, actionRow } = usePurposeDrafts({
+  const { sections, actionRow } = usePurposeDrafts({
     purposes,
     providers,
     scope: "org",
@@ -257,7 +253,8 @@ function ModelsBody({
   });
 
   if (header.activeTab === "purposes") {
-    // The drafts live in this component: a switch to 模型 and back keeps them
+    // The drafts live in this component: a switch to the models tab and back keeps them. One section per
+    // purpose (a SettingsPage always stacks them: its sub-nav is the title column).
     return (
       <SettingsPage
         header={header}
@@ -265,9 +262,7 @@ function ModelsBody({
         activeNav="models"
         {...(actionRow !== undefined ? { actionRow } : {})}
       >
-        <FormSection id="purposes" title={t("org.title")} description={t("org.description")} flush>
-          {list(t("org.title"))}
-        </FormSection>
+        {sections.length > 0 ? sections : <EmptyState text={t("purpose.none")} />}
       </SettingsPage>
     );
   }

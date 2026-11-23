@@ -3801,7 +3801,6 @@
         "cleared": "Cleared the price for \"{model}\"."
       },
       "purposes": {
-        "title": "Default model per purpose",
         "description": "The kernel and extensions pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
       },
       "toMarket": "Browse the marketplace",
@@ -3820,7 +3819,6 @@
     },
     "org": {
       "pageTitle": "Models",
-      "title": "Model purposes",
       "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default.",
       "noProviders": "The platform has no model services yet. Super admins deploy them under Admin → Models.",
       "toAdminModels": "Set up model services",
@@ -3848,9 +3846,11 @@
       "modelInvalid": "The selected model is not available.",
       "unset": "Not set",
       "useDefault": "Use deployment default ({target})",
+      "none": "No purposes to set.",
       "overridden": "Overridden",
       "unavailable": "{target} (unavailable)",
-      "params": "Parameters",
+      "paramsAllDefault": "Parameters · all default",
+      "paramsCustomized": "Parameters · {n} customized",
       "save": "Save",
       "savedAll": "{n, plural, one {Saved # purpose.} other {Saved # purposes.}}",
       "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them.",
@@ -5548,7 +5548,8 @@
         "connector": "Connector",
         "skill": "Skill",
         "plugin": "Dependency plugin",
-        "agent_template": "Agent template"
+        "agent_template": "Agent template",
+        "theme": "Theme"
       },
       "installedAt": "Installed {at}",
       "cleanup": "Clean up",
@@ -6677,7 +6678,9 @@
         "not_grantable": "Can't be approved in advance",
         "not_available": "Not one of the agent's tools now",
         "needs_role": "Needs a role you don't have",
-        "fixed_ask": "Always asks a person"
+        "fixed_ask": "Always asks a person",
+        "needs_admin": "Outside the organization's network allowlist: an organization admin must add it",
+        "device_refuses": "The task's device can't take network changes"
       },
       "network": "Network access",
       "networkHint": "Domains the task's runs may reach on its device without asking (within what the organization allows).",

@@ -12,6 +12,7 @@ import {
 import { checkSdkComments } from "../english-comments.js";
 import { checkDesignI18n, checkI18n, checkWebI18nKeys } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
+import { checkOrgFilter } from "../org-filter.js";
 import { checkOutboxRegistry } from "../outbox-registry.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkPlatformOps } from "../platform-ops.js";
@@ -26,6 +27,7 @@ import { checkTestPortfolio } from "../test-portfolio.js";
 import { checkTokens } from "../tokens.js";
 import { checkUiParts } from "../ui-parts.js";
 import { checkUiSlots } from "../ui-slots.js";
+import { checkWebApiParityRepo } from "../web-api-parity.js";
 import { checkWebUi } from "../web-ui.js";
 import { root } from "./report.js";
 
@@ -80,7 +82,9 @@ export const RUNNERS: Record<string, NamedCheck> = {
   terms: { name: "Terms", run: () => checkTerms(root) },
   "kernel-conventions": { name: "Kernel conventions", run: () => checkKernelConventions(root) },
   "outbox-registry": { name: "Outbox registry", run: () => checkOutboxRegistry(root) },
+  "org-filter": { name: "Org filter", run: () => checkOrgFilter(root) },
   "platform-ops": { name: "Platform operations", run: () => checkPlatformOps(root) },
+  "web-api-parity": { name: "Web API parity", run: () => checkWebApiParityRepo(root) },
   "compose-haproxy": {
     name: "compose haproxy",
     run: () =>

@@ -54,6 +54,7 @@ export async function scheduledTaskRunAt(
     if (typeof p.schedule?.taskRunId === "string") return p.schedule.taskRunId;
     if (typeof p.dispatch?.parentRunId === "string") runId = p.dispatch.parentRunId;
   } else if (ev.type === "background_task_finished" && typeof p.taskId === "string") {
+    // org-filter: the task id is the kernel-written event payload, scoped by its conversation_id
     const task = await t
       .selectFrom("background_tasks")
       .select("run_id")
@@ -219,6 +220,7 @@ export async function taskGrantsRunOf(
   const run = await unattendedTaskRunOf(db, runId);
   if (run === null || run.trial) return null;
   if (await personJoined(db, runId)) return null;
+  // org-filter: the task id is read from the kernel run's own scheduled_task_run_id, never input
   const task = await db
     .selectFrom("scheduled_tasks")
     .select(["id", "account_id", "org_id"])
@@ -232,6 +234,8 @@ export async function taskGrantsRunOf(
  * Appends a key to a task run's `missing_grants` (a tool key, or `connection:<slug>`), once: one
  * atomic update, so parallel calls of a run and of its sub-agents never lose or repeat a key.
  */
+// org-filter: callers pass the task run id of the kernel run's own unattended context
+// (PolicyContext.unattended, from runs.scheduled_task_run_id), never a caller-supplied id
 export async function appendMissingGrant(
   db: KernelSchemaDb,
   taskRunId: string,

@@ -260,6 +260,9 @@ const toObligation = (r: {
 });
 
 @Injectable()
+// org-filter: deployment-wide retirement of legacy launches: the worker sweeps (retire-legacy-tasks
+// job), the release-gate report and the cutover CLI span every org; the per-device and per-obligation
+// calls come from SandboxService's retirement gate with kernel-held device and obligation ids
 export class LegacyRetirementStore {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,

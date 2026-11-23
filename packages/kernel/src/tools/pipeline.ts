@@ -2669,6 +2669,7 @@ export class ToolPipeline {
    * full reach, under any profile): an intent past admission, or one revoked after dispatch, whose
    * device-wide scope came from the call's escalation grant.
    */
+  // org-filter: runId is the call context's own run (ctx.runId), a runtime uuid, never caller input
   private async admittedOutsideSandbox(runId: string, callId: string): Promise<boolean> {
     const rows = await this.deps.db
       .selectFrom("sandbox_operation_intents as i")
@@ -3022,6 +3023,7 @@ export class ToolPipeline {
   }
 
   /** The highest attempt of any approval of the call, of every kind (0: none yet). */
+  // org-filter: runId is the call context's own run (ctx.runId), a runtime uuid, never caller input
   private async lastAttempt(runId: string, callId: string): Promise<number> {
     const row = await this.deps.db
       .selectFrom("approvals")

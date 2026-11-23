@@ -80,6 +80,7 @@ export class BackgroundTaskFinisher {
         .selectFrom("sandbox_operation_intents")
         .select("operation_id")
         .where("operation_id", "=", task.operationId)
+        .where("org_id", "=", task.orgId)
         .forUpdate()
         .executeTakeFirst();
     if (
@@ -94,6 +95,7 @@ export class BackgroundTaskFinisher {
         .updateTable("sandbox_operation_intents")
         .set({ state: "completed", updated_at: new Date() })
         .where("operation_id", "=", task.operationId)
+        .where("org_id", "=", task.orgId)
         .where("state", "=", "background-running")
         .execute();
     // A lost end (supervision lost, instance gone or replaced) is no proof the process is gone:
@@ -104,6 +106,7 @@ export class BackgroundTaskFinisher {
         .updateTable("sandbox_operation_intents")
         .set({ state: "revoked", outcome_unknown: true, updated_at: new Date() })
         .where("operation_id", "=", task.operationId)
+        .where("org_id", "=", task.orgId)
         .where("state", "=", "background-running")
         .returning("operation_id")
         .executeTakeFirst();

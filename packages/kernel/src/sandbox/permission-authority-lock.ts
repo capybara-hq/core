@@ -101,15 +101,21 @@ export class PermissionAuthorityLock {
       claims.set(item.key, item.mode);
     }
     if (subject.deviceId) {
-      const row = await this.db
-        .selectFrom("devices")
-        .select("org_id")
-        .where("id", "=", subject.deviceId)
-        .executeTakeFirst();
-      if (!row || row.org_id !== subject.orgId)
-        throw new ApiError("device.not_found", "Device not found");
+      const orgId = subject.orgId;
+      const row =
+        orgId === undefined
+          ? undefined
+          : await this.db
+              .selectFrom("devices")
+              .select("org_id")
+              .where("id", "=", subject.deviceId)
+              .where("org_id", "=", orgId)
+              .executeTakeFirst();
+      if (!row || row.org_id !== orgId) throw new ApiError("device.not_found", "Device not found");
     }
     if (subject.rootConversationId) {
+      // org-filter: reads org_id and compares below: another org's conversation must fail, not
+      // read as an absent id that a root write may reserve
       const row = await this.db
         .selectFrom("conversations")
         .select("org_id")

@@ -947,6 +947,11 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
+export interface DeviceFence {
+    readonly token: number;
+}
+
+// @public
 export class DeviceOfflineError extends Error {
     constructor(deviceId: string, opts?: {
         cause?: unknown;
@@ -965,14 +970,15 @@ export interface DeviceProvider {
         limits: SandboxLimits;
         fileSystem: FileSystemHandle_2;
         signal: AbortSignal;
+        fence: DeviceFence;
     }): Promise<SandboxHandle>;
     createFileSystem(args: {
         name: string;
         limits: SandboxLimits;
         signal: AbortSignal;
     }): Promise<FileSystemHandle_2>;
-    destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    destroyByName(name: string, signal: AbortSignal): Promise<void>;
+    destroy(h: SandboxHandle, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
+    destroyByName(name: string, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
     destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
     destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
     readonly dialIn?: DialInHandler;
@@ -1025,7 +1031,7 @@ export interface DeviceProvider {
         isDir: boolean;
     } | null>;
     suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
+    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal, fence: DeviceFence): Promise<"updated" | "recreate">;
     writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
 }
 
@@ -2173,6 +2179,9 @@ export function isSecret(schema: z.ZodTypeAny): boolean;
 export function isSkillName(s: unknown): s is string;
 
 // @public
+export function isStaleFenceError(e: unknown): e is StaleFenceError;
+
+// @public
 export function isThemeAssetPath(v: unknown): v is string;
 
 // @public
@@ -2742,6 +2751,12 @@ export const OPEN_PUBLIC_DENIED_CLASSES: readonly AddressClass[];
 export interface OpenExternalCapabilityV1 {
     open(url: string): Promise<void>;
 }
+
+// @public @deprecated
+export type OrgAccess = "readonly" | "override";
+
+// @public @deprecated
+export function orgAccess<T extends z.ZodTypeAny>(schema: T, _access: OrgAccess): T;
 
 // @public
 export interface OrgDeletedPayload {
@@ -3732,7 +3747,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.63";
+export const SDK_VERSION = "0.1.0-rc.64";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -4029,6 +4044,16 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 
 // @public
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
+
+// @public
+export class StaleFenceError extends Error {
+    constructor(message: string, opts?: {
+        cause?: unknown;
+        current?: number;
+    });
+    readonly current: number | undefined;
+    readonly staleFence: true;
+}
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];

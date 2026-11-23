@@ -372,6 +372,8 @@ export type OwnedRef = { kind: "plugin" | "skill" | "agent_template"; id: string
  * `except` (usually the owner), by name. One definition for the update notices and the
  * "used by another org" check of deletes. An item that is gone or disabled is on nowhere.
  */
+// org-filter: answers which orgs an item is on in, so it reads the item's named list and switches
+// of every org on purpose (keyed by the item id)
 export async function orgsUsing(
   db: KernelSchemaDb,
   ref: OwnedRef,

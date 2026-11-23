@@ -1,5 +1,67 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.102
+
+### Patch Changes
+
+- ff74e46: The bootstrap step retries each npm package download (registry lookup and tarball) up to three
+  times with backoff when it fails transiently (a dropped connection, a timeout, HTTP 408 / 429 /
+  5xx), never on a 404 or a package that differs from its pin; the final error still names the
+  plugin. Docker Compose upgrades now run `docker compose run --rm init` before `docker compose up
+  -d`, so a failing migration or bootstrap no longer takes the serving containers down.
+- c0dc748: `openai-compatible` is an optional bootstrap preinstall, no longer required: only `object-store-s3`,
+  `skills-core` and `file-preview` are fixed in every org. On an existing deployment the
+  demoted plugin keeps scope `all`: the bootstrap owes its scope sync, which installs it in every org
+  that has not switched it off, so it stays on there.
+- c55f359: The kernel drops the org-only extension config: an org's config of an extension is its copy of the
+  overridable deployment fields. `PUT /orgs/:orgId/extensions/:extension` takes `{ enabled, force,
+  confirm }` only, the org extension view loses `config`, `secrets` and `orgConfigSchema`
+  (`configurable` now means "has an overridable field", `needsConfig` comes from the effective config
+  alone), the install body loses `extensionConfig`, `extension.no_org_config` and the
+  `extensions.set-org-config` operation are gone, and point providers, directory sync, web tools and
+  setup checks get the org's effective config only. Deployment fields are org-overridable by default
+  (`platformOnly` marks the rest). The testing fixtures move their org fields into `deployment`
+  (fake-web's `token`, fake-im's `directoryUrl`) and mark the fixtures of points without org config
+  platform-only. `plugins.set-enabled` switches a plugin on whose
+  extension still needs the org's config (as the web does) and says so in `configNeeded`. A
+  `platformOnly` mark below a top-level key (a hand-made package) makes that whole key platform-only,
+  and a pipe or transform deployment root is read through to its input object.
+  
+  A config field's meta is merged across its default / optional / nullable / prefault / catch /
+  readonly wrappers, and `secret` counts on any of them: a mark on a wrapper
+  (`platformOnly(secret(x).optional())`) no longer hides the secret below it, which made the load
+  fail as an unreachable secret.
+- 1ae08aa: Load installed plugins packed before core#720 again: the reviewed static manifest stored with
+  their install record still lists `config.org`, which the module's manifest no longer has, so every
+  such plugin was refused with `manifest_mismatch`. The legacy list is dropped before the comparison.
+  With the SDK's temporary `orgAccess` no-op and `defineExtension` dropping `config.org` (same
+  release), modules such as deepseek, jina, ark, bailian, lark and slack import and load again; their
+  org-only fields reach no permission set or view. Removed in core#720 plan Task 17.
+- 6c2a7da: The model purposes pages (`/admin/models` and `/settings/models`, tab 用途默认) draw each purpose as
+  its own section: the label, 已覆盖 and its one line in the head, warnings and the model select in
+  the card, and the model's parameters folded in a disclosure (closed by default, its summary counts
+  the customized parameters, a parameter error opens it).
+- 2c45b54: An approval asked by a member's own tool policy no longer fails to record (`approval_requested`
+  now takes `policy: "member"`). The web's API types now match the kernel routes they call
+  (checked by `check:web-api-parity`): plugins with themes, an org's upload awaiting confirmation,
+  migration-warning permissions, network grant refusals and skipped questions are typed and labeled,
+  the account avatar upload no longer sends a field the route refuses, and an agent avatar of another
+  image type is refused before the upload.
+- 93ecec3: The web app has one org config form per extension: the overridable deployment fields (following
+  the platform or the org's own copy). The org-config section, Save and enable and the install
+  wizard's extension step are gone, and the platform's config form tags each field `Platform only`
+  or `Org can override`.
+- fb58f12: In the conversation thread, a tool call that returned an error shows a small red dot (named "The
+  call returned an error" for screen readers and as a tooltip) instead of the red word "Failed", and
+  a group header shows the dot and the count instead of " (N failed)". The error text stays visible.
+- Updated dependencies [ff74e46]
+- Updated dependencies [c0dc748]
+- Updated dependencies [8bdbb9b]
+- Updated dependencies [c55f359]
+- Updated dependencies [1ae08aa]
+- Updated dependencies [2c45b54]
+  - @capybara-hq/kernel@0.1.0-rc.78
+
 ## 0.1.0-rc.101
 
 ### Patch Changes

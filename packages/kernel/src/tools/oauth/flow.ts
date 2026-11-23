@@ -287,6 +287,7 @@ export class OAuthFlow {
       .selectFrom("connectors")
       .select("id")
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();

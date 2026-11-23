@@ -1082,6 +1082,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       .selectFrom("channel_connections")
       .select("config")
       .where("id", "=", id)
+      .where("org_id", "=", row.orgId)
       .executeTakeFirstOrThrow();
     const full = structuredClone(stored.config ?? {});
     for (const [p, v] of Object.entries(await this.readSecrets(row.orgId, id))) setDeep(full, p, v);

@@ -347,6 +347,8 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  * No in-process state.
  */
 @Injectable()
+// org-filter: the platform plugin update (one version per deployment) moves the item's installs,
+// connectors and pinned copies in every org by design, keyed by the platform item / template ids
 export class PlatformPluginUpdater {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,

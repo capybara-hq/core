@@ -390,6 +390,7 @@ export class DeviceProjectsService {
       .selectFrom("conversations")
       .select("id")
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .where("project_name", "=", name)
       .where("project_path", "=", gone.path)
       .execute();
@@ -408,6 +409,7 @@ export class DeviceProjectsService {
           permission_revision: eb("permission_revision", "+", 1),
         }))
         .where("id", "in", [...affected])
+        .where("org_id", "=", orgId)
         .where("permission_profile", "=", "full-access")
         .execute();
     await audit(this.db.db, {

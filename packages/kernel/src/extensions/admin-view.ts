@@ -633,6 +633,7 @@ export class ExtensionAdmin {
     }
     const built = [...clients].map(([plugin, c]) => ({ plugin, build: c.build }));
     if (built.length === 0) return { clients, reports };
+    // org-filter: super admin's extension view (ExtensionAdmin): client reports of every org
     const ranked = this.db
       .selectFrom("extension_client_reports")
       .selectAll()
@@ -651,7 +652,8 @@ export class ExtensionAdmin {
       list.push({
         orgId: r.org_id,
         contribution: r.contribution,
-        kind: r.kind,
+        // written only from a validated report (`ReportBody.kind`)
+        kind: r.kind as NonNullable<AdminExtensionView["clientReports"]>[number]["kind"],
         count: r.count,
         firstAt: r.first_at.toISOString(),
         lastAt: r.last_at.toISOString(),

@@ -7,7 +7,7 @@ import type { PersonRef } from "./people";
  * （与 plugin-sdk `validateAnswer` 同一套规则的子集；最终以内核校验为准）。
  */
 
-export type QuestionStatus = "pending" | "answered" | "expired" | "cancelled";
+export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled";
 
 export interface Question {
   id: string;

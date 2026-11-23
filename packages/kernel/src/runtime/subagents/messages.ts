@@ -303,6 +303,7 @@ export class SubagentMessages {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", childId)
+      .where("org_id", "=", ctx.orgId)
       .forUpdate()
       .executeTakeFirst();
     if ((await this.activeRunOf(childId)) === undefined) return null;
@@ -362,6 +363,7 @@ export class SubagentMessages {
         .selectFrom("conversations")
         .select("id")
         .where("id", "=", plan.childConversationId)
+        .where("org_id", "=", ctx.orgId)
         .forUpdate()
         .executeTakeFirst();
       if (await activeRun()) return null;

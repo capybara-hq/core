@@ -12,6 +12,7 @@ export type PersonRef = {
   id: string;
   name: string;
   avatarUrl: string | null;
+  /** @clientOnly Set by the web (the viewer as "You"), never by the kernel. */
   initialFrom?: string;
 };
 

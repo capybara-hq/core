@@ -211,6 +211,7 @@ export async function conversationLocale(
       .selectFrom("conversations")
       .select("account_id")
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
     accountId = c?.account_id ?? null;
   }
@@ -494,6 +495,7 @@ export class ChannelOutbound {
   }
 
   /** 会话日志当前的最后位置（会话不存在时 undefined）。 */
+  // org-filter: conversationId comes from the kernel-written delivery job payload, not caller input
   private async lastSeq(conversationId: string): Promise<number | undefined> {
     const conv = await this.kdb
       .selectFrom("conversations")
@@ -514,6 +516,7 @@ export class ChannelOutbound {
   async recordError(connectionId: string, message: string): Promise<void> {
     const text = `delivery failed: ${message}`.slice(0, MAX_ERROR_CHARS);
     this.log.warn("channel delivery failed", { connectionId, error: text });
+    // org-filter: connectionId is the delivery's own connection (kernel-written job / row)
     await this.kdb
       .updateTable("channel_connections")
       .set({ last_error: text })
@@ -861,6 +864,7 @@ class Delivery {
       .selectFrom("channel_connections")
       .select(["status", "updated_at"])
       .where("id", "=", this.s.row.id)
+      .where("org_id", "=", this.s.row.orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     return r?.status === "active" ? r.updated_at.getTime() : undefined;
@@ -932,6 +936,7 @@ class Delivery {
       .selectFrom("conversations")
       .select("last_seq")
       .where("id", "=", this.conversationId)
+      .where("org_id", "=", this.s.row.orgId)
       .executeTakeFirst();
     return !conv || Number(conv.last_seq) <= this.seen;
   }
@@ -1080,6 +1085,7 @@ class Delivery {
             .selectFrom("questions")
             .select("spec")
             .where("id", "=", p.questionId)
+            .where("org_id", "=", this.s.row.orgId)
             .executeTakeFirst();
           const form = (q?.spec as { form?: InputForm } | undefined)?.form;
           if (!form) return;

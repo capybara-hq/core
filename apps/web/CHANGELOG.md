@@ -1,5 +1,13 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.102
+
+### Patch Changes
+
+- a14caad: The connectors page sorts template cards with the page's locale, so the server render and the
+  browser agree (they differed for Chinese names such as Google 表格 / Google 云端硬盘 and failed
+  hydration).
+
 ## 0.1.0-rc.101
 
 ### Patch Changes
