@@ -1109,6 +1109,7 @@ describe("reconstructRequest：基线零漂移", () => {
   it("project_root events, usable then unavailable, before and after a summary (project root spec §5): zero drift, no device touched", async () => {
     reset();
     const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
+    const operations = vi.spyOn(k.app.get(SandboxService), "withOperations");
     try {
       const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
       const conv = await createConv(owner, orgId, agentId);
@@ -1163,14 +1164,17 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(last.some((t) => t.includes("no longer exists on the device"))).toBe(true);
       await expectZeroDrift(conv, await snapshotOf(conv));
       expect(kernelRead).not.toHaveBeenCalled();
+      expect(operations).not.toHaveBeenCalled();
     } finally {
       kernelRead.mockRestore();
+      operations.mockRestore();
     }
   });
 
   it("a sub-agent's run copies its root's project_root into its own log: its first request carries the project, zero drift, no device touched", async () => {
     reset();
     const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
+    const operations = vi.spyOn(k.app.get(SandboxService), "withOperations");
     try {
       const agentId = await createAgent(
         { provider: "model-fake", model: "fake-1" },
@@ -1296,8 +1300,10 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(after[1]?.payload).toEqual(changed);
       expect(after[1]?.runId).toBe(third);
       expect(kernelRead).not.toHaveBeenCalled();
+      expect(operations).not.toHaveBeenCalled();
     } finally {
       kernelRead.mockRestore();
+      operations.mockRestore();
     }
   });
 

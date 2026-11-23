@@ -1,5 +1,8 @@
 import type { SandboxActor } from "@capybara-hq/plugin-sdk";
-/** Who uses the sandbox in {@link SandboxService.withSandbox}. */
+/**
+ * Who uses the sandbox in {@link SandboxService.withOperations} and the other use entries
+ * (`withPreparation`, `withKernelRead`).
+ */
 export interface SandboxUseContext {
   orgId: string;
   deviceId: string;

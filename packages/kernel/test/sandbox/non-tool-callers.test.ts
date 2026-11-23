@@ -295,6 +295,32 @@ describe("a person's project skill invocation", () => {
     ).rejects.toMatchObject({ code: "skill.not_invocable" });
   });
 
+  it("a conversation not created yet, or one without a project: not_found, no device call", async () => {
+    const base = {
+      orgId: ORG,
+      agentId: "a",
+      accountId: ACC,
+      agent: {} as never,
+      name: "project:fix",
+      args: "",
+    };
+    // the first message of a conversation not created yet has no project
+    await expect(invoker().prepare(base)).rejects.toMatchObject({
+      code: "skill.not_invocable",
+      details: [{ reason: "not_found" }],
+    });
+    // a conversation whose log records no project_root
+    const free = new SkillInvoker(fakeDb(), {} as never, {} as never, log, {
+      latestOfType: async () => undefined,
+    } as never);
+    await expect(free.prepare({ ...base, conversationId: CONV })).rejects.toMatchObject({
+      code: "skill.not_invocable",
+      details: [{ reason: "not_found" }],
+    });
+    expect(sb.withOperations).not.toHaveBeenCalled();
+    expect(sb.withKernelRead).not.toHaveBeenCalled();
+  });
+
   it("an agent without the Skill tool is refused, and its menu lists no project skill", async () => {
     const noSkill = { disabledTools: [{ kind: "builtin", name: "Skill" }] };
     await expect(
