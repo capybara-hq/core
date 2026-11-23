@@ -20,21 +20,18 @@ import {
 } from "../lib/devices";
 import { labelLocale } from "../lib/extension-label";
 import { Person } from "./Person";
-import { ThisMachineSection } from "./ThisMachineSection";
 
 /**
- * Overview (device provider design §6.6): values only, the same for every provider. The
- * this-machine block on top (only inside the desktop shell, for this machine's device), then what
+ * Overview (device provider design §6.6): values only, the same for every provider: what
  * the provider last reported (its description line in the page language and its limits as read-only rows; no report
  * on a usable device: the provider did not answer), the files note and the recent network changes.
  */
-export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; device: Device }) {
+export function DeviceOverviewSection({ device: e }: { device: Device }) {
   const t = useTranslations("devices");
   const lang = labelLocale(useLocale());
   const report = e.report;
   return (
     <Stack gap={12}>
-      <ThisMachineSection orgId={orgId} device={e} />
       {(report !== null || e.available) && (
         <ContentSection title={t("overview.about")}>
           <Stack gap={8}>

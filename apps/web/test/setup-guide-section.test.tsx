@@ -714,7 +714,7 @@ describe("channel detail: 接入指南 and the drift notice", () => {
 });
 
 describe("a device-connection guide (新建设备)", () => {
-  it("shows every block before save and passes shell actions to renderShellAction", async () => {
+  it("shows every block before save", async () => {
     const provider = {
       plugin: "device-local",
       displayName: { zh: "本机", en: "Local machine" },
@@ -748,7 +748,6 @@ describe("a device-connection guide (新建设备)", () => {
             blocks: [
               { kind: "markdown", text: "Before the break" },
               { kind: "markdown", text: "***\n\nAfter the break" },
-              { kind: "shell-action", action: "connect-this-machine", label: "Connect here" },
             ],
             checks: [],
             unresolved: [],
@@ -757,25 +756,9 @@ describe("a device-connection guide (新建设备)", () => {
           },
         }),
     });
-    (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
-      version: 1,
-      capabilities: {
-        "device@2": {
-          status: vi.fn().mockResolvedValue({ connections: [] }),
-          onStatus: () => () => {},
-          connect: vi.fn(),
-        },
-      },
-      on: () => () => {},
-    };
-    try {
-      await renderRouteWithCache("/devices", lastStubRoutes(), { locale: "en" });
-      await userEvent.click(await screen.findByRole("button", { name: en.devices.new }));
-      expect(await screen.findByText("Before the break")).toBeTruthy();
-      expect(screen.getByText("After the break")).toBeTruthy();
-      expect(await screen.findByRole("button", { name: "Connect here" })).toBeTruthy();
-    } finally {
-      Reflect.deleteProperty(window, "capybaraShell");
-    }
+    await renderRouteWithCache("/devices", lastStubRoutes(), { locale: "en" });
+    await userEvent.click(await screen.findByRole("button", { name: en.devices.new }));
+    expect(await screen.findByText("Before the break")).toBeTruthy();
+    expect(screen.getByText("After the break")).toBeTruthy();
   });
 });

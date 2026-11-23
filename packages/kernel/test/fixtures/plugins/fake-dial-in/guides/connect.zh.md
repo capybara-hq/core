@@ -5,5 +5,3 @@
 ```sh
 capybara-device connect {{publicUrl}}
 ```
-
-::shell-action connect-this-machine 连接本机

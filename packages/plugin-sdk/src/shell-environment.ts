@@ -45,7 +45,6 @@ declare global {
  * (key, owner) by the spec that defines it; the owner names the spec holding its functions.
  */
 export const SHELL_CAPABILITIES: readonly { key: string; owner: string }[] = [
-  { key: "device@2", owner: "device provider spec (2026-11-21-device-provider-design.md), §9" },
   { key: "notify@1", owner: "desktop client spec (2026-11-07-desktop-client-design.md)" },
   { key: "openExternal@1", owner: "desktop client spec (2026-11-07-desktop-client-design.md)" },
   { key: "signIn@1", owner: "desktop client spec (2026-11-07-desktop-client-design.md), §6.5" },
