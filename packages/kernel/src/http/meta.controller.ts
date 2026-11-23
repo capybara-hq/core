@@ -23,13 +23,11 @@ export const MetaResponseSchema = z.object({
   protocols: z.object({
     /**
      * The `capybara-device` protocol majors the loaded dial-in providers speak (their
-     * `permissions.dialIn.protocol`); without any, the SDK's major, and `localDevices` is false.
+     * `permissions.dialIn.protocol`); without any, the SDK's major.
      */
     device: z.object({ min: z.number().int(), max: z.number().int() }),
   }),
   features: z.object({
-    /** A dial-in provider speaking `capybara-device/<major>` (device-local) is loaded. */
-    localDevices: z.boolean(),
     appSignIn: z.boolean(),
     /** App ids a push provider covers with the providers that do; `[]` without `http.publicUrl`. */
     push: z.array(z.object({ appId: z.string(), providers: z.array(z.string()) })),
@@ -79,8 +77,7 @@ export class MetaController {
       this.iconUrl("favicon"),
     ]);
     const appSignIn = Boolean(config.http.publicUrl);
-    // Local devices exist only while a dial-in provider speaking capybara-device is loaded
-    // (device-local); the shells offer "connect this machine" only then.
+    // The capybara-device majors the loaded dial-in providers (device-local) speak.
     const devices = deviceProtocolRange(this.dialIn.loaded().map((p) => p.protocol));
     return {
       name: config.platform.name ?? null,
@@ -90,7 +87,6 @@ export class MetaController {
         device: devices ?? { min: DEVICE_PROTOCOL_VERSION, max: DEVICE_PROTOCOL_VERSION },
       },
       features: {
-        localDevices: devices !== null,
         // The authorize route answers app_auth.unavailable without http.publicUrl.
         appSignIn,
         // A push message carries the deployment origin, which needs http.publicUrl.

@@ -4,7 +4,7 @@ import { edgeAttrs, Tabs, useScrollEdges } from "../display/tabs";
 import { Stack } from "../layout/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
-import { type FormSectionLayout, LoadingFormSection } from "./form-page";
+import { LoadingFormSection } from "./form-page";
 import {
   type FieldShape,
   type ItemShape,
@@ -62,8 +62,6 @@ export function SettingsPage({
       items?: ItemShape[];
       title?: string;
       description?: string;
-      /** The loaded section's `FormSection` layout (default `columns`). */
-      layout?: FormSectionLayout;
     }[];
     cards?: ItemShape[] | { shape?: ItemShape; count?: number };
   };

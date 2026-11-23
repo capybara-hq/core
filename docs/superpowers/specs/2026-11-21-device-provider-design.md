@@ -60,8 +60,8 @@ Goals
    of one deployment), isolated from each other, each with its own credential, state, service and
    limits. No migration of existing machines or deployments (maintainer, 2026-11-21: nothing was
    ever released, so no compatibility): §7.4.
-8. The desktop's 「连接本机」 works in every platform window independently; the tray shows all
-   connections.
+8. (Withdrawn 2026-11-23: the desktop's 「连接本机」 and tray rows are gone; desktop and shells
+   manage no devices, §9.)
 
 Non-goals
 
@@ -162,6 +162,22 @@ background, `list` / `scan`) renamed, with `multi` cardinality and these changes
   - `home`: the base the project picker starts from (local OS mode), else the workspace.
   - `limits`: limits the provider or the machine's owner applies on top (shown, read only).
   - `reset`: whether "重建文件" exists (today cloud only).
+  - `changeHint` (2026-11-23, maintainer-approved): optional, localized `{ en, zh? }` (at most
+    400 characters each), who can change the device's limits and how, in the provider's own words
+    (the local provider: the machine's owner, `capybara-device ceiling set -c <device id> …` on
+    that machine; a container provider: the super admin's deployment config of the extension).
+    The device page shows it under the limits in the page language; the kernel appends its English
+    text to every refusal that cites the report (an escalated call the provider or the machine's
+    owner does not allow now, a network the device side keeps on the allowlist), so the person and
+    the model learn the way out. One report-level text, not one per limit: limits are display
+    pairs, and a provider's way to change them is usually one place (designer's call).
+- **Who keeps a crossing closed** (2026-11-23): the permission support may name the layer of a
+  closed crossing that is not the provider itself: `limitedBy: { outsideSandbox?: "owner",
+  openPublic?: "owner" }`, only on a closed crossing. The kernel's ceiling layers gain `owner`
+  ("the owner of the machine this device runs on") next to `provider`, used in refusals and the
+  network option's reason; both are the device side (they clamp the sandbox network, never what an
+  org allows per call). The kernel never special-cases a provider: the local provider fills
+  `limitedBy` from its owner ceiling, and a provider without an owner layer leaves it out.
 - **Scope**: an operation's scope carries `projectRoot` (the conversation's working directory, its
   write boundary and where AGENTS.md, skills, hooks and MCP config load from: project root
   design, maintainer 2026-11-14) plus `writeRoots` (project root, workspace). Read roots are no
@@ -241,15 +257,15 @@ machine owner keeps a local narrowing. (Designer's call; listed in §14.)
 - New setup-guide place `device-connection` in `SETUP_GUIDE_PLACE_INFO`: audience `member`;
   variables `{{publicUrl}}`, `{{orgId}}`, `{{orgName}}`, `{{pluginName}}`; `::check` rows allowed
   (e.g. "this machine is signed in"). One guide per provider.
-- New directive `::shell-action connect-this-machine <label>`: the web renders it as a primary
-  button only when the shell offers `device@2` (§9), else drops it. Guides stay plain markdown
-  otherwise; the existing renderer (`SetupGuideSection`) shows them.
+- Guides are plain markdown; the existing renderer (`SetupGuideSection`) shows them. (The
+  `::shell-action connect-this-machine` directive this section first added was removed on
+  2026-11-23 with the shell's device integration, §9.)
 - 新建设备: one card per provider on in the org (its `displayName` and `description`), then the
   chosen provider's guide. A provider without `dialIn`: a name field and 新建 (today's cloud flow).
   A dial-in provider: no name field; the dialog waits for the new device (today's 3 s poll of the
   device list) and opens it.
 - `device-local`'s guide is today's `LocalSteps` moved to markdown (install, `login --url
-  {{publicUrl}}`, start / `service install`) plus the shell action. "Connected to another
+  {{publicUrl}}`, start / `service install`). "Connected to another
   platform" and "connected to your other org" disappear: connecting again adds a connection.
 
 ### 6.5 Same person, two orgs, one machine
@@ -265,8 +281,7 @@ org learn about the other).
 MacBook-Pro.local            device-local · 在线 · v0.2.0 · 最后活跃 …
 ──────────────────────────────────────────────────────────────────
 概览   the provider's description line, its read-only limits, files,
-       recent changes; 本机 block (running ops, pause/resume/disconnect,
-       keep-awake) only inside the desktop shell for this machine's device
+       recent changes
 网络   open / allowlist, the hosts (add / remove), within the org ceiling
 项目   list, add (provider refusals shown), no hidden count
        重建文件 (only when report().reset) · 删除设备
@@ -309,7 +324,15 @@ Today `operation-authority.ts`, `permission-facts.ts`, `permission-runtime-repor
 - **Network**: the kernel's list intersected with the connection's own narrowing, through the
   per-operation proxy, address classes closed (unchanged mechanism).
 - **Outside the sandbox**: per approved call, only when the connection's owner ceiling allows it
-  (`capybara-device ceiling set --outside-sandbox on`, CLI only); off for a new connection.
+  (`capybara-device ceiling set --outside-sandbox on|off`, CLI only). **On for a new connection**
+  (2026-11-23, maintainer-approved, aligned with Claude Code: commands run in the sandbox, and a
+  call that asks to run outside it goes through the approval its conversation's permission profile
+  decides: the person, the review model, or the Auto profile's grant). An existing connection keeps
+  its stored ceiling; a missing `policy.json` still reads as the closed ceiling. `login` prints the
+  ceiling, the risk text, and how to narrow it (`ceiling set -c <device id> --outside-sandbox
+  off`). Before this, a new connection had it off and nothing outside the machine told the person
+  how to change it; an agent refused there read the limit as the provider's and unfixable. The
+  report now names the owner as the layer (`limitedBy`) and says how to change it (`changeHint`).
 - **Project reach** becomes per connection: `machine` (default, the read rule above),
   `paths` (a list of directories: reads and projects only there, plus tool directories; for
   connections that must not see each other's code), or `workspace`. Set on the machine
@@ -388,29 +411,18 @@ the old program's `service uninstall` before upgrading, as the upgrade note says
 - OS mode: no CPU / memory enforcement (unchanged; noted in the guide). A per-connection
   concurrency cap is left for later if real use shows contention.
 
-## 9. Desktop (clients) and the shell capability `device@2`
+## 9. Desktop and shells don't manage devices
 
-`device@1` answers one status for the machine. `device@2` answers per connection and only for the
-calling window's deployment:
-
-- `status() → { connections: Connection[] }`: the connections of this machine to **this
-  deployment** (any org), each `{ deviceId, orgId, mode, connection, offlineReason?, keepAwake,
-  serviceInstalled, lastWakeAt? }`. Connections to other deployments are never named.
-- `connect({ orgId })` adds a connection (shell dialog first, as today); no "disconnect the other
-  platform" dialog and no `stopAndLogout`.
-- `running`, `pause`, `resume`, `disconnect`, `requestCeiling`, `setKeepAwake` take `{ deviceId }`
-  and refuse a device of another deployment.
-- `onStatus(cb)` as today.
-
-Web: `useThisMachine` returns the list; `useIsThisMachine(orgId, deviceId)` and
-`useThisMachineDeviceId(orgId)` look it up. The `::shell-action connect-this-machine` button calls
-`connect`.
-
-Desktop main process: `control.ts` / `machine.ts` read every `connections/*/control.sock`; the
-tray shows one row per connection (host · org · state, running count) with its submenu (pause /
-resume / disconnect / keep-awake / open the device page in that profile's window), and the icon
-shows the worst state (offline > busy > online). Removing a profile asks whether to log out the
-connections to that deployment (desktop spec §6.3, now plural).
+Maintainer decision 2026-11-23: the desktop app and every other native shell no longer connect,
+show or manage local devices, and the host a client runs on is not assumed to be a device. Local
+devices are the `device-local` plugin's, connected only with the `capybara-device` program
+(`login`, `service install -c <device id>`, …), which the device's connection guide describes.
+Why: one way to connect a machine, the same on every platform and for servers without a desktop,
+and no second control surface (tray rows, keep-awake, pause / resume) to keep in step with the
+program. So there is no shell capability for devices (the `device@2` this section first defined is
+gone from the SDK, the web and the clients, with no replacement), no `::shell-action` guide
+directive, no "this machine" mark or block on the web, and `GET /api/v1/meta` has no
+`features.localDevices`; `protocols.device` stays.
 
 ## 10. Plugins and packages
 
@@ -424,7 +436,7 @@ connections to that deployment (desktop spec §6.3, now plural).
   either fixed builtins or optional preinstalls off everywhere, so `bootstrap.json` gains a
   `scope` field for preinstalls (default `optional`, as today).
 - `@capybara-hq/plugin-sdk`: `device-provider@1`, `DialInChannel`, the device report, the
-  `device-connection` guide place and directive, shell `DeviceCapabilityV2`. The protocol 4 frame
+  `device-connection` guide place. The protocol 4 frame
   types move to a subpath (`@capybara-hq/plugin-sdk/device-protocol`) shared by `device-local` and
   `capybara-device` (builder's call on the exact home).
 - `@capybara-hq/device`: §7; the protocol version bumps (the hello carries no ceiling the kernel
@@ -440,15 +452,16 @@ connections to that deployment (desktop spec §6.3, now plural).
 3. Network setting in the kernel for every device (local included), device page, 新建设备 with
    guides.
 4. Local read model (Claude Code alignment, per-connection project reach).
-5. Many connections in `capybara-device`; `device@2` in the web and desktop; tray.
+5. Many connections in `capybara-device`. (The `device@2` shell capability and tray rows this step
+   also shipped were removed on 2026-11-23, §9.)
 
 Steps 4 and 5 touch only `capybara-device`, `device-local` and the clients, and may run in
 parallel once 2 is merged.
 
 ## 12. Specs amended
 
-- Desktop client spec §8 (`device@1` → `device@2`), §9.1 (the dialog), §9.3 ("one runner, one
-  deployment" → one runner per connection), §9.5 (network widening moves to the web), §9.6.
+- Desktop client spec §8 and §9: superseded by §9 here (2026-11-23: the desktop manages no
+  devices).
 - Approval-only profiles design: the local owner ceiling's `network open|allowlist` moves to the
   kernel's device setting (§6.3; the machine keeps a narrowing), and `restrictedProjectReach` is
   replaced by §7.1.
@@ -463,7 +476,6 @@ parallel once 2 is merged.
   this Mac's prod connection must not be touched); deny-list tests that a sandboxed read of the
   other connection's working directory and state fails; the flat-layout move.
 - Web: the create dialog with two providers; the device page without per-provider sections.
-- Desktop: `device@2` with two fake connections; tray rows; no real launchd (injected fakes).
 
 ## 14. Decisions and open questions
 
@@ -493,6 +505,11 @@ Designer's calls to check:
 Withdrawn: removing the `open` network mode (the maintainer kept it, 2026-11-21).
 
 ## AGENTS.md rules touched
+
+2026-11-23 amendment (change hints, owner layer, outside-the-sandbox default): no rule changes;
+the Sandboxes rule's "bounded by the device's outside-sandbox setting" holds unchanged. The SDK
+change (`DeviceReport.changeHint`, `SandboxPermissionSupport.limitedBy`) follows **Public API
+reports**.
 
 - **Sandboxes**: "commands run in the device's sandbox under every permission profile (scope:
   project, workspace, tool directories; network: the open public internet or an allowlist …)"

@@ -20,7 +20,6 @@ import {
   USER_CODE_ALPHABET,
 } from "../../src/dial-in/auth.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
@@ -1184,23 +1183,12 @@ describe("the sign-in chooses a dial-in provider", () => {
   });
 });
 
-// Last: unloads the capybara-device stand-in.
-describe("GET /api/v1/meta local devices", () => {
-  it("is on while a capybara-device provider is loaded (in no org), its declared major as the range", async () => {
-    const meta = async () => {
-      const res = await k.http.inject({ method: "GET", url: "/api/v1/meta" });
-      expect(res.statusCode, res.body).toBe(200);
-      return res.json() as {
-        protocols: { device: { min: number; max: number } };
-        features: { localDevices: boolean };
-      };
-    };
+describe("GET /api/v1/meta device protocol range", () => {
+  it("names the declared major of the loaded capybara-device provider (in no org)", async () => {
+    const res = await k.http.inject({ method: "GET", url: "/api/v1/meta" });
+    expect(res.statusCode, res.body).toBe(200);
+    const meta = res.json() as { protocols: { device: { min: number; max: number } } };
     const major = Number(DEVICE_DIAL_IN_PROTOCOL.split("/")[1]);
-    const on = await meta();
-    expect(on.features.localDevices).toBe(true);
-    expect(on.protocols.device).toEqual({ min: major, max: major });
-    // fake-dial-in and fake-dial-in-b stay loaded but speak other protocols: no local devices
-    await k.app.get(ExtensionHost).unload(LOCAL_DIAL_IN);
-    expect((await meta()).features.localDevices).toBe(false);
+    expect(meta.protocols.device).toEqual({ min: major, max: major });
   });
 });

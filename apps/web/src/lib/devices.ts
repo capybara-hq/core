@@ -51,9 +51,10 @@ export type DeviceNetworkMode = "open" | "allowlist" | "none";
 
 /**
  * The layer that set a sandbox ceiling: the platform (super admin), the organization (its
- * admins), the device (its owner on the machine, or a cloud device's own choice) or the provider.
+ * admins), the device (its own network choice), the owner of the machine it runs on (as its
+ * provider reports it) or the provider.
  */
-export type DeviceSandboxLayer = "platform" | "org" | "device" | "provider";
+export type DeviceSandboxLayer = "platform" | "org" | "device" | "owner" | "provider";
 
 /**
  * A device's sandbox in effect (kernel `DeviceSandboxView`, approval-only profiles design, "UI"),
@@ -134,6 +135,8 @@ export interface DeviceReport {
   home: string | null;
   limits: { label: DeviceText; value: DeviceText }[];
   reset: boolean;
+  /** Who can change the device's limits and how, in its provider's words; absent when none. */
+  changeHint?: DeviceText;
 }
 
 /** The text in the page language (English when it has no translation). */

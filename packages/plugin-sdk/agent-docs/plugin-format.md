@@ -97,10 +97,7 @@ A guide is CommonMark + GFM:
   `connector-connected`, `oauth-token-endpoint`). The label is plain text, at most 80 characters.
 - Code fences: `<language> title="<text>"`; every block gets a copy button. Indented code blocks are
   refused. Raw HTML shows as text, images are never loaded, and only `https:` links stay links.
-- Shell actions (`device-connection` guides only): a line `::shell-action connect-this-machine
-  <label>` in column 0 is a button that asks the native shell to connect the machine the page runs
-  on; at most 4 per document, the label is plain text (at most 80 characters, no variables).
-- The zh document has the same sections, the same check ids, the same shell actions and byte-equal code blocks.
+- The zh document has the same sections, the same check ids and byte-equal code blocks.
 - Limits: 64 KiB per document, 24 code blocks, 16 checks, 16 sections.
 
 `capybara-plugin pack` and `check` validate the documents; `capybara-plugin guide <id> [--locale zh]

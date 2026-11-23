@@ -40,13 +40,12 @@ export type UnresolvedReason =
 /**
  * One block of a rendered guide (spec §7.2): sanitized Markdown prose (it may hold U+2060 word
  * joiners that keep text from being auto-linked: rendered as is), a code block with its title, or
- * a check line, or a shell action (`device-connection` guides: a button the native shell runs).
+ * a check line.
  */
 export type SetupGuideBlock =
   | { kind: "markdown"; text: string }
   | { kind: "code"; language: string; title: string | null; text: string }
-  | { kind: "check"; id: string; label: string }
-  | { kind: "shell-action"; action: "connect-this-machine"; label: string };
+  | { kind: "check"; id: string; label: string };
 
 /** A plugin's setup guide rendered by the kernel for an org and target (spec §7.2). */
 export interface RenderedSetupGuide {

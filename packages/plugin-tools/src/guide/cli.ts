@@ -31,8 +31,6 @@ const printBlock = (b: SetupGuideBlock): string => {
     }
     case "check":
       return `[check ${b.id}] ${b.label}`;
-    case "shell-action":
-      return `[shell action ${b.action}] ${b.label}`;
   }
 };
 
