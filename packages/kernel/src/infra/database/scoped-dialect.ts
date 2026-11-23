@@ -106,16 +106,40 @@ class ScopedConnection implements DatabaseConnection {
     });
   }
 
+  /**
+   * A cursor holds this checkout until it is closed: the scope is set and the stream read inside
+   * one serial step, so no query of another scope runs in between.
+   */
   async *streamQuery<R>(
     query: CompiledQuery,
     chunkSize: number,
   ): AsyncIterableIterator<QueryResult<R>> {
     const scope = currentScope();
-    await this.serial(async () => {
-      await this.check(scope, query.sql);
-      await this.ensure(scope);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    yield* this.inner.streamQuery<R>(query, chunkSize);
+    let ready: (error?: unknown) => void = () => {};
+    const started = new Promise<void>((resolve, reject) => {
+      ready = (error) => (error === undefined ? resolve() : reject(error));
+    });
+    void this.serial(async () => {
+      try {
+        await this.check(scope, query.sql);
+        await this.ensure(scope);
+      } catch (error) {
+        ready(error ?? new Error("scope setup failed"));
+        return;
+      }
+      ready();
+      await held;
+    });
+    try {
+      await started;
+      yield* this.inner.streamQuery<R>(query, chunkSize);
+    } finally {
+      release();
+    }
   }
 
   /** `BEGIN`, then the scope of the caller transaction-local, as the transaction's first statement. */
@@ -125,7 +149,16 @@ class ScopedConnection implements DatabaseConnection {
       await driver.beginTransaction(this.inner, settings);
       this.inTransaction = true;
       this.applied = undefined;
-      await this.ensure(scope);
+      try {
+        await this.ensure(scope);
+      } catch (error) {
+        // Kysely rolls back only a transaction whose begin resolved: end this one here, or the
+        // connection would return to the pool inside it (best effort; the error is the caller's)
+        await driver.rollbackTransaction(this.inner).catch(() => {});
+        this.inTransaction = false;
+        this.applied = undefined;
+        throw error;
+      }
     });
   }
 

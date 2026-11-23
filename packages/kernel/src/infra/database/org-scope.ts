@@ -49,6 +49,15 @@ export function asPlatform<T>(reason: string, fn: () => T): T {
 }
 
 /**
+ * Runs `fn` with no scope, whatever the caller had: a callback that outlives its registrant (the
+ * bus subscriber's shared connection, a job with no org) must not inherit the scope of whoever
+ * happened to create it. Fails closed once RLS is enforced.
+ */
+export function withoutOrgScope<T>(fn: () => T): T {
+  return storage.run({ scope: undefined, bindable: false }, fn);
+}
+
+/**
  * Runs `fn` (an HTTP request, from the Fastify `onRequest` hook) with an empty, bindable slot: no
  * scope until a guard binds one with {@link bindRequestScope}.
  */

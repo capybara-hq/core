@@ -11,7 +11,7 @@ import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { asPlatform, withOrgScope } from "../infra/database/org-scope.js";
+import { asPlatform, withOrgScope, withoutOrgScope } from "../infra/database/org-scope.js";
 import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -218,7 +218,10 @@ class DeviceConnection {
    * one that registered them, so each enters it again.
    */
   private inOrg<T>(fn: () => T): T {
-    return withOrgScope(this.identity.orgId, fn);
+    // never throw inside a socket listener: a device without an org (impossible by the schema)
+    // runs unscoped, which fails closed
+    const { orgId } = this.identity;
+    return orgId ? withOrgScope(orgId, fn) : withoutOrgScope(fn);
   }
 
   start(): void {

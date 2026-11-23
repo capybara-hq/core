@@ -295,6 +295,19 @@ Made while building phases 2–3 (within the decisions above):
   starts); `OrgGuard` binds the guarded org, `AuthGuard` binds platform on a `@SuperAdmin` route
   without `@OrgAction`, and an extension route binds its caller's org (or platform for a super
   admin's embed). A Nest guard cannot wrap the handler in an ALS run, hence the slot.
+- **Platform is never a silent fallback** (security review of phase 2): `runJob` scopes a job to
+  its data's `orgId`; a queue whose work is deployment-wide says so (`runJob(…, { platform: reason
+  })`: maintenance, plugin scope sync, extension lifecycle hooks); any other job runs with no scope
+  (§5.1's "else platform" is dropped), so a missing org fails closed and the unscoped-query check
+  reports it in phase 4. Callbacks that outlive their registrant start with no scope: the bus
+  subscriber's shared connection, like it already drops the transaction and the log context.
+- **Left for phase 4** (found by the review, all fail closed or stay as they are while `db.rls` is
+  not `enforce`): the kernel services behind org-bound extension calls (`ctx.models.embed({ orgId
+  })` and the like) enter that org; what the start sequence starts keeps the platform scope
+  (extension timers, the gateway's channel sockets, whose events only enqueue); the run worker's
+  claim reads, the route-access check of extension routes and the session lookup run unscoped;
+  `@Cacheable` keys of org data must carry the org before `enforce`, or one org's filtered view is
+  cached for another.
 - **Not on the scoped pool**, and so admitted whatever `db.rls` says: the migrator's own client, the
   owned startup activation session (platform work at start, before the gate opens) and extension
   pools (`ctx.db`, out of scope by decision 9).

@@ -193,6 +193,22 @@ describe("db.rls scoped", () => {
     expect(inner.scope).toBe("platform");
   });
 
+  it("a rollback to a savepoint undoes a scope set after it, and the next query sets it again", async () => {
+    const db = pool("scoped", 1);
+    const trx = await withOrgScope("org-a", () => db.startTransaction().execute());
+    try {
+      const sp = await trx.savepoint("s1").execute();
+      expect((await asPlatform("p", () => settings(sp))).scope).toBe("platform");
+      const back = await sp.rollbackToSavepoint("s1").execute();
+      // the connection holds org-a again; a platform query must not trust its stale record
+      expect((await asPlatform("p", () => settings(back))).scope).toBe("platform");
+      expect((await withOrgScope("org-a", () => settings(back))).org).toBe("org-a");
+    } finally {
+      await trx.rollback().execute();
+    }
+    expect(await settings(db)).toEqual(none("off"));
+  });
+
   it("the unscoped-query check sees unscoped queries on org-scoped tables only", async () => {
     const db = pool("scoped", 1);
     const hits: string[] = [];

@@ -246,7 +246,7 @@ Services never set it. It is set once, at entry points:
 | An `@OrgAction` route (`OrgGuard`) | the guarded org (`bindRequestScope`) |
 | A `@SuperAdmin` route without `@OrgAction` (`AuthGuard`) | platform |
 | An extension route (`plugin-dispatch.ts`) | its caller's org; platform for a super admin's embed |
-| `runJob` (every queue processor, extension `ctx.queue` jobs too) | the job data's `orgId`, else platform |
+| `runJob` (every queue processor, extension `ctx.queue` jobs too) | the job data's `orgId`; else platform when the queue passes `{ platform: reason }`; else none |
 | `@LockedCron` / `@LockedInterval` and `ScheduledRuns.runNow` | platform |
 | A claimed run (`RunExecution.withClaim`) | the run's org |
 | A channel inbound event, a dial-in connection's frames | the connection's or device's org once resolved |
@@ -255,7 +255,8 @@ Services never set it. It is set once, at entry points:
 Deployment-wide work inside one of them wraps exactly the deployment-wide part in
 `asPlatform(reason, fn)` (a sweep over every org, a lookup made before any org is known, a query marked
 `// org-filter: deployment-wide …`); a sweep that handles each org in turn enters `withOrgScope(orgId,
-fn)` per org. A scope entered inside a transaction applies to the queries made in it. Tests that seed
+fn)` per org. A scope entered inside a transaction applies to the queries made in it. A callback that
+outlives its registrant (a shared connection's listener) starts with `withoutOrgScope`. Tests that seed
 through a raw pool are unaffected (`db.rls` is `off` by default); `setUnscopedQueryCheck` reports
 unscoped queries on org-scoped tables under the scoped pool. No PgBouncer transaction pooling unless
 `db.rls` is `off` (the session-level setting needs a session).

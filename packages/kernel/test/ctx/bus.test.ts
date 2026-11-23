@@ -2,6 +2,7 @@ import { startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { currentScope, withOrgScope } from "../../src/infra/database/org-scope.js";
 import { currentStore, TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
 import { logContext, withLogContext } from "../../src/log-context.js";
@@ -178,9 +179,9 @@ describe("ctx.bus", () => {
     await expect(a.bus.subscribe("t", () => {})).rejects.toThrow(/closed/);
   });
 
-  it("handlers run outside the transaction and log context of the first subscriber", async () => {
+  it("handlers run outside the transaction, log context and org scope of the first subscriber", async () => {
     const r = replica("ctxiso");
-    const seen: { tx: boolean; reqId: string | undefined }[] = [];
+    const seen: { tx: boolean; reqId: string | undefined; scope: unknown }[] = [];
     // a transaction host on a stub pool: the first subscribe happens inside an open transaction
     // and a request's log context, which stay open while the message arrives
     const trx = {};
@@ -192,20 +193,26 @@ describe("ctx.bus", () => {
     const open = new Promise<void>((resolve) => {
       close = resolve;
     });
-    const subscribed = withLogContext({ reqId: "req-1" }, () =>
-      host.run(async () => {
-        await r.bus.subscribe("t", () => {
-          seen.push({ tx: currentStore() !== undefined, reqId: logContext()?.reqId });
-        });
-        await open;
-      }),
+    const subscribed = withOrgScope("org-1", () =>
+      withLogContext({ reqId: "req-1" }, () =>
+        host.run(async () => {
+          await r.bus.subscribe("t", () => {
+            seen.push({
+              tx: currentStore() !== undefined,
+              reqId: logContext()?.reqId,
+              scope: currentScope(),
+            });
+          });
+          await open;
+        }),
+      ),
     );
     await until(async () => (await numsub("cap:ctxiso:t")) === 1);
     await r.bus.publish("t", { n: 1 });
     await until(() => seen.length === 1);
     close();
     await subscribed;
-    expect(seen).toEqual([{ tx: false, reqId: undefined }]);
+    expect(seen).toEqual([{ tx: false, reqId: undefined, scope: undefined }]);
     await r.sub.close();
   });
 

@@ -24,7 +24,7 @@ import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { asPlatform, withOrgScope } from "../infra/database/org-scope.js";
+import { asPlatform, withOrgScope, withoutOrgScope } from "../infra/database/org-scope.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { DirectorySync } from "../orgs/directory-sync.js";
@@ -231,7 +231,8 @@ export class ChannelInbound {
         .executeTakeFirst(),
     );
     const run = () => this.handleInOrg(connectionId, e);
-    return conn ? withOrgScope(conn.org_id, run) : run();
+    // a connection gone meanwhile: nothing to scope to, and no platform fallback
+    return conn ? withOrgScope(conn.org_id, run) : withoutOrgScope(run);
   }
 
   private async handleInOrg(connectionId: string, e: InboundEvent): Promise<void> {

@@ -64,15 +64,20 @@ describe("org scope", () => {
     );
   });
 
-  it("runJob scopes a job to its data's orgId, else to the platform", async () => {
+  it("runJob scopes a job to its data's orgId, else to an explicit platform reason, else none", async () => {
     const seen = await withOrgScope("caller", () =>
       Promise.all([
         runJob("q", { id: "1", data: { orgId: "o9" } }, async () => currentScope()),
         runJob("q", { id: "2", data: { other: 1 } }, async () => currentScope()),
         runJob("q", { id: "3", data: { orgId: "" } }, async () => currentScope()),
+        runJob("q", { id: "4", data: {} }, async () => currentScope(), { platform: "sweep" }),
+        runJob("q", { id: "5", data: { orgId: "o8" } }, async () => currentScope(), {
+          platform: "sweep",
+        }),
       ]),
     );
-    expect(seen.map(scopeKey)).toEqual(["org:o9", "platform", "platform"]);
-    expect(seen[1]).toEqual({ kind: "platform", reason: "job of q" });
+    // never the caller's scope: a worker loop started in some scope does not lend it to jobs
+    expect(seen.map(scopeKey)).toEqual(["org:o9", "none", "none", "platform", "org:o8"]);
+    expect(seen[3]).toEqual({ kind: "platform", reason: "sweep" });
   });
 });
