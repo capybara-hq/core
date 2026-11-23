@@ -132,7 +132,7 @@ export interface DeviceReport {
   revision: string;
   description: DeviceText;
   home: string | null;
-  limits: { label: DeviceText; value: string }[];
+  limits: { label: DeviceText; value: DeviceText }[];
   reset: boolean;
 }
 

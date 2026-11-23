@@ -70,7 +70,8 @@ signature for the lifecycle and the conformance suite.
 
 **`report(device, signal)`** answers `DeviceReport` (`{ revision, description: {en, zh?}, home, limits[], reset }`, checked by
 `parseDeviceReport` with the sizes in `DEVICE_REPORT_LIMITS`): what the device page shows (a description, the owner's home or
-null, up to 8 limit lines, whether the provider can reset the files). It is shown to people and never used for enforcement.
+null, up to 8 limit lines `{ label, value }` whose label and value are both text `{en, zh?}`: words in a value get a zh form,
+pure data such as a path may carry `en` only; whether the provider can reset the files). It is shown to people and never used for enforcement.
 The kernel stores the parsed report in `devices.report` (migration 0175) and refreshes it under the exclusive lifecycle lease
 after a create and a resume, through a bounded call raced against its deadline (a provider that ignores the signal is given up
 at the bound); a failed or invalid report leaves the stored one and never fails the lifecycle step.

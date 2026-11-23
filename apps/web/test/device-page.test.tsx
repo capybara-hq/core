@@ -35,7 +35,7 @@ const REPORT = {
     zh: "在平台的 Docker 容器里运行",
   },
   home: null,
-  limits: [] as { label: { en: string; zh?: string }; value: string }[],
+  limits: [] as { label: { en: string; zh?: string }; value: { en: string; zh?: string } }[],
   reset: true,
 };
 const MACHINE = {
@@ -160,13 +160,34 @@ describe("one device page for every provider", () => {
       dev({
         report: {
           ...REPORT,
-          limits: [{ label: { en: "Network", zh: "网络" }, value: "github.com" }],
+          limits: [{ label: { en: "Network", zh: "网络" }, value: { en: "github.com" } }],
         },
       }),
     );
     expect(await screen.findByText(REPORT.description.en)).toBeTruthy();
     expect(factRow("Network")?.textContent).toContain("github.com");
     expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
+
+  it("概览 shows a limit's value in the UI language, English when it has no translation", async () => {
+    await renderDevice(
+      dev({
+        report: {
+          ...REPORT,
+          limits: [
+            {
+              label: { en: "Projects", zh: "项目" },
+              value: { en: "/a, +2 more", zh: "/a，另有 2 个" },
+            },
+            { label: { en: "Network", zh: "网络" }, value: { en: "github.com" } },
+          ],
+        },
+      }),
+      { locale: "zh" },
+    );
+    expect((await screen.findByText("/a，另有 2 个")).textContent).toBe("/a，另有 2 个");
+    expect(screen.queryByText("/a, +2 more")).toBeNull();
+    expect(factRow("网络")?.textContent).toContain("github.com");
   });
 
   it("概览 speaks the UI language and has no limits block without limits", async () => {
