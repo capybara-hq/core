@@ -47,7 +47,7 @@ the whole schema (for a plugin with no work done for an org). The mark goes on t
 top-level field only; a nested field has its top-level key's level.
 
 ```ts
-import { platformOnly, secret } from "@capybara-hq/plugin-sdk";
+import { configUrlFetch, platformOnly, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 config: {
@@ -57,6 +57,17 @@ config: {
     adminKey: platformOnly(secret(z.string()).optional()),         // platform only
   }),
 },
+
+// In work done for an org (`config` is the call's effective config, `orgId` the org's id):
+const client = new VendorClient({
+  baseURL: config.baseUrl,
+  apiKey: config.apiKey,
+  fetch: configUrlFetch(ctx.net, {
+    url: config.baseUrl,
+    platform: (ctx.config as { baseUrl: string }).baseUrl, // read at call time
+    orgId,
+  }),
+});
 ```
 
 - Work done for an org reads the call's `config` (the effective config: platform config with the
@@ -64,6 +75,14 @@ config: {
 - An org that saves a copy brings its own value for every overridable secret. Platform-only
   secrets stay in the effective config; never send one to an endpoint taken from an overridable
   field, because an org could point that endpoint at a server it controls.
+- Every URL under an overridable field reaches the network through `configUrlFetch(ctx.net, { url,
+  platform, orgId })`: the platform's own value (read from `ctx.config` each time) gets the global
+  `fetch`, any other value (set by an org) goes through the kernel's guarded `ctx.net.fetch`. Pass
+  the result as the vendor SDK's `fetch` and use it. Declare such a field as a URL (`z.url()` or
+  `.url()`); a URL that only the platform should set is marked `platformOnly` instead.
+  `capybara-plugin check` fails an overridable URL no `configUrlFetch` call reads, and an
+  overridable string named like a URL (`…Url`, `…Endpoint`, `…Host`) not declared as one
+  (`plugin-org-url-net`).
 
 ## Setup checks
 
