@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { itemRemovedError } from "../../src/catalog/ownership.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
@@ -492,6 +493,44 @@ describe("org deletion and what the org owns", () => {
       expect(errorOf(c)).toEqual([409, "catalog.item_removed"]);
       expect((await itemRow(itemId)).deleted_at).not.toBeNull();
       await cleanedUp("del-race");
+    });
+
+    it("an item removed before the install's row lock refuses the install itself (liveItem)", async () => {
+      const { orgX, itemId, digest } = await pendingIn("del-race-live");
+      // The deletion commits between the confirmation's last pending check and its install, so
+      // the install's FOR KEY SHARE read sees the removed row (#149); captured from install
+      // itself, since removalOr would map any later step's error to item_removed too
+      const ops = env.k.app.get(ExtensionAdminOps);
+      const original = ops.install.bind(ops);
+      let refused: unknown;
+      const spy = vi.spyOn(ops, "install").mockImplementationOnce(async (...args) => {
+        await runOutsideTransaction(async () => {
+          expect((await deleteOrg(orgX)).statusCode).toBe(204);
+        });
+        try {
+          return await original(...args);
+        } catch (e) {
+          refused = e;
+          throw e;
+        }
+      });
+      const c = await confirmUpload(itemId, digest);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]?.[4]).toMatchObject({ catalogItemId: itemId, liveItem: true });
+      expect(refused).toMatchObject({
+        code: "catalog.item_removed",
+        message: itemRemovedError("del-race-live").message,
+      });
+      expect(errorOf(c)).toEqual([409, "catalog.item_removed"]);
+      // refused before anything was written
+      expect(await installRow("del-race-live")).toBeUndefined();
+      expect(
+        await env.db
+          .selectFrom("extension_catalog_sources")
+          .select("plugin")
+          .where("item_id", "=", itemId)
+          .execute(),
+      ).toEqual([]);
     });
 
     it("confirmation racing the owner's delete", async () => {
