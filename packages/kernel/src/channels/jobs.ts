@@ -132,6 +132,7 @@ export class ChannelJobs implements OnApplicationShutdown {
       .selectFrom("conversations")
       .select("last_seq")
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirst();
     if (!conv) return;

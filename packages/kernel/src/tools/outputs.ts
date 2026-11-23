@@ -84,6 +84,8 @@ export const OUTPUT_CLEANUP_BATCH = 1000;
  * 删除已过期（`expires_at < now()`）的输出存档，每批 `batch` 行，直到删完；返回删除的总行数。
  * 每批一条独立语句（不开长事务）；多个 worker 同时清理时 `SKIP LOCKED` 互不等待。
  */
+// org-filter: deployment-wide cleanup of expired archives across all orgs (a worker job), by
+// expiry only
 export async function deleteExpiredOutputs(
   db: KernelSchemaDb,
   batch = OUTPUT_CLEANUP_BATCH,

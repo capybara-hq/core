@@ -256,6 +256,7 @@ export async function appendQueuedIn(
   }
   // run context spec §3.4: no browser values were stored with a leftover row; a scheduled task's
   // item stored its task's zone, which wins (scheduled tasks spec §6)
+  // org-filter: reads the org of the conversation the caller holds the row lock of
   const org = await t
     .selectFrom("conversations")
     .select("org_id")
@@ -273,6 +274,7 @@ export async function appendQueuedIn(
       .updateTable("conversations")
       .set({ selection: JSON.stringify(await readSelection(t, conversationId)) })
       .where("id", "=", conversationId)
+      .where("org_id", "=", org.org_id)
       .execute();
   }
   // As a direct send: the message brings an archived conversation back into the default lists
@@ -280,6 +282,7 @@ export async function appendQueuedIn(
     .updateTable("conversations")
     .set({ archived_at: null })
     .where("id", "=", conversationId)
+    .where("org_id", "=", org.org_id)
     .where("archived_at", "is not", null)
     .executeTakeFirst();
   return {
@@ -295,6 +298,8 @@ async function agentModel(t: KernelTrx, conversationId: string): Promise<ModelRe
 }
 
 /** The conversation's org, agent and the agent's current definition (inside `t`). */
+// org-filter: returns the conversation's own org; the id comes from a caller that holds the
+// conversation's row lock (queue dispatch), never from a request
 async function currentAgent(t: KernelTrx, conversationId: string) {
   const row = await t
     .selectFrom("conversations as c")
@@ -335,6 +340,7 @@ export async function queuedSkillBlocked(
 }
 
 /** Pauses the queue with `reason` (inside `t`, holding the conversation row lock). */
+// org-filter: the caller locked this conversation row in its own (org-checked or kernel) path
 export async function pauseQueueWith(
   t: KernelTrx,
   conversationId: string,
@@ -359,6 +365,7 @@ export async function alreadySent(t: KernelTrx, conversationId: string, clientMe
 }
 
 /** Clears the pause once the queue is empty (inside `t`, holding the conversation row lock). */
+// org-filter: the caller locked this conversation row in its own (org-checked or kernel) path
 export async function unpauseIfEmpty(t: KernelTrx, conversationId: string): Promise<void> {
   await t
     .updateTable("conversations")
@@ -429,6 +436,7 @@ export async function dispatchQueuedIn(
  * Pauses the queue of a conversation whose run just failed or was stopped, when it holds items
  * (inside the terminal transaction, see `finishRunIn`).
  */
+// org-filter: inside a run's terminal transaction; the conversation id is the claimed run's
 export async function pauseQueueIn(t: KernelTrx, conversationId: string): Promise<void> {
   await t
     .updateTable("conversations")

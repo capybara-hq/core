@@ -162,6 +162,7 @@ export async function findOrBindThread(
   const id = await create();
   const winner = await insertThread(db, k, id);
   if (winner !== id) {
+    // org-filter: id is the empty conversation create() just made in this transaction
     await db.deleteFrom("conversations").where("id", "=", id).where("last_seq", "=", "0").execute();
     return { conversationId: winner, created: false };
   }

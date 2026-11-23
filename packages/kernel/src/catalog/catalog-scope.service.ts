@@ -207,6 +207,8 @@ export function conflictsError(conflicts: ScopePreview["conflicts"]): ApiError {
  * Stateless, shared by every replica.
  */
 @Injectable()
+// org-filter: super admin's platform plugin scope: an item's scope list, org switches and installs
+// span every org by design (keyed by the platform item id)
 export class CatalogScopeService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,

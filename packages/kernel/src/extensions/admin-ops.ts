@@ -685,6 +685,7 @@ async function hasRetainedData(db: KernelSchemaDb, name: string): Promise<boolea
     x: number;
   }>`SELECT 1 AS x FROM pg_namespace WHERE nspname = ${pluginSchemaName(name)}`.execute(db);
   if (schema.rows.length > 0) return true;
+  // org-filter: whether any org kept config for the plugin name (a deployment-wide existence check)
   const hit = await db
     .selectFrom("extension_permission_snapshots")
     .select(sql<number>`1`.as("x"))

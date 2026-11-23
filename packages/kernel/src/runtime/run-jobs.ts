@@ -41,6 +41,8 @@ export { TERMINAL_STATUSES, type TerminalStatus } from "./run-status.js";
  * that writes them (conversation, decided rows, run; ruling R19), so a stop, a run's end, a decision
  * and a timeout never deadlock. Returns whether any of them is still pending.
  */
+// org-filter: locks the wait rows of a run the caller already holds (its conversation row is
+// locked first); run ids are kernel-resolved, never request input
 export async function lockWaitRowsIn(
   t: KernelSchemaDb,
   runId: string,
@@ -316,6 +318,7 @@ export class RunResume {
       .returning("conversation_id")
       .executeTakeFirst();
     if (!row) return "other-wait-pending";
+    // org-filter: the conversation of the run row just resumed above; reads its own org
     const conv = await t
       .selectFrom("conversations")
       .select(["kind", "org_id"])

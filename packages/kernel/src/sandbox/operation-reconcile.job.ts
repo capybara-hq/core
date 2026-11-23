@@ -102,6 +102,7 @@ export class SandboxOperationReconcileJob {
         .selectFrom("device_instances")
         .select("provider")
         .where("device_id", "=", claimed.device_id)
+        .where("org_id", "=", claimed.org_id)
         .executeTakeFirst();
       const entry = this.providers.forDevice(claimed.provider);
       if (
@@ -194,6 +195,7 @@ export class SandboxOperationReconcileJob {
       .selectFrom("device_instances")
       .select(["provider", "handle", "created_at"])
       .where("device_id", "=", row.device_id)
+      .where("org_id", "=", row.org_id)
       .executeTakeFirst();
     // Do not use a new instance as proof that the old execution was cleaned up.
     if (

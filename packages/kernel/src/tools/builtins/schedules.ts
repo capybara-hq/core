@@ -482,19 +482,27 @@ const normalizedChat = (chat: ChatInput): ScheduleChat => ({
   chatType: chat.chatType ?? "dm",
 });
 
-/** A chat target with its connection's name for the words. */
-async function chatTargetOf(db: KernelSchemaDb, chat: ScheduleChat): Promise<Target> {
+/**
+ * A chat target with its connection's name for the words. The connection id may come from the
+ * model's tool input: only a connection of `orgId` lends its name (another org's id shows as is).
+ */
+async function chatTargetOf(
+  db: KernelSchemaDb,
+  orgId: string,
+  chat: ScheduleChat,
+): Promise<Target> {
   const c = await db
     .selectFrom("channel_connections")
     .select("name")
     .where("id", "=", chat.connectionId)
+    .where("org_id", "=", orgId)
     .executeTakeFirst();
   return { mode: "chat", chat, connectionName: c?.name ?? chat.connectionId };
 }
 
 /** A stored task's target; a chat's connection name is read for the words. */
 async function storedTarget(db: KernelSchemaDb, task: ScheduledTask): Promise<Target> {
-  if (task.mode === "chat" && task.chat !== null) return chatTargetOf(db, task.chat);
+  if (task.mode === "chat" && task.chat !== null) return chatTargetOf(db, task.orgId, task.chat);
   if (task.mode === "conversation" && task.conversationId !== null) {
     return { mode: "conversation", conversationId: task.conversationId };
   }
@@ -697,6 +705,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       .db()
       .selectFrom("approvals")
       .select("summary")
+      .where("org_id", "=", ctx.orgId)
       .where("run_id", "=", ctx.runId)
       .where("call_id", "=", ctx.callId)
       .where("status", "=", "approved")
@@ -744,7 +753,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       input.mode === "here"
         ? await hereTarget(deps.db(), ctx.orgId, ctx.accountId, ctx.conversationId)
         : input.mode === "chat"
-          ? await chatTargetOf(deps.db(), normalizedChat(input.chat as ChatInput))
+          ? await chatTargetOf(deps.db(), ctx.orgId, normalizedChat(input.chat as ChatInput))
           : { mode: "new" };
     return {
       trigger,
@@ -886,7 +895,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
         input.mode === "here"
           ? await hereTarget(db, ctx.orgId, ctx.accountId, ctx.conversationId)
           : input.mode === "chat"
-            ? await chatTargetOf(db, normalizedChat(input.chat as ChatInput))
+            ? await chatTargetOf(db, ctx.orgId, normalizedChat(input.chat as ChatInput))
             : { mode: "new" };
       if (!sameTarget(before, after)) {
         const b = targetWords(before, ctx.conversationId);
@@ -987,7 +996,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
           input.mode === "here"
             ? await hereTarget(deps.db(), ctx.orgId, ctx.accountId, ctx.conversationId)
             : input.mode === "chat"
-              ? await chatTargetOf(deps.db(), normalizedChat(input.chat as ChatInput))
+              ? await chatTargetOf(deps.db(), ctx.orgId, normalizedChat(input.chat as ChatInput))
               : { mode: "new" };
         const f = targetFields(target);
         patch.mode = f.mode;

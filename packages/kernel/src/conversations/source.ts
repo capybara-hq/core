@@ -6,6 +6,8 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
  * (`conversations.source`, migration 0124) and never changed. A missing conversation throws
  * rather than guessing a source (a guess could offer a group chat what only a DM may see).
  */
+// org-filter: callers pass a conversation id the kernel resolved (an approval row, the running
+// tool's context), never a raw request id
 export async function conversationSourceOf(
   db: Pick<KernelSchemaDb, "selectFrom">,
   conversationId: string,

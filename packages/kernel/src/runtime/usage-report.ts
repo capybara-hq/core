@@ -267,6 +267,7 @@ export class UsageReporter {
    * and `usage.outputImages` when it produced any), else `embedding`; the calling extension, no
    * conversation fields; `eventId` is the row id. Null when the row no longer exists.
    */
+  // org-filter: the usage job's kernel-written model_usage id; the row's own org is reported
   private async payloadOfUsage(id: string): Promise<UsageReportPayload | null> {
     const row = await this.db
       .selectFrom("model_usage")
@@ -307,6 +308,7 @@ export class UsageReporter {
   }
 
   /** A `model_usage` job is done (delivered, or nothing left to deliver to): marks the row. */
+  // org-filter: marks the model_usage row of a kernel-written usage job id
   private async markReported(data: UsageReportJob): Promise<void> {
     if (data.usageId === undefined) return;
     await this.db
@@ -318,6 +320,7 @@ export class UsageReporter {
   }
 
   /** A `model_usage` job gave up after its last attempt: the row records it. */
+  // org-filter: marks the model_usage row of a kernel-written usage job id
   private async markFailed(data: UsageReportJob): Promise<void> {
     if (data.usageId === undefined) return;
     try {
