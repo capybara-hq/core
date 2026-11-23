@@ -1803,7 +1803,6 @@
       "deleteDanger": "Deleting {name} also deletes its files and ends its processes, with no way back.",
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
       "filesLostNoReset": "The files of this device are gone at its provider, which offers no rebuild from here.",
-      "tabNetwork": "Network",
       "tabProjects": "Projects"
     },
     "thisMachine": {

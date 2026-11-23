@@ -2,7 +2,7 @@
 
 import {
   Button,
-  ContentSection,
+  FormSection,
   ItemList,
   RadioGroup,
   Stack,
@@ -110,7 +110,7 @@ function Section({
     Date.parse(status.lastWakeAt) > Date.parse(lastView);
   const ka = status.keepAwake;
   return (
-    <ContentSection title={t("title")}>
+    <FormSection id="this-machine" title={t("title")}>
       <Stack gap={12}>
         {woke && (
           <Text variant="prose" tone="muted">
@@ -186,6 +186,6 @@ function Section({
           </Text>
         </Stack>
       </Stack>
-    </ContentSection>
+    </FormSection>
   );
 }
