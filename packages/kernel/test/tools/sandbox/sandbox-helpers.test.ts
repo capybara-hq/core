@@ -21,6 +21,7 @@ import {
 import { skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
 import { noRowsDb, onlyBuiltins } from "../../helpers/disabled-tools.js";
+import { managedCall, managedRoute, managedSandbox } from "../../helpers/managed-tool-stubs.js";
 
 /** M5 T8：沙箱工具的纯函数与「没有沙箱提供方」时的不可用说明。 */
 
@@ -220,18 +221,13 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
       };
       const tool = sandboxTools({
         devices,
-        sandbox: {
-          // 等锁用掉了 lockWaitSeconds + 25 秒
-          withSandbox: async (_c, fn, sig) => {
+        sandbox: managedSandbox(p, {
+          // waiting for the lease took lockWaitSeconds + 25 seconds
+          onEnter: () => {
             now += cfg.sandbox.lockWaitSeconds * 1000 + 25_000;
-            return fn(
-              { id: "h" },
-              p as never,
-              { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-              sig,
-            );
           },
-        },
+        }).sandbox,
+        ...managedRoute(),
         // biome-ignore lint/suspicious/noExplicitAny: 只列附件
         attachments: { listForConversation: async () => [] } as any,
         // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -240,12 +236,15 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
         eventLog: {} as any,
         config: { get: () => cfg },
       }).find((t) => t.spec.name === name) as BuiltinTool;
-      await tool.run(input, {
-        orgId: "o",
-        conversationId: "c",
-        signal: AbortSignal.timeout(10_000),
-        // biome-ignore lint/suspicious/noExplicitAny: 只用到上面几项
-      } as any);
+      await tool.run(
+        input,
+        // only the fields above are read
+        managedCall({
+          orgId: "o",
+          conversationId: "c",
+          signal: AbortSignal.timeout(10_000),
+        }) as never,
+      );
       expect(timeouts).toEqual([cfg.tools.timeoutMs - 25_000]);
     } finally {
       clock.mockRestore();
@@ -335,18 +334,7 @@ describe("no automatic attachment copy", () => {
         return d === undefined ? null : { size: d.byteLength, isDir: false };
       },
     };
-    const sandbox = {
-      withSandbox: async (
-        _ctx: unknown,
-        fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) =>
-        fn(
-          { id: "x" },
-          p,
-          { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-          new AbortController().signal,
-        ),
-    };
+    const { sandbox } = managedSandbox(p);
     return { files, writes, sandbox };
   }
 
@@ -362,8 +350,8 @@ describe("no automatic attachment copy", () => {
     };
     const read = sandboxTools({
       devices,
-      // biome-ignore lint/suspicious/noExplicitAny: 测试替身
-      sandbox: mem.sandbox as any,
+      sandbox: mem.sandbox,
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: 测试替身
       attachments: attachments as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -382,14 +370,14 @@ describe("no automatic attachment copy", () => {
     mem.files.set("/workspace/f.txt", new TextEncoder().encode("hello\n"));
     const r = (await read?.run(
       { file_path: "/workspace/f.txt" },
-      {
+      managedCall({
         orgId: "o",
         accountId: "a",
         agentId: "g",
         conversationId: "c",
         callId: "call",
         signal: new AbortController().signal,
-      },
+      }),
     )) as { content: { text: string }[] };
     expect(r.content[0]?.text).toBe("     1\thello");
     // nothing lands under attachments/, and no notice speaks of an attachment
@@ -405,15 +393,15 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     redis: { url: "redis://x" },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
-  const callCtx = () => ({
-    orgId: "00000000-0000-4000-8000-000000000001",
-    accountId: "a",
-    agentId: "g",
-    conversationId: "c",
-    callId: "call",
-    runId: "run",
-    signal: new AbortController().signal,
-  });
+  const callCtx = () =>
+    managedCall({
+      orgId: "00000000-0000-4000-8000-000000000001",
+      accountId: "a",
+      agentId: "g",
+      conversationId: "c",
+      callId: "call",
+      signal: new AbortController().signal,
+    });
 
   /** 可定制的内存沙箱：`exec` 返回固定结果。 */
   function rig(
@@ -447,18 +435,8 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     };
     const tools = sandboxTools({
       devices,
-      sandbox: {
-        withSandbox: async (
-          _ctx: unknown,
-          fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-        ) =>
-          fn(
-            { id: "x" },
-            p,
-            { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-            new AbortController().signal,
-          ),
-      } as unknown as SandboxToolDeps["sandbox"],
+      sandbox: managedSandbox(p).sandbox,
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: 测试替身
       attachments: { listForConversation: async () => [] } as any,
       storage: {
@@ -576,21 +554,10 @@ describe("read before write over Read's byte limit", () => {
     };
     // the log: the latest view.file of each path, as the conversation's tool_results record it
     const recorded = new Map<string, { size: number; sha256: string }>();
-    const sandbox = {
-      withSandbox: async (
-        _ctx: unknown,
-        fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) =>
-        fn(
-          { id: "x" },
-          p,
-          { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-          new AbortController().signal,
-        ),
-    } as unknown as SandboxToolDeps["sandbox"];
     const tools = sandboxTools({
       devices,
-      sandbox,
+      sandbox: managedSandbox(p).sandbox,
+      ...managedRoute(),
       // biome-ignore lint/suspicious/noExplicitAny: test stub
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: never called
@@ -610,14 +577,14 @@ describe("read before write over Read's byte limit", () => {
       },
     });
     const write = tools.find((t) => t.spec.name === "Write") as BuiltinTool;
-    const ctx = {
+    const ctx = managedCall({
       orgId: "o",
       accountId: "a",
       agentId: "g",
       conversationId: "c",
       callId: "call",
       signal: new AbortController().signal,
-    };
+    });
     const run = async (content: string) => {
       const r = (await write.run({ file_path: "/workspace/big.txt", content }, ctx)) as {
         view: { file: { path: string; size: number; sha256: string } };
@@ -644,18 +611,20 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     redis: { url: "redis://x" },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
-  const ctx = {
+  const ctx = managedCall({
     orgId: "o",
     accountId: "a",
     agentId: "g",
     conversationId: "0123abcd-4567-4890-8bcd-ef0123456789",
     callId: "call",
-    runId: "run",
     signal: new AbortController().signal,
-  };
+  });
 
-  /** An instance whose handle carries `ROOTS`. */
-  function device() {
+  /**
+   * An instance whose handle carries `ROOTS`, entered on the managed route production takes;
+   * `legacy`: the legacy route (only its dormant-only tests, deleted with that route).
+   */
+  function device(route: "managed" | "legacy" = "managed") {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
     const execs: { command: string; cwd: string }[] = [];
@@ -682,6 +651,16 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };
+    const withSandbox: SandboxToolDeps["sandbox"]["withSandbox"] = async (_c, fn, sig) => {
+      entered++;
+      return fn(
+        { id: "env-1", roots: ROOTS },
+        p as never,
+        { fresh: false, restarted: false, roots: ROOTS },
+        sig,
+      );
+    };
+    const managed = managedSandbox(p, { roots: ROOTS, handle: { id: "env-1", roots: ROOTS } });
     const tools = sandboxTools({
       devices,
       background: {
@@ -691,16 +670,9 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       } as any,
       sandbox: {
         currentInstance: async () => ({ createdAt: new Date(0), provider: "device-fake" }),
-        withSandbox: async (_c, fn, sig) => {
-          entered++;
-          return fn(
-            { id: "env-1", roots: ROOTS },
-            p as never,
-            { fresh: false, restarted: false, roots: ROOTS },
-            sig,
-          );
-        },
+        ...(route === "legacy" ? { withSandbox } : managed.sandbox),
       },
+      ...(route === "managed" && managedRoute()),
       // biome-ignore lint/suspicious/noExplicitAny: test stub
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: never called
@@ -713,7 +685,8 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       config: { get: () => cfg },
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
-    return { files, writes, execs, tool, entered: () => entered };
+    const enteredCount = () => (route === "legacy" ? entered : managed.entries.length);
+    return { files, writes, execs, tool, entered: enteredCount };
   }
 
   const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
@@ -728,12 +701,14 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     await expect(
       d.tool("Write").run({ file_path: `${ROOTS.skills}/x/run.sh`, content: "x" }, ctx),
     ).rejects.toThrow(
-      `Path ${ROOTS.skills}/x/run.sh is read-only (${ROOTS.skills} holds skill files); pass a path under ${ROOTS.workspace} or ${ROOTS.tmp} instead.`,
+      // the managed route bounds paths by the admitted scope, so the text names no roots
+      // (checkToolWritable in src/tools/builtins/sandbox/common.ts)
+      `Path ${ROOTS.skills}/x/run.sh is read-only (${ROOTS.skills} holds skill files); pass another path instead.`,
     );
   });
 
   it("a /workspace path is refused under custom roots with an actionable error naming the real workspace", async () => {
-    const d = device();
+    const d = device("legacy");
     await expect(d.tool("Read").run({ file_path: "/workspace/a.txt" }, ctx)).rejects.toThrow(
       `Invalid file_path "/workspace/a.txt": path must be under ${ROOTS.workspace}, ${ROOTS.skills}, ${ROOTS.tmp}. Pass an absolute path under ${ROOTS.workspace}, ${ROOTS.skills} or ${ROOTS.tmp}.`,
     );

@@ -17,7 +17,7 @@ import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { retirementFor } from "../helpers/identity.js";
-import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { managedUse, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -112,8 +112,10 @@ function replica(): { s: SandboxService; store: LegacyRetirementStore } {
 }
 
 const signal = () => AbortSignal.timeout(50_000);
+/** One ordinary use on the managed route (as a tool call does): the instance it ran on. */
 const use = (s: SandboxService, deviceId: string) =>
-  s.withSandbox(
+  managedUse(
+    s,
     {
       orgId: seed.orgId,
       deviceId,
