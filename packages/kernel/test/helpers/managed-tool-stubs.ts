@@ -5,6 +5,7 @@ import {
   type SandboxPreparation,
   type SandboxPreparationScope,
   type SandboxRoots,
+  SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { attachmentsDir } from "../../src/sandbox/attachments-path.js";
@@ -108,7 +109,9 @@ export function managedSandbox(p: unknown, o: ManagedSandboxOptions = {}) {
             (r) => posix.normalize(r) !== r || (r !== base && !r.startsWith(`${base}/`)),
           )
         )
-          throw new Error(`preparation roots outside ${base}: ${stageRoots.join(", ")}`);
+          throw new SandboxScopeDeniedError(
+            "Preparation roots must stay inside the trusted purpose directory",
+          );
         staged.push({ purpose, roots: [...stageRoots] });
         const prep: SandboxPreparation = {
           readFile: (path, opts) => held.readFile(handle, path, opts),

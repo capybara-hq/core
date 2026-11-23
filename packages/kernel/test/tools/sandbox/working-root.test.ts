@@ -321,11 +321,12 @@ describe("the sandbox tools in a bound conversation", () => {
     expect(d.asked).toEqual([]);
   });
 
-  it("a sub-agent's call reads its root conversation's project", async () => {
+  it("a sub-agent's call uses its root conversation's device and holds it as itself", async () => {
     const d = device(usable(PROJECT));
     await d.tool("Bash").run(bash, { ...ctx, sandboxConversationId: "root-conv" });
-    // the root conversation's device, held by the sub-agent itself; the held evidence's working
-    // root is the root's (`workingRootFor` reads the holder's root conversation)
+    // the stub's evidence working root is fixed here: the real derivation for a child (the
+    // holder's root conversation, `workingRootFor`) is test/sandbox/permission-wiring.test.ts
+    // (around line 319)
     expect(d.devicesAsked).toEqual(["root-conv"]);
     expect(d.entries.map((e) => e.use.holderConversationId)).toEqual([ctx.conversationId]);
     expect(d.execs.map((e) => e.cwd)).toEqual([PROJECT]);
