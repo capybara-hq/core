@@ -23,7 +23,11 @@ afterAll(async () => {
 });
 
 const dirs: string[] = [];
+const backends: Awaited<ReturnType<typeof createMacOperationBackend>>[] = [];
 afterEach(async () => {
+  // a background start returns at launch: its completion still flushes the spool and commits the
+  // journal into the state directory, so the directory is removed only once the backend settled
+  await Promise.all(backends.splice(0).map((b) => b.lifecycle.settle(signal)));
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 const signal = new AbortController().signal;
@@ -116,6 +120,7 @@ async function fixture() {
       },
     },
   );
+  backends.push(backend);
   const scope = {
     operationId: "op",
     admitBeforeMs: Date.now() + 60000,

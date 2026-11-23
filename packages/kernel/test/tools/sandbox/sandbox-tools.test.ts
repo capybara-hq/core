@@ -111,6 +111,11 @@ beforeAll(async () => {
           "device-fake": { root },
         },
         sandbox: { deliverMaxBytes: 1024 },
+        // These tests exercise the tools, not crash recovery: with the helper's short run job lock
+        // (2 s), an event-loop stall on a loaded machine lets the lock lapse, the job is taken
+        // back as stalled, and the recovered run records the call in flight as "Result unknown"
+        // (no view, no file state). The default lock keeps a slow worker alive.
+        runtime: { jobLockMs: 30_000, stalledIntervalMs: 30_000 },
       },
     ),
     { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
