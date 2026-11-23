@@ -158,6 +158,7 @@ export class QuestionsService {
     const row = await t
       .selectFrom("questions")
       .selectAll()
+      .where("org_id", "=", input.orgId)
       .where("run_id", "=", input.runId)
       .where("call_id", "=", input.callId)
       .where("attempt", "=", input.attempt)
@@ -208,6 +209,8 @@ export class QuestionsService {
   }
 
   /** 某个调用的全部输入请求（按轮次升序）。 */
+  // org-filter: runId is a runtime run (the pipeline's ctx.runId, or a run id from the
+  // conversation's own event log in channel outbound), never caller input
   async forCall(runId: string, callId: string): Promise<QuestionRecord[]> {
     const rows = await this.db
       .selectFrom("questions")
@@ -256,6 +259,8 @@ export class QuestionsService {
     if (orgId !== undefined) q = q.where("org_id", "=", orgId);
     const row = await q.executeTakeFirst();
     if (!row) return false;
+    // org-filter: the conversation of the question row read just above (org-filtered when the
+    // caller passes orgId; otherwise a kernel-written question id, see expireIn)
     await t
       .selectFrom("conversations")
       .select("id")
@@ -313,6 +318,8 @@ export class QuestionsService {
         problems.map((message) => ({ path: "answer", message })),
       );
     }
+    // org-filter: by primary key of the question row locked above (in orgId when given; both
+    // callers, the HTTP route and IM card actions, pass the caller's org)
     const updated = await t
       .updateTable("questions")
       .set({
@@ -345,6 +352,7 @@ export class QuestionsService {
     return r.record ? { outcome: r.outcome, record: r.record } : { outcome: r.outcome };
   }
 
+  // org-filter: questionId comes from the kernel-written timeout job payload (Waits), not caller input
   @Transactional()
   private async expireIn(questionId: string): Promise<{
     outcome: "expired" | "not_due" | "settled";
@@ -378,6 +386,8 @@ export class QuestionsService {
    * 在调用方的事务内（`mandatory`）取消运行的全部 pending 输入请求（运行在等待中被中止），各写
    * `question_answered{cancelled}`。返回被取消的记录；调用方提交后发布事件。
    */
+  // org-filter: runId is the run the kernel is stopping or finishing (Waits, RunFinish), not caller
+  // input
   @Transactional({ propagation: "mandatory" })
   async cancelPendingIn(runId: string): Promise<QuestionRecord[]> {
     const t = this.db.db;
@@ -461,6 +471,7 @@ export class QuestionsService {
         .updateTable("questions")
         .set({ status: "cancelled", answered_at: sql<Date>`now()` })
         .where("id", "=", row.id)
+        .where("org_id", "=", orgId)
         .returningAll()
         .executeTakeFirstOrThrow();
       const seq = await this.answeredEvent(toRecord(row), null, null, "cancelled");
@@ -482,6 +493,8 @@ export class QuestionsService {
    * the highest seq written (null: none); the caller notifies and emits `question.answered` after
    * the commit.
    */
+  // org-filter: conversationId is the conversation the caller just wrote the person's message in and
+  // holds locked (ConversationsService, checked in its org); the rows are that conversation's
   @Transactional({ propagation: "mandatory" })
   async skipPendingIn(
     conversationId: string,

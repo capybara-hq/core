@@ -119,6 +119,7 @@ export class ConnectorAccountPolicies {
         await this.db
           .selectFrom("connector_tool_account_policies")
           .select(["tool_name", "policy"])
+          .where("org_id", "=", orgId)
           .where("connector_id", "=", connectorId)
           .where("account_id", "=", accountId)
           .execute()
@@ -158,6 +159,7 @@ export class ConnectorAccountPolicies {
     const rows = await this.db
       .selectFrom("connector_tool_account_policies")
       .select(["tool_name", "policy"])
+      .where("org_id", "=", orgId)
       .where("connector_id", "=", connectorId)
       .where("account_id", "=", accountId)
       .where(sql<boolean>`starts_with(tool_name, ${GIT_PUSH_PREFIX})`)
@@ -231,6 +233,7 @@ export class ConnectorAccountPolicies {
     if (cleared.length > 0) {
       await this.db
         .deleteFrom("connector_tool_account_policies")
+        .where("org_id", "=", orgId)
         .where("connector_id", "=", connectorId)
         .where("account_id", "=", accountId)
         .where("tool_name", "in", cleared)

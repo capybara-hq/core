@@ -24,6 +24,8 @@ export interface Member {
  * 账号是不是某个组织的匿名访客（`org_anonymous_accounts`）。匿名访客没有登录方式，只能以 guest 身份
  * 代表 IM 里未绑定的人：不能被授予别的角色、成为 owner、指派为 agent 负责人、加入别的组织或被移出。
  */
+// org-filter: an anonymous guest account is one org's guest and can join no other org, so the
+// question "is this account any org's anonymous guest" is account-wide by design
 export async function isAnonymousGuest(db: KernelSchemaDb, accountId: string): Promise<boolean> {
   const row = await db
     .selectFrom("org_anonymous_accounts")

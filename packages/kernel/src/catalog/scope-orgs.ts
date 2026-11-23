@@ -52,6 +52,7 @@ export async function addScopeOrg(
     })
     .where("id", "=", item.id)
     .execute();
+  // org-filter: the item's whole named list after the add, for the scope_changed audit (spans orgs)
   const rows = await db
     .selectFrom("catalog_item_scope_orgs")
     .select("org_id")

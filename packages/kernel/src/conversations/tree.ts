@@ -13,6 +13,8 @@ const TREE_MAX_LEVELS = 16;
  * below `conversationId` (0 for the conversation itself), shallowest first. Deleted conversations
  * are included (a deleted root's tree is still stopped); an unknown id yields nothing.
  */
+// org-filter: walks parent links from a conversation the caller resolved in its org; a sub-agent
+// conversation is always created in its parent's org
 export async function conversationTree(
   db: KernelSchemaDb,
   conversationId: string,
@@ -34,6 +36,8 @@ export async function conversationTree(
  * sub-agent), nearest first: its parent, the parent's parent and so on up to the root, through
  * `conversations.parent_conversation_id`. Empty for a root or an unknown id.
  */
+// org-filter: walks parent links only; callers either resolved the id in their org or only test
+// whether their own root is an ancestor (inTree), which a conversation of another org never has
 export async function conversationAncestors(
   db: KernelSchemaDb,
   conversationId: string,
@@ -60,6 +64,8 @@ export async function conversationAncestors(
  * while such a path holds the root and waits for the child (40P01). Returns the ids locked (the
  * requested ones and their ancestors); an unknown id is skipped.
  */
+// org-filter: locks conversations the caller resolved in its org and their ancestors, which a
+// sub-agent conversation always shares the org with
 export async function lockConversationTrees(
   db: KernelSchemaDb,
   ids: readonly string[],

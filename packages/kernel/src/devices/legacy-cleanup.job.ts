@@ -53,6 +53,8 @@ export class LegacySandboxCleanupJob {
   }
 
   /** One run (see the class); `signal` (the stop, or a lost run lock) is read between rows. */
+  // org-filter: deployment-wide sweep of the legacy sandboxes table across all orgs
+  // (LockedInterval), each row keyed by its own conversation id
   async runOnce(now = new Date(), signal?: AbortSignal): Promise<LegacyCleanupResult> {
     const any = await this.db
       .selectFrom("sandboxes")

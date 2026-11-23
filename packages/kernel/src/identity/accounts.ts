@@ -441,6 +441,8 @@ export class AccountsService {
       this.db.db,
       sessions.map((r) => r.id),
     );
+    // org-filter: a password change revokes the account's personal tokens in every org on purpose
+    // (accounts are platform-wide; ruling R24)
     await this.db
       .updateTable("api_tokens")
       .set({ revoked_at: sql<Date>`now()` })
@@ -742,6 +744,8 @@ export class AccountsService {
         "platform",
         patch.status === "disabled" ? (_scope, row) => row.account_id === id : false,
       );
+      // org-filter: a super-admin account status change resets Full consent on the account's
+      // conversations in every org on purpose (accounts are platform-wide)
       await this.db
         .updateTable("conversations")
         .set((eb) => ({
@@ -784,6 +788,8 @@ export class AccountsService {
         .where("revoked_at", "is", null)
         .returning("id")
         .execute();
+      // org-filter: disabling an account (super admin) revokes its personal tokens in every org on
+      // purpose (accounts are platform-wide)
       await this.db
         .updateTable("api_tokens")
         .set({ revoked_at: sql<Date>`now()` })

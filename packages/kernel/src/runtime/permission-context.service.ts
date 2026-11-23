@@ -163,6 +163,7 @@ export class PermissionContextRecorder {
       .selectFrom("conversations")
       .select(["org_id", "kind", "eval_run_id"])
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .executeTakeFirst();
     if (!conv || conv.org_id !== input.orgId)
       throw new ApiError("conversation.not_found", "Conversation not found");

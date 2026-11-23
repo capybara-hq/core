@@ -86,25 +86,26 @@ describe("F15: the thread fades at both scroll edges", () => {
   });
 });
 
-describe("F21: context lines break between words", () => {
-  it("draws every context line with keep-all", () => {
-    expect(decls(".cb-context-line").get("word-break")).toBe("keep-all");
+describe("F21: context values break between words", () => {
+  it("draws every context value with keep-all", () => {
+    expect(decls(".cb-context-value").get("word-break")).toBe("keep-all");
     wrap(
       <ContextSection
         ratio={4}
         model="deepseek-flash"
-        sandbox="设备：个人设备 · 已暂停"
+        device="个人设备 · 已暂停"
         connectors={["Slack"]}
-        lastRun="上次运行 · deepseek-flash · 19 秒"
-        total="共 146,405 token"
+        lastRun={["19 秒"]}
+        total="146,405 token"
       />,
     );
-    const lines = document.querySelectorAll(".cb-context-line");
-    expect([...lines].map((l) => l.textContent)).toEqual([
-      "deepseek-flash · 设备：个人设备 · 已暂停",
-      expect.stringContaining("Slack"),
-      "上次运行 · deepseek-flash · 19 秒",
-      "共 146,405 token",
+    const values = document.querySelectorAll(".cb-context-value");
+    expect([...values].map((l) => l.textContent)).toEqual([
+      "deepseek-flash",
+      "个人设备 · 已暂停",
+      "Slack",
+      "19 秒",
+      "146,405 token",
     ]);
   });
 });

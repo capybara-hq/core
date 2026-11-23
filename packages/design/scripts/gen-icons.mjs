@@ -120,6 +120,9 @@ const ICONS = {
   hand: "hand",
   "shield-check": "shield-check",
   "lock-open": "lock-open",
+  // A section's hint behind a tooltip (§6.16.17), and a client component's sound control.
+  info: "info",
+  volume: "volume-2",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

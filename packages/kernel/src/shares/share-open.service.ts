@@ -290,6 +290,7 @@ export class ShareOpenService {
       .updateTable("file_shares")
       .set({ last_opened_at: sql<Date>`now()` })
       .where("id", "=", share.id)
+      .where("org_id", "=", share.orgId)
       .execute();
     await audit(this.db.db, {
       actorAccountId: share.audience === "internal" ? opened.viewerAccountId : null,

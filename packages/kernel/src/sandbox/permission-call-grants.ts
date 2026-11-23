@@ -307,6 +307,7 @@ export class PermissionCallGrants {
       .selectFrom("permission_call_grants")
       .selectAll()
       .where("binding_hash", "=", bindingHash)
+      .where("org_id", "=", b.orgId)
       .executeTakeFirstOrThrow();
     if (
       permissionScopeHash(bindingOfGrant(row)) !== bindingHash ||
@@ -337,6 +338,7 @@ export class PermissionCallGrants {
         .selectFrom("approvals")
         .selectAll()
         .where("id", "=", decision.approvalId)
+        .where("org_id", "=", b.orgId)
         .executeTakeFirst();
       if (
         approval?.status !== "approved" ||
@@ -395,6 +397,7 @@ export class PermissionCallGrants {
       .selectFrom("permission_call_grants")
       .selectAll()
       .where("binding_hash", "=", hash)
+      .where("org_id", "=", binding.orgId)
       .executeTakeFirst();
     if (!row || permissionScopeHash(bindingOfGrant(row)) !== hash) return null;
     await this.assertCurrent(binding);
@@ -425,6 +428,8 @@ export class PermissionCallGrants {
     scope: SandboxOperationScope,
     input: unknown,
   ): Promise<DeviceExecGrants | undefined> {
+    // org-filter: operationId is the kernel-minted id of an admitted operation scope (never tool
+    // input), and the row must also match deviceId below
     const intent = await this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
@@ -474,6 +479,7 @@ export class PermissionCallGrants {
       .selectFrom("permission_call_grants")
       .selectAll()
       .where("id", "=", intent.permission_grant_id)
+      .where("org_id", "=", intent.org_id)
       .executeTakeFirstOrThrow();
     const admittedScope = intent.scope;
     if (

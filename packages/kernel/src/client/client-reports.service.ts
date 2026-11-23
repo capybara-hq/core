@@ -81,6 +81,7 @@ export class ClientReports {
 
   /** Deletes the reports last seen more than {@link REPORT_RETENTION_DAYS} days ago; the count. */
   async prune(): Promise<number> {
+    // org-filter: deployment-wide retention sweep over every org's reports (maintenance job)
     const r = await this.db.db
       .deleteFrom("extension_client_reports")
       .where("last_at", "<", sql<Date>`now() - make_interval(days => ${REPORT_RETENTION_DAYS})`)

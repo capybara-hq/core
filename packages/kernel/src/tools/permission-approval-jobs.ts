@@ -53,6 +53,7 @@ export class PermissionApprovalJobs {
           .selectFrom("conversations")
           .select("id")
           .where("id", "=", root.id)
+          .where("org_id", "=", data.orgId)
           .unionAll((q) =>
             q
               .selectFrom("conversations as c")
@@ -64,12 +65,14 @@ export class PermissionApprovalJobs {
       .selectFrom("conversations")
       .select("id")
       .where("id", "in", (q) => q.selectFrom("tree").select("id"))
+      .where("org_id", "=", data.orgId)
       .orderBy("id")
       .forUpdate()
       .execute();
     const cards = await this.db
       .selectFrom("approvals")
       .select(["run_id", "conversation_id"])
+      .where("org_id", "=", data.orgId)
       .where(
         "conversation_id",
         "in",

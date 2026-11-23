@@ -11,6 +11,7 @@ import type {
   PropertySectionProps,
   SpinnerProps,
   StackProps,
+  SwitchProps,
   TextProps,
   TooltipProps,
 } from "../../../../packages/plugin-client/src/design";
@@ -24,6 +25,7 @@ import type {
   PropertySection,
   Spinner,
   Stack,
+  Switch,
   Text,
   Tooltip,
 } from "../../../../packages/design/src/index";
@@ -46,6 +48,7 @@ accepts<Narrow<LogoProps, DP<typeof Logo>>, DP<typeof Logo>>(true);
 accepts<Narrow<PropertySectionProps, DP<typeof PropertySection>>, DP<typeof PropertySection>>(true);
 accepts<Narrow<SpinnerProps, DP<typeof Spinner>>, DP<typeof Spinner>>(true);
 accepts<Narrow<StackProps, DP<typeof Stack>>, DP<typeof Stack>>(true);
+accepts<Narrow<SwitchProps, DP<typeof Switch>>, DP<typeof Switch>>(true);
 accepts<Narrow<TextProps, DP<typeof Text>>, DP<typeof Text>>(true);
 accepts<Narrow<TooltipProps, DP<typeof Tooltip>>, DP<typeof Tooltip>>(true);
 known<ButtonProps, DP<typeof Button>>(true);
@@ -57,5 +60,6 @@ known<LogoProps, DP<typeof Logo>>(true);
 known<PropertySectionProps, DP<typeof PropertySection>>(true);
 known<SpinnerProps, DP<typeof Spinner>>(true);
 known<StackProps, DP<typeof Stack>>(true);
+known<SwitchProps, DP<typeof Switch>>(true);
 known<TextProps, DP<typeof Text>>(true);
 known<TooltipProps, DP<typeof Tooltip>>(true);

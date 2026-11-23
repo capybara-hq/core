@@ -700,6 +700,7 @@ export class DevicesService {
       .selectFrom("devices")
       .select(["network_mode", "network_hosts"])
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     const own = ownNetwork(row);
     const from: DeviceNetworkSetting = { mode: own.networkMode, hosts: [...own.networkHosts] };
@@ -777,6 +778,7 @@ export class DevicesService {
         updated_at: sql<Date>`now()`,
       })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
     await this.ceilings.publishLocked(
       { orgId, deviceId: id },
@@ -864,6 +866,7 @@ export class DevicesService {
       .selectFrom("devices")
       .select(["network_mode", "network_hosts"])
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     const own = ownNetwork(row);
     if (own.networkMode === "none")
@@ -967,6 +970,7 @@ export class DevicesService {
         .updateTable("devices")
         .set({ name, updated_at: sql<Date>`now()` })
         .where("id", "=", id)
+        .where("org_id", "=", orgId)
         .execute();
     } catch (e) {
       if (isUniqueViolation(e, "devices_name_uq")) throw nameTaken();
@@ -1030,6 +1034,7 @@ export class DevicesService {
       .updateTable("devices")
       .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
     await this.db
       .deleteFrom("device_defaults")

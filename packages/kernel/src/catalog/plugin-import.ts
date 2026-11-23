@@ -1151,6 +1151,7 @@ export class PluginImport {
     permissionsMismatch?: PermissionsMismatch;
   }> {
     if (!UUID_RE.test(stagingId)) throw notFound();
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .select(["id", "review", "manifest"])
@@ -1177,6 +1178,7 @@ export class PluginImport {
    */
   async stagedTarget(stagingId: string, owner?: ImportOwner): Promise<StagedTarget> {
     if (!UUID_RE.test(stagingId)) throw notFound();
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .select(["review", "manifest", "object_prefix"])
@@ -1315,6 +1317,7 @@ export class PluginImport {
         { path: "orgs", message: "scope named needs at least one organization" },
       ]);
     }
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .selectAll()
@@ -1488,6 +1491,7 @@ export class PluginImport {
     const { owner } = scope;
     await this.authorizeActor(actor, owner);
     const t = this.db;
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const used = await t
       .deleteFrom("plugin_import_staging")
       .where("id", "=", stagingId)
@@ -1565,6 +1569,7 @@ export class PluginImport {
       await assertNameNotReserved(t, m.name);
       await this.resolveDependencies(m, owner);
     }
+    // org-filter: the existing item's whole named list (spans orgs), keyed by its item id
     const actual =
       existing === undefined
         ? scope
@@ -1966,6 +1971,7 @@ export class PluginImport {
   }
 
   /** The expired staging rows, batch by batch; returns the rows deleted. */
+  // org-filter: deployment-wide expiry sweep (maintenance job) over every org's staging rows
   private async cleanupStagingRows(): Promise<number> {
     let total = 0;
     for (;;) {
@@ -1997,6 +2003,7 @@ export class PluginImport {
    * One expired staging row (row lock, `SKIP LOCKED`): its objects, then the row; false when another
    * replica has it or it is gone.
    */
+  // org-filter: deployment-wide expiry sweep; the row id comes from the sweep's own read
   @Transactional()
   private async cleanupOne(r: { id: string; object_prefix: string | null }): Promise<boolean> {
     const t = this.db;
@@ -2041,6 +2048,7 @@ export class PluginImport {
       .forUpdate()
       .executeTakeFirst();
     if (!pkg) return;
+    // org-filter: whether any staging of any org still uses the package (content-addressed sha)
     const used =
       (await t
         .selectFrom("extension_installs")

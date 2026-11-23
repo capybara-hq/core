@@ -88,6 +88,8 @@ export class RunFinish {
    * approval and input request rows, the run row; they never deadlock with each other.
    * 调用方在提交后对非 null 的返回值调用 {@link notifyFinished}。
    */
+  // org-filter: ends a run by its kernel-resolved run and conversation ids (worker claim, stop and
+  // decision paths that checked the org); the conversation's own org is read here
   @Transactional({ propagation: "mandatory" })
   async finishIn(a: FinishRunArgs): Promise<number | null> {
     const t = this.kdb.db;
@@ -184,6 +186,7 @@ export class RunFinish {
         .selectFrom("conversations")
         .select("id")
         .where("parent_conversation_id", "=", a.conversationId)
+        .where("org_id", "=", orgId)
         .where("kind", "=", "subagent")
         .limit(1)
         .executeTakeFirst()) !== undefined;

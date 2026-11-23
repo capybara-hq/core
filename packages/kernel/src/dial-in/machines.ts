@@ -96,6 +96,7 @@ export class DialInMachines {
       .selectFrom("device_machines")
       .select(["name", "os", "arch"])
       .where("device_id", "=", input.deviceId)
+      .where("org_id", "=", input.orgId)
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .limit(1)
@@ -104,7 +105,7 @@ export class DialInMachines {
     const moved = prev !== undefined && !sameMachine(prev, input);
     // no stop frame: it would wait on the list and could reach the replacement machine instead
     await this.revokeActive(input.deviceId, "replaced");
-    await this.resetInstance(input.deviceId, moved);
+    await this.resetInstance(input.orgId, input.deviceId, moved);
     const credential = MACHINE_CREDENTIAL_PREFIX + randomBytes(32).toString("base64url");
     const row = await this.db
       .insertInto("device_machines")
@@ -135,7 +136,7 @@ export class DialInMachines {
    * or arch differ from the device's previous machine) has other files. Another directory on
    * the same machine is known only to the provider (from the new machine's first hello).
    */
-  private async resetInstance(deviceId: string, moved: boolean): Promise<void> {
+  private async resetInstance(orgId: string, deviceId: string, moved: boolean): Promise<void> {
     await this.db
       .updateTable("device_instances")
       .set((eb) => ({
@@ -151,6 +152,7 @@ export class DialInMachines {
           : sql<number>`CASE WHEN fs_status = 'lost' THEN fs_resets + 1 ELSE fs_resets END`,
       }))
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .execute();
   }
 
@@ -190,6 +192,7 @@ export class DialInMachines {
   }
 
   /** Whether the device is deleted (soft-deleted, or gone): why its credential stopped working. */
+  // org-filter: deviceId is the device of the connection's authenticated machine credential
   async isDeviceDeleted(deviceId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("devices")
@@ -205,6 +208,7 @@ export class DialInMachines {
    * host's boot identity (none clears the stored one). Marks the machine seen. A revoked machine
    * is left alone.
    */
+  // org-filter: machineId is the connection's authenticated machine credential, not caller input
   @Transactional()
   async recordConnect(
     machineId: string,
@@ -226,6 +230,7 @@ export class DialInMachines {
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */
+  // org-filter: machineId is the connection's authenticated machine credential, not caller input
   async touch(machineId: string): Promise<void> {
     await this.db
       .updateTable("device_machines")
@@ -247,6 +252,8 @@ export class DialInMachines {
    * the revoked machine's id. Used by {@link issue} (`replaced`) and the device's deletion
    * (`deleted`).
    */
+  // org-filter: deviceId is a device the caller already checked in its org (issue's sign-in
+  // confirmation, the device's deletion); the device row supplies the org for the locks
   @Transactional()
   async revokeActive(deviceId: string, reason: MachineRevocationReason): Promise<string | null> {
     const device = await this.db
@@ -273,6 +280,7 @@ export class DialInMachines {
    * Revokes one machine by id (a sign-in whose credential never reached the program), with the
    * same post-commit disconnect as a replacement (no stop frame). True when it was active.
    */
+  // org-filter: machineId was issued by this sign-in flow (DialInAuth.abandon), not caller input
   @Transactional()
   async revokeMachine(machineId: string): Promise<boolean> {
     const machine = await this.db
@@ -302,6 +310,7 @@ export class DialInMachines {
   }
 
   /** The device's active machine, or null. */
+  // org-filter: deviceId is the device the managed device context already resolved in its org
   async activeFor(deviceId: string): Promise<ActiveMachine | null> {
     const r = await this.db
       .selectFrom("device_machines")

@@ -105,7 +105,7 @@ export const SIZES = {
     gutter: 20,
     "title-bar": 48,
     properties: 300,
-    "panel-min": 520,
+    "panel-min": 360,
     panel: 560,
     "chat-min": 480,
     "tool-output": 120,

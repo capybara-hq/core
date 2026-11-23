@@ -247,6 +247,7 @@ export class Offboarding {
           .returning("id")
           .execute()
       : [];
+    // org-filter: removal revokes the person's personal tokens account-wide on purpose (comment above)
     const tokens = revoke
       ? await this.db
           .updateTable("api_tokens")
@@ -378,6 +379,7 @@ export class Offboarding {
         .updateTable("conversations")
         .set({ queue_paused: false, queue_pause_reason: null })
         .where("id", "in", queueConversations)
+        .where("org_id", "=", orgId)
         .execute();
     }
 
