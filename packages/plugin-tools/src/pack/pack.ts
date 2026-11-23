@@ -34,6 +34,7 @@ import {
   parseSetupGuide,
   parseThemeFile,
   SDK_VERSION,
+  SETUP_GUIDE_PLACE_INFO,
   type StaticExtensionManifest,
   type SuggestedAppearance,
   setupGuideDocPath,
@@ -886,7 +887,7 @@ function checkSetupGuides(
       ...(zh !== undefined && { zh }),
       ...(extension !== undefined && { pluginChecks }),
     });
-    if (extension === undefined) {
+    if (extension === undefined && SETUP_GUIDE_PLACE_INFO[g.place].checks) {
       for (const c of parseSetupGuide(en).checks) {
         if (c.source !== "plugin") continue;
         issues.push({
