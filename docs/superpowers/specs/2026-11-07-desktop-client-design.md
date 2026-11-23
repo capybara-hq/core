@@ -4,6 +4,11 @@
   2026-11-20 for the desktop onboarding design (§6.1, §6.3, §6.5 to §6.10, §7.4, and every place
   that said "native dialog"), against `main` at `7d371dbb`.
 - Status: D1 and D2 implemented; the 2026-11-20 amendment approved by the maintainer.
+- Amended 2026-11-23 (maintainer decision): the desktop manages no devices. 「连接本机」, the
+  `device@1` / `device@2` capability, the tray's device rows and the bundled `capybara-device` are
+  removed; local devices are connected only with the `capybara-device` program (device provider
+  spec §9). The device parts of §3, §4, §5.2, §6.2 (`features.localDevices`), §7.3, §8, §9 and §14
+  below are kept as history and no longer apply.
 - Pairs with: the mobile layout design (`2026-11-19-mobile-layout-design.md`, branch
   `docs/mobile-layout`), whose §9 **"Shell environment"** owns the `window.capybaraShell` contract:
   its shape and types (in `@capybara-hq/plugin-sdk`), versioning (`version`, capabilities by
@@ -688,6 +693,9 @@ click:
 
 ## 8. The desktop's capabilities
 
+> 2026-11-23: the `device@1` rows below are withdrawn (device provider spec §9); the desktop offers
+> no device capability.
+
 Offered on `window.capybaraShell.capabilities` under the rules of mobile layout §9.2 and §9.4: the
 web reads them only through `lib/shell.ts` (`useShellCapability("device@1")`, reactive: `device@1`
 can appear after the page loaded, once discovery answered), and treats an absent one as the
@@ -721,6 +729,9 @@ desktop accepts a call without them (an older web): the local pages then use the
 of the reported scheme.
 
 ## 9. 「连接本机」
+
+> 2026-11-23: withdrawn. The desktop does not connect, show or manage local devices; the device's
+> connection guide and the `capybara-device` program do (device provider spec §9). Kept as history.
 
 ### 9.1 The flow
 

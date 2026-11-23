@@ -19,7 +19,7 @@ const shapes = (source: string, until?: string) => {
 describe("the shell capability types", () => {
   // apps/web may not import @capybara-hq/plugin-sdk, so lib/shell.ts carries a copy
   it("lib/shell.ts mirrors packages/plugin-sdk/src/shell-capabilities.ts exactly", () => {
-    expect(shapes(read("../src/lib/shell.ts"), "export const useDeviceCapability")).toBe(
+    expect(shapes(read("../src/lib/shell.ts"), "export const useNotifyCapability")).toBe(
       shapes(read("../../../packages/plugin-sdk/src/shell-capabilities.ts")),
     );
   });

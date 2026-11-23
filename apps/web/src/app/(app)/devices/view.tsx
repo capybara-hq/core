@@ -13,7 +13,6 @@ import { labelLocale } from "../../../lib/extension-label";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
-import { useThisMachineDeviceIds } from "../../../lib/use-this-machine";
 import NotFound from "../not-found";
 
 /**
@@ -39,7 +38,6 @@ function Devices({ orgId }: { orgId: string }) {
   const t = useTranslations("devices");
   const [creating, setCreating] = useState(false);
   const list = usePageQuery(devicesQuery(orgId));
-  const thisMachine = useThisMachineDeviceIds(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   // New device needs a provider to create on: without one it is not offered
@@ -81,7 +79,7 @@ function Devices({ orgId }: { orgId: string }) {
         {...(callout ? { callout } : {})}
       >
         {items.map((e) => (
-          <DeviceCard key={e.id} device={e} thisMachine={thisMachine.has(e.id)} />
+          <DeviceCard key={e.id} device={e} />
         ))}
       </ListPage>
       {creating && (
@@ -96,7 +94,7 @@ function Devices({ orgId }: { orgId: string }) {
   );
 }
 
-function DeviceCard({ device: e, thisMachine }: { device: Device; thisMachine: boolean }) {
+function DeviceCard({ device: e }: { device: Device }) {
   const t = useTranslations("devices");
   const nameOf = useDeviceName();
   const locale = labelLocale(useLocale());
@@ -109,8 +107,6 @@ function DeviceCard({ device: e, thisMachine }: { device: Device; thisMachine: b
       href={`/devices/${encodeURIComponent(e.id)}`}
       description={e.provider === null ? t("none") : providerLabel(e, locale)}
       meta={[
-        // the shell says this device is the machine the app runs on (desktop client spec §9.6)
-        ...(thisMachine ? [t("thisMachine.mark")] : []),
         state === "filesLost" || state === "unavailable"
           ? { label: t(`state.${state}`), tone: "warn" as const }
           : t(`state.${state}`),

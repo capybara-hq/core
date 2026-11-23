@@ -6,9 +6,8 @@ describe("shell environment", () => {
     expectTypeOf<CapybaraShell["version"]>().toEqualTypeOf<1>();
   });
 
-  it("the capability registry lists the eleven known keys", () => {
+  it("the capability registry lists the ten known keys", () => {
     expect(SHELL_CAPABILITIES.map((c) => c.key)).toEqual([
-      "device@2",
       "notify@1",
       "openExternal@1",
       "signIn@1",

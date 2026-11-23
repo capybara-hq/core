@@ -37,7 +37,7 @@ import type {
   DeviceSandboxLayer,
   HostGrantCeiling,
 } from "../sandbox/device-sandbox.js";
-import { hostGrantable } from "../sandbox/device-sandbox.js";
+import { deviceSideLayer, hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
 import { assertAuthorityWriteHeld } from "../sandbox/permission-authority-lock.js";
@@ -721,7 +721,7 @@ export class DevicesService {
     if (to.mode === "open" && next.box.networkMode !== "open")
       throw new ApiError(
         "device.network_not_allowed",
-        `The open network is not allowed for this device: ${networkLayerText(next.box.layer.network)} limits it to ${next.box.networkCeiling === "none" ? "no network" : "the allowlist"}`,
+        `The open network is not allowed for this device: ${networkLayerText(next.box.layer.network)} limits it to ${next.box.networkCeiling === "none" ? "no network" : "the allowlist"}${deviceSideLayer(next.box.layer.network) && next.changeHint ? ` (to change this, as the device's provider says: ${next.changeHint.trim().replace(/\.$/, "")})` : ""}`,
       );
     // a device's own list only narrows its org's hosts, whatever the network in effect now
     const outside = to.hosts.filter(
@@ -1549,6 +1549,8 @@ function networkLayerText(layer: DeviceSandboxLayer | null): string {
       return "the organization (an org admin)";
     case "provider":
       return "its sandbox provider";
+    case "owner":
+      return "the owner of the machine it runs on";
     default:
       return "its owner";
   }

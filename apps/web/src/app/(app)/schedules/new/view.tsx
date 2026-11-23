@@ -166,6 +166,12 @@ function NewScheduleForm({
             description={t("form.scheduleHint")}
             loading={{ fields: LOADING_SECTIONS.schedule }}
           />
+          <FormSection
+            id="target"
+            title={t("form.target")}
+            description={t("form.targetHint")}
+            loading={{ fields: LOADING_SECTIONS.target }}
+          />
         </>
       ) : (
         <>

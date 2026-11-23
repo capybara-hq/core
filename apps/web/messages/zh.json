@@ -1764,7 +1764,6 @@
       "providerLabel": "设备类型",
       "connected": "已连接 {name}。",
       "close": "关闭",
-      "connectFailed": "无法连接本机，请重试。",
       "noGuide": "这个设备类型没有提供连接指南，请联系组织管理员。"
     },
     "detail": {
@@ -1791,33 +1790,7 @@
       "deleteDanger": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。",
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
       "filesLostNoReset": "这台设备的文件已在它的设备类型那里丢失，这里无法重建。",
-      "tabNetwork": "网络",
       "tabProjects": "项目"
-    },
-    "thisMachine": {
-      "title": "本机",
-      "mark": "本机",
-      "running": "正在运行",
-      "runningEmpty": "目前没有正在运行的任务。",
-      "isolation": {
-        "restricted": "沙箱内",
-        "full": "沙箱外"
-      },
-      "pause": "暂停",
-      "resume": "恢复",
-      "disconnect": "断开",
-      "wakeNote": "电脑曾休眠",
-      "keepAwake": {
-        "title": "保持唤醒",
-        "off": "关闭",
-        "whileBusy": "运行时",
-        "connected": "始终",
-        "held": "正在保持电脑唤醒。",
-        "unavailable": "无法保持唤醒：{reason}",
-        "cannot": "保持唤醒无法阻止：没有外接显示器、使用电池的 Mac 合上盖子仍会休眠；手动选择睡眠、电量极低和过热保护也会休眠。在 Linux 上，合盖由 logind 处理，本服务无权覆盖。"
-      },
-      "failed": "操作没有完成，请重试。",
-      "widened": "已在这台电脑上更改。"
     },
     "sandbox": {
       "mark": {
@@ -1848,12 +1821,14 @@
       "limited": {
         "platform": "平台已限定为白名单（超级管理员设置）",
         "org": "组织已限定为白名单（组织管理员设置）",
-        "provider": "设备类型已限定为白名单"
+        "provider": "设备类型已限定为白名单",
+        "owner": "设备所在电脑的所有者已限定为白名单"
       },
       "closed": {
         "platform": "平台已关闭网络（超级管理员设置）",
         "org": "组织已关闭网络（组织管理员设置）",
-        "provider": "设备类型已关闭网络"
+        "provider": "设备类型已关闭网络",
+        "owner": "设备所在电脑的所有者已关闭网络"
       },
       "hosts": "这台设备的主机",
       "hostsHelp": "设备自己的清单只能收窄组织的清单：不在组织清单里的主机会被拒绝。没有自己的主机时，使用组织的主机。",

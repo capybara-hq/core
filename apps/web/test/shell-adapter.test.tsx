@@ -11,7 +11,6 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   shellCapability,
-  useDeviceCapability,
   useHapticsCapability,
   useMenuCapability,
   useNativeHandlers,
@@ -60,7 +59,7 @@ afterEach(() => {
 });
 
 function Probe() {
-  const device = useShellCapability<{ status(): string }>("device@1");
+  const device = useShellCapability<{ status(): string }>("example@1");
   return <p data-testid="device">{device === undefined ? "browser" : device.status()}</p>;
 }
 
@@ -68,7 +67,7 @@ describe("useShellCapability", () => {
   const device = { status: () => "not_connected" };
 
   it("is undefined in the server render, even inside a shell", () => {
-    install(fakeShell({ capabilities: { "device@1": device } }).shell);
+    install(fakeShell({ capabilities: { "example@1": device } }).shell);
     expect(renderToString(<Probe />)).toContain("browser");
   });
 
@@ -77,7 +76,7 @@ describe("useShellCapability", () => {
     install(f.shell);
     const { unmount } = render(<Probe />);
     expect(screen.getByTestId("device").textContent).toBe("browser");
-    act(() => f.change({ "device@1": device }));
+    act(() => f.change({ "example@1": device }));
     expect(screen.getByTestId("device").textContent).toBe("not_connected");
     // removed again: back to the browser
     act(() => f.change({}));
@@ -97,7 +96,7 @@ describe("useShellCapability", () => {
       get capabilities() {
         copies++;
         // a bridge that hands out a fresh copy per access
-        return offered ? { "device@1": { status: () => `copy ${copies}` } } : {};
+        return offered ? { "example@1": { status: () => `copy ${copies}` } } : {};
       },
       on: (_e: "change", l: () => void) => {
         listeners.add(l);
@@ -107,7 +106,7 @@ describe("useShellCapability", () => {
     install(shell);
     const seen: unknown[] = [];
     function Keep() {
-      const d = useShellCapability<{ status(): string }>("device@1");
+      const d = useShellCapability<{ status(): string }>("example@1");
       seen.push(d);
       return <p data-testid="keep">{d === undefined ? "browser" : d.status()}</p>;
     }
@@ -133,11 +132,11 @@ describe("useShellCapability", () => {
     render(<Probe />);
     expect(screen.getByTestId("device").textContent).toBe("browser");
     cleanup();
-    install(fakeShell({ version: 2, capabilities: { "device@1": device } }).shell);
+    install(fakeShell({ version: 2, capabilities: { "example@1": device } }).shell);
     render(<Probe />);
     expect(screen.getByTestId("device").textContent).toBe("browser");
     cleanup();
-    install(fakeShell({ capabilities: { "device@1": device } }).shell);
+    install(fakeShell({ capabilities: { "example@1": device } }).shell);
     vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
     render(<Probe />);
     expect(screen.getByTestId("device").textContent).toBe("browser");
@@ -146,11 +145,11 @@ describe("useShellCapability", () => {
   it("ignores what is not an object and keys inherited from the prototype", () => {
     install(
       fakeShell({
-        capabilities: Object.assign(Object.create({ "device@1": device }), { "notify@1": 42 }),
+        capabilities: Object.assign(Object.create({ "example@1": device }), { "notify@1": 42 }),
       }).shell,
     );
     function Two() {
-      const a = useShellCapability("device@1");
+      const a = useShellCapability("example@1");
       const b = useShellCapability("notify@1");
       return <p data-testid="two">{`${a === undefined} ${b === undefined}`}</p>;
     }
@@ -159,8 +158,8 @@ describe("useShellCapability", () => {
   });
 
   it("refuses a key that is not name@major (never a user agent or kind check)", () => {
-    expect(() => renderToString(<KeyProbe k="device" />)).toThrow(/name@major/);
-    expect(() => renderToString(<KeyProbe k="device@0" />)).toThrow(/name@major/);
+    expect(() => renderToString(<KeyProbe k="example" />)).toThrow(/name@major/);
+    expect(() => renderToString(<KeyProbe k="example@0" />)).toThrow(/name@major/);
   });
 });
 
@@ -171,12 +170,12 @@ function KeyProbe({ k }: { k: string }) {
 
 describe("shellCapability (event handlers only)", () => {
   const connect = vi.fn();
-  const withDevice = () => install(fakeShell({ capabilities: { "device@1": { connect } } }).shell);
+  const withDevice = () => install(fakeShell({ capabilities: { "example@1": { connect } } }).shell);
 
   it("throws when called during a render", () => {
     withDevice();
     function Bad() {
-      shellCapability("device@1");
+      shellCapability("example@1");
       return null;
     }
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -188,7 +187,7 @@ describe("shellCapability (event handlers only)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     function Flip() {
       const [on, setOn] = useState(false);
-      if (on) shellCapability("device@1");
+      if (on) shellCapability("example@1");
       return (
         <button type="button" onClick={() => flushSync(() => setOn(true))}>
           go
@@ -204,7 +203,7 @@ describe("shellCapability (event handlers only)", () => {
   it("without navigator.userActivation: throws outside any event (a timer, an effect)", () => {
     withDevice();
     expect(navigator).not.toHaveProperty("userActivation");
-    expect(() => shellCapability("device@1")).toThrow(
+    expect(() => shellCapability("example@1")).toThrow(
       "calls a shell capability without a user activation",
     );
   });
@@ -225,7 +224,7 @@ describe("shellCapability (event handlers only)", () => {
       withDevice();
       active = true;
       await Promise.resolve();
-      expect(shellCapability("device@1")).toEqual({ connect });
+      expect(shellCapability("example@1")).toEqual({ connect });
     });
 
     it("throws without an active activation, even inside an event's dispatch", () => {
@@ -238,7 +237,7 @@ describe("shellCapability (event handlers only)", () => {
             type="button"
             onClick={() => {
               try {
-                shellCapability("device@1");
+                shellCapability("example@1");
               } catch (e) {
                 error = e;
               }
@@ -258,7 +257,7 @@ describe("shellCapability (event handlers only)", () => {
       active = true;
       vi.spyOn(console, "error").mockImplementation(() => {});
       function Bad() {
-        shellCapability("device@1");
+        shellCapability("example@1");
         return null;
       }
       expect(() => render(<Bad />)).toThrow("calls a shell capability outside an event handler");
@@ -273,7 +272,7 @@ describe("shellCapability (event handlers only)", () => {
         <button
           type="button"
           onClick={() => {
-            got.push(shellCapability("device@1"), shellCapability("notify@1"));
+            got.push(shellCapability("example@1"), shellCapability("notify@1"));
           }}
         >
           connect
@@ -335,26 +334,21 @@ describe("the root layout", () => {
 
 describe("typed capability accessors", () => {
   function Typed() {
-    const d = useDeviceCapability();
     const n = useNotifyCapability();
     const s = useSignInCapability();
-    return (
-      <p data-testid="typed">{[d, n, s].map((c) => (c === undefined ? "-" : "+")).join("")}</p>
-    );
+    return <p data-testid="typed">{[n, s].map((c) => (c === undefined ? "-" : "+")).join("")}</p>;
   }
 
   it("read their own key and follow change; absent in the browser", () => {
     const f = fakeShell();
     install(f.shell);
     render(<Typed />);
-    expect(screen.getByTestId("typed").textContent).toBe("---");
+    expect(screen.getByTestId("typed").textContent).toBe("--");
     act(() => f.change({ "notify@1": {}, "signIn@1": {} }));
-    expect(screen.getByTestId("typed").textContent).toBe("-++");
-    // the web speaks device@2 only: a shell offering device@1 offers no device
-    act(() => f.change({ "device@1": {} }));
-    expect(screen.getByTestId("typed").textContent).toBe("---");
-    act(() => f.change({ "device@2": {} }));
-    expect(screen.getByTestId("typed").textContent).toBe("+--");
+    expect(screen.getByTestId("typed").textContent).toBe("++");
+    // another major of a known name is not that capability
+    act(() => f.change({ "notify@2": {}, "signIn@1": {} }));
+    expect(screen.getByTestId("typed").textContent).toBe("-+");
   });
 });
 

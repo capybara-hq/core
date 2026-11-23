@@ -129,15 +129,40 @@ export const ESCALATION_JUSTIFICATION_MISSING_TEXT =
 export const ESCALATION_UNATTENDED_WHY =
   "this is an unattended run (a scheduled task) where no one can approve running outside the sandbox";
 /**
- * Why an escalation cannot be reviewed because a layer's outside-sandbox setting is off: one text
- * per layer that blocks it (`DeviceSandbox.layer.outsideSandbox`), each naming who lifts it and how.
+ * The device's own words appended to a refusal that cites its report: its description (what the
+ * device may do now) and its change hint (who changes that and how), each without a final period,
+ * as one parenthesis-free tail of a clause.
  */
+function reportTail(description: string | null, changeHint: string | null): string {
+  const clean = (t: string) => t.trim().replace(/\.$/, "");
+  const parts = [
+    ...(description ? [`: ${clean(description)}`] : []),
+    ...(changeHint
+      ? [` (to change this, as the device's provider says: ${clean(changeHint)})`]
+      : []),
+  ];
+  return parts.join("");
+}
 /**
  * Why an escalation cannot be reviewed because the device's provider does not allow running
- * outside its sandbox now, with the provider's own description of the device (its report).
+ * outside its sandbox now, with the provider's own description of the device and how to change it
+ * (its report's `description` and `changeHint`).
  */
-export const escalationDeviceOffWhy = (description: string | null): string =>
-  `this device's provider does not allow running outside the sandbox now${description ? `: ${description.replace(/\.$/, "")}` : ""}`;
+export const escalationDeviceOffWhy = (
+  description: string | null,
+  changeHint: string | null = null,
+): string =>
+  `this device's provider does not allow running outside the sandbox now${reportTail(description, changeHint)}`;
+/**
+ * Why an escalation cannot be reviewed because the owner of the machine the device runs on keeps
+ * running outside the sandbox off (the provider names that layer, support `limitedBy`), with the
+ * provider's description of the device and how to change it.
+ */
+export const escalationOwnerOffWhy = (
+  description: string | null,
+  changeHint: string | null = null,
+): string =>
+  `the owner of the machine this device runs on does not allow running outside the sandbox on it now${reportTail(description, changeHint)}`;
 export const ESCALATION_ORG_OFF_WHY =
   "running commands outside the sandbox is off in this organization; an organization admin can allow running outside the sandbox";
 export const ESCALATION_PLATFORM_OFF_WHY =
@@ -147,13 +172,15 @@ export const ESCALATION_NO_OUTSIDE_WHY =
 /**
  * The refusal text of an escalation that a layer's outside-sandbox setting blocks, the same for
  * every provider: an instance-boundary provider has no outside at all, whichever layer is off;
- * otherwise the platform or the org names who lifts it, and a provider whose support does not
- * allow it now says so with its description of the device (`description`, its report's).
+ * otherwise the platform or the org names who lifts it, and the owner of the machine or a provider
+ * whose support does not allow it now says so with the device's report (`description`, and
+ * `changeHint`: how to change it, in the provider's words).
  */
 export const escalationCeilingWhy = (input: {
   layer: DeviceSandboxLayer | null;
   boundary: "operation" | "instance";
   description?: string | null;
+  changeHint?: string | null;
 }): string => {
   if (input.boundary === "instance") return ESCALATION_NO_OUTSIDE_WHY;
   switch (input.layer) {
@@ -161,8 +188,10 @@ export const escalationCeilingWhy = (input: {
       return ESCALATION_PLATFORM_OFF_WHY;
     case "org":
       return ESCALATION_ORG_OFF_WHY;
+    case "owner":
+      return escalationOwnerOffWhy(input.description ?? null, input.changeHint ?? null);
     default:
-      return escalationDeviceOffWhy(input.description ?? null);
+      return escalationDeviceOffWhy(input.description ?? null, input.changeHint ?? null);
   }
 };
 /** Why an escalation cannot be reviewed: the runtime cannot run a command outside its sandbox now. */

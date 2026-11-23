@@ -90,20 +90,16 @@ describe("places and paths", () => {
     );
   });
 
-  it("device-connection: member audience, its four variables, connect-this-machine allowed", () => {
+  it("device-connection: member audience and its four variables", () => {
     expect(SETUP_GUIDE_PLACE_INFO["device-connection"]).toEqual({
       modes: [],
       audiences: ["member"],
       drift: false,
-      shellActions: ["connect-this-machine"],
       checks: false,
       variables: { publicUrl: "url", orgId: "token", orgName: "text", pluginName: "token" },
     });
     for (const p of SETUP_GUIDE_PLACES) {
-      if (p !== "device-connection") {
-        expect(SETUP_GUIDE_PLACE_INFO[p].shellActions).toEqual([]);
-        expect(SETUP_GUIDE_PLACE_INFO[p].checks).toBe(true);
-      }
+      if (p !== "device-connection") expect(SETUP_GUIDE_PLACE_INFO[p].checks).toBe(true);
     }
   });
 
@@ -293,7 +289,6 @@ describe("validateSetupGuide: the document", () => {
       docBytes: 65536,
       codeBlocks: 24,
       checks: 16,
-      shellActions: 4,
       sections: 16,
       titleChars: 100,
       checkLabelChars: 80,
@@ -378,74 +373,17 @@ describe("validateSetupGuide: language parity", () => {
   });
 });
 
-describe("::shell-action lines", () => {
-  const place = "device-connection" as const;
-  const line = "::shell-action connect-this-machine Connect this Mac";
-
-  it("parses ::shell-action connect-this-machine <label> with its line and section", () => {
-    const p = parseSetupGuide(`# Connect\n\n${line}\n`);
-    expect(p.issues).toEqual([]);
-    expect(p.shellActions).toEqual([
-      { action: "connect-this-machine", label: "Connect this Mac", line: 3, section: null },
-    ]);
-    const inSection = parseSetupGuide(
-      doc("::: audience member", line, ":::", "", "```sh", line, "```"),
-    );
-    expect(inSection.shellActions).toEqual([
-      { action: "connect-this-machine", label: "Connect this Mac", line: 4, section: 0 },
-    ]);
-  });
-
-  it("accepts a device-connection guide with the action and a variable in prose", () => {
-    expect(errors(v(doc("Connect {{orgName}}.", "", line), { place }))).toEqual([]);
-  });
-
-  it("refuses check lines: the place has no target to check", () => {
+describe("check lines in a place without a target", () => {
+  it("refuses check lines in device-connection", () => {
     expect(
-      errors(v(doc("::check capybara:public-url Public URL", "", "::check key-ok Key"), { place })),
+      errors(
+        v(doc("::check capybara:public-url Public URL", "", "::check key-ok Key"), {
+          place: "device-connection",
+        }),
+      ),
     ).toEqual([
       "guides/slack-app.md:3: check capybara:public-url is not allowed in place device-connection (guide slack-app): guides of this place have no target to check, so remove the line",
       "guides/slack-app.md:5: check key-ok is not allowed in place device-connection (guide slack-app): guides of this place have no target to check, so remove the line",
-    ]);
-  });
-
-  it("refuses an action without a label, with variables, unknown, or in another place", () => {
-    expect(errors(v(doc(line), { place: "channel-connection" }))).toEqual([
-      "guides/slack-app.md:3: shell actions are not allowed in place channel-connection",
-    ]);
-    expect(errors(v(doc("::shell-action open-terminal X"), { place }))).toEqual([
-      'guides/slack-app.md:3: unknown shell action "open-terminal" (known: connect-this-machine)',
-    ]);
-    expect(errors(v(doc("::shell-action connect-this-machine"), { place }))).toEqual([
-      "guides/slack-app.md:3: shell action connect-this-machine needs a label: `::shell-action connect-this-machine <label>`",
-    ]);
-    expect(errors(v(doc("::shell-action connect-this-machine {{orgName}}"), { place }))).toEqual([
-      "guides/slack-app.md:3: directive lines hold no variables (shell action labels are plain text)",
-    ]);
-    expect(errors(v(doc("::shell-action"), { place }))).toEqual([
-      "guides/slack-app.md:3: a shell action line is `::shell-action <action> <label>`",
-    ]);
-  });
-
-  it("limits the lines per document", () => {
-    const five = Array.from({ length: 5 }, (_, i) => `::shell-action connect-this-machine B${i}`);
-    expect(errors(v(doc(...five.flatMap((l) => [l, ""])), { place }))).toEqual([
-      `guides/slack-app.md: the document has 5 shell action lines; at most ${SETUP_GUIDE_LIMITS.shellActions}`,
-    ]);
-    expect(SETUP_GUIDE_LIMITS.shellActions).toBe(4);
-  });
-
-  it("refuses an action line swallowed by raw HTML", () => {
-    expect(errors(v(doc("<div>", line, "</div>"), { place }))[0]).toContain("inside raw HTML");
-  });
-
-  it("requires the zh document to carry the same actions in the same sections", () => {
-    const en = doc(line);
-    expect(
-      errors(v(en, { place, zh: doc("::shell-action connect-this-machine 连接这台电脑") })),
-    ).toEqual([]);
-    expect(errors(v(en, { place, zh: doc("没有按钮。") }))).toEqual([
-      "guides/slack-app.zh.md: the shell actions differ from guides/slack-app.md; both languages need the same actions in the same sections",
     ]);
   });
 });
