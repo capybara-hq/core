@@ -19,7 +19,6 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { DeviceNetworkSection } from "../../../../components/DeviceNetworkSection";
 import { DeviceOverviewSection } from "../../../../components/DeviceOverviewSection";
 import { DeviceProjectsSection } from "../../../../components/DeviceProjectsSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
@@ -54,8 +53,9 @@ import NotFound from "../../not-found";
  * display name, status light and the sandbox mark on the left, program version (a dial-in
  * device's machine), last seen (the machine's, else the instance's last use) and creation time on
  * the right — the page's one bright element, and the page's title: the PageHeader is title-less,
- * so the name is said once (`titleHidden`). Tabs Overview (values: the provider's report, files,
- * recent changes, the danger zone), Network (the network setting) and Projects (the projects).
+ * so the name is said once (`titleHidden`). Tabs Overview (the provider's report, the network
+ * setting, recent changes, files, then the danger zone: sections in columns by count) and Projects
+ * (the projects: one section, so stacked; spec §5.3 "Columns by count").
  * Rename, Rebuild files (only when the provider's report offers a reset and its files are lost, a
  * change waits for a file reset or its sandbox limits must be established again, said up front in
  * a callout; behind a confirmation; a job, so the page then polls until the files are back) and
@@ -119,11 +119,10 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
 
 type Dialogs = "rename" | "reset" | "delete" | null;
 
-type Tab = "overview" | "network" | "projects";
-const TABS: readonly Tab[] = ["overview", "network", "projects"];
+type Tab = "overview" | "projects";
+const TABS: readonly Tab[] = ["overview", "projects"];
 const TAB_LABEL = {
   overview: "detail.tabOverview",
-  network: "detail.tabNetwork",
   projects: "detail.tabProjects",
 } as const;
 const tabItems = (t: ReturnType<typeof useTranslations<"devices">>) =>
@@ -236,8 +235,6 @@ function Detail({
               />
             </DangerZone>
           </Stack>
-        ) : tab === "network" ? (
-          <DeviceNetworkSection orgId={orgId} device={e} />
         ) : (
           <DeviceProjectsSection orgId={orgId} device={e} />
         )}

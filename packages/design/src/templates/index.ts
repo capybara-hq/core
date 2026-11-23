@@ -25,6 +25,7 @@ export {
   type OverviewSectionProps,
   type OverviewSectionState,
 } from "./overview-section";
+export { formSectionLayout, SECTION_COLUMNS_MIN } from "./section-layout";
 export { SettingsPage } from "./settings-page";
 export { SetupPage, type SetupPageProps } from "./setup-page";
 export { SharedFilePage, type SharedFilePageProps } from "./shared-file-page";

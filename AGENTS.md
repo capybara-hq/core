@@ -108,7 +108,9 @@ Each line is the rule you must not miss; the skill has the rest.
   `view.tsx`; pages never read the size class (`web-ui-size-branch`); a structure that differs per
   class lives in a design template or component through `ClassForms`; one box is enough: never a
   box inside a box (`web-ui-box-in-box` and the jsdom guard `findNestedBoxes`, both in
-  [tools/checks/README.md](tools/checks/README.md))
+  [tools/checks/README.md](tools/checks/README.md)); form sections stand in two columns only
+  when the page has three or more, which the template decides from its count (no page prop;
+  sections are siblings, `assertSectionGroups` throws in dev and tests otherwise)
   (`pnpm check:web-ui`); the new conversation is the workspace home at `/` (the setup layout while
   the org is not ready; `/chat` redirects there permanently with its query, maintainer decision
   2026-11-07), a conversation is `/chat/<id>`. [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)

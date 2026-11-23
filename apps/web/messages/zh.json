@@ -1791,7 +1791,6 @@
       "deleteDanger": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。",
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
       "filesLostNoReset": "这台设备的文件已在它的设备类型那里丢失，这里无法重建。",
-      "tabNetwork": "网络",
       "tabProjects": "项目"
     },
     "thisMachine": {
