@@ -57,9 +57,9 @@ export type ToolRowData = {
   guard?: ToolGuard;
   /**
    * A done call with a protocol notice: the row adds the neutral word in `muted` (§6.16.9),
-   * "需先加载工具" / "Load the tool first" (`not_loaded`, the tool was not loaded) or
-   * "正在确认是否已启动" / "Confirming whether it started" (`reconciling`, a background start the
-   * kernel sent but has not confirmed yet).
+   * `tool.notice.not_loaded` ("Load the tool first": the tool was not loaded) or
+   * `tool.notice.reconciling` ("Confirming whether it started": a background start the kernel
+   * sent but has not confirmed yet).
    */
   notice?: ToolNotice;
   /**
