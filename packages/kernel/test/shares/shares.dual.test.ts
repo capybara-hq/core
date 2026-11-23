@@ -8,17 +8,19 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { scheduledTick } from "../../src/infra/schedule/cron-tick.js";
 import { createLogger } from "../../src/log.js";
 import { ShareLiveness } from "../../src/shares/liveness.js";
 import { ShareObjects, shareRefreshLockKey } from "../../src/shares/share-objects.js";
 import { SharesService } from "../../src/shares/shares.service.js";
-import { ShareSweepJob } from "../../src/shares/sweep.job.js";
+import { SHARE_SWEEP_CRON, SHARE_SWEEP_JOB, ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -382,6 +384,13 @@ describe("the daily share sweep on two replicas", () => {
       ]),
       { head: true },
     );
+    // the replicas' own schedulers fire the same daily tick (03:40): stop them and clear a tick
+    // marker one of them may already have set, so the two calls below are the tick's only takers
+    for (const k of [a, b]) k.app.get(SchedulerRegistry).deleteCronJob(SHARE_SWEEP_JOB);
+    const locks = a.app.get(LockService);
+    const marker = `cron:${SHARE_SWEEP_JOB}:${scheduledTick(SHARE_SWEEP_CRON, Date.now()).tick}`;
+    const holder = await locks.holderOf(marker);
+    if (holder !== null) await locks.releaseIf(marker, holder);
     const runs = [a, b].map((k) => vi.spyOn(k.app.get(ShareSweepJob), "runOnce"));
     try {
       // both replicas' schedulers fire the same tick: one runs it
