@@ -130,6 +130,8 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
           secretAndStateDenies: [],
           otherConnectionDenies: [],
           unreadableConnections: [],
+          mountReexposedDenies: [],
+          mountReexposureProblem: null,
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,

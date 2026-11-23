@@ -96,6 +96,8 @@ async function fixture() {
           secretAndStateDenies: [],
           otherConnectionDenies: [],
           unreadableConnections: [],
+          mountReexposedDenies: [],
+          mountReexposureProblem: null,
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
         }),

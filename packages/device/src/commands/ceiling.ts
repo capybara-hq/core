@@ -1,6 +1,7 @@
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
 import { scanConnections } from "../connections.js";
+import { machineReachMountRefusal } from "../exec/linux-mountinfo.js";
 import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
 import { reachWidens } from "../exec/read-model.js";
 import { PolicyStore } from "../policy-store.js";
@@ -203,6 +204,8 @@ export async function ceilingCommand(
           home: deps.home,
         });
         out(`Revision: ${strict.revision}`);
+        if (strict.mountReexposureProblem !== null)
+          out(`Mounts: ${machineReachMountRefusal(strict.mountReexposureProblem)}`);
       } catch (e) {
         out(`Revision: unavailable (${(e as Error).message})`);
       }

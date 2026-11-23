@@ -187,8 +187,18 @@ reads the denied settings files. On Linux Java takes the home from the password 
 Landlock does not hide `stat`, so the build sees the files exist but cannot open them and may fail
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look
 absent. Repository credentials reach a build only through an escalated call. Gradle init scripts
-and a `GRADLE_USER_HOME` moved elsewhere are not covered. A bind mount or second
-mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
+and a `GRADLE_USER_HOME` moved elsewhere are not covered. Because the carve works on paths, a
+denied directory mounted again elsewhere would stay readable there, so each operation start reads
+`/proc/self/mountinfo` and denies every path where another mount shows a denied directory or
+something inside it: a bind mount of it or of a file in it, a mount of an ancestor's subtree (a
+second mount of the disk holding your home), a file system mounted inside it that is also mounted
+elsewhere, and an overlay whose layer lies in or holds it; those paths are denied under every reach.
+When the mount table leaves it open (unreadable, a line or escape it cannot parse, mounts that do not
+settle, an overlay layer that is not an absolute path), machine reach is refused with the cause and
+`capybara-device ceiling set --project-reach paths` as the way on; `ceiling` shows the cause too. A
+mount made after an operation started is seen from the next operation on, and file systems that
+serve another directory under their own device (FUSE such as bindfs, NFS from this machine) or an
+overlay layer named through a link are not recognized. More than
 4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. Every
 granted root is held open by the operation agent, so its open-file limit (often a soft limit of
 1024) can refuse an operation before that cap, also with many listed project paths. macOS
