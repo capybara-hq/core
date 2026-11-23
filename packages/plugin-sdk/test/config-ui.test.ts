@@ -10,6 +10,7 @@ import {
   type JsonSchema,
   type LocalizedName,
   missingInboundModeFields,
+  type PluginManifest,
   parsePluginManifest,
   platformOnly,
   type StaticExtensionManifest,
@@ -556,8 +557,10 @@ describe("plugin.json extension.configSchemas", () => {
     expect(r).toMatchObject({ extension: { configSchemas: { deployment } } });
   });
 
-  it("rejects an org JSON Schema", () => {
-    expect(parsePluginManifest(manifest({ org: { type: "object" } }))).toHaveProperty("errors");
+  it("reads a legacy org JSON Schema (packed before core#720) and drops it", () => {
+    const r = parsePluginManifest(manifest({ org: { type: "object" } }));
+    expect(r).not.toHaveProperty("errors");
+    expect((r as PluginManifest).extension?.configSchemas).toEqual({});
   });
 
   it("accepts a schema just under the limit", () => {

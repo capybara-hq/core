@@ -230,18 +230,34 @@ const configFields = z
   .array(z.strictObject({ path: z.string().max(1000), secret: z.boolean(), hot: z.boolean() }))
   .max(1000);
 
+const configSchemaJson = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
+    {
+      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
+    },
+  );
+
 /**
- * Transition only: packages packed before core#720 carry `extension.manifest.config.org` (the old
- * org config field list, often `[]`). Published tarballs are immutable, so the reader accepts that
- * list and drops it: it never reaches the parsed manifest, the permission set, the config levels
- * or the views. Nothing else reads it, `defineExtension` still refuses `config.org`, and the packer
- * never writes it. Removed once the official plugins are republished and re-pinned (core#720 plan
- * Task 17).
+ * Transition only: packages packed before core#720 carry the old org-only config in plugin.json:
+ * `extension.manifest.config.org` (the org config field list, often `[]`) and
+ * `extension.configSchemas.org` (its form schema). Published tarballs are immutable, so the reader
+ * accepts both and drops them: they never reach the parsed manifest, the permission set, the
+ * config levels or the views. Nothing else reads them, `defineExtension` still refuses
+ * `config.org`, and the packer never writes either. Removed once the official plugins are
+ * republished and re-pinned (core#720 plan Task 17).
  */
-const legacyPackedOrgConfigFields = configFields.optional().meta({
-  deprecated: true,
-  description: "Ignored: written only by packers before core#720.",
-});
+const legacyPackedBeforeCore720 = {
+  configOrg: configFields.optional().meta({
+    deprecated: true,
+    description: "Ignored: written only by packers before core#720.",
+  }),
+  configSchemasOrg: configSchemaJson.optional().meta({
+    deprecated: true,
+    description: "Ignored: written only by packers before core#720.",
+  }),
+};
 
 const staticExtensionManifest = z.strictObject({
   name: z.string(),
@@ -253,18 +269,9 @@ const staticExtensionManifest = z.strictObject({
   permissions: z.record(z.string(), z.unknown()),
   ui: z.array(z.record(z.string(), z.unknown())).optional(),
   config: z
-    .strictObject({ deployment: configFields, org: legacyPackedOrgConfigFields })
+    .strictObject({ deployment: configFields, org: legacyPackedBeforeCore720.configOrg })
     .transform(({ org: _legacyOrg, ...config }) => config),
 });
-
-const configSchemaJson = z
-  .record(z.string(), z.unknown())
-  .refine(
-    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
-    {
-      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
-    },
-  );
 
 const setupGuide = z.strictObject({
   id: z.string().regex(CATALOG_ITEM_NAME_RE, {
@@ -310,7 +317,13 @@ const extensionSection = z.strictObject({
   manifest: staticExtensionManifest,
   migrations: dotPath("migrations").optional(),
   ui: dotPath("ui").optional(),
-  configSchemas: z.strictObject({ deployment: configSchemaJson.optional() }).optional(),
+  configSchemas: z
+    .strictObject({
+      deployment: configSchemaJson.optional(),
+      org: legacyPackedBeforeCore720.configSchemasOrg,
+    })
+    .transform(({ org: _legacyOrg, ...schemas }) => schemas)
+    .optional(),
   client: clientSection.optional(),
 });
 

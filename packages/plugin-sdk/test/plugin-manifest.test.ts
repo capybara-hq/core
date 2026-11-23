@@ -123,6 +123,33 @@ describe("parsePluginManifest", () => {
     }
   });
 
+  it("reads a legacy configSchemas.org from packages packed before core#720 and drops it", () => {
+    const deployment = { type: "object", properties: { readerUrl: { type: "string" } } };
+    const org = { type: "object", properties: { apiKey: { type: "string", "x-secret": true } } };
+    const json = withExtension({
+      extension: {
+        entry: "./dist/index.mjs",
+        manifest: staticManifest(),
+        configSchemas: { deployment, org },
+      },
+    });
+    expect(errorsOf(json)).toEqual([]);
+    const schemas = (parsePluginManifest(json) as PluginManifest).extension?.configSchemas;
+    expect(schemas).toEqual({ deployment });
+    expect(schemas).not.toHaveProperty("org");
+  });
+
+  it("still refuses other unknown configSchemas keys", () => {
+    const json = withExtension({
+      extension: {
+        entry: "./dist/index.mjs",
+        manifest: staticManifest(),
+        configSchemas: { deployment: { type: "object" }, extra: { type: "object" } },
+      },
+    });
+    expect(errorsOf(json).join()).toMatch(/extra/);
+  });
+
   it("still refuses other unknown config keys and a malformed legacy org list", () => {
     const withConfig = (config: unknown) =>
       withExtension({}, { config: config as StaticExtensionManifest["config"] });
@@ -655,6 +682,26 @@ describe("JSON Schema (ajv) agrees with zod", () => {
           config: { deployment: [], org: [] } as StaticExtensionManifest["config"],
         },
       ),
+    ],
+    [
+      "legacy configSchemas.org (packed before core#720)",
+      withExtension({
+        extension: {
+          entry: "./dist/index.mjs",
+          manifest: staticManifest(),
+          configSchemas: { deployment: { type: "object" }, org: { type: "object" } },
+        },
+      }),
+    ],
+    [
+      "unknown configSchemas key",
+      withExtension({
+        extension: {
+          entry: "./dist/index.mjs",
+          manifest: staticManifest(),
+          configSchemas: { extra: { type: "object" } },
+        },
+      }),
     ],
     [
       "unknown config key",

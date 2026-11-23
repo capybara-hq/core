@@ -419,6 +419,15 @@
                 "type": "string"
               },
               "additionalProperties": {}
+            },
+            "org": {
+              "deprecated": true,
+              "description": "Ignored: written only by packers before core#720.",
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
             }
           },
           "additionalProperties": false
