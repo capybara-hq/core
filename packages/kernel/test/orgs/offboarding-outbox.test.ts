@@ -19,10 +19,10 @@ import {
 import { Offboarding } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RUN_JOB, RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-jobs.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, kernelTransaction } from "../helpers/identity.js";
+import { managedUseOn } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
@@ -223,12 +223,13 @@ const instanceOf = (deviceId: string) =>
 async function startInstance(orgId: string, accountId: string, deviceId: string): Promise<void> {
   const agentId = await insertAgent(orgId, accountId);
   const conversationId = await insertConversation(orgId, agentId, accountId);
-  await k.app.get(SandboxService).withSandbox(
+  await managedUseOn(
+    k,
+    raw,
     { orgId, deviceId, holderConversationId: conversationId, actor: { accountId, conversationId } },
     async (h, p, _i, signal) => {
       await p.exec(h, { command: "echo hi", timeoutMs: 10_000, maxOutputBytes: 100, signal });
     },
-    AbortSignal.timeout(30_000),
   );
   expect(await instanceOf(deviceId)).toBeDefined();
 }

@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxHandle } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
+import {
+  type HeldProvider,
+  SandboxService,
+  type SandboxUseInfo,
+} from "../../src/sandbox/sandbox.service.js";
+import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import type { TestKernel } from "./runs.js";
 
@@ -94,5 +101,52 @@ export async function runClaimed(
     claim,
     () => true,
     () => tool.run(input, ctx),
+  );
+}
+
+/**
+ * Uses the device of `use` once on the managed route of a real kernel, as a tool call of a run
+ * does (`SandboxService.withOperations`): a claimed running run of the holder conversation
+ * triggered by the actor's account ({@link startClaimedRun}), the call's `tool_call_started`
+ * ({@link recordCallStarted}), then the use under the run's claim fence. Every provider call in
+ * `fn` is admitted by the real operation intents for that conversation's permission profile.
+ * The holder must be a root conversation of the actor's account in the device's org; an unbound
+ * holder is bound to the device first (admission enters only the conversation's own device). Its
+ * run is left running (a test that later runs the conversation finishes or deletes it).
+ */
+export async function managedUseOn<T>(
+  k: TestKernel,
+  raw: Kysely<unknown>,
+  use: SandboxUseContext,
+  fn: (h: SandboxHandle, p: HeldProvider, info: SandboxUseInfo, signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal = AbortSignal.timeout(30_000),
+): Promise<T> {
+  // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
+  await kernelDb(raw as Kysely<any>)
+    .updateTable("conversations")
+    .set({ device_id: use.deviceId })
+    .where("id", "=", use.holderConversationId)
+    .where("device_id", "is", null)
+    .execute();
+  const { runId, claim } = await startClaimedRun(
+    k,
+    raw,
+    use.holderConversationId,
+    use.actor.accountId,
+  );
+  const callId = randomUUID();
+  await recordCallStarted(raw, use.holderConversationId, runId, callId, "Bash");
+  return k.app.get(RunExecution).withClaim(
+    claim,
+    () => true,
+    () =>
+      k.app
+        .get(SandboxService)
+        .withOperations(
+          { ...use, actor: { ...use.actor, runId } },
+          { claim, callId, deadlineMs: Date.now() + 30_000 },
+          fn,
+          signal,
+        ),
   );
 }
