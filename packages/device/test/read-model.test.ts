@@ -324,6 +324,34 @@ describe("projectPathRefusal", () => {
     expect(projectPathRefusal(join(home, ".Ssh", "id"), input("machine"))).toBe("denied");
   });
 
+  it.skipIf(process.platform !== "darwin")(
+    "refuses a denied directory spelled through the macOS data volume firmlink",
+    () => {
+      // a firmlink is not a symlink: realpath keeps /System/Volumes/Data, the sandbox does not
+      const real = realpathSync(bDir);
+      const viaData = `/System/Volumes/Data${real}`;
+      expect(existsSync(viaData)).toBe(true);
+      for (const reach of ["machine", "paths", "workspace"] as const) {
+        expect(projectPathRefusal(join(viaData, "repo"), input(reach, [viaData]))).toBe(
+          "other-connection",
+        );
+      }
+      expect(projectPathRefusal(`/system/volumes/data${real}`, input("machine"))).toBe(
+        "other-connection",
+      );
+      const ssh = `/System/Volumes/Data${realpathSync(join(home, ".ssh"))}/id`;
+      expect(projectPathRefusal(ssh, input("machine"))).toBe("denied");
+      // a deny list spelled through the firmlink still matches the plain spelling
+      const viaDeny = { ...input("machine"), otherConnectionDenies: [viaData] };
+      expect(projectPathRefusal(join(real, "x"), viaDeny)).toBe("other-connection");
+      // the extra forms never widen a reach: the firmlink spelling of a listed path stays outside
+      const listed = realpathSync(project);
+      expect(projectPathRefusal(`/System/Volumes/Data${listed}`, input("paths", [listed]))).toBe(
+        "outside-reach",
+      );
+    },
+  );
+
   it.skipIf(!ignoresCase)("allows a case variant of a listed path under paths reach", () => {
     const variant = join(tmp, "Projects", "P", "src");
     expect(projectPathRefusal(variant, input("paths", [project]))).toBeNull();
