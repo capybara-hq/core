@@ -2,6 +2,7 @@
 declare const db: any;
 declare const sql: any;
 declare function Injectable(): ClassDecorator;
+declare function asPlatform<T>(reason: string, fn: () => T): T;
 
 export async function byOrg(orgId: string, id: string) {
   await db.selectFrom("things").selectAll().where("org_id", "=", orgId).where("id", "=", id);
@@ -29,9 +30,16 @@ export async function byOrg(orgId: string, id: string) {
 }
 
 export async function sweep() {
-  // org-filter: deployment-wide sweep across every org, each row handled in its own org
-  await db.selectFrom("things").select(["id", "org_id"]).execute();
+  // a deployment-wide query runs in the platform scope (RLS spec §10)
+  await asPlatform("sweep", async () => {
+    // org-filter: deployment-wide sweep across every org, each row handled in its own org
+    await db.selectFrom("things").select(["id", "org_id"]).execute();
+  });
 }
+
+// org-filter: deployment-wide cleanup across every org; its caller runs it in asPlatform
+export const cleanup = () =>
+  asPlatform("cleanup", () => db.deleteFrom("notes").where("id", "=", "x").execute());
 
 @Injectable()
 // org-filter: super-admin service (platform guard on every route), reads every org on purpose

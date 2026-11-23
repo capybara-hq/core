@@ -14,6 +14,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { AllowService, type Principal } from "../identity/principal.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { bindRequestScope } from "../infra/database/org-scope.js";
 import { type OrgAction as Action, can, HUMAN_ONLY, type OrgRole } from "./roles.js";
 
 /** OrgGuard 放在请求上的组织上下文。 */
@@ -114,6 +115,9 @@ export class OrgGuard implements CanActivate {
     const orgId = (req.params as Record<string, string | undefined>).orgId;
     if (!orgId) throw new Error("OrgGuard: route has no :orgId parameter");
 
+    // the request works in this org from here on (RLS spec §5.1), the role check included: it
+    // reads only this org's membership; a refused check ends the request
+    bindRequestScope({ kind: "org", orgId });
     const role = await authorizeOrgAction(this.db.db, p, orgId, action);
     req.org = { orgId, role };
     return true;

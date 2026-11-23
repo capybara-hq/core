@@ -129,7 +129,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
   }
 
   process(job: Job, token?: string): Promise<void> {
-    return runJob(MAINTENANCE_QUEUE_NAME, job, () => this.dispatch(job, token));
+    return runJob(MAINTENANCE_QUEUE_NAME, job, () => this.dispatch(job, token), {
+      platform: "maintenance job (deployment-wide sweeps)",
+    });
   }
 
   /** Starts consuming (worker role, after the extensions loaded; built with `autorun: false`). */

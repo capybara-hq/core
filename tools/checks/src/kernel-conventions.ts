@@ -316,7 +316,7 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   {
     rule: "kc-enqueue-via-outbox",
     path: "packages/kernel/src/channels/inbound.ts",
-    within: "handle",
+    within: "handleInOrg",
     reason:
       "a job's own follow-up: the directory sync of a `directory_changed` event, added inside " +
       "the inbound job, which fails and is retried by BullMQ when the add fails; no write owes it",

@@ -30,3 +30,13 @@ export async function exemptions(id: string) {
       eb("id", "=", id), // expect-above: org-filter-stale
     );
 }
+
+declare function asPlatform<T>(reason: string, fn: () => T): T;
+
+export async function sweepOutsidePlatform() {
+  // org-filter: deployment-wide sweep across every org, but not in the platform scope
+  await db.selectFrom("things").select(["id", "org_id"]).execute(); // expect: org-filter-platform
+  // org-filter: deployment-wide sweep; asPlatform runs after the query, not around it
+  await db.selectFrom("notes").selectAll().execute(); // expect: org-filter-platform
+  await asPlatform("later", async () => {});
+}

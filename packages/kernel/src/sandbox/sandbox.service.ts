@@ -15,6 +15,7 @@ import {
   type SandboxPreparationScope,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { runOutsideTransaction } from "../infra/database/transaction-host.js";
 import {
   createHeldOperations,
@@ -2544,27 +2545,29 @@ export class SandboxService {
       const done = await this.tryLocked(
         c.device_id,
         async (lease) => {
-          const id = c.device_id;
-          // org-filter: deployment-wide suspension sweep (worker) over every org's idle instances,
-          // re-read under each device's lease
-          const row = await this.db
-            .selectFrom("device_instances")
-            .selectAll()
-            .where("device_id", "=", id)
-            .where(due)
-            .executeTakeFirst();
-          if (!row?.handle) return false;
-          const fence = { gen: row.generation };
-          await p.impl.suspend(row.handle, opSignal(lease));
-          if (!(await lease.renew())) throw new SandboxLockLostError(id);
-          await this.fenced(lease, id, fence, {
-            status: "suspended",
-            suspended_at: sql<Date>`now()`,
-            running_since: null,
-            sweep_failed_at: null,
+          return asPlatform("deployment-wide suspension sweep", async () => {
+            const id = c.device_id;
+            // org-filter: deployment-wide suspension sweep (worker) over every org's idle instances,
+            // re-read under each device's lease
+            const row = await this.db
+              .selectFrom("device_instances")
+              .selectAll()
+              .where("device_id", "=", id)
+              .where(due)
+              .executeTakeFirst();
+            if (!row?.handle) return false;
+            const fence = { gen: row.generation };
+            await p.impl.suspend(row.handle, opSignal(lease));
+            if (!(await lease.renew())) throw new SandboxLockLostError(id);
+            await this.fenced(lease, id, fence, {
+              status: "suspended",
+              suspended_at: sql<Date>`now()`,
+              running_since: null,
+              sweep_failed_at: null,
+            });
+            this.log.info("sandbox suspended", { deviceId: id });
+            return true;
           });
-          this.log.info("sandbox suspended", { deviceId: id });
-          return true;
         },
         overdue,
       );
@@ -2608,17 +2611,19 @@ export class SandboxService {
     let n = 0;
     await inPool(await this.candidates(mine), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
-        // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
-        // re-read under each device's lease
-        const row = await this.db
-          .selectFrom("device_instances")
-          .selectAll()
-          .where("device_id", "=", id)
-          .where(mine)
-          .executeTakeFirst();
-        if (!row) return false;
-        await this.destroyRow(row, p, lease, mode);
-        return true;
+        return asPlatform("deployment-wide destruction sweep", async () => {
+          // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
+          // re-read under each device's lease
+          const row = await this.db
+            .selectFrom("device_instances")
+            .selectAll()
+            .where("device_id", "=", id)
+            .where(mine)
+            .executeTakeFirst();
+          if (!row) return false;
+          await this.destroyRow(row, p, lease, mode);
+          return true;
+        });
       });
       if (done) n++;
     });
@@ -2830,8 +2835,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
-      // org-filter: deviceId comes from the deployment-wide retire-legacy-tasks worker's due list,
-      // not caller input
+      // org-filter: deviceId comes from the retire-legacy-tasks worker's due list (kernel-held,
+      // not caller input); the worker runs it in the platform scope
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -2870,8 +2875,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
-      // org-filter: reads the device's own org; deviceId comes from the deployment-wide reconcile
-      // sweep, not caller input
+      // org-filter: reads the device's own org; deviceId comes from the reconcile sweep
+      // (kernel-held, not caller input), which runs in the platform scope
       const device = await this.db
         .selectFrom("devices")
         .select(["org_id", "provider"])
@@ -3026,20 +3031,22 @@ export class SandboxService {
     // org-filter: deployment-wide reconcile sweep (worker) over every org's marked devices of
     // this provider
     const page = (after: string, n: number) =>
-      this.db
-        .selectFrom("devices as d")
-        .innerJoin("device_instances as i", "i.device_id", "d.id")
-        .select("d.id")
-        .where("d.deleted_at", "is", null)
-        .where("d.permission_reconcile_required", "=", true)
-        .where("d.provider", "=", p.plugin)
-        .where("i.provider", "=", p.plugin)
-        .where("i.handle", "is not", null)
-        .where("i.status", "in", ["running", "suspended"])
-        .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
-        .orderBy(sql`d.id COLLATE "C"`)
-        .limit(n)
-        .execute();
+      asPlatform("deployment-wide reconcile sweep", () =>
+        this.db
+          .selectFrom("devices as d")
+          .innerJoin("device_instances as i", "i.device_id", "d.id")
+          .select("d.id")
+          .where("d.deleted_at", "is", null)
+          .where("d.permission_reconcile_required", "=", true)
+          .where("d.provider", "=", p.plugin)
+          .where("i.provider", "=", p.plugin)
+          .where("i.handle", "is not", null)
+          .where("i.status", "in", ["running", "suspended"])
+          .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
+          .orderBy(sql`d.id COLLATE "C"`)
+          .limit(n)
+          .execute(),
+      );
     // a keyset cursor shared by the replicas (the cron runs once per tick): each tick goes on
     // after the last device the previous one visited and wraps around, so devices that stay
     // marked never starve the ones after them
@@ -3486,16 +3493,18 @@ export class SandboxService {
   private async candidates(
     due: (eb: ExpressionBuilder<KernelDatabase, "device_instances">) => Expression<SqlBool>,
   ): Promise<{ device_id: string; running_since: Date | null }[]> {
-    // org-filter: deployment-wide sweep candidates (suspension and destruction workers) across
-    // every org
-    return await this.db
-      .selectFrom("device_instances")
-      .select(["device_id", "running_since"])
-      .where(due)
-      .orderBy(sql`sweep_failed_at ASC NULLS FIRST`)
-      .orderBy("last_used_at")
-      .limit(SWEEP_BATCH)
-      .execute();
+    return asPlatform("deployment-wide sweep candidates", async () => {
+      // org-filter: deployment-wide sweep candidates (suspension and destruction workers) across
+      // every org
+      return await this.db
+        .selectFrom("device_instances")
+        .select(["device_id", "running_since"])
+        .where(due)
+        .orderBy(sql`sweep_failed_at ASC NULLS FIRST`)
+        .orderBy("last_used_at")
+        .limit(SWEEP_BATCH)
+        .execute();
+    });
   }
 
   /**
@@ -3534,8 +3543,8 @@ export class SandboxService {
       return await fn(lease);
     } catch (err) {
       this.log.warn("sandbox maintenance failed; will retry", { deviceId, err });
-      // org-filter: sweep bookkeeping on the device this deployment-wide sweep holds under its
-      // lease
+      // org-filter: sweep bookkeeping on the device the calling sweep (platform scope) holds
+      // under its lease
       await this.db
         .updateTable("device_instances")
         .set({ sweep_failed_at: sql<Date>`now()` })
@@ -4240,8 +4249,8 @@ export class SandboxService {
   private deviceGone(
     eb: ExpressionBuilder<KernelDatabase, "device_instances">,
   ): Expression<SqlBool> {
-    // org-filter: deployment-wide sweep condition: a deleted device of any org, correlated to
-    // the instance row
+    // org-filter: a sweep condition fragment (a deleted device of any org, correlated to the
+    // instance row), run only by candidates(), inside its asPlatform
     return eb.or([
       eb.exists(
         eb
