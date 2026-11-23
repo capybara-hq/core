@@ -21,6 +21,7 @@ import {
   readRootsFor,
   unreadableConnectionMessage,
 } from "../src/exec/read-model.js";
+import { deniedSecretPaths } from "../src/policy.js";
 
 /** Whether the temporary volume ignores case (APFS default on macOS). */
 function tempVolumeIgnoresCase(): boolean {
@@ -213,6 +214,25 @@ describe("projectPathRefusal", () => {
     const link = join(tmp, "ssh-link");
     symlinkSync(join(home, ".ssh"), link);
     expect(projectPathRefusal(link, input("machine"))).toBe("denied");
+  });
+
+  it("refuses mise's env files and Maven and Gradle credentials from the shared deny list", () => {
+    const withShared = { ...input("machine"), secretAndStateDenies: deniedSecretPaths(home) };
+    for (const rel of [
+      ".config/mise/config.toml",
+      ".config/mise/config.local.toml",
+      ".config/mise/conf.d/tokens.toml",
+      ".config/mise.toml",
+      ".mise.toml",
+      ".mise.local.toml",
+      ".m2/settings.xml",
+      ".m2/settings-security.xml",
+      ".gradle/gradle.properties",
+    ])
+      expect(projectPathRefusal(join(home, rel), withShared), rel).toBe("denied");
+    // their neighbours stay readable: the local repository and Gradle's caches
+    for (const rel of [".m2/repository", ".gradle/caches", ".config/mise-other"])
+      expect(projectPathRefusal(join(home, rel), withShared), rel).toBeNull();
   });
 
   it("checks other connections before secrets", () => {

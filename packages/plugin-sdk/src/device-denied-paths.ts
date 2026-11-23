@@ -3,9 +3,11 @@
  * to `~` (spec §13.6, extended by ruling R19): SSH keys, cloud CLI credentials, container and
  * Kubernetes credentials, netrc, GnuPG, git / npm / PyPI tokens, the macOS keychains, the
  * browser profile directories, other tool credential stores (cargo, 1Password, Vault, Terraform,
- * Claude, Codex, keyrings, pass, rclone, s3cmd, mise) and shell histories. One source for the device, which denies them (and its own state
- * directory), and the kernel, which never proposes an approval for a path under one. Full access
- * and auto mode run as the owner and do not apply them: the command review does.
+ * Claude, Codex, keyrings, pass, rclone, s3cmd), the env files mise loads from the home (an `[env]`
+ * section may hold tokens), Maven and Gradle credential files, and shell histories. One source for
+ * the device, which denies them (and its own state directory), and the kernel, which never proposes
+ * an approval for a path under one. Full access and auto mode run as the owner and do not apply
+ * them: the command review does.
  */
 export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.ssh",
@@ -46,7 +48,17 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.password-store",
   "~/.config/rclone",
   "~/.s3cfg",
+  // mise's global and home-level config files, each of which may carry an [env] section
   "~/.config/mise/config.toml",
+  "~/.config/mise/config.local.toml",
+  "~/.config/mise/conf.d",
+  "~/.config/mise.toml",
+  "~/.mise.toml",
+  "~/.mise.local.toml",
+  // Maven server passwords (and their master key) and Gradle repository credentials
+  "~/.m2/settings.xml",
+  "~/.m2/settings-security.xml",
+  "~/.gradle/gradle.properties",
   "~/.bash_history",
   "~/.zsh_history",
 ]);

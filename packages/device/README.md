@@ -153,7 +153,9 @@ only), the system and developer tool directories (on macOS `/System`, `/usr`, `/
 `/private/etc`, Homebrew, Xcode and the Command Line Tools, `/Library/Apple`, `/Library/Frameworks`,
 installed JDKs) and the data of the version managers your home uses, read only. The deny list is
 never readable, whatever the reach: secret paths (`~/.ssh`, cloud CLI credentials, `~/.netrc`,
-`~/.gnupg`, browser profiles, other tool credential stores and shell histories:
+`~/.gnupg`, browser profiles, other tool credential stores, mise's config files in the home, Maven's
+`~/.m2/settings.xml` and `settings-security.xml`, Gradle's `~/.gradle/gradle.properties` and shell
+histories:
 `DEVICE_DENIED_SECRET_PATHS` in the plugin SDK), this program's state directory (and the default
 `~/.config/capybara-device` when `XDG_CONFIG_HOME` moves it), every other connection's state and
 working directory on this machine (a logged-out connection's default working directory too), and the private temporary directories of other connections
@@ -170,9 +172,11 @@ Linux residuals of the deny list, stated plainly. Landlock grants directories, s
 carved out of the whole machine by granting its siblings: files directly inside a directory on the
 path to a denied one are unreadable, and such a directory cannot be listed (for example `~/.bashrc`
 and `~/.gitconfig` when `~/.ssh` is denied, unless a tool home grants them; likewise files
-directly in `~/.cargo`, `~/.claude`, `~/.codex`, `~/.terraform.d`, `~/.local`, `~/.local/share` and
-`~/.config/mise`, so cargo cannot read `~/.cargo/config.toml` for a project under the home: use
-the `paths` reach or an escalated call there). A bind mount or second
+directly in `~/.cargo`, `~/.claude`, `~/.codex`, `~/.terraform.d`, `~/.local`, `~/.local/share`,
+`~/.config/mise`, `~/.m2` and `~/.gradle`, so cargo cannot read `~/.cargo/config.toml` and Maven
+cannot read `~/.m2/toolchains.xml` for a project under the home: use the `paths` reach or an
+escalated call there). Sandboxed Maven and Gradle builds never see the denied settings files on any
+system: repository credentials they hold reach a build only through an escalated call. A bind mount or second
 mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
 4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. macOS
 Seatbelt denies the paths directly and has none of these.

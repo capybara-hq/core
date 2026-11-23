@@ -332,7 +332,7 @@ kernel and no fallback: upgrade the kernel first, then the programs.
   the reach if you want it.
 - **Linux.** Files directly inside a directory on the path to a denied one (`~/.bashrc` when
   `~/.ssh` is denied; `~/.cargo/config.toml` and other files directly in `~/.cargo`, `~/.claude`,
-  `~/.codex`, `~/.terraform.d`, `~/.local` and `~/.config/mise`) are unreadable under `machine` reach, and a bind mount of a denied directory
+  `~/.codex`, `~/.terraform.d`, `~/.local`, `~/.config/mise`, `~/.m2` and `~/.gradle`) are unreadable under `machine` reach, and a bind mount of a denied directory
   stays readable. See the device README.
 - **Old temporary directories.** Earlier versions left flat temporary directories
   `capybara-op-<pid>-*` in the user temp dir (`getconf DARWIN_USER_TEMP_DIR` on macOS); this version
