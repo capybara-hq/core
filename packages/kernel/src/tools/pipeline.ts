@@ -834,6 +834,13 @@ const idem = {
   hookDenied: (runId: string, callId: string) => `hook_denied:${runId}:${callId}`,
 };
 
+/**
+ * `ToolCallContext.idempotencyKey`: one logical call's key (a call id is unique only within its
+ * run), the same for every `InputRequired` round of the call.
+ */
+export const toolIdempotencyKey = (conversationId: string, runId: string, callId: string): string =>
+  sha256Hex(`capybara:tool-call:${conversationId}:${runId}:${callId}`);
+
 /** 同一调用最多连续请求用户输入的次数。 */
 const MAX_INPUT_ROUNDS = 3;
 /** 输入请求 state 的上限（JSON 序列化后的字节数）。 */
@@ -3129,6 +3136,7 @@ export class ToolPipeline {
       agentId: ctx.agentId,
       conversationId: ctx.conversationId,
       callId,
+      idempotencyKey: toolIdempotencyKey(ctx.conversationId, ctx.runId, callId),
       ...(resume !== undefined && { resume }),
       // who and where (memory plugin spec §6.2): `accountId` stays the trigger account
       source: ctx.source,

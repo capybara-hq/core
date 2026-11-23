@@ -203,12 +203,42 @@ export interface InputRequired {
 
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
 
+/**
+ * What a tool handler gets with each invocation.
+ *
+ * **Side effects and idempotency.** The kernel runs a call's effect at most once: it records
+ * that the call started before invoking the handler, and when a run dies after that and before
+ * the result is recorded, the result is written as unknown (an error result the model sees:
+ * `Result unknown: the call was interrupted before a result was recorded. Verify the outcome
+ * before retrying.`) and **the handler is never called again** for that call. The model, or a
+ * person, may then decide to call the tool again: that is a new call with a new `callId`.
+ *
+ * One logical call may still invoke the handler more than once: each `InputRequired` round
+ * resumes it with `resume`. `callId` and `idempotencyKey` stay the same across those
+ * invocations. A tool with an external side effect passes `idempotencyKey` downstream (for
+ * example as an `Idempotency-Key` header, or stored with the record it creates) so the effect
+ * applies once per logical call and an unknown outcome can be checked against the external
+ * system before retrying.
+ */
 export interface ToolCallContext {
   orgId: string;
   accountId: string;
   agentId: string;
   conversationId: string;
+  /**
+   * The model's id for this call. Stable across every invocation of one logical call (the
+   * `InputRequired` rounds), but unique only within its run: two runs of one conversation may
+   * reuse an id, so `conversationId` + `callId` is not a key. Use `idempotencyKey`.
+   */
   callId: string;
+  /**
+   * The key of this logical call for idempotent side effects: 64 lowercase hex characters derived
+   * from the conversation, the run and `callId`. The same for every invocation of the call
+   * (each `InputRequired` round), different for every other call, including a later call the
+   * model makes to retry it. Optional in the type so older extensions compile; the kernel always
+   * passes it.
+   */
+  idempotencyKey?: string;
   signal: AbortSignal;
   /** null = the user cancelled or it timed out. */
   resume?: { state: unknown; answer: FormAnswer | null };

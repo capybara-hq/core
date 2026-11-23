@@ -2,6 +2,7 @@ import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sd
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
+import { itemRemovedError } from "../catalog/ownership.js";
 import { oweDeployedExtensionSync } from "../catalog/scope-jobs.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -228,10 +229,7 @@ export class ExtensionAdminOps {
         .executeTakeFirst();
       // The lock waits out a removal holding the row; the row read then is the removed one
       if (opts.liveItem && (item === undefined || item.deleted_at !== null)) {
-        throw new ApiError(
-          "catalog.item_removed",
-          `${name} was removed while its confirmation was running; nothing of it stays installed`,
-        );
+        throw itemRemovedError(name);
       }
     }
     const row = await this.lockRow(name);

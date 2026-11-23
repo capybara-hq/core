@@ -130,6 +130,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `{ exitCode: null, timedOut: false }` (with the output collected so far) and does not reject. A timeout resolves `timedOut: true, exitCode: null`.
 - **gone versus ordinary errors**: when the instance is **definitely** no longer there on the provider's side (container deleted, E2B sandbox expired), `exec` / `readFile` /
   `writeFile` / `stat` / `killAll` throw `SandboxGoneError` and `resume` returns `"gone"`. The kernel then recreates the instance on the same file system and retries once; the model sees a recreated notice (processes are gone, files are kept).
+  In a managed operation the kernel records a dispatched operation that ends in `SandboxGoneError` as an **unknown outcome** (never retried under a new identity) and still rebuilds the instance.
+  A provider that knows the instance is gone **before** the request reached the machine (#643: e.g. the machine's runtime changed) throws `DeviceRequestNotSentError` with the `SandboxGoneError` as its
+  `cause`: the operation is a definite `not_sent` failure (the model is told nothing ran and may retry), and the instance is rebuilt at once (`goneBeforeSent` in `sandbox.service.ts`; tests
+  in `managed-device-context.test.ts` and `sandbox.service.test.ts`).
   Losing the file system is a different error, `FileSystemGoneError` (above). If the instance is only temporarily unreachable (401, 5xx, network errors, a bare 404 returned by a proxy),
   throw an **ordinary error**; otherwise one network blip wipes the user's files. Use `isSandboxGoneError` to decide (duck-typed, compatible with an extension bundling its own copy of the SDK).
   Throw network errors as they come (node's `code` / `syscall`, or wrapped as `cause` / `AggregateError.errors`, as `fetch` does): `DeviceProviders`

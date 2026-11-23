@@ -48,6 +48,14 @@ const failureKindOf = (error: Error): OperationFailureKind =>
       ? "denied"
       : "unsupported";
 
+/**
+ * A provider found the instance gone before it sent the request (#643): a
+ * `DeviceRequestNotSentError` whose `cause` is a `SandboxGoneError`. Nothing ran, so the operation
+ * is a definite `not_sent` failure, and the instance is rebuilt like any gone one.
+ */
+const goneBeforeSent = (error: unknown): boolean =>
+  isDeviceRequestNotSent(error) && isSandboxGoneError((error as { cause?: unknown }).cause);
+
 /** The reservation fields a managed start's dispatch must match (its stable input). */
 const backgroundBinding = (
   args: ManagedStartArgs,
@@ -1411,17 +1419,25 @@ export class SandboxService {
         return await this.runAs(e, ctx, p, fn, signal, invocation, trusted, kernelRead);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
+        const notSentGone = goneBeforeSent(err);
         if (
-          isSandboxOperationOutcomeUnknownError(err) &&
-          isSandboxGoneError((err as { cause?: unknown }).cause)
+          notSentGone ||
+          (isSandboxOperationOutcomeUnknownError(err) &&
+            (isSandboxGoneError((err as { cause?: unknown }).cause) ||
+              goneBeforeSent((err as { cause?: unknown }).cause)))
         ) {
           // gone after a durable dispatch: the outcome stays unknown and the call is never retried
-          // under a new identity, but the gone instance is rebuilt on the kept files now, so the
-          // holder's next call runs on it and is told of the restart (its seen record still names
-          // the gone instance)
-          this.log.info("sandbox instance is gone after a dispatched operation; recreating", {
-            deviceId: env,
-          });
+          // under a new identity. Gone before the request was sent (#643): the operation is
+          // recorded as not sent, and the call answers that nothing ran. Either way the gone
+          // instance is rebuilt on the kept files now, so the holder's next call (a retry
+          // included) runs on it and is told of the restart (its seen record still names the
+          // gone instance)
+          this.log.info(
+            notSentGone
+              ? "sandbox instance is gone before an operation was sent; recreating"
+              : "sandbox instance is gone after a dispatched operation; recreating",
+            { deviceId: env },
+          );
           const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
           await this.leave(env, e);
           left = true;

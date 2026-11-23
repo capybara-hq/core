@@ -194,6 +194,8 @@ export interface RewrapResult {
   initialPasswords: number;
   /** Unexpired sealed Platform reveals (`platform_sealed_reveals`, invitation links) now sealed with it. */
   sealedReveals: number;
+  /** Unexpired sealed approval card values (`platform_sealed_inputs`) now sealed with it. */
+  sealedInputs: number;
   /** Mobile app push tokens (`push_registrations`) now sealed with it. */
   pushTokens: number;
 }
@@ -227,11 +229,14 @@ interface MasterKeyedTable {
     | "org_data_keys"
     | "account_initial_passwords"
     | "platform_sealed_reveals"
+    | "platform_sealed_inputs"
     | "push_registrations";
   /** The row key column; also names the row in errors (an id, never key material). */
-  idColumn: "org_id" | "account_id" | "id";
+  idColumn: "org_id" | "account_id" | "approval_id" | "id";
   dataColumn: "wrapped_key" | "ciphertext" | "token_ciphertext";
-  aad(id: string): string;
+  /** Columns besides the id that the AAD binds, read with each row and passed to `aad`. */
+  aadColumns?: readonly "paths"[];
+  aad(id: string, row: Readonly<Record<string, unknown>>): string;
   /**
    * The table has `expires_at`: expired rows are never read again, so they are left to their
    * cleanup job instead of being rewrapped.
@@ -259,6 +264,14 @@ const MASTER_KEYED: MasterKeyedTable[] = [
     idColumn: "id",
     dataColumn: "ciphertext",
     aad: platformSealedRevealAad,
+    hasExpiresAt: true,
+  },
+  {
+    table: "platform_sealed_inputs",
+    idColumn: "approval_id",
+    dataColumn: "ciphertext",
+    aadColumns: ["paths"],
+    aad: (id, row) => platformSealedInputAad(id, row.paths as string[]),
     hasExpiresAt: true,
   },
   {
@@ -290,8 +303,8 @@ function assertKnown(t: MasterKeyedTable, keyring: Keyring, rows: { id: string; 
 
 /**
  * Rewraps everything sealed with a master key other than the keyring's current one (org data keys,
- * unexpired initial passwords and sealed reveals, push tokens) with the current key, `batchSize` rows per
- * transaction, until none is left. Checks first that the keyring holds every master key in use and
+ * unexpired initial passwords, sealed reveals and sealed inputs, push tokens) with the current
+ * key, `batchSize` rows per transaction, until none is left. Checks first that the keyring holds every master key in use and
  * throws (naming row ids and key ids, never key material) before writing anything when it does not.
  * Idempotent: a second run finds nothing; concurrent runs lock the same rows and skip the ones
  * already done.
@@ -319,27 +332,29 @@ export async function rewrapToCurrentMasterKey(
     for (;;) {
       const done = await handles.txHost.run(async () => {
         const trx = db();
-        const rows: { id: string; mk: string; data: Uint8Array }[] = await staleRows(
-          trx,
-          t,
-          keyring,
-        )
-          .select([`${t.idColumn} as id`, "master_key_id as mk", `${t.dataColumn} as data`])
-          .orderBy(t.idColumn)
-          .limit(batchSize)
-          .forUpdate()
-          .execute();
+        const rows: ({ id: string; mk: string; data: Uint8Array } & Record<string, unknown>)[] =
+          await staleRows(trx, t, keyring)
+            .select([
+              `${t.idColumn} as id`,
+              "master_key_id as mk",
+              `${t.dataColumn} as data`,
+              ...(t.aadColumns ?? []),
+            ])
+            .orderBy(t.idColumn)
+            .limit(batchSize)
+            .forUpdate()
+            .execute();
         // a row written meanwhile by a replica that runs an older config
         assertKnown(t, keyring, rows);
         for (const r of rows) {
           let plain: Buffer;
           try {
-            plain = keyring.unwrap(r.mk, Buffer.from(r.data), t.aad(r.id));
+            plain = keyring.unwrap(r.mk, Buffer.from(r.data), t.aad(r.id, r));
           } catch (e) {
             const why = e instanceof Error ? e.message : String(e);
             throw new Error(`secrets: cannot unwrap ${t.table}.${t.idColumn}=${r.id}: ${why}`);
           }
-          const w = keyring.wrap(plain, t.aad(r.id));
+          const w = keyring.wrap(plain, t.aad(r.id, r));
           plain.fill(0);
           await trx
             .withSchema("capybara")
@@ -359,6 +374,7 @@ export async function rewrapToCurrentMasterKey(
     dataKeys: counts.get("org_data_keys") ?? 0,
     initialPasswords: counts.get("account_initial_passwords") ?? 0,
     sealedReveals: counts.get("platform_sealed_reveals") ?? 0,
+    sealedInputs: counts.get("platform_sealed_inputs") ?? 0,
     pushTokens: counts.get("push_registrations") ?? 0,
   };
 }

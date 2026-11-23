@@ -4555,6 +4555,7 @@ export interface ToolCallContext {
     callId: string;
     config?: unknown;
     conversationId: string;
+    idempotencyKey?: string;
     orgId: string;
     ownerAccountId?: string;
     resume?: {

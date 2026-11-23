@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
+  SandboxGoneError,
   type SandboxRoots,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -1229,5 +1230,92 @@ describe("cloud installed evidence in the real lifecycle", () => {
       (e: unknown) => e,
     );
     expect(isDeviceRequestNotSent(replayed)).toBe(true);
+  });
+
+  it("an instance gone before the request was sent is not_sent, rebuilt, and a retry runs (#643)", async () => {
+    register("v1");
+    const base = k.app.get(DeviceProviders).forDevice(CLOUD);
+    if (!base) throw new Error("expected the cloud provider");
+    const f = await seedCloud();
+    await call(f);
+    const instance = () =>
+      f.db
+        .selectFrom("device_instances")
+        .select(["handle", "created_at"])
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirstOrThrow();
+    const before = await instance();
+    // the provider finds the instance gone before contacting the machine, once
+    let refusals = 0;
+    k.app.get(DeviceProviders).register({
+      ...base,
+      impl: {
+        ...base.impl,
+        async operation(h, scope, signal) {
+          const real = await base.impl.operation?.(h, scope, signal);
+          if (!real) throw new Error("expected the cloud provider's operations");
+          return {
+            ...real,
+            async stat(...args: Parameters<typeof real.stat>) {
+              if (refusals++ === 0)
+                throw new DeviceRequestNotSentError("the machine's runtime changed; not sent", {
+                  cause: new SandboxGoneError("the instance is gone"),
+                });
+              return real.stat(...args);
+            },
+          };
+        },
+      },
+    });
+    const statCall = async () => {
+      // the canonical started call the operation's admission reads
+      const callCtx = ctxOf(f);
+      const conv = await f.db
+        .selectFrom("conversations")
+        .select("last_seq")
+        .where("id", "=", f.conversationId)
+        .executeTakeFirstOrThrow();
+      const seq = Number(conv.last_seq) + 1;
+      await f.db
+        .insertInto("conversation_events")
+        .values({
+          conversation_id: f.conversationId,
+          run_id: f.runId,
+          seq,
+          type: "tool_call_started",
+          payload: JSON.stringify({ callId: callCtx.callId, toolKey: "Read" }),
+        })
+        .execute();
+      await f.db
+        .updateTable("conversations")
+        .set({ last_seq: seq })
+        .where("id", "=", f.conversationId)
+        .execute();
+      return k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          inSandboxOperations(depsOf(), callCtx, async (s) =>
+            s.p.stat(s.h, `${s.roots.workspace}/probe`, s.signal),
+          ),
+      );
+    };
+    const err = await failure(statCall());
+    // nothing ran: the not-sent text (safe to retry), never the unknown outcome
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT);
+    const rows = await f.db
+      .selectFrom("sandbox_operation_intents")
+      .select(["state", "outcome_unknown"])
+      .where("device_id", "=", f.deviceId)
+      .where("method", "=", "stat")
+      .execute();
+    expect(rows).toEqual([{ state: "completed", outcome_unknown: false }]);
+    // the gone instance was rebuilt on the kept files at once
+    const after = await instance();
+    expect(after.created_at.getTime()).not.toBe(before.created_at.getTime());
+    // and the retry (a new call) runs on it
+    await statCall();
+    expect(refusals).toBe(2);
   });
 });

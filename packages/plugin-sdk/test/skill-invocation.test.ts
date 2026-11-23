@@ -1,5 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: Claude Code variables such as ${CLAUDE_SKILL_DIR} are plain text here
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   escapeSkillInvocationTags,
   hasShellInjection,
@@ -159,12 +159,43 @@ describe("renderSkillBody", () => {
     // 60 KB of "$0 " with a 10 000-character argument would render 200 MB.
     const body = "$0 ".repeat(20_000);
     const arg = "a".repeat(10_000);
-    const t0 = performance.now();
-    expect(() => renderSkillBody(body, inv, arg, "m", D)).toThrow(RangeError);
-    expect(() => renderSkillBody(body, inv, arg, "m", D)).toThrow(
-      /rendered skill must be at most 200000 characters/,
-    );
-    expect(performance.now() - t0).toBeLessThan(200);
+    const max = SKILL_INVOCATION_LIMITS.renderedMaxChars;
+    // The early stop is proven by the work done, not a clock (#630): count the substitutions
+    // and the characters they produce before the refusal.
+    let substitutions = 0;
+    let produced = 0;
+    const original = String.prototype.replace as (
+      this: string,
+      pattern: string | RegExp,
+      replacement: string | ((...a: never[]) => string),
+    ) => string;
+    const spy = vi.spyOn(String.prototype, "replace").mockImplementation(function (
+      this: string,
+      pattern: string | RegExp,
+      replacement: string | ((...a: never[]) => string),
+    ) {
+      if (typeof replacement !== "function") {
+        return original.call(this, pattern, replacement);
+      }
+      return original.call(this, pattern, (...a: never[]) => {
+        substitutions++;
+        const r = replacement(...a);
+        produced += r.length;
+        return r;
+      });
+    } as typeof String.prototype.replace);
+    try {
+      expect(() => renderSkillBody(body, inv, arg, "m", D)).toThrow(
+        /rendered skill must be at most 200000 characters/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    // Refused at the first substitution past the limit: the 20th of the 20 000 placeholders
+    // (20 arguments and the 19 spaces between them are 200 019 characters), so no more than one
+    // argument past the limit was ever produced.
+    expect(substitutions).toBe(20);
+    expect(produced).toBeLessThanOrEqual(max + arg.length);
     const all = "$ARGUMENTS".repeat(25);
     expect(() => renderSkillBody(all, inv, arg, "m", D)).toThrow(RangeError);
   });
