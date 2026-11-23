@@ -340,13 +340,13 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     // enabling is not routed to the wizard (no extension step); 配置 is the lone menu item, drawn directly
     expect(actionsOf(off, "cfg-off")).toEqual([p.action.enable, p.action.configure]);
     expect(within(off).getByRole("link", { name: p.action.configure }).getAttribute("href")).toBe(
-      "/extensions#plugin-cfg-off",
+      "/extensions#plugin=cfg-off",
     );
     expect(
       within(rowOf(list, "cfg-on"))
         .getByRole("link", { name: p.action.configure })
         .getAttribute("href"),
-    ).toBe("/extensions#plugin-cfg-on");
+    ).toBe("/extensions#plugin=cfg-on");
   });
 
   it("启用 an optional plugin without input sends the switch { enabled: true }", async () => {
@@ -2123,7 +2123,7 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     });
     await renderInstall();
     await userEvent.setup().click(await screen.findByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/extensions#plugin-crm"));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/extensions#plugin=crm"));
   });
 });
 

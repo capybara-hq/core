@@ -40,6 +40,7 @@ import {
 } from "../../../lib/extension-capabilities";
 import { capabilityGroups, type OrgExtension } from "../../../lib/extensions";
 import { roleAtLeast } from "../../../lib/members";
+import { useHashItem } from "../../../lib/hash-item";
 import { orgExtensionsQuery } from "../../../lib/query/channels";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
@@ -181,7 +182,11 @@ function ExtensionList({
   const tc = useTranslations("extensions.columns");
   const locale = useLocale();
   const capabilityLabel = useCapabilityLabel();
-  const [open, setOpen] = useState<string | null>(null);
+  // The open Sheet is kept in the URL hash (`#plugin=<name>`): other pages deep-link to it
+  const hashPlugin = useHashItem("plugin");
+  const open = hashPlugin.id;
+  const setOpen = (plugin: string | null) =>
+    plugin === null ? hashPlugin.close() : hashPlugin.open(plugin);
   const actions = useOrgExtensionActions({ orgId, canEdit, extensions, onOpen: setOpen });
   const { rows, busy } = actions;
   const sorted = sortExtensions(

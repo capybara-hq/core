@@ -327,7 +327,7 @@ export function usePluginActions({
           {
             id: "configure",
             label: t("action.configure"),
-            href: `/extensions#plugin-${encodeURIComponent(own.plugin)}`,
+            href: `/extensions#plugin=${encodeURIComponent(own.plugin)}`,
           },
         ]
       : [];
@@ -392,7 +392,7 @@ export function usePluginActions({
             {
               id: "configure" as const,
               label: t("action.configure"),
-              href: `/extensions#plugin-${encodeURIComponent(own.plugin)}`,
+              href: `/extensions#plugin=${encodeURIComponent(own.plugin)}`,
             },
           ]
         : []),

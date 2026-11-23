@@ -391,7 +391,7 @@ function Wizard({
       // An extension that still needs config goes on to its Sheet (the wizard collects none)
       router.push(
         own?.needsConfig === true
-          ? `/extensions#plugin-${encodeURIComponent(own.plugin)}`
+          ? `/extensions#plugin=${encodeURIComponent(own.plugin)}`
           : `/plugins/${encodeURIComponent(item.id)}`,
       );
     } catch (e) {

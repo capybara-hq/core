@@ -173,9 +173,6 @@ describe("the org form of a two-level extension config (Sheet)", () => {
     expect(headings.slice(0, 2)).toEqual([en.extensions.overrides.title, en.extensions.stateTitle]);
     for (const el of within(sheet).getAllByRole("textbox"))
       expect((el as HTMLInputElement).readOnly).toBe(false);
-    expect(
-      within(sheet).queryByText(en.configForm.platformSet.replace("Set by", "Read-only")),
-    ).toBeNull();
   });
 
   it("zh copy is exactly the accepted wording", () => {

@@ -570,6 +570,17 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
     expect(within(sheet).queryByText(en.extensions.configFirstHint)).toBeNull();
   });
 
+  it("#plugin=<name> opens that extension's Sheet, and closing it clears the hash", async () => {
+    api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE] }) });
+    window.history.replaceState(null, "", "/#plugin=fake-im");
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    const sheet = await screen.findByRole("dialog", { name: "fake-im" });
+    expect(within(sheet).getByText(en.extensions.stateTitle)).toBeTruthy();
+    await userEvent.setup().keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "fake-im" })).toBeNull());
+    expect(window.location.hash).toBe("");
+  });
+
   it("the org settings nav has no 扩展 (it is the workspace page)", async () => {
     api({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
