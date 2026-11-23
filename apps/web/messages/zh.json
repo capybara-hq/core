@@ -502,7 +502,7 @@
       "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
       "invalid": "市场内容格式不合法，已保留上一份条目。",
       "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝安装。包可能被篡改，请联系市场维护者。",
-      "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
+      "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 net.allowPrivateHosts 中加入它。",
       "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
       "entry_deprecated": "这个版本已被市场标为废弃，不能安装，请选择其他版本。",
@@ -1730,11 +1730,10 @@
     "download": "下载",
     "previewTruncated": "只显示开头部分，完整内容请下载。",
     "previewFailed": "预览加载失败。",
-    "deviceLine": "设备：{name} · {state}",
+    "deviceLine": "{name} · {state}",
     "deviceNone": "未绑定设备",
     "deviceDeleted": "设备已删除",
-    "deviceFailed": "设备状态读取失败",
-    "lastRun": "上次运行 · {parts}"
+    "deviceFailed": "设备状态读取失败"
   },
   "pluginPage": {
     "pathLabel": "扩展页",
@@ -2278,6 +2277,8 @@
     "form": {
       "nameLabel": "名称",
       "nameRequired": "请填写名称。",
+      "descriptionLabel": "说明",
+      "descriptionHint": "显示在连接器卡片和详情页上。",
       "slugLabel": "Slug",
       "slugHelp": "小写字母、数字与下划线，最长 24 位；留空则由名称推导。slug 越短，工具名可用的长度越长；工具键最长 64 个字符。",
       "urlLabel": "端点 URL",
@@ -2374,6 +2375,7 @@
     },
     "settings": {
       "title": "常规",
+      "descriptionFallback": "留空时显示其模板的说明，即框中的灰色文字。",
       "activeLabel": "启用连接器",
       "save": "保存",
       "saved": "已保存。",
@@ -5741,7 +5743,7 @@
       "toolsNone": "无",
       "loadFailed": "无法打开该子智能体。"
     },
-    "contextTotal": "含子智能体的 token 总数 {n}",
+    "contextTotal": "{n} token（含子智能体）",
     "background": "后台任务",
     "startingGrant": "运行中的工作保留开始时的权限，权限更改只对新的操作生效；撤销设备或组织的访问仍可能使其停止。"
   },

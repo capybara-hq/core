@@ -1,5 +1,14 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- b22a19d: A connector template's `description` may be `{ zh, en }` as well as a string
+  (`ConnectorTemplateFile.description: string | LocalizedName`); the 1024-character limit applies to
+  each text. A plain string stays valid and is shown in both languages. The connector template JSON
+  Schema follows.
+
 ## 0.1.0-rc.64
 
 ### Patch Changes
