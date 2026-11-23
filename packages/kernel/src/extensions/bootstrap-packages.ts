@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { BootstrapExtraMarketplace, Logger } from "@capybara-hq/plugin-sdk";
+import {
+  type BootstrapExtraMarketplace,
+  type Logger,
+  PLUGIN_MANIFEST_FILE,
+  type PluginManifest,
+  parsePluginManifest,
+} from "@capybara-hq/plugin-sdk";
+import { isClaudePluginTree, translateClaudePlugin } from "../catalog/claude/translate.js";
 import { GitSourceError, normalGitPath, readGitTreeAndOids } from "../catalog/git-source.js";
 import { marketplaceNetPolicy, marketplaceUrlProblem } from "../catalog/marketplace-fetch.js";
 import { marketplaceForm } from "../catalog/marketplaces.service.js";
+import { PluginPackageError, withoutRemovedManifestFields } from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import {
@@ -271,4 +279,82 @@ async function scanOfflineDir(
     if (!out.has(integrity)) out.set(integrity, bytes);
   }
   return out;
+}
+
+/** What a git entry's tree is, as the bootstrap import reads it ({@link readBootstrapGitPlugin}). */
+export interface BootstrapGitPlugin {
+  /** `capybara`: `.capybara-plugin/plugin.json`; `claude`: a Claude Code plugin; `skills`: skills only. */
+  kind: "capybara" | "claude" | "skills";
+  name: string;
+  version: string;
+  /** The plugin has an extension (only a `capybara` tree can). */
+  extension: boolean;
+}
+
+/**
+ * Name, version and kind of a git entry's tree, as the bootstrap import identifies it (spec
+ * 2026-11-20-bootstrap-extra-manifest §9, "As built" R20): a tree with `.capybara-plugin/plugin.json`
+ * by that file (the import's manifest parser); a Claude Code plugin (`.claude-plugin/plugin.json`,
+ * or its other markers) by the import's translation with the entry as fallback, so its version is
+ * the Claude manifest's, else the entry's; a skills-only tree named and versioned by the entry. The
+ * kernel's bootstrap step and `capybara-plugin bootstrap --write` both call it, so the version a pin
+ * records is the one the import checks. Only the identity is read here: the import still checks the
+ * whole tree. An unreadable identity throws `PluginPackageError` (`catalog.invalid_manifest`).
+ */
+export function readBootstrapGitPlugin(
+  files: ReadonlyMap<string, Uint8Array>,
+  entry: { name: string; version: string },
+  o: { publisher?: string; allowInsecureLoopback?: boolean } = {},
+): BootstrapGitPlugin {
+  const own = files.get(PLUGIN_MANIFEST_FILE);
+  if (own !== undefined) {
+    const m = manifestOf(own, PLUGIN_MANIFEST_FILE);
+    return {
+      kind: "capybara",
+      name: m.name,
+      version: m.version,
+      extension: m.extension !== undefined,
+    };
+  }
+  if (isClaudePluginTree(files)) {
+    const t = translateClaudePlugin(files, {
+      fallbackName: entry.name,
+      fallbackVersion: entry.version,
+      fallbackPublisher: o.publisher ?? entry.name,
+      entryVersion: entry.version,
+      ...(o.allowInsecureLoopback !== undefined && {
+        allowInsecureLoopback: o.allowInsecureLoopback,
+      }),
+    });
+    const m = manifestOf(t.tree.get(PLUGIN_MANIFEST_FILE), `${PLUGIN_MANIFEST_FILE} (translated)`);
+    return { kind: "claude", name: m.name, version: m.version, extension: false };
+  }
+  if (![...files.keys()].some((p) => p.startsWith("skills/"))) {
+    throw new PluginPackageError("catalog.invalid_manifest", [
+      `${PLUGIN_MANIFEST_FILE} not found, and the tree is neither a Claude Code plugin nor a skills-only plugin (no skills/ directory)`,
+    ]);
+  }
+  return { kind: "skills", name: entry.name, version: entry.version, extension: false };
+}
+
+/** A plugin manifest's bytes parsed as the import parses them. */
+function manifestOf(bytes: Uint8Array | undefined, where: string): PluginManifest {
+  let text: string | undefined;
+  try {
+    text =
+      bytes !== undefined ? new TextDecoder("utf-8", { fatal: true }).decode(bytes) : undefined;
+  } catch {
+    text = undefined;
+  }
+  if (text === undefined) {
+    throw new PluginPackageError("catalog.invalid_manifest", [`${where} is not valid UTF-8 text`]);
+  }
+  const parsed = parsePluginManifest(withoutRemovedManifestFields(text));
+  if ("errors" in parsed) {
+    throw new PluginPackageError(
+      "catalog.invalid_manifest",
+      parsed.errors.map((e) => `${where}: ${e}`),
+    );
+  }
+  return parsed;
 }

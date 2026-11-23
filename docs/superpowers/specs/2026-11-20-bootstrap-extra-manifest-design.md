@@ -232,7 +232,8 @@ super admin's later choice is never reset. It never fails the start.
 - `--network`: `npm` entries match the registry tarball;
 - `--write` sets each `git` entry's `commit` to `HEAD`, its `version` from the plugin's
   `plugin.json` and its `integrity` from the pack, and writes the packs into `--out <dir>` for the
-  offline directory.
+  offline directory. (As built R20: a Claude Code or skills-only tree is pinned too, its version
+  read as the import reads it.)
 
 ### 10. Errors
 
@@ -383,6 +384,16 @@ Rulings taken while implementing; where they differ from the text above, they wi
   refuses a process without `bootstrap.extraManifest`, in the start, in `capybara bootstrap` and
   under the lock. A removal (an empty extra file) that has written but not completed leaves an empty
   list, so it is no trace, as R17 intends.
+- **R20, `--write` pins every tree kind the import takes (#535; as built 2026-11-23):** the
+  kernel exports `readBootstrapGitPlugin(files, entry)`, which identifies a git entry's tree the way
+  the bootstrap import does: `.capybara-plugin/plugin.json` (the import's manifest parser), else a
+  Claude Code plugin through the import's translation (`.claude-plugin/plugin.json`'s version, else
+  the entry's own), else a skills-only tree named and versioned by the entry. `BootstrapService`
+  and `capybara-plugin bootstrap --write` both call it, so `--write` sets `version` to the Claude
+  manifest's version, and leaves the entry's version for a Claude Code plugin without one and for a
+  skills-only tree (the import uses the entry's version there). A tree that is another plugin than
+  the entry names is a `bootstrap-extra-path` finding. It reads the identity only; the import still
+  checks the whole tree.
 - **Repository root:** a git entry's `path` may be `.` / `./` (a single-plugin repository).
 - **Several repositories:** `capybara-plugin bootstrap` reads every git entry from `--root`; a
   manifest whose git entries come from more than one marketplace is checked and pinned once per

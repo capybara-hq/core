@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { packPackageTgz } from "@capybara-hq/kernel";
+import { packPackageTgz, readBootstrapGitPlugin } from "@capybara-hq/kernel";
 import {
   type BootstrapExtraManifest,
   type BootstrapGitEntry,
@@ -87,8 +87,10 @@ const message = (e: unknown) => {
 /**
  * Checks (or, with `write`, pins) the extra bootstrap manifest: it parses; each `git` entry's tree
  * at `commit` packs with the kernel's `packPackageTgz` to `integrity`; with `network`, `npm`
- * entries match the registry. `write` sets each `git` entry's `commit` to HEAD, its `version` from
- * `plugin.json` and its `integrity`, and writes the packs into `out`. Every `git` entry is read
+ * entries match the registry. `write` sets each `git` entry's `commit` to HEAD, its `version` as
+ * the kernel's import reads the tree (`readBootstrapGitPlugin`: `.capybara-plugin/plugin.json`,
+ * else `.claude-plugin/plugin.json`, else the entry's own for a Claude Code plugin without one or
+ * a skills-only tree) and its `integrity`, and writes the packs into `out`. Every `git` entry is read
  * from `root`, so a manifest whose entries come from several marketplaces (repositories) is
  * checked once per repository with `marketplace`.
  */
@@ -151,13 +153,16 @@ export async function syncBootstrapExtra(
       }
       continue;
     }
+    // The kernel's own reading of the tree (capybara, Claude Code or skills-only plugin), so the
+    // version pinned is the one its import checks: a Claude Code plugin's manifest version, else
+    // (and for a skills-only tree) the entry's own
     let version: string;
     try {
-      const raw = files.get(".capybara-plugin/plugin.json");
-      if (raw === undefined) throw new Error("no .capybara-plugin/plugin.json");
-      const v = (JSON.parse(Buffer.from(raw).toString("utf8")) as { version?: unknown }).version;
-      if (typeof v !== "string") throw new Error("plugin.json has no version");
-      version = v;
+      const plugin = readBootstrapGitPlugin(files, e);
+      if (plugin.name !== e.name) {
+        throw new Error(`the tree is plugin ${plugin.name}, not ${e.name}`);
+      }
+      version = plugin.version;
     } catch (err) {
       add("bootstrap-extra-path", `${e.name}: ${e.path}: ${message(err)}`);
       continue;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { PLUGIN_MANIFEST_FILE, SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
@@ -11,11 +11,7 @@ import {
   type PluginImport,
   type PluginImportSource,
 } from "../catalog/plugin-import.js";
-import {
-  PluginPackageError,
-  readPluginFiles,
-  readPluginPackage,
-} from "../catalog/plugin-package.js";
+import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -43,6 +39,7 @@ import { bootstrapManifestSha256 } from "./bootstrap-manifest.js";
 import {
   bootstrapGitMarketplace,
   integrityOf,
+  readBootstrapGitPlugin,
   resolveBootstrapPackages,
 } from "./bootstrap-packages.js";
 import { ExtensionInstalls } from "./installs.js";
@@ -554,7 +551,7 @@ export class BootstrapService {
     if (e.source === "git") {
       const m = bootstrapGitMarketplace(at.manifest, e, this.config());
       git = { files: await this.unpackGit(e, bytes), publisher: repoOwner(m.url) };
-      plugin = this.gitPlugin(e, git.files);
+      plugin = this.gitPlugin(e, git);
       // The source an admin import of the managed marketplace's `path` entry records (same
       // arguments), so its later versions add to this item
       const where = marketplaceGitSource(
@@ -754,27 +751,20 @@ export class BootstrapService {
   }
 
   /**
-   * Name, version and extension of a git entry's tree: from its `plugin.json`; a tree without one
-   * (a Claude Code or skills-only plugin, never an extension) is named by the entry, which its
-   * import's review is checked against ({@link prepareGitEntry}).
+   * Name, version and extension of a git entry's tree ({@link readBootstrapGitPlugin}, which
+   * `capybara-plugin bootstrap --write` pins with): its `plugin.json`, a Claude Code plugin's
+   * manifest or the entry; its import's review is checked against the entry again
+   * ({@link prepareGitEntry}).
    */
   private gitPlugin(
     e: BootstrapGitRunEntry,
-    files: Map<string, Uint8Array>,
+    git: GitEntryImport,
   ): { name: string; version: string; extension: boolean } {
-    if (!files.has(PLUGIN_MANIFEST_FILE)) {
-      return { name: e.name, version: e.version, extension: false };
-    }
     try {
-      const { manifest } = readPluginFiles(files, {
-        hostSdkVersion: SDK_VERSION,
-        requirePackageJson: false,
+      return readBootstrapGitPlugin(git.files, e, {
+        publisher: git.publisher,
+        allowInsecureLoopback: this.config().marketplaces.allowInsecureLoopback,
       });
-      return {
-        name: manifest.name,
-        version: manifest.version,
-        extension: manifest.extension !== undefined,
-      };
     } catch (err) {
       throw err instanceof PluginPackageError ? catalogPackageError(err) : err;
     }

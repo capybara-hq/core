@@ -125,7 +125,9 @@ export {
   readBootstrapManifest,
 } from "./extensions/bootstrap-manifest.js";
 export {
+  type BootstrapGitPlugin,
   type BootstrapResolveOptions,
+  readBootstrapGitPlugin,
   resolveBootstrapPackages,
 } from "./extensions/bootstrap-packages.js";
 export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
