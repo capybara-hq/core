@@ -691,8 +691,13 @@ suite in `@capybara-hq/testing` checks it):
   (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
   the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
-  path to a denied one are unreadable and it cannot be listed, a bind mount of a denied directory stays readable, and
-  more than 4096 carved roots refuses machine reach. `policy.json` is format 4; an older file is refused at start
+  path to a denied one are unreadable and it cannot be listed, and more than 4096 carved roots refuses machine reach.
+  Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system
+  mounted inside it and elsewhere, an overlay layer, a loop image) are denied too, from `/proc/self/mountinfo` at each
+  ceiling read (`exec/linux-mountinfo.ts`, `mountReexposedDenies`, every reach); mounts of unknown content (an
+  unmounted automount point, an unresolvable overlay layer, an unreadable loop backing file) are denied wholesale; a
+  table it cannot read or decide (`mountReexposureProblem`) refuses machine reach with `machineReachMountRefusal`,
+  never a guess (paths reach then trusts the listed paths). `policy.json` is format 4; an older file is refused at start
   and rewritten from the closed policy by `ceiling set` (`PolicyVersionError`, `replacementPolicy`).
 - **Packages that ship `.idea` / `.vscode` do not install in the sandbox.** The editor denies hold
   below `node_modules` too (a directory moved or linked out of it would carry the configuration

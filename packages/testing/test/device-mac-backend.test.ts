@@ -195,6 +195,8 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
       unreadableConnections: [],
+      mountReexposedDenies: [],
+      mountReexposureProblem: null,
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };

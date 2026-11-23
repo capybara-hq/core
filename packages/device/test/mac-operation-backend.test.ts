@@ -52,6 +52,8 @@ async function fixture() {
     secretAndStateDenies: [],
     otherConnectionDenies: [],
     unreadableConnections: [],
+    mountReexposedDenies: [],
+    mountReexposureProblem: null,
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
@@ -863,6 +865,8 @@ it.runIf(process.platform === "darwin")(
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
       unreadableConnections: [],
+      mountReexposedDenies: [],
+      mountReexposureProblem: null,
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
     };
@@ -995,6 +999,8 @@ it.runIf(process.platform === "darwin")(
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
       unreadableConnections: [],
+      mountReexposedDenies: [],
+      mountReexposureProblem: null,
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
@@ -1201,6 +1207,8 @@ it.runIf(process.platform === "darwin")(
       secretAndStateDenies: [stateDir],
       otherConnectionDenies: [],
       unreadableConnections: [],
+      mountReexposedDenies: [],
+      mountReexposureProblem: null,
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
