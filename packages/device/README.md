@@ -179,19 +179,14 @@ connection's sandboxed work is refused with a message naming it and
 `capybara-device logout -c <id>`, because the deny list could not be built; escalated calls and the
 owner report keep working.
 
-Linux residuals of the deny list, stated plainly. Landlock only grants, so a denied path is
-carved out of the whole machine by granting what lies beside it: in each directory on the path to
-a denied one, the subdirectories off every denied path are granted whole and the regular files
-directly inside it are granted one by one as exact file reads (for example `~/.bashrc` and
-`~/.gitconfig` when `~/.ssh` is denied, and `~/.cargo/config.toml` beside a denied
-`~/.cargo/credentials`). A denied file is never among them, nor a symbolic link, another file
-type, a file you cannot read or one with a second name (a hard link). Such a directory still
-cannot be listed (`ls ~` fails under `machine` reach), and a file created in it after the
-operation started, or renamed, deleted or replaced by renaming another file over it before the
-command starts, is not readable by that operation (the command still runs). Secrets a shell start
-file exports (`export TOKEN=...` in `~/.bashrc`) are not covered: start files stay readable.
-Neither are copies of a denied file under another name, such as an editor backup
-(`~/.my.cnf.bak`, `~/.netrc~`): only the listed names are denied. A sandboxed Maven or Gradle build never
+Linux residuals of the deny list, stated plainly. Landlock grants directories, so a denied path is
+carved out of the whole machine by granting its siblings: files directly inside a directory on the
+path to a denied one are unreadable, and such a directory cannot be listed (for example `~/.bashrc`
+and `~/.gitconfig` when `~/.ssh` is denied, unless a tool home grants them; likewise files
+directly in `~/.cargo`, `~/.claude`, `~/.codex`, `~/.terraform.d`, `~/.local`, `~/.local/share`,
+`~/mise`, `~/.m2`, `~/.gradle`, `~/.gradle/develocity` and `~/.gradle/enterprise`, so cargo cannot
+read `~/.cargo/config.toml` and Maven cannot read `~/.m2/toolchains.xml` for a project under the
+home: use the `paths` reach or an escalated call there). A sandboxed Maven or Gradle build never
 reads the denied settings files. On Linux Java takes the home from the password database and
 Landlock does not hide `stat`, so the build sees the files exist but cannot open them and may fail
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look
@@ -221,11 +216,9 @@ so a mount made in between is readable until then. Not recognized: network file 
 or FUSE file systems (bindfs) showing the same files under another device, a disk or image mounted
 twice under different devices, a file system no longer in the mount table, and snapshots (copies of
 a directory, not mounts of it). More than
-4096 carved directories refuses machine reach for that operation: use the `paths` reach instead;
-files fill what the directories leave of the 4096 and the rest stay unreadable. Every granted root
-is held open by the operation agent until the sandbox is set up; the agent raises its soft
-open-file limit to fit them, drops files past its hard limit, and only directories past it refuse
-an operation, with a message naming the limit and the `paths` reach. macOS
+4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. Every
+granted root is held open by the operation agent, so its open-file limit (often a soft limit of
+1024) can refuse an operation before that cap, also with many listed project paths. macOS
 Seatbelt denies the paths directly and has none of these.
 
 Commands get a minimal environment (`PATH`, `LANG`,

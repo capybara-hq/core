@@ -301,22 +301,20 @@ export function linuxOperationWorker(
             ...tempRoots,
           ]),
         ];
-        // Landlock only grants: an exec reads the real directories and regular files beside every
-        // denied path (never "/" itself, which also holds the device's files lock); native work
-        // keeps the grant's roots and the agent checks each resolved path against `denied`
-        const carved =
-          !request.grant.full && request.kind === "exec"
-            ? carveReadRoots(
-                readRoots,
-                withCanonicalForms(request.grant.deniedReadRoots),
-                ...(options.carveFs ? [options.carveFs] : []),
-              )
-            : undefined;
         const roots = request.grant.full
           ? {}
           : {
-              readRoots: carved ? carved.roots : readRoots,
-              ...(carved?.files.length ? { readFileRoots: carved.files } : {}),
+              // Landlock only grants: an exec reads the real directories beside every denied
+              // path (never "/" itself, which also holds the device's files lock); native work
+              // keeps the grant's roots and the agent checks each resolved path against `denied`
+              readRoots:
+                request.kind === "exec"
+                  ? carveReadRoots(
+                      readRoots,
+                      withCanonicalForms(request.grant.deniedReadRoots),
+                      ...(options.carveFs ? [options.carveFs] : []),
+                    )
+                  : readRoots,
               writeRoots: [...new Set([...request.grant.writeRoots, ...extra, ...tempRoots])],
               ...(writeDenies.length ? { writeDenies } : {}),
             };

@@ -44,17 +44,6 @@ def pin(paths):
     return pinned
 
 
-def pin_files(paths):
-    """Pins file roots O_PATH | O_NOFOLLOW without checking their type: the launcher's own
-    refusals (a link, a directory, a FIFO) are what the evidence exercises."""
-    pinned = []
-    for path in paths:
-        fd = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
-        info = os.fstat(fd)
-        pinned.append({"path": path, "fd": fd, "dev": info.st_dev, "ino": info.st_ino})
-    return pinned
-
-
 def network(scope, endpoints):
     kind = scope["kind"]
     if kind == "environment":
@@ -142,7 +131,6 @@ def launch(request, endpoints):
     # the stand-in's read rule: the project root (the scope names no read roots)
     project = [files["projectRoot"]] if files["projectRoot"] is not None else []
     read = pin([path for path in project if path not in files["writeRoots"]])
-    read_files = pin_files(request.get("readFileRoots", []))
     attack = request.get("attack")
     if attack and attack["kind"] == "swap-after-pin":
         # Evidence only: the root path changes between pinning and launch.
@@ -150,14 +138,6 @@ def launch(request, endpoints):
         os.symlink(attack["target"], attack["root"])
     elif attack and attack["kind"] == "wrong-identity":
         write[0] = dict(write[0], ino=write[0]["ino"] + 1)
-    elif attack and attack["kind"] == "file-wrong-identity":
-        read_files[0] = dict(read_files[0], ino=read_files[0]["ino"] + 1)
-    elif attack and attack["kind"] == "swap-file-after-pin":
-        # Evidence only: the file root's name now holds another file (a new inode).
-        os.rename(attack["root"], attack["moved"])
-        os.link(attack["target"], attack["root"])
-    elif attack and attack["kind"] == "unlink-file-after-pin":
-        os.unlink(attack["root"])
     leaked = []
     if attack and attack["kind"] == "leak-fd":
         # Evidence only: a careless consumer leaves a high inheritable descriptor open.
@@ -167,10 +147,7 @@ def launch(request, endpoints):
         leaked.append(1500)
     report_r, report_w = os.pipe()
     env.setdefault("HOME", files["writeRoots"][0])
-    roots = {"read": read, "write": write}
-    if read_files:
-        roots["readFiles"] = read_files
-    body = {"mode": request["mode"], "roots": roots,
+    body = {"mode": request["mode"], "roots": {"read": read, "write": write},
             "candidateArch": OPTIONS.get("candidateArch", False),
             "network": network(grant["network"], endpoints), "reportFd": report_w,
             "env": env, "cwd": request.get("cwd")}
@@ -182,14 +159,13 @@ def launch(request, endpoints):
     try:
         process = subprocess.Popen([sys.executable, "-I", LAUNCHER], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   pass_fds=[report_w] + leaked
-                                   + [e["fd"] for e in read + write + read_files],
+                                   pass_fds=[report_w] + leaked + [e["fd"] for e in read + write],
                                    env=ENV)
     finally:
         os.close(report_w)
         for fd in leaked:
             os.close(fd)
-        for entry in read + write + read_files:
+        for entry in read + write:
             os.close(entry["fd"])
     process.stdin.write(json.dumps(body).encode())
     process.stdin.close()
