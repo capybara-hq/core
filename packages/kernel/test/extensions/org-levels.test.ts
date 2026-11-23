@@ -245,7 +245,7 @@ describe("a platformOnly mark below a top-level key fails closed (hand-made pack
       conn: "platform",
       region: "override",
     });
-    type Node = { child?: Node };
+    type Node = { child?: Node | undefined };
     const tree: z.ZodType<Node> = z.lazy(() => z.object({ child: tree.optional() }));
     expect(Object.fromEntries(fieldLevels(z.object({ tree, region: z.string() })))).toEqual({
       tree: "override",
