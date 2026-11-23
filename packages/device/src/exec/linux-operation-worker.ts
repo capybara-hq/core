@@ -274,7 +274,9 @@ export function linuxOperationWorker(
           );
           if (overlap !== undefined)
             throw new SandboxScopeDeniedError(
-              `The write root ${overlap} covers or lies inside ${parent}, the device's private temporary directories, which no sandboxed command may write; choose a write root inside the workspace, the device's tmp root or a project directory`,
+              withCanonicalForms([options.privateTempBase]).some((dir) => within(dir, overlap))
+                ? `The write root ${overlap} contains this device's working directory ${options.privateTempBase}, which restricted work may not write as a whole; use a project directory that does not contain it, or Full access if the owner allows it`
+                : `The write root ${overlap} lies inside this device's private temporary directories (${parent}), which restricted work may not write; use a project directory, the workspace or the device's tmp root instead`,
             );
         }
         if (request.kind === "exec" && !request.grant.full && options.transport.kind === "host") {

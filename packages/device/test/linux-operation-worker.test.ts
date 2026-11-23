@@ -95,7 +95,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-/** This file's device: its private temporary parent lies in the device's own tmp root. */
+/** This file's device: its private temporary parent lies in the device's own directory. */
 const DEVICE = `linux-worker-${process.pid}`;
 const TMP_ROOT = realpathSync(mkdtempSync(join(tmpdir(), "cap-device-tmp-root-")));
 const tempParent = join(TMP_ROOT, privateTempParentName(DEVICE));
@@ -220,6 +220,11 @@ describe("Linux operation worker", () => {
     const stale = join(tempParent, "op-4194305-stale");
     await mkdir(stale);
     await writeFile(join(stale, "left"), "x");
+    // an entry that cannot be removed (a link in a temp's place, left alone) stops nothing else
+    const outside = await mkdtemp(join(tmpdir(), "cap-sweep-outside-"));
+    dirs.push(outside);
+    await symlink(outside, join(tempParent, "op-4194305-a-link"));
+    await symlink(outside, join(tempParent, "op-4194305-z-link"));
     // a live process's temp is kept
     const live = join(tempParent, `op-${process.ppid}-live`);
     await mkdir(live);
@@ -331,25 +336,30 @@ describe("Linux operation worker", () => {
         native: { method: "writeFile", path: join(writeRoots[0] as string, "f") },
         purpose: "operation",
       }) as unknown as MacWorkerRequest;
-    for (const writeRoots of [
+    // another name for the device's own directory: a write root reaching the parent through a
+    // symbolic link is refused like the real path
+    const alias = join(await mkdtemp(join(tmpdir(), "cap-root-alias-")), "dir");
+    dirs.push(dirname(alias));
+    await symlink(TMP_ROOT, alias);
+    for (const [writeRoots, why] of [
       // the device's own directory (a root holding the device's working directory, as machine
       // or paths reach could name), the parent itself, a directory inside it
-      [TMP_ROOT],
-      [tempParent],
-      [join(tempParent, "op-1-x")],
-    ])
+      [[TMP_ROOT], /contains this device's working directory .*Full access/],
+      [[alias], /contains this device's working directory/],
+      [[tempParent], /lies inside this device's private temporary directories/],
+      [[join(tempParent, "op-1-x")], /lies inside/],
+      [[join(alias, privateTempParentName(DEVICE))], /lies inside/],
+    ] as const)
       for (const request of [
-        execRequest(false, { grant: { ...grant(false), writeRoots } }),
-        native(writeRoots),
+        execRequest(false, { grant: { ...grant(false), writeRoots: [...writeRoots] } }),
+        native([...writeRoots]),
       ]) {
         const fake = await fakeTransport("exit");
         const handle = await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
           request,
           new AbortController().signal,
         );
-        await expect(handle.completion, `${request.kind} ${writeRoots}`).rejects.toThrow(
-          /no sandboxed command may write/,
-        );
+        await expect(handle.completion, `${request.kind} ${writeRoots}`).rejects.toThrow(why);
         expect(fake.spawned()).toBe(0);
       }
     // the device's tmp root beside the parent is an ordinary write root

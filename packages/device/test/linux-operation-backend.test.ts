@@ -642,11 +642,11 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
 
   it("a restricted exec's TMPDIR is its own private directory beside the device's roots, never the project", async () => {
     const root = project("temp");
-    // another connection's working directory (its tmp root and private temps inside), which
-    // every other connection's owner ceiling denies
+    // another connection's working directory (its private temps beside its roots), which every
+    // other connection's owner ceiling denies
     const other = "/home/sandbox/other-connection";
     device.run(
-      `mkdir -p -m 700 ${other}/tmp/capybara-op-other/op-1-x && printf secret > ${other}/tmp/capybara-op-other/op-1-x/file`,
+      `mkdir -p -m 700 ${other}/capybara-op-other/op-1-x && printf secret > ${other}/capybara-op-other/op-1-x/file`,
     );
     // a loose file beside the device's temps in its tmp root (this fixture's tmp root is /tmp)
     device.run("printf sibling > /tmp/temp-sibling");
@@ -669,7 +669,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
         'printf "%s %s %s " "$TMPDIR" "$TMP" "$TEMP"',
         'printf "%s " "$(stat -c %a "$TMPDIR")"',
         '(printf t > "$TMPDIR/made" && printf "wrote ") || printf "unwritable "',
-        `(cat ${other}/tmp/capybara-op-other/op-1-x/file >/dev/null 2>&1 && printf "leaked ") || printf "denied "`,
+        `(cat ${other}/capybara-op-other/op-1-x/file >/dev/null 2>&1 && printf "leaked ") || printf "denied "`,
         // the positive control: machine reach still reads a sibling in the tmp root
         '(cat /tmp/temp-sibling 2>/dev/null && printf " ") || printf "unread "',
         '(printf x > /tmp/outside 2>/dev/null && printf "tmpwrite") || printf "tmpclosed"',
@@ -710,7 +710,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
         maxOutputBytes: 4096,
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow(/no sandboxed command may write/);
+    ).rejects.toThrow(/contains this device's working directory/);
   });
 
   it("the allowlist proxy: its own token, web ports only, globally routable addresses only", async () => {

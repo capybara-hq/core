@@ -221,7 +221,11 @@ follows one write policy (below). Each restricted command also gets its own empt
 in the user's temporary directory, on a Linux host beside the device's roots
 (`<workDir>/capybara-op-<deviceId>/`, which no sandboxed command may write: a write root covering or
 inside it is refused). It is private to the device, not to the command: under `machine` reach other
-operations of the same device can read it. On
+operations of the same device can read it. So on Linux a project at `~` or any directory containing
+the working directory is refused for all restricted work (file operations included); pick a project
+directory beside it or use Full access where the owner allows it. Known limitation: on macOS no such
+refusal exists, so a restricted write root covering `<userTemp>` (only possible under `machine`
+reach) could reach other operations' temporary directories. On
 macOS `mktemp` without a template writes to the user's shared temporary directory instead, which
 stays closed, so give it one (`mktemp "$TMPDIR/x.XXXXXX"`). A command in a local-Docker device's
 container keeps its first write root as `TMPDIR`. When the restricted runtime is

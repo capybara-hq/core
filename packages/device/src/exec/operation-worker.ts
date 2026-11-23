@@ -571,7 +571,7 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
 }
 /**
  * This device's private temporary parent in a directory `base` (macOS: the user's temporary
- * directory; a Linux host: the device's own tmp root, `<dir>/tmp`)
+ * directory; a Linux host: the device's own directory `<dir>`, beside its roots)
  * (`capybara-op-<deviceId>`, {@link privateTempParentName}), ready for an operation's own temp:
  * created private (0700) when missing; an existing one must be a directory of this user, never a
  * link, and is narrowed back to 0700 when its mode is wider. Anything else is refused: a parent
@@ -628,7 +628,11 @@ except FileNotFoundError:
     sys.exit(0)
 if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
     sys.exit("not a directory of this user: left in place")
-shutil.rmtree(path)
+def gone_already(function, failed, exc_info):
+    # an entry another removal (a concurrent sweep) took first is no failure
+    if not issubclass(exc_info[0], FileNotFoundError):
+        raise exc_info[1]
+shutil.rmtree(path, onerror=gone_already)
 `;
 export async function removePrivateTemp(pythonPath: string, path: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -655,20 +659,23 @@ export async function removePrivateTemp(pythonPath: string, path: string): Promi
  * its own. Best effort.
  */
 export async function sweepPrivateTemps(parent: string, pythonPath: string): Promise<void> {
+  let names: string[];
   try {
-    for (const name of await readdir(parent)) {
-      const pid = Number(/^op-(\d+)-[^/]+$/.exec(name)?.[1]);
-      if (!pid || pid === process.pid) continue;
-      try {
-        process.kill(pid, 0);
-        continue;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
-      }
-      await removePrivateTemp(pythonPath, join(parent, name));
-    }
+    names = await readdir(parent);
   } catch {
-    // a failed sweep only leaves empty scratch directories behind
+    return;
+  }
+  for (const name of names) {
+    const pid = Number(/^op-(\d+)-[^/]+$/.exec(name)?.[1]);
+    if (!pid || pid === process.pid) continue;
+    try {
+      process.kill(pid, 0);
+      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
+    }
+    // one entry that cannot be removed leaves only that scratch directory behind
+    await removePrivateTemp(pythonPath, join(parent, name)).catch(() => {});
   }
 }
 /** A separate process owns each immutable SRT manager; Full never enters that process. */

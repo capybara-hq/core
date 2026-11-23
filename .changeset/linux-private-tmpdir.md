@@ -9,6 +9,8 @@ that command only and removed when the operation ends (a crashed device's leftov
 next operation). TMPDIR is no longer the first write root, so temporary files stay out of the
 project. The directory is private to the device (other connections cannot read the working
 directory; under `machine` reach other operations of the same device can read it). A restricted
-grant whose write root covers or lies inside that parent is refused, and the private temporary
+grant whose write root covers or lies inside that parent is refused: on Linux a project at `~` or
+any directory containing the working directory is refused for all restricted work (native file
+operations included), and the private temporary
 directories are removed without following links (macOS too). The parent's overlap check also
 compares the canonical forms of the denied paths.
