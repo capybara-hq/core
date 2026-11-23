@@ -263,7 +263,7 @@ describe("service command", () => {
     expect(await serviceCommand("start", { ...base(), run: launchctl, platform: "darwin" })).toBe(
       1,
     );
-    expect(lines.join("\n")).toContain("capybara-device service install");
+    expect(lines.join("\n")).toContain(`capybara-device service install -c ${id}`);
 
     installPlist();
     lines.length = 0;
@@ -288,7 +288,7 @@ describe("service command", () => {
     expect(
       await serviceCommand("stop", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
     ).toBe(1);
-    expect(lines.join("\n")).toContain("capybara-device service install");
+    expect(lines.join("\n")).toContain(`capybara-device service install -c ${id}`);
 
     installPlist();
     lines.length = 0;
@@ -301,7 +301,7 @@ describe("service command", () => {
     lines.length = 0;
     expect(await serviceCommand("stop", { ...base(), run: launchctl, platform: "darwin" })).toBe(0);
     expect(calls.filter((c) => c[1] === "bootout")).toHaveLength(1);
-    expect(lines.join("\n")).toContain("capybara-device service start");
+    expect(lines.join("\n")).toContain(`capybara-device service start -c ${id}`);
   });
 
   it("macOS restart reloads a loaded service, and bootstraps an unloaded one", async () => {
@@ -339,7 +339,7 @@ describe("service command", () => {
         platform: "darwin",
       }),
     ).toBe(1);
-    expect(lines.join("\n")).toContain("capybara-device service install");
+    expect(lines.join("\n")).toContain(`capybara-device service install -c ${id}`);
   });
 
   it("Linux start, stop and restart are systemctl verbs", async () => {

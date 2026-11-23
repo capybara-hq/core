@@ -19,12 +19,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import {
   networkLoginLine,
-  OUTSIDE_SANDBOX_LOGIN_LINE,
   OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE,
+  outsideSandboxLoginLine,
   outsideSandboxRiskText,
   projectReachLoginLine,
   restrictedUnavailableLoginLine,
-  SANDBOX_ONLY_LOGIN_LINE,
+  sandboxOnlyLoginLine,
 } from "../src/commands/login.js";
 import { logout } from "../src/commands/logout.js";
 import { connectionDir, listConnections } from "../src/connections.js";
@@ -474,16 +474,18 @@ describe("login", () => {
     expect(file).toMatchObject({ version: 4, ownerCeiling: NEW_INSTALL, projectPaths: [] });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(helloOutside()).toBe(false);
-    expect(out.filter((l) => l === SANDBOX_ONLY_LOGIN_LINE)).toHaveLength(1);
-    expect(SANDBOX_ONLY_LOGIN_LINE).toContain("capybara-device ceiling set --outside-sandbox on");
-    expect(out).toContain(networkLoginLine("open"));
-    expect(networkLoginLine("open")).toContain("--network allowlist");
+    expect(out.filter((l) => l === sandboxOnlyLoginLine("env-1"))).toHaveLength(1);
+    expect(sandboxOnlyLoginLine("env-1")).toContain(
+      "capybara-device ceiling set --outside-sandbox on -c env-1",
+    );
+    expect(out).toContain(networkLoginLine("open", "env-1"));
+    expect(networkLoginLine("open", "env-1")).toContain("--network allowlist -c env-1");
     // the new setup's machine reach, as `ceiling show` names it
     expect(out.filter((l) => l.startsWith("Project reach: "))).toEqual([
-      projectReachLoginLine("machine", 0),
+      projectReachLoginLine("machine", 0, "env-1"),
     ]);
-    expect(projectReachLoginLine("machine", 0)).toMatch(/^Project reach: machine \(/);
-    expect(out).not.toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(projectReachLoginLine("machine", 0, "env-1")).toMatch(/^Project reach: machine \(/);
+    expect(out).not.toContain(outsideSandboxLoginLine("env-1"));
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
@@ -491,7 +493,7 @@ describe("login", () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, outsideSandbox: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
+    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
     expect(out).not.toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
@@ -506,7 +508,7 @@ describe("login", () => {
       ownerCeiling: OUTSIDE_ALLOWED,
     });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(OUTSIDE_ALLOWED);
-    expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
     expect(out).toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
@@ -521,9 +523,11 @@ describe("login", () => {
     expect(await run(["login", "--url", base])).toBe(0);
     expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8"))).toEqual(existing);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(SANDBOX_ONLY);
-    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
-    expect(out).toContain(networkLoginLine("allowlist"));
-    expect(networkLoginLine("allowlist")).toContain("capybara-device ceiling set --network open");
+    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
+    expect(out).toContain(networkLoginLine("allowlist", "env-1"));
+    expect(networkLoginLine("allowlist", "env-1")).toContain(
+      "capybara-device ceiling set --network open -c env-1",
+    );
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
@@ -539,9 +543,13 @@ describe("login", () => {
       writeFileSync(policyPath(stateDir()), `${JSON.stringify(existing)}\n`, { mode: 0o600 });
       tokenAnswers = [granted];
       expect(await run(["login", "--url", base])).toBe(0);
-      expect(out).toContain(projectReachLoginLine("paths", 1));
-      expect(projectReachLoginLine("paths", 1)).toMatch(/^Project reach: paths \(1 listed;/);
-      expect(projectReachLoginLine("workspace", 0)).toMatch(/^Project reach: workspace \(/);
+      expect(out).toContain(projectReachLoginLine("paths", 1, "env-1"));
+      expect(projectReachLoginLine("paths", 1, "env-1")).toMatch(
+        /^Project reach: paths \(1 listed;/,
+      );
+      expect(projectReachLoginLine("workspace", 0, "env-1")).toMatch(
+        /^Project reach: workspace \(/,
+      );
     } finally {
       rmSync(listed, { recursive: true, force: true });
     }
@@ -551,9 +559,9 @@ describe("login", () => {
     writeOutsideAllowedPolicy(stateDir());
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
     expect(out.filter((l) => l === outsideSandboxRiskText("env-1"))).toHaveLength(1);
-    expect(out).not.toContain(SANDBOX_ONLY_LOGIN_LINE);
+    expect(out).not.toContain(sandboxOnlyLoginLine("env-1"));
     expect(readPolicy(stateDir()).ownerCeiling.outsideSandbox).toBe(true);
     expect(helloOutside()).toBe(true);
   });
@@ -567,7 +575,7 @@ describe("login", () => {
     expect(await run(["login", "--url", base])).toBe(0);
     expect(err.join("\n")).toContain("Cannot set the local policy");
     // no file: every reader sees the closed missing-file ceiling (start writes it), never open
-    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
+    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
     expect(existsSync(policyPath(stateDir()))).toBe(false);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
@@ -597,8 +605,8 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
-    expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing"));
+    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
+    expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1"));
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
   });
 
@@ -607,13 +615,13 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
+    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
     expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
     out.length = 0;
     writeOutsideAllowedPolicy(stateDir());
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
-    expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
