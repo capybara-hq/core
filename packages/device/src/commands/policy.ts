@@ -13,6 +13,7 @@ import {
   otherConnectionDenies,
   projectPathRefusal,
   unreadableConnectionMessage,
+  withFirmlinkForms,
 } from "../exec/read-model.js";
 import { osRoots } from "../exec/shared.js";
 import { deniedSecretPaths } from "../policy.js";
@@ -173,6 +174,7 @@ function projectPaths(
   const allDenies = withCanonicalForms(
     [...denies.secretAndStateDenies, ...denies.otherConnectionDenies].map((d) => resolve(d)),
   );
+  const noteDenies = withFirmlinkForms(allDenies);
   let containsDenied = false;
   const out: string[] = [];
   for (const entry of given) {
@@ -205,7 +207,9 @@ function projectPaths(
       throw new Error(`${path} belongs to another connection of this machine`);
     }
     if (refusal !== null) throw new Error(`${path} cannot be a project path (${refusal})`);
-    if (allDenies.some((d) => d !== real && within(d, real))) containsDenied = true;
+    // the note matches a firmlink spelling (/System/Volumes/Data/...) as the refusal does
+    const reals = withFirmlinkForms([real]);
+    if (reals.some((r) => noteDenies.some((d) => d !== r && within(d, r)))) containsDenied = true;
     if (!out.includes(real)) out.push(real);
   }
   return { paths: out, containsDenied };

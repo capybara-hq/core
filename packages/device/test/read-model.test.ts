@@ -21,6 +21,7 @@ import {
   readRootsFor,
   unreadableConnectionMessage,
 } from "../src/exec/read-model.js";
+import { deniedSecretPaths } from "../src/policy.js";
 
 /** Whether the temporary volume ignores case (APFS default on macOS). */
 function tempVolumeIgnoresCase(): boolean {
@@ -215,6 +216,50 @@ describe("projectPathRefusal", () => {
     expect(projectPathRefusal(link, input("machine"))).toBe("denied");
   });
 
+  it("refuses mise's env files and Maven and Gradle credentials from the shared deny list", () => {
+    const withShared = { ...input("machine"), secretAndStateDenies: deniedSecretPaths(home) };
+    for (const rel of [
+      ".config/mise",
+      ".config/mise/config.toml",
+      ".config/mise/config.local.toml",
+      ".config/mise/config.production.toml",
+      ".config/mise/conf.d/tokens.toml",
+      ".config/mise/age.txt",
+      ".config/mise.toml",
+      ".mise.toml",
+      ".mise.local.toml",
+      ".mise/config.toml",
+      "mise.toml",
+      "mise.local.toml",
+      "mise/config.toml",
+      "mise/config.local.toml",
+      ".config/mise.local.toml",
+      ".rtx.toml",
+      ".rtx.local.toml",
+      "mise/conf.d/tokens.toml",
+      ".m2/settings.xml",
+      ".m2/settings-security.xml",
+      ".m2/settings-security4.xml",
+      ".gradle/gradle.properties",
+      ".gradle/develocity/keys.properties",
+      ".gradle/enterprise/keys.properties",
+    ])
+      expect(projectPathRefusal(join(home, rel), withShared), rel).toBe("denied");
+    // their neighbours stay readable: mise's data and a ~/mise checkout, the local repository,
+    // Gradle's caches
+    for (const rel of [
+      ".local/share/mise",
+      ".local/share/mise/installs/node",
+      ".config/mise-other",
+      "mise",
+      "mise/src",
+      ".m2/repository",
+      ".gradle/caches",
+      ".gradle/develocity",
+    ])
+      expect(projectPathRefusal(join(home, rel), withShared), rel).toBeNull();
+  });
+
   it("checks other connections before secrets", () => {
     const both = { ...input("machine"), secretAndStateDenies: [bDir] };
     expect(projectPathRefusal(bDir, both)).toBe("other-connection");
@@ -323,6 +368,34 @@ describe("projectPathRefusal", () => {
     expect(projectPathRefusal(join(home, ".SSH"), input("machine"))).toBe("denied");
     expect(projectPathRefusal(join(home, ".Ssh", "id"), input("machine"))).toBe("denied");
   });
+
+  it.skipIf(process.platform !== "darwin")(
+    "refuses a denied directory spelled through the macOS data volume firmlink",
+    () => {
+      // a firmlink is not a symlink: realpath keeps /System/Volumes/Data, the sandbox does not
+      const real = realpathSync(bDir);
+      const viaData = `/System/Volumes/Data${real}`;
+      expect(existsSync(viaData)).toBe(true);
+      for (const reach of ["machine", "paths", "workspace"] as const) {
+        expect(projectPathRefusal(join(viaData, "repo"), input(reach, [viaData]))).toBe(
+          "other-connection",
+        );
+      }
+      expect(projectPathRefusal(`/system/volumes/data${real}`, input("machine"))).toBe(
+        "other-connection",
+      );
+      const ssh = `/System/Volumes/Data${realpathSync(join(home, ".ssh"))}/id`;
+      expect(projectPathRefusal(ssh, input("machine"))).toBe("denied");
+      // a deny list spelled through the firmlink still matches the plain spelling
+      const viaDeny = { ...input("machine"), otherConnectionDenies: [viaData] };
+      expect(projectPathRefusal(join(real, "x"), viaDeny)).toBe("other-connection");
+      // the extra forms never widen a reach: the firmlink spelling of a listed path stays outside
+      const listed = realpathSync(project);
+      expect(projectPathRefusal(`/System/Volumes/Data${listed}`, input("paths", [listed]))).toBe(
+        "outside-reach",
+      );
+    },
+  );
 
   it.skipIf(!ignoresCase)("allows a case variant of a listed path under paths reach", () => {
     const variant = join(tmp, "Projects", "P", "src");

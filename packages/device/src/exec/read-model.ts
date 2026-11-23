@@ -181,6 +181,24 @@ function canonical(path: string): string {
   return forms[forms.length - 1] ?? path;
 }
 
+/** The macOS data volume, lower case: every firmlinked system location also answers below it. */
+const DARWIN_DATA_VOLUME = "/system/volumes/data/";
+
+/**
+ * On macOS, `paths` plus, for each one spelled below the data volume (`/System/Volumes/Data/...`,
+ * compared ignoring case as on the default APFS volume), its firmlink spelling `/...`. A firmlink
+ * is not a symlink, so `realpath` keeps either spelling as given; used for the deny checks only,
+ * where an extra form can only add a refusal. Elsewhere `paths` as given.
+ */
+export function withFirmlinkForms(paths: readonly string[]): string[] {
+  if (process.platform !== "darwin") return [...paths];
+  const out = new Set(paths);
+  for (const p of paths)
+    if (p.toLowerCase().startsWith(DARWIN_DATA_VOLUME))
+      out.add(p.slice(DARWIN_DATA_VOLUME.length - 1));
+  return withCanonicalForms([...out]);
+}
+
 /**
  * null when the path is allowed; else the refusal code. A deny matches when ANY form of the path
  * (given or canonical) is inside or equal to ANY form of a denied directory, so a link never
@@ -189,6 +207,8 @@ function canonical(path: string): string {
  * checked first, then secret and state paths, then the reach. A path that only contains a denied
  * directory is not refused here: the sandbox denies inside it. A relative path is outside reach.
  * A dangling link is followed by its link text for the deny check, and is outside a narrower reach.
+ * On macOS the deny check also matches the firmlink spelling of a path or deny below
+ * `/System/Volumes/Data`; the reach check does not.
  */
 export function projectPathRefusal(
   path: string,
@@ -203,9 +223,9 @@ export function projectPathRefusal(
   if (!isAbsolute(path)) return "outside-reach";
   const given = resolve(path);
   const followed = danglingLinkForms(given);
-  const forms = withCanonicalForms([given, ...followed.forms]);
+  const forms = withFirmlinkForms(withCanonicalForms([given, ...followed.forms]));
   const hits = (denies: readonly string[]) => {
-    const all = withCanonicalForms(denies.map((d) => resolve(d)));
+    const all = withFirmlinkForms(withCanonicalForms(denies.map((d) => resolve(d))));
     return forms.some((f) => all.some((d) => within(f, d)));
   };
   if (hits(input.otherConnectionDenies)) return "other-connection";

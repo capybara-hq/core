@@ -237,6 +237,20 @@ def canonical_fd(fd, path):
         return False
 
 
+class TooManyRoots(Refused):
+    """Pinning a root ran out of descriptors: the process's limit (EMFILE) or the system's file
+    table (ENFILE); every root holds one open."""
+
+    def __init__(self):
+        super().__init__(
+            "SCOPE_DENIED",
+            "The granted roots need more open files than the process or system open-file limit "
+            "allows (each root holds one: many listed project paths, or machine reach carving the "
+            "deny list into one root per directory beside it); grant fewer roots: list fewer "
+            "project paths, or limit machine reach to listed paths with "
+            "capybara-device ceiling set --project-reach paths")
+
+
 def pin(path):
     """Opens an existing granted root once (no-follow, canonical); None when it does not exist."""
     if not isinstance(path, str) or not path.startswith("/") or os.path.normpath(path) != path:
@@ -245,7 +259,9 @@ def pin(path):
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except FileNotFoundError:
         return None
-    except OSError:
+    except OSError as error:
+        if error.errno in (errno.EMFILE, errno.ENFILE):
+            raise TooManyRoots()
         raise Refused("SCOPE_DENIED", "A granted root is not a directory at its path")
     info = os.fstat(fd)
     if not canonical_fd(fd, path):
@@ -260,6 +276,8 @@ def pin_read(path):
     checked below it without following a link. None when it does not exist."""
     try:
         return pin(path)
+    except TooManyRoots:
+        raise
     except Refused:
         pass
     parent = pin(os.path.dirname(path)) if path != "/" else None

@@ -561,6 +561,41 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       ).rejects.toMatchObject({ name: "SandboxScopeDeniedError" });
   });
 
+  it("machine reach with more carved roots than the agent's open-file limit is refused with a remedy", async () => {
+    const base = project("carve-nofile");
+    // 300 siblings beside the denied directory: each becomes a pinned root under machine reach
+    device.run(`mkdir -p ${base}/secret && cd ${base} && mkdir $(seq -f 'd%g' 1 300)`);
+    device.run("mkdir -m 700 /home/sandbox/state-nofile");
+    const limited = new HostServer(device, {}, { nofile: 256 });
+    servers.push(limited);
+    const machine = await hostBackend(limited, {
+      stateDir: "/home/sandbox/state-nofile",
+      deviceId: "device-nofile",
+      projectReach: "machine",
+      deniedReadRoots: [`${base}/secret`],
+    });
+    const scope = scopeFor(machine.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", projectRoot: `${base}/d1`, writeRoots: [`${base}/d1`] },
+      network: { kind: "none" },
+    });
+    const refused = machine.operation(scope, authorityFor(scope.operationId)).exec({
+      command: "printf ran > ran",
+      cwd: `${base}/d1`,
+      timeoutMs: 20_000,
+      maxOutputBytes: 100,
+      signal: new AbortController().signal,
+    });
+    await expect(refused).rejects.toMatchObject({
+      name: "SandboxScopeDeniedError",
+      message: expect.stringContaining("capybara-device ceiling set --project-reach paths"),
+    });
+    await expect(refused).rejects.toMatchObject({
+      message: expect.stringContaining("open-file limit"),
+    });
+    expect(await read(`${base}/d1/ran`)).toBeNull();
+  });
+
   it("a restricted exec's home is the device's sandbox home: writable, kept, the real home not", async () => {
     const root = project("home");
     device.run("mkdir -m 700 /home/sandbox/state-home /home/sandbox/device-home");
