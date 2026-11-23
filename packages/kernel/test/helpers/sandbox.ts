@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { Logger, SandboxHandle } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { type Kysely, sql } from "kysely";
 import type { KernelConfig } from "../../src/config/schema.js";
@@ -15,10 +15,21 @@ import { DeviceReports } from "../../src/sandbox/device-reports.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import type { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
-import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import {
+  type OperationIntent,
+  type OperationInvocation,
+  operationIdFor,
+  type SandboxOperationIntents,
+} from "../../src/sandbox/operation-intents.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import type { DeviceProviderEntry, DeviceProviders } from "../../src/sandbox/providers.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import {
+  type HeldProvider,
+  type OperationSessionInvocation,
+  SandboxService,
+  type SandboxUseInfo,
+} from "../../src/sandbox/sandbox.service.js";
+import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import { ceilingWritesOver, handlesFor, instanceWritesFor, retirementFor } from "./identity.js";
 
 /** A kernel logger over a test's partial logger (the missing levels are dropped). */
@@ -168,6 +179,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
       revokeIncarnation: async () => {},
       owedRevocations: async () => [],
       acknowledgeRevocation: async () => {},
+      ...admittingIntents(),
       ...d.operationIntents,
     } as unknown as SandboxOperationIntents,
     {} as SandboxOperationAuthority,
@@ -212,4 +224,95 @@ export async function enableFakeProvider(
   await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
     VALUES (${plugin}, ${orgId}, true)
     ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true`.execute(raw);
+}
+
+/**
+ * The write roots of a {@link testOperationInvocation}'s admitted scope (default: the instance's
+ * workspace and temporary directory, free mode).
+ */
+export const TEST_OPERATION_WRITE_ROOTS: readonly string[] = ["/workspace", "/tmp"];
+
+/**
+ * Operation intents that admit every managed operation of a {@link sandboxServiceFor} service
+ * (its default): `pending` finds nothing recorded, `admit` and `claimDispatch` return a scoped
+ * operation in free mode (project root null, {@link TEST_OPERATION_WRITE_ROOTS} writable, no
+ * network) whose id and tag are the invocation's `operationIdFor`, and the outcome writes are
+ * no-ops. A service-level test then drives the shared lifecycle (leases, rebuild, lost files)
+ * through the managed route, as production does; admission itself is tested on the real intents.
+ */
+export function admittingIntents(
+  writeRoots: readonly string[] = TEST_OPERATION_WRITE_ROOTS,
+): Partial<SandboxOperationIntents> {
+  const scopeOf = (ctx: SandboxUseContext, invocation: OperationInvocation) => {
+    const operationId = operationIdFor(invocation);
+    return {
+      operationId,
+      admitBeforeMs: invocation.deadlineMs,
+      deviceId: ctx.deviceId,
+      rootConversationId: invocation.claim.rootId,
+      profileRevision: 1,
+      ceilingRevision: "test",
+      profile: "request-approval",
+      actor: ctx.actor,
+      tag: operationId,
+      filesystem: { kind: "scoped", projectRoot: null, writeRoots: [...writeRoots] },
+      network: { kind: "none" },
+    };
+  };
+  const row = (
+    ctx: SandboxUseContext,
+    invocation: OperationInvocation,
+    state: string,
+  ): OperationIntent =>
+    ({
+      operation_id: operationIdFor(invocation),
+      execution_id: invocation.claim.executionId,
+      state,
+      scope: scopeOf(ctx, invocation),
+      execution_ref: null,
+      outcome_unknown: false,
+    }) as unknown as OperationIntent;
+  return {
+    pending: async (ctx, invocation) => row(ctx, invocation, "pending"),
+    admit: async (ctx, invocation) => row(ctx, invocation, "admitted"),
+    claimDispatch: async (ctx, invocation) => row(ctx, invocation, "dispatching"),
+    complete: async () => {},
+    unknown: async () => {},
+    refusePreDispatch: async () => {},
+    acknowledgeBackground: async () => "acknowledged",
+  };
+}
+
+/**
+ * A managed invocation for a use of `ctx` outside any run loop (a service-level test): a fresh
+ * claim of a made-up run of the holder conversation (its own root), a fresh call id and a
+ * deadline one minute out. Only {@link admittingIntents} accepts it; on a real kernel use
+ * `startClaimedRun` and `recordCallStarted` (`managed-calls.ts`).
+ */
+export function testOperationInvocation(ctx: SandboxUseContext): OperationSessionInvocation {
+  return {
+    claim: {
+      runId: randomUUID(),
+      conversationId: ctx.holderConversationId,
+      orgId: ctx.orgId,
+      rootId: ctx.holderConversationId,
+      executionId: randomUUID(),
+    },
+    callId: randomUUID(),
+    deadlineMs: Date.now() + 60_000,
+  };
+}
+
+/**
+ * Uses the device of `ctx` once on the managed route (`SandboxService.withOperations` with a
+ * {@link testOperationInvocation}): what a tool call does, minus the device context record. The
+ * service must admit the invocation ({@link sandboxServiceFor}'s default intents do).
+ */
+export function managedUse<T>(
+  s: SandboxService,
+  ctx: SandboxUseContext,
+  fn: (h: SandboxHandle, p: HeldProvider, info: SandboxUseInfo, signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  return s.withOperations(ctx, testOperationInvocation(ctx), fn, signal);
 }
