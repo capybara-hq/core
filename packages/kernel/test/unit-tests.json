@@ -53,6 +53,7 @@
   "extensions/config-issues.test.ts",
   "extensions/config-json-schema.test.ts",
   "extensions/declared-display-name.test.ts",
+  "extensions/matches-section.test.ts",
   "extensions/org-levels.test.ts",
   "extensions/package.test.ts",
   "extensions/permission-set.test.ts",
