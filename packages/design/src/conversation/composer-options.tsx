@@ -60,7 +60,7 @@ export type ComposerOptionsProps = {
  * opening a bottom sheet with one group each. The groups reuse the pickers' props: their items
  * (disabled ones with their reason), their notes, and a locked picker (a conversation's
  * device) shown read-only with its hint. Choosing an item calls the picker's `onPick` and
- * keeps the sheet open, so all choices can be set in one go. The model is one row (模型 ·
+ * keeps the sheet open, so all choices can be set in one go. The model is one row (Model ·
  * current model ›) that opens the model page in the same sheet: a search field above
  * {@link LONG_PICKER_THRESHOLD} models, the current and the pinned (agent default) models first,
  * then the provider groups; a pick goes back to the options. The accessible summary also

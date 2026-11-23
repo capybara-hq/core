@@ -161,7 +161,7 @@ describe("the options sheet's model row and model page (phones, §6.59 in-sheet 
     wrap(<Harness />);
     await openSheet(user);
     await user.click(modelRow());
-    // the same dialog, now titled 模型, with a back control at the head's start
+    // the same dialog, now titled Model, with a back control at the head's start
     const sheet = screen.getByRole("dialog", { name: "模型" });
     expect(sheet.getAttribute("data-part")).toBe("composer-options-sheet");
     expect(pane().getAttribute("data-page")).toBe("model");

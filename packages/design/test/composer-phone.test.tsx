@@ -327,7 +327,7 @@ describe("the composer's options button (phones, §6.16.2)", () => {
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent),
     ).toEqual(["设备", "思考档位"]);
-    // the model is one row: 模型 · the current model · chevron (§6.59 in-sheet drill-in)
+    // the model is one row: Model · the current model · chevron (§6.59 in-sheet drill-in)
     const row = within(sheet).getByRole("button", { name: /^模型/ });
     expect(row.getAttribute("data-part")).toBe("options-model");
     expect(row.textContent).toContain("DeepSeek-V4.1-Flash");

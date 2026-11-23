@@ -310,7 +310,7 @@ export type SheetOption = {
   label: string;
   /** A count after the label (a filter's matches). */
   count?: number;
-  /** A muted tag after the label (a model's 「智能体默认」, a disabled one's reason). */
+  /** A muted tag after the label (a model's agent-default tag, a disabled one's reason). */
   tag?: string;
   /** An attention mark after the tag, as a Badge (`warn` unless `badgeTone`). */
   badge?: string;
