@@ -8,6 +8,7 @@ import { DiscoveryService, MetadataScanner } from "@nestjs/core";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import type { KernelLogger } from "../../log.js";
 import { waitWithin } from "../close-within.js";
+import { asPlatform } from "../database/org-scope.js";
 import { runOutsideTransaction } from "../database/transaction-host.js";
 import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
 import { KERNEL_LOGGER } from "../tokens.js";
@@ -85,7 +86,10 @@ export class ScheduledRuns implements ScheduledRunScope, OnModuleInit, BeforeApp
   async runNow(name: string): Promise<boolean> {
     const body = this.bodies.get(name);
     if (!body) return false;
-    await runOutsideTransaction(() => Promise.resolve(body(this.abort.signal)));
+    // deployment-wide like the tick itself (RLS spec §5.1)
+    await runOutsideTransaction(() =>
+      asPlatform(`cron ${name}`, () => Promise.resolve(body(this.abort.signal))),
+    );
     return true;
   }
 

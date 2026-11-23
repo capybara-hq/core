@@ -48,6 +48,7 @@ import { insecurePublicUrlWarning } from "../identity/cookies.js";
 import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { ReplicaPresence } from "../infra/presence/replica-presence.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
@@ -198,7 +199,14 @@ export class KernelLifecycle
     if (this.shutdown.isShuttingDown()) throw new Error("kernel stopped during start");
   }
 
-  async onApplicationBootstrap(): Promise<void> {
+  onApplicationBootstrap(): Promise<void> {
+    // the start sequence (migrations, bootstrap, extension load, the gateway's connections) is
+    // deployment-wide work (RLS spec §5.1); what it starts keeps this scope until an entry point
+    // (a request, a job, a run, an event) enters its own
+    return asPlatform("kernel start sequence", () => this.startSequence());
+  }
+
+  private async startSequence(): Promise<void> {
     if (this.shutdown.isShuttingDown()) throw new Error("kernel is stopped");
     const { config, options: opts } = this;
     const { worker, gateway } = this;

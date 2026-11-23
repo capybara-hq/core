@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import {
+  asPlatform,
   createLogger,
   installProcessGuards,
   type KernelLogger,
@@ -104,82 +105,89 @@ export async function main(
     return 2;
   }
   const useLogger = opts.onCommand?.(cmd.command, log) ?? (() => {});
-  switch (cmd.command) {
-    case "help":
-      io.stdout.write(`${USAGE}\n`);
-      return 0;
-    case "migrate":
-      return runMigrate(log, env);
-    case "bootstrap":
-      return runBootstrap(
-        {
-          ...(cmd.dir !== undefined && { dir: cmd.dir }),
-          ...(cmd.manifest !== undefined && { manifest: cmd.manifest }),
-          ...(cmd.extraManifest !== undefined && { extraManifest: cmd.extraManifest }),
-        },
-        log,
-        env,
-        io,
-      );
-    case "admin-create":
-      return runAdminCreate(
-        {
-          login: cmd.login,
-          displayName: cmd.displayName,
-          ...(cmd.email !== undefined && { email: cmd.email }),
-          ifNone: cmd.ifNone,
-          ...(cmd.passwordFile !== undefined && { passwordFile: cmd.passwordFile }),
-        },
-        log,
-        env,
-        io,
-      );
-    case "admin-grant":
-      return runAdminGrant({ login: cmd.login, grant: cmd.grant }, log, env, io);
-    case "extensions-review":
-      return runExtensionsReview(log, env, io);
-    case "extensions-approve":
-      return runExtensionsApprove({ name: cmd.name, yes: cmd.yes }, log, env, io);
-    case "extensions-list":
-      return runExtensionsList(log, env, io);
-    case "extensions-install":
-      return runExtensionsInstall({ target: cmd.target, yes: cmd.yes }, log, env, io);
-    case "extensions-state":
-      return runExtensionsState({ name: cmd.name, action: cmd.action }, log, env, io);
-    case "plugins-list":
-      return runPluginsList(log, env, io);
-    case "config-migrate-permissions":
-      return runConfigMigratePermissions({ input: cmd.input, output: cmd.output }, env, io);
-    case "plugins-import":
-      return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
-    case "secrets-rewrap":
-      return runSecretsRewrap(log, env, io);
-    case "permissions-cutover":
-      return runPermissionsCutover(
-        {
-          action: cmd.action,
-          json: cmd.json,
-          ...(cmd.leaseWaitMs !== undefined && { leaseWaitMs: cmd.leaseWaitMs }),
-        },
-        log,
-        env,
-        io,
-      );
-    case "start":
-      if (envFile !== undefined) log.info("loaded env file", { path: envFile });
-      return runStart(
-        {
-          ...(cmd.roles !== undefined && { roles: cmd.roles }),
-          ...(cmd.activatePermissionConfig !== undefined && {
-            activatePermissionConfig: cmd.activatePermissionConfig,
-          }),
-        },
-        log,
-        env,
-        exitAfterShutdown,
-        process,
-        useLogger,
-      );
+  // An admin command works across the deployment: the platform org scope (RLS spec §5.1).
+  // `capybara start` scopes each entry point of the running kernel itself.
+  if (cmd.command === "start") return dispatch();
+  return asPlatform(`capybara ${cmd.command}`, dispatch);
+
+  async function dispatch(): Promise<number | undefined> {
+    switch (cmd.command) {
+      case "help":
+        io.stdout.write(`${USAGE}\n`);
+        return 0;
+      case "migrate":
+        return runMigrate(log, env);
+      case "bootstrap":
+        return runBootstrap(
+          {
+            ...(cmd.dir !== undefined && { dir: cmd.dir }),
+            ...(cmd.manifest !== undefined && { manifest: cmd.manifest }),
+            ...(cmd.extraManifest !== undefined && { extraManifest: cmd.extraManifest }),
+          },
+          log,
+          env,
+          io,
+        );
+      case "admin-create":
+        return runAdminCreate(
+          {
+            login: cmd.login,
+            displayName: cmd.displayName,
+            ...(cmd.email !== undefined && { email: cmd.email }),
+            ifNone: cmd.ifNone,
+            ...(cmd.passwordFile !== undefined && { passwordFile: cmd.passwordFile }),
+          },
+          log,
+          env,
+          io,
+        );
+      case "admin-grant":
+        return runAdminGrant({ login: cmd.login, grant: cmd.grant }, log, env, io);
+      case "extensions-review":
+        return runExtensionsReview(log, env, io);
+      case "extensions-approve":
+        return runExtensionsApprove({ name: cmd.name, yes: cmd.yes }, log, env, io);
+      case "extensions-list":
+        return runExtensionsList(log, env, io);
+      case "extensions-install":
+        return runExtensionsInstall({ target: cmd.target, yes: cmd.yes }, log, env, io);
+      case "extensions-state":
+        return runExtensionsState({ name: cmd.name, action: cmd.action }, log, env, io);
+      case "plugins-list":
+        return runPluginsList(log, env, io);
+      case "config-migrate-permissions":
+        return runConfigMigratePermissions({ input: cmd.input, output: cmd.output }, env, io);
+      case "plugins-import":
+        return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
+      case "secrets-rewrap":
+        return runSecretsRewrap(log, env, io);
+      case "permissions-cutover":
+        return runPermissionsCutover(
+          {
+            action: cmd.action,
+            json: cmd.json,
+            ...(cmd.leaseWaitMs !== undefined && { leaseWaitMs: cmd.leaseWaitMs }),
+          },
+          log,
+          env,
+          io,
+        );
+      case "start":
+        if (envFile !== undefined) log.info("loaded env file", { path: envFile });
+        return runStart(
+          {
+            ...(cmd.roles !== undefined && { roles: cmd.roles }),
+            ...(cmd.activatePermissionConfig !== undefined && {
+              activatePermissionConfig: cmd.activatePermissionConfig,
+            }),
+          },
+          log,
+          env,
+          exitAfterShutdown,
+          process,
+          useLogger,
+        );
+    }
   }
 }
 

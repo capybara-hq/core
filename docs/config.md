@@ -13,6 +13,7 @@ The defaults of secret fields do not appear in this document.
 | `db.poolMax` | `CAPYBARA_DB__POOL_MAX` | `number` | `10` | no | no | Maximum PostgreSQL pool size |
 | `db.connectTimeoutMs` | `CAPYBARA_DB__CONNECT_TIMEOUT_MS` | `number` | `5000` | no | no | PostgreSQL connect timeout in milliseconds |
 | `db.idleTimeoutMs` | `CAPYBARA_DB__IDLE_TIMEOUT_MS` | `number` | `60000` | no | no | How long an idle PostgreSQL connection stays in the pool, in milliseconds |
+| `db.rls` | `CAPYBARA_DB__RLS` | `"off" \| "scoped" \| "enforce"` | `"off"` | no | no | Row level security (RLS spec, issue #115): off sends nothing; scoped sets the caller's org scope on every PostgreSQL connection (one extra round trip per pool query and per transaction) while the policies admit every row; enforce makes the policies filter every org-scoped table by that scope once row level security is enabled on the tables (RLS spec phase 5; until then the kernel warns at start and nothing is filtered). Needs a session-capable connection (no PgBouncer transaction pooling) unless off; PostgreSQL applies no policy to a superuser or BYPASSRLS role |
 | `redis.url` | `CAPYBARA_REDIS__URL` | `string` | required | no | yes | Redis connection URL |
 | `masterKey` | `CAPYBARA_MASTER_KEY` | `string` | required | no | yes | Base64 master key (32 bytes) for secret encryption |
 | `masterKeyPrevious` | `CAPYBARA_MASTER_KEY_PREVIOUS` | `array<string>` | — | no | yes | Previous master keys kept during rotation |

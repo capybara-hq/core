@@ -6,6 +6,7 @@ import FindMyWay from "find-my-way";
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, ERROR_CODES, errorBody } from "../errors.js";
 import { ACCESS_COOKIE, REFRESH_COOKIE } from "../identity/cookies.js";
+import { bindRequestScope } from "../infra/database/org-scope.js";
 import { codeForStatus, redactPath } from "./error.filter.js";
 
 /** Every extension route lives under this prefix (`ctx.http.route` adds `/plugins/<name>`). */
@@ -192,6 +193,12 @@ export async function registerPluginDispatch(
     // onRequest answered every request it did not resolve; this is only a guard
     if (!entry) return reply.code(500).send(errorBody("internal", "Internal error"));
     const { route, caller } = entry;
+    // the org scope of everything the handler runs (RLS spec §5.1): its caller's org, platform
+    // for a super admin's embed, none for a public route until the extension acts for an org
+    if ("orgId" in caller && caller.orgId) bindRequestScope({ kind: "org", orgId: caller.orgId });
+    else if (caller.access === "embed" && caller.scope === "platform") {
+      bindRequestScope({ kind: "platform", reason: "super admin embed route" });
+    }
     // Abort `req.signal` only when the connection closes before the response is written (the
     // client disconnected): long-lived handlers (SSE) unsubscribe on it. A close after a finished
     // response does not abort (writableFinished is true).
