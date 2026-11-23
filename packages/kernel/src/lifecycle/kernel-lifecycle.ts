@@ -23,7 +23,6 @@ import {
   type BootstrapEntryResult,
   BootstrapFailedError,
   BootstrapService,
-  bootstrapManifestSha256,
 } from "../extensions/bootstrap.js";
 import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
 import {
@@ -34,6 +33,7 @@ import {
   missingExtraManifestMessage,
   syncExtraMarketplaces,
 } from "../extensions/bootstrap-extra.js";
+import { bootstrapManifestSha256 } from "../extensions/bootstrap-manifest.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";

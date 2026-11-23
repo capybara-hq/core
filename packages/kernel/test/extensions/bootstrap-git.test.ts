@@ -20,11 +20,12 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { BootstrapService, resolveBootstrapPackages } from "../../src/extensions/bootstrap.js";
+import { BootstrapService } from "../../src/extensions/bootstrap.js";
 import {
   type MergedBootstrapManifest,
   mergeBootstrapManifests,
 } from "../../src/extensions/bootstrap-extra.js";
+import { resolveBootstrapPackages } from "../../src/extensions/bootstrap-packages.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { packPackageTgz, unpackPackageTgz } from "../../src/packages/tgz.js";
 import { truncateTables } from "../helpers/db.js";

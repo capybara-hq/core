@@ -23,8 +23,8 @@ import {
   BOOTSTRAP_LOCK_TTL,
   BootstrapFailedError,
   BootstrapService,
-  bootstrapManifestSha256,
 } from "../../src/extensions/bootstrap.js";
+import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap-manifest.js";
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../../src/extensions/enabled.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";

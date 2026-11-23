@@ -10,11 +10,8 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
-import {
-  BootstrapFailedError,
-  BootstrapService,
-  bootstrapManifestSha256,
-} from "../../src/extensions/bootstrap.js";
+import { BootstrapFailedError, BootstrapService } from "../../src/extensions/bootstrap.js";
+import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap-manifest.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";

@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BootstrapExtraManifest, BootstrapManifest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
 import {
   loadBootstrapManifest,
   mergeBootstrapManifests,
   readBootstrapExtraManifest,
   syncExtraMarketplaces,
 } from "../../src/extensions/bootstrap-extra.js";
+import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap-manifest.js";
 
 const SRI = `sha512-${"A".repeat(86)}==`;
 const COMMIT = "a".repeat(40);

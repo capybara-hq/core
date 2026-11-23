@@ -10,7 +10,9 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { marketplaceForm } from "../catalog/marketplaces.service.js";
 import { ApiError } from "../errors.js";
-import { BOOTSTRAP_MANIFEST_FILE, errMsg, readBootstrapManifest } from "./bootstrap.js";
+import { BOOTSTRAP_MANIFEST_FILE, readBootstrapManifest } from "./bootstrap-manifest.js";
+
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * The built-in bootstrap manifest merged with the extra one (spec 2026-11-20-bootstrap-extra-manifest
