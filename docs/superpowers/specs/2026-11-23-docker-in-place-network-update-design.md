@@ -1,7 +1,8 @@
 # In-place network allowlist update for `device-docker`
 
 Issue: #663 (last item). Status: draft for review. Written against core `main` at `87345db65` and
-plugins `main` (`plugins/device-docker` at `01eca7e`).
+plugins `main` at `1c9b0dd` (last `plugins/device-docker` commit `80a489e`, version
+`0.1.0-rc.23`).
 
 Related: device provider spec §6.3 (`2026-11-21-device-provider-design.md`, a host added to a list
 reaches the instance at its next use); auto mode spec §4.2 (`update`, `limitsApplyAt`); the
@@ -65,18 +66,30 @@ doc of `update` gains the narrowing rule (§3.3).
   stays read-only; the image creates `/config` owned by `node` so the named volume inherits it). It
   holds `allow.json` = `{ mode, hosts, digest }`. At start the proxy reads it when present and valid,
   else the env (`MODE`, `ALLOW_HOSTS`) as today. The volume belongs to the instance: `destroy` /
-  `destroyByName` remove it with the containers and the internal network, never with the file system.
-- **Control socket** on a tmpfs (`HostConfig.Tmpfs: /run/egress`), a Unix socket only processes in
-  the proxy container reach. The sandbox reaches the proxy only on TCP 3128 / 1080 over the internal
+  `destroyByName` remove it with the containers and the internal network, and `destroyFileSystem`
+  never touches it. This is a deliberate exception to "drops the instance … (never volumes)"; the
+  provider comment on `destroyByName` changes to "never the file system's volumes".
+- **Control socket** at `/run/egress/control.sock` on a tmpfs
+  (`HostConfig.Tmpfs: { "/run/egress": "rw,noexec,nosuid,size=64k,uid=1000,gid=1000,mode=0700" }`,
+  uid 1000 = the image's `node` user; the socket itself mode `0600`), a Unix socket only processes
+  in the proxy container reach. The sandbox reaches the proxy only on TCP 3128 / 1080 over the internal
   network, so it cannot change its own list. The client is a mode of the same file
-  (`node /app/proxy.mjs control apply <json>`), started by `update` through the Docker exec API
-  (the socket proxy already allows exec, the sandbox uses it).
+  (`node /app/proxy.mjs control apply <json>`), started by `update` through the Docker exec API with
+  `User: "node"` (the socket proxy already allows exec, the sandbox uses it).
 - **Apply**: validate every host with the same rules as `ALLOW_HOSTS` (refuse the whole request on
   one bad entry); write `allow.json` (temp file, fsync, rename); replace the list reference used by
   `hostAllowed` (single-threaded, so a check sees the old or the new list, never a mix); walk the
-  registry of open tunnels (CONNECT, SOCKS, in-flight absolute-URL HTTP requests; each entry records
-  the target host it was admitted for) and destroy both sockets of every entry the new list does not
-  cover; then reply `{ ok, digest }`. A request with the digest already in force replies at once
+  registry of connections and destroy both sockets of every entry the new list does not cover; then
+  reply `{ ok, digest }`.
+- **Connection registry.** An entry is registered when a request is admitted by host, **before**
+  name resolution, and removed when both sockets close. It covers CONNECT tunnels, SOCKS (from the
+  moment the handshake names a target, through resolution and `connectAny`, up to
+  `CONNECT_TIMEOUT_MS`), and absolute-URL HTTP requests in flight. Each entry records the normalized
+  target host. On apply every entry is re-evaluated with `hostAllowed(host, newList)` (wildcards
+  included, never string equality with the old list's entries). A connection still resolving or
+  connecting re-checks `hostAllowed` against the current list when its upstream connect completes
+  and drops the socket if the host is no longer covered, so no admission made under the old list
+  outlives the swap. A request with the digest already in force replies at once
   (idempotent).
 - Only allowlist to allowlist with a non-empty list is applied this way. `open-public` and the mode
   stay as today (§1 item 4).
@@ -84,15 +97,21 @@ doc of `update` gains the narrowing rule (§3.3).
 ### 3.2 Provider (`device-docker/src/provider.ts`)
 
 - `update`: unchanged decisions for `none`, kind changes, a missing container and a container
-  without this contract's labels (`"recreate"`). For allowlist to allowlist: when the proxy carries
-  the control label (`dev.capybara.sandbox.egress-control: 1`), apply in place (§3.1); a suspended
-  instance has its proxy started for the call and stopped again, so the volume holds the new list
-  for the next resume. A proxy without the label (made by an earlier plugin version) gets today's
-  swap once, for a widening only; a narrowing there answers `"recreate"` as today.
-- **Lower bound.** The sandbox labels keep the list of `create`. A lost proxy is rebuilt from the
-  config volume when it exists (exactly the list in force), else from the labels (never more than
-  in force), so `updateDecision`'s "keeps every recorded host" rule is no longer needed for the
-  in-place path.
+  without this contract's labels (`"recreate"`). For allowlist to allowlist: when the sandbox container
+  and its proxy carry the control label (`dev.capybara.sandbox.egress-control: 1`), apply in place
+  (§3.1); a suspended instance has its proxy started for the call and stopped again, so the volume
+  holds the new list for the next resume. An instance without the label (made by an earlier plugin
+  version) gets today's swap for a widening; a narrowing there answers `"recreate"` as today.
+- **Lower bound invariant.** A rebuilt proxy never allows more than the list last acknowledged.
+  The sandbox labels keep the list of `create`, which after an in-place narrowing is **wider** than
+  in force, so they are a valid source only for an instance that has never been updated in place.
+  The sandbox container gets the label `dev.capybara.sandbox.egress-control: 1` at `create` (labels
+  cannot change later, so it is set on every instance this version creates). A lost proxy is
+  rebuilt from the config volume when it exists (exactly the list in force). When the volume is
+  missing too, `ensureEgressRunning` rebuilds from the labels **only** for a container without the
+  control label; for one with it, it returns `false` (like `ensureInternalNetwork` does for an old
+  internal network), so `resume` answers `gone` and `update` answers `"recreate"`, and the kernel
+  recreates the instance under the desired limits. A missing volume never falls back to the labels.
 - **Acknowledgement.** `update` answers `"updated"` only when the exec exits 0 and prints the digest
   of the list it sent. A non-zero exit, a timeout, a wrong digest or an abort throws.
 
@@ -101,8 +120,9 @@ doc of `update` gains the narrowing rule (§3.3).
 A provider answers `"updated"` for a narrowing only once no connection to a removed host survives
 and no new one can open. Otherwise it answers `"recreate"` or throws. The SDK doc of
 `DeviceProvider.update` states this for every provider (device-e2b included), and the core skill and
-the device-docker README repeat it. A narrowing never waits for the next use on a running instance
-that the kernel already passes through `applyLimits` (unchanged).
+the device-docker README repeat it. When a narrowing applies is unchanged (the kernel's next use
+or reconcile, under the lease); the rule constrains only a successful `"updated"`. A failed or
+aborted `update` is the kernel's to handle (recreate, or quarantine and retry on the next use).
 
 ### 3.4 Failure handling
 
@@ -113,8 +133,9 @@ that the kernel already passes through `applyLimits` (unchanged).
 - Crash between the file write and the swap: the proxy restarts from `allow.json`. For a narrowing
   the file is the narrower list (safe). For a widening the proxy may now run the wider list while the
   kernel record is the older one; the record then claims less than is in force only for hosts the
-  desired limits already allowed, and a later narrowing goes through `applyLimits` because the record
-  and the desired limits differ.
+  desired limits already allowed. On the next use `appliedLacksHost(record, desired)` is still true,
+  so the kernel calls `update` again, which acknowledges at once by digest and records the list; a
+  later narrowing goes through `applyLimits` because `appliedWider` sees the difference.
 
 ### 3.5 Records, reports and approvals
 
@@ -141,7 +162,10 @@ force, both within what the kernel recorded or desired (§3.4).
 - **Docker integration** (`test/network.test.ts`, real Docker): a background process holding a
   connection survives a widening and the container id is unchanged; a narrowing closes the
   connection to the removed host, keeps the container and refuses new connections to it; suspend and
-  resume keep the updated list; a lost proxy is rebuilt from the volume; a control failure throws.
+  resume keep the updated list; a lost proxy is rebuilt from the volume; **proxy lost, volume lost,
+  narrowed instance**: resume answers `gone` and `update` answers `"recreate"` (never a proxy
+  rebuilt from the wider labels); a connection still resolving or connecting to a removed host when
+  the narrowing lands is dropped; `destroy` removes `<name>-egress-conf`; a control failure throws.
 - **Kernel**: no behavior change. One `device-fake` test that `"updated"` keeps a running background
   task and posts no "recreated" notice, if not already covered.
 
@@ -152,13 +176,16 @@ force, both within what the kernel recorded or desired (§3.4).
 2. Core: bump the `device-docker` pin in `packages/kernel/bootstrap.json`; fix the stale skill line
    that says host changes reach only new instances; SDK doc of `update` (§3.3) with `gen:sdk-api` and
    a changeset if the report changes.
-3. Existing instances keep working: their proxies lack the control label and use today's swap (or a
-   recreate for a narrowing) once, which gives them a proxy with the control socket. No migration.
+3. Existing instances keep working: they lack the control label and use today's paths, so a
+   widening on an old instance still drops its open connections (once per change) and a narrowing
+   still recreates it; the recreate gives it a container and proxy of this version. No migration.
 
 ## 6. Open questions for the maintainer
 
 1. **Narrowing in place** (recommended) or keep narrowing as a recreate and do widening only? In
-   place depends on the tunnel registry being complete; the tests in §4 are the proof.
+   place is safe only with the lower bound invariant of §3.2 (a missing config volume recreates
+   instead of rebuilding from the wider labels) and a complete connection registry (§3.1); the tests
+   in §4 are the proof.
 2. **Kind changes** (`open-public` <-> `allowlist`): keep recreating (recommended: the labels name the
    kind for `refuseOpenNetwork` on resume), or move them in place too?
 3. **Empty allowlist**: today `NetworkMode: none`, so the first host added recreates. Give every
