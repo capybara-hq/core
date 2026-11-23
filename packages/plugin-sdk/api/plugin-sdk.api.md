@@ -939,48 +939,6 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
-export interface DeviceCapabilityV2 {
-    connect(a: {
-        orgId: string;
-    }): Promise<"connected" | "cancelled" | {
-        error: string;
-    }>;
-    disconnect(a: {
-        deviceId: string;
-    }): Promise<void>;
-    onStatus(cb: () => void): () => void;
-    pause(a: {
-        deviceId: string;
-    }): Promise<void>;
-    requestCeiling(a: {
-        deviceId: string;
-    } & DeviceCeilingRequest): Promise<"applied" | "cancelled">;
-    resume(a: {
-        deviceId: string;
-    }): Promise<"resumed" | "cancelled">;
-    running(a: {
-        deviceId: string;
-    }): Promise<DeviceRunningOp[]>;
-    setKeepAwake(a: {
-        deviceId: string;
-        mode: KeepAwakeMode;
-    }): Promise<"applied" | "cancelled">;
-    status(): Promise<{
-        connections: ThisMachineConnection[];
-    }>;
-}
-
-// @public
-export interface DeviceCeilingRequest {
-    network?: "open" | "allowlist";
-    outsideSandbox?: boolean;
-    projectReach?: "machine" | "paths" | "workspace";
-}
-
-// @public
-export type DeviceConnection = "starting" | "online" | "offline" | "draining" | "stopped";
-
-// @public
 export class DeviceOfflineError extends Error {
     constructor(deviceId: string, opts?: {
         cause?: unknown;
@@ -1088,15 +1046,6 @@ export interface DeviceReportLimit {
 // @public
 export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
     readonly notSent: true;
-}
-
-// @public
-export interface DeviceRunningOp {
-    accountId: string | null;
-    conversationId: string | null;
-    isolation: "restricted" | "full";
-    startedAt: string;
-    tag: string;
 }
 
 // @public
@@ -2230,9 +2179,6 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | {
 };
 
 // @public
-export type KeepAwakeMode = "off" | "while-busy" | "connected";
-
-// @public
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
@@ -2886,9 +2832,6 @@ export interface ParsedSetupGuide {
     codeBlocks: SetupGuideCodeBlock[];
     issues: SetupGuideParseIssue[];
     sections: SetupGuideSection[];
-    // Warning: (ae-forgotten-export) The symbol "SetupGuideShellActionLine" needs to be exported by the entry point index.d.ts
-    //
-    shellActions: SetupGuideShellActionLine[];
     title: string | null;
 }
 
@@ -3799,7 +3742,6 @@ export const SETUP_GUIDE_LIMITS: {
     readonly docBytes: 65536;
     readonly codeBlocks: 24;
     readonly checks: 16;
-    readonly shellActions: 4;
     readonly sections: 16;
     readonly titleChars: 100;
     readonly checkLabelChars: 80;
@@ -3878,10 +3820,6 @@ export type SetupGuideBlock = {
     kind: "check";
     id: string;
     label: string;
-} | {
-    kind: "shell-action";
-    action: SetupGuideShellAction;
-    label: string;
 };
 
 // @public
@@ -3937,7 +3875,6 @@ export interface SetupGuidePlaceInfo {
     audiences: readonly SetupGuideAudience[];
     drift: boolean;
     modes: readonly string[];
-    shellActions: readonly SetupGuideShellAction[];
     variables: Readonly<Record<string, SetupGuideVariableType>>;
 }
 
@@ -3948,9 +3885,6 @@ export interface SetupGuideSection {
     type: "mode" | "audience";
     value: string;
 }
-
-// @public
-export type SetupGuideShellAction = "connect-this-machine";
 
 // @public
 export type SetupGuideVariableType = "url" | "text" | "token";
@@ -3992,7 +3926,6 @@ export const SHELL_CAPABILITIES: readonly {
 // @public
 export const SHELL_CAPABILITY_KEYS: {
     readonly chrome: "chrome@1";
-    readonly device: "device@2";
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
@@ -4517,22 +4450,6 @@ export interface ThemeSchemeOverride {
 
 // @public
 export const THINKING_VALUES: readonly string[];
-
-// @public
-export interface ThisMachineConnection {
-    connection: DeviceConnection;
-    deviceId: string;
-    keepAwake: {
-        mode: KeepAwakeMode;
-        held: boolean;
-        unavailable?: string;
-    };
-    lastWakeAt?: string;
-    mode: "os" | "docker";
-    offlineReason?: string;
-    orgId: string;
-    serviceInstalled: boolean;
-}
 
 // @public
 export const TOOL_KEY_ARGS_MAX = 3;

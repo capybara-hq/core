@@ -225,7 +225,7 @@ function Detail({
         )}
         {tab === "overview" ? (
           <Stack gap={12}>
-            <DeviceOverviewSection orgId={orgId} device={e} />
+            <DeviceOverviewSection device={e} />
             <DangerZone title={t("danger.title")}>
               <DangerZoneItem
                 title={t("detail.delete")}

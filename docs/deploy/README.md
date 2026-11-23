@@ -751,8 +751,8 @@ People can connect their own laptop or server as a local device with `@capybara-
 `device-local` plugin's (a bootstrap preinstall, on in every organization; an org admin may switch it
 off), served over the kernel's dial-in channel (config `devices.dialIn`,
 `CAPYBARA_DEVICES__DIAL_IN__*`). Upgrade `capybara-device` together with the kernel: the program and
-`device-local` speak one device protocol major, and `GET /api/v1/meta` reports `features.localDevices`
-and the protocol range only while `device-local` is loaded. The program opens one
+`device-local` speak one device protocol major, and `GET /api/v1/meta` reports the range of majors the
+loaded `device-local` speaks (`protocols.device`). The program opens one
 long-lived WebSocket connection to the kernel's `gateway` role.
 
 - **Route and origin.** The program connects to `wss://<http.publicUrl host>/device/connect`
