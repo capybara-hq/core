@@ -31,13 +31,8 @@ import { RefBlock } from "./ref-block";
 // subsection.html (and callout.html: the Callout's line form inside a box).
 
 const noop = () => {};
-const MODELS = [
-  { value: "", label: "未设置" },
-  { value: "deepseek/deepseek-chat", label: "DeepSeek / deepseek-chat" },
-];
-
-/** An item row with a field (the reference set's item-list-fields block). */
-function PurposeRow({ title, code, lines }: { title: string; code: string; lines: string[] }) {
+/** An item row with a field (the reference set's item-list-fields block): a tool and its policy. */
+function PolicyRow({ title, code, lines }: { title: string; code: string; lines: string[] }) {
   return (
     <ItemListItem
       title={title}
@@ -48,8 +43,8 @@ function PurposeRow({ title, code, lines }: { title: string; code: string; lines
         </Text>
       ))}
     >
-      <Field label="模型">
-        <Select value="deepseek/deepseek-chat" onChange={noop} options={MODELS} />
+      <Field label="审批">
+        <Select value="ask" onChange={noop} options={POLICIES} />
       </Field>
     </ItemListItem>
   );
@@ -84,14 +79,19 @@ function itemListBlocks(): ReactNode {
       </RefBlock>
       {/* Item rows with fields in a flush form card (one section listing items, each with a field). */}
       <RefBlock id="item-list-fields" width={960} pad>
-        <FormSection id="purposes" title="用途默认映射" description="各组织可在设置里覆盖。" flush>
-          <ItemList label="用途" inset="flush">
-            <PurposeRow title="评测" code="eval" lines={["由内核声明"]} />
-            <PurposeRow title="标题" code="title" lines={["由内核声明"]} />
-            <PurposeRow
-              title="子智能体 · 快"
-              code="subagent_fast"
-              lines={["由内核声明", "子智能体选「快」时用这个模型。"]}
+        <FormSection
+          id="tool-policies"
+          title="工具策略"
+          description="每个工具的默认审批方式。"
+          flush
+        >
+          <ItemList label="工具" inset="flush">
+            <PolicyRow title="网页搜索" code="WebSearch" lines={["内置工具"]} />
+            <PolicyRow title="网页读取" code="WebFetch" lines={["内置工具"]} />
+            <PolicyRow
+              title="命令"
+              code="Bash"
+              lines={["内置工具", "在设备里运行命令，按命令审查的结果决定。"]}
             />
           </ItemList>
         </FormSection>
