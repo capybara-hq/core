@@ -75,10 +75,16 @@ describe("summarizeTools (spec §7 verb table)", () => {
     expect(summarizeTools(rows, "zh")).toBe("已使用 3 个工具");
   });
 
-  it("appends failures", () => {
+  it("appends the calls that returned an error, without the word 失败", () => {
     const rows = [row({ kind: "command" }), ...many(17), ...many(2, { status: "failed" })];
-    expect(summarizeTools(rows, "zh")).toContain("（2 个失败）");
-    expect(summarizeTools(rows, "en")).toContain(" (2 failed)");
+    expect(summarizeTools(rows, "zh")).toBe(
+      "已运行 1 个命令，已使用 19 个工具 · 2 个调用返回了错误",
+    );
+    expect(summarizeTools(rows, "en")).toContain(" · 2 calls returned an error");
+    expect(summarizeTools([row({ status: "failed" }), row()], "en")).toContain(
+      " · 1 call returned an error",
+    );
+    expect(summarizeTools(rows, "zh")).not.toContain("失败");
   });
 
   it("names the one object a kind touches", () => {
@@ -173,7 +179,7 @@ describe("ToolRow (§6.16.9)", () => {
 
   it("a done row has no status mark", () => {
     const { container } = wrap(<ToolRow row={row({ keyArg: "#反馈" })} />);
-    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    expect(container.querySelector('[data-part="error-dot"]')).toBeNull();
     expect(container.querySelector('[data-part="spinner"]')).toBeNull();
     expect(container.querySelector('[data-part="key-arg"]')?.textContent).toBe("#反馈");
     // no detail: not a button
@@ -188,13 +194,45 @@ describe("ToolRow (§6.16.9)", () => {
     expect(container.textContent).toBe("Bash 检查配置");
   });
 
-  it("failed shows 失败 and the error's first line", () => {
+  it("failed shows the error dot (named, not the word 失败) and the error's first line", () => {
     const { container } = wrap(
       <ToolRow row={row({ status: "failed", error: "404 文件不存在\nstack…" })} />,
     );
-    expect(container.querySelector('[data-part="fail-word"]')?.textContent).toBe("失败");
+    const dot = screen.getByRole("img", { name: "调用返回了错误" });
+    expect(dot.getAttribute("data-part")).toBe("error-dot");
+    expect(dot.getAttribute("title")).toBe("调用返回了错误");
+    expect(dot.textContent).toBe("");
+    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    expect(container.textContent).not.toContain("失败");
     expect(container.textContent).toContain("404 文件不存在");
     expect(container.textContent).not.toContain("stack");
+    cleanup();
+    wrap(<ToolRow row={row({ status: "failed", error: "boom" })} />, "en");
+    expect(screen.getByRole("img", { name: "The call returned an error" })).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Failed");
+  });
+
+  it("an expanded failed row keeps the full error text in its output", () => {
+    wrap(
+      <ToolRow
+        row={row({
+          status: "failed",
+          error: "validation_failed: name is required",
+          detail: { errorText: "validation_failed: name is required\nat field name" },
+        })}
+        open
+      />,
+    );
+    expect(screen.getByRole("img", { name: "调用返回了错误" })).toBeTruthy();
+    expect(document.querySelector('[data-part="tool-output"]')?.textContent).toBe(
+      "validation_failed: name is required\nat field name",
+    );
+  });
+
+  it("the error dot is a drawn fail dot, not a character", () => {
+    const body = rule(css, ".cb-error-dot");
+    expect(body).toMatch(/background:\s*var\(--cb-fail\)/);
+    expect(body).toMatch(/border-radius:\s*50%/);
   });
 
   it("running shows a spinner and the elapsed time as the reference writes it", () => {
@@ -418,7 +456,7 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(summarizeTools(rows, "zh")).toBe("已读取 /w/a.py，已修改 /w/a.py（1 个已拦下）");
     expect(summarizeTools(rows, "en")).toContain(" (1 blocked)");
     const { container } = wrap(<ToolGroup rows={rows} />);
-    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    expect(container.querySelector('[data-part="error-dot"]')).toBeNull();
   });
 
   it("a guarded row reads as done with the neutral word, no failure", () => {
@@ -428,7 +466,7 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(container.querySelector('[data-part="guard-word"]')?.textContent).toBe(
       " · 已拦下：需先重新读取",
     );
-    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    expect(container.querySelector('[data-part="error-dot"]')).toBeNull();
     cleanup();
     const en = wrap(
       <ToolRow row={builtin("Write", { kind: "edit", keyArg: "/w/b", guard: "not_read" })} />,
@@ -448,7 +486,7 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(container.querySelector('[data-part="sandbox-word"]')?.textContent).toBe(
       " · 在沙箱外运行",
     );
-    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    expect(container.querySelector('[data-part="error-dot"]')).toBeNull();
     cleanup();
     const failed = wrap(
       <ToolRow
@@ -607,9 +645,21 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(container.querySelector('[data-part="tool-meta"]')).toBeNull();
   });
 
-  it("a failed group marks the failures in fail", () => {
-    const { container } = wrap(<ToolGroup rows={[row(), row({ status: "failed" })]} />);
-    expect(container.querySelector('[data-part="fail-word"]')?.textContent).toBe("（1 个失败）");
+  it("a failed group marks the errors with the dot and the count, not the word 失败", () => {
+    const { container } = wrap(
+      <ToolGroup rows={[row(), row({ status: "failed" }), row({ status: "failed" })]} />,
+    );
+    const mark = container.querySelector('[data-part="tool-errors"]');
+    expect(mark?.textContent).toBe("2");
+    const dot = screen.getByRole("img", { name: "2 个调用返回了错误" });
+    expect(mark?.contains(dot)).toBe(true);
+    expect(dot.getAttribute("title")).toBe("2 个调用返回了错误");
+    // the header names the mark once: the visible count is hidden from the accessible name
+    expect(screen.getByRole("button", { name: /已使用 3 个工具/ }).textContent).toBe(
+      "已使用 3 个工具2",
+    );
+    expect(container.textContent).not.toContain("失败");
+    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
   });
 
   it("names a single object in ink", () => {

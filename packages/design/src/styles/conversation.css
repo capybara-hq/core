@@ -111,6 +111,28 @@ button.cb-tool-line:focus-visible {
   white-space: nowrap;
 }
 
+/* The error dot (§6.16.8, §6.16.9): a call that returned an error is a small fail dot, a status
+   mark rather than a word; its accessible name and tooltip say what it means. */
+.cb-error-dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cb-fail);
+  vertical-align: middle;
+}
+.cb-tool-label > .cb-error-dot {
+  margin-inline-start: var(--cb-space-2);
+}
+/* The group header's mark: the dot and the count, in the header's own colour. */
+.cb-tool-errors {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  margin-inline-start: var(--cb-space-2);
+}
+
 /* The row's meta (§6.16.9): the status words after the label stay whole; the description yields
    with the ellipsis. */
 .cb-tool-meta {

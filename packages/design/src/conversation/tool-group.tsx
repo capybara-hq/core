@@ -6,6 +6,7 @@ import { useClock } from "./clock";
 import { Spinner } from "./prose";
 import { summaryParts } from "./tool-copy";
 import {
+  ErrorDot,
   hasDetail,
   isLive,
   isWaiting,
@@ -138,20 +139,25 @@ export function ToolGroup({
   const live = rows.some(isLive);
   const running = rows.some(isRunning);
   const isOpen = live || (open ?? own);
-  const parts = summaryParts(rows, locale).map((p, i) => (
-    <span
+  const parts = summaryParts(rows, locale).map((p, i) =>
+    p.errors ? (
+      // the error dot and the count; the dot names it, so the count is not read twice
       // biome-ignore lint/suspicious/noArrayIndexKey: the runs are positional
-      key={i}
-      className={
-        p.tone
-          ? `cb-${p.tone === "fail" ? "fail-word" : p.tone === "accent" ? "accent-word" : p.tone}`
-          : undefined
-      }
-      data-part={p.part}
-    >
-      {p.text}
-    </span>
-  ));
+      <span key={i} className="cb-tool-errors" data-part="tool-errors">
+        <ErrorDot label={p.errors.label} />
+        <span aria-hidden="true">{p.errors.count}</span>
+      </span>
+    ) : (
+      <span
+        // biome-ignore lint/suspicious/noArrayIndexKey: the runs are positional
+        key={i}
+        className={p.tone ? `cb-${p.tone === "accent" ? "accent-word" : p.tone}` : undefined}
+        data-part={p.part}
+      >
+        {p.text}
+      </span>
+    ),
+  );
   const box = isOpen ? (
     <ToolBox>
       {children ??
