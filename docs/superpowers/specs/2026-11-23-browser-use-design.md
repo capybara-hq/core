@@ -192,7 +192,9 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
   the hop is authenticated with an HMAC over the ticket id under the kernel's internal secret.
 - An open viewer stream counts as device use: it refreshes the instance's last use (and a takeover
   holds it), so idle suspension never cuts off a person logging in. (designer's call)
-- Every open, close and takeover is audited (`browser.view`, `browser.takeover`); frames are not.
+- Every viewer open and close is audited (`browser.view`, `browser.view_closed`); frames are not. The
+  kernel does not parse the stream, so takeover itself is not a kernel audit event; only the owner
+  can view, and takeover needs an open viewer. (amended 2026-11-23)
 - Embed tokens stay invalid for `/api`; the ticket is valid only for its one stream.
 
 ### 6.3 Bandwidth
@@ -309,7 +311,8 @@ Primary, structure based (every chat model):
   output archived per the tool output rules
 - click / type / select / press key / scroll / hover by ref; upload a workspace file to a ref
 - wait (for text, a ref, navigation, or a time cap)
-- handoff (`message` for the person): opens the expanded view with the message on top, waits until
+- handoff (`message` for the person): phase 1 shows the question card in the conversation and a
+  banner in the panel (opening the panel automatically is phase 2); waits until
   the person hands back or cancels, then returns the new page state. The wait is the existing
   resumable `InputRequired` (a two-choice form: 完成 / 取消, answered in the conversation or by
   交还智能体 in the panel through `ctx.deviceAccess.answerHandoff`), so it survives replica restarts. `wait` with a long cap uses the same
