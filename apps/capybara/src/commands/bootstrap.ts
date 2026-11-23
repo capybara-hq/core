@@ -112,7 +112,7 @@ export async function runBootstrap(
           ...(extraManifest !== undefined && { extraManifest }),
         });
         sha = bootstrapManifestSha256(manifest);
-        if (carry === undefined && (await cli.bootstrap.isDone(sha))) return "done" as const;
+        if (carry === undefined && (await cli.bootstrap.isDone(manifest))) return "done" as const;
         const dir = bootstrapDirOf(cli.config, opts.dir);
         try {
           return (

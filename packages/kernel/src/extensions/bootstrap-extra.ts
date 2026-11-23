@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
   type BootstrapEntry,
@@ -31,7 +32,9 @@ export type MergedBootstrapManifest = Omit<BootstrapManifest, "plugins"> & {
 
 /**
  * What an extra manifest left in the deployment: the config-managed marketplaces and the entries
- * the last completed bootstrap run took from an extra manifest (flagged `extra` in its results).
+ * an extra manifest contributed to the latest bootstrap run: the run that started writing and has
+ * not completed (`bootstrap_run_started`, ruling R19) when there is one, else the last completed
+ * run (flagged `extra` in its results, R17).
  * A process without an extra manifest that finds any is configured differently from the ones that
  * wrote them ({@link missingExtraManifestMessage}).
  */
@@ -121,6 +124,24 @@ export function mergeBootstrapManifests(
       ...(extra.defaultTheme !== undefined && { defaultTheme: extra.defaultTheme }),
     },
   };
+}
+
+/**
+ * sha256 (hex) of the extra manifest's part of a merged manifest: its entries (as merged), its
+ * marketplaces and its default theme; null without an extra manifest. A recorded run counts as done
+ * only while the latest completed run has the same extra part (ruling R18), so a distribution
+ * removed (an empty extra manifest) and added back runs again, while a replica on another
+ * built-in manifest with the same extra manifest (a rolling upgrade) does not.
+ */
+export function bootstrapExtraSha256(manifest: MergedBootstrapManifest): string | null {
+  if (manifest.extra === undefined) return null;
+  const names = new Set(manifest.extra.plugins);
+  const part = {
+    plugins: manifest.plugins.filter((p) => names.has(p.name)),
+    marketplaces: manifest.extra.marketplaces,
+    ...(manifest.extra.defaultTheme !== undefined && { defaultTheme: manifest.extra.defaultTheme }),
+  };
+  return createHash("sha256").update(JSON.stringify(part)).digest("hex");
 }
 
 /** Loads the built-in manifest (a given one, else the file) and merges the extra file into it. */

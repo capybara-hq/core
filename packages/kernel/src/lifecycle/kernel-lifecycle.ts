@@ -33,7 +33,6 @@ import {
   missingExtraManifestMessage,
   syncExtraMarketplaces,
 } from "../extensions/bootstrap-extra.js";
-import { bootstrapManifestSha256 } from "../extensions/bootstrap-manifest.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";
@@ -415,7 +414,7 @@ export class KernelLifecycle
   private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
     const manifest = await this.manifest();
     const bootstrap = this.bootstrap;
-    if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
+    if (await bootstrap.isDone(manifest)) return false;
     try {
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({

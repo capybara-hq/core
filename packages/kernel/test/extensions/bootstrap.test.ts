@@ -233,7 +233,7 @@ describe("a fresh deployment", () => {
       })),
     );
     const sha = bootstrapManifestSha256(fx.manifest);
-    expect(await k.app.get(BootstrapService).isDone(sha)).toBe(true);
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
     const completed = await audits("bootstrap.completed");
     expect(completed).toEqual([
       {
@@ -720,9 +720,7 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     const k = await boot(fx);
     expect(k.port).toBeGreaterThan(0);
     expect(k.app.get(ExtensionHost).current("alpha")).toBeDefined();
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      false,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(false);
 
     // Fixed in a later image: the next start completes it
     await stopAll();
@@ -730,9 +728,7 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     await writeFile(join(fx.dir, bootstrapFileName(beta)), fixed);
     beta.integrity = `sha512-${createHash("sha512").update(fixed).digest("base64")}`;
     const k2 = await boot(fx);
-    expect(await k2.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      true,
-    );
+    expect(await k2.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
     expect((await installs()).map((r) => [r.name, r.version])).toEqual([
       ["alpha", "1.0.0"],
       ["beta", "1.0.0"],
@@ -798,9 +794,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
     const fx = await builtinFixture();
     await serve(fx.packages);
     const k = await boot(fx, { ...OBJECT_STORE_CONFIG, packages: { npmRegistry: reg?.url } });
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      true,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
     expect(tarballs()).toEqual([
       "/@test/plugin-fake-bootstrap-b/-/plugin-fake-bootstrap-b-0.1.0.tgz",
       "/@test/plugin-delta/-/plugin-delta-1.0.0.tgz",
@@ -818,9 +812,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
       logger,
     );
     expect(k.port).toBeGreaterThan(0);
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      false,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(false);
     expect((await installs()).map((r) => r.name)).toEqual(["fake-bootstrap-b"]);
     const final = lines.find((l) => l.msg.includes("retried on the next start"));
     expect(final?.fields?.failures).toEqual([
@@ -979,9 +971,7 @@ describe("a declarative entry", () => {
     });
     // The first pass (before the extensions loaded) installed the object store; the pass after
     // the startup reconcile imported delta and completed the run, recording both passes' actions
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      true,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
       results: [
         { name: "fake-bootstrap-b", action: "installed", version: "0.1.0" },
@@ -1091,9 +1081,7 @@ describe("a builtin entry", () => {
     const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
     // Deferred, not failed: no entry failure and no "could not be installed" line in any pass
     expect(lines.filter((l) => l.msg.includes("could not be installed"))).toEqual([]);
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      true,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
       results: [
         { name: "delta", action: "imported", version: "1.0.0" },
@@ -1131,9 +1119,7 @@ describe("a builtin entry", () => {
     const { logger, lines } = recordingLogger();
     const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
     expect(k.port).toBeGreaterThan(0);
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      false,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(false);
     expect((await installs()).map((r) => r.name)).toEqual(["fake-bootstrap-b"]);
     expect(
       lines.some((l) => l.level === "error" && l.msg.includes("retried on the next start")),
@@ -1151,9 +1137,7 @@ describe("a builtin entry", () => {
     const k = await boot(fx, {}, logger);
     expect(k.port).toBeGreaterThan(0);
     expect(k.app.get(StorageService).available).toBe(false);
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      false,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(false);
     // Tried once, by the second pass
     const failed = lines.filter((l) => l.msg.includes("a plugin could not be installed"));
     expect(failed.map((l) => l.fields?.plugin)).toEqual(["delta"]);
@@ -1197,9 +1181,7 @@ describe("a builtin entry", () => {
         .where("name", "=", "delta")
         .execute(),
     ).toEqual([before]);
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      false,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(false);
     expect(
       lines.find((l) => l.msg.includes("retried on the next start"))?.fields?.failures,
     ).toEqual([expect.objectContaining({ name: "delta", code: "plugin.name_taken" })]);
@@ -1230,9 +1212,7 @@ describe("a builtin entry", () => {
     );
     fx.manifest.plugins.push(epsilon);
     const k2 = await boot(fx, OBJECT_STORE_CONFIG);
-    expect(await k2.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      true,
-    );
+    expect(await k2.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
     admin = await session(k2, "root");
     expect(await itemNamed("delta")).toMatchObject({ builtin: true, scope: "all" });
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({

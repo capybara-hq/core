@@ -33,6 +33,7 @@ import { writeSnapshot } from "./approvals.js";
 import {
   BootstrapExtraMismatchError,
   type BootstrapGitRunEntry,
+  bootstrapExtraSha256,
   type ExtraManifestTraces,
   hasExtraManifestTraces,
   type MergedBootstrapEntry,
@@ -76,7 +77,14 @@ import type { SingleProviderNote } from "./single-provider.js";
  *   together only one runs it; the others wait, then find it done. A lost lock (renewal failed
  *   until expiry) aborts the run at its next step. "Done" is a `bootstrap_runs` row for the
  *   manifest's sha256 (written with the audit `bootstrap.completed` only when every entry
- *   succeeded; otherwise the next start runs it again, which is idempotent).
+ *   succeeded; otherwise the next start runs it again, which is idempotent) while the latest
+ *   completed run has the same extra-manifest part ({@link bootstrapExtraSha256}, ruling R18): an
+ *   extra manifest removed and added back runs again; another built-in manifest with the same
+ *   extra part (a replica of the previous release) does not.
+ * - Before its first write a run records itself as started (`bootstrap_run_started`, with the
+ *   names of its extra entries; ruling R19) and completing deletes the row, so the extra-manifest
+ *   mismatch check ({@link BootstrapService.extraManifestTraces}) sees an extra manifest's entries
+ *   from the first pass on, also while the run is not recorded done.
  * - Two passes per start: the first runs before the extensions load (no object store yet), the
  *   second after them. A `builtin` entry (not required, but builtin in the catalog) is deferred by
  *   the first pass (`deferBuiltin`: skipped, not a failure; the run is then not recorded and the
@@ -243,14 +251,37 @@ export class BootstrapService {
     return this.configService.get();
   }
 
-  /** Whether the bootstrap step completed for the manifest with this sha256. */
-  async isDone(manifestSha256: string): Promise<boolean> {
+  /**
+   * Whether the bootstrap step is done for this manifest: a completed run of its sha256 while the
+   * latest completed run has the same extra-manifest part (ruling R18).
+   */
+  async isDone(manifest: MergedBootstrapManifest): Promise<boolean> {
+    return (await this.recorded(manifest)) !== undefined;
+  }
+
+  /** The recorded result of the manifest's run when it counts as done ({@link isDone}). */
+  private async recorded(manifest: MergedBootstrapManifest): Promise<BootstrapResult | undefined> {
+    const manifestSha256 = bootstrapManifestSha256(manifest);
     const row = await this.db
       .selectFrom("bootstrap_runs")
-      .select("manifest_sha256")
+      .select("results")
       .where("manifest_sha256", "=", manifestSha256)
       .executeTakeFirst();
-    return row !== undefined;
+    if (row === undefined) return undefined;
+    const latest = await this.db
+      .selectFrom("bootstrap_runs")
+      .select(["manifest_sha256", "extra_sha256"])
+      .orderBy("completed_at", "desc")
+      .orderBy("manifest_sha256")
+      .limit(1)
+      .executeTakeFirstOrThrow();
+    if (
+      latest.manifest_sha256 !== manifestSha256 &&
+      latest.extra_sha256 !== bootstrapExtraSha256(manifest)
+    ) {
+      return undefined;
+    }
+    return { manifestSha256, results: row.results as BootstrapEntryResult[] };
   }
 
   /**
@@ -267,14 +298,16 @@ export class BootstrapService {
       .where("managed", "=", "config")
       .orderBy("name")
       .execute();
-    const last = await this.lastRunResults();
-    return {
-      marketplaces: rows.map((r) => r.name),
-      plugins: (last ?? [])
-        .filter((r) => r.extra === true)
-        .map((r) => r.name)
-        .sort(),
-    };
+    // A run that started writing and has not completed is the latest state (R19)
+    const started = await this.db
+      .selectFrom("bootstrap_run_started")
+      .select("extra_plugins")
+      .executeTakeFirst();
+    const plugins =
+      started !== undefined
+        ? [...(started.extra_plugins as string[])]
+        : ((await this.lastRunResults()) ?? []).filter((r) => r.extra === true).map((r) => r.name);
+    return { marketplaces: rows.map((r) => r.name), plugins: plugins.sort() };
   }
 
   /**
@@ -309,20 +342,12 @@ export class BootstrapService {
     imports: BootstrapImports;
   }): Promise<BootstrapResult> {
     const manifestSha256 = bootstrapManifestSha256(o.manifest);
-    const recorded = async () => {
-      const done = await this.db
-        .selectFrom("bootstrap_runs")
-        .select("results")
-        .where("manifest_sha256", "=", manifestSha256)
-        .executeTakeFirst();
-      return done && { manifestSha256, results: done.results as BootstrapEntryResult[] };
-    };
     // Done: no lock, no directory, no network
-    const before = await recorded();
+    const before = await this.recorded(o.manifest);
     if (before) return before;
     return this.locked(o.signal, async (signal) => {
       // Another replica may have finished it while this one waited for the lock
-      const done = await recorded();
+      const done = await this.recorded(o.manifest);
       if (done) return done;
       if (o.manifest.extra === undefined) {
         const traces = await this.extraManifestTraces();
@@ -359,6 +384,8 @@ export class BootstrapService {
         },
       );
       for (const [name, bytes] of obtained) files.set(name, bytes);
+      // Before the first write: a process without the extra manifest is refused from here on (R19)
+      await this.recordStarted(manifestSha256, o.manifest.extra?.plugins ?? []);
       const handled = await this.lastRunNames();
       const results: BootstrapEntryResult[] = [];
       const failures: BootstrapFailure[] = [];
@@ -400,7 +427,7 @@ export class BootstrapService {
         throw new BootstrapFailedError(failures, results, deferred, files);
       }
       signal.throwIfAborted();
-      await this.recordDone(manifestSha256, results);
+      await this.recordDone(manifestSha256, bootstrapExtraSha256(o.manifest), results);
       this.log.info("bootstrap completed", { manifestSha256, results });
       return { manifestSha256, results };
     });
@@ -426,17 +453,43 @@ export class BootstrapService {
     );
   }
 
-  /** The `bootstrap_runs` row and the `bootstrap.completed` audit, in one transaction. */
+  /** The run has started writing: the `bootstrap_run_started` row names its extra entries. */
   @Transactional()
-  private async recordDone(manifestSha256: string, results: BootstrapEntryResult[]): Promise<void> {
+  private async recordStarted(manifestSha256: string, extraPlugins: string[]): Promise<void> {
+    const values = {
+      manifest_sha256: manifestSha256,
+      extra_plugins: JSON.stringify(extraPlugins),
+      started_at: sql<Date>`now()` as unknown as Date,
+    };
+    await this.db
+      .insertInto("bootstrap_run_started")
+      .values(values)
+      .onConflict((oc) => oc.column("singleton").doUpdateSet(values))
+      .execute();
+  }
+
+  /**
+   * The `bootstrap_runs` row (again with the current time and results when the manifest ran before:
+   * it is then the latest completed run, R18), the `bootstrap.completed` audit and the end of the
+   * started run, in one transaction.
+   */
+  @Transactional()
+  private async recordDone(
+    manifestSha256: string,
+    extraSha256: string | null,
+    results: BootstrapEntryResult[],
+  ): Promise<void> {
+    const values = {
+      completed_at: sql<Date>`now()` as unknown as Date,
+      results: JSON.stringify(results),
+      extra_sha256: extraSha256,
+    };
     await this.db
       .insertInto("bootstrap_runs")
-      .values({
-        manifest_sha256: manifestSha256,
-        completed_at: sql<Date>`now()` as unknown as Date,
-        results: JSON.stringify(results),
-      })
+      .values({ manifest_sha256: manifestSha256, ...values })
+      .onConflict((oc) => oc.column("manifest_sha256").doUpdateSet(values))
       .execute();
+    await this.db.deleteFrom("bootstrap_run_started").execute();
     await audit(this.db, {
       action: "bootstrap.completed",
       target: manifestSha256,
@@ -474,6 +527,7 @@ export class BootstrapService {
       .selectFrom("bootstrap_runs")
       .select("results")
       .orderBy("completed_at", "desc")
+      .orderBy("manifest_sha256")
       .limit(1)
       .executeTakeFirst();
     return row?.results as BootstrapEntryResult[] | undefined;

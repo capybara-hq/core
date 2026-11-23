@@ -2011,6 +2011,7 @@ export interface KernelDatabase {
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
   bootstrap_runs: BootstrapRunsTable;
+  bootstrap_run_started: BootstrapRunStartedTable;
   org_notices: OrgNoticesTable;
   platform_notices: PlatformNoticesTable;
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
@@ -2136,6 +2137,20 @@ export interface BootstrapRunsTable {
   manifest_sha256: string;
   completed_at: Ts;
   results: ColumnType<unknown, string, string>;
+  /**
+   * 0178: sha256 (hex) of the extra manifest's part of the run (`bootstrapExtraSha256`); null
+   * without an extra manifest and in older rows.
+   */
+  extra_sha256: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** 0178: the bootstrap run that has started writing and not completed (at most one row). */
+export interface BootstrapRunStartedTable {
+  singleton: ColumnType<boolean, boolean | undefined, never>;
+  manifest_sha256: string;
+  /** The names of the run's entries from the extra manifest (a JSON array of strings). */
+  extra_plugins: ColumnType<unknown, string, string>;
+  started_at: Ts;
 }
 
 /** 0034_directory.sql, renamed in 0042, one kind (plugin) since 0044: platform catalog items. */

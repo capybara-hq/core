@@ -107,7 +107,8 @@ entries. Parse errors in either file fail the step, as an invalid built-in manif
   overrides an upstream pin.
 - The run identity becomes the sha256 of the merged manifest, so `bootstrap_runs`, `isDone`,
   `lastRunNames` and `clearRemoved` work unchanged: an extra entry dropped from the file is treated
-  exactly like a built-in entry dropped by an upgrade.
+  exactly like a built-in entry dropped by an upgrade. (As built R18: "done" also compares the extra
+  manifest's part with the latest completed run's.)
 - `clearRemoved` already acts on "every live platform item not in the manifest"; with the merged
   manifest it no longer strips the other file's entries (running the files separately would).
 
@@ -358,6 +359,30 @@ Rulings taken while implementing; where they differ from the text above, they wi
   the npm-only gap (an extra manifest without marketplaces, e.g. run only by compose's init,
   leaves no managed row). An entry a built-in manifest dropped carries no flag, and an empty extra
   manifest file is configured, so removal works as before.
+- **R18, re-adding an extra manifest runs it again (#534; as built 2026-11-23):** "done" is no
+  longer only a `bootstrap_runs` row for the merged manifest's sha256. Each row also stores
+  `extra_sha256` (migration 0178): the sha256 of the extra manifest's part of the merged manifest
+  (its entries as merged, its marketplaces, its default theme; NULL without an extra manifest). A
+  recorded run counts as done when it is the latest completed run, or when the latest completed run
+  has the same `extra_sha256`. Completing a manifest that ran before writes its row again (current
+  time and results), so it becomes the latest. Manifest X, then an empty extra file, then X again:
+  the third start runs X and puts back `required` / `builtin`. Decision taken over "done only when
+  it is the latest run": a replica of the previous release (another `bootstrap.json`, the same extra
+  manifest) restarting during a rolling upgrade still finds its manifest done, instead of running
+  the old built-in manifest again and clearing the new release's `required` entries. Rows written
+  before 0178 have NULL there, so a deployment with an extra manifest runs it once more after the
+  upgrade only if its latest row is another manifest's (idempotent). `BootstrapService.isDone`
+  takes the merged manifest.
+- **R19, a started run is a trace (#533; as built 2026-11-23):** after every package is obtained
+  and before its first write, a run upserts the single row of `bootstrap_run_started` (migration
+  0178) with its manifest sha256 and the names of its extra entries (an empty list without an extra
+  manifest); completing a run deletes it in the transaction that writes the `bootstrap_runs` row.
+  The traces of R14 / R17 read the extra entries from that row when it exists (the run that wrote
+  last), else from the last completed run. So the first pass of an npm-only extra manifest (which
+  defers its builtin entries and is not recorded), or a run whose second pass keeps failing, already
+  refuses a process without `bootstrap.extraManifest`, in the start, in `capybara bootstrap` and
+  under the lock. A removal (an empty extra file) that has written but not completed leaves an empty
+  list, so it is no trace, as R17 intends.
 - **Repository root:** a git entry's `path` may be `.` / `./` (a single-plugin repository).
 - **Several repositories:** `capybara-plugin bootstrap` reads every git entry from `--root`; a
   manifest whose git entries come from more than one marketplace is checked and pinned once per
