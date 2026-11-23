@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ContentSection,
+  FormSection,
   formatDateTime,
   ItemList,
   ItemListItem,
@@ -19,21 +19,25 @@ import {
   deviceText,
 } from "../lib/devices";
 import { labelLocale } from "../lib/extension-label";
+import { DeviceNetworkSection } from "./DeviceNetworkSection";
 import { Person } from "./Person";
 
 /**
- * Overview (device provider design §6.6): values only, the same for every provider: what
- * the provider last reported (its description line in the page language and its limits as read-only rows; no report
- * on a usable device: the provider did not answer), the files note and the recent network changes.
+ * Overview (device provider design §6.6), the same for every provider: what the provider last
+ * reported (its description line in the page language and its limits as read-only rows; no report
+ * on a usable device: the provider did not answer), the network setting, the recent network
+ * changes and the files note. Every part is a `FormSection`, all siblings (a fragment), so the
+ * template counts them and picks the layout (spec §5.3 "Columns by count"); the page puts the
+ * danger zone after them.
  */
-export function DeviceOverviewSection({ device: e }: { device: Device }) {
+export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; device: Device }) {
   const t = useTranslations("devices");
   const lang = labelLocale(useLocale());
   const report = e.report;
   return (
-    <Stack gap={12}>
+    <>
       {(report !== null || e.available) && (
-        <ContentSection title={t("overview.about")}>
+        <FormSection id="about" title={t("overview.about")}>
           <Stack gap={8}>
             <Text variant="prose" {...(report === null ? { tone: "muted" as const } : {})}>
               {report === null ? t("overview.noReport") : deviceText(report.description, lang)}
@@ -45,17 +49,18 @@ export function DeviceOverviewSection({ device: e }: { device: Device }) {
               />
             )}
           </Stack>
-        </ContentSection>
+        </FormSection>
       )}
+      <DeviceNetworkSection orgId={orgId} device={e} />
+      <RecentChanges recent={e.sandbox.recent} />
       {!e.filesLost && (
-        <ContentSection title={t("files.title")}>
+        <FormSection id="files" title={t("files.title")}>
           <Text variant="prose" tone="muted">
             {t("detail.filesAndSuspendNote")}
           </Text>
-        </ContentSection>
+        </FormSection>
       )}
-      <RecentChanges recent={e.sandbox.recent} />
-    </Stack>
+    </>
   );
 }
 
@@ -77,8 +82,8 @@ function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
         ? t("withHosts", { value: mode(n.mode), hosts: n.hosts.join(", ") })
         : mode(n.mode);
   return (
-    <ContentSection title={t("title")}>
-      <ItemList label={t("title")}>
+    <FormSection id="recent" title={t("title")} flush>
+      <ItemList label={t("title")} inset="flush">
         {changes.map((c, i) => {
           const network = c.network;
           return (
@@ -103,6 +108,6 @@ function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
           );
         })}
       </ItemList>
-    </ContentSection>
+    </FormSection>
   );
 }

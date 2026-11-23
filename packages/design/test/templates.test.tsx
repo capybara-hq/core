@@ -244,24 +244,20 @@ describe("FormPage", () => {
     expect(document.activeElement).toBe(document.body);
   });
 
-  it("a DangerZone after form sections sits in their field column (spec §6.21)", () => {
+  it("a DangerZone after columned form sections sits in their field column (spec §6.21)", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const rule = css.match(/\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/)?.[0] ?? "";
-    expect(rule).toContain("margin-left: calc(240px + var(--cb-space-7))");
+    const wide =
+      css.match(
+        /@container cb-body \(min-width: 792px\) \{[^@]*\.cb-form-section:not\(\[data-layout="stacked"\]\)\s*~ \.cb-danger-zone \{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(wide).toContain("margin-left: calc(240px + var(--cb-space-7))");
     const narrow =
       css.match(
-        /@media \(max-width: 840px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
+        /@media \(max-width: 840px\) \{[^@]*\.cb-form-section:not\(\[data-layout="stacked"\]\)\s*~ \.cb-danger-zone \{[^}]*\}/,
       )?.[0] ?? "";
     expect(narrow).toContain("margin-left: 0");
-  });
-
-  it("a DangerZone after stacked sections (a SettingsPage) spans their width, not indented", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const rule =
-      css.match(
-        /\.cb-form-section\[data-layout="stacked"\] ~ \.cb-danger-zone,\s*\.cb-settings-content \.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
-      )?.[0] ?? "";
-    expect(rule).toContain("margin-left: 0");
+    // after stacked sections (one or two, every SettingsPage) no rule indents it
+    expect(css).not.toMatch(/^\.cb-form-section ~ \.cb-danger-zone/m);
   });
 
   it("unsaved=0 不注册 beforeunload", () => {
@@ -274,7 +270,7 @@ describe("FormPage", () => {
     expect(add.mock.calls.some((c) => c[0] === "beforeunload")).toBe(false);
   });
 
-  it("FormSection 渲染 id、标题、说明与两栏网格", () => {
+  it("FormSection renders its id, title, description and the head beside the card in one grid", () => {
     zh(
       <FormSection id="basic" title="基础信息" description="名称与描述">
         <div>字段</div>
@@ -283,7 +279,8 @@ describe("FormPage", () => {
     expect(document.getElementById("basic")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 2, name: "基础信息" })).toBeTruthy();
     expect(screen.getByText("名称与描述")).toBeTruthy();
-    // Two columns: the title and description, then the fields on a card
+    // One grid: the title and description, then the fields on a card (the template's section
+    // count decides whether the head stands beside the card or above it)
     const head = document.querySelector('[data-part="form-section-head"]') as HTMLElement;
     const card = document.querySelector('[data-part="form-card"]') as HTMLElement;
     expect(head.parentElement).toBe(card.parentElement);
