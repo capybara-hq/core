@@ -143,14 +143,14 @@ init_log_has() {
   log="$(dc logs --no-color init)"
   grep -qF -- "$1" <<<"$log"
 }
-# bootstrap_once: the bootstrap step completed exactly once, with two required bootstrap installs
-# and the builtin skills-core.
+# bootstrap_once: the bootstrap step completed exactly once, with one required bootstrap install
+# (object-store-s3) and the builtin skills-core.
 bootstrap_once() {
   [ "$(psql_q "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] \
     || fail "expected one bootstrap run, got $(psql_q "SELECT count(*) FROM capybara.bootstrap_runs")"
   [ "$(psql_q "SELECT count(*) FROM capybara.audit_events WHERE action = 'bootstrap.completed'")" = "1" ] \
     || fail "expected one bootstrap.completed audit"
-  [ "$(psql_q "SELECT string_agg(name, ',' ORDER BY name) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "object-store-s3,openai-compatible" ] \
+  [ "$(psql_q "SELECT string_agg(name, ',' ORDER BY name) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "object-store-s3" ] \
     || fail "the bootstrap plugins are not installed as required and enabled"
   # The builtin skills-core: imported by init's second pass, into the object store init waits for
   [ "$(psql_q "SELECT count(*) FROM capybara.catalog_items WHERE name = 'skills-core' AND builtin AND scope = 'all' AND deleted_at IS NULL")" = "1" ] \
@@ -166,7 +166,7 @@ init_log_has "object-store-s3 $(pin object-store-s3): installed" || fail "init d
 init_log_has "Bootstrap done" || fail "init did not finish the bootstrap step"
 # "Ran once" is the DB count (bootstrap_once), not the log: init's log accumulates across restarts
 bootstrap_once
-echo "    init bootstrapped openai-compatible and object-store-s3 (required, enabled)"
+echo "    init bootstrapped object-store-s3 (required, enabled)"
 [ "$(dc ps -q worker | grep -c .)" = "2" ] || fail "expected two worker containers"
 [ "$(admin_count)" = "0" ] || fail "a super admin exists without a password file"
 

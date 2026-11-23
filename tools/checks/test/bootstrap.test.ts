@@ -11,7 +11,7 @@ import {
   startFakeNpmRegistry,
 } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { checkBootstrap } from "../src/bootstrap.js";
+import { BOOTSTRAP_FIXED, checkBootstrap } from "../src/bootstrap.js";
 
 const dir = fileURLToPath(new URL("../fixtures/bootstrap/", import.meta.url));
 const fixture = (name: string) => join(dir, name);
@@ -79,6 +79,22 @@ describe("checkBootstrap", () => {
     const f = await checkBootstrap(fixture("scope-on-builtin.json"), dir);
     expect(f.map((x) => x.rule)).toEqual(["bootstrap-scope"]);
     expect(f[0]?.message).toContain("scope applies only to optional preinstalls");
+  });
+
+  it("bootstrap-fixed-set names the extra and the missing fixed entry", async () => {
+    const f = await checkBootstrap(fixture("fixed-set.json"), dir, { fixedSet: true });
+    const fixed = f.filter((x) => x.rule === "bootstrap-fixed-set");
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0]?.message).toContain("openai-compatible");
+    expect(fixed[0]?.message).toContain("file-preview");
+  });
+
+  it("the real manifest keeps exactly the fixed set", async () => {
+    expect(BOOTSTRAP_FIXED).toEqual(["object-store-s3", "skills-core", "file-preview"]);
+    const f = await checkBootstrap(join(repoRoot, "packages/kernel/bootstrap.json"), repoRoot, {
+      fixedSet: true,
+    });
+    expect(f.filter((x) => x.rule === "bootstrap-fixed-set")).toEqual([]);
   });
 
   it("a bootstrap plugin with client code is refused", async () => {

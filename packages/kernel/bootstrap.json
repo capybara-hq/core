@@ -12,7 +12,7 @@
       "npm": "@capybara-hq/plugin-openai-compatible",
       "version": "0.1.0-rc.11",
       "integrity": "sha512-xhLYmzgzC6I8VAx/xzGSrW53On9hVT9aXrNJaeLYBMVr84lY765MZ6P6qt5hDhHIH13sxyfaCf+3FQ6muc4U/w==",
-      "required": true
+      "required": false
     },
     {
       "name": "object-store-s3",

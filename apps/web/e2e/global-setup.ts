@@ -15,7 +15,7 @@
  * request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container
  * is the object store through the
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
- * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: downloaded at the
+ * cross-origin). object-store-s3 (required) and openai-compatible (an optional preinstall) are the bootstrap plugins: downloaded at the
  * versions packages/kernel/bootstrap.json pins from the npm registry and checked against their
  * sha512 by `capybara bootstrap` (as the compose init does; the only network access of this setup,
  * `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror, and a matching tgz in the repository's

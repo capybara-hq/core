@@ -13,6 +13,11 @@ import type { Finding } from "./source.js";
 export interface BootstrapCheckOptions {
   /** Rewrite stale versions and integrities in the manifest instead of reporting them. */
   write?: boolean;
+  /**
+   * Require the entries that are `required` or `builtin` to be exactly {@link BOOTSTRAP_FIXED}
+   * (`bootstrap-fixed-set`); on for core's real manifest, off for the test fixtures.
+   */
+  fixedSet?: boolean;
   /** Also check the npm entries against the registry and the marketplace commit (network mode). */
   network?: BootstrapNetworkOptions;
   /**
@@ -33,6 +38,12 @@ export interface BootstrapCheckOptions {
    */
   sandboxRuntime?: readonly { name: string; source: string }[];
 }
+
+/**
+ * The plugins that are builtin and fixed in every org (`required: true` or `builtin: true`);
+ * every other bootstrap entry is an optional preinstall.
+ */
+export const BOOTSTRAP_FIXED = ["object-store-s3", "skills-core", "file-preview"];
 
 /** Core's compose files (repo-relative) whose sandbox images build from the plugins repository. */
 export const BOOTSTRAP_COMPOSE_FILES = ["docker/compose.yaml", "docker/compose.dev.yaml"];
@@ -107,6 +118,24 @@ export async function checkBootstrap(
   }
 
   const findings: Finding[] = [];
+  if (opts.fixedSet) {
+    const actual = parsed.plugins.filter((e) => e.required || e.builtin).map((e) => e.name);
+    const extra = actual.filter((n) => !BOOTSTRAP_FIXED.includes(n));
+    const missing = BOOTSTRAP_FIXED.filter((n) => !actual.includes(n));
+    if (extra.length > 0 || missing.length > 0) {
+      const parts = [
+        ...(extra.length > 0 ? [`extra required or builtin: ${extra.join(", ")}`] : []),
+        ...(missing.length > 0 ? [`missing required or builtin: ${missing.join(", ")}`] : []),
+      ];
+      findings.push(
+        at(
+          lineOf(text, extra[0] ?? missing[0] ?? ""),
+          "bootstrap-fixed-set",
+          `the required or builtin entries must be exactly ${BOOTSTRAP_FIXED.join(", ")} (${parts.join("; ")})`,
+        ),
+      );
+    }
+  }
   const rawPlugins = (raw as { plugins: Record<string, unknown>[] }).plugins;
   let rewritten = false;
   const out = await mkdtemp(join(tmpdir(), "check-bootstrap-"));
