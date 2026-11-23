@@ -1,5 +1,34 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.75
+
+### Minor Changes
+
+- ef9ac57: Desktop and native shells no longer manage local devices (maintainer decision 2026-11-23): local
+  devices are connected only with `capybara-device`. The SDK drops the shell capability `device@2`
+  (`SHELL_CAPABILITY_KEYS.device`, `DeviceCapabilityV2`, `ThisMachineConnection`, `DeviceRunningOp`,
+  `DeviceCeilingRequest`, `KeepAwakeMode`, `DeviceConnection`) and the setup-guide directive
+  `::shell-action` (`SetupGuideShellAction`, `SetupGuideShellActionLine`, the `shell-action` block,
+  `SetupGuidePlaceInfo.shellActions`, `SETUP_GUIDE_LIMITS.shellActions`); a leftover
+  `::shell-action` line is now plain text. `GET /api/v1/meta` no longer reports
+  `features.localDevices` (`protocols.device` stays). The web drops the 本机 block on the device
+  page, the 本机 mark in the device list and picker, and the 连接本机 button in 新建设备.
+
+### Patch Changes
+
+- d68c9fc: Device reports can say how to change a device's limits: `DeviceReport.changeHint` (`{ en, zh? }`,
+  in the provider's words). The device page shows it under the limits, and the kernel appends it to
+  the refusals that cite the report (an escalated call the device does not allow now, a network the
+  device side keeps on the allowlist). A provider's permission support may name who keeps a closed
+  crossing closed (`limitedBy: { outsideSandbox?: "owner", openPublic?: "owner" }`): the kernel then
+  names the owner of the machine the device runs on instead of the provider.
+- Updated dependencies [d68c9fc]
+- Updated dependencies [21c1852]
+- Updated dependencies [0eb3412]
+- Updated dependencies [d649c6b]
+- Updated dependencies [ef9ac57]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.60
+
 ## 0.1.0-rc.74
 
 ### Minor Changes

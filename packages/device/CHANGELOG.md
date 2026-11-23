@@ -1,5 +1,61 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.31
+
+### Minor Changes
+
+- d68c9fc: A new connection's owner ceiling allows running outside the sandbox (aligned with Claude Code):
+  commands still run in the sandbox, and a call that asks to run outside it runs only as the
+  conversation's permission profile decides. Existing connections keep their stored ceiling; `login`
+  prints how to turn it off (`capybara-device ceiling set -c <device id> --outside-sandbox off`).
+
+### Patch Changes
+
+- 21c1852: `DEVICE_DENIED_SECRET_PATHS` denies mise's whole config directory `~/.config/mise` (config files
+  with `[env]` sections, the sops age key) and the config files mise loads from the home
+  (`~/.config/mise.toml`, `~/.config/mise.local.toml`, `~/.mise.toml`, `~/.mise.local.toml`,
+  `~/.mise`, `~/mise.toml`, `~/mise.local.toml`, `~/mise/config.toml`, `~/mise/config.local.toml`,
+  `~/mise/conf.d`, the legacy `~/.rtx.toml` and `~/.rtx.local.toml`; globbed names such as
+  `~/mise.<env>.toml` cannot be listed and stay readable), and the Maven and Gradle credential files
+  (`~/.m2/settings.xml`, `~/.m2/settings-security.xml`, `~/.m2/settings-security4.xml`,
+  `~/.gradle/gradle.properties`, `~/.gradle/develocity/keys.properties`,
+  `~/.gradle/enterprise/keys.properties`). Sandboxed work on a local device never reads them, and the
+  kernel never proposes an approval for them. A sandboxed Maven or Gradle build no longer gets those
+  settings: on Linux it sees the files exist but cannot open them and may fail (Maven: "Non-readable
+  settings"); on macOS they look absent. Gradle init scripts and a moved `GRADLE_USER_HOME` are not
+  covered. On Linux under `machine` reach, files directly in `~/mise`, `~/.m2` and `~/.gradle` become
+  unreadable too.
+- 0d22a21: A project root spelled through the macOS data volume firmlink (`/System/Volumes/Data/...`) into
+  another connection or a denied secret path is refused as `project_refused` when it is chosen, as
+  its plain spelling already was, instead of only failing inside the sandbox at run time.
+  `capybara-device policy add projectPaths` also prints its note about denied directories inside the
+  path for such a spelling.
+- 205603c: Every follow-up command a message names now carries `-c <device id>` (service install / start /
+  restart / stop, ceiling set, policy add, login output), so it can be copied on a machine with more
+  than one connection.
+- 7361985: On Linux, a sandboxed operation whose granted roots exceed the agent's open-file limit (machine
+  reach carving many directories beside a denied path) is refused with that reason and how to narrow
+  the reach (`capybara-device ceiling set --project-reach paths`), instead of claiming a granted root
+  is not a directory.
+- 5e0847e: A relative `XDG_CONFIG_HOME` is ignored (the XDG Base Directory spec calls it invalid): the state
+  stays under `~/.config/capybara-device` and the login service gets no relative value. `login`
+  refuses a new connection's working directory that contains or lies inside another connection's
+  working directory or the machine directory (`work_dir_overlap`). In Docker mode an idle operation
+  checks the container is still there and running, so a `docker rm` or a daemon restart no longer
+  fails every operation until the program restarts.
+- 6c699f2: A restricted command on a Linux host gets its own temporary directory, as on macOS: a fresh
+  `op-<pid>-…` directory (0700) in a 0700 parent beside the device's roots
+  (`<workDir>/capybara-op-<deviceId>/`), exported as TMPDIR, TMP and TEMP, granted read and write for
+  that command only and removed when the operation ends (a crashed device's leftovers are swept by its
+  next operation). TMPDIR is no longer the first write root, so temporary files stay out of the
+  project. The directory is private to the device (other connections cannot read the working
+  directory; under `machine` reach other operations of the same device can read it). A restricted
+  grant whose write root covers or lies inside that parent is refused: on Linux a project at `~` or
+  any directory containing the working directory is refused for all restricted work (native file
+  operations included), and the private temporary
+  directories are removed without following links (macOS too). The parent's overlap check also
+  compares the canonical forms of the denied paths.
+
 ## 0.1.0-rc.30
 
 ### Minor Changes
