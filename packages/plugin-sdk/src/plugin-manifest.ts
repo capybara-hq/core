@@ -230,6 +230,19 @@ const configFields = z
   .array(z.strictObject({ path: z.string().max(1000), secret: z.boolean(), hot: z.boolean() }))
   .max(1000);
 
+/**
+ * Transition only: packages packed before core#720 carry `extension.manifest.config.org` (the old
+ * org config field list, often `[]`). Published tarballs are immutable, so the reader accepts that
+ * list and drops it: it never reaches the parsed manifest, the permission set, the config levels
+ * or the views. Nothing else reads it, `defineExtension` still refuses `config.org`, and the packer
+ * never writes it. Removed once the official plugins are republished and re-pinned (core#720 plan
+ * Task 17).
+ */
+const legacyPackedOrgConfigFields = configFields.optional().meta({
+  deprecated: true,
+  description: "Ignored: written only by packers before core#720.",
+});
+
 const staticExtensionManifest = z.strictObject({
   name: z.string(),
   version: z.string(),
@@ -239,7 +252,9 @@ const staticExtensionManifest = z.strictObject({
   optional: z.array(z.string()),
   permissions: z.record(z.string(), z.unknown()),
   ui: z.array(z.record(z.string(), z.unknown())).optional(),
-  config: z.strictObject({ deployment: configFields }),
+  config: z
+    .strictObject({ deployment: configFields, org: legacyPackedOrgConfigFields })
+    .transform(({ org: _legacyOrg, ...config }) => config),
 });
 
 const configSchemaJson = z

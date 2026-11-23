@@ -351,6 +351,33 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "org": {
+                  "deprecated": true,
+                  "description": "Ignored: written only by packers before core#720.",
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "maxLength": 1000
+                      },
+                      "secret": {
+                        "type": "boolean"
+                      },
+                      "hot": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "secret",
+                      "hot"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
