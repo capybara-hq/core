@@ -354,9 +354,9 @@ export async function runInBackgroundManaged(
   await announce();
   const { task } = launch;
   if (launch.kind === "unknown") {
-    throw new ToolError(
+    return launchUnconfirmed(
+      task.id,
       `Background task ${task.id} ("${description}") may have started, but its start was not confirmed; it is being reconciled under its original identity and will not be started again. Check TaskList before starting it again.`,
-      { kind: "unavailable" },
     );
   }
   // a retry of a call whose acknowledged task has since ended reports the start it made; a ref
@@ -406,6 +406,12 @@ export async function runInBackgroundManaged(
       `Background task ${task.id} ("${description}") was stopped while it was starting; its cancellation is in progress. Call Bash again if it is still needed.`,
     );
   }
+  if (!started && task.launchState === "dispatched") {
+    return launchUnconfirmed(
+      task.id,
+      `Background task ${task.id} ("${description}") may have started, but its start was not confirmed; it will not be started again. Check TaskList before starting it again.`,
+    );
+  }
   if (!started) {
     throw new ToolError(
       `Background task ${task.id} ("${description}") may have started, but its start was not confirmed; it will not be started again. Check TaskList before starting it again.`,
@@ -430,6 +436,19 @@ export async function runInBackgroundManaged(
     isError: false,
     view: { kind: "command", description, exitCode: null, timedOut: false },
     display: display(`后台运行命令：${shown}`, `Started in the background: ${shown}`),
+  };
+}
+
+/**
+ * The result of a start the kernel sent but could not confirm: the same error text the model got
+ * as a thrown `ToolError`, plus the display-only `launch_unconfirmed` view, so the thread shows the
+ * row as reconciling until the task settles (never in a request).
+ */
+function launchUnconfirmed(taskId: string, text: string): BuiltinResult {
+  return {
+    content: [{ type: "text", text }],
+    isError: true,
+    view: { kind: "launch_unconfirmed", taskId },
   };
 }
 

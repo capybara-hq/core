@@ -657,6 +657,7 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
         "id",
         "lostReason",
         "startedAt",
+        "starting",
         "status",
         "stopping",
         "subagentId",
@@ -665,7 +666,7 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
       ].sort(),
     );
     // an acknowledged managed task is running, not "starting", for the model and the API
-    expect(view).toMatchObject({ status: "running", stopping: false });
+    expect(view).toMatchObject({ status: "running", stopping: false, starting: false });
     const listed = textOf(await taskListTool(deps).run({}, await f.ctxFor()));
     expect(listed).toContain("running for");
   });

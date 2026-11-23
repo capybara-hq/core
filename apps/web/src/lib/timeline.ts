@@ -13,6 +13,7 @@ import {
 import type {
   ApprovalPolicy,
   Approver,
+  BackgroundTaskStatus,
   CommandAsk,
   ContentBlock,
   ConversationEvent,
@@ -146,7 +147,34 @@ export interface SubagentLive {
    * root-level row waiting only while the tree does not say it went on.
    */
   agentStatus?: (conversationId: string) => string | undefined;
+  /**
+   * The background tasks list (`GET …/background-tasks`) by task id, when read: settles a launch
+   * whose start was not confirmed (a reconciling row) once the kernel confirmed it (`running`
+   * without `starting`) or ended it, before or without its finish in the log.
+   */
+  backgroundTasks?: ReadonlyMap<string, BackgroundTaskLive>;
 }
+
+/** What the timeline reads of a background task from the list. */
+export interface BackgroundTaskLive {
+  status: BackgroundTaskStatus;
+  /** The start was sent but not confirmed yet (the kernel reconciles it). */
+  starting?: boolean;
+  exitCode: number | null;
+  lostReason: string | null;
+}
+
+/**
+ * Whether a background task ended without being known to have run: its launch was given up,
+ * abandoned, revoked or refused (the kernel's `launch_unknown`, `launch_abandoned`,
+ * `launch_revoked`, `launch refused: …` reasons), not a task that ran and was lost later
+ * (`supervision_lost`, `sandbox_recreated`).
+ */
+const neverRan = (t: {
+  status: BackgroundTaskStatus;
+  lostReason?: string | null | undefined;
+}): boolean =>
+  (t.status === "lost" || t.status === "failed") && (t.lostReason ?? "").startsWith("launch");
 
 /** A list status of a run that is still going. */
 const isActiveView = (s: string) => s === "queued" || s === "running" || s === "waiting";
@@ -909,6 +937,27 @@ export function buildEventTimeline(
   const agentResults = new Set<TimelineSubagent>();
   /** Background task id → its description (from its launch, else its finish). */
   const taskDescriptions = new Map<string, string>();
+  /**
+   * Background task id → the launch row whose start was not confirmed (`launch_unconfirmed`), shown
+   * as reconciling until the task is confirmed running or ends.
+   */
+  const reconciling = new Map<string, CallState>();
+  /**
+   * Settles a reconciling launch row: a task that ran (confirmed running, or ended after running)
+   * makes it a done start, one that never ran (given up, refused) a failed call with its result.
+   */
+  const settleLaunch = (taskId: string, ran: boolean) => {
+    const c = reconciling.get(taskId);
+    if (!c) return;
+    reconciling.delete(taskId);
+    const row = c.tool.row;
+    delete row.notice;
+    if (ran) return;
+    row.status = "failed";
+    const output = row.detail?.output ?? "";
+    if (row.blockedBy === undefined) row.error = firstLine(output);
+    row.detail = { ...row.detail, errorText: output };
+  };
   /** Root-level sub-agent id → the latest wait of an agent below it (agent map spec §7). */
   const deepWaits = new Map<string, { id: string; kind: SubagentWaitKind }>();
   /** Child runs that handed back a report: the description their end entry is named by. */
@@ -1222,14 +1271,22 @@ export function buildEventTimeline(
         // working: the model still gets an error, the row a neutral outcome.
         const guard = view?.kind === "guard" ? view.reason : undefined;
         const notLoaded = view?.kind === "not_loaded";
+        // A background start sent but not confirmed: the kernel reconciles it, so the row is
+        // neither done nor failed until the task is confirmed or ends (the model still gets an error).
+        const unconfirmed =
+          view?.kind === "launch_unconfirmed" && c.tool.background ? view.taskId : undefined;
         const failed =
-          (p.isError && guard === undefined && !notLoaded) ||
+          (p.isError && guard === undefined && !notLoaded && unconfirmed === undefined) ||
           (view?.kind === "command" &&
             (view.timedOut || (view.exitCode === null && !(c.tool.background && !p.isError)))) ||
           row.blockedBy !== undefined;
         row.status = failed ? "failed" : "done";
         if (guard !== undefined && !failed) row.guard = guard;
         if (notLoaded && !failed) row.notice = "not_loaded";
+        if (unconfirmed !== undefined && !failed) {
+          row.notice = "reconciling";
+          reconciling.set(unconfirmed, c);
+        }
         // the review admitted the command outside the OS sandbox (a per-call escalation)
         if (p.review?.sandbox === "escalated") row.outsideSandbox = true;
         // Full access granted the crossing by itself: the row says so, neutrally, with its kind
@@ -1273,7 +1330,7 @@ export function buildEventTimeline(
         };
         c.tool.outputId = p.outputId ?? null;
         if (c.tool.background && !failed) {
-          const taskId = STARTED_TASK.exec(p.content)?.[1];
+          const taskId = unconfirmed ?? STARTED_TASK.exec(p.content)?.[1];
           if (taskId !== undefined) {
             c.tool.background = { taskId };
             taskDescriptions.set(taskId, row.description ?? taskId);
@@ -1649,6 +1706,7 @@ export function buildEventTimeline(
       case "background_task_finished": {
         const p = e.payload;
         if (!taskDescriptions.has(p.taskId)) taskDescriptions.set(p.taskId, p.description);
+        settleLaunch(p.taskId, !neverRan(p));
         out.push({
           kind: "background",
           key,
@@ -1746,6 +1804,12 @@ export function buildEventTimeline(
   for (const a of agentCalls.values()) {
     if (a.sub.row.status === "queued" && a.runId !== null && closedRuns.has(a.runId))
       a.sub.row.status = "aborted";
+  }
+  // A reconciling launch the log has not settled: the list says whether it was confirmed or ended.
+  for (const taskId of [...reconciling.keys()]) {
+    const t = live.backgroundTasks?.get(taskId);
+    if (t === undefined || (t.status === "running" && t.starting === true)) continue;
+    settleLaunch(taskId, !neverRan(t));
   }
   // What the log does not say yet: live calls, and a child waiting or queued again.
   for (const [id, s] of subagentRows) {

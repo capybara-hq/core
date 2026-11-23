@@ -56,8 +56,10 @@ export type ToolRowData = {
    */
   guard?: ToolGuard;
   /**
-   * A done call with a protocol notice (the tool was not loaded): the row adds the neutral word
-   * "需先加载工具" / "Load the tool first" in `muted` (§6.16.9).
+   * A done call with a protocol notice: the row adds the neutral word in `muted` (§6.16.9),
+   * `tool.notice.not_loaded` ("Load the tool first": the tool was not loaded) or
+   * `tool.notice.reconciling` ("Confirming whether it started": a background start the kernel
+   * sent but has not confirmed yet).
    */
   notice?: ToolNotice;
   /**
@@ -206,7 +208,7 @@ export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
         </span>
       ) : null}
       {row.status === "done" && row.notice ? (
-        <span className="cb-muted" data-part="notice-word">
+        <span className="cb-muted" data-part="notice-word" data-notice={row.notice}>
           {` · ${t(`tool.notice.${row.notice}`)}`}
         </span>
       ) : null}

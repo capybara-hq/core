@@ -82,6 +82,7 @@ import { useConversationPermission } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
+import { useBackgroundLive } from "./useBackgroundLive";
 import { type SendResult, useConversation } from "./useConversation";
 import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
 import { lockedDevicePicker, useSelection } from "./useSelection";
@@ -299,6 +300,7 @@ export function useConversationPage(
     [subagents.views],
   );
   const whoWaits = useWhoWaits(conv.people);
+  const backgroundTasks = useBackgroundLive(orgId, conversationId, conv.events);
   // the tree is a root's (a sub-agent's page, or one still loading, reads none)
   const isRoot = conv.conversation !== undefined && !conv.conversation.parentConversationId;
   const tree = useTreeLookup(orgId, conversationId, conv.events, isRoot);
@@ -310,8 +312,9 @@ export function useConversationPage(
         ...(views ? { views } : {}),
         whoWaits,
         ...(tree ?? {}),
+        ...(backgroundTasks ? { backgroundTasks } : {}),
       }),
-    [conv.events, info, locale, conv.state.progress, views, whoWaits, tree],
+    [conv.events, info, locale, conv.state.progress, views, whoWaits, tree, backgroundTasks],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   const pending = usePendingSends(conv.events);
