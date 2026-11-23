@@ -97,8 +97,8 @@ Each line is the rule you must not miss; the skill has the rest.
   [test-portfolio](docs/superpowers/specs/2026-11-14-test-portfolio-design.md)
 - **Migrations:** plain SQL `NNNN_<snake_desc>.sql`, `IF [NOT] EXISTS`, applied files are immutable,
   kernel schema `capybara`, extension schema `plugin_<name>`; a kernel table with `org_id` ships its
-  RLS policy (`ENABLE` + `FORCE ROW LEVEL SECURITY`, `org_scope` through `rls_admits(org_id)`) in the
-  same migration (`check:org-filter`).
+  RLS policy (`org_scope` through `rls_admits(org_id)`; RLS stays disabled until phase 5) in the same
+  migration (`check:org-filter`).
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
 - **Config:** env prefix `CAPYBARA_`, nesting with `__`, env wins; extension deployment config may
   also live in PG (env > file / Nacos > PG > default); invalid extension config never fails startup.

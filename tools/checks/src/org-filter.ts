@@ -42,10 +42,11 @@ import {
  * - `org-filter-platform` (RLS spec §10, decision 7): a query covered by a marker whose reason says
  *   "deployment-wide" is not inside an `asPlatform(…)` call (in one of its arguments), so once RLS
  *   is enforced it would see only the rows of whatever scope its caller had;
- * - `org-filter-policy` (RLS spec §7, phase 3): an org-scoped table without row level security in
- *   the kernel migrations (`packages/kernel/src/migrations/*.sql`): each needs `ENABLE ROW LEVEL
- *   SECURITY`, `FORCE ROW LEVEL SECURITY` and a `CREATE POLICY … ON <table>`, in the migration that
- *   adds the table or a later one (SQL comments do not count).
+ * - `org-filter-policy` (RLS spec §7, phase 3): an org-scoped table without a row level security
+ *   policy in the kernel migrations (`packages/kernel/src/migrations/*.sql`): each needs a `CREATE
+ *   POLICY … ON <table>`, in the migration that adds the table or a later one (SQL comments do not
+ *   count). Enabling RLS is not required: the policies ship dark and phase 5 enables them (spec
+ *   §10, maintainer decision 2026-11-24).
  *
  * Limits (heuristic, text-based like the other checks): an org filter added through a helper
  * whose call does not mention `org_id` is not seen (exempt it, naming the helper); a query built
@@ -434,8 +435,8 @@ export function checkOrgFilter(root: string): Finding[] {
 }
 
 /**
- * `org-filter-policy`: every org-scoped table has row level security enabled and forced and a
- * policy in some kernel migration. Reported on the table's line in the schema.
+ * `org-filter-policy`: every org-scoped table has a row level security policy in some kernel
+ * migration. Reported on the table's line in the schema.
  */
 export function checkPolicies(root: string, tables: Set<string>): Finding[] {
   const dir = join(root, MIGRATIONS);
@@ -452,23 +453,17 @@ export function checkPolicies(root: string, tables: Set<string>): Finding[] {
   const findings: Finding[] = [];
   for (const t of [...tables].sort()) {
     const name = `(?:capybara\\.)?"?${t}"?`;
-    const has = (re: string) => new RegExp(re, "i").test(sqlText);
-    const missing = [
-      has(`\\bALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${name}\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`)
-        ? undefined
-        : "ENABLE ROW LEVEL SECURITY",
-      has(`\\bALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${name}\\s+FORCE\\s+ROW\\s+LEVEL\\s+SECURITY`)
-        ? undefined
-        : "FORCE ROW LEVEL SECURITY",
-      has(`\\bCREATE\\s+POLICY\\s+"?\\w+"?\\s+ON\\s+${name}(?![a-z0-9_])`) ? undefined : "a policy",
-    ].filter((m): m is string => m !== undefined);
-    if (missing.length === 0) continue;
+    const hasPolicy = new RegExp(
+      `\\bCREATE\\s+POLICY\\s+"?\\w+"?\\s+ON\\s+${name}(?![a-z0-9_])`,
+      "i",
+    ).test(sqlText);
+    if (hasPolicy) continue;
     const idx = schemaLines.findIndex((l) => new RegExp(`^\\s*"?${t}"?\\s*:`).test(l));
     findings.push({
       file: schemaFile,
       line: idx >= 0 ? idx + 1 : 1,
       rule: "org-filter-policy",
-      message: `org-scoped table "${t}" has no ${missing.join(", no ")} in the kernel migrations: a table with org_id ships its RLS policy (ENABLE and FORCE ROW LEVEL SECURITY, CREATE POLICY org_scope ON ${t} USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id))) in the migration that adds it (RLS spec §7)`,
+      message: `org-scoped table "${t}" has no RLS policy in the kernel migrations: a table with org_id ships one in the migration that adds it (DROP POLICY IF EXISTS org_scope ON ${t}; CREATE POLICY org_scope ON ${t} USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id)); RLS spec §7)`,
     });
   }
   return findings;
