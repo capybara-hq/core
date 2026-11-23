@@ -49,7 +49,7 @@ import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { asPlatform } from "../infra/database/org-scope.js";
-import { rlsBypassReason } from "../infra/database/rls-role.js";
+import { rlsEnforceProblem } from "../infra/database/rls-role.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { ReplicaPresence } from "../infra/presence/replica-presence.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
@@ -224,10 +224,10 @@ export class KernelLifecycle
     this.checkpoint();
     if (cfg().db.rls === "enforce") {
       // never fails the start: enforcement is a backstop, and the operator decides
-      const bypass = await rlsBypassReason(this.pool);
-      if (bypass !== undefined) {
+      const problem = await rlsEnforceProblem(this.pool);
+      if (problem !== undefined) {
         this.log.error(
-          `db.rls is enforce, but ${bypass}: PostgreSQL applies no row level security policy to it; connect as a role without SUPERUSER and BYPASSRLS`,
+          `db.rls is enforce, but ${problem}: PostgreSQL filters nothing by the org scope there`,
         );
       }
     }

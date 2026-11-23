@@ -275,7 +275,9 @@ Made while building phases 2–3 (within the decisions above):
   nothing, so phase 2 costs nothing until a deployment opts in), `scoped` (every connection carries
   the scope with `capybara.rls = off`: the policies admit every row; this is the mode that measures
   the round-trip cost of §8 and runs the unscoped-query check) and `enforce` (`capybara.rls =
-  enforce`). Not hot. Phase 5 changes the default, not the field.
+  enforce`), which filters only once phase 5 has enabled RLS on the tables: until then the kernel
+  logs an error at start (`rlsEnforceProblem`) and nothing is filtered. `enforce` stays in the enum
+  so the enforce tests drive the real config. Not hot. Phase 5 changes the default, not the field.
 - **One mechanism on the driver** carries both cases of §5.2: a Kysely driver wrapper on the kernel
   pool (`infra/database/scoped-dialect.ts`) sets the scope transaction-local as the first statement
   after `BEGIN`, and session-level before the first query of a checkout outside a transaction. Every
@@ -312,23 +314,27 @@ Made while building phases 2–3 (within the decisions above):
   file connects as its `POSTGRES_USER`, a superuser, so on such a deployment `enforce` changes
   nothing: enforcing needs a role without `SUPERUSER` and `BYPASSRLS` first (it may still own the
   schema; `FORCE` covers the owner), which makes part of phase 6 a prerequisite of phase 5. The
-  kernel logs an error at start when `db.rls` is `enforce` on such a role (it never fails the start),
-  and the enforce tests connect as a non-superuser owner of their database.
-- **Phase 3 ships as migration `0182_rls_policies.sql`**: the helper `capybara.rls_admits` and one
-  `org_scope` policy per table (`DROP POLICY IF EXISTS` + `CREATE POLICY`, since Postgres has no
-  `CREATE POLICY IF NOT EXISTS`). The measurement of §8 is `tools/dev/rls-measure.ts`, run against
+  kernel logs an error at start when `db.rls` is `enforce` on such a role or while RLS is not yet
+  enabled on the tables (it never fails the start), and the enforce tests connect as a
+  non-superuser owner of their database.
+- **Phase 3 ships truly dark** (maintainer decision 2026-11-24): migration `0182_rls_policies.sql`
+  creates the helper `capybara.rls_admits` and one `org_scope` policy per table (`DROP POLICY IF
+  EXISTS` + `CREATE POLICY`, since Postgres has no `CREATE POLICY IF NOT EXISTS`) and enables RLS on
+  no table, so nothing applies them and nothing changes for any role. Phase 5 runs `ENABLE` and
+  `FORCE ROW LEVEL SECURITY` in a migration of its own. The enforce tests enable and force RLS on
+  their own database in setup (`test/helpers/rls.ts`, `enableRlsForTest`), as phase 5 will. The measurement of §8 is `tools/dev/rls-measure.ts`, run against
   a kernel once per `db.rls` value on the same commit.
 - **Platform defaults are read-only to orgs** (security review of phase 3): on
   `model_purpose_mappings` and `model_disabled` the `org_scope` policy is the plain one, and a second,
   `FOR SELECT` policy admits `org_id IS NULL`, so an org scope reads the defaults but cannot delete
   one or update it into its own org (one combined `USING` would have admitted both).
-- **Dark only for exempt roles**: on a role subject to RLS the policies are in place even while they
-  admit everything: `pg_dump` needs `--enable-row-security`, `COPY FROM` into these tables is refused
-  (data-only restores, bulk loads, logical replication), and a predicate on a non-leakproof function
-  (`lower(name)` of `devices_name_uq`, the `->>` expression index of `skill_change_requests`) no
-  longer serves as an index condition. Documented in `docs/deploy/README.md`; the measurement of §8
-  must run on such a role, since a superuser shows no cost at all. If the maintainer prefers, phase 3
-  can instead create the policies without `ENABLE` / `FORCE`, moving those to phase 5.
+- **What phase 5's `ENABLE` / `FORCE` brings** (security review of phase 3), on a role subject to
+  RLS, even while the policies admit everything: `pg_dump` needs `--enable-row-security`, `COPY
+  FROM` into these tables is refused (data-only restores, bulk loads, logical replication), and a
+  predicate on a non-leakproof function (`lower(name)` of `devices_name_uq`, the `->>` expression
+  index of `skill_change_requests`) no longer serves as an index condition. This is why phase 3
+  ships without them; the measurement of §8 for phase 5 must run on such a role with RLS enabled,
+  since a superuser shows no cost at all.
 - **Known limits once enforced**: a unique or `ON CONFLICT` collision still reveals that another
   org's row exists; foreign key checks and cascades bypass RLS (cascades stay within the parent's
   org).
