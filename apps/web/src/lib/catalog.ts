@@ -135,7 +135,7 @@ export interface StaticExtensionManifest {
     ui?: { views?: string[]; embeds?: string[]; components?: string[] };
   };
   /** The config fields the extension declares (SDK `StaticConfigField`). */
-  config?: { deployment: StaticConfigField[]; org: StaticConfigField[] };
+  config?: { deployment: StaticConfigField[] };
 }
 
 /** One declared config field (SDK `StaticConfigField`). */
@@ -955,10 +955,9 @@ export interface ConnectorInstallInput {
   client?: { clientId: string; clientSecret?: string };
 }
 
-/** The org install body: template input by template id, the plugin's own extension's org config. */
+/** The org install body: template input by template id (kernel `OrgPluginInstallBody`). */
 export interface OrgInstallBody {
   connectors?: Record<string, ConnectorInstallInput>;
-  extensionConfig?: Record<string, unknown>;
 }
 
 /** What switching a plugin off in an org takes away (kernel `UninstallPreview`). */
