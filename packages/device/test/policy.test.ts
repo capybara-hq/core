@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { describeCeiling, policyCommand } from "../src/commands/policy.js";
@@ -443,7 +443,7 @@ describe("policy command", () => {
     writePolicy(dir, DEFAULT_POLICY); // projectReach: machine
     const note =
       "Project paths apply while the project reach is paths (capybara-device ceiling set " +
-      "--project-reach paths).";
+      `--project-reach paths -c ${basename(dir)}).`;
     const r = await run(["add", "projectPaths", project("a")]);
     expect(r.out).toContain(note);
     writePolicy(dir, {

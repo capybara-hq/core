@@ -14,13 +14,14 @@ import {
   readCredential,
   replacementPolicy,
 } from "../state.js";
+import { connectionFlag } from "./policy.js";
 
 /** Printed once when `ceiling set` replaced a policy file in another format version. */
-export function policyReplacedNotice(replaced: PolicyVersionError): string {
+export function policyReplacedNotice(replaced: PolicyVersionError, stateDir: string): string {
   return (
     `Replaced ${replaced.file} (format ${policyFormatName(replaced.found)}, this program reads ` +
     `format ${POLICY_VERSION}): allowed domains, credentials, resource limits and keep-awake are ` +
-    "back to their defaults; set them again with capybara-device policy / keep-awake."
+    `back to their defaults; set them again with capybara-device policy / keep-awake${connectionFlag(stateDir)}.`
   );
 }
 
@@ -263,13 +264,13 @@ export async function ceilingCommand(
     `ceiling set outsideSandbox ${ceiling.outsideSandbox ? "on" : "off"}, network ` +
       `${ceiling.network}, projectReach ${ceiling.projectReach}`,
   );
-  if (replaced !== undefined) out(policyReplacedNotice(replaced));
+  if (replaced !== undefined) out(policyReplacedNotice(replaced, stateDir));
   out("This machine's owner ceiling is now:");
   for (const line of describe(written)) out(line);
   if (ceiling.network === "allowlist")
     out(
       "Sandboxed commands reach only the sandbox allowlist (capybara-device policy add " +
-        "allowedDomains <host>).",
+        `allowedDomains <host>${connectionFlag(stateDir)}).`,
     );
   if (ceiling.projectReach === "machine")
     out(
@@ -279,6 +280,8 @@ export async function ceilingCommand(
   if (ceiling.projectReach === "paths")
     out("Sandboxed work may read the listed project paths outside the device's workspace.");
   if (ceiling.projectReach === "paths" && written.projectPaths.length === 0)
-    out("No project paths are listed yet: capybara-device policy add projectPaths <dir>");
+    out(
+      `No project paths are listed yet: capybara-device policy add projectPaths <dir>${connectionFlag(stateDir)}`,
+    );
   return 0;
 }

@@ -66,38 +66,45 @@ async function checkSandbox(
 }
 
 /** How the owner widens the ceiling, on this machine only (the deployment may only narrow it). */
-export const WIDEN_CEILING_HINT =
-  "Only you can widen it, on this machine: `capybara-device ceiling set --outside-sandbox on` " +
-  "(see `capybara-device ceiling show`).";
+export const widenCeilingHint = (deviceId: string): string =>
+  "Only you can widen it, on this machine: " +
+  `\`capybara-device ceiling set --outside-sandbox on -c ${deviceId}\` ` +
+  `(see \`capybara-device ceiling show -c ${deviceId}\`).`;
 
 /** The sandbox network line of the login output. */
-export function networkLoginLine(network: DeviceNetworkMode): string {
+export function networkLoginLine(network: DeviceNetworkMode, deviceId: string): string {
   return network === "open"
     ? "Sandboxed commands reach the public internet (private, local and metadata addresses stay " +
-        "closed); `capybara-device ceiling set --network allowlist` limits them to allowedDomains."
+        `closed); \`capybara-device ceiling set --network allowlist -c ${deviceId}\` limits them to ` +
+        "allowedDomains."
     : "Sandboxed commands reach only allowedDomains; open the network with " +
-        "`capybara-device ceiling set --network open`.";
+        `\`capybara-device ceiling set --network open -c ${deviceId}\`.`;
 }
 
 /**
  * The project reach line `login` prints: the reach as `capybara-device ceiling show` names it,
  * with what sandboxed work reads under it and how to change it.
  */
-export function projectReachLoginLine(reach: ProjectReach, listed: number): string {
+export function projectReachLoginLine(
+  reach: ProjectReach,
+  listed: number,
+  deviceId: string,
+): string {
   if (reach === "machine")
     return (
       "Project reach: machine (sandboxed work may read the whole machine except secrets, this " +
-      "program's state and other connections; `capybara-device ceiling set --project-reach " +
-      "workspace` narrows it)."
+      "program's state and other connections; " +
+      `\`capybara-device ceiling set --project-reach workspace -c ${deviceId}\` narrows it).`
     );
   if (reach === "paths")
     return (
       `Project reach: paths (${listed} listed; sandboxed work reads them and the device's ` +
-      "workspace; `capybara-device policy add projectPaths <dir>` lists more)."
+      "workspace; " +
+      `\`capybara-device policy add projectPaths <dir> -c ${deviceId}\` lists more).`
     );
   return (
     "Project reach: workspace (sandboxed work reads only the device's workspace; " +
-    "`capybara-device ceiling set --project-reach paths|machine` widens it)."
+    `\`capybara-device ceiling set --project-reach paths|machine -c ${deviceId}\` widens it).`
   );
 }
 
@@ -105,15 +112,15 @@ export function projectReachLoginLine(reach: ProjectReach, listed: number): stri
  * The line `login` prints when the owner ceiling keeps every call in the sandbox (the default of a
  * new setup): commands run in the sandbox under every profile, Full access included.
  */
-export const SANDBOX_ONLY_LOGIN_LINE =
+export const sandboxOnlyLoginLine = (deviceId: string): string =>
   "This machine's owner ceiling keeps every command in the sandbox, Full access included: no " +
-  `call runs outside it. ${WIDEN_CEILING_HINT}`;
+  `call runs outside it. ${widenCeilingHint(deviceId)}`;
 
 /** The line `login` prints when the owner ceiling allows running outside the sandbox. */
-export const OUTSIDE_SANDBOX_LOGIN_LINE =
+export const outsideSandboxLoginLine = (deviceId: string): string =>
   "This machine's owner ceiling allows running outside the sandbox: commands still run in the " +
   "sandbox, and one approved call may run as you. Turn it off with " +
-  "`capybara-device ceiling set --outside-sandbox off`.";
+  `\`capybara-device ceiling set --outside-sandbox off -c ${deviceId}\`.`;
 
 /** Added when the organization does not allow running outside the sandbox while the owner does. */
 export const OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE =
@@ -121,10 +128,10 @@ export const OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE =
   "sandbox here.";
 
 /** The line `login` prints when sandboxed work cannot run here (no OS sandbox). */
-export function restrictedUnavailableLoginLine(reason: string): string {
+export function restrictedUnavailableLoginLine(reason: string, deviceId: string): string {
   return (
     `The OS sandbox is unavailable on this machine (${reason}), so sandboxed work cannot run ` +
-    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker. ${WIDEN_CEILING_HINT}`
+    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker. ${widenCeilingHint(deviceId)}`
   );
 }
 
@@ -509,18 +516,18 @@ export async function login(
             : `Logged in. Device ${deviceId}, working directory ${dir}`,
         );
         if (ceiling.outsideSandbox) {
-          out(OUTSIDE_SANDBOX_LOGIN_LINE);
+          out(outsideSandboxLoginLine(deviceId));
           // the token's `outsideSandbox` is the platform and organization outside-sandbox setting
           if (granted.outsideSandbox === "off") out(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
           // the risk text is shown once at login, and only when an escalated call runs as the
           // owner on this machine (outside Docker)
           else if (mode !== "docker") out(outsideSandboxRiskText(deviceId));
         } else {
-          out(SANDBOX_ONLY_LOGIN_LINE);
+          out(sandboxOnlyLoginLine(deviceId));
         }
-        out(networkLoginLine(ceiling.network));
-        out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths));
-        if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox));
+        out(networkLoginLine(ceiling.network, deviceId));
+        out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths, deviceId));
+        if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox, deviceId));
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(

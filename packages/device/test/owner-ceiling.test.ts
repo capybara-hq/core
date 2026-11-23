@@ -281,7 +281,7 @@ describe("local owner policy format", () => {
     expect(narrowing.out.split("\n")).toContain(
       `Replaced ${policyPath(state)} (format 3, this program reads format 4): allowed domains, ` +
         "credentials, resource limits and keep-awake are back to their defaults; set them again " +
-        "with capybara-device policy / keep-awake.",
+        "with capybara-device policy / keep-awake -c dev.",
     );
     // a newer format is named too, and a current file gets no notice
     writeRaw({ ...onDiskOf(FULL_POLICY), version: 5 });

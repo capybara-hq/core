@@ -653,7 +653,13 @@ describe("channel detail: 接入指南 and the drift notice", () => {
     const calls = stubApi(detailRoutes());
     await renderRouteWithCache("/channels/ch1", lastStubRoutes(), { locale: "zh" });
     await screen.findByText("创建 Slack 应用");
-    await userEvent.setup().click(screen.getByRole("button", { name: g.askAgent.action }));
+    const ask = screen.getByRole("button", { name: g.askAgent.action });
+    // in the guide's head, beside the title, before the first step (never at the guide's foot)
+    const follows = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(screen.getByText("创建 Slack 应用"), ask)).toBe(true);
+    expect(follows(ask, screen.getByText("manifest.socket.yaml"))).toBe(true);
+    await userEvent.setup().click(ask);
     expect(router.push).toHaveBeenCalledTimes(1);
     const to = new URL(String(router.push.mock.calls[0]?.[0]), "http://x");
     expect(to.pathname).toBe("/");

@@ -108,6 +108,7 @@ export type SetupGuideSectionProps = (
  * rows), and a muted line per reason naming the variables without a value (shown as written).
  * Prose is shown exactly as the kernel sent it (its U+2060 word joiners included). It draws no box:
  * the page puts it in a section card (a FormSection or a Card), where the notice is a line.
+ * Ask an agent sits in the head beside the title (never at the foot of a long guide).
  */
 export function SetupGuideSection({
   orgId: ownOrgId,
@@ -210,7 +211,20 @@ export function SetupGuideSection({
           place={g.place}
         />
       ) : null}
-      <Text variant="h3">{g.title}</Text>
+      {admin || onDeployment ? (
+        <Text variant="h3">{g.title}</Text>
+      ) : (
+        // Ask an agent sits in the guide's head, beside its title, where it is seen before the
+        // steps rather than after a long guide; it wraps under the title when the row is narrow
+        <Stack direction="row" justify="between" align="center" gap={8} wrap>
+          <Text variant="h3">{g.title}</Text>
+          <AskAgent
+            g={g}
+            query={query}
+            target={targetLabel ?? query.name ?? pluginLabel ?? g.plugin}
+          />
+        </Stack>
+      )}
       {g.modes.length > 1 && (
         <Stack gap={8}>
           <Segmented
@@ -257,13 +271,6 @@ export function SetupGuideSection({
           {t(`unresolved.${reason}`, { names: names.map((n) => `{{${n}}}`).join(", ") })}
         </Text>
       ))}
-      {admin || onDeployment ? null : (
-        <AskAgent
-          g={g}
-          query={query}
-          target={targetLabel ?? query.name ?? pluginLabel ?? g.plugin}
-        />
-      )}
     </Stack>
   );
 }
@@ -306,13 +313,7 @@ function AskAgent({
       target: targetRef,
     }),
   ].join("\n\n");
-  return (
-    <Stack direction="row">
-      <Button variant="ghost" onClick={() => router.push(draftConversationPath(draft))}>
-        {t("action")}
-      </Button>
-    </Stack>
-  );
+  return <Button onClick={() => router.push(draftConversationPath(draft))}>{t("action")}</Button>;
 }
 
 /**
