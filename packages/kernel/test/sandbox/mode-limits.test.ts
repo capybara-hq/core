@@ -766,6 +766,23 @@ describe("installed network wider than the record (#766)", () => {
     expect(await ops("create")).toHaveLength(1);
   });
 
+  it("limits fixed at the file system: an update that cannot narrow a wider instance stops it and keeps the intent", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({
+      limitsApplyAt: "fileSystem",
+      updateMode: "recreate",
+    });
+    await setFakeSandboxNetwork(root, first.h.id, { kind: "open-public", hosts: [] });
+    const err = await use(s).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/enforces a wider network than its recorded limits/);
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+    expect(await status()).toBe("suspended");
+    // never recorded unapplied (that would claim the instance runs the record); the intent stays
+    const after = await record();
+    expect(after?.unapplied).toBeUndefined();
+    expect(hostsOf(after?.pending as Record<string, unknown> | undefined)).toEqual(hostsOf(rec));
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(true);
+  });
+
   it("limits fixed at the file system: an instance created on kept files that came up wider is narrowed", async () => {
     const { s, first, rec } = await suspendedOnAllowlist({ limitsApplyAt: "fileSystem" });
     // the instance is gone; the next one comes up with the network its file system kept (E2B)

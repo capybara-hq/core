@@ -526,8 +526,12 @@ export interface DeviceProvider {
    * exclusively, an instance created on kept files whose limits are fixed at the file system)
    * the kernel compares this answer with the limits it recorded and, when it allows more (the
    * open public network over an allowlist, or a host the record does not cover), is null or
-   * fails, applies the desired limits again through `update` with its own fence. Equal or
-   * narrower changes nothing.
+   * fails, applies the desired limits again through `update` with its own fence (a provider bound
+   * to its file system that cannot apply them is stopped until it can). Equal or narrower changes
+   * nothing. Since null forces that `update` at every such step, answer null only for a state the
+   * provider really cannot read, never as a routine answer. Shared uses of a running instance read
+   * nothing, so a late call that lands while the instance keeps running is narrowed at its next
+   * resume or rebuild (at the latest after the kernel's maximum running time).
    */
   appliedNetwork?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxLimits["network"] | null>;
   /**

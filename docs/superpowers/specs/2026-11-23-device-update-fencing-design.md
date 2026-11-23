@@ -456,8 +456,11 @@ instance, a running instance it holds exclusively, and a new instance of a `limi
 "fileSystem"` provider (whose new instance keeps the file system's network). Wider than the recorded
 `applied` (open public over a list, or a host no recorded entry covers), null, or a failed read
 applies the desired limits again through `applyLimits` (intent first, the holder's token); equal or
-narrower changes nothing. Shared uses read nothing, so the window closes at the next resume or
-rebuild. device-e2b implements it from `GET /sandboxes/{id}` (plugins follow-up after the SDK release).
+narrower changes nothing; a file-system-bound provider whose `update` cannot apply them is
+quarantined with the intent kept rather than recorded `unapplied`. Shared uses read nothing, so the
+window closes at the next resume or rebuild (at most `maxRunningMinutes` under steady use);
+device-e2b's own per-operation check (`appliedWithin`) already refuses operations whose network is
+narrower than the VM's meanwhile. device-e2b implements it from `GET /sandboxes/{id}` (plugins follow-up after the SDK release).
 
 The questions as asked:
 

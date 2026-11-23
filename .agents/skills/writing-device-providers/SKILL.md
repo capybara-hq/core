@@ -564,7 +564,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   instance-bound provider's new instance got the desired limits at `create`), `installedNetworkWider` compares it with
   the recorded `applied` (`installedWider` in `modes.ts`): wider (open public over a list, or a host no recorded entry
   covers), null, or a failed read applies the desired limits again through `applyLimits` (intent, holder's token);
-  equal or narrower changes nothing. A shared use reads nothing, so a late stale call that lands while the instance
+  equal or narrower changes nothing. A `limitsApplyAt: "fileSystem"` provider that cannot apply them then (`update`
+  answers `recreate`) is quarantined with the intent kept, never recorded `unapplied` and used. An abort during the read
+  on a running instance throws without quarantine. A shared use reads nothing, so a late stale call that lands while the instance
   keeps running is narrowed at its next resume or rebuild. Only asked when the provider also has `update`. Tests: the
   "installed network wider than the record (#766)" cases of `mode-limits.test.ts` (the fake's `reportsNetwork`,
   `setFakeSandboxNetwork`) and the red-proof case of `mode-limits.dual.test.ts`.

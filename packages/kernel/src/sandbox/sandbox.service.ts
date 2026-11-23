@@ -1056,21 +1056,28 @@ export class SandboxService {
         );
       return true;
     }
-    const wider = installedWider(installed, recorded, appliedOf(want));
-    if (wider)
-      this.log.warn(
-        "the instance's installed network allows more than its record; applying again",
-        {
-          deviceId: id,
-          provider: p.plugin,
-          recorded: recorded?.network.kind ?? null,
-          installed:
-            typeof installed === "object" && installed !== null
-              ? String((installed as { kind?: unknown }).kind)
-              : null,
-        },
-      );
-    return wider;
+    try {
+      const wider = installedWider(installed, recorded, appliedOf(want));
+      if (wider) {
+        const kind =
+          typeof installed === "object" && installed !== null
+            ? (installed as { kind?: unknown }).kind
+            : null;
+        this.log.warn(
+          "the instance's installed network allows more than its record; applying again",
+          {
+            deviceId: id,
+            provider: p.plugin,
+            recorded: recorded?.network.kind ?? null,
+            installed: typeof kind === "string" ? kind : typeof kind,
+          },
+        );
+      }
+      return wider;
+    } catch {
+      // a malformed answer the comparison cannot read (a sparse host list, say): fail closed
+      return true;
+    }
   }
 
   /**
@@ -3687,11 +3694,24 @@ export class SandboxService {
         return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
       if (handle && row.status === "running") {
-        if (
-          this.mustApply(row, p, want) ||
-          (await this.installedNetworkWider(id, p, row, handle, signal, want))
-        ) {
-          const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+        const must = this.mustApply(row, p, want);
+        const installed =
+          !must && (await this.installedNetworkWider(id, p, row, handle, signal, want));
+        // aborted while reading: the instance runs as it was (no quarantine of a healthy instance
+        // for a cancel); the next exclusive step reads again
+        if (installed && signal.aborted) throw abortReason(signal);
+        if (must || installed) {
+          const created = await this.applyLimits(
+            ctx,
+            p,
+            held,
+            row,
+            handle,
+            fence,
+            signal,
+            want,
+            installed,
+          );
           if (created)
             return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
         }
@@ -3704,13 +3724,23 @@ export class SandboxService {
           const incarnation = { provider: p.plugin, generation: String(createdAt) };
           // the new limits first: the row says running only once the instance runs with them
           // (and again when the instance's installed network allows more than the record: #766)
-          if (
-            this.mustApply(row, p, want) ||
-            (await this.installedNetworkWider(id, p, row, handle, signal, want))
-          ) {
+          const must = this.mustApply(row, p, want);
+          const installed =
+            !must && (await this.installedNetworkWider(id, p, row, handle, signal, want));
+          if (must || installed) {
             let created: Instance | null;
             try {
-              created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+              created = await this.applyLimits(
+                ctx,
+                p,
+                held,
+                row,
+                handle,
+                fence,
+                signal,
+                want,
+                installed,
+              );
             } catch (err) {
               // refused as stale: the provider changed nothing, and the instance (the same
               // incarnation after an in-place update) may already run a newer holder's work
@@ -3815,7 +3845,17 @@ export class SandboxService {
     if (!fresh) return created;
     if (!(await this.installedNetworkWider(ctx.deviceId, p, fresh, created.handle, signal, want)))
       return created;
-    const again = await this.applyLimits(ctx, p, held, fresh, created.handle, fence, signal, want);
+    const again = await this.applyLimits(
+      ctx,
+      p,
+      held,
+      fresh,
+      created.handle,
+      fence,
+      signal,
+      want,
+      true,
+    );
     return again ?? created;
   }
 
@@ -3985,6 +4025,11 @@ export class SandboxService {
    * instance create is recreated (warned); after an abort, or for a provider bound to its file
    * system, the instance is suspended ({@link quarantine}) and the error thrown, so the next use
    * resumes it and tries again.
+   *
+   * `installedWider`: the call narrows an instance whose installed network allows more than its
+   * record (issue #766). A provider bound to its file system that cannot apply `want` then is
+   * quarantined too, with the intent kept, instead of being recorded `unapplied` and used: the
+   * instance would run wider than the record claims.
    */
   private async applyLimits(
     ctx: SandboxUseContext,
@@ -3995,6 +4040,7 @@ export class SandboxService {
     fence: Fence,
     signal: AbortSignal,
     want: DeviceLimits,
+    installedWider = false,
   ): Promise<Instance | null> {
     const id = ctx.deviceId;
     const target = appliedOf(want);
@@ -4053,6 +4099,17 @@ export class SandboxService {
       }
     }
     if (p.impl.limitsApplyAt === "fileSystem" && !gone) {
+      if (installedWider) {
+        // the instance enforces more than the record and the provider could not narrow it: stop
+        // it, keep the intent (the next use resumes it and tries again); a file reset applies it
+        await this.quarantine(held, id, handle, p, fence, {
+          provider: p.plugin,
+          generation: String(row.created_at.getTime()),
+        });
+        throw new Error(
+          "The device's sandbox enforces a wider network than its recorded limits and the provider could not narrow it; the sandbox is stopped and the next use tries again (resetting the device's files also applies the limits)",
+        );
+      }
       await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(was, target) });
       this.log.info("sandbox limits changed; they apply when the device's files are reset", facts);
       return null;
