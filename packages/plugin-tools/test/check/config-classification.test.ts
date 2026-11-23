@@ -80,6 +80,13 @@ const VARIANTS: Record<string, Variant> = {
     body: `const f = configUrlFetch(ctx.net, { url: config["baseUrl"], orgId });
         await f(config.baseUrl);`,
   },
+  // green: an optional chain
+  optional: {
+    imports: ROUTER,
+    fields: "baseUrl: z.url()",
+    body: `const f = configUrlFetch(ctx.net, { url: opts.config?.baseUrl ?? "", orgId });
+        await f(config.baseUrl);`,
+  },
   // red: a tuple element (prefixItems) and a URL inside a recursive schema ($ref into $defs)
   shapes: {
     top: `const Node = z.object({
@@ -231,6 +238,7 @@ describe("checkConfigClassification", () => {
     expect(found.get("renamed")).toEqual([]);
     expect(found.get("namespace")).toEqual([]);
     expect(found.get("bracket")).toEqual([]);
+    expect(found.get("optional")).toEqual([]);
   });
 
   it("walks tuple elements and recursive $refs", () => {

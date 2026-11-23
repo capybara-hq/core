@@ -153,21 +153,30 @@ function overridableKeys(schema: JsonSchema | undefined): [string, unknown][] {
   return Object.entries(props).filter(([, v]) => !(isObj(v) && v["x-platform-only"] === true));
 }
 
+/** {@link unwrap}, also through an optional chain (`a?.b` is a `ChainExpression`). */
+function unchain(n: Node): Node {
+  let cur = unwrap(n);
+  while (cur.type === "ChainExpression") cur = unwrap(cur.expression as Node);
+  return cur;
+}
+
 /**
  * The field names a `url` argument reads: a bare identifier (`url: baseUrl`, also one bound by
  * destructuring), the last property of a member chain rooted in an identifier (`config.baseUrl`,
- * `opts.config["baseUrl"]`), through `??` / `||`, `? :`, `+` and template literals. A name inside a
- * call or `new` (`new URL(c.baseUrl).origin`), a callee and an intermediate member never count.
+ * `opts.config["baseUrl"]`, optional `config?.baseUrl`), through `??` / `||`, `? :`, `+` and
+ * template literals. A name inside a call or `new` (`new URL(c.baseUrl).origin`), a callee and an
+ * intermediate member never count, so a transformed value (`config.baseUrl.trim()`,
+ * `String(config.baseUrl)`) routes nothing: read the field into a variable and pass that.
  */
 function namesIn(expr: Node, out = new Set<string>()): Set<string> {
-  const e = unwrap(expr);
+  const e = unchain(expr);
   switch (e.type) {
     case "Identifier":
       out.add(e.name as string);
       break;
     case "MemberExpression": {
-      let obj = unwrap(e.object as Node);
-      while (obj.type === "MemberExpression") obj = unwrap(obj.object as Node);
+      let obj = unchain(e.object as Node);
+      while (obj.type === "MemberExpression") obj = unchain(obj.object as Node);
       const p = e.property as Node;
       const name = e.computed ? stringValue(p) : p.type === "Identifier" ? p.name : undefined;
       if (
