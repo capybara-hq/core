@@ -30,6 +30,7 @@ export const DESIGN_SUBSET = [
   "Select",
   "Spinner",
   "Stack",
+  "Switch",
   "Text",
   "Tooltip",
   "ViewBlocks",

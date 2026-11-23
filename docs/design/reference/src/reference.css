@@ -3330,6 +3330,36 @@ textarea {
   height: 100%;
   background: var(--cb-ink);
 }
+.r-psec-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.r-psec-hint {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.r-ctx-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+  margin: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-ctx-row {
+  display: contents;
+}
+.r-ctx-row > dt {
+  color: var(--cb-muted);
+  white-space: nowrap;
+}
+.r-ctx-row > dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--cb-ink);
+}
 .r-plist {
   display: flex;
   flex-direction: column;

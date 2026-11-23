@@ -1091,12 +1091,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   function propSection(o) {
-    const sec = (title, value, body, extra = "") =>
-      `<section class="r-psec"${extra}><div class="r-psec-head"><span class="r-muted">${esc(title)}</span>${value ? `<span>${value}</span>` : ""}</div>${body}</section>`;
+    const sec = (title, value, body, extra = "", hint = false) =>
+      `<section class="r-psec"${extra}><div class="r-psec-head"><span class="r-psec-title"><span class="r-muted">${esc(title)}</span>${hint ? `<span class="r-psec-hint" aria-label="关于「${esc(title)}」">${icon("info", 12)}</span>` : ""}</span>${value ? `<span>${value}</span>` : ""}</div>${body}</section>`;
     switch (o.state) {
       case "context": {
         const X = P.context;
-        return sec("上下文", `${X.ratio}%`, `<div class="r-meter" role="meter" aria-valuenow="${X.ratio}"><span style="width:${X.ratio}%"></span></div><div class="r-muted r-small">${esc(X.model)} · ${esc(X.sandbox)}</div><div class="r-muted r-small">连接器：${X.connectors.map(esc).join("、")}</div>`);
+        return sec("上下文", `${X.ratio}%`, `<div class="r-meter" role="meter" aria-valuenow="${X.ratio}"><span style="width:${X.ratio}%"></span></div><dl class="r-ctx-facts"><div class="r-ctx-row"><dt>模型</dt><dd>${esc(X.model)}</dd></div><div class="r-ctx-row"><dt>设备</dt><dd>${esc(X.device)}</dd></div><div class="r-ctx-row"><dt>连接器</dt><dd>${X.connectors.map(esc).join("、")}</dd></div><div class="r-ctx-row"><dt>上次运行</dt><dd>${X.lastRun.map(esc).join(" · ")}</dd></div></dl>`);
       }
       case "files":
         return sec(
@@ -1110,6 +1110,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
           "后台任务",
           "",
           `${B.running.map((r) => `<div class="r-bgrow">${spin()}<span class="r-ellipsis r-grow">${esc(r.name)}</span><span class="r-muted">${esc(r.duration)}</span>${iconBtn("square", K.stop, { step: "dense", size: 12 })}</div>`).join("")}<a class="r-pmore" href="#">已完成 ${B.completed} 项${icon("chevron-right", 12)}</a>`,
+          "",
+          true,
         );
       }
       case "extension":

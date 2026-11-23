@@ -119,8 +119,8 @@ test("the resize handle moves by 16 with the arrow keys, is clamped and remember
   await page.keyboard.press("ArrowRight");
   await expect.poll(width).toBe(544);
   // Clamped to layout.panel-min…
-  for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
-  await expect.poll(width).toBe(520);
+  for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowRight");
+  await expect.poll(width).toBe(360);
   // …and to the content width minus layout.chat-min (1184 − 480).
   await page.keyboard.press("End");
   await expect.poll(width).toBe(704);
