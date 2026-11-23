@@ -670,14 +670,19 @@ describe("mounts that re-expose a denied directory (Linux mountinfo)", () => {
     const f = await fixture();
     const keys = join(f.dir, "mnt", "keys");
     const seen: string[][] = [];
+    const kept: string[][] = [];
     const input = {
       ...f.input,
-      mountReexposures: (denied: readonly string[]) => {
+      mountReexposures: (denied: readonly string[], keep: readonly string[]) => {
         seen.push([...denied]);
+        kept.push([...keep]);
         return { paths: [keys], problem: null };
       },
     };
     const c = readStrictOwnerCeilingSync(input);
+    // never denied wholesale: the device's own roots
+    for (const root of [f.roots.workspace, f.roots.skills, f.roots.tmp])
+      expect(kept[0]).toContain(root);
     // asked about every denied path the grant would deny
     expect([...(seen[0] ?? [])].sort()).toEqual(
       [...new Set([...c.secretAndStateDenies, ...c.otherConnectionDenies])].sort(),

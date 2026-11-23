@@ -142,11 +142,12 @@ export interface OwnerCeilingInput {
    */
   macTempBases?: readonly string[];
   /**
-   * Where mounts re-expose the given denied paths (given and canonical forms); default on Linux
-   * {@link linuxMountReexposures} of this process's mount table, elsewhere none. Called on every
-   * read, so the answer is as of each operation start.
+   * Where mounts re-expose the given denied paths (given and canonical forms), never denying a
+   * mount that holds one of `keep` (the device roots and listed project paths) wholesale; default
+   * on Linux {@link linuxMountReexposures} of this process's mount table, elsewhere none. Called on
+   * every read, so the answer is as of each operation start (and each owner reconcile).
    */
-  mountReexposures?: (denied: readonly string[]) => MountReexposures;
+  mountReexposures?: (denied: readonly string[], keep: readonly string[]) => MountReexposures;
 }
 /** Strict additive reader: no absent-file defaults or last-good fallback. */
 export async function readStrictOwnerCeiling(
@@ -251,14 +252,18 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
     join(home, DEVICE_DEFAULT_STATE_PATH.slice(2)),
   ]);
   const otherDenies = withCanonicalForms(otherDirs);
+  const projectPaths = canonicalProjectPaths(policy.projectPaths);
   const mounts = (
     input.mountReexposures ??
     (process.platform === "linux"
-      ? linuxMountReexposures
+      ? (denied: readonly string[], keep: readonly string[]) =>
+          linuxMountReexposures(denied, { keep })
       : (): MountReexposures => ({ paths: [], problem: null }))
-  )([...new Set([...secretAndStateDenies, ...otherDenies])]);
+  )(
+    [...new Set([...secretAndStateDenies, ...otherDenies])],
+    withCanonicalForms([roots.workspace, roots.skills, roots.tmp, ...projectPaths]),
+  );
   const mountDenies = withCanonicalForms(mounts.paths);
-  const projectPaths = canonicalProjectPaths(policy.projectPaths);
   return Object.freeze({
     revision: digest({
       generation: version(after),

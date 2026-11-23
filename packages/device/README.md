@@ -188,17 +188,27 @@ Landlock does not hide `stat`, so the build sees the files exist but cannot open
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look
 absent. Repository credentials reach a build only through an escalated call. Gradle init scripts
 and a `GRADLE_USER_HOME` moved elsewhere are not covered. Because the carve works on paths, a
-denied directory mounted again elsewhere would stay readable there, so each operation start reads
-`/proc/self/mountinfo` and denies every path where another mount shows a denied directory or
-something inside it: a bind mount of it or of a file in it, a mount of an ancestor's subtree (a
-second mount of the disk holding your home), a file system mounted inside it that is also mounted
-elsewhere, and an overlay whose layer lies in or holds it; those paths are denied under every reach.
-When the mount table leaves it open (unreadable, a line or escape it cannot parse, mounts that do not
-settle, an overlay layer that is not an absolute path), machine reach is refused with the cause and
-`capybara-device ceiling set --project-reach paths` as the way on; `ceiling` shows the cause too. A
-mount made after an operation started is seen from the next operation on, and file systems that
-serve another directory under their own device (FUSE such as bindfs, NFS from this machine) or an
-overlay layer named through a link are not recognized. More than
+denied directory mounted again elsewhere would stay readable there, so the deny list is built
+with `/proc/self/mountinfo` and names every path where another mount may show a denied directory
+or something inside it: a bind mount of it or of a file in it, a mount of an ancestor's subtree (a
+second mount of the disk holding your home, content covered by a later mount included), a file
+system mounted inside it that is also mounted elsewhere, an overlay whose layer lies in or holds it,
+and a loop device whose image file lies in it; those paths are denied under every reach. Mounts
+whose content cannot be told are denied as a whole: an automount point with nothing mounted on it
+yet (a lookup there would mount something; an indirect map such as `/home` that holds a denied
+directory or this device's own directories is left alone, and its keys not mounted yet are not
+seen), an overlay whose layer is relative or does not resolve, a loop device whose image cannot be
+read. When the table itself cannot be read or decided (unreadable, a line or escape it cannot parse,
+mounts that do not settle, unknown content holding this device's own directories), machine reach is
+refused with the cause; fixing it restores machine reach. Meanwhile `capybara-device ceiling set
+--project-reach paths` reads only the project directories you list, and listing a directory means
+you trust it not to hold a second view of a denied one (no mounts are denied for that reach while
+the table is undecided); `ceiling` shows the cause. The table is read at each operation's start and
+about every second while operations run; when the deny list changes, running operations are revoked,
+so a mount made in between is readable until then. Not recognized: network file systems (NFS, CIFS)
+or FUSE file systems (bindfs) showing the same files under another device, a disk or image mounted
+twice under different devices, a file system no longer in the mount table, and snapshots (copies of
+a directory, not mounts of it). More than
 4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. Every
 granted root is held open by the operation agent, so its open-file limit (often a soft limit of
 1024) can refuse an operation before that cap, also with many listed project paths. macOS

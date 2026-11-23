@@ -43,6 +43,7 @@ describe("parseMountinfo", () => {
       root: "/",
       mountPoint: "/",
       fsType: "ext4",
+      source: "/dev/sda1",
       superOptions: ["rw", "errors=remount-ro"],
     });
     expect(b?.mountPoint).toBe("/dev");
@@ -58,6 +59,11 @@ describe("parseMountinfo", () => {
   it("decodes escaped UTF-8 bytes and keeps raw UTF-8 text", () => {
     expect(decodeMountinfoField("/h/\\303\\251t\\303\\251")).toBe("/h/été");
     expect(decodeMountinfoField("/h/été")).toBe("/h/été");
+  });
+  it("accepts an empty mount source", () => {
+    const [, e] = parseMountinfo(table(BASE[0] as string, "30 21 0:40 / /x rw - tmpfs  rw"));
+    expect(e?.source).toBe("");
+    expect(e?.mountPoint).toBe("/x");
   });
   it("refuses an escape it cannot decode", () => {
     for (const bad of ["/a\\04", "/a\\x41b", "/a\\400", "/a\\", "/a\\377"])
@@ -114,12 +120,13 @@ describe("mountReexposures", () => {
       // another device's /u/.ssh is not the denied directory
       line(40, 21, "8:2", "/u", "/srv/u"),
       line(41, 21, "8:3", "/u/.ssh", "/elsewhere"),
-      // the root file system's /home: hidden under the /home mount, not the denied directory
+      // the root file system's /home/u/.ssh, covered by the /home mount: still denied (content
+      // hidden under an over-mount counts)
       line(42, 21, "8:1", "/home", "/srv/roothome"),
     );
-    expect(reexposed(text).paths).toEqual(["/srv/u/.ssh"]);
+    expect([...reexposed(text).paths].sort()).toEqual(["/srv/roothome/u/.ssh", "/srv/u/.ssh"]);
   });
-  it("follows stacked mounts: the mount on top holds the path", () => {
+  it("counts every stacked mount, the covered ones included", () => {
     const text = table(
       ...BASE,
       line(30, 21, "8:2", "/", "/home"),
@@ -128,7 +135,7 @@ describe("mountReexposures", () => {
       line(40, 21, "8:2", "/u", "/srv/old"),
       line(41, 21, "8:3", "/u", "/srv/new"),
     );
-    expect(reexposed(text).paths).toEqual(["/srv/new/.ssh"]);
+    expect([...reexposed(text).paths].sort()).toEqual(["/srv/new/.ssh", "/srv/old/.ssh"]);
   });
   it("a mount over an ancestor hides an older mount below it", () => {
     const text = table(
@@ -153,10 +160,12 @@ describe("mountReexposures", () => {
   it("a mount point under a denied path is already denied and not repeated", () => {
     expect(reexposed(table(...BASE, line(40, 21, "8:1", "/home", `${SSH}/h`))).paths).toEqual([]);
   });
-  it("keeps the deleted and the literal form of an unlinked root", () => {
-    const text = table(...BASE, line(40, 21, "8:1", "/home/u/.ssh\\040(deleted)", "/mnt/gone"));
-    // the literal form names a directory the root file system may really have: denied too
-    expect(reexposed(text).paths).toEqual(["/mnt/gone", "/home/u/.ssh (deleted)"]);
+  it("reads an unlinked root (//deleted) as the directory it was", () => {
+    const text = table(...BASE, line(40, 21, "8:1", "/home/u/.ssh//deleted", "/mnt/gone"));
+    expect(reexposed(text).paths).toEqual(["/mnt/gone"]);
+    // a name ending in " (deleted)" is just a name
+    const named = table(...BASE, line(40, 21, "8:1", "/home/u/.ssh\\040(deleted)", "/mnt/x"));
+    expect(reexposed(named).paths).toEqual([]);
   });
   it("a root that is not a path stands for the whole file system", () => {
     const text = table(
@@ -215,12 +224,55 @@ describe("mountReexposures", () => {
     );
     expect(reexposed(text).paths).toEqual(["/merged/.ssh"]);
   });
-  it("an overlay layer that is not an absolute path is a problem", () => {
+  it("an overlay with a relative or unresolvable layer is denied with every mount of it", () => {
+    const relative = table(
+      ...BASE,
+      // moby's overlay2 writes short relative layer names
+      line(
+        50,
+        21,
+        "0:60",
+        "/",
+        "/var/lib/docker/overlay2/x/merged",
+        "overlay",
+        "rw,lowerdir=l/ABC:l/DEF,upperdir=/up",
+      ),
+      line(51, 21, "0:60", "/etc", "/srv/etc"),
+    );
+    expect(reexposed(relative)).toEqual({
+      paths: ["/var/lib/docker/overlay2/x/merged", "/srv/etc"],
+      problem: null,
+    });
+    const gone = table(
+      ...BASE,
+      line(50, 21, "0:60", "/", "/merged", "overlay", "rw,lowerdir=/gone,upperdir=/up"),
+    );
+    const realpath = (p: string) => (p === "/gone" ? null : p);
+    expect(mountReexposures(parseMountinfo(gone), [SSH], { realpath })).toEqual({
+      paths: ["/merged"],
+      problem: null,
+    });
+  });
+  it("unknown content holding the device's own directories is a problem, not a deny", () => {
+    const text = table(
+      line(21, 1, "0:60", "/", "/", "overlay", "rw,lowerdir=/var/lib/docker/l/A,upperdir=/up"),
+    );
+    const r = mountReexposures(parseMountinfo(text), [SSH], {
+      realpath: () => null,
+      keep: ["/home/u/capybara/workspace"],
+    });
+    expect(r.paths).toEqual([]);
+    expect(r.problem).toMatch(/cannot resolve .* holds this device's own directories/);
+  });
+  it("canonicalizes absolute overlay layers before the in/holds test", () => {
     const text = table(
       ...BASE,
-      line(50, 21, "0:60", "/", "/merged", "overlay", "rw,lowerdir=l/ABC,upperdir=/up"),
+      line(50, 21, "0:60", "/", "/merged", "overlay", "rw,lowerdir=/link-to-home,upperdir=/up"),
     );
-    expect(reexposed(text).problem).toMatch(/overlay mount at \/merged .* not an absolute path/);
+    const realpath = (p: string) => (p === "/link-to-home" ? "/home/u" : p);
+    expect(mountReexposures(parseMountinfo(text), [SSH], { realpath }).paths).toEqual([
+      "/merged/.ssh",
+    ]);
   });
   it("iterates to a fixed point: a re-exposure re-exposed elsewhere", () => {
     const text = table(
@@ -248,14 +300,13 @@ describe("mountReexposures", () => {
   it("a fixed point beyond the limits is a problem", () => {
     const text = table(...BASE, line(40, 21, "8:1", "/home", "/mnt/h"));
     const r = mountReexposures(parseMountinfo(text), [SSH], {
-      paths: 0,
-      rounds: 32,
-      pathLength: 4096,
+      limits: { paths: 0, rounds: 32, pathLength: 4096 },
     });
     expect(r.problem).toMatch(/do not settle/);
     expect(
-      mountReexposures(parseMountinfo(text), [SSH], { paths: 10, rounds: 1, pathLength: 4096 })
-        .problem,
+      mountReexposures(parseMountinfo(text), [SSH], {
+        limits: { paths: 10, rounds: 1, pathLength: 4096 },
+      }).problem,
     ).toMatch(/do not settle/);
   });
   it("a denied path no mount holds is a problem", () => {
@@ -275,35 +326,111 @@ describe("mountReexposures", () => {
   });
 });
 
+describe("automount points and loop devices", () => {
+  const autofs = (id: number, point: string, mode: string) =>
+    line(
+      id,
+      21,
+      `0:${id}`,
+      "/",
+      point,
+      "autofs",
+      `rw,fd=5,pgrp=1,timeout=0,minproto=5,maxproto=5,${mode}`,
+    );
+  it("denies a direct or offset automount point with nothing mounted on it", () => {
+    const text = table(
+      ...BASE,
+      autofs(60, "/mnt/auto", "direct"),
+      autofs(61, "/srv/off", "offset"),
+    );
+    expect(reexposed(text).paths).toEqual(["/mnt/auto", "/srv/off"]);
+  });
+  it("follows what is mounted on a direct point instead of denying it", () => {
+    const text = table(
+      ...BASE,
+      autofs(60, "/mnt/auto", "direct"),
+      line(70, 60, "8:9", "/", "/mnt/auto"),
+    );
+    expect(reexposed(text).paths).toEqual([]);
+  });
+  it("denies an indirect point unless it holds a denied path or a directory the device needs", () => {
+    const text = table(
+      ...BASE,
+      autofs(60, "/net", "indirect"),
+      autofs(61, "/home", "indirect"),
+      autofs(62, "/proj", "indirect"),
+    );
+    expect(mountReexposures(parseMountinfo(text), [SSH], { keep: ["/proj/app"] }).paths).toEqual([
+      "/net",
+    ]);
+  });
+  it("leaves the binfmt_misc automount alone", () => {
+    expect(
+      reexposed(table(...BASE, autofs(60, "/proc/sys/fs/binfmt_misc", "direct"))).paths,
+    ).toEqual([]);
+  });
+  it("a loop device backed by a file in a denied directory shows it wholly", () => {
+    const loop = (id: number, dev: string, source: string, point: string) =>
+      `${id} 21 ${dev} / ${point} ro,relatime shared:9 - squashfs ${source} ro`;
+    const text = table(
+      ...BASE,
+      loop(80, "7:0", "/dev/loop0", "/mnt/img"),
+      loop(81, "7:1", "/dev/loop1p1", "/snap/core/1"),
+      loop(82, "7:2", "/dev/loop2", "/mnt/old"),
+    );
+    const backing: Record<number, string> = {
+      0: `${SSH}/vault.img`,
+      1: "/var/lib/snapd/snaps/core_1.snap",
+      2: `${SSH}/old.img (deleted)`,
+    };
+    expect(
+      mountReexposures(parseMountinfo(text), [SSH], { loopBackingFile: (n) => backing[n] ?? null })
+        .paths,
+    ).toEqual(["/mnt/img", "/mnt/old"]);
+    // a backing file it cannot read denies that loop device's mounts
+    expect(mountReexposures(parseMountinfo(text), [SSH]).paths).toEqual([
+      "/mnt/img",
+      "/snap/core/1",
+      "/mnt/old",
+    ]);
+  });
+});
+
 describe("linuxMountReexposures", () => {
   const enc = (s: string) => new TextEncoder().encode(s);
   it("reads the table through the seam", () => {
-    const r = linuxMountReexposures([SSH], () =>
-      enc(table(...BASE, line(40, 21, "8:1", SSH, "/mnt/keys"))),
-    );
+    const r = linuxMountReexposures([SSH], {
+      read: () => enc(table(...BASE, line(40, 21, "8:1", SSH, "/mnt/keys"))),
+      realpath: (p) => p,
+    });
     expect(r).toEqual({ paths: ["/mnt/keys"], problem: null });
   });
   it("an unreadable, non-UTF-8 or malformed table is a problem with no paths", () => {
-    const unreadable = linuxMountReexposures([SSH], () => {
-      throw Object.assign(new Error("nope"), { code: "EACCES" });
+    const unreadable = linuxMountReexposures([SSH], {
+      read: () => {
+        throw Object.assign(new Error("nope"), { code: "EACCES" });
+      },
     });
     expect(unreadable).toEqual({
       paths: [],
       problem: "/proc/self/mountinfo cannot be read (EACCES)",
     });
-    expect(linuxMountReexposures([SSH], () => new Uint8Array([0x2f, 0xff])).problem).toBe(
+    expect(linuxMountReexposures([SSH], { read: () => new Uint8Array([0x2f, 0xff]) }).problem).toBe(
       "/proc/self/mountinfo is not valid UTF-8",
     );
-    expect(linuxMountReexposures([SSH], () => enc("garbage\n")).problem).toMatch(
+    expect(linuxMountReexposures([SSH], { read: () => enc("garbage\n") }).problem).toMatch(
       /^\/proc\/self\/mountinfo has a line it cannot parse/,
     );
     expect(
-      linuxMountReexposures([SSH], () => enc(table(line(1, 0, "8:1", "/\\9", "/")))).problem,
+      linuxMountReexposures([SSH], { read: () => enc(table(line(1, 0, "8:1", "/\\9", "/"))) })
+        .problem,
     ).toMatch(/an escape it cannot decode/);
   });
-  it("the refusal names the cause and the paths reach", () => {
+  it("the refusal names the cause, that fixing it restores machine reach, and the paths trust", () => {
     const text = machineReachMountRefusal("/proc/self/mountinfo cannot be read (EACCES)");
     expect(text).toContain("(/proc/self/mountinfo cannot be read (EACCES))");
+    expect(text).toContain("fixing that cause restores it");
     expect(text).toContain("capybara-device ceiling set --project-reach paths");
+    expect(text).toContain("which you trust not to hold a second view of a denied directory");
   });
 });

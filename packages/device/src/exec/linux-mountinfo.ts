@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 
 /**
@@ -8,19 +8,30 @@ import { posix } from "node:path";
  * finds every such M so the deny list names it too.
  *
  * The parser and the model are pure (string in, paths out) so they are tested from fixtures on
- * any OS; {@link linuxMountReexposures} is the thin reader. Whenever the answer cannot be told
- * (the file is unreadable or malformed, an escape cannot be decoded, the re-exposures do not
- * settle), the result carries a `problem`: the caller refuses machine project reach with
- * {@link machineReachMountRefusal} instead of guessing. Every other doubt is resolved by denying
- * more (a hidden mount still counts, every candidate mount of a path counts), never less.
+ * any OS; {@link linuxMountReexposures} is the thin reader. When the table itself cannot be read
+ * as the model needs it (unreadable, malformed, an escape it cannot decode, mounts that do not
+ * settle, unknown content holding the device's own directories), the result carries a `problem`
+ * and the caller refuses machine project reach with {@link machineReachMountRefusal} instead of
+ * guessing. Every other doubt denies more (covered mounts count, mounts of unknown content are
+ * denied wholesale), never less.
  *
- * Residuals: the table is read when the owner ceiling is read, at each operation's start (and at
- * an owner reconcile), so a mount made while an operation runs is seen from the next operation on
- * (the sandboxed command itself cannot mount: Landlock forbids changing the mount topology). File
- * systems that serve another directory under their own device (FUSE such as bindfs, NFS from this
- * machine) are not recognized, nor is an overlay layer named through a symbolic link; an overlay
- * layer is read as a path of this mount namespace, so one mounted from another namespace can only
- * deny more.
+ * Residuals:
+ * - The table is read with the owner ceiling: at each operation's start, and about every second
+ *   while operations run (the backend's owner reconcile), where a deny list that changed revokes
+ *   the live operations (`grantStillHolds`). A mount made in between is readable until then.
+ * - A sandboxed command cannot call mount(2) (Landlock forbids changing the mount topology), but
+ *   a lookup under an automount point makes the automounter mount for it: such points are denied
+ *   while nothing is mounted on them, except an indirect point that holds a denied path or a
+ *   directory the device needs (`/home` as an automount map), whose keys not mounted yet are not
+ *   seen.
+ * - Separate superblocks showing the same data are not recognized: network file systems (NFS,
+ *   CIFS) mounting the same share twice or this machine's own export, FUSE file systems serving
+ *   another directory (bindfs), a block device or image mounted twice under different devices.
+ * - A file system no longer in the table (kept alive by an open file or an overlay layer after
+ *   its mount went away) and snapshots (btrfs, LVM, ZFS: copies, not mounts of the directory) are
+ *   not covered.
+ * - An overlay layer or loop backing file is resolved in this process's mount namespace; one from
+ *   another namespace that does not resolve here denies the overlay's mounts (more, not less).
  */
 
 /** One line of mountinfo (proc(5)), with the path fields decoded. */
@@ -37,6 +48,8 @@ export interface MountEntry {
   /** The mount point, relative to this process's root. */
   readonly mountPoint: string;
   readonly fsType: string;
+  /** The mount source (`/dev/sda1`, `none`, possibly empty). */
+  readonly source: string;
   /** The super options, split on the raw commas, each decoded. */
   readonly superOptions: readonly string[];
 }
@@ -94,7 +107,9 @@ export function parseMountinfo(text: string): MountEntry[] {
     const sep = fields.indexOf("-", 6);
     const malformed = () =>
       new MountinfoError(`a line it cannot parse (${JSON.stringify(line.slice(0, 200))})`);
-    if (sep < 6 || fields.length !== sep + 4 || fields.includes("")) throw malformed();
+    // every field but the source has content (an empty source shows as two spaces)
+    if (sep < 6 || fields.length !== sep + 4 || fields.some((f, i) => f === "" && i !== sep + 2))
+      throw malformed();
     const [id, parent, dev, root, mountPoint] = fields as [string, string, string, string, string];
     if (!/^\d+$/.test(id) || !/^\d+$/.test(parent) || !/^\d+:\d+$/.test(dev)) throw malformed();
     const fsType = decodeMountinfoField(fields[sep + 1] as string);
@@ -107,6 +122,7 @@ export function parseMountinfo(text: string): MountEntry[] {
       root: decodeMountinfoField(root),
       mountPoint: decodedPoint,
       fsType,
+      source: decodeMountinfoField(fields[sep + 2] as string),
       superOptions: (fields[sep + 3] as string).split(",").map(decodeMountinfoField),
     };
   });
@@ -116,17 +132,19 @@ function inside(path: string, root: string): boolean {
   return root === "/" || path === root || path.startsWith(`${root}/`);
 }
 
-const DELETED = " (deleted)";
+/** What dentry_path appends to an unlinked root in mountinfo (never part of a real path). */
+const DELETED_ROOT = "//deleted";
+/** What d_path appends to an unlinked file's path (a loop device's backing file). */
+const DELETED_FILE = " (deleted)";
 
 /**
- * The forms a mount's root may stand for: the kernel appends ` (deleted)` to an unlinked root,
- * which a real name can also end with, so both are kept. A root that is not absolute is `null`:
- * the whole file system.
+ * A mount's root within its file system, `null` when it is not a path (the whole file system).
+ * An unlinked root (`/a//deleted`) stands for the directory it was.
  */
-function rootForms(root: string): (string | null)[] {
-  if (!root.startsWith("/")) return [null];
-  if (!root.endsWith(DELETED)) return [root];
-  return [root, root.slice(0, -DELETED.length) || "/"];
+function rootOf(root: string): string | null {
+  if (!root.startsWith("/")) return null;
+  if (root.endsWith(DELETED_ROOT)) return root.slice(0, -DELETED_ROOT.length) || "/";
+  return root;
 }
 
 /**
@@ -159,6 +177,9 @@ function overlayLayers(entry: MountEntry): string[] {
   return layers;
 }
 
+/** Automount points that never lead to a user's files (systemd's binfmt_misc automount). */
+const HARMLESS_AUTOFS_POINTS: ReadonlySet<string> = new Set(["/proc/sys/fs/binfmt_misc"]);
+
 /** Bounds of the fixed point: beyond them the re-exposures are said not to settle. */
 export interface MountReexposureLimits {
   readonly paths: number;
@@ -174,33 +195,75 @@ export const MOUNT_REEXPOSURE_LIMITS: MountReexposureLimits = Object.freeze({
   pathLength: 4096,
 });
 
+export interface MountReexposureOptions {
+  limits?: MountReexposureLimits;
+  /**
+   * The real path of an absolute path, or null when it does not resolve (missing, unreadable).
+   * Default: the path as written (pure).
+   */
+  realpath?: (path: string) => string | null;
+  /**
+   * The backing file of loop device N (`/sys/block/loopN/loop/backing_file`), or null when it
+   * cannot be read. Default: null (pure), which denies that loop device's mounts.
+   */
+  loopBackingFile?: (n: number) => string | null;
+  /**
+   * The directories this device itself needs (its roots, the listed project paths): a mount of
+   * unknown content that holds one of them is never denied wholesale (an indirect automount point
+   * is left as is; an overlay or loop mount of unknown content is a `problem`).
+   */
+  keep?: readonly string[];
+}
+
 export interface MountReexposures {
-  /** Every path, off the denied ones, where a denied path or something inside it is visible. */
+  /** Every path, off the denied ones, where a denied path or something inside it may be visible. */
   readonly paths: readonly string[];
   /** Why the answer is incomplete (the cause, English), or null when it is complete. */
   readonly problem: string | null;
 }
 
+/** A directory or file whose content a mount shows (an overlay layer, a loop backing file). */
+interface ContentSource {
+  readonly entry: MountEntry;
+  readonly kind: "dir" | "file";
+  /** The path as written and its real path. */
+  readonly forms: readonly string[];
+}
+
 /**
- * Where a denied path or something inside it is visible again through another mount.
+ * Where a denied path or something inside it may be visible again through another mount.
  *
- * For each denied path P: the mounts that may contain P (resolved from the mount tree: the mount
- * on `/`, then at each level the child mount crossed first, the one with the shortest mount point
- * on P's way, and on it the mounts stacked there; ties are all followed) give P's location in
- * their file system (the mount's root plus the rest of P); every mount whose mount point lies in
- * or at P gives its root, wholly inside P. Every mount of the same file system (`major:minor`)
- * then shows such a location: wholly at its mount point when its root lies inside it, or at
- * `mountPoint + (location - root)` when its root holds it. An overlay mount whose layer lies in or
- * holds P shows P likewise. The paths found are denied in turn until nothing new comes (a fixed
- * point within {@link MOUNT_REEXPOSURE_LIMITS}). Paths in or at a denied path are not repeated.
+ * Unknown content first, denied without looking further (a doubt denies more): an automount
+ * point (autofs) with nothing mounted on it yet, since a lookup under it makes the automounter
+ * mount outside this model (a direct or offset point always; an indirect one, such as `/net`,
+ * unless it holds a denied path or a {@link MountReexposureOptions.keep} directory, whose keys are
+ * the residual; binfmt_misc is harmless); every mount of an overlay whose layer is relative or
+ * does not resolve; every mount of a loop device whose backing file cannot be read. When such a
+ * mount holds a `keep` directory the answer is a `problem` instead (denying it would deny the
+ * device itself).
  *
- * Every mount counts, hidden or not, and every candidate mount of P counts: a doubt denies more.
+ * Then, for each denied path P: its location in every file system mounted on P's way (each mount
+ * whose mount point is P or an ancestor of it, covered ones included, so content hidden under an
+ * over-mount counts: the mount's root plus the rest of P); for a path this function found itself,
+ * only the mounts that hold it (the mount on `/`, then at each level the child crossed first, the
+ * one with the shortest mount point on its way, and the mounts stacked there; ties all followed).
+ * Every mount in or at P gives its root too (content inside P), unless that root holds P itself.
+ * Every mount of the same file system (`major:minor`) then shows such a location: wholly at its
+ * mount point when its root lies inside it, or at `mountPoint + (location - root)` when its root
+ * holds it. An overlay whose layer (real path or as written) lies in or holds P shows P likewise,
+ * and a loop device whose backing file lies in P shows it wholly. The paths found are denied in
+ * turn until nothing new comes (a fixed point within {@link MOUNT_REEXPOSURE_LIMITS}). Paths in or
+ * at a denied path are not repeated.
  */
 export function mountReexposures(
   entries: readonly MountEntry[],
   denied: readonly string[],
-  limits: MountReexposureLimits = MOUNT_REEXPOSURE_LIMITS,
+  options: MountReexposureOptions = {},
 ): MountReexposures {
+  const limits = options.limits ?? MOUNT_REEXPOSURE_LIMITS;
+  const realpath = options.realpath ?? ((path: string) => path);
+  const loopBackingFile = options.loopBackingFile ?? (() => null);
+  const keep = (options.keep ?? []).map((p) => posix.normalize(p));
   const ids = new Set(entries.map((e) => e.mountId));
   const children = new Map<number, MountEntry[]>();
   const starts: MountEntry[] = [];
@@ -218,9 +281,8 @@ export function mountReexposures(
     list.push(e);
     byDev.set(e.dev, list);
   }
-  const overlays = entries.filter((e) => e.fsType === "overlay");
 
-  /** The mounts `path` may be in (more than one only when the tree leaves it open). */
+  /** The mounts `path` is in (more than one only when the tree leaves it open). */
   const containing = (path: string): MountEntry[] => {
     const out = new Set<MountEntry>();
     const seen = new Set<number>();
@@ -239,10 +301,77 @@ export function mountReexposures(
     return [...out];
   };
 
-  const deniedSet = new Set(denied.map((p) => posix.normalize(p)));
+  const original = [...new Set(denied.map((p) => posix.normalize(p)))];
+  const deniedSet = new Set(original);
   const isDenied = (p: string) => [...deniedSet].some((d) => inside(p, d));
   const found: string[] = [];
-  let pending = [...deniedSet];
+  const deny = (p: string) => {
+    if (isDenied(p)) return false;
+    deniedSet.add(p);
+    found.push(p);
+    return true;
+  };
+  const holdsKeep = (dev: string) =>
+    (byDev.get(dev) ?? []).find((e) => keep.some((k) => inside(k, e.mountPoint)));
+
+  // unknown content: what a mount shows cannot be told, so its mount points are denied
+  const sources: ContentSource[] = [];
+  const unknown = new Map<string, string>(); // dev -> cause
+  const forms = (path: string): string[] | null => {
+    if (!path.startsWith("/")) return null;
+    const real = realpath(path);
+    if (real === null) return null;
+    return [...new Set([posix.normalize(path), posix.normalize(real)])];
+  };
+  for (const e of entries) {
+    if (e.fsType === "overlay")
+      for (const layer of overlayLayers(e)) {
+        const f = forms(layer);
+        if (f === null) {
+          if (!unknown.has(e.dev))
+            unknown.set(
+              e.dev,
+              `the overlay mount at ${e.mountPoint} has a layer it cannot resolve (${layer})`,
+            );
+        } else sources.push({ entry: e, kind: "dir", forms: f });
+      }
+    const loop = /^\/dev\/loop(\d+)(?:p\d+)?$/.exec(e.source);
+    if (loop !== null) {
+      const backing = loopBackingFile(Number(loop[1]));
+      const f =
+        backing === null
+          ? null
+          : forms(
+              backing.endsWith(DELETED_FILE) ? backing.slice(0, -DELETED_FILE.length) : backing,
+            );
+      if (f === null) {
+        if (!unknown.has(e.dev))
+          unknown.set(
+            e.dev,
+            `the backing file of ${e.source}, mounted at ${e.mountPoint}, cannot be read`,
+          );
+      } else sources.push({ entry: e, kind: "file", forms: f });
+    }
+  }
+  for (const [dev, cause] of unknown) {
+    const held = holdsKeep(dev);
+    if (held !== undefined)
+      return {
+        paths: found,
+        problem: `${cause}, and its mount at ${held.mountPoint} holds this device's own directories`,
+      };
+    for (const e of byDev.get(dev) ?? []) deny(e.mountPoint);
+  }
+  for (const e of entries) {
+    if (e.fsType !== "autofs" || HARMLESS_AUTOFS_POINTS.has(e.mountPoint)) continue;
+    // something mounted on it already is in the table and followed like any mount
+    if ((children.get(e.mountId) ?? []).some((k) => k.mountPoint === e.mountPoint)) continue;
+    const direct = e.superOptions.includes("direct") || e.superOptions.includes("offset");
+    if (!direct && [...original, ...keep].some((p) => inside(p, e.mountPoint))) continue;
+    deny(e.mountPoint);
+  }
+
+  let pending = [...original];
   for (let round = 0; pending.length > 0; round++) {
     if (round >= limits.rounds)
       return {
@@ -257,50 +386,48 @@ export function mountReexposures(
       locations.set(dev, set);
     };
     for (const p of pending) {
-      const holders = containing(p);
+      const holders = round === 0 ? entries.filter((e) => inside(p, e.mountPoint)) : containing(p);
       if (holders.length === 0)
         return { paths: found, problem: `no mount in /proc/self/mountinfo holds ${p}` };
       const own: { dev: string; root: string | null }[] = [];
-      for (const m of holders)
-        for (const form of rootForms(m.root))
-          own.push({
-            dev: m.dev,
-            root: form === null ? null : posix.join(form, posix.relative(m.mountPoint, p)),
-          });
+      for (const m of holders) {
+        const root = rootOf(m.root);
+        own.push({
+          dev: m.dev,
+          root: root === null ? null : posix.join(root, posix.relative(m.mountPoint, p)),
+        });
+      }
       for (const l of own) addLocation(l.dev, l.root);
       // a mount in or at P shows its content inside P: that content is denied wherever its file
       // system shows it too, unless it holds P itself (an ancestor mounted inside P, whose other
       // content is not P's)
       for (const e of entries)
-        if (inside(e.mountPoint, p))
-          for (const form of rootForms(e.root))
-            if (
-              form === null ||
-              !own.some((l) => l.dev === e.dev && l.root !== null && inside(l.root, form))
-            )
-              addLocation(e.dev, form);
-      for (const o of overlays)
-        for (const layer of overlayLayers(o)) {
-          if (!layer.startsWith("/"))
-            return {
-              paths: found,
-              problem: `the overlay mount at ${o.mountPoint} names a layer that is not an absolute path (${layer})`,
-            };
-          const l = posix.normalize(layer);
-          if (inside(l, p)) addLocation(o.dev, "/");
-          else if (inside(p, l)) addLocation(o.dev, posix.join("/", posix.relative(l, p)));
+        if (inside(e.mountPoint, p)) {
+          const root = rootOf(e.root);
+          if (
+            root === null ||
+            !own.some((l) => l.dev === e.dev && l.root !== null && inside(l.root, root))
+          )
+            addLocation(e.dev, root);
+        }
+      for (const source of sources)
+        for (const form of source.forms) {
+          if (inside(form, p)) addLocation(source.entry.dev, source.kind === "dir" ? "/" : null);
+          else if (source.kind === "dir" && inside(p, form))
+            addLocation(source.entry.dev, posix.join("/", posix.relative(form, p)));
         }
     }
     const next = new Set<string>();
     for (const [dev, roots] of locations)
-      for (const e of byDev.get(dev) ?? [])
-        for (const form of rootForms(e.root))
-          for (const r of roots) {
-            let shown: string | undefined;
-            if (r === null || form === null || inside(form, r)) shown = e.mountPoint;
-            else if (inside(r, form)) shown = posix.join(e.mountPoint, posix.relative(form, r));
-            if (shown !== undefined && !isDenied(shown)) next.add(shown);
-          }
+      for (const e of byDev.get(dev) ?? []) {
+        const form = rootOf(e.root);
+        for (const r of roots) {
+          let shown: string | undefined;
+          if (r === null || form === null || inside(form, r)) shown = e.mountPoint;
+          else if (inside(r, form)) shown = posix.join(e.mountPoint, posix.relative(form, r));
+          if (shown !== undefined && !isDenied(shown)) next.add(shown);
+        }
+      }
     pending = [];
     for (const p of next) {
       if (p.length > limits.pathLength || found.length >= limits.paths)
@@ -308,24 +435,50 @@ export function mountReexposures(
           paths: found,
           problem: "the paths that re-expose a denied directory do not settle",
         };
-      if (isDenied(p)) continue;
-      deniedSet.add(p);
-      found.push(p);
-      pending.push(p);
+      if (deny(p)) pending.push(p);
     }
   }
   return { paths: found, problem: null };
 }
 
+/** What {@link linuxMountReexposures} reads; each defaults to this machine's file. */
+export interface LinuxMountReadOptions {
+  /** `/proc/self/mountinfo`. */
+  read?: () => Uint8Array;
+  /** The real path of a path, or null when it does not resolve. */
+  realpath?: (path: string) => string | null;
+  /** `/sys/block/loopN/loop/backing_file`, or null when it cannot be read. */
+  loopBackingFile?: (n: number) => string | null;
+  /** See {@link MountReexposureOptions.keep}. */
+  keep?: readonly string[];
+}
+
+function nodeRealpath(path: string): string | null {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return null;
+  }
+}
+
+function nodeLoopBackingFile(n: number): string | null {
+  try {
+    return readFileSync(`/sys/block/loop${n}/loop/backing_file`, "utf8").replace(/\n$/, "");
+  } catch {
+    return null;
+  }
+}
+
 /**
- * {@link mountReexposures} of this process's mount table: reads `/proc/self/mountinfo` (or
- * `read`, a test seam) as UTF-8 and never throws; an unreadable or undecodable table is a
- * `problem` with no paths.
+ * {@link mountReexposures} of this process's mount table: reads `/proc/self/mountinfo` as UTF-8,
+ * resolves overlay layers and loop backing files on this machine, and never throws; an
+ * unreadable or undecodable table is a `problem` with no paths.
  */
 export function linuxMountReexposures(
   denied: readonly string[],
-  read: () => Uint8Array = () => readFileSync("/proc/self/mountinfo"),
+  options: LinuxMountReadOptions = {},
 ): MountReexposures {
+  const read = options.read ?? (() => readFileSync("/proc/self/mountinfo"));
   let text: string;
   try {
     const bytes = read();
@@ -342,7 +495,11 @@ export function linuxMountReexposures(
     };
   }
   try {
-    return mountReexposures(parseMountinfo(text), denied);
+    return mountReexposures(parseMountinfo(text), denied, {
+      realpath: options.realpath ?? nodeRealpath,
+      loopBackingFile: options.loopBackingFile ?? nodeLoopBackingFile,
+      ...(options.keep ? { keep: options.keep } : {}),
+    });
   } catch (e) {
     if (e instanceof MountinfoError)
       return { paths: [], problem: `/proc/self/mountinfo has ${e.message}` };
@@ -352,13 +509,15 @@ export function linuxMountReexposures(
 
 /**
  * The refusal of machine project reach while the mount table leaves open whether a denied
- * directory is visible elsewhere: names the cause and the narrower reach that still works.
+ * directory is visible elsewhere: names the cause, that fixing it restores machine reach, and what
+ * the paths reach relies on instead.
  */
 export function machineReachMountRefusal(problem: string): string {
   return (
-    `Cannot tell whether a mount re-exposes a directory the owner denies (${problem}), so this ` +
-    "connection's machine project reach is refused; switch to listed project directories with " +
-    "capybara-device ceiling set --project-reach paths (capybara-device policy add projectPaths " +
-    "lists them)"
+    `Cannot tell whether a mount shows a directory the owner denies somewhere else (${problem}), ` +
+    "so this connection's machine project reach is refused; fixing that cause restores it. " +
+    "Meanwhile capybara-device ceiling set --project-reach paths reads only the project " +
+    "directories you list (capybara-device policy add projectPaths), which you trust not to hold " +
+    "a second view of a denied directory"
   );
 }
