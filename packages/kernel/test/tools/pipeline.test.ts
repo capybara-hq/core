@@ -42,6 +42,7 @@ import {
   RUN_STOPPED_TEXT,
   type ToolPipeline,
   type ToolStepContext,
+  toolIdempotencyKey,
 } from "../../src/tools/pipeline.js";
 import {
   type BuiltinHandler,
@@ -1077,6 +1078,56 @@ describe("ToolPipeline.runStep", () => {
     // 仍 pending：继续等，处理函数不再被调用
     expect(await pipeline().runStep(stepCtx())).toEqual(out);
     expect(handlerCalls.form).toHaveLength(1);
+  });
+
+  it("a resumed call keeps its callId and idempotencyKey; another run's call gets another key (#116)", async () => {
+    const seen: {
+      conversationId: string;
+      callId: string;
+      idempotencyKey?: string;
+      resume?: unknown;
+    }[] = [];
+    handlers.plugin__probe__form = async (_input, ctx: ToolCallContext) => {
+      seen.push({
+        conversationId: ctx.conversationId,
+        callId: ctx.callId,
+        ...(ctx.idempotencyKey !== undefined && { idempotencyKey: ctx.idempotencyKey }),
+        ...(ctx.resume !== undefined && { resume: ctx.resume }),
+      });
+      if (ctx.resume === undefined) {
+        return {
+          kind: "input_required",
+          form: { title: "t", fields: [{ key: "a", label: "A", schema: { type: "string" } }] },
+          state: { step: "asked" },
+        };
+      }
+      return { content: [{ type: "text", text: "done" }] };
+    };
+    await insertRun();
+    await assistant([{ id: "c1", name: "plugin__probe__form", input: {} }]);
+    await pipeline().runStep(stepCtx());
+    const asked = (await eventsOf(db, seed.conversationId)).find(
+      (e) => e.type === "question_asked",
+    );
+    const questionId = (asked?.payload as { questionId: string } | undefined)?.questionId ?? "";
+    await questionsFor(db, eventLog, config).answer(questionId, seed.accountId, { a: "x" });
+    await pipeline().runStep(stepCtx());
+    const key = toolIdempotencyKey(seed.conversationId, runId, "c1");
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(seen).toEqual([
+      { conversationId: seed.conversationId, callId: "c1", idempotencyKey: key },
+      {
+        conversationId: seed.conversationId,
+        callId: "c1",
+        idempotencyKey: key,
+        resume: { state: { step: "asked" }, answer: { a: "x" } },
+      },
+    ]);
+    // a call id is unique only within its run: the same id in another run is another call
+    expect(toolIdempotencyKey(seed.conversationId, randomUUID(), "c1")).not.toBe(key);
+    expect(resultsOf(await eventsOf(db, seed.conversationId))).toMatchObject([
+      { callId: "c1", content: "done" },
+    ]);
   });
 
   it("处理函数抛出非 ToolError：只给模型错误类名，不回显内部消息", async () => {
