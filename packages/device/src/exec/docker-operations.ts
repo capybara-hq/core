@@ -48,6 +48,11 @@ export interface OperationContainerHost {
    * containers of the device's pinned image.
    */
   readonly helpers?: HelperLauncher;
+  /**
+   * Whether a helper container sees the host's device and inode numbers of a mounted directory
+   * (a native Linux daemon): the native helper then checks its anchors against them.
+   */
+  readonly mountsPreserveIdentity?: boolean;
   /** The image platform the daemon runs (default: this host's), for the bind-time image check. */
   readonly imagePlatform?: PinnedPlatform | undefined;
   operationContainer(
@@ -243,6 +248,7 @@ function hostSkillsPreparation(
   request: MacWorkerRequest & { kind: "native" },
   hostRoots: SandboxRoots,
   helpers: HelperLauncher,
+  preserveIdentity: boolean,
   acquire: (runtimeHash: string | undefined) => Promise<{ release(): void }>,
   signal: AbortSignal,
 ): MacWorkerHandle {
@@ -289,8 +295,8 @@ function hostSkillsPreparation(
           path: host,
           access: "write",
           anchor,
-          // Docker Desktop's file sharing shows other device and inode numbers inside the VM
-          identity: process.platform === "linux" ? [st.dev, st.ino] : null,
+          // Docker Desktop's file sharing or a remote daemon shows other numbers in the container
+          identity: preserveIdentity ? [st.dev, st.ino] : null,
           components,
         });
       }
@@ -414,7 +420,14 @@ export async function createDockerOperationBackend(
     request.purpose === "preparation" &&
     request.grant.writeRoots.length > 0 &&
     request.grant.writeRoots.every((root) => within(root, DEFAULT_SANDBOX_ROOTS.skills))
-      ? hostSkillsPreparation(request, options.hostRoots, helpers, acquire, signal)
+      ? hostSkillsPreparation(
+          request,
+          options.hostRoots,
+          helpers,
+          options.container.mountsPreserveIdentity === true,
+          acquire,
+          signal,
+        )
       : worker(request, signal);
   return createLocalOperationBackend(
     {

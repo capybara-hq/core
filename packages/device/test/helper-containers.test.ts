@@ -19,6 +19,7 @@ import {
   HELPER_LABEL,
   removeLeftoverHelpers,
 } from "../src/exec/helper-launcher.js";
+import { runContainerNativeHelper } from "../src/exec/native-helper-client.js";
 import {
   finalizeRecoveredOutput,
   ManagedOutputSpool,
@@ -153,6 +154,33 @@ describe.skipIf(!hasDocker)("trusted helpers in helper containers", () => {
     const left = spawnSync("docker", ["ps", "-aq", "--filter", `name=${leftover}`], {
       encoding: "utf8",
     });
+    expect(left.stdout.trim()).toBe("");
+  });
+
+  it("a cancelled native helper settles only once its container is gone", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "cap-helper-cancel-")));
+    dirs.push(root);
+    const controller = new AbortController();
+    const running = runContainerNativeHelper(
+      { method: "list", path: root },
+      [{ path: root, access: "read", anchor: root, identity: null }],
+      {
+        launcher: helpers,
+        paths: [root],
+        // the request is never dispatched: cancelled while the helper waits for it
+        beforeDispatch: async () => {
+          controller.abort();
+          await new Promise(() => {});
+        },
+      },
+      controller.signal,
+    );
+    await expect(running).rejects.toBeDefined();
+    const left = spawnSync(
+      "docker",
+      ["ps", "-aq", "--filter", `label=${HELPER_LABEL}=${deviceId}`],
+      { encoding: "utf8" },
+    );
     expect(left.stdout.trim()).toBe("");
   });
 

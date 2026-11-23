@@ -20,7 +20,7 @@ vi.mock("node:child_process", async (importOriginal) => {
       child.stdin = null;
       child.kill = () => {};
       queueMicrotask(() => {
-        if (args[0] === "info") child.stdout.emit("data", Buffer.from("aarch64\n"));
+        if (args[0] === "info") child.stdout.emit("data", Buffer.from("aarch64|Docker Desktop\n"));
         child.emit("close", 0);
       });
       return child;
@@ -43,12 +43,14 @@ describe("the docker-mode device container at startup", () => {
       policy: () => DEFAULT_POLICY,
     });
     expect(calls).toEqual([
-      ["docker", "info", "--format", "{{.Architecture}}"],
+      ["docker", "info", "--format", "{{.Architecture}}|{{.OperatingSystem}}"],
       // helper containers an earlier run left, by this device's label
       ["docker", "ps", "-aq", "--filter", "label=capybara.device.helper=dev1"],
     ]);
     // the daemon's architecture picks the pinned digests the bind accepts
     expect(container.imagePlatform).toBe("arm64");
+    // Docker Desktop's file sharing shows other inode numbers: no anchor identity check
+    expect(container.mountsPreserveIdentity).toBe(false);
     // nothing to kill at stop either: the operation backend stops its own work exactly
     expect("dispose" in container).toBe(false);
     expect("killAll" in container).toBe(false);

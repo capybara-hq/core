@@ -20,6 +20,8 @@ describe("helper container arguments", () => {
       "run",
       "--rm",
       "-i",
+      "--pull",
+      "never",
       "--name",
       "capybara-helper-dev1-x",
       "--label",

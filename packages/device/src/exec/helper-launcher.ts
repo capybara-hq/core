@@ -109,6 +109,10 @@ export function helperContainerArgs(
     "run",
     "--rm",
     "-i",
+    // never a pull: the device container already runs the pinned image, so a missing image fails
+    // fast (and closed) instead of blocking on the registry
+    "--pull",
+    "never",
     "--name",
     name,
     "--label",
@@ -139,11 +143,29 @@ export function helperContainerArgs(
   ];
 }
 
-/** Removes a helper container by name, without waiting (a stopped helper holds nothing). */
-function removeContainer(name: string): void {
-  try {
-    spawn("docker", ["rm", "-f", name], { stdio: "ignore" }).on("error", () => {});
-  } catch {}
+/** Removes a helper container by name; resolves once `docker rm -f` returned. */
+function removeContainer(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn("docker", ["rm", "-f", name], { stdio: "ignore" });
+      child.once("error", () => resolve());
+      child.once("close", () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/** The removal each killed container helper started, by its client process. */
+const gone = new WeakMap<object, Promise<void>>();
+
+/**
+ * Resolves once a killed helper is gone for good: for a container helper, once its container was
+ * removed (killing the `docker run` client alone does not stop a helper that already read its
+ * request); at once for a host helper or one never killed.
+ */
+export function helperGone(child: object): Promise<void> {
+  return gone.get(child) ?? Promise.resolve();
 }
 
 /**
@@ -165,7 +187,7 @@ export function containerHelperLauncher(o: ContainerHelperOptions): HelperLaunch
       });
       const kill = child.kill.bind(child);
       child.kill = (signal?: NodeJS.Signals | number) => {
-        removeContainer(n);
+        if (!gone.has(child)) gone.set(child, removeContainer(n));
         return kill(signal);
       };
       return child;
@@ -176,9 +198,9 @@ export function containerHelperLauncher(o: ContainerHelperOptions): HelperLaunch
         input,
         encoding: "utf8",
         maxBuffer,
-        timeout: 120_000,
+        timeout: 60_000,
       });
-      if (r.error || r.signal) removeContainer(n);
+      if (r.error || r.signal) void removeContainer(n);
       return { status: r.status, stdout: r.stdout ?? "", error: r.error };
     },
   };

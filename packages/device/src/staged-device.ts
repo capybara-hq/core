@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -278,7 +279,13 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       // project roots are the container's paths, never a directory another connection could use
       const { roots: _host, sandboxHome: _home, onProjectAdmitted: _projects, ...rest } = options;
       return createDockerOperationBackend(
-        { ...rest, hostRoots, container: o.container as OperationContainerHost },
+        {
+          ...rest,
+          // the real directory, as the device container mounts it: helper containers mount these
+          // paths and refuse one with a link in it
+          hostRoots: osRoots(realDir(resolve(cred.dir))),
+          container: o.container as OperationContainerHost,
+        },
         { ...deps, ...o.linux },
       );
     }
@@ -424,6 +431,11 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       await o.dispose?.();
     },
   };
+}
+
+/** A directory's real path, or the path itself while it does not exist. */
+function realDir(dir: string): string {
+  return existsSync(dir) ? realpathSync(dir) : dir;
 }
 
 /** The image id the container was created from (`docker inspect`), never a mutable tag. */

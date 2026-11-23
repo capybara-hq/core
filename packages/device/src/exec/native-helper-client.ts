@@ -6,7 +6,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
-import type { HelperLauncher } from "./helper-launcher.js";
+import { type HelperLauncher, helperGone } from "./helper-launcher.js";
 import { recordTransferTiming, timed } from "./transfer-timing.js";
 export interface PinnedNativeRoot {
   path: string;
@@ -441,6 +441,8 @@ export async function runContainerNativeHelper(
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);
+    // a cancelled helper settles only once its container is gone, so no write follows the cancel
+    await helperGone(child);
   }
   if (dispatchedAt)
     recordTransferTiming(request.method, "helperIo", performance.now() - dispatchedAt);

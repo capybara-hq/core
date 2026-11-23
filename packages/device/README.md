@@ -430,7 +430,9 @@ environment fingerprint) run in short-lived helper containers of the same pinned
 the step's host directories mounted at the same paths (skills preparation: `<dir>/skills`; a
 background task's output: the connection's `output` directory and `<dir>/workspace` or
 `<dir>/tmp`). A link the work plants in the workspace can reach only those mounts, never the rest
-of the host. Leftover helper containers of a killed run are removed at the next start.
+of the host. Leftover helper containers of a killed run are removed at the next start. A program running as root on
+Linux runs both containers as the image's `sandbox` user (uid 1000), which cannot write the
+root-owned device directories: run the program as an ordinary user.
 
 The container is always on Docker's default bridge: an escalated call has the container's whole network.
 Restricted work inside it is confined by the Linux launcher (Landlock, the seccomp broker and the
