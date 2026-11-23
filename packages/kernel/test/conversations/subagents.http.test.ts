@@ -51,6 +51,12 @@ const agentCall = (description: string, prompt: string) => ({
 });
 
 const RULES: ScriptRule[] = [
+  // The title call (its excerpt quotes the first user message, so it would match the scenario
+  // rules below): a title ends the conversation's title attempts.
+  {
+    when: { systemIncludes: "as a title for this conversation" },
+    reply: { text: "Sub-agent work" },
+  },
   {
     // a command the command review allows whose output is archived
     when: { systemIncludes: CHILD, lastUserIncludes: "task-tool", assistantTurns: 0 },
@@ -149,6 +155,15 @@ beforeEach(async () => {
   ownerCookie = o.cookie;
   member = (await login("member")).req;
   orgId = await createOrgWithProviders(k, owner);
+  // A completed web run also queues a prompt suggestion job, which appends a `usage` event
+  // (`purpose: "suggestion"`) after the run, in no order with the next run or the title: the usage
+  // sums below would race it. This suite is about sub-agents: switch it off.
+  const off = await owner({
+    method: "PATCH",
+    url: `/api/v1/orgs/${orgId}/settings`,
+    payload: { promptSuggestions: "off" },
+  });
+  expect(off.statusCode, off.body).toBe(200);
   await testMembers(db).add(orgId, memberId, "member", ownerId);
   const res = await owner({
     method: "POST",
@@ -232,36 +247,42 @@ async function listSubagents(
 /**
  * Runs "SCENARIO one" to its end and returns the parent and its only child. The child's delivery
  * can wake the parent again: wait for a completed run that consumed it, not just the delivery.
- * Each completed run also queues a title job whose call appends a `usage` event (`purpose: "title"`)
- * after `run_finished`; wait for the one after the consuming run, so the parent's usage no longer
- * moves under the caller.
+ * Each completed run may also queue a title job whose call appends a `usage` event
+ * (`purpose: "title"`) after `run_finished`; prompt suggestions (another run-less `usage` event per
+ * completed run) are off in the org. The script answers the title call, so the first attempt writes
+ * the title and its usage in one transaction, and no later run queues another attempt: once the
+ * title is there, the parent's usage no longer moves under the caller.
  */
 async function oneChild(): Promise<{ conv: string; child: string }> {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, "SCENARIO one");
   await waitForTerminal(db, conv, 1, 30_000);
   await finishedDeliveries(db, conv);
-  // The script has no rule for the title call, so no title is written and every completed run
-  // queues one more attempt: the first run's attempt can log its usage before the second run ends.
-  // Wait for the attempt that follows the run that consumed the delivery.
   await waitFor(
     async () => {
       const events = await eventsOf(db, conv);
       const delivery = events.find(
         (e) => e.type === "subagent_delivery" && e.payload.kind === "finished",
       );
-      const consumed =
-        delivery &&
-        events.find((e) => e.type === "run_finished" && e.payload.consumedUpToSeq >= delivery.seq);
       return (
-        consumed !== undefined &&
-        events.some(
-          (e) => e.type === "usage" && e.payload.purpose === "title" && e.seq > consumed.seq,
-        )
+        delivery !== undefined &&
+        events.some((e) => e.type === "run_finished" && e.payload.consumedUpToSeq >= delivery.seq)
       );
     },
     30_000,
-    "the title call's usage after the parent consumed the child's delivery",
+    "a completed parent run that consumed the child's delivery",
+  );
+  await waitFor(
+    async () => {
+      const row = await db
+        .selectFrom("conversations")
+        .select("title")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow();
+      return row.title !== null;
+    },
+    30_000,
+    "the parent's generated title",
   );
   const [c, ...more] = await childRunsOf(db, conv);
   expect(more).toEqual([]);
