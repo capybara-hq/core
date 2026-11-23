@@ -6,17 +6,59 @@ import { z } from "zod";
  * the platform sets the default value, an org may save its own copy) or `platform` (marked
  * `platformOnly`: set by the platform only, never shown to an org). Levels sit on top-level keys of
  * the deployment schema only (spec A §5.2); a nested field has its top-level key's level. A
- * `platformOnly` root makes every key `platform`.
+ * `platformOnly` root makes every key `platform`. The SDK refuses a mark below a top-level key,
+ * but a hand-made package may carry one: such a mark fails closed, making its whole top-level key
+ * `platform` (an org never gets a field the plugin meant for the platform alone).
  */
 export type FieldLevel = "platform" | "override";
 
-/** The top-level keys of a `ZodObject` deployment schema with their level; empty otherwise. */
+/**
+ * The deployment schema's object: the schema itself, or the input object of a pipe or transform
+ * root (`z.object({…}).transform(…)`), as zod's JSON Schema of the input shows its properties, so
+ * a loaded replica and one reading the static form agree. undefined for anything else.
+ */
+export function deploymentObject(schema: z.ZodTypeAny | undefined): z.ZodObject | undefined {
+  let node: z.ZodTypeAny | undefined = schema;
+  for (let depth = 0; node !== undefined && depth < 16; depth++) {
+    if (node instanceof z.ZodObject) return node;
+    node = node instanceof z.ZodPipe ? (node.in as z.ZodTypeAny) : undefined;
+  }
+  return undefined;
+}
+
+/** Whether `schema` or any schema nested in it (fields, items, options, wrappers) is marked. */
+function markedAnywhere(schema: z.ZodTypeAny, seen = new Set<unknown>()): boolean {
+  if (seen.has(schema)) return false;
+  seen.add(schema);
+  if (isPlatformOnly(schema)) return true;
+  const def = schema._zod.def as unknown as Record<string, unknown>;
+  for (const v of Object.values(def)) {
+    const children =
+      v instanceof z.ZodType
+        ? [v]
+        : Array.isArray(v)
+          ? v
+          : typeof v === "object" && v !== null && Object.getPrototypeOf(v) === Object.prototype
+            ? Object.values(v)
+            : [];
+    for (const c of children) {
+      if (c instanceof z.ZodType && markedAnywhere(c as z.ZodTypeAny, seen)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The top-level keys of a `ZodObject` deployment schema (or the input object of a pipe or
+ * transform root, {@link deploymentObject}) with their level; empty otherwise.
+ */
 export function fieldLevels(schema: z.ZodTypeAny | undefined): Map<string, FieldLevel> {
   const out = new Map<string, FieldLevel>();
-  if (!(schema instanceof z.ZodObject)) return out;
-  const root = isPlatformOnly(schema);
-  for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
-    out.set(key, root || isPlatformOnly(field) ? "platform" : "override");
+  const obj = deploymentObject(schema);
+  if (schema === undefined || obj === undefined) return out;
+  const root = isPlatformOnly(schema) || isPlatformOnly(obj);
+  for (const [key, field] of Object.entries(obj.shape as Record<string, z.ZodTypeAny>)) {
+    out.set(key, root || markedAnywhere(field) ? "platform" : "override");
   }
   return out;
 }
@@ -25,8 +67,29 @@ const markedPlatformOnly = (node: unknown): boolean =>
   (node as { "x-platform-only"?: unknown } | null)?.["x-platform-only"] === true;
 
 /**
- * The same levels read from a package's static form schema (`x-platform-only` on the root or a
- * top-level property), for an install record whose module this replica has not loaded.
+ * Whether a JSON Schema node or anything below it carries `"x-platform-only": true`, following
+ * local `$ref`s (`#/…`) into `root`.
+ */
+function jsonMarkedAnywhere(node: unknown, root: unknown, seen = new Set<unknown>()): boolean {
+  if (typeof node !== "object" || node === null || seen.has(node)) return false;
+  seen.add(node);
+  if (markedPlatformOnly(node)) return true;
+  const ref = (node as { $ref?: unknown }).$ref;
+  if (typeof ref === "string" && ref.startsWith("#/")) {
+    let target: unknown = root;
+    for (const part of ref.slice(2).split("/")) {
+      const k = part.replace(/~1/g, "/").replace(/~0/g, "~");
+      target = typeof target === "object" && target !== null ? (target as never)[k] : undefined;
+    }
+    if (jsonMarkedAnywhere(target, root, seen)) return true;
+  }
+  return Object.values(node).some((v) => jsonMarkedAnywhere(v, root, seen));
+}
+
+/**
+ * The same levels read from a package's static form schema (`x-platform-only` on the root, a
+ * top-level property or, failing closed, anywhere below one), for an install record whose module
+ * this replica has not loaded.
  */
 export function jsonSchemaFieldLevels(schema: JsonSchema | undefined): Map<string, FieldLevel> {
   const out = new Map<string, FieldLevel>();
@@ -34,7 +97,7 @@ export function jsonSchemaFieldLevels(schema: JsonSchema | undefined): Map<strin
   if (typeof props !== "object" || props === null) return out;
   const root = markedPlatformOnly(schema);
   for (const [key, prop] of Object.entries(props as Record<string, unknown>)) {
-    out.set(key, root || markedPlatformOnly(prop) ? "platform" : "override");
+    out.set(key, root || jsonMarkedAnywhere(prop, schema) ? "platform" : "override");
   }
   return out;
 }
@@ -52,13 +115,20 @@ const overrideKeys = (schema: z.ZodTypeAny): string[] =>
  */
 export function relaxOverridable(schema: z.ZodTypeAny): z.ZodTypeAny {
   const keys = overrideKeys(schema);
-  if (keys.length === 0) return schema;
-  const obj = schema as z.ZodObject;
-  const shape = { ...(obj.shape as Record<string, z.ZodTypeAny>) };
-  for (const k of keys) shape[k] = (shape[k] as z.ZodTypeAny).optional();
-  const plain = z.object(shape);
-  const catchall = obj._zod.def.catchall as z.ZodTypeAny | undefined;
-  return catchall ? plain.catchall(catchall) : plain;
+  if (keys.length === 0 || deploymentObject(schema) === undefined) return schema;
+  // A pipe or transform root keeps its output side(s) on the relaxed input object
+  const rebuild = (node: z.ZodTypeAny): z.ZodTypeAny => {
+    if (node instanceof z.ZodPipe) {
+      return rebuild(node.in as z.ZodTypeAny).pipe(node.out as z.ZodTypeAny);
+    }
+    const obj = node as z.ZodObject;
+    const shape = { ...(obj.shape as Record<string, z.ZodTypeAny>) };
+    for (const k of keys) shape[k] = (shape[k] as z.ZodTypeAny).optional();
+    const plain = z.object(shape);
+    const catchall = obj._zod.def.catchall as z.ZodTypeAny | undefined;
+    return catchall ? plain.catchall(catchall) : plain;
+  };
+  return rebuild(schema);
 }
 
 /**
@@ -78,8 +148,9 @@ export function parseLoadGate(schema: z.ZodTypeAny, raw: unknown): z.ZodSafePars
  */
 export function missingOverridable(schema: z.ZodTypeAny, raw: unknown): string[] {
   const keys = overrideKeys(schema);
-  if (keys.length === 0) return [];
-  const shape = (schema as z.ZodObject).shape as Record<string, z.ZodTypeAny>;
+  const obj = deploymentObject(schema);
+  if (keys.length === 0 || obj === undefined) return [];
+  const shape = obj.shape as Record<string, z.ZodTypeAny>;
   const value = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
   return keys.filter(
     (k) => value[k] === undefined && !(shape[k] as z.ZodTypeAny).safeParse(undefined).success,

@@ -196,3 +196,75 @@ describe("parseDeploymentConfig (the CLI's deployment config check)", () => {
     expect(!r.ok && r.issues.map((i) => i.path)).toEqual(["host"]);
   });
 });
+
+describe("a platformOnly mark below a top-level key fails closed (hand-made package)", () => {
+  // the SDK refuses such a mark; zod `.meta` sets it anyway, as a hand-made package could
+  const nested = z.object({
+    conn: z.object({ url: z.string(), key: platformOnly(z.string()) }),
+    list: z.array(z.object({ token: platformOnly(z.string()).optional() })).optional(),
+    region: z.string(),
+  });
+
+  it("fieldLevels: the whole top-level key is platform", () => {
+    expect(Object.fromEntries(fieldLevels(nested))).toEqual({
+      conn: "platform",
+      list: "platform",
+      region: "override",
+    });
+  });
+
+  it("jsonSchemaFieldLevels: the same, also through a local $ref", () => {
+    expect(
+      Object.fromEntries(
+        jsonSchemaFieldLevels({
+          type: "object",
+          $defs: { Secret: { type: "string", "x-platform-only": true } },
+          properties: {
+            conn: {
+              type: "object",
+              properties: {
+                url: { type: "string" },
+                key: { type: "string", "x-platform-only": true },
+              },
+            },
+            list: { type: "array", items: { $ref: "#/$defs/Secret" } },
+            region: { type: "string" },
+          },
+        }),
+      ),
+    ).toEqual({ conn: "platform", list: "platform", region: "override" });
+  });
+
+  it("the loaded and the static form agree", () => {
+    expect(Object.fromEntries(jsonSchemaFieldLevels(configJsonSchema(nested)))).toEqual(
+      Object.fromEntries(fieldLevels(nested)),
+    );
+  });
+});
+
+describe("a pipe or transform deployment root", () => {
+  const transformed = z
+    .object({ host: platformOnly(z.string()), baseUrl: z.string().url() })
+    .transform((v) => ({ ...v, normalized: true }));
+  const piped = z
+    .object({ host: platformOnly(z.string()), baseUrl: z.string().url() })
+    .pipe(z.object({ host: z.string(), baseUrl: z.string() }));
+
+  it.each([
+    ["transform", transformed],
+    ["pipe", piped],
+  ])("fieldLevels sees the input object of a %s root, as its JSON Schema does", (_n, s) => {
+    const loaded = Object.fromEntries(fieldLevels(s));
+    expect(loaded).toEqual({ host: "platform", baseUrl: "override" });
+    expect(Object.fromEntries(jsonSchemaFieldLevels(configJsonSchema(s)))).toEqual(loaded);
+  });
+
+  it("the load gate relaxes the input object and keeps the transform", () => {
+    expect(missingOverridable(transformed, { host: "h" })).toEqual(["baseUrl"]);
+    expect(parseLoadGate(transformed, { host: "h" })).toEqual({
+      success: true,
+      data: { host: "h", normalized: true },
+    });
+    expect(parseLoadGate(transformed, {}).success).toBe(false);
+  });
+});
