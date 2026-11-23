@@ -66,4 +66,42 @@ describe("configUrlFetch", () => {
     expect(g).not.toHaveBeenCalled();
     expect(calls).toHaveLength(1);
   });
+
+  it("never treats an empty URL as the platform's", async () => {
+    const g = stubGlobal();
+    const { net, calls } = fakeNet();
+    await configUrlFetch(net, { url: "/", platform: "" })("https://x/a");
+    expect(g).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("forwards a URL input as a string", async () => {
+    stubGlobal();
+    const { net, calls } = fakeNet();
+    await configUrlFetch(net, { url: "https://x" })(new URL("https://x/a?b=1"));
+    expect(calls[0]?.[0]).toBe("https://x/a?b=1");
+  });
+
+  it("keeps the method, headers and body of a Request input", async () => {
+    stubGlobal();
+    const { net, calls } = fakeNet();
+    const req = new Request("https://x/a", {
+      method: "POST",
+      headers: { "x-k": "v" },
+      body: "payload",
+    });
+    await configUrlFetch(net, { url: "https://x" })(req, { method: "PUT" });
+    const [url, init] = calls[0] as [string, RequestInit];
+    expect(url).toBe("https://x/a");
+    expect(init.method).toBe("PUT");
+    expect(new Headers(init.headers).get("x-k")).toBe("v");
+    expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe("payload");
+  });
+
+  it("sends no body for a GET Request", async () => {
+    stubGlobal();
+    const { net, calls } = fakeNet();
+    await configUrlFetch(net, { url: "https://x" })(new Request("https://x/a"));
+    expect((calls[0]?.[1] as RequestInit).body).toBeUndefined();
+  });
 });

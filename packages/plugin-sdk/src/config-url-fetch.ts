@@ -32,12 +32,20 @@ export function configUrlFetch(
         ? [opts.platform]
         : opts.platform;
   const url = trimSlashes(opts.url);
-  if (platform.some((p) => trimSlashes(p) === url)) return fetch;
+  // An empty URL ("", "/") never counts as the platform's.
+  if (url !== "" && platform.some((p) => trimSlashes(p) === url)) return fetch;
   const netOpts = opts.orgId === undefined ? {} : { orgId: opts.orgId };
-  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
-    net.fetch(
-      typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
-      init,
-      netOpts,
-    )) as typeof fetch;
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    if (typeof input === "string") return net.fetch(input, init, netOpts);
+    if (input instanceof URL) return net.fetch(input.href, init, netOpts);
+    // A Request carries its method, headers, body and signal: forward them under any explicit init.
+    const hasBody = input.method !== "GET" && input.method !== "HEAD";
+    const fromRequest: RequestInit = {
+      method: input.method,
+      headers: input.headers,
+      signal: input.signal,
+      ...(hasBody ? { body: await input.clone().arrayBuffer() } : {}),
+    };
+    return net.fetch(input.url, { ...fromRequest, ...init }, netOpts);
+  }) as typeof fetch;
 }
