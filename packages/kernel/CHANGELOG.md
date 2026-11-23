@@ -1,5 +1,41 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.81
+
+### Minor Changes
+
+- 43eb3a1: RLS phase 2 (issue #115): the kernel carries an org scope from its entry points (org guard, super
+  admin routes, extension routes, jobs, cron ticks, run claims, channel and dial-in events, the start
+  sequence, CLI commands) and, with the new `db.rls` config (`off` by default, `scoped`, `enforce`),
+  sets it on every PostgreSQL connection. No behaviour change while `db.rls` is `off`.
+- c7b4dcf: RLS phase 3 (issue #115): migration 0182 creates `capybara.rls_admits` and one row level security
+  policy per kernel table with an `org_id` column, truly dark: no table enables RLS yet (a later
+  migration does), so nothing changes for any database role. With `db.rls: enforce` the kernel logs
+  an error at start while RLS is not enabled on the tables or its role is a superuser or has
+  BYPASSRLS, since PostgreSQL filters nothing then.
+
+### Patch Changes
+
+- 76f58f0: A background Bash start the kernel sent but could not confirm (a transport loss) no longer shows as
+  failed in the thread while the kernel reconciles it. Its result keeps the same error text for the
+  model and adds the display-only `launch_unconfirmed` view; the background tasks list gains
+  `starting`, and reconciling a start announces `changed: background`. The row reads "正在确认是否已启动"
+  / "Confirming whether it started" until the task is confirmed running or ends, and becomes a
+  failed row only when the launch is given up, revoked or refused (#790).
+- af84f8c: A provider whose `update` cannot honor the fence token (E2B) no longer leaves the instance wider than
+  the kernel's record until the limits change again (#766). The SDK adds the optional
+  `DeviceProvider.appliedNetwork(h, signal)`: the network the instance enforces now, as the provider's
+  backend reports it. Under the exclusive lease, on a resumed instance, a running one the use holds
+  exclusively, and a new instance of a provider whose limits are fixed at its file system, the kernel
+  compares it with the recorded limits; a wider network (the open public network over a list, or a host
+  the record does not cover), an unknown one or a failed read applies the desired limits again through
+  `update` with the holder's token. Equal or narrower changes nothing.
+- 3efbc4b: RLS (issue #115): queries marked deployment-wide run in the platform scope (`asPlatform`), and
+  `check:org-filter` requires that and an RLS policy for every org-scoped table. No behaviour change
+  while `db.rls` is `off`.
+- Updated dependencies [af84f8c]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.67
+
 ## 0.1.0-rc.80
 
 ### Patch Changes
