@@ -124,7 +124,7 @@
       "name": "file-preview",
       "source": "npm",
       "npm": "@capybara-hq/plugin-file-preview",
-      "version": "0.1.0-rc.4",
+      "version": "0.1.0-rc.3",
       "integrity": "sha512-4GMeq6gpjloCmTrEidiUHX5v6PN4oTfRDWcx+sLb5NlUoSk5DaJVVtJDc5oNDzow09OSm62DJchDOBJItLdwrA==",
       "required": false,
       "builtin": true
