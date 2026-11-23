@@ -108,6 +108,11 @@ export type PickerProps = {
   /** The current choice, shown on the button. */
   value: string;
   /**
+   * An icon before the value on the button, in the chip's own muted ink (the device chip's
+   * `cpu` while the conversation will run without a device: 「不用设备」).
+   */
+  icon?: IconName;
+  /**
    * Locked (the agent after the first message): plain `muted` text with no chevron and this hint
    * as its tooltip.
    */
@@ -145,6 +150,7 @@ export function isShortPickerValue(value: string): boolean {
 export function Picker({
   label,
   value,
+  icon,
   locked,
   disabled,
   groups,
@@ -207,7 +213,8 @@ export function Picker({
   }
   if (action)
     entries.push(
-      { kind: "separator" },
+      // the line parts the action from the items; with no items the action stands alone
+      ...(entries.length > 0 ? [{ kind: "separator" as const }] : []),
       {
         kind: "item",
         id: "picker-action",
@@ -247,6 +254,7 @@ export function Picker({
           disabled={disabled}
           data-short={isShortPickerValue(value) ? "true" : undefined}
         >
+          {icon ? <Icon name={icon} size={12} /> : null}
           {/* a long label (the model's) gives way with an ellipsis on a phone (AC3 fix round 1) */}
           <span className="cb-picker-value" data-part="picker-value">
             {value}

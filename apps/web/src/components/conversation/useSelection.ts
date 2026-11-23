@@ -214,10 +214,16 @@ export type DeviceChoice = {
    */
   unavailable?: string;
   /**
-   * Undefined without a sandbox provider and without a local device: the composer then
-   * has no device picker.
+   * Undefined when the person has no device and cannot create one (no device provider is on in
+   * the org): the composer then has no device picker. With no device but a provider, the picker
+   * reads 「不用设备」 and offers only 新建设备.
    */
   picker: PickerProps | undefined;
+  /**
+   * The new-device dialog the picker's 新建设备 opened (the Devices page's, `DeviceCreateDialog`):
+   * the composer draws it while set.
+   */
+  create?: { onClose(): void };
 };
 
 /** A project item's id in the device picker (device ids never start with it). */
@@ -237,6 +243,11 @@ const PROJECT_ITEM = "project:";
  * 项目, 自由模式 (the default) and the chosen device's projects its current mode can read. A
  * device without projects, or one that does not support them, offers none; another device drops
  * the pick.
+ *
+ * With no device at all but a device provider on in the org ({@link canCreateDevice}), there is
+ * nothing to pick: the button leads with the device icon and says 「不用设备」 (the first send goes
+ * without one), and the menu holds only 新建设备 (the Devices page's new-device dialog, which
+ * `create` asks the composer to draw) and the note.
  */
 export function useDeviceChoice(orgId: string, list: DeviceList | undefined): DeviceChoice {
   const t = useTranslations("chat");
@@ -245,6 +256,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
   const [picked, setPicked] = useState<string | null>(null);
   /** The project picked, with the device it belongs to. */
   const [pickedProject, setPickedProject] = useState<{ device: string; name: string } | null>(null);
+  const [creating, setCreating] = useState(false);
   const id = list === undefined ? undefined : chosenDeviceId(list, picked);
   // prefetched with the page for the device it starts on (the route's `then`)
   const projectsQ = deviceProjectsQuery(orgId, id ?? "");
@@ -255,6 +267,24 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
   }).data;
   if (list === undefined || !deviceChoiceShown(list)) {
     return { deviceId: undefined, project: undefined, picker: undefined };
+  }
+  if (list.items.length === 0) {
+    // nothing to pick: say what happens and offer the one next step (deviceChoiceShown: a
+    // provider is on, so a device can be created)
+    return {
+      deviceId: undefined,
+      project: undefined,
+      picker: {
+        label: t("pickDevice"),
+        value: t("noDevice"),
+        icon: "cpu",
+        groups: [],
+        action: { label: te("new"), icon: "plus", onSelect: () => setCreating(true) },
+        note: t("deviceNote"),
+        onPick: () => {},
+      },
+      ...(creating ? { create: { onClose: () => setCreating(false) } } : {}),
+    };
   }
   const current = list.items.find((e) => e.id === id);
   const offered = projects?.supported === true ? projects.projects : [];

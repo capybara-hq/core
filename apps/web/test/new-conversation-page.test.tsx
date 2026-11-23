@@ -627,7 +627,49 @@ describe("the device picker (environments design §4.1)", () => {
     ]);
   });
 
-  it("without a sandbox provider there is no picker and the send carries no device", async () => {
+  it("no device but a provider on: the chip says No device with the device icon, its menu offers only New device", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
+    await renderRouteWithCache(
+      "/",
+      withDevices({ ...DEVICES, items: [], defaultId: null, lastUsedId: null }),
+    );
+    const chip = await vi.waitFor(() => {
+      const c = picker();
+      expect(c).not.toBeNull();
+      return c as HTMLElement;
+    });
+    // it states what happens (the conversation runs without a device), never "—"
+    expect(chip.getAttribute("aria-label")).toBe(`${en.chat.pickDevice}: ${en.chat.noDevice}`);
+    expect(chip.textContent).not.toContain("—");
+    expect(chip.querySelector("svg")).not.toBeNull();
+    const user = userEvent.setup();
+    await user.click(chip);
+    const action = await screen.findByRole("menuitem", { name: en.devices.new });
+    const menu = action.closest('[role="menu"]') as HTMLElement;
+    expect(menu.getAttribute("aria-label")).toBe(en.chat.pickDevice);
+    // no empty list and no "no matches": one action and the note
+    expect(within(menu).queryAllByRole("menuitemradio")).toEqual([]);
+    expect(within(menu).queryByText("No matches")).toBeNull();
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((e) => e.textContent),
+    ).toEqual([en.devices.new]);
+    expect(within(menu).getByText(en.chat.deviceNote)).toBeTruthy();
+    // New device opens the Devices page's new-device dialog
+    await user.click(action);
+    const dialog = await screen.findByRole("dialog", { name: en.devices.create.title });
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(dialog.isConnected).toBe(false));
+    // the first send goes without a device
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const body = bodyOf(calls.find((c) => c.method === "POST")) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("deviceId");
+  });
+
+  it("no device and no provider to create one on: no picker and the send carries no device", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache(
