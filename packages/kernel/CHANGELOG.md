@@ -1,5 +1,21 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.77
+
+### Patch Changes
+
+- 4e207e4: The bootstrap step now moves the platform version of a pinned plugin with an extension along with
+  its extension: once the extension runs the raised pin, a platform version that came from the
+  bootstrap and is lower is applied through the platform plugin update, so the plugin's skills,
+  connector templates, themes and org installs follow it. A platform version the super admin moved to
+  is kept, a disabled plugin is left for the super admin, and a platform an earlier run left behind
+  is caught up.
+- b4c0d80: `Skill` on a project skill whose recorded root makes no clean absolute SKILL.md path now names that
+  cause instead of claiming the path is outside what the device can read in sandbox mode.
+- Updated dependencies [95d479c]
+- Updated dependencies [608a3b4]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.62
+
 ## 0.1.0-rc.76
 
 ### Patch Changes
