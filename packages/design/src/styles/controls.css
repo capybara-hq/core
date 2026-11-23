@@ -1222,6 +1222,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A row with a mark tile: the 24 px tile, then the name space.2 after it; the description lines
+   up under the name (the rule after .cb-check-list-description). */
+.cb-check-list-named {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
 .cb-check[data-disabled="true"] .cb-check-list-title {
   color: var(--cb-muted);
 }
@@ -1242,6 +1250,10 @@
   line-height: var(--cb-type-small-line);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A row with a mark tile: the description indented by the box, the tile and their gaps. */
+.cb-check-list-row[data-marked="true"] .cb-check-list-description {
+  padding-left: calc(22px + 24px + var(--cb-space-2));
 }
 .cb-check-list[data-inset="flush"] > .cb-check-list-all,
 .cb-check-list[data-inset="flush"] .cb-check-list-row {
