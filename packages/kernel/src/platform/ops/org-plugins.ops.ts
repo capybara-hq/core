@@ -5,6 +5,7 @@ import { CatalogScopeService } from "../../catalog/catalog-scope.service.js";
 import {
   CatalogConnectorInput,
   CatalogItemPathParams,
+  OrgPluginInstallBody,
   PluginInstallPathParams,
 } from "../../catalog/org-catalog.schemas.js";
 import { OrgCatalogService } from "../../catalog/org-catalog.service.js";
@@ -75,6 +76,9 @@ const InstallInput = z
     itemId: ItemId,
     templates: Templates.optional().describe(
       "Per connector template id (plugins.get lists them), the connector's name, slug, endpoint fields and OAuth client id; never a credential.",
+    ),
+    templatesOn: OrgPluginInstallBody.shape.templatesOn.describe(
+      "The connector template ids to switch on with the install (the web wizard's choose step): exactly these make connectors, the plugin's other templates are switched off in the org and stay available on the connectors page. Omit to take the templates on in the org now (default-on ones, and default-off ones an admin switched on).",
     ),
     askPerson: personFieldParams.askPerson,
   })
@@ -209,9 +213,12 @@ export class OrgPluginsOperations implements OnModuleInit {
    * switch-off, as the install wizard asks). The extension's config for the org is its copy of the
    * overridable fields, saved apart (`extensions.save-org-config`).
    */
-  private async installTargets(ctx: OperationContext, itemId: string) {
+  private async installTargets(ctx: OperationContext, itemId: string, templatesOn?: string[]) {
     const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, itemId);
-    const templates = d.templates.filter((t) => t.on && !t.connected).map(targetOf);
+    const templates = d.templates
+      .filter((t) => (templatesOn === undefined ? t.on : templatesOn.includes(t.id)))
+      .filter((t) => !t.connected)
+      .map(targetOf);
     return {
       item: d.item,
       templates,
@@ -705,7 +712,7 @@ export class OrgPluginsOperations implements OnModuleInit {
         precheck: async (i, ctx) => {
           let r: Awaited<ReturnType<OrgPluginsOperations["installTargets"]>> | undefined;
           const read = await precheckBy(async () => {
-            r = await this.installTargets(ctx, i.itemId);
+            r = await this.installTargets(ctx, i.itemId, i.templatesOn);
           });
           if (!read.ok || r === undefined) return read;
           if (r.item.installed !== null) {
@@ -717,9 +724,10 @@ export class OrgPluginsOperations implements OnModuleInit {
           }
           return templatesRefusal(r.templates, i.templates);
         },
-        personFields: async (i, ctx) => (await this.installTargets(ctx, i.itemId)).target,
+        personFields: async (i, ctx) =>
+          (await this.installTargets(ctx, i.itemId, i.templatesOn)).target,
         summary: async (i, ctx) => {
-          const { item, templates } = await this.installTargets(ctx, i.itemId);
+          const { item, templates } = await this.installTargets(ctx, i.itemId, i.templatesOn);
           const n = localized(item.displayName, item.name);
           const e = entersText(ctx);
           return {
@@ -728,7 +736,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
-          const { templates } = await this.installTargets(ctx, input.itemId);
+          const { templates } = await this.installTargets(ctx, input.itemId, input.templatesOn);
           // the install runs steps in transactions of their own under the org row lock, so the
           // values are taken first (takePersonInputs)
           const { entered, auditDetail } = await takePersonInputs("plugins.install", ctx);
@@ -738,9 +746,10 @@ export class OrgPluginsOperations implements OnModuleInit {
               ctx.orgId,
               ctx.actorAccountId,
               input.itemId,
-              (connectors !== undefined ? { connectors } : {}) as Parameters<
-                OrgCatalogService["install"]
-              >[3],
+              {
+                ...(connectors !== undefined && { connectors }),
+                ...(input.templatesOn !== undefined && { templatesOn: input.templatesOn }),
+              } as Parameters<OrgCatalogService["install"]>[3],
               undefined,
               auditDetail,
             )
