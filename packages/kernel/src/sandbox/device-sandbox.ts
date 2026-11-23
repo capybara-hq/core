@@ -14,8 +14,19 @@ import { coversHost, orgEffectiveHosts } from "./modes.js";
 /** The sandbox network: the open public internet or an allowlist. `allowlist` is narrower. */
 export type DeviceNetworkMode = "open" | "allowlist";
 
-/** The layer that set a ceiling, named by a disabled option and an actionable error. */
-export type DeviceSandboxLayer = "platform" | "org" | "device" | "provider";
+/**
+ * The layer that set a ceiling, named by a disabled option and an actionable error. `owner` is the
+ * owner of the machine the device runs on, when its provider says that owner keeps the crossing
+ * closed (`SandboxPermissionSupport.limitedBy`); `provider` is the provider's own limit.
+ */
+export type DeviceSandboxLayer = "platform" | "org" | "device" | "owner" | "provider";
+
+/**
+ * Whether a ceiling's layer is the device's side (its provider, or the owner of the machine it
+ * runs on): it clamps the sandbox network, never what an org allows per call.
+ */
+export const deviceSideLayer = (layer: DeviceSandboxLayer | null | undefined): boolean =>
+  layer === "provider" || layer === "owner";
 
 /**
  * The platform's device sandbox settings, as the settings reader returns them (env > file / Nacos >
@@ -76,6 +87,8 @@ export interface DeviceSandboxProviderLayer {
   boundary: SandboxBoundary;
   network: { openPublic: boolean; allowlist: boolean; perOperationHosts: boolean };
   outsideSandbox: boolean;
+  /** Who keeps a closed crossing closed when not the provider itself (support `limitedBy`). */
+  limitedBy?: { outsideSandbox?: "owner"; openPublic?: "owner" };
 }
 
 /** The effective device sandbox: the same under every permission profile. */
@@ -156,9 +169,11 @@ export function effectiveDeviceSandbox(
       ? "platform"
       : org.outsideSandbox === "off"
         ? "org"
-        : !provider.outsideSandbox || instance
+        : instance
           ? "provider"
-          : null;
+          : !provider.outsideSandbox
+            ? (provider.limitedBy?.outsideSandbox ?? "provider")
+            : null;
   // the network ceiling: platform, then org, then what the provider can enforce
   let ceiling: DeviceNetworkMode | "none";
   let networkLayer: DeviceSandboxLayer | null = null;
@@ -177,7 +192,7 @@ export function effectiveDeviceSandbox(
     networkLayer = "provider";
   } else if (ceiling === "open" && !provider.network.openPublic) {
     ceiling = "allowlist";
-    networkLayer = "provider";
+    networkLayer = provider.limitedBy?.openPublic ?? "provider";
   }
   // the device's choice, else the org default, else the platform default; then the ceiling
   const chosen: DeviceNetworkMode | "none" =
@@ -228,6 +243,7 @@ export function providerLayerOf(
       boundary: support.boundary,
       network: { ...support.network },
       outsideSandbox: support.outsideSandbox,
+      ...(support.limitedBy !== undefined && { limitedBy: { ...support.limitedBy } }),
     };
   return {
     boundary: "instance",
@@ -274,7 +290,7 @@ export function hostGrantCeiling(
     return { kind: "hosts", hosts: [] };
   // the platform's or org's allowlist ceiling is hard; a provider that cannot enforce the open
   // network clamps the sandbox network, not what an org allows per call
-  const hard = box.networkCeiling === "allowlist" && box.layer?.network !== "provider";
+  const hard = box.networkCeiling === "allowlist" && !deviceSideLayer(box.layer?.network);
   return hard || platform.orgHosts === "within"
     ? { kind: "hosts", hosts: orgHostsOf(platform, org) }
     : {
@@ -320,7 +336,7 @@ export function hostGrantRefusal(
     return "network access is turned off for this device's sandbox";
   if (box.boundary === "instance" || box.perCallHosts === false)
     return `a host cannot be granted per call on this device; add ${host} to the device's network list`;
-  return (box.networkCeiling === "allowlist" && box.layer?.network !== "provider") ||
+  return (box.networkCeiling === "allowlist" && !deviceSideLayer(box.layer?.network)) ||
     ceiling.kind === "any"
     ? `an organization admin adds ${host} to the organization's device network list`
     : `${host} is outside the platform's host list; a super admin adds the host`;

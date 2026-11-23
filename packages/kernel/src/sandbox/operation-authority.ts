@@ -728,6 +728,7 @@ export class SandboxOperationAuthority {
               layer: sandbox.layer.outsideSandbox,
               boundary: sandbox.boundary,
               description: base.description,
+              changeHint: base.changeHint,
             })
           : null;
     const vector = await this.epochs.readLocked(subject);
@@ -818,10 +819,8 @@ export class SandboxOperationAuthority {
     projectUsable?: true;
   }) {
     const { orgId, deviceId } = input;
-    const { policy, sandbox, hostCeiling, hostRefusal, description } = await this.facts.readDevice(
-      orgId,
-      deviceId,
-    );
+    const { policy, sandbox, hostCeiling, hostRefusal, description, changeHint } =
+      await this.facts.readDevice(orgId, deviceId);
     const { workingRoot, projectRoot } = await this.workingRootOf(input);
     const grant = input.runId
       ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
@@ -835,6 +834,7 @@ export class SandboxOperationAuthority {
     return {
       policy,
       description,
+      changeHint,
       workingRoot,
       projectRoot,
       grant,

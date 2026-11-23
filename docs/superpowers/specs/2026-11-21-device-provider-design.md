@@ -162,6 +162,22 @@ background, `list` / `scan`) renamed, with `multi` cardinality and these changes
   - `home`: the base the project picker starts from (local OS mode), else the workspace.
   - `limits`: limits the provider or the machine's owner applies on top (shown, read only).
   - `reset`: whether "重建文件" exists (today cloud only).
+  - `changeHint` (2026-11-23, maintainer-approved): optional, localized `{ en, zh? }` (at most
+    400 characters each), who can change the device's limits and how, in the provider's own words
+    (the local provider: the machine's owner, `capybara-device ceiling set -c <device id> …` on
+    that machine; a container provider: the super admin's deployment config of the extension).
+    The device page shows it under the limits in the page language; the kernel appends its English
+    text to every refusal that cites the report (an escalated call the provider or the machine's
+    owner does not allow now, a network the device side keeps on the allowlist), so the person and
+    the model learn the way out. One report-level text, not one per limit: limits are display
+    pairs, and a provider's way to change them is usually one place (designer's call).
+- **Who keeps a crossing closed** (2026-11-23): the permission support may name the layer of a
+  closed crossing that is not the provider itself: `limitedBy: { outsideSandbox?: "owner",
+  openPublic?: "owner" }`, only on a closed crossing. The kernel's ceiling layers gain `owner`
+  ("the owner of the machine this device runs on") next to `provider`, used in refusals and the
+  network option's reason; both are the device side (they clamp the sandbox network, never what an
+  org allows per call). The kernel never special-cases a provider: the local provider fills
+  `limitedBy` from its owner ceiling, and a provider without an owner layer leaves it out.
 - **Scope**: an operation's scope carries `projectRoot` (the conversation's working directory, its
   write boundary and where AGENTS.md, skills, hooks and MCP config load from: project root
   design, maintainer 2026-11-14) plus `writeRoots` (project root, workspace). Read roots are no
@@ -308,7 +324,15 @@ Today `operation-authority.ts`, `permission-facts.ts`, `permission-runtime-repor
 - **Network**: the kernel's list intersected with the connection's own narrowing, through the
   per-operation proxy, address classes closed (unchanged mechanism).
 - **Outside the sandbox**: per approved call, only when the connection's owner ceiling allows it
-  (`capybara-device ceiling set --outside-sandbox on`, CLI only); off for a new connection.
+  (`capybara-device ceiling set --outside-sandbox on|off`, CLI only). **On for a new connection**
+  (2026-11-23, maintainer-approved, aligned with Claude Code: commands run in the sandbox, and a
+  call that asks to run outside it goes through the approval its conversation's permission profile
+  decides: the person, the review model, or the Auto profile's grant). An existing connection keeps
+  its stored ceiling; a missing `policy.json` still reads as the closed ceiling. `login` prints the
+  ceiling, the risk text, and how to narrow it (`ceiling set -c <device id> --outside-sandbox
+  off`). Before this, a new connection had it off and nothing outside the machine told the person
+  how to change it; an agent refused there read the limit as the provider's and unfixable. The
+  report now names the owner as the layer (`limitedBy`) and says how to change it (`changeHint`).
 - **Project reach** becomes per connection: `machine` (default, the read rule above),
   `paths` (a list of directories: reads and projects only there, plus tool directories; for
   connections that must not see each other's code), or `workspace`. Set on the machine
@@ -481,6 +505,11 @@ Designer's calls to check:
 Withdrawn: removing the `open` network mode (the maintainer kept it, 2026-11-21).
 
 ## AGENTS.md rules touched
+
+2026-11-23 amendment (change hints, owner layer, outside-the-sandbox default): no rule changes;
+the Sandboxes rule's "bounded by the device's outside-sandbox setting" holds unchanged. The SDK
+change (`DeviceReport.changeHint`, `SandboxPermissionSupport.limitedBy`) follows **Public API
+reports**.
 
 - **Sandboxes**: "commands run in the device's sandbox under every permission profile (scope:
   project, workspace, tool directories; network: the open public internet or an allowlist …)"

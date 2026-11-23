@@ -49,6 +49,36 @@ describe("parseSandboxPermissionSupport", () => {
     ).toBe("the OS sandbox is not installed");
   });
 
+  it("keeps limitedBy naming the owner for a closed crossing only", () => {
+    const closed = {
+      ...operationSupport(),
+      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      outsideSandbox: false,
+      limitedBy: { outsideSandbox: "owner", openPublic: "owner" },
+    };
+    expect(parseSandboxPermissionSupport(closed).limitedBy).toEqual({
+      outsideSandbox: "owner",
+      openPublic: "owner",
+    });
+    expect(parseSandboxPermissionSupport({ ...closed, limitedBy: {} })).not.toHaveProperty(
+      "limitedBy",
+    );
+    for (const limitedBy of [{ outsideSandbox: "provider" }, { network: "owner" }, "owner"])
+      expect(() => parseSandboxPermissionSupport({ ...closed, limitedBy })).toThrow(
+        DeviceProtocolError,
+      );
+    // an open crossing names no limit
+    expect(() =>
+      parseSandboxPermissionSupport({
+        ...operationSupport(),
+        limitedBy: { outsideSandbox: "owner" },
+      }),
+    ).toThrow(DeviceProtocolError);
+    expect(() =>
+      parseSandboxPermissionSupport({ ...operationSupport(), limitedBy: { openPublic: "owner" } }),
+    ).toThrow(DeviceProtocolError);
+  });
+
   it.each([
     ["version 1", { version: 1 }],
     ["unknown boundary", { boundary: "process" }],

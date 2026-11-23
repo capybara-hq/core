@@ -24,11 +24,11 @@ import { Person } from "./Person";
 
 /**
  * Overview (device provider design §6.6), the same for every provider: what the provider last
- * reported (its description line in the page language and its limits as read-only rows; no report
- * on a usable device: the provider did not answer), the network setting, the recent network
- * changes and the files note. Every part is a `FormSection`, all siblings (a fragment), so the
- * template counts them and picks the layout (spec §5.3 "Columns by count"); the page puts the
- * danger zone after them.
+ * reported (its description line in the page language, its limits as read-only rows and, when it
+ * gives one, its words on who changes them and how; no report on a usable device: the provider
+ * did not answer), the network setting, the recent network changes and the files note. Every part
+ * is a `FormSection`, all siblings (a fragment), so the template counts them and picks the layout
+ * (spec §5.3 "Columns by count"); the page puts the danger zone after them.
  */
 export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; device: Device }) {
   const t = useTranslations("devices");
@@ -47,6 +47,11 @@ export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; dev
                 keyWidth="14ch"
                 rows={report.limits.map((l) => ({ k: deviceText(l.label, lang), v: l.value }))}
               />
+            )}
+            {report?.changeHint !== undefined && (
+              <Text variant="prose" tone="muted">
+                {deviceText(report.changeHint, lang)}
+              </Text>
             )}
           </Stack>
         </FormSection>

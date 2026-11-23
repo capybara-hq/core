@@ -107,9 +107,11 @@ function NetworkForm({
     choice !== initial ||
     (choice === "allowlist" && hosts.join("\n") !== s.allowedDomains.join("\n"));
   // the layer that set the ceiling: the device's own layer no longer limits it, so anything but
-  // the platform or the org is the provider
+  // the platform, the org or the machine's owner is the provider
   const layer =
-    s.layer.network === "platform" || s.layer.network === "org" ? s.layer.network : "provider";
+    s.layer.network === "platform" || s.layer.network === "org" || s.layer.network === "owner"
+      ? s.layer.network
+      : "provider";
   const limit = (n: DeviceNetworkMode) =>
     wider(n, s.networkCeiling)
       ? {

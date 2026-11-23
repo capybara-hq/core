@@ -930,6 +930,7 @@ export const DEVICE_REPORT_LIMITS: Readonly<{
     limitLabelChars: 60;
     limitValueChars: 60;
     homeChars: 4096;
+    changeHintChars: 400;
 }>;
 
 // @public
@@ -1030,6 +1031,7 @@ export interface DeviceRef {
 
 // @public
 export interface DeviceReport {
+    changeHint?: DeviceText;
     description: DeviceText;
     home: string | null;
     limits: DeviceReportLimit[];
@@ -3623,6 +3625,7 @@ export interface SandboxOperationScope extends SandboxOperationRef {
 export interface SandboxPermissionSupport {
     readonly background: boolean;
     readonly boundary: SandboxBoundary;
+    readonly limitedBy?: SandboxSupportLimitedBy;
     readonly network: {
         readonly openPublic: boolean;
         readonly allowlist: boolean;
@@ -3691,6 +3694,12 @@ export type SandboxStopResult = {
 } | {
     outcome: "lost";
 };
+
+// @public
+export interface SandboxSupportLimitedBy {
+    readonly openPublic?: "owner";
+    readonly outsideSandbox?: "owner";
+}
 
 // @public
 export class SandboxWorkUnsettledError extends SandboxPermissionUnsupportedError {

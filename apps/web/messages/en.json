@@ -1833,12 +1833,14 @@
       "limited": {
         "platform": "Limited to the allowlist by the platform (super admin)",
         "org": "Limited to the allowlist by the organization (organization admin)",
-        "provider": "Limited to the allowlist by the device's provider"
+        "provider": "Limited to the allowlist by the device's provider",
+        "owner": "Limited to the allowlist by the owner of the machine it runs on"
       },
       "closed": {
         "platform": "Closed by the platform (super admin)",
         "org": "Closed by the organization (organization admin)",
-        "provider": "Closed by the device's provider"
+        "provider": "Closed by the device's provider",
+        "owner": "Closed by the owner of the machine it runs on"
       },
       "hosts": "This device's hosts",
       "hostsHelp": "Its own list only narrows the organization's: a host outside the organization's list is refused. With none of its own, the organization's hosts apply.",
