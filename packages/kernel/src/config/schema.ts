@@ -383,7 +383,7 @@ export const KernelConfigSchema = z.strictObject({
         .meta(
           meta({
             description:
-              "Row level security (RLS spec, issue #115): off sends nothing; scoped sets the caller's org scope on every PostgreSQL connection (one extra round trip per pool query and per transaction) while the policies admit every row; enforce makes the policies filter every org-scoped table by that scope. Needs a session-capable connection (no PgBouncer transaction pooling) unless off; PostgreSQL applies no policy to a superuser or BYPASSRLS role",
+              "Row level security (RLS spec, issue #115): off sends nothing; scoped sets the caller's org scope on every PostgreSQL connection (one extra round trip per pool query and per transaction) while the policies admit every row; enforce makes the policies filter every org-scoped table by that scope once row level security is enabled on the tables (RLS spec phase 5; until then the kernel warns at start and nothing is filtered). Needs a session-capable connection (no PgBouncer transaction pooling) unless off; PostgreSQL applies no policy to a superuser or BYPASSRLS role",
           }),
         ),
     })
