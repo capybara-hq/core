@@ -389,7 +389,7 @@ describe("a login service", () => {
         },
       ),
     ).toBe(1);
-    expect(err.join("\n")).toContain("capybara-device service stop");
+    expect(err.join("\n")).toMatch(/capybara-device service stop -c \S+/);
     expect(sent.filter(([, s]) => s !== 0)).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });

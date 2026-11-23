@@ -189,7 +189,7 @@ describe("stop under a service (DV2)", () => {
       run: fakeLaunchctl({ loaded: true, pid: 4242 }),
     });
     expect(code).toBe(1);
-    expect(errs.join("\n")).toContain("capybara-device service stop");
+    expect(errs.join("\n")).toMatch(/capybara-device service stop -c \S+/);
     expect(signalled()).toEqual([]);
   });
 
@@ -378,7 +378,7 @@ describe("service status says what is true (DV5)", () => {
     expect(crashed.code).toBe(1);
     expect(crashed.text).toContain("not running");
     expect(crashed.text).toContain(join(stateDir, "service.log"));
-    expect(crashed.text).toContain("capybara-device service restart");
+    expect(crashed.text).toContain(`capybara-device service restart -c ${id}`);
 
     writePid(stateDir, 4242, "1.0.0");
     const up = await status({ loaded: true, pid: 4242 });
@@ -400,7 +400,7 @@ describe("service status says what is true (DV5)", () => {
       }),
     ).toBe(0);
     expect(lines.join("\n")).toContain(
-      "installed 2.0.0 — restart it: capybara-device service restart",
+      `installed 2.0.0 — restart it: capybara-device service restart -c ${id}`,
     );
   });
 
@@ -417,7 +417,9 @@ describe("service status says what is true (DV5)", () => {
     ).toBe(0);
     const text = lines.join("\n");
     expect(text).toContain("running (pid 4242, version unknown)");
-    expect(text).toContain("installed 1.0.0 — restart it: capybara-device service restart");
+    expect(text).toContain(
+      `installed 1.0.0 — restart it: capybara-device service restart -c ${id}`,
+    );
   });
 
   it("Linux running takes the unit's MainPID", async () => {

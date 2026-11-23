@@ -15,7 +15,7 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { DeviceMode } from "./args.js";
 import type { ProjectReach } from "./exec/read-model.js";
@@ -241,11 +241,12 @@ const POLICY_KEYS: readonly string[] = ["version", ...Object.keys(DEFAULT_POLICY
 const OWNER_CEILING_KEYS: readonly string[] = ["outsideSandbox", "network", "projectReach"];
 
 /** The command that rewrites a policy file this version cannot read. */
-export const POLICY_REWRITE_COMMAND = "capybara-device ceiling set";
+export const policyRewriteCommand = (dir: string): string =>
+  `capybara-device ceiling set -c ${basename(dir)}`;
 
 /**
  * policy.json is in another format version than {@link POLICY_VERSION}. No old format is
- * converted: the owner rewrites the file with {@link POLICY_REWRITE_COMMAND}, which starts from
+ * converted: the owner rewrites the file with {@link policyRewriteCommand}, which starts from
  * {@link replacementPolicy}. `found` is the file's `version` value (undefined when absent).
  */
 export class PolicyVersionError extends Error {
@@ -322,7 +323,7 @@ export function readPolicyFile(dir: string): PolicyFile {
   if (o.version !== POLICY_VERSION) {
     throw new PolicyVersionError(
       `${file} is in policy format ${policyFormatName(o.version)}; ` +
-        `this program reads only format ${POLICY_VERSION}. Rewrite it with ${POLICY_REWRITE_COMMAND} ` +
+        `this program reads only format ${POLICY_VERSION}. Rewrite it with ${policyRewriteCommand(dir)} ` +
         "(it starts from the closed ceiling: workspace reach, allowlist network, nothing outside " +
         "the sandbox)",
       file,

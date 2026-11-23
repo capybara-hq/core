@@ -1,5 +1,5 @@
 import { realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import {
   DEVICE_DEFAULT_STATE_PATH,
   type SandboxRoots,
@@ -39,14 +39,23 @@ export const NOT_ENFORCED_NOTE =
   "outside the sandbox already has the owner's credentials, sandboxed work gets none).";
 
 /** Where the owner ceiling is changed (the policy command never changes it). */
-const CEILING_COMMAND =
+/**
+ * The ` -c <device id>` a follow-up command in a message carries: the connection directory is
+ * named by the device id. A hint always names the connection, so it can be copied on a machine
+ * with several.
+ */
+export function connectionFlag(stateDir: string): string {
+  return ` -c ${basename(stateDir)}`;
+}
+
+const ceilingCommand = (stateDir: string): string =>
   "capybara-device ceiling set --outside-sandbox on|off --network open|allowlist " +
-  "--project-reach machine|paths|workspace";
+  `--project-reach machine|paths|workspace${connectionFlag(stateDir)}`;
 
 /** Printed with a projectPaths change while the reach is not `paths`. */
-const PROJECT_PATHS_REACH_NOTE =
+const projectPathsReachNote = (stateDir: string): string =>
   "Project paths apply while the project reach is paths (capybara-device ceiling set " +
-  "--project-reach paths).";
+  `--project-reach paths${connectionFlag(stateDir)}).`;
 
 /** Printed instead in Docker mode, where sandboxed work runs in the device's container. */
 const PROJECT_PATHS_DOCKER_NOTE =
@@ -187,7 +196,7 @@ function projectPaths(
     if (!statSync(real).isDirectory()) throw new Error(`${path} is not a directory`);
     if (real === "/") {
       throw new Error(
-        '"/" is not a project path: use capybara-device ceiling set --project-reach machine',
+        `"/" is not a project path: use capybara-device ceiling set --project-reach machine${connectionFlag(stateDir)}`,
       );
     }
     const refusal = projectPathRefusal(real, {
@@ -239,7 +248,11 @@ function edit(
 }
 
 /** What `policy show` says the owner ceiling gives on this machine (English, one line each). */
-export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
+export function describeCeiling(
+  policy: Policy,
+  runMode: "os" | "docker" = "os",
+  stateDir = "<device id>",
+): string[] {
   const { outsideSandbox, network, projectReach } = policy.ownerCeiling;
   const where = runMode === "docker" ? "in the device's container" : "as you on this machine";
   return [
@@ -256,7 +269,7 @@ export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os")
       : projectReach === "paths"
         ? "Sandboxed work and project browsing read the device's workspace and the projectPaths list."
         : "Sandboxed work and project browsing stay in the device's workspace.",
-    `Change the owner ceiling with: ${CEILING_COMMAND}`,
+    `Change the owner ceiling with: ${ceilingCommand(stateDir)}`,
   ];
 }
 
@@ -284,7 +297,7 @@ export async function policyCommand(
   if (cmd.action === "show") {
     const policy = store.current();
     out(JSON.stringify(policy, null, 2));
-    for (const l of describeCeiling(policy, docker ? "docker" : "os")) out(l);
+    for (const l of describeCeiling(policy, docker ? "docker" : "os", stateDir)) out(l);
     out(NOT_ENFORCED_NOTE);
     return 0;
   }
@@ -319,15 +332,17 @@ export async function policyCommand(
           break;
         }
         case "mode":
-          throw new Error(`the mode is gone: set the owner ceiling with ${CEILING_COMMAND}`);
+          throw new Error(
+            `the mode is gone: set the owner ceiling with ${ceilingCommand(stateDir)}`,
+          );
         case "network":
         case "tier":
         case "isolation":
         case "localhost":
         case "remoteGrants":
           throw new Error(
-            `"${key}" is gone: set the owner ceiling with ${CEILING_COMMAND}; ` +
-              `allowedDomains with capybara-device policy add allowedDomains <host>`,
+            `"${key}" is gone: set the owner ceiling with ${ceilingCommand(stateDir)}; ` +
+              `allowedDomains with capybara-device policy add allowedDomains <host>${connectionFlag(stateDir)}`,
           );
         default:
           throw new Error(`unknown policy key "${key}"; one of ${KEYS.join(", ")}`);
@@ -376,7 +391,7 @@ export async function policyCommand(
   if (key === "projectPaths") {
     if (containsDenied) out(PROJECT_PATHS_INNER_DENY_NOTE);
     if (docker) out(PROJECT_PATHS_DOCKER_NOTE);
-    else if (saved.ownerCeiling.projectReach !== "paths") out(PROJECT_PATHS_REACH_NOTE);
+    else if (saved.ownerCeiling.projectReach !== "paths") out(projectPathsReachNote(stateDir));
   }
   if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;
