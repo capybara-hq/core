@@ -40,7 +40,7 @@ import type {
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
-import { assertAuthorityHeld } from "../sandbox/permission-authority-lock.js";
+import { assertAuthorityWriteHeld } from "../sandbox/permission-authority-lock.js";
 import {
   hostsNarrowed,
   needsOpenNetwork,
@@ -816,9 +816,10 @@ export class DevicesService {
   /**
    * Adds `hosts` to one of the person's devices' own network list: a network approval decided
    * "add to this device's list" (`via`: where it was decided). In a caller's transaction (the
-   * approval decision's) it joins it and requires the device's permission write lock already held
-   * there ({@link lockNetworkAddSubject} in the caller's ordered prelude; else it throws before
-   * writing); with no transaction it takes that prelude itself ({@link withOrderedLocks}). It
+   * approval decision's) it joins it and requires the authority locks of that prelude already held
+   * there (platform and org shared, the device exclusive: {@link lockNetworkAddSubject} in the
+   * caller's ordered prelude; else it throws before locking or writing anything; the membership
+   * and device rows are locked again in the body); with no transaction it takes that prelude itself ({@link withOrderedLocks}). It
    * takes no distributed lock. The write is a network change like `PATCH` ({@link networkLocked}:
    * audited `device.network_changed` from → to, listed as a recent change, the device epoch bumped
    * and the instance marked for its next use). Refuses with `device.network_not_allowed`, writing
@@ -835,7 +836,8 @@ export class DevicesService {
     via: "web" | "im",
   ): Promise<void> {
     if (currentStore() !== undefined) {
-      assertAuthorityHeld("device", deviceId, true);
+      // every authority level the prelude takes: platform and org shared, the device exclusive
+      assertAuthorityWriteHeld({ orgId, deviceId }, "device");
       await this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via);
       return;
     }

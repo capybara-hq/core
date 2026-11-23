@@ -14,7 +14,11 @@ import type { DeviceList, DeviceView } from "../../src/devices/devices.service.j
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionDisplayNames } from "../../src/extensions/display-name.js";
-import { TransactionHost, withOrderedLocks } from "../../src/infra/database/transaction-host.js";
+import {
+  currentStore,
+  TransactionHost,
+  withOrderedLocks,
+} from "../../src/infra/database/transaction-host.js";
 import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
@@ -1123,6 +1127,35 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       // in a caller's transaction without the prelude's device write lock: refused, nothing written
       await expect(
         tx.run(() => svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web")),
+      ).rejects.toThrow("The matching authority lock is required");
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
+      // the device write lock alone is not the prelude: the platform and org levels it takes
+      // (shared) are required too, checked before anything is locked or written
+      const holding = (held: [string, "shared" | "exclusive"][]) =>
+        tx.run(async () => {
+          const store = currentStore();
+          if (!store) throw new Error("no transaction");
+          store.permissionLocks = new Map(held);
+          await svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web");
+        });
+      const deviceKey = `permission-authority-device-${env.id}`;
+      const orgKey = `permission-authority-org-${orgId}`;
+      const platformKey = "permission-authority-platform-platform";
+      await expect(holding([[deviceKey, "exclusive"]])).rejects.toThrow(
+        "The matching authority lock is required",
+      );
+      await expect(
+        holding([
+          [orgKey, "shared"],
+          [deviceKey, "exclusive"],
+        ]),
+      ).rejects.toThrow("The matching authority lock is required");
+      await expect(
+        holding([
+          [platformKey, "shared"],
+          [orgKey, "shared"],
+          [deviceKey, "shared"],
+        ]),
       ).rejects.toThrow("The matching authority lock is required");
       expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
       // it joins the caller's transaction after the caller's prelude: a rollback there takes the

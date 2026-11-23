@@ -132,3 +132,17 @@ export function assertAuthorityHeld(kind: AuthorityLevel, id: string, exclusive 
   if (!held || (exclusive && held !== "exclusive"))
     throw new Error("The matching authority lock is required");
 }
+
+/**
+ * The current transaction holds every authority lock a write of `level` on `subject` takes
+ * ({@link PermissionAuthorityLock.acquire}): each level above `level` (shared or stronger) and
+ * `level` itself exclusively; else throws before the caller writes anything.
+ */
+export function assertAuthorityWriteHeld(subject: AuthoritySubject, level: AuthorityLevel): void {
+  const entries = authorityEntries(subject);
+  const stop = entries.findIndex(([l]) => l === level);
+  if (stop < 0) throw new Error("The changed authority level is missing");
+  entries.slice(0, stop + 1).forEach(([l, id], i) => {
+    assertAuthorityHeld(l, id, i === stop);
+  });
+}
