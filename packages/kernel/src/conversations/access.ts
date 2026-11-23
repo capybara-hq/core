@@ -82,6 +82,7 @@ export const accessibleTo =
           .selectFrom("agents")
           .select(sql`1`.as("one"))
           .whereRef("agents.id", "=", "conversations.agent_id")
+          .whereRef("agents.org_id", "=", "conversations.org_id")
           .where("agents.deleted_at", "is", null)
           .where(visibleTo(viewer)),
       ),

@@ -67,6 +67,7 @@ export class SubagentDeliveries {
    * the commit: the log's notify and `subagent.delivered`; the parent's ensure-run backstop is
    * owed in the transaction. Returns the new event's seq.
    */
+  // org-filter: the dispatch row is kernel-written; its parent conversation's own org is read here
   @Transactional()
   async deliverIn(
     row: DispatchRow,
@@ -183,6 +184,7 @@ export class SubagentDeliveries {
    * notify after the commit. No `subagent.delivered`: nothing model-visible arrived, so no wake.
    * True when this call wrote it.
    */
+  // org-filter: locks the parent conversation of a kernel-written dispatch row
   private async finishSilentlyIn(
     row: DispatchRow,
     finished: EventPayload<"subagent_finished">,
@@ -224,6 +226,7 @@ export class SubagentDeliveries {
       dispatchedIdemKey(row.parentRunId, row.parentCallId),
     );
     if (dispatched?.type === "subagent_dispatched") return dispatched.payload.description;
+    // org-filter: the child conversation of a kernel-written dispatch row
     const conv = await this.db
       .selectFrom("conversations")
       .select("title")

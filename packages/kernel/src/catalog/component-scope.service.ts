@@ -634,6 +634,7 @@ export class ComponentScopeService {
    * (ruling P2-11): listed read-only, on in their org only. Connector templates have none; an
    * org's own theme is a platform_themes row with its org as owner, listed with the platform ones.
    */
+  // org-filter: super admin's component list: every org's own skills and templates are listed
   private async orgOwned(
     kind: ComponentKind,
     orgs: { id: string; name: string }[],
@@ -1062,6 +1063,8 @@ export class ComponentScopeService {
       })
       .where("id", "=", id)
       .execute();
+    // org-filter: super admin's scope change (adminLock above) replaces the platform component's
+    // whole named list, which spans orgs by design
     await this.db
       .deleteFrom("component_scope_orgs")
       .where("kind", "=", kind)
@@ -1285,6 +1288,7 @@ export class ComponentScopeService {
    * The scope that offers the component now: its own (`listed`: its own list), or for `follow` its
    * plugin's (`all` for a builtin or deleted plugin: the widest, so nothing counts as widening).
    */
+  // org-filter: a platform plugin's named org list, keyed by its platform item id (spans orgs)
   private async effectiveScope(
     c: ComponentRow,
     listed: string[],
@@ -1306,6 +1310,7 @@ export class ComponentScopeService {
   }
 
   /** The component's own `named` list, sorted. */
+  // org-filter: a platform component's named org list, keyed by its platform id (spans orgs)
   private async listed(kind: ComponentKind, id: string): Promise<string[]> {
     const rows = await this.db
       .selectFrom("component_scope_orgs")

@@ -121,6 +121,8 @@ export async function dispatchOfCall(
  * conversation without a parent); just `[conversationId]` for a root or an unknown id. Walks at
  * most 16 levels, far above `subagents.maxDepth`'s bound of 5.
  */
+// org-filter: walks parent links of a kernel-resolved conversation (a run's); a sub-agent
+// conversation is always created in its parent's org
 async function ancestryOf(db: KernelSchemaDb, conversationId: string): Promise<string[]> {
   const chain = [conversationId];
   for (let i = 0; i < 16; i++) {

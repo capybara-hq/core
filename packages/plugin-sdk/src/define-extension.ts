@@ -94,7 +94,9 @@ function checkRefs(
 
 /**
  * Validates the plugin manifest and returns it unchanged; throws ExtensionManifestError when
- * invalid.
+ * invalid. One transition exception: a `config.org` key (modules packed before core#720) is dropped,
+ * not refused, and the returned manifest is then a copy with `config: { deployment }` only; any
+ * other `config` key besides `deployment` still throws.
  */
 export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   const plugin = typeof m?.name === "string" && m.name !== "" ? m.name : "<unnamed>";
@@ -134,17 +136,18 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest {
       fail(`field "optional" entry "${r}" overlaps with "provides" or "requires"`);
     }
   }
+  let legacyOrg = false;
   if (m.config !== undefined) {
     if (typeof m.config !== "object" || m.config === null || Array.isArray(m.config)) {
       fail(`field "config" must be an object`);
     }
     for (const key of Object.keys(m.config)) {
       if (key === "deployment") continue;
-      fail(
-        key === "org"
-          ? `config.org was removed: move org fields into config.deployment (every field an org may override is a deployment field without platformOnly)`
-          : `config.${key} is not a config level: the only one is config.deployment`,
-      );
+      if (key === "org") {
+        legacyOrg = true;
+        continue;
+      }
+      fail(`config.${key} is not a config level: the only one is config.deployment`);
     }
   }
   if (m.permissions !== undefined) {
@@ -154,5 +157,19 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   // structural ui problems only; slot resolution never fails the extension (UI slots spec §3.2)
   const uiErrs = validateUiContributions(m.ui, m.permissions);
   if (uiErrs.length > 0) fail(`invalid ui: ${uiErrs.join("; ")}`);
-  return m;
+  return legacyOrg ? withoutLegacyOrgConfig(m) : m;
+}
+
+/**
+ * The manifest without the `config.org` key of a module packed before core#720 (a copy, so the
+ * module's own object is untouched). Dropped silently (the SDK has no logger): its fields never
+ * reach the static manifest, the permission set, the config levels or the views. Runtime tolerance
+ * only: the packer and `capybara-plugin check` still refuse `config.org` in new packs. Removed with
+ * the other pre-core#720 readers in core#720 plan Task 17.
+ */
+function withoutLegacyOrgConfig(m: ExtensionManifest): ExtensionManifest {
+  const { org: _legacyOrg, ...config } = m.config as NonNullable<ExtensionManifest["config"]> & {
+    org?: unknown;
+  };
+  return { ...m, config };
 }

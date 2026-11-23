@@ -483,6 +483,7 @@ export class RunWorker {
     // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
     if (run.status === "waiting") return;
     await this.hooks?.afterRunRead?.(runId, conversationId);
+    // org-filter: the run job's kernel-written conversation id; reads the conversation's own org
     const conv = await this.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id", "kind", "subagent_depth", "source", "account_id"])
@@ -906,6 +907,7 @@ export class RunWorker {
         .selectFrom("conversations")
         .select("consumed_seq")
         .where("id", "=", conversationId)
+        .where("org_id", "=", conv.org_id)
         .executeTakeFirstOrThrow();
       const startConsumed = Number(consumed_seq);
       let absorbed = startConsumed;
@@ -1098,6 +1100,7 @@ export class RunWorker {
       .selectFrom("conversations")
       .select("consumed_seq")
       .where("id", "=", conversationId)
+      .where("org_id", "=", conv.org_id)
       .executeTakeFirstOrThrow();
 
     const ac = new AbortController();
@@ -1238,6 +1241,7 @@ export class RunWorker {
    * (conversation, then run, as `RunFinish.finishIn`): the job read its status before taking the
    * conversation lock, and a stop may have ended it since.
    */
+  // org-filter: locks the conversation of the run this worker holds (kernel-written job id)
   private async endedUnderLocks(conversationId: string, runId: string): Promise<boolean> {
     await this.db
       .selectFrom("conversations")
@@ -1317,6 +1321,7 @@ export class RunWorker {
   }
 
   /** {@link fallBackIfUnavailable}'s write: null when the person switched again meanwhile. */
+  // org-filter: the conversation of the run this worker holds (kernel-written job id)
   @Transactional({ propagation: "requires_new" })
   private async fallBackIn(
     conversationId: string,

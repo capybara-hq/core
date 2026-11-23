@@ -155,6 +155,18 @@
   gap: var(--cb-space-1);
   min-width: 0;
 }
+/* The title with its marks (a muted state word) on one line; the marks wrap under a long title. */
+.cb-form-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--cb-space-1) var(--cb-space-2);
+  min-width: 0;
+}
+.cb-form-section-marks {
+  display: inline-flex;
+  gap: var(--cb-space-2);
+}
 .cb-form-section-description {
   margin: 0;
   color: var(--cb-muted);

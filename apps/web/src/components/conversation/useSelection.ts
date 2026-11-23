@@ -4,7 +4,14 @@ import type { PickerProps } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
-import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
+import {
+  type Agent,
+  EFFORTS,
+  type Effort,
+  findModel,
+  type ModelInfo,
+  type ProviderModels,
+} from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
 import {
   chosenDeviceId,
@@ -18,8 +25,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { deviceProjectsQuery } from "../../lib/query/devices";
 import { useDeviceName } from "../use-device-name";
 
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-export type Effort = (typeof EFFORTS)[number];
+export type { Effort } from "../../lib/agents";
 
 const refId = (r: ModelRef) => `${r.provider}\u0000${r.model}`;
 const sameRef = (a: ModelRef | null | undefined, b: ModelRef | null | undefined) =>

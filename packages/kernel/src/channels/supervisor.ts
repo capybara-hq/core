@@ -565,6 +565,7 @@ export class ChannelSupervisor {
         this.config.get().channels.retryBaseMs * 2 ** Math.min(fails - 1, 20),
       );
       await this.redis.set(channelBackoffKey(id), "1", "PX", delay);
+      // org-filter: id is a connection this gateway supervisor holds the lease of, not caller input
       await this.db
         .updateTable("channel_connections")
         .set({ last_error: message })

@@ -70,6 +70,8 @@ const notFound = (id: string) =>
  * job name added through the outbox is harmless when its work is gone or done (spec §3.5).
  */
 @Injectable()
+// org-filter: super-admin service (callers authorize through SuperAdminLock / admin routes); the
+// outbox is deployment-wide and every dead row of every org is listed and handled on purpose
 export class OutboxDeadService {
   constructor(
     @Inject(TransactionHost) readonly txHost: TransactionHost,

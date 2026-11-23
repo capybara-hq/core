@@ -185,6 +185,7 @@ export class PendingConnectorsService {
       .updateTable("agents")
       .set({ current_version: toVersion, updated_at: sql`now()` })
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(t, {
       actorAccountId: actor,
@@ -238,6 +239,7 @@ export class PendingConnectorsService {
       .selectFrom("agents")
       .select("owner_account_id")
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     const r = await this.requests.open({
       orgId,

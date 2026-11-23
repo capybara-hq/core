@@ -179,6 +179,7 @@ export class DeviceReports {
         .selectFrom("device_instances")
         .select("handle")
         .where("device_id", "=", deviceId)
+        .where("org_id", "=", device.org_id)
         .where("provider", "=", plugin)
         .executeTakeFirst();
       const ref: DeviceRef = {
@@ -214,6 +215,7 @@ export class DeviceReports {
   async current(
     deviceId: string,
   ): Promise<{ revision: string; support: SandboxPermissionSupport | null } | null> {
+    // org-filter: read seam for tests only (no production caller); the id is never caller input
     const row = await this.db
       .selectFrom("devices")
       .select("report")
@@ -294,6 +296,7 @@ export class DeviceReports {
       .updateTable("devices")
       .set({ report: JSON.stringify({ ...report, support }), report_at: sql<Date>`now()` })
       .where("id", "=", ref.deviceId)
+      .where("org_id", "=", ref.orgId)
       .execute();
     const before = storedRevision(row.report);
     const changed = before !== report.revision;

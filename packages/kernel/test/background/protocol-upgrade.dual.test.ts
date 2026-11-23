@@ -73,10 +73,10 @@ beforeEach(async () => {
   destroyFails = false;
   const impl = createFakeSandbox(root);
   provider = Object.create(impl) as DeviceProvider;
-  provider.destroy = async (h, s) => {
+  provider.destroy = async (h, s, f) => {
     calls.push(`destroy ${h.id}`);
     if (destroyFails) throw new Error("provider refused the destroy");
-    return impl.destroy(h, s);
+    return impl.destroy(h, s, f);
   };
   provider.create = async (args) => {
     const h = await impl.create(args);

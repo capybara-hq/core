@@ -69,6 +69,7 @@ export class StepLog {
   ): Promise<{ written: ConversationEvent[]; toSeq: number | null }> {
     const t = this.kdb.db;
     // the conversation row lock the append takes anyway, taken first to read the seq before it
+    // org-filter: a sub-agent run's own conversation (kernel-resolved by the run worker)
     const before = await t
       .selectFrom("conversations")
       .select("last_seq")

@@ -19,6 +19,8 @@ export async function retargetSetupRequests(
   owner: string,
 ): Promise<void> {
   if (agentIds.length === 0) return;
+  // org-filter: the agent ids were resolved in the caller's org (owner change, offboarding) and a
+  // setup request lives in its agent's org
   await db
     .updateTable("catalog_requests")
     .set({ requested_by: owner })
@@ -153,6 +155,7 @@ export class PendingConnectorRequests {
       const existing = await t
         .selectFrom("catalog_requests")
         .select("id")
+        .where("org_id", "=", a.orgId)
         .where("agent_id", "=", a.agentId)
         .where("kind", "=", "connector_setup")
         .where("status", "=", "pending")
@@ -191,6 +194,7 @@ export class PendingConnectorRequests {
     const row = await t
       .selectFrom("catalog_requests")
       .select(["id", "pending_keys", "requested_by"])
+      .where("org_id", "=", a.orgId)
       .where("agent_id", "=", a.agentId)
       .where("kind", "=", "connector_setup")
       .where("status", "=", "pending")
@@ -205,6 +209,7 @@ export class PendingConnectorRequests {
           .updateTable("catalog_requests")
           .set({ pending_keys: JSON.stringify(left) })
           .where("id", "=", row.id)
+          .where("org_id", "=", a.orgId)
           .execute();
       }
       return;
@@ -220,6 +225,7 @@ export class PendingConnectorRequests {
           row.requested_by === a.actor && { dismissed_at: sql<Date>`now()` }),
       })
       .where("id", "=", row.id)
+      .where("org_id", "=", a.orgId)
       .execute();
     await audit(t, {
       actorAccountId: a.actor,

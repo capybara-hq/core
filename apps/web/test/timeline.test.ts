@@ -148,7 +148,7 @@ describe("buildTimeline", () => {
     });
   });
 
-  it("a timed-out or stopped command fails: 已运行 3 个命令（2 个失败）", () => {
+  it("a timed-out or stopped command fails: 已运行 3 个命令 · 2 个调用返回了错误", () => {
     const events = [
       user(1, "go"),
       calls(2, [
@@ -170,7 +170,7 @@ describe("buildTimeline", () => {
     ];
     const rows = tools(buildTimeline(events, [], INFO, "zh"))[0]?.rows.map((r) => r.row) ?? [];
     expect(rows.map((r) => r.status)).toEqual(["done", "failed", "failed"]);
-    expect(summarizeTools(rows, "zh")).toBe("已运行 3 个命令（2 个失败）");
+    expect(summarizeTools(rows, "zh")).toBe("已运行 3 个命令 · 2 个调用返回了错误");
   });
 
   it("a read-before-write refusal (guard view) is a neutral outcome, counted apart from failures", () => {

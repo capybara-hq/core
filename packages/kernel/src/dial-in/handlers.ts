@@ -37,6 +37,8 @@ export class DialInHandlers {
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "current">,
   ) {}
 
+  // org-filter: deviceId is the device of an authenticated machine connection (the gateway); the
+  // device row supplies its org
   async forDevice(deviceId: string): Promise<DialInServing | DialInUnavailable> {
     const row = await this.kdb.db
       .selectFrom("devices")

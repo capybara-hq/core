@@ -150,6 +150,46 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
 }
 
 /**
+ * A lifecycle call's fence (device update fencing design §3): the kernel passes it to `update`,
+ * `create`, `destroy` and `destroyByName` made under the device's exclusive lease, so a provider
+ * can refuse a call from a holder whose lease ended while the call was in flight.
+ */
+export interface DeviceFence {
+  /**
+   * The device's fencing generation as the calling holder last wrote it: a non-negative safe
+   * integer, strictly higher for every later exclusive holder of the device, never lower for later
+   * calls of the same holder.
+   */
+  readonly token: number;
+}
+
+/**
+ * Thrown by a lifecycle call whose {@link DeviceFence} token is lower than one the instance
+ * already applied: the caller is a stale holder, and nothing was changed. The kernel handles it as
+ * a lost lease (never as a reason to recreate). `current` is the token the instance holds, when the
+ * provider knows it.
+ */
+export class StaleFenceError extends Error {
+  readonly staleFence = true as const;
+  readonly current: number | undefined;
+
+  constructor(message: string, opts?: { cause?: unknown; current?: number }) {
+    super(message, opts && "cause" in opts ? { cause: opts.cause } : undefined);
+    this.name = "StaleFenceError";
+    this.current = opts?.current;
+  }
+}
+
+/** Duck-typed check (not instanceof), so a plugin bundling another plugin-sdk copy still matches. */
+export function isStaleFenceError(e: unknown): e is StaleFenceError {
+  return (
+    e instanceof Error &&
+    e.name === "StaleFenceError" &&
+    (e as { staleFence?: unknown }).staleFence === true
+  );
+}
+
+/**
  * The file system is definitely gone on the provider's side (volume removed, E2B sandbox killed).
  * `create` throws it instead of attaching the instance to a new, empty file system; the kernel then
  * reports the device's files as lost rather than handing out a silently empty workspace.
@@ -374,6 +414,19 @@ export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedEr
  * `exitCode: null`, `timedOut: false` (and the output collected so far), it does not reject. An
  * `exec` called with an already aborted signal rejects at once.
  *
+ * **Fencing** (device update fencing design §4): `update`, `create`, `destroy` and
+ * `destroyByName` get a {@link DeviceFence} from the kernel. A provider that keeps per-instance
+ * state it can update conditionally must store the highest token it applied next to that state,
+ * compare and store in one atomic step, and throw {@link StaleFenceError} for a lower token (an
+ * equal token is the same holder and is accepted); `create` seeds the new instance's token and
+ * should refuse when the instance it would replace carries a higher one; `destroy` /
+ * `destroyByName` should refuse an instance carrying a higher token. A provider that cannot (no
+ * conditional write in its backend) ignores the token and states the residual race in its README.
+ * The fence is `undefined` only from an older kernel that sends none: freshness is then unproven,
+ * so a provider answers `recreate` to an in-place change it would otherwise fence, seeds 0 at
+ * `create` and destroys without a check. `null` (destroy only) means the kernel has no fence for
+ * the call (no device record, or the one-off legacy cleanup): destroy without a check.
+ *
  * **Concurrent use** (required in `@2`): the sessions of one device share its instance, so the
  * kernel calls `exec`, `readFile`, `writeFile` and `stat` concurrently on one instance. Those four
  * methods must be safe to call concurrently. Each `exec` labels its command with its `tag`, and an
@@ -446,11 +499,19 @@ export interface DeviceProvider {
    * no connection to a removed host survives and no new one can open; otherwise answer `recreate`
    * or throw. A thrown `update` is the kernel's to handle (recreate, or quarantine and retry on the
    * next use), so a repeated call with the same limits must be safe.
+   *
+   * `fence`: a provider that can must refuse a token lower than the one the instance applied last
+   * with {@link StaleFenceError}, checked and stored in the same atomic step as the new limits (see
+   * "Fencing" above); an equal or higher token with limits already in force raises the stored
+   * token and answers `updated`. Any answer to a call whose token is not lower (`updated` or
+   * `recreate`) leaves the stored token at least that high, so an older call arriving later is
+   * still refused.
    */
   update?(
     h: SandboxHandle,
     limits: SandboxLimits,
     signal: AbortSignal,
+    fence: DeviceFence,
   ): Promise<"updated" | "recreate">;
   /**
    * Creates a device's file system. `name` looks like `cap-device-<deviceId>`. If a file
@@ -475,6 +536,10 @@ export interface DeviceProvider {
   /**
    * Creates an instance attached to `fileSystem`. Without `image` the provider uses its own
    * published image. Throws {@link FileSystemGoneError} when the file system is gone.
+   *
+   * `fence`: the new instance starts with this token stored (so a stale `update` is refused
+   * against it); a provider should throw {@link StaleFenceError}, leaving everything as it is,
+   * when an instance it would replace under `name` carries a higher token.
    */
   create(args: {
     name: string;
@@ -482,21 +547,27 @@ export interface DeviceProvider {
     limits: SandboxLimits;
     fileSystem: FileSystemHandle;
     signal: AbortSignal;
+    fence: DeviceFence;
   }): Promise<SandboxHandle>;
   /** `gone` means the provider no longer has this instance. */
   resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
   /** Files must be kept. Succeeds when the instance does not exist. */
   suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-  /** Drops the instance only; the file system and its files are kept. Succeeds when it does not exist. */
-  destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+  /**
+   * Drops the instance only; the file system and its files are kept. Succeeds when it does not
+   * exist. `fence`: a provider should throw {@link StaleFenceError} when the instance carries a
+   * higher token; `null` when the kernel has no fence for the call (nothing to compare).
+   */
+  destroy(h: SandboxHandle, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
   /**
    * Drops the instance made under `name` by `create` (instance only, files kept); succeeds when
    * there is none. The kernel uses it when it has no handle (`create` finished on the provider's
    * side but the kernel stopped before recording the handle), and in its one-off cleanup of
    * per-conversation sandboxes with `cap-<conversationId>` names made by a `sandbox@1` provider's
-   * `create`.
+   * `create`. `fence` as for {@link DeviceProvider.destroy} (`null` in that one-off cleanup,
+   * which has no device record).
    */
-  destroyByName(name: string, signal: AbortSignal): Promise<void>;
+  destroyByName(name: string, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
   /**
    * Kills every running command started through `exec` in this instance (and the processes they
    * spawned that did not start their own session). The kernel calls it only when no other holder

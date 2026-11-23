@@ -1508,7 +1508,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       toolKey: z.string(),
       expiresAt: z.string(),
       /** Which rule asked a tool approval (UI refresh B; display only; absent on the other asks). */
-      policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
+      policy: z
+        .enum(["agent", "connector", "member", "default", "role", "org", "fixed"])
+        .optional(),
       /**
        * A network ask (network ask-to-allow spec §6.1): the hosts the device owner is asked to
        * allow. Display only, never model-visible: the model sees the call's `tool_result` only.

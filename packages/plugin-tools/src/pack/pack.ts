@@ -623,6 +623,14 @@ async function buildAndImport(
   if (typeof mod.default !== "object" || mod.default === null) {
     throw new Error(`${label}: the bundle has no default export object`);
   }
+  // defineExtension drops a legacy config.org so modules packed before core#720 still load; a new
+  // pack must not carry one (removed with that tolerance in core#720 plan Task 17)
+  const config = (mod.default as { config?: unknown }).config;
+  if (typeof config === "object" && config !== null && Object.hasOwn(config, "org")) {
+    throw new Error(
+      `${label}: config.org was removed: move org fields into config.deployment (every field an org may override is a deployment field without platformOnly)`,
+    );
+  }
   const m = defineExtension(mod.default as ExtensionManifest);
   return { code, m, inputs: Object.keys(result.metafile?.inputs ?? {}) };
 }

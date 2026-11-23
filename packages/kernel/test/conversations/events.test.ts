@@ -259,3 +259,25 @@ describe("approval_decided", () => {
     expect(decided("x".repeat(501))).toBe(false);
   });
 });
+
+describe("approval_requested", () => {
+  it("records every rule that can ask, a member's own tool policy too (ApprovalPolicySource)", () => {
+    const requested = (policy: string) =>
+      ConversationEventSchema.safeParse({
+        type: "approval_requested",
+        payload: {
+          step: 1,
+          callId: "c1",
+          approvalId: "a1",
+          toolKey: "github__create_issue",
+          expiresAt: "2026-11-23T00:00:00.000Z",
+          policy,
+          requestedFor: "acc1",
+          approverRole: null,
+        },
+      }).success;
+    for (const p of ["agent", "connector", "member", "default", "role", "org", "fixed"]) {
+      expect(requested(p), p).toBe(true);
+    }
+  });
+});

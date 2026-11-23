@@ -1355,6 +1355,7 @@ export class PluginInstaller {
         ),
       }))
       .where("id", "=", installId)
+      .where("org_id", "=", orgId)
       .where("status", "=", "installing")
       .executeTakeFirst();
     // The install row was already cleaned up as stale: do not audit plugin.org_installed, roll
@@ -1406,6 +1407,7 @@ export class PluginInstaller {
       .updateTable("plugin_installs")
       .set({ status: "failed", error: JSON.stringify({ step, code }) })
       .where("id", "=", installId)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(t, {
       actorAccountId: actor,
@@ -1935,7 +1937,11 @@ export class PluginInstaller {
       if (outcome === "removed") addRemoved({ kind: c.kind, ref: c.ref });
       else if (outcome !== "gone") keep(outcome);
     }
-    await t.deleteFrom("plugin_installs").where("id", "=", installId).execute();
+    await t
+      .deleteFrom("plugin_installs")
+      .where("id", "=", installId)
+      .where("org_id", "=", orgId)
+      .execute();
     await audit(t, {
       actorAccountId: actor,
       ...(ctx.opts.actorTokenId !== undefined && { actorTokenId: ctx.opts.actorTokenId }),

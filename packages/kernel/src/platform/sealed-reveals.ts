@@ -121,6 +121,7 @@ export class SealedReveals {
             .selectFrom("invitations")
             .select("invitations.id")
             .whereRef("invitations.id", "=", "platform_sealed_reveals.id")
+            .where("invitations.org_id", "=", orgId)
             .where("invitations.accepted_at", "is", null)
             .where("invitations.revoked_at", "is", null)
             .where(sql<boolean>`invitations.expires_at > now()`),
@@ -151,6 +152,7 @@ export class SealedReveals {
 
 /** Deletes the sealed reveals past `expires_at`; returns how many. */
 export async function deleteExpiredSealedReveals(db: KernelSchemaDb): Promise<number> {
+  // org-filter: deployment-wide expiry sweep over every org's sealed reveals (maintenance job)
   const r = await db
     .deleteFrom("platform_sealed_reveals")
     .where("expires_at", "<=", sql<Date>`now()`)

@@ -123,6 +123,8 @@ export async function orphanCandidates(
 
 /** Whether delivery is still owed by a pending outbox row; dead copies are not active work.
  */
+// org-filter: outbox rows looked up by queue and deterministic kernel job id (unique across the
+// deployment) in the deployment-wide orphan check; outbox.org_id is nullable
 export async function jobInOutbox(
   db: KernelSchemaDb,
   queue: string,
@@ -295,6 +297,8 @@ export class RunOrphanCheck {
       .execute();
   }
 
+  // org-filter: outbox rows looked up by queue and deterministic kernel job id (unique across the
+  // deployment) in the deployment-wide orphan check; outbox.org_id is nullable
   private async hasDeadDelivery(c: OrphanCandidate): Promise<boolean> {
     return (
       (await this.db
@@ -356,6 +360,8 @@ export class RunOrphanCheck {
     if (deliveryFailed) {
       // Lock dead rows against admin retry. A pending retry always takes precedence over a
       // historical dead copy. Producers of replacement jobs also hold this conversation lock.
+      // org-filter: outbox rows by queue and deterministic kernel job id (unique across the
+      // deployment); outbox.org_id is nullable
       const deliveries = await this.db
         .selectFrom("outbox")
         .select("dead_at")
@@ -408,6 +414,7 @@ export class RunOrphanCheck {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", c.conversationId)
+      .where("org_id", "=", c.orgId)
       .forUpdate()
       .executeTakeFirst();
     const r = await this.db

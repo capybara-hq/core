@@ -430,7 +430,7 @@ export class AttachmentsService {
       ttlHours,
     });
     const head = await this.storage.kernel(orgId).put(key, file.bytes, { contentType, size });
-    await this.markStored(id, head.size, head.etag ?? null);
+    await this.markStored(orgId, id, head.size, head.etag ?? null);
     return { id };
   }
 
@@ -456,11 +456,17 @@ export class AttachmentsService {
 
   /** The last step of {@link createFromBytes}: the stored object's size and etag, `ready`. */
   @Transactional()
-  private async markStored(id: string, size: number, etag: string | null): Promise<void> {
+  private async markStored(
+    orgId: string,
+    id: string,
+    size: number,
+    etag: string | null,
+  ): Promise<void> {
     await this.db.db
       .updateTable("attachments")
       .set({ status: "ready", size, etag })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "pending")
       .execute();
   }
@@ -565,6 +571,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ status: "ready", etag: got?.head.etag ?? head.etag ?? null, pages })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "pending")
       .execute();
     return view;
@@ -810,6 +817,7 @@ export class AttachmentsService {
         .updateTable("attachments")
         .set({ conversation_id: conversationId, expires_at: null })
         .where("id", "in", toBind)
+        .where("org_id", "=", orgId)
         .execute();
     }
     return blocks;
@@ -975,6 +983,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now() + make_interval(hours => ${SKILL_PACKAGE_TTL_HOURS})` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "ready")
       .where("purpose", "=", "skill-package")
       .returning(["object_key", "size", "etag"])
@@ -1013,6 +1022,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ status: "deleting", expires_at: sql<Date>`now()` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
   }
 
@@ -1057,6 +1067,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now() + make_interval(hours => ${AGENT_AVATAR_TTL_HOURS})` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "ready")
       .where("agent_id", "is", null)
       .where("expires_at", "is not", null)
@@ -1093,6 +1104,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ agent_id: agentId, expires_at: null })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
   }
 
@@ -1167,7 +1179,7 @@ export class AttachmentsService {
     const head = await this.storage
       .kernel(orgId)
       .put(key, file.data, { contentType: contentType || "application/octet-stream" });
-    await this.bindRead(id, conversationId, head.size, head.etag ?? null);
+    await this.bindRead(orgId, id, conversationId, head.size, head.etag ?? null);
     return { ok: true, attachmentId: id, size: head.size };
   }
 
@@ -1226,6 +1238,7 @@ export class AttachmentsService {
   /** Step 4 of {@link storeRead}: binds the unbound row in one transaction. */
   @Transactional()
   private async bindRead(
+    orgId: string,
     id: string,
     conversationId: string,
     size: number,
@@ -1235,6 +1248,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ conversation_id: conversationId, status: "ready", expires_at: null, size, etag })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("purpose", "=", "read")
       .where("status", "=", "pending")
       .where("conversation_id", "is", null)
@@ -1253,6 +1267,8 @@ export class AttachmentsService {
    * Chat attachments of deleted conversations are not touched. Does nothing without an object
    * store. Returns the number of rows deleted.
    */
+  // org-filter: deployment-wide cleanup job across all orgs; each claimed row is deleted by its
+  // own id and handled in its own org (r.org_id)
   async purgeRead(): Promise<number> {
     if (!this.storage.available) return 0;
     const hours = this.config.get().attachments.readPurgeAfterHours;
@@ -1322,6 +1338,8 @@ export class AttachmentsService {
    * 解出的文件 `skills/<id>/` 只在没有任何技能版本引用时一并删除。
    * 没有对象存储时什么也不做。返回删除的附件数。
    */
+  // org-filter: deployment-wide cleanup job across all orgs; each claimed row is deleted by its
+  // own id and handled in its own org (r.org_id)
   async deleteExpired(): Promise<number> {
     if (!this.storage.available) return 0;
     let deleted = 0;

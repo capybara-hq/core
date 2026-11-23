@@ -250,6 +250,16 @@ export const CHECKS: readonly CheckEntry[] = [
     inAll: true,
   },
   {
+    name: "web-api-parity",
+    cli: "web-api-parity",
+    ciMode: "full",
+    reason:
+      "cheap (about 2 s: the repo's TypeScript checker answers only the types asked for), part of `pnpm check`; a change on either side, kernel or web, can break it",
+    description:
+      "The web's hand-written API types match the kernel routes they call (fields, types, enum values).",
+    inAll: true,
+  },
+  {
     name: "kernel-conventions",
     cli: "kernel-conventions",
     ciMode: "full",
@@ -264,6 +274,16 @@ export const CHECKS: readonly CheckEntry[] = [
     ciMode: "full",
     reason: CHEAP,
     description: "Every outbox kind has a registered processor.",
+    inAll: true,
+  },
+  {
+    name: "org-filter",
+    cli: "org-filter",
+    ciMode: "full",
+    reason:
+      "cheap (about a second, part of `pnpm check`) and whole-tree: the org-scoped tables come from the kernel schema, so a migration adding org_id makes untouched files violate, and a stale exemption is only seen by scanning every file",
+    description:
+      "Kernel queries on tables with an org_id column filter by it or carry a reasoned `// org-filter:` exemption.",
     inAll: true,
   },
   {

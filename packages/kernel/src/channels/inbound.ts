@@ -334,6 +334,7 @@ export class ChannelInbound {
         await db
           .deleteFrom("conversations")
           .where("id", "=", created)
+          .where("org_id", "=", row.orgId)
           .where("last_seq", "=", "0")
           .execute();
       }

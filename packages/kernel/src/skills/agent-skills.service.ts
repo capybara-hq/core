@@ -141,6 +141,8 @@ export async function assertShareableName(
  * org owns it, `agent_id` is cleared, the agent it came from and its maintainer are recorded.
  * Its versions stay.
  */
+// org-filter: skillId is the skill row the caller read with its org filter and locked FOR UPDATE
+// in this same transaction (AgentSkillsService.shareIn, SkillChangesService.decideIn)
 export async function shareSkillIn(
   db: KernelDb,
   v: { skillId: string; agentId: string; maintainerAccountId: string },
@@ -205,10 +207,15 @@ export async function keyShareOrg(db: KernelDb, orgId: string): Promise<void> {
  * The cap on new agent skills: at {@link AGENT_SKILLS_MAX} live own skills -> 409
  * `skill.agent_cap`. Runs in the caller's transaction.
  */
-export async function assertBelowAgentSkillCap(db: KernelDb, agentId: string): Promise<void> {
+export async function assertBelowAgentSkillCap(
+  db: KernelDb,
+  orgId: string,
+  agentId: string,
+): Promise<void> {
   const skills = await db
     .selectFrom("skills")
     .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("org_id", "=", orgId)
     .where("scope", "=", "agent")
     .where("agent_id", "=", agentId)
     .where("deleted_at", "is", null)
@@ -244,6 +251,7 @@ export async function createAgentSkillVersion(
         updated_at: sql`now()`,
       })
       .where("id", "=", v.skillId)
+      .where("org_id", "=", v.orgId)
       .execute();
   } else {
     await db
@@ -493,6 +501,7 @@ export class AgentSkillsService {
       .selectFrom("agents")
       .select("id")
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .where(visibleTo(accountId))
       .executeTakeFirst();
     if (!visible) throw agentNotFound();
@@ -596,6 +605,7 @@ export class AgentSkillsService {
       this.db
         .selectFrom("skill_change_requests")
         .selectAll()
+        .where("org_id", "=", actor.orgId)
         .where("skill_id", "=", skillId)
         .where("kind", "=", "version")
         .where("status", "=", "pending");
@@ -611,6 +621,7 @@ export class AgentSkillsService {
         .selectFrom("conversations")
         .select("id")
         .where("id", "in", convs)
+        .where("org_id", "=", actor.orgId)
         .orderBy("id")
         .forUpdate()
         .execute();
@@ -736,13 +747,14 @@ export class AgentSkillsService {
       const shared = await this.maintainedSkill(actor, pkg.name, true);
       if (shared) return this.proposeIn(actor, pkg, manifest, prefix, shared);
       await this.assertNoUsedOrgSkillNamed(actor, pkg.name);
-      await assertBelowAgentSkillCap(this.db, actor.agentId);
+      await assertBelowAgentSkillCap(this.db, actor.orgId, actor.agentId);
     } else {
       // A pending share was for the version the admins review: a new version supersedes it (the
       // share's files are that version's own and stay)
       const shares = await this.db
         .selectFrom("skill_change_requests")
         .selectAll()
+        .where("org_id", "=", actor.orgId)
         .where("skill_id", "=", existing.id)
         .where("kind", "=", "share")
         .where("status", "=", "pending")
@@ -834,6 +846,7 @@ export class AgentSkillsService {
       )
       .select("agent_versions.definition")
       .where("agents.id", "=", actor.agentId)
+      .where("agents.org_id", "=", actor.orgId)
       .executeTakeFirst();
     const disabledSkills =
       def === undefined ? [] : (normalizeStoredDefinition(def.definition).disabledSkills ?? []);
@@ -1034,6 +1047,7 @@ export class AgentSkillsService {
     const pending = await this.db
       .selectFrom("skill_change_requests")
       .select("id")
+      .where("org_id", "=", actor.orgId)
       .where("skill_id", "=", skillId)
       .where("kind", "=", "share")
       .where("status", "=", "pending")
@@ -1113,6 +1127,7 @@ export class AgentSkillsService {
     const pend = await this.db
       .selectFrom("skill_change_requests")
       .selectAll()
+      .where("org_id", "=", orgId)
       .where("agent_id", "=", agentId)
       .where("status", "=", "pending")
       .where(sql<string>`proposed_version -> 'manifest' ->> 'name'`, "=", r.name)

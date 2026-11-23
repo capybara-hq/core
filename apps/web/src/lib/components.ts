@@ -311,6 +311,12 @@ export const unavailableComponent = (
   );
 
 /** What switching a component off in the org takes away: the agents using it, connectors kept. */
+/** What a switch answers for the component (kernel `OrgComponentView`): its state, not the listing. */
+export type OrgComponentSwitched = Pick<
+  OrgComponent,
+  "kind" | "id" | "name" | "plugin" | "switch" | "on" | "locked"
+>;
+
 export interface ComponentSwitchPreview {
   preview: {
     agents: { id: string; name: string; refs: string[] }[];
@@ -346,7 +352,7 @@ export const setOrgComponentSwitch = (
   id: string,
   body: { enabled: boolean; confirm?: string },
 ) =>
-  apiFetch<{ component: OrgComponent } | ComponentSwitchPreview>(
+  apiFetch<{ component: OrgComponentSwitched } | ComponentSwitchPreview>(
     `${orgBase(orgId)}/${kind}/${enc(id)}/switch`,
     send("PUT", body),
   );
