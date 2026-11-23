@@ -157,6 +157,17 @@ const run = (s: SandboxService, command: string) =>
     signal(),
   );
 
+/**
+ * A command that ends only once `n` commands of this barrier have started: each marks its start in
+ * the workspace, then waits for the others' marks. Commands that run concurrently pass it; run one
+ * after another, the first never sees the others and fails after 10 s (exit 9). Overlap is proven
+ * by causality, not by sleeping long enough for a loaded machine to start all of them.
+ */
+const barrier = (name: string, n: number) =>
+  `mkdir -p .barrier-${name} && : > .barrier-${name}/$$; i=0; ` +
+  `until [ "$(ls .barrier-${name} | wc -l)" -ge ${n} ]; do ` +
+  `i=$((i+1)); [ $i -gt 1000 ] && exit 9; sleep 0.01; done`;
+
 /** All intervals pairwise overlap (every start is before every end). */
 const allOverlap = (xs: { start: number; end: number }[]) =>
   Math.max(...xs.map((x) => x.start)) < Math.min(...xs.map((x) => x.end));
@@ -201,7 +212,8 @@ describe("concurrent commands (fake sandbox)", () => {
     withCap(3);
     const s = service();
     await run(s, "true");
-    await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.6")));
+    const out = await Promise.all([0, 1, 2].map(() => run(s, barrier("held", 3))));
+    for (const o of out) expect(o.r.exitCode).toBe(0);
     const xs = (await execIntervals()).slice(1);
     expect(xs).toHaveLength(3);
     expect(allOverlap(xs)).toBe(true);
@@ -213,8 +225,8 @@ describe("concurrent commands (fake sandbox)", () => {
     withCap(3);
     const s = service();
     await run(s, "true");
-    await setFakeSandboxDelays(root, { exec: 500 });
-    await Promise.all([0, 1, 2, 3].map(() => run(s, "true")));
+    const out = await Promise.all([0, 1, 2, 3].map(() => run(s, barrier("cap", 3))));
+    for (const o of out) expect(o.r.exitCode).toBe(0);
     const xs = (await execIntervals()).slice(1).sort((a, b) => a.start - b.start);
     expect(xs).toHaveLength(4);
     expect(allOverlap(xs.slice(0, 3))).toBe(true);
@@ -351,7 +363,7 @@ describe("concurrent commands (fake sandbox)", () => {
     await run(s, "true");
     expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
     await setFakeSandboxDelays(root, { resume: 300 });
-    const out = await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.4")));
+    const out = await Promise.all([0, 1, 2].map(() => run(s, barrier("resume", 3))));
     for (const o of out) {
       expect(o.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
       expect(o.r.exitCode).toBe(0);
@@ -367,7 +379,8 @@ describe("concurrent commands (fake sandbox)", () => {
     withCap(6);
     const s = service();
     await setFakeSandboxDelays(root, { create: 200 });
-    const out = await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.4")));
+    const out = await Promise.all([0, 1, 2].map(() => run(s, barrier("first", 3))));
+    for (const o of out) expect(o.r.exitCode).toBe(0);
     expect(out.filter((o) => o.info.fresh)).toHaveLength(1);
     expect(await ops("create")).toHaveLength(1);
     expect(allOverlap(await execIntervals())).toBe(true);
