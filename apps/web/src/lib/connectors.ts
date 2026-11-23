@@ -108,13 +108,15 @@ export interface ConnectorSummary {
   platformTemplateId?: string | null;
   /** The icon of the plugin its template came from (an org icon route; null or absent: none). */
   icon?: string | null;
+  /** Its own description, set by an org admin (null or absent: none). */
+  description?: string | null;
   /**
    * Its platform template's description (the English or only text; null or absent: none, e.g. a
-   * custom connector); show it with `componentDescription`.
+   * custom connector); the pages show it when the connector has no own description.
    */
-  description?: string | null;
-  /** That description's Chinese text; null: `description` serves both languages. */
-  descriptionZh?: string | null;
+  templateDescription?: string | null;
+  /** The template description's Chinese text; null: `templateDescription` serves both. */
+  templateDescriptionZh?: string | null;
   /**
    * Its template's setup guide the org may see, at the item's latest version (setup guides v2
    * spec §9.3); null for a custom connector or a template without one (older: absent).
@@ -161,7 +163,12 @@ export interface CreateConnectorInput {
   endpoint: ConnectorEndpoint;
   auth: ConnectorAuth;
   credential?: CredentialValue;
+  /** The connector's own description (plain text, ≤ {@link CONNECTOR_DESCRIPTION_MAX}). */
+  description?: string;
 }
+
+/** Upper bound on a connector's own description (the kernel's `CONNECTOR_DESCRIPTION_MAX`). */
+export const CONNECTOR_DESCRIPTION_MAX = 1024;
 
 /** 远端描述里声明的认证方式（向导据此预填）。 */
 export type AuthHint = { scheme: string; description?: string } & (
@@ -211,7 +218,26 @@ export interface UpdateConnectorInput {
   name?: string;
   status?: "active" | "disabled";
   tools?: Record<string, { status?: "enabled" | "disabled"; defaultPolicy?: ToolPolicy }>;
+  /** The connector's own description; null clears it. */
+  description?: string | null;
 }
+
+/**
+ * The connector's template description in the reader's language (zh: its Chinese text when it has
+ * one), null without one.
+ */
+export const templateDescriptionOf = (c: ConnectorSummary, locale: string): string | null => {
+  const text =
+    locale === "zh" ? (c.templateDescriptionZh ?? c.templateDescription) : c.templateDescription;
+  return text === null || text === undefined || text === "" ? null : text;
+};
+
+/**
+ * The description a connector shows: its own when an org admin set one, else its template's in the
+ * reader's language, else null.
+ */
+export const connectorDescriptionOf = (c: ConnectorSummary, locale: string): string | null =>
+  c.description ? c.description : templateDescriptionOf(c, locale);
 
 /** 需要凭据的认证方式的归属；`none` 为 null。 */
 export const ownershipOf = (auth: ConnectorAuth): Ownership | null =>

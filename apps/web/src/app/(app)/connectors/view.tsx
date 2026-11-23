@@ -18,6 +18,7 @@ import {
   type ConnectorDetail,
   type ConnectorSummary,
   canManageConnectors,
+  connectorDescriptionOf,
   personalConnectors,
 } from "../../../lib/connectors";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -178,10 +179,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     const own = personal.some((p) => p.id === c.id);
     // for org admins: the connector's 凭据 tab, or 设置 without credentials (alone, the one button)
     const config: MenuItem[] = manage ? [connectorAdminItem(c, tn)] : [];
-    const description = componentDescription(
-      { description: c.description ?? null, descriptionZh: c.descriptionZh ?? null },
-      locale,
-    );
+    const description = connectorDescriptionOf(c, locale);
     const base = {
       avatar: { image: c.icon ?? null },
       title: c.name,

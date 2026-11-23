@@ -1208,38 +1208,62 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       },
     });
     expect(custom.statusCode, custom.body).toBe(201);
-    const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
-    expect(list.statusCode, list.body).toBe(200);
-    const conns = (list.json() as { connectors: (Described & { id: string; name: string })[] })
-      .connectors;
+    type Shown = {
+      description: string | null;
+      templateDescription: string | null;
+      templateDescriptionZh: string | null;
+    };
+    const shown = (x: Shown) => ({
+      own: x.description,
+      template: { description: x.templateDescription, descriptionZh: x.templateDescriptionZh },
+    });
+    const none = { description: null, descriptionZh: null };
+    const listed = async () => {
+      const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+      expect(list.statusCode, list.body).toBe(200);
+      return (list.json() as { connectors: (Shown & { id: string; name: string })[] }).connectors;
+    };
+    const conns = await listed();
     expect(
       Object.fromEntries(
-        conns.filter((c) => c.name.startsWith("d-")).map((c) => [c.name, pick(c)]),
+        conns.filter((c) => c.name.startsWith("d-")).map((c) => [c.name, shown(c)]),
       ),
     ).toEqual({
-      "d-mail": expected.mail,
-      "d-drive": expected.drive,
-      "d-bare": expected.bare,
-      "d-custom": { description: null, descriptionZh: null },
+      "d-mail": { own: null, template: expected.mail },
+      "d-drive": { own: null, template: expected.drive },
+      "d-bare": { own: null, template: none },
+      "d-custom": { own: null, template: none },
     });
     const mail = conns.find((c) => c.name === "d-mail") as { id: string };
-    const one = await env.mem({
-      method: "GET",
+    const detailOf = async () => {
+      const r = await env.mem({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return shown(r.json().connector);
+    };
+    expect(await detailOf()).toEqual({ own: null, template: expected.mail });
+    // an own description sits next to the template's (the page shows the own one first)
+    const set = await env.boss({
+      method: "PATCH",
       url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
+      payload: { description: "Our team mailbox" },
     });
-    expect(pick(one.json().connector)).toEqual(expected.mail);
-    // a plugin the org's catalog no longer shows: the description goes with the icon
+    expect(set.statusCode, set.body).toBe(200);
+    expect(shown(set.json().connector)).toEqual({
+      own: "Our team mailbox",
+      template: expected.mail,
+    });
+    expect(await detailOf()).toEqual({ own: "Our team mailbox", template: expected.mail });
+    // a plugin the org's catalog no longer shows: the template's goes with the icon, the own stays
     await setScope(env, itemId, "named", []);
     await env.db
       .updateTable("catalog_items")
       .set({ shown_to_others: false })
       .where("id", "=", itemId)
       .execute();
-    const hidden = await env.mem({
-      method: "GET",
-      url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
-    });
-    expect(pick(hidden.json().connector)).toEqual({ description: null, descriptionZh: null });
+    expect(await detailOf()).toEqual({ own: "Our team mailbox", template: none });
   });
 
   it("the org extensions list carries each extension's plugin icon (null without one)", async () => {

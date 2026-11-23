@@ -2278,6 +2278,8 @@
     "form": {
       "nameLabel": "名称",
       "nameRequired": "请填写名称。",
+      "descriptionLabel": "说明",
+      "descriptionHint": "显示在连接器卡片和详情页上。",
       "slugLabel": "Slug",
       "slugHelp": "小写字母、数字与下划线，最长 24 位；留空则由名称推导。slug 越短，工具名可用的长度越长；工具键最长 64 个字符。",
       "urlLabel": "端点 URL",
@@ -2374,6 +2376,7 @@
     },
     "settings": {
       "title": "常规",
+      "descriptionFallback": "留空时显示其模板的说明，即框中的灰色文字。",
       "activeLabel": "启用连接器",
       "save": "保存",
       "saved": "已保存。",

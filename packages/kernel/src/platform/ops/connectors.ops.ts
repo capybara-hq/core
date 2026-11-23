@@ -149,6 +149,7 @@ const summary = (c: ConnectorSummary) => ({
   },
   status: c.status,
   platformTemplateId: c.platformTemplateId,
+  description: c.description,
   updatedAt: c.updatedAt,
 });
 
@@ -565,7 +566,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof UpdateInput>>({
         id: "connectors.update",
         description:
-          "Edit a connector (org admins): rename it, switch it off or on (status), or use an org-credential connector that declares git hosts for git in sandboxes (useForGit; pushes are then the bot's). Its endpoint and credential are not edited here (credentials: connectors.set-org-credential); per-tool state and default policies stay on the connector's web page.",
+          "Edit a connector (org admins): rename it, set or clear its own description (description; null clears it), switch it off or on (status), or use an org-credential connector that declares git hosts for git in sandboxes (useForGit; pushes are then the bot's). Its endpoint and credential are not edited here (credentials: connectors.set-org-credential); per-tool state and default policies stay on the connector's web page.",
         input: UpdateInput,
         example: { connectorId: EXAMPLE_ID, name: "Docs (staging)" },
         authz: { orgAction: "connectors.manage" },
@@ -593,6 +594,13 @@ export class ConnectorsOperations implements OnModuleInit {
           if (i.status !== undefined) {
             zh.push(i.status === "active" ? "启用" : "停用");
             en.push(i.status === "active" ? "switch it on" : "switch it off");
+          }
+          if (i.description !== undefined) {
+            const text = i.description?.trim() ?? "";
+            zh.push(text === "" ? "清除说明" : `说明改为「${named(text)}」`);
+            en.push(
+              text === "" ? "clear its description" : `set its description to "${named(text)}"`,
+            );
           }
           if (i.useForGit !== undefined) {
             zh.push(i.useForGit ? "用于沙箱中的 git" : "不再用于沙箱中的 git");

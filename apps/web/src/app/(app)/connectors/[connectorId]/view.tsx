@@ -47,12 +47,13 @@ import { SetupGuideSection } from "../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import { displayNameOf } from "../../../../lib/catalog";
-import { componentDescription } from "../../../../lib/components";
 import {
   ackConnectorGuide,
+  CONNECTOR_DESCRIPTION_MAX,
   type ConnectorDetail,
   type ConnectorTool,
   canManageConnectors,
+  connectorDescriptionOf,
   deleteConnector,
   ownershipOf,
   refreshConnector,
@@ -61,6 +62,7 @@ import {
   setOrgCredential,
   type ToolDefinition,
   type ToolPolicy,
+  templateDescriptionOf,
   type UpdateConnectorInput,
   updateConnector,
 } from "../../../../lib/connectors";
@@ -375,11 +377,8 @@ function ConnectorFacts({ app }: { app: ConnectorDetail }) {
   const t = useTranslations("connectors");
   const locale = useLocale();
   const ownership = app.auth.type === "none" ? null : app.auth.ownership;
-  // its template's description, line breaks kept, over the facts (none for a custom connector)
-  const description = componentDescription(
-    { description: app.description ?? null, descriptionZh: app.descriptionZh ?? null },
-    locale,
-  );
+  // its own description, else its template's; line breaks kept, over the facts
+  const description = connectorDescriptionOf(app, locale);
   const facts = (
     <KeyValue
       keyWidth="10ch"
@@ -779,9 +778,13 @@ function SettingsTab({
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const locale = useLocale();
   const [name, setName] = useState(app.name);
+  const [description, setDescription] = useState(app.description ?? "");
   const [active, setActive] = useState(app.status === "active");
   const [pending, setPending] = useState(false);
+  // the template's description stands in while the connector has none of its own
+  const fallback = templateDescriptionOf(app, locale);
   const [confirm, setConfirm] = useState(false);
   // A delete invalidates the org's connectors (the list this page goes back to) and forgets the
   // connector once this page is left.
@@ -790,13 +793,22 @@ function SettingsTab({
     invalidates: () => [keys.org(orgId).connectors()],
     forgetsOnLeave: () => [keys.org(orgId).connector(app.id)],
   });
-  const dirty = name.trim() !== app.name || active !== (app.status === "active");
+  const descriptionDirty = description.trim() !== (app.description ?? "");
+  const dirty =
+    name.trim() !== app.name || active !== (app.status === "active") || descriptionDirty;
 
   async function save() {
     if (name.trim() === "") return;
     setPending(true);
     try {
-      await update({ name: name.trim(), status: active ? "active" : "disabled" });
+      await update({
+        name: name.trim(),
+        status: active ? "active" : "disabled",
+        // blank clears it: the pages then show the template's description again
+        ...(descriptionDirty && {
+          description: description.trim() === "" ? null : description.trim(),
+        }),
+      });
       toast.success(t("settings.saved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -815,6 +827,22 @@ function SettingsTab({
               maxLength={80}
               disabled={!manage}
               onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <Field
+            label={t("form.descriptionLabel")}
+            optional
+            help={fallback !== null ? t("settings.descriptionFallback") : t("form.descriptionHint")}
+            count={{ value: description.length, max: CONNECTOR_DESCRIPTION_MAX }}
+          >
+            <Textarea
+              name="connector-description"
+              rows={3}
+              maxLength={CONNECTOR_DESCRIPTION_MAX}
+              value={description}
+              disabled={!manage}
+              {...(fallback !== null ? { placeholder: fallback } : {})}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </Field>
           <Stack direction="row" gap={12} align="center">

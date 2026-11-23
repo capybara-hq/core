@@ -745,6 +745,8 @@ export interface ConnectorsTable {
    * re-enables exactly the connectors it disabled.
    */
   disabled_by_plugin_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0181: the connector's own description, set by an org admin (null: none). */
+  description: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**

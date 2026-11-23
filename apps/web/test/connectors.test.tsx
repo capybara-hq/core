@@ -312,15 +312,25 @@ describe("/connectors: a card per connector and per template of a plugin on in t
                 id: "c-gh",
                 name: "GitHub",
                 platformTemplateId: "t-gh",
-                description: "Issues and pull requests.",
-                descriptionZh: "议题与拉取请求。",
+                description: null,
+                templateDescription: "Issues and pull requests.",
+                templateDescriptionZh: "议题与拉取请求。",
               }),
               summary({
                 id: "c-jira",
                 name: "Jira",
                 platformTemplateId: "t-jira",
-                description: "Jira issues.",
-                descriptionZh: null,
+                templateDescription: "Jira issues.",
+                templateDescriptionZh: null,
+              }),
+              // its own description comes before its template's
+              summary({
+                id: "c-wiki",
+                name: "Wiki",
+                platformTemplateId: "t-wiki",
+                description: "Our wiki space.",
+                templateDescription: "Confluence pages.",
+                templateDescriptionZh: "Confluence 页面。",
               }),
               summary({ id: "c-own", name: "Own server" }),
             ],
@@ -362,6 +372,9 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       ).toBeNull();
       const jira = await cardOf("Jira", title);
       expect(within(jira).getByText("Jira issues.")).toBeTruthy();
+      const wiki = await cardOf("Wiki", title);
+      expect(within(wiki).getByText("Our wiki space.")).toBeTruthy();
+      expect(within(wiki).queryByText(zhOrEn("Confluence 页面。", "Confluence pages."))).toBeNull();
       // a custom connector has no description: its card's text is its name and facts only
       const own = await cardOf("Own server", title);
       expect(own.querySelector('[data-part="object-card-description"]')).toBeNull();
@@ -667,7 +680,10 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       stubApi({
         "GET /api/v1/orgs/o1/connectors/app1": () =>
           json(200, {
-            connector: detail({ description: "Fixture tools.", descriptionZh: "测试工具。" }),
+            connector: detail({
+              templateDescription: "Fixture tools.",
+              templateDescriptionZh: "测试工具。",
+            }),
           }),
       });
       await renderDetail({ locale });
@@ -1558,6 +1574,51 @@ describe("connector mutations update the cache", () => {
     ]);
     expect(listState(client)).toBe(true);
   });
+
+  it.each(LOCALES)(
+    "设置: the own description saves, the template's in the page language stands in as its placeholder; blank clears it (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/connectors/app1": () =>
+          json(200, {
+            connector: detail({
+              description: null,
+              templateDescription: "Fixture tools.",
+              templateDescriptionZh: "测试工具。",
+            }),
+          }),
+        "PATCH /api/v1/orgs/o1/connectors/app1": (c) =>
+          json(200, { connector: detail(bodyOf(c) as Record<string, unknown>) }),
+      });
+      await renderDetail({ locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("tab", { name: m.connectors.detail.tabs.settings }));
+      const field = screen.getByRole("textbox", {
+        name: new RegExp(`^${m.connectors.form.descriptionLabel}`),
+      });
+      expect(field.getAttribute("placeholder")).toBe(
+        locale === "zh" ? "测试工具。" : "Fixture tools.",
+      );
+      expect(screen.getByText(m.connectors.settings.descriptionFallback)).toBeTruthy();
+      await user.type(field, "  Our fixture  ");
+      await user.click(screen.getByRole("button", { name: m.connectors.settings.save }));
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toMatchObject({
+          description: "Our fixture",
+        }),
+      );
+      // the answer has the own description: clearing it sends null
+      expect(await screen.findByText(m.connectors.settings.saved)).toBeTruthy();
+      await user.clear(field);
+      await user.click(screen.getByRole("button", { name: m.connectors.settings.save }));
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toMatchObject({
+          description: null,
+        }),
+      );
+    },
+  );
 
   it("Git 推送: an org admin picks the default; the answer replaces the cached connector", async () => {
     const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
