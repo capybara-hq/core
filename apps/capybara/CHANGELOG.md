@@ -1,5 +1,28 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.101
+
+### Patch Changes
+
+- b0b933c: Connector templates and the connectors made from them show the template's own icon (for example
+  Gmail, Drive and Calendar of one Google plugin) instead of their plugin's icon; a template without
+  an icon of its own still shows its plugin's. The plugin install wizard lists the connector
+  templates with their icons. A connector's icon is served on its own route, so guests, who see the
+  connector pages but not the catalog, can load it too. New routes:
+  `GET /api/v1/orgs/:orgId/connector-templates/:templateId/icon`,
+  `GET /api/v1/admin/catalog/connector-templates/:templateId/icon` and
+  `GET /api/v1/orgs/:orgId/connectors/:connectorId/icon`.
+- 019b6ed: Marketplace labels: the official marketplace is named "Capybara" (it was "Official marketplace" /
+  "官方市场"), and a marketplace managed by the deployment config (an extra bootstrap manifest)
+  shows the `owner.name` of its marketplace.json once a refresh has read it, instead of its config
+  key. The config key stays the row's name, its id (`config:<name>`) and its token's env name.
+- 4c1002a: `SANDBOX_RUNTIME_SOURCE.files` is now the Linux launcher with exact file read roots (the
+  `current` of core#742; `current` and `files` are the same again), and `accepted` keeps the earlier
+  launcher's digest for one revision so device containers made from an earlier device-docker image
+  stay available until they are recreated. The image pins device-docker rc.25 (its image stages the
+  new launcher and checks staged files against `accepted`) and device-local rc.7, at plugins commit
+  03a53c8.
+
 ## 0.1.0-rc.100
 
 ### Patch Changes
