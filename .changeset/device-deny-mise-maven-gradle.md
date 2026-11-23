@@ -5,8 +5,9 @@
 
 `DEVICE_DENIED_SECRET_PATHS` denies mise's whole config directory `~/.config/mise` (config files
 with `[env]` sections, the sops age key) and the config files mise loads from the home
-(`~/.config/mise.toml`, `~/.mise.toml`, `~/.mise.local.toml`, `~/.mise`, `~/mise.toml`,
-`~/mise.local.toml`, `~/mise/config.toml`, `~/mise/conf.d`; globbed names such as
+(`~/.config/mise.toml`, `~/.config/mise.local.toml`, `~/.mise.toml`, `~/.mise.local.toml`,
+`~/.mise`, `~/mise.toml`, `~/mise.local.toml`, `~/mise/config.toml`, `~/mise/config.local.toml`,
+`~/mise/conf.d`, the legacy `~/.rtx.toml` and `~/.rtx.local.toml`; globbed names such as
 `~/mise.<env>.toml` cannot be listed and stay readable), and the Maven and Gradle credential files
 (`~/.m2/settings.xml`, `~/.m2/settings-security.xml`, `~/.m2/settings-security4.xml`,
 `~/.gradle/gradle.properties`, `~/.gradle/develocity/keys.properties`,

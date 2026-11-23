@@ -54,13 +54,18 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   // spellings such as ~/mise.<env>.toml cannot be listed here and stay readable.
   "~/.config/mise",
   "~/.config/mise.toml",
+  "~/.config/mise.local.toml",
   "~/.mise.toml",
   "~/.mise.local.toml",
   "~/.mise",
   "~/mise.toml",
   "~/mise.local.toml",
   "~/mise/config.toml",
+  "~/mise/config.local.toml",
   "~/mise/conf.d",
+  // mise's legacy (rtx) names
+  "~/.rtx.toml",
+  "~/.rtx.local.toml",
   // Maven server passwords (and their master keys), Gradle repository credentials and Develocity
   // (Gradle Enterprise) access keys
   "~/.m2/settings.xml",

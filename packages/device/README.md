@@ -154,7 +154,8 @@ only), the system and developer tool directories (on macOS `/System`, `/usr`, `/
 installed JDKs) and the data of the version managers your home uses, read only. The deny list is
 never readable, whatever the reach: secret paths (`~/.ssh`, cloud CLI credentials, `~/.netrc`,
 `~/.gnupg`, browser profiles, other tool credential stores, mise's `~/.config/mise` and the config
-files it loads from the home (`~/.mise.toml`, `~/mise.toml`, `~/.mise/`, `~/mise/config.toml`, ...;
+files it loads from the home (`~/.mise.toml`, `~/mise.toml`, `~/.mise/`, `~/mise/config.toml`, their
+`.local` variants, the legacy `~/.rtx.toml`, ...;
 globbed names such as `~/mise.<env>.toml` cannot be listed and stay readable), Maven's
 `~/.m2/settings.xml` and `settings-security*.xml`, Gradle's `~/.gradle/gradle.properties` and
 Develocity `keys.properties`, and shell histories:
@@ -184,7 +185,9 @@ Landlock does not hide `stat`, so the build sees the files exist but cannot open
 absent. Repository credentials reach a build only through an escalated call. Gradle init scripts
 and a `GRADLE_USER_HOME` moved elsewhere are not covered. A bind mount or second
 mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
-4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. macOS
+4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. Every
+granted root is held open by the operation agent, so its open-file limit (often a soft limit of
+1024) can refuse an operation before that cap, also with many listed project paths. macOS
 Seatbelt denies the paths directly and has none of these.
 
 Commands get a minimal environment (`PATH`, `LANG`,

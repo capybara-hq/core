@@ -245,9 +245,10 @@ class TooManyRoots(Refused):
         super().__init__(
             "SCOPE_DENIED",
             "The granted roots need more open files than the process or system open-file limit "
-            "allows "
-            "(machine reach carves the deny list into one root per directory beside it); limit "
-            "project reach to listed paths with capybara-device ceiling set --project-reach paths")
+            "allows (each root holds one: many listed project paths, or machine reach carving the "
+            "deny list into one root per directory beside it); grant fewer roots: list fewer "
+            "project paths, or limit machine reach to listed paths with "
+            "capybara-device ceiling set --project-reach paths")
 
 
 def pin(path):
