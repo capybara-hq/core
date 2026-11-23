@@ -1047,7 +1047,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/admin/plugins/sources: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/plugins/sources", ROUTES);
-    expect(screen.getByText("Official marketplace")).toBeTruthy();
+    expect(screen.getByText("Capybara")).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
