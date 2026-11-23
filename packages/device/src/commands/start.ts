@@ -5,7 +5,7 @@ import { CommandLog } from "../command-log.js";
 import { DEVICE_ID_PATTERN } from "../connections.js";
 import type { LiveStatus } from "../control/protocol.js";
 import { startControlServer } from "../control/server.js";
-import { type ExecutableCheck, hostPythonProblem } from "../host-python.js";
+import { type HostProbes, hostPythonProblem } from "../host-python.js";
 import { KeepAwake } from "../keep-awake.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
@@ -44,7 +44,7 @@ export interface StartDeps {
   createStaged?: (cred: Credential, policy: PolicyStore) => Promise<StagedDevice> | StagedDevice;
   connectStaged?: typeof connectStaged;
   /** Whether a path is an executable file (default: the file system); for the docker-mode check. */
-  isExecutable?: ExecutableCheck;
+  hostProbes?: HostProbes;
   /** Test seams for keep-awake: the holder's spawn, the wake detector and the check period. */
   keepAwakeSpawn?: typeof spawn;
   wake?: WakeDetector;
@@ -84,9 +84,12 @@ export async function start(deps: StartDeps): Promise<number> {
     return 1;
   }
   if (cred.mode === "docker") {
-    const problem = hostPythonProblem(process.platform, deps.isExecutable);
+    const problem = hostPythonProblem(deps.service?.platform ?? process.platform, deps.hostProbes);
     if (problem !== undefined) {
-      err(`Cannot start: ${problem}`);
+      err(
+        `Cannot start: ${problem} A login service of this device keeps failing to start until ` +
+          "that is installed.",
+      );
       return 1;
     }
   }

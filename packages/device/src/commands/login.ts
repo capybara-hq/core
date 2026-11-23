@@ -15,12 +15,13 @@ import {
   DEVICE_ID_PATTERN,
   ensureMachineFile,
   listConnections,
+  unreadableConnections,
 } from "../connections.js";
 import { withCanonicalForms, within } from "../exec/operation-types.js";
 import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
-import { type ExecutableCheck, hostPythonProblem } from "../host-python.js";
+import { type HostProbes, hostPythonProblem } from "../host-python.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
@@ -151,7 +152,7 @@ export interface LoginDeps {
   /** Whether the OS sandbox can run here (default: the runtime's check); injectable for tests. */
   sandboxAvailable?: SandboxCheck;
   /** Whether a path is an executable file (default: the file system); for the docker-mode check. */
-  isExecutable?: ExecutableCheck;
+  hostProbes?: HostProbes;
 }
 
 const SLOW_DOWN_STEP_SECONDS = 5;
@@ -349,8 +350,14 @@ export async function login(
     );
   }
   // Docker mode needs the host's python3: refused before anything is requested or stored.
-  if (cmd.mode === "docker") {
-    const problem = hostPythonProblem(platform, deps.isExecutable);
+  // (only when this machine has no connection yet: then the device is certainly a new one; with
+  // others, an existing device keeps its mode and --mode is ignored, so it is checked below)
+  if (
+    cmd.mode === "docker" &&
+    listConnections(deps.machineDir).length === 0 &&
+    unreadableConnections(deps.machineDir).length === 0
+  ) {
+    const problem = hostPythonProblem(platform, deps.hostProbes);
     if (problem !== undefined)
       return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
   }
@@ -465,6 +472,17 @@ export async function login(
             );
           }
         }
+        if (served === undefined && mode === "docker") {
+          const problem = hostPythonProblem(platform, deps.hostProbes);
+          if (problem !== undefined) {
+            try {
+              rmdirSync(connDir);
+            } catch {
+              // not empty or already gone
+            }
+            return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
+          }
+        }
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
         // A new connection gets the default written before the credential makes the login final
@@ -483,6 +501,12 @@ export async function login(
         } catch (e) {
           err(`Cannot read the local policy in ${connDir}: ${(e as Error).message}`);
         }
+        // an existing docker device keeps its mode: the requirement applies to it, but the new
+        // credential is still written (start refuses until the host has python3)
+        const hostPython =
+          served !== undefined && mode === "docker"
+            ? hostPythonProblem(platform, deps.hostProbes)
+            : undefined;
         /** Why sandboxed work cannot run here: the OS sandbox is missing (OS mode only). */
         let noSandbox: string | undefined;
         if (mode !== "docker") {
@@ -537,6 +561,10 @@ export async function login(
         out(networkLoginLine(ceiling.network, deviceId));
         out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths, deviceId));
         if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox, deviceId));
+        if (hostPython !== undefined)
+          out(
+            `Warning: ${hostPython} Until then capybara-device start refuses to run this device.`,
+          );
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(

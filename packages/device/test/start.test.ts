@@ -85,7 +85,7 @@ describe("start: docker mode needs the host python3", () => {
       out: () => {},
       err: (l) => err.push(l),
       proc: Object.assign(new EventEmitter(), { pid: 4260 }) as never,
-      isExecutable,
+      hostProbes: { isExecutable, commandLineTools: isExecutable },
       createStaged: () => {
         created.push("staged");
         return stagedParts();
@@ -100,6 +100,7 @@ describe("start: docker mode needs the host python3", () => {
     expect(r.code).toBe(1);
     expect(r.err.join("\n")).toContain("/usr/bin/python3");
     expect(r.err.join("\n")).toContain("install");
+    expect(r.err.join("\n")).toContain("keeps failing");
     expect(r.created).toEqual([]);
     expect(existsSync(pidPath(dir))).toBe(false);
   });

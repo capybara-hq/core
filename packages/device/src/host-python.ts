@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 
 /** The interpreter the trusted helpers run with, by absolute path (never looked up on PATH). */
@@ -16,6 +17,25 @@ export const isExecutableFile: ExecutableCheck = (path) => {
   }
 };
 
+/** Whether the macOS command line tools are installed (`xcode-select -p`, never the python shim). */
+export type CommandLineToolsCheck = () => boolean;
+
+export const commandLineToolsInstalled: CommandLineToolsCheck = () => {
+  try {
+    return (
+      spawnSync("/usr/bin/xcode-select", ["-p"], { timeout: 5000, stdio: "ignore" }).status === 0
+    );
+  } catch {
+    return false;
+  }
+};
+
+/** The host probes of the docker-mode check; both injectable for tests. */
+export interface HostProbes {
+  isExecutable?: ExecutableCheck;
+  commandLineTools?: CommandLineToolsCheck;
+}
+
 /**
  * Why a docker-mode device cannot run on this host, or undefined when it can. Docker mode runs the
  * operations in a container, but the program still verifies and stages its runtime on the host with
@@ -23,16 +43,23 @@ export const isExecutableFile: ExecutableCheck = (path) => {
  */
 export function hostPythonProblem(
   platform: NodeJS.Platform,
-  check: ExecutableCheck = isExecutableFile,
+  probes: HostProbes = {},
 ): string | undefined {
-  if (check(HOST_PYTHON)) return undefined;
+  const present = (probes.isExecutable ?? isExecutableFile)(HOST_PYTHON);
+  // on macOS /usr/bin/python3 is always an executable shim: it only works with the command line
+  // tools, and running it without them may open an install dialog, so ask xcode-select instead
+  if (
+    present &&
+    (platform !== "darwin" || (probes.commandLineTools ?? commandLineToolsInstalled)())
+  )
+    return undefined;
   const install =
     platform === "darwin"
       ? "Install the Xcode command line tools: xcode-select --install"
       : "Install it with your package manager, e.g. sudo apt install python3 (Debian, Ubuntu) or " +
         "sudo dnf install python3 (Fedora, RHEL)";
   return (
-    `Docker mode needs ${HOST_PYTHON} on this machine, and it is missing or not executable. ` +
+    `Docker mode needs ${HOST_PYTHON} on this machine, and it is missing or not usable. ` +
     "The program runs its trusted helpers with it on the host (it verifies and stages the runtime " +
     "that serves the device container), even though the work itself runs in the container. " +
     `${install}, then try again.`
