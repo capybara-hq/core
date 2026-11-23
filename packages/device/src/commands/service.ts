@@ -150,8 +150,17 @@ function where(deps: ServiceDeps): ServiceWhere {
   };
 }
 
-const NOT_INSTALLED =
-  "capybara-device service is not installed. Install it: capybara-device service install";
+/**
+ * A follow-up command in a message: it always names the connection (`-c <device id>`), because a
+ * machine with a second connection refuses a command without one, and a hint must be copyable.
+ */
+function notInstalled(deps: ServiceDeps): string {
+  return `capybara-device service is not installed. Install it: ${serviceHint(deps.deviceId, "install")}`;
+}
+
+export function serviceHint(deviceId: string, action: ServiceAction): string {
+  return `capybara-device service ${action} -c ${deviceId}`;
+}
 
 /**
  * One status report, in four shapes: not installed; installed but not loaded; loaded but the
@@ -162,13 +171,13 @@ const NOT_INSTALLED =
 function reportStatus(deps: ServiceDeps, run: RunSystem): number {
   const at = where(deps);
   if (!hasLoginService(at.home, at.platform, at.deviceId)) {
-    deps.out(NOT_INSTALLED);
+    deps.out(notInstalled(deps));
     return 1;
   }
   const state = managerState(at, run);
   if (!state.loaded) {
     deps.out(
-      "capybara-device service is installed but not loaded. Start it: capybara-device service start",
+      `capybara-device service is installed but not loaded. Start it: ${serviceHint(deps.deviceId, "start")}`,
     );
     return 1;
   }
@@ -176,7 +185,7 @@ function reportStatus(deps: ServiceDeps, run: RunSystem): number {
     deps.out(
       "capybara-device service is loaded, but the program is not running: it exited. The reason " +
         `is at the end of ${join(deps.stateDir, "service.log")}; once it is fixed: ` +
-        "capybara-device service restart",
+        serviceHint(deps.deviceId, "restart"),
     );
     return 1;
   }
@@ -188,7 +197,7 @@ function reportStatus(deps: ServiceDeps, run: RunSystem): number {
   const bin = serviceBinPath(at);
   const installed = bin === undefined ? undefined : packageVersionAt(bin);
   if (installed !== undefined && version !== installed) {
-    deps.out(`installed ${installed} — restart it: capybara-device service restart`);
+    deps.out(`installed ${installed} — restart it: ${serviceHint(deps.deviceId, "restart")}`);
   }
   return 0;
 }
@@ -314,7 +323,7 @@ async function launchd(
   if (action === "status") return reportStatus(deps, run);
   if (action === "start" || action === "restart") {
     if (!installed()) {
-      deps.err(NOT_INSTALLED);
+      deps.err(notInstalled(deps));
       return 1;
     }
     const state = managerState(where(deps), run);
@@ -343,7 +352,7 @@ async function launchd(
   }
   if (action === "stop") {
     if (!installed()) {
-      deps.err(NOT_INSTALLED);
+      deps.err(notInstalled(deps));
       return 1;
     }
     if (!loaded()) {
@@ -359,7 +368,7 @@ async function launchd(
       return 1;
     }
     deps.out(
-      "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
+      `Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: ${serviceHint(deps.deviceId, "start")}`,
     );
     return 0;
   }
@@ -414,7 +423,7 @@ async function systemd(
   if (action === "status") return reportStatus(deps, run);
   if (action === "start" || action === "stop" || action === "restart") {
     if (!installed()) {
-      deps.err(NOT_INSTALLED);
+      deps.err(notInstalled(deps));
       return 1;
     }
     const state = managerState(where(deps), run);
@@ -436,7 +445,7 @@ async function systemd(
         return 1;
       }
       deps.out(
-        "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
+        `Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: ${serviceHint(deps.deviceId, "start")}`,
       );
       return 0;
     }

@@ -47,7 +47,8 @@ export function stop(
     const program = readRunning(stateDir, checks);
     if (state.loaded && program !== undefined && state.pid === program.pid) {
       err(
-        "capybara-device runs as a login service on this machine. Stop it with: capybara-device service stop",
+        "capybara-device runs as a login service on this machine. Stop it with: " +
+          `capybara-device service stop -c ${deviceId}`,
       );
       return 1;
     }
