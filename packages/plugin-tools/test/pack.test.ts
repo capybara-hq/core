@@ -499,7 +499,6 @@ describe("packPlugin: config schemas (extension config forms spec §4.5)", () =>
     const config = mod.default.config ?? {};
     expect(manifest.extension?.configSchemas).toEqual({
       deployment: configJsonSchema(config.deployment as never),
-      org: configJsonSchema(config.org as never),
     });
     const props = manifest.extension?.configSchemas?.deployment?.properties;
     const endpoints = (props as Record<string, Record<string, unknown>> | undefined)?.endpoints;
@@ -507,14 +506,14 @@ describe("packPlugin: config schemas (extension config forms spec §4.5)", () =>
     expect(a.manifest.extension?.configSchemas).toEqual(manifest.extension?.configSchemas);
   }, 60_000);
 
-  it("packs an org override field with x-org, leaving the static config fields unchanged", async () => {
-    const r = await packPlugin(fixture("org-override-pack"), out);
+  it("packs a platform-only field with x-platform-only, leaving the static config fields unchanged", async () => {
+    const r = await packPlugin(fixture("platform-only-pack"), out);
     const manifest = manifestOf(await readTgz(r.file));
     const props = manifest.extension?.configSchemas?.deployment?.properties as
       | Record<string, Record<string, unknown>>
       | undefined;
-    expect(props?.region?.["x-org"]).toBe("override");
-    expect(props?.region).not.toHaveProperty("org");
+    expect(props?.region?.["x-platform-only"]).toBe(true);
+    expect(props?.region).not.toHaveProperty("platformOnly");
     expect(manifest.extension?.manifest?.config?.deployment).toEqual([
       { path: "region", secret: false, hot: false },
     ]);
@@ -536,7 +535,7 @@ describe("packPlugin: config schemas (extension config forms spec §4.5)", () =>
     );
   }, 60_000);
 
-  it("refuses a packed plugin.json over manifestChars though each config schema is under its cap", async () => {
+  it("refuses a packed plugin.json over manifestChars though the config schema is under its cap", async () => {
     await expect(packPlugin(fixture("manifest-too-large"), out)).rejects.toThrow(
       /packed \.capybara-plugin\/plugin\.json is \d+ characters, over the 262144 limit/,
     );

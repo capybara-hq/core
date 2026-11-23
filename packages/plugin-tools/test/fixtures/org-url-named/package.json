@@ -1,5 +1,5 @@
 {
-  "name": "@capybara-hq/plugin-fixture-org-override-unbound",
+  "name": "@capybara-hq/plugin-fixture-org-url-named",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",

@@ -18,7 +18,6 @@ export default defineExtension({
         options: [{ value: "a", label }],
       }),
     }),
-    org: z.object({ fine: ui(z.string().optional(), { label }) }),
   },
   setup() {},
 });

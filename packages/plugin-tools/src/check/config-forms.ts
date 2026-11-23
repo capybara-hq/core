@@ -23,9 +23,9 @@ function readPackageJson(file: string): Record<string, unknown> | undefined {
 
 /**
  * Config forms (extension config forms spec §10): every plugin with an extension (`src/index.ts`)
- * is bundled and imported the way the packer does, and its deployment and org config schemas are
- * turned into the form JSON Schemas the package carries.
- * - `plugin-config-ui`: a problem of their hints (`validateConfigUi` at the level, and value hints
+ * is bundled and imported the way the packer does, and its deployment config schema is turned into
+ * the form JSON Schema the package carries.
+ * - `plugin-config-ui`: a problem of its hints (`validateConfigUi`, and value hints
  *   on secrets, which the JSON Schema drops silently); the packer refuses these too.
  * - `plugin-config-labels`: a published plugin (not `"private": true`) whose rendered field has no
  *   label in both zh and en (secret records drawn per item by `x-ui.secrets` are skipped).
@@ -55,17 +55,14 @@ export async function checkConfigForms(pluginDirs: string[]): Promise<Finding[]>
     const pkg = readPackageJson(join(dir, "package.json"));
     // a missing or malformed package.json is "Plugin pack"'s finding
     if (pkg === undefined || pkg.private === true) continue;
-    for (const level of ["deployment", "org"] as const) {
-      const schema = schemas[level];
-      if (schema === undefined) continue;
-      for (const p of missingConfigLabels(schema)) {
-        findings.push({
-          file,
-          line: 1,
-          rule: "plugin-config-labels",
-          message: `${level} config: ${p.path} ${p.message}: a published plugin labels every field it shows (ui(schema, { label: { zh, en } }))`,
-        });
-      }
+    if (schemas.deployment === undefined) continue;
+    for (const p of missingConfigLabels(schemas.deployment)) {
+      findings.push({
+        file,
+        line: 1,
+        rule: "plugin-config-labels",
+        message: `deployment config: ${p.path} ${p.message}: a published plugin labels every field it shows (ui(schema, { label: { zh, en } }))`,
+      });
     }
   }
   return findings;
