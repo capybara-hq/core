@@ -19,7 +19,6 @@ import { canonicalJson } from "../extensions/config-hash.js";
 import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { deepFreeze } from "../extensions/hooks.js";
-import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { PluginGuides } from "../extensions/plugin-guides.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -235,7 +234,6 @@ export class SetupChecksService {
     @Inject(SetupCheckRegistry) private readonly registry: SetupCheckRegistry,
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "current">,
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
-    @Inject(OrgExtensionConfigs) private readonly orgConfigs: Pick<OrgExtensionConfigs, "get">,
     @Inject(ChannelConnections)
     private readonly channels: Pick<
       ChannelConnections,
@@ -556,7 +554,17 @@ export class SetupChecksService {
     if (!(await isExtensionEnabled(this.db.db, orgId, plugin))) {
       return { state: unknownState(REASONS.disabled(plugin)) };
     }
-    const eff = await this.effective.get(orgId, plugin);
+    let eff: Awaited<ReturnType<EffectiveConfigs["get"]>>;
+    try {
+      eff = await this.effective.get(orgId, plugin);
+    } catch (err) {
+      // fail closed: nothing runs and nothing is cached; the error is logged, never echoed
+      this.log.warn("setup checks: cannot read the effective config", {
+        plugin,
+        err: describeCheckError(err, (s) => s),
+      });
+      return { state: unknownState(REASONS.unavailable) };
+    }
     if (!eff.ok) {
       return {
         state: unknownState(
@@ -715,11 +723,7 @@ export class SetupChecksService {
   ): Promise<SetupCheckResult> {
     const material = await this.material(p, check);
     if ("result" in material) return material.result;
-    const secrets = [
-      ...material.secrets,
-      ...this.configSecrets(p.plugin, config),
-      ...(p.orgId === null ? [] : await this.orgConfigSecrets(p.orgId, p.plugin)),
-    ];
+    const secrets = [...material.secrets, ...this.configSecrets(p.plugin, config)];
     const redact = checkRedactor(secrets);
     const fields = { plugin: p.plugin, checkId: check.id, orgId: p.orgId };
     const timeout = AbortSignal.timeout(this.timeoutMs);
@@ -860,19 +864,6 @@ export class SetupChecksService {
       ...secretValues(schema, inst.config),
       ...(effective === undefined ? [] : secretValues(schema, effective)),
     ];
-  }
-
-  /**
-   * The secret values of the extension's org-level config (`config.org`) in the org: the check
-   * never gets them, but the extension holds them, so a result is redacted by them too. Nothing
-   * when the plugin has no org config; a read that fails throws (the check is not run: a result
-   * is never redacted by fewer secrets than the extension holds).
-   */
-  private async orgConfigSecrets(orgId: string, plugin: string): Promise<string[]> {
-    const schema = this.extensions.current(plugin)?.manifest.config?.org;
-    if (!schema) return [];
-    const c = await this.orgConfigs.get(orgId, plugin);
-    return c?.config == null ? [] : secretValues(schema, c.config);
   }
 
   /** The frozen arguments of a plugin check (the target built field by field). */

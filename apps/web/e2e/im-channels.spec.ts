@@ -63,21 +63,24 @@ test("IM binding: enable fake channel → create connection → sign in and conf
   await signIn(page);
 
   // 1. The org's 扩展 page: fake-im is pending configuration (its switch is read-only); its row opens
-  //    a Sheet with the org config form, and 保存并启用 saves the directory URL and switches it on
+  //    a Sheet with the overridable fields; saving them gives the org its own directory URL; the
+  //    Sheet is closed (it covers the list) and the row's switch is turned on
   await page.goto("/extensions");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   const row = page.getByRole("row").filter({ hasText: "fake-im" });
   await row.click();
   const sheet = page.getByRole("dialog", { name: "fake-im", exact: true });
-  await sheet.getByRole("textbox", { name: /^url/ }).fill(im.book("acme").url);
-  await sheet
-    .getByRole("button", { name: zh.extensions.saveAndEnableLabel.replace("{plugin}", "fake-im") })
-    .click();
+  await sheet.getByRole("textbox", { name: /^directoryUrl/ }).fill(im.book("acme").url);
+  await sheet.getByRole("button", { name: zh.extensions.overrides.saveLabel }).click();
+  await expect(sheet.getByText(zh.extensions.overrides.ownConfig)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
   const enable = row.getByRole("switch", {
     name: zh.extensions.enableLabel.replace("{plugin}", "fake-im"),
   });
+  await expect(enable).toBeEnabled();
+  await enable.click();
   await expect(enable).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Escape");
 
   // 2. 新建一个 agent（model-fake）
   await newAgent(page, "IM agent");

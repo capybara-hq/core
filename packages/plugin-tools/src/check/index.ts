@@ -8,10 +8,10 @@ export {
   migrationFileMatcher,
 } from "./applied-migrations.js";
 export { CHECK_USAGE, checkCommand } from "./cli.js";
+export { checkConfigClassification } from "./config-classification.js";
 export { checkConfigForms } from "./config-forms.js";
 export { checkDeps } from "./deps.js";
 export { checkMigrations, checkSql } from "./migrations.js";
-export { checkOrgOverride } from "./org-override.js";
 export { checkPluginPack, PLUGIN_PACK_MAX_BYTES } from "./plugin-pack.js";
 export { checkPluginPermissions } from "./plugin-permissions.js";
 export { checkPluginState } from "./plugin-state.js";

@@ -3,7 +3,6 @@ import {
   defineExtension,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
   ModelError,
-  orgAccess,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createFakeProvider } from "./script.js";
@@ -16,77 +15,74 @@ const label = (zh: string, en: string): { ui: ConfigUiHints } => ({ ui: { label:
 
 /** Deployment config: the available models (default: one, fake-1). */
 const DeploymentConfig = z.object({
-  models: orgAccess(
-    z
-      .array(
-        z.object({
-          id: z.string().min(1).meta(label("模型 ID", "Model ID")),
-          contextWindow: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .meta(label("上下文窗口", "Context window")),
-          streamIdleTimeoutMs: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .meta(label("流空闲超时（毫秒）", "Stream idle timeout (ms)")),
-          /** Declares image / document input support (default false). */
-          vision: z.boolean().optional().meta(label("图片输入", "Image input")),
-          documents: z.boolean().optional().meta(label("文档输入", "Document input")),
-          kind: z
-            .enum([
-              "chat",
-              "embedding",
-              "rerank",
-              "image_generation",
-              "video_generation",
-              "speech_to_text",
-              "text_to_speech",
-            ])
-            .optional()
-            .meta(label("类型", "Kind")),
-          publisher: z.string().optional().meta(label("发布者", "Publisher")),
-          dimensions: z
-            .array(z.number().int().positive())
-            .optional()
-            .meta(label("向量维度", "Embedding dimensions")),
-          maxBatch: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .meta(label("单次最大输入数", "Max inputs per call")),
-          maxImages: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .meta(label("单次最大出图数", "Max images per call")),
-          maxReferenceImages: z
-            .number()
-            .int()
-            .min(0)
-            .optional()
-            .meta(label("最大参考图数", "Max reference images")),
-          imageSizes: z
-            .array(
-              z.object({
-                width: z.number().int().positive().meta(label("宽（像素）", "Width (px)")),
-                height: z.number().int().positive().meta(label("高（像素）", "Height (px)")),
-              }),
-            )
-            .min(1)
-            .optional()
-            .meta(label("出图尺寸", "Image sizes")),
-        }),
-      )
-      .optional()
-      .meta(label("模型", "Models")),
-    "override",
-  ),
+  models: z
+    .array(
+      z.object({
+        id: z.string().min(1).meta(label("模型 ID", "Model ID")),
+        contextWindow: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .meta(label("上下文窗口", "Context window")),
+        streamIdleTimeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .meta(label("流空闲超时（毫秒）", "Stream idle timeout (ms)")),
+        /** Declares image / document input support (default false). */
+        vision: z.boolean().optional().meta(label("图片输入", "Image input")),
+        documents: z.boolean().optional().meta(label("文档输入", "Document input")),
+        kind: z
+          .enum([
+            "chat",
+            "embedding",
+            "rerank",
+            "image_generation",
+            "video_generation",
+            "speech_to_text",
+            "text_to_speech",
+          ])
+          .optional()
+          .meta(label("类型", "Kind")),
+        publisher: z.string().optional().meta(label("发布者", "Publisher")),
+        dimensions: z
+          .array(z.number().int().positive())
+          .optional()
+          .meta(label("向量维度", "Embedding dimensions")),
+        maxBatch: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .meta(label("单次最大输入数", "Max inputs per call")),
+        maxImages: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .meta(label("单次最大出图数", "Max images per call")),
+        maxReferenceImages: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .meta(label("最大参考图数", "Max reference images")),
+        imageSizes: z
+          .array(
+            z.object({
+              width: z.number().int().positive().meta(label("宽（像素）", "Width (px)")),
+              height: z.number().int().positive().meta(label("高（像素）", "Height (px)")),
+            }),
+          )
+          .min(1)
+          .optional()
+          .meta(label("出图尺寸", "Image sizes")),
+      }),
+    )
+    .optional()
+    .meta(label("模型", "Models")),
 });
 
 /**

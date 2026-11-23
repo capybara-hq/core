@@ -1,7 +1,6 @@
 import {
   type Directory,
   defineExtension,
-  orgAccess,
   secret,
   type WebFetchProvider,
   type WebSearchProvider,
@@ -55,8 +54,8 @@ export default defineExtension({
   },
   config: {
     deployment: z.object({
-      baseUrl: orgAccess(z.string(), "override"),
-      apiKey: orgAccess(secret(z.string()), "override"),
+      baseUrl: z.string(),
+      apiKey: secret(z.string()),
     }),
   },
   setup(ctx) {
@@ -74,7 +73,7 @@ export default defineExtension({
       },
     );
     const search: WebSearchProvider = {
-      configured(_orgConfig, config) {
+      configured(config) {
         // the copy's value reaches configured() too; "off" switches the provider off in the org
         return (config as { baseUrl?: string } | undefined)?.baseUrl !== "off";
       },

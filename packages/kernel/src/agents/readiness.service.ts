@@ -16,8 +16,8 @@ import { AgentsService } from "./agents.service.js";
 /**
  * A model provider an org admin can make usable on `/settings/models`, and what it waits for:
  * `not_enabled`, the org has not switched it on (it may also need the org's config then);
- * `needs_config`, it is on but waits for the org's own config (an org-level field, or an
- * overridable platform field the platform left empty).
+ * `needs_config`, it is on but waits for the org's own copy of an overridable deployment field
+ * the platform left empty.
  */
 export interface OrgFixableProvider {
   provider: string;
@@ -66,15 +66,15 @@ const MODEL_PROVIDER = parseExtensionPoint(MODEL_PROVIDER_EXTENSION_POINT_V2).na
 const isModelProvider = (v: OrgExtensionView) =>
   providesOf(v).some((ref) => parseExtensionPoint(ref).name === MODEL_PROVIDER);
 
-/** The org can fill the config the extension waits for: an org-level or an overridable field. */
-const orgCanConfigure = (v: OrgExtensionView) => v.configurable || v.overrideState !== "none";
+/** The org can fill the config the extension waits for: it has an overridable field. */
+const orgCanConfigure = (v: OrgExtensionView) => v.configurable;
 
 /**
  * What the org admin must do to make `v` usable here, or null when they cannot (or need not). The
  * view comes from the org's extension list, which shows an extension only when it is offered to
  * the org (`offeredToOrg`): not named to other orgs only, not disabled while off.
  */
-function fixOf(v: OrgExtensionView): OrgFixableProvider["reason"] | null {
+export function fixOf(v: OrgExtensionView): OrgFixableProvider["reason"] | null {
   if (!v.available) return null;
   if (!v.enabled)
     return v.switchable && (!v.needsConfig || orgCanConfigure(v)) ? "not_enabled" : null;

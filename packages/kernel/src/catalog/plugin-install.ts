@@ -111,8 +111,6 @@ export interface ConnectorInstallInput {
  */
 export interface PluginInstallInput {
   connectors?: Record<string /* templateId */, ConnectorInstallInput>;
-  /** The org config of the plugin's extension (used only when this install enables it). */
-  extensionConfig?: Record<string, unknown>;
 }
 
 /**
@@ -286,7 +284,6 @@ export interface InstallPlan {
   sourceFormat: SourceFormat;
   /** The plugin's own extension, to enable in the org. */
   extension: string | null;
-  extensionConfig: Record<string, unknown> | undefined;
   templates: { id: string; file: ConnectorTemplateFile }[];
   /** The connector inputs built from the templates (empty for a preflight without input). */
   connectors: Map<string, CreateConnectorInput>;
@@ -807,7 +804,7 @@ export class PluginInstaller {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
       }
     } else {
-      this.checkInput(manifest, allTemplates, input, at);
+      this.checkInput(allTemplates, input, at);
       for (const ct of templates) {
         // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
         if (actor === null) throw systemNeedsInput(manifest.name);
@@ -854,7 +851,6 @@ export class PluginInstaller {
       row: v,
       sourceFormat: v.source_format,
       extension,
-      extensionConfig: input?.extensionConfig,
       templates,
       connectors,
       skillNames,
@@ -1162,10 +1158,7 @@ export class PluginInstaller {
         await this.enableExtension(
           orgId,
           plan.extension,
-          {
-            enabled: true,
-            ...(plan.extensionConfig !== undefined && { config: plan.extensionConfig }),
-          },
+          { enabled: true },
           actor,
           opts.actorTokenId,
           { viaItem: itemId, ...(nested && { approvedBy }) },
@@ -1459,20 +1452,12 @@ export class PluginInstaller {
     return name;
   }
 
-  /** The input only names the plugin's template ids, and an extension config needs an extension. */
-  private checkInput(
-    manifest: PluginManifest,
-    templates: { id: string }[],
-    input: PluginInstallInput,
-    at: string,
-  ): void {
+  /** The input only names the plugin's template ids. */
+  private checkInput(templates: { id: string }[], input: PluginInstallInput, at: string): void {
     const ids = new Set(templates.map((c) => c.id));
     for (const k of Object.keys(input.connectors ?? {})) {
       if (!ids.has(k))
         throw fail(`${at}connectors.${k}`, "No such connector template in this plugin");
-    }
-    if (input.extensionConfig !== undefined && !manifest.extension) {
-      throw fail(`${at}extensionConfig`, "This plugin has no extension");
     }
   }
 

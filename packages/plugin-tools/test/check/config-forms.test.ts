@@ -34,7 +34,7 @@ describe("checkConfigForms", () => {
         expect.stringMatching(/^deployment config: endpoints\.items\.url has no label/),
       ],
       ["plugin-config-labels", expect.stringMatching(/^deployment config: timeout has no label/)],
-      ["plugin-config-labels", expect.stringMatching(/^org config: region has no label/)],
+      ["plugin-config-labels", expect.stringMatching(/^deployment config: region has no label/)],
     ]);
     // apiKeys is a secret record drawn per endpoint (x-ui.secrets): never reported
     expect(f.some((x) => x.message.includes("apiKeys"))).toBe(false);

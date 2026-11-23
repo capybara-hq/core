@@ -35,7 +35,7 @@ const demo = (): StaticExtensionManifest => ({
   requires: [],
   optional: [],
   permissions: { tools: ["write"] },
-  config: { deployment: [], org: [] },
+  config: { deployment: [] },
 });
 
 const pkg = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -208,7 +208,7 @@ describe("staticManifestOf", () => {
       requires: [],
       optional: [],
       permissions: {},
-      config: { deployment: [], org: [] },
+      config: { deployment: [] },
     });
     expect(JSON.parse(JSON.stringify(st))).toEqual(st);
   });
@@ -223,7 +223,6 @@ describe("staticManifestOf", () => {
             auth: z.object({ id: z.string(), key: z.string() }).meta({ secret: true }),
             level: z.string().meta({ hot: true }).optional(),
           }),
-          org: z.string(),
         },
       }),
     );
@@ -235,7 +234,24 @@ describe("staticManifestOf", () => {
       { path: "nested.b", secret: false, hot: false },
       { path: "token", secret: true, hot: false },
     ]);
-    expect(st.config.org).toEqual([{ path: "", secret: false, hot: false }]);
+    expect(st.config).not.toHaveProperty("org");
+  });
+
+  it("a manifest JSON packed before core#720 with config.org is read without org", () => {
+    const json = {
+      schemaVersion: 1,
+      name: "demo-plugin",
+      version: "1.2.3",
+      publisher: "Acme",
+      description: "A demo plugin",
+      extension: {
+        entry: "./dist/index.mjs",
+        manifest: { ...demo(), config: { deployment: [], org: [] } },
+      },
+    };
+    const parsed = parsePluginManifest(json);
+    expect(parsed).not.toHaveProperty("errors");
+    expect((parsed as PluginManifest).extension?.manifest.config).toEqual({ deployment: [] });
   });
 
   it("权限与界面贡献原样带上（去掉 undefined），函数不进静态清单", () => {

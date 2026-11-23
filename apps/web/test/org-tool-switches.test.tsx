@@ -26,8 +26,6 @@ const TODO = {
   version: "1.0.0",
   enabled: true,
   configurable: false,
-  config: null,
-  secrets: [],
   permissions: [
     {
       category: "provides",
@@ -37,7 +35,6 @@ const TODO = {
     },
   ],
   provides: ["tool@1"],
-  orgConfigSchema: null,
 };
 
 function routes(extra: Parameters<typeof stubApi>[0] = {}) {

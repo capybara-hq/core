@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import {
@@ -102,7 +103,17 @@ afterAll(async () => {
 });
 
 let orgSeq = 0;
-/** 新建组织并启用 dir-mini（组织配置指向一份新的假通讯录）。 */
+/** Saves the org's copy of `plugin`'s overridable `directoryUrl` (the org's own book). */
+async function setDirectoryUrl(orgId: string, plugin: string, url: string): Promise<void> {
+  const res = await ownerReq({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/extensions/${plugin}/overrides`,
+    payload: { values: { directoryUrl: url } },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+/** A new org with dir-mini enabled, its copy's `directoryUrl` pointing at a new fake book. */
 async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeChannelServer["book"]> }> {
   orgSeq++;
   const orgId = await createOrgWithProviders(k, ownerReq, `Dir ${orgSeq}`);
@@ -110,9 +121,10 @@ async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeChannel
   const res = await ownerReq({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/dir-mini`,
-    payload: { enabled: true, config: { url: book.url } },
+    payload: { enabled: true },
   });
   expect(res.statusCode, res.body).toBe(200);
+  await setDirectoryUrl(orgId, "dir-mini", book.url);
   return { orgId, book };
 }
 
@@ -785,10 +797,10 @@ describe("通讯录同步", () => {
       url: `/api/v1/orgs/${disabled.orgId}/extensions/dir-mini`,
       payload: { enabled: false },
     });
-    // 启用但已存配置不再满足 schema（如插件升级后）
+    // enabled without a copy: the platform leaves the required directoryUrl empty (needs_config)
     const invalid = await createOrgWithProviders(k, ownerReq, "Invalid cfg");
-    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled, config)
-      VALUES ('dir-mini', ${invalid}, true, '{}'::jsonb)`.execute(raw);
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
+      VALUES ('dir-mini', ${invalid}, true)`.execute(raw);
     const unconfigured = await createOrgWithProviders(k, ownerReq, "Unconfigured");
     const deleted = await setupOrg();
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deleted.orgId}`.execute(raw);
@@ -1018,7 +1030,7 @@ describe("修复波 W1", () => {
     expect(await memberOf(orgId, "dc-1")).toMatchObject({ source: DIR_SOURCE });
   });
 
-  it("移除阶段前复核可同步性：组织级配置中途变得无效 → 不移除任何人", async () => {
+  it("re-check before removals: reading the extension's state fails midway → nobody removed", async () => {
     const { orgId, book } = await setupOrg();
     book.members = [person("ci-1"), person("ci-2")];
     expect(await sync(orgId)).toMatchObject({ added: 2 });
@@ -1029,7 +1041,7 @@ describe("修复波 W1", () => {
       orgExtensionConfigs: {
         get: async (o: string, p: string) => {
           calls++;
-          if (calls > 1) throw new Error("stored config no longer matches the schema");
+          if (calls > 1) throw new Error("cannot read the extension's state");
           return k.app.get(OrgExtensionConfigs).get(o, p);
         },
       },
@@ -1043,18 +1055,19 @@ describe("修复波 W1", () => {
 });
 
 describe("Ruling A28：directory.configured", () => {
-  const enableOpt = async (orgId: string, config: Record<string, unknown>) => {
+  const enableOpt = async (orgId: string, directoryUrl?: string) => {
     const res = await ownerReq({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/dir-opt`,
-      payload: { enabled: true, config },
+      payload: { enabled: true },
     });
     expect(res.statusCode, res.body).toBe(200);
+    if (directoryUrl !== undefined) await setDirectoryUrl(orgId, "dir-opt", directoryUrl);
   };
 
   it("未配置的通讯录：扫描不投递、同步静默跳过、changed 不投递任务、无审计", async () => {
     const orgId = await createOrgWithProviders(k, ownerReq, "Opt unconfigured");
-    await enableOpt(orgId, {});
+    await enableOpt(orgId);
     const targets = await k.app.get(DirectorySync).scan();
     expect(targets.filter((t) => t.orgId === orgId)).toEqual([]);
     expect(await k.app.get(DirectorySync).sync(orgId, "dir-opt")).toEqual({
@@ -1071,7 +1084,7 @@ describe("Ruling A28：directory.configured", () => {
 
   it("未配置时手动同步 409 directory.not_configured；配置后照常扫描与同步", async () => {
     const orgId = await createOrgWithProviders(k, ownerReq, "Opt manual");
-    await enableOpt(orgId, {});
+    await enableOpt(orgId);
     const res = await ownerReq({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/extensions/dir-opt/directory/sync`,
@@ -1080,7 +1093,7 @@ describe("Ruling A28：directory.configured", () => {
     expect((res.json() as { error: { code: string } }).error.code).toBe("directory.not_configured");
     const book = fd.book(`opt-${orgId}`);
     book.members = [person("opt-1")];
-    await enableOpt(orgId, { url: book.url });
+    await enableOpt(orgId, book.url);
     const targets = await k.app.get(DirectorySync).scan();
     expect(targets.filter((t) => t.orgId === orgId).map((t) => t.plugin)).toEqual(["dir-opt"]);
     // 扫描投递的任务在 worker 上同步
@@ -1090,5 +1103,62 @@ describe("Ruling A28：directory.configured", () => {
       "scheduled sync of the configured directory",
     );
     expect(synced.detail).toMatchObject({ trigger: "schedule", added: 1, partial: false });
+  });
+});
+
+describe("effective config per org", () => {
+  it("each org's sync lists its own copy's directory, never another org's", async () => {
+    const a = await setupOrg();
+    const b = await setupOrg();
+    a.book.members = [person("ta-1")];
+    b.book.members = [person("tb-1"), person("tb-2")];
+    expect(await sync(a.orgId)).toMatchObject({ status: "synced", added: 1 });
+    expect(a.book.starts()).toBe(1);
+    expect(b.book.starts()).toBe(0);
+    expect(await sync(b.orgId)).toMatchObject({ status: "synced", added: 2 });
+    expect(a.book.starts()).toBe(1);
+    expect(b.book.starts()).toBe(1);
+    expect(await memberOf(a.orgId, "tb-1")).toBeUndefined();
+    expect(await memberOf(b.orgId, "ta-1")).toBeUndefined();
+    // the listMembers calls themselves: each gets its org's effective config
+    const seen: { orgId: string; config: unknown }[] = [];
+    const entry = k.app
+      .get(ExtensionRegistry)
+      .list("directory")
+      .find((e) => e.plugin === "dir-mini");
+    const impl = entry?.impl as { listMembers: (args: { config: unknown }) => Promise<unknown> };
+    const original = impl.listMembers;
+    for (const o of [a, b]) {
+      impl.listMembers = async (args) => {
+        seen.push({ orgId: o.orgId, config: args.config });
+        expect(args).not.toHaveProperty("orgConfig");
+        return original.call(impl, args);
+      };
+      try {
+        await sync(o.orgId);
+      } finally {
+        impl.listMembers = original;
+      }
+    }
+    expect(seen).toEqual([
+      { orgId: a.orgId, config: { directoryUrl: a.book.url } },
+      { orgId: b.orgId, config: { directoryUrl: b.book.url } },
+    ]);
+  });
+
+  it("an org without its copy needs config: skipped silently, manual sync 400 extension.needs_config", async () => {
+    const orgId = await createOrgWithProviders(k, ownerReq, "Dir no copy");
+    const on = await ownerReq({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/dir-mini`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    expect(await sync(orgId)).toEqual({ status: "skipped", reason: "needs_config" });
+    const res = await ownerReq({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/extensions/dir-mini/directory/sync`,
+    });
+    expect((res.json() as { error: { code: string } }).error.code).toBe("extension.needs_config");
   });
 });

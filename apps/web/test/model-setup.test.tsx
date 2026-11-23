@@ -58,10 +58,7 @@ const anthropic = (over: Record<string, unknown> = {}) => ({
   version: "0.1.0",
   enabled: false,
   configurable: false,
-  config: null,
-  secrets: [],
   permissions: [provides("model-provider@2")],
-  orgConfigSchema: null,
   available: true,
   required: false,
   catalogItem: { itemId: "i1", scope: "optional" },
@@ -118,6 +115,21 @@ function orgKernel(exts: Record<string, unknown>[], start: OrgReadiness = NOT_EN
           : [],
       }),
     "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: list() }),
+    // the overridable deployment fields of the one service that has any
+    "GET /api/v1/orgs/o1/extensions/anthropic/overrides": () =>
+      json(200, {
+        state: "following",
+        valid: false,
+        issues: [],
+        fields: [{ path: "apiKey", secret: true, platform: { set: false } }],
+      }),
+    "PUT /api/v1/orgs/o1/extensions/anthropic/overrides": () =>
+      json(200, {
+        state: "copy",
+        valid: true,
+        issues: [],
+        fields: [{ path: "apiKey", secret: true, platform: { set: false }, org: { set: true } }],
+      }),
     // what the shell reads again when an extension changes (its UI contributions)
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
     "PUT /api/v1/orgs/o1/extensions/anthropic": (c) => {
@@ -402,14 +414,9 @@ describe("setup steps while providers are on but give no model (no_models)", () 
 });
 
 describe("/settings/models: 模型服务", () => {
-  it("a service that needs org config: 配置 opens its Sheet, 保存并启用 sends the config with the switch", async () => {
-    const schema = {
-      type: "object",
-      properties: { apiKey: { type: "string", title: "API key" } },
-      required: ["apiKey"],
-    };
+  it("a service that needs config: 配置 opens its Sheet with the overridable fields; its own save sends the values", async () => {
     const { calls } = orgKernel([
-      anthropic({ configurable: true, orgConfigSchema: schema, needsConfig: true }),
+      anthropic({ configurable: true, overrideState: "following", needsConfig: true }),
     ]);
     await renderRouteWithCache("/settings/models", lastStubRoutes(), {
       me: orgAdmin,
@@ -431,17 +438,14 @@ describe("/settings/models: 模型服务", () => {
       }),
     );
     const sheet = await screen.findByRole("dialog", { name: "Anthropic models" });
-    await user.type(within(sheet).getByRole("textbox", { name: /API key/ }), "sk-1");
+    await user.type(await within(sheet).findByLabelText(/^apiKey/), "sk-1");
     await user.click(
-      within(sheet).getByRole("button", {
-        name: en.extensions.saveAndEnableLabel.replace("{plugin}", "Anthropic models"),
-      }),
+      within(sheet).getByRole("button", { name: en.extensions.overrides.saveLabel }),
     );
     await vi.waitFor(() =>
-      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
-        enabled: true,
-        config: { apiKey: "sk-1" },
-      }),
+      expect(bodyOf(calls.find((c) => c.method === "PUT" && c.url.endsWith("/overrides")))).toEqual(
+        { values: { apiKey: "sk-1" } },
+      ),
     );
   });
 

@@ -7,7 +7,9 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import { OrgOverrides } from "../../src/extensions/org-overrides.js";
 import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
@@ -23,8 +25,10 @@ import {
 
 /**
  * Web tools spec §6: the org default provider of an `org-default` extension point. Candidates are
- * the loaded providers enabled in the org whose `configured()` accepts the org config; one is used
- * as is, several need the org's stored default, which survives the provider being disabled.
+ * the loaded providers enabled in the org whose effective config for the org is valid and whose
+ * `configured(config)` accepts it; one is used as is, several need the org's stored default, which
+ * survives the provider being disabled. The fake web providers' `token` is a required overridable
+ * field the platform leaves empty: an org runs a provider only with its own copy.
  */
 
 let pgc: TestContainer;
@@ -70,13 +74,23 @@ beforeEach(async () => {
   orgId = await createOrgWithProviders(k, await session(k, "owner"));
 });
 
-const enable = (plugin: string, token?: string) =>
-  configs.put(
-    orgId,
-    plugin,
-    { enabled: true, ...(token !== undefined && { config: { token } }) },
-    ownerId,
-  );
+/** Enables `plugin` in the org and, with a token, saves the org's copy holding it. */
+const enable = async (plugin: string, token?: string) => {
+  await configs.put(orgId, plugin, { enabled: true }, ownerId);
+  if (token !== undefined) {
+    await k.app.get(OrgOverrides).save(orgId, plugin, { token }, [], { accountId: ownerId });
+  }
+};
+
+/** Makes the org's copy of `plugin` invalid (its required token secret gone). */
+const breakCopy = async (plugin: string) => {
+  await db
+    .deleteFrom("secrets")
+    .where("org_id", "=", orgId)
+    .where("key", "=", `plugin-override:${plugin}:token`)
+    .execute();
+  await k.app.get(EffectiveConfigs).invalidate(orgId, plugin);
+};
 const disable = (plugin: string) => configs.put(orgId, plugin, { enabled: false }, ownerId);
 
 const errCode = (e: unknown) => (e as { code?: string }).code;
@@ -87,12 +101,13 @@ describe("ExtensionPointDefaults.resolve", () => {
     expect(await points.resolve(orgId, "web-fetch")).toEqual({ ok: false, reason: "none" });
   });
 
-  it("enabled without a token → none; with a token → that provider and its org config", async () => {
+  it("enabled without a token → none; with the org's copy → that provider and its effective config", async () => {
     await enable("fake-web");
     expect(await points.resolve(orgId, "web-search")).toEqual({ ok: false, reason: "none" });
     await enable("fake-web", "tok-1");
     const r = await points.resolve<{ search: unknown }>(orgId, "web-search");
-    expect(r).toMatchObject({ ok: true, extension: "fake-web", orgConfig: { token: "tok-1" } });
+    expect(r).toMatchObject({ ok: true, extension: "fake-web", config: { token: "tok-1" } });
+    expect(r).not.toHaveProperty("orgConfig");
     expect(r.ok && typeof r.impl.search).toBe("function");
     const f = await points.resolve<{ fetch: unknown }>(orgId, "web-fetch");
     expect(f.ok && typeof f.impl.fetch).toBe("function");
@@ -134,28 +149,26 @@ describe("ExtensionPointDefaults.resolve", () => {
     });
   });
 
-  it("an invalid stored org config excludes the provider and logs a warning", async () => {
+  it("an invalid effective config (the org's copy no longer validates) excludes the provider", async () => {
     await enable("fake-web", "a");
     await enable("fake-web-2", "b");
-    // A stored config the schema rejects (as after a schema change): no secret, a number token
-    await db
-      .deleteFrom("secrets")
-      .where("org_id", "=", orgId)
-      .where("key", "=", "plugin-config:fake-web-2:token")
-      .execute();
-    await db
-      .updateTable("extension_org_configs")
-      .set({ config: JSON.stringify({ token: 5 }) })
-      .where("org_id", "=", orgId)
-      .where("plugin", "=", "fake-web-2")
-      .execute();
+    await breakCopy("fake-web-2");
     expect(await points.resolve(orgId, "web-search")).toMatchObject({
       ok: true,
       extension: "fake-web",
     });
-    expect(lines.some((l) => l.includes("provider excluded") && l.includes("fake-web-2"))).toBe(
-      true,
-    );
+    const { providers, failed } = await points.providersFor(orgId, "web-search");
+    expect(providers.map((p) => p.extension)).toEqual(["fake-web"]);
+    // a known state, not a read failure
+    expect([...failed]).toEqual([]);
+  });
+
+  it("a provider whose configured(config) is false is excluded; each gets its own org's config", async () => {
+    await enable("fake-web", "a");
+    await enable("fake-web-2", "unconfigured");
+    const { providers } = await points.providersFor(orgId, "web-search");
+    expect(providers).toMatchObject([{ extension: "fake-web", config: { token: "a" } }]);
+    for (const p of providers) expect(p).not.toHaveProperty("orgConfig");
   });
 
   it("a configured() that throws excludes the provider and logs a warning", async () => {
@@ -189,27 +202,17 @@ describe("ExtensionPointDefaults.serves", () => {
     return out;
   };
 
-  it("agrees with providersFor when on, off, unconfigured and with an invalid stored config", async () => {
+  it("agrees with providersFor when on, off, unconfigured and with an invalid copy", async () => {
     // off: nothing enabled
     expect(await agree()).toEqual({ "fake-web": false, "fake-web-2": false });
-    // on / enabled but configured() false
+    // on / enabled but without a valid effective config
     await enable("fake-web", "a");
     await enable("fake-web-2");
     expect(await agree()).toEqual({ "fake-web": true, "fake-web-2": false });
     await enable("fake-web-2", "b");
     expect(await agree()).toEqual({ "fake-web": true, "fake-web-2": true });
-    // invalid stored org config (as after a schema change)
-    await db
-      .deleteFrom("secrets")
-      .where("org_id", "=", orgId)
-      .where("key", "=", "plugin-config:fake-web-2:token")
-      .execute();
-    await db
-      .updateTable("extension_org_configs")
-      .set({ config: JSON.stringify({ token: 5 }) })
-      .where("org_id", "=", orgId)
-      .where("plugin", "=", "fake-web-2")
-      .execute();
+    // the org's copy no longer validates (as after a schema change)
+    await breakCopy("fake-web-2");
     expect(await agree()).toEqual({ "fake-web": true, "fake-web-2": false });
     // switched off
     await disable("fake-web");

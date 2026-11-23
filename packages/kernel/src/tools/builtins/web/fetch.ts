@@ -137,8 +137,8 @@ export async function fetchPage(
     try {
       fetched = await resolved.impl.fetch({
         url,
-        orgConfig: resolved.orgConfig,
         config: resolved.config,
+        orgId: ctx.orgId,
         signal: ctx.signal,
       });
     } catch (e) {

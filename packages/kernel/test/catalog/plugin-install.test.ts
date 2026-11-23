@@ -1031,9 +1031,10 @@ describe("org plugin install: one kind per component", () => {
     expect(JSON.stringify(bad.json().error.details)).toContain("connectors.gh.endpoint.url");
     const unknown = await install(env.boss, env, id, { connectors: { nope: {} } });
     expect(unknown.statusCode).toBe(400);
+    // the install body takes no extension config (an org's config is its copy)
     const cfg = await install(env.boss, env, id, { ...pluginBody(), extensionConfig: {} });
     expect(cfg.statusCode).toBe(400);
-    expect(cfg.json().error.details[0].path).toBe("extensionConfig");
+    expect(cfg.json().error.code).toBe("validation_failed");
     expect(await liveInstalls()).toEqual([]);
     const ok = await install(env.boss, env, id, pluginBody());
     expect(ok.statusCode, ok.body).toBe(201);

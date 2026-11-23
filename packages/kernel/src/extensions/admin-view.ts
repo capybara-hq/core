@@ -83,7 +83,7 @@ interface Subject {
 /** 空权限集合（包读不到的降级项）。 */
 const EMPTY_SET: PermissionSet = buildPermissionSet({
   provides: [],
-  config: { deployment: [], org: [] },
+  config: { deployment: [] },
   tables: [],
 });
 

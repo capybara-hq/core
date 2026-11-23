@@ -66,10 +66,11 @@ docker compose ps -a     # createbuckets and init exit 0, the other services bec
 
 3. Create an agent with the model `model-fake/fake-1` and send `echo:hello`.
 
-For a real model, configure `openai-compatible` under Admin → Extensions (it is always installed), or
-`anthropic` / `openai` / `deepseek` / `bailian` (Alibaba Cloud Model Studio) / `ark` (Volcengine Ark)
-(preinstalled, off in each organization until an org admin switches them on
-in Plugins); see [Models](docs/guide/models.md). The official plugins live in
+For a real model, configure `openai-compatible`, `anthropic` / `openai` / `deepseek` / `bailian`
+(Alibaba Cloud Model Studio) or `ark` (Volcengine Ark) under Admin → Extensions (all preinstalled,
+off in each organization until an org admin switches them on in Plugins; an organization follows the
+platform's config and may save its own copy of the fields the plugin lets it override); see
+[Models](docs/guide/models.md). The official plugins live in
 [capybara-hq/plugins](https://github.com/capybara-hq/plugins). `.env.example` lists the optional
 settings (image version, port, public URL).
 

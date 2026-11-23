@@ -227,8 +227,8 @@ export function webSearchTool(deps: WebSearchDeps): BuiltinTool {
           ...(allowed !== undefined && allowed.length > 0 && { allowedDomains: allowed }),
           ...(blocked !== undefined && blocked.length > 0 && { blockedDomains: blocked }),
           maxResults: max,
-          orgConfig: resolved.orgConfig,
           config: resolved.config,
+          orgId: ctx.orgId,
           signal: ctx.signal,
         });
         results = Array.isArray(out?.results) ? out.results : [];

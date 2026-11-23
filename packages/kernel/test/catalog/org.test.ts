@@ -1,11 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { defineExtension, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { enabledExtensionsQuery } from "../../src/extensions/enabled.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
-import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { type PluginIconScope, PluginIcons } from "../../src/extensions/plugin-icons.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
@@ -754,7 +753,7 @@ describe("自建开关与权限", () => {
     expect(r.json().error.code).toBe("forbidden");
     // 成员拿 disabled 条目 / 不存在的版本：先判角色，一律 forbidden（不能借错误码探测条目）
     const off = await importSkill(env, { name: "off", policy: "disabled" });
-    for (const body of [{}, { extensionConfig: {} }, { connectors: {} }]) {
+    for (const body of [{}, { connectors: {} }]) {
       const x = await install(env.mem, env, off, body);
       expect(x.json().error.code).toBe("forbidden");
     }
@@ -1422,8 +1421,8 @@ describe("the org switch (plugin scope)", () => {
     ).toHaveLength(0);
   });
 
-  describe("an extension whose org config has a required secret", () => {
-    /** Deploys a plugin whose extension's org config needs the secret `apiKey`. */
+  describe("an extension with a required overridable secret the platform leaves empty", () => {
+    /** Deploys a plugin whose extension's deployment config needs the overridable secret `apiKey`. */
     const deploy = async (name: string) => {
       const real = defineExtension({
         name,
@@ -1431,13 +1430,15 @@ describe("the org switch (plugin scope)", () => {
         sdk: "^0.1.0-rc.0",
         provides: [],
         permissions: {},
-        config: { org: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) },
+        config: {
+          deployment: z.object({ apiKey: secret(z.string()), region: z.string().optional() }),
+        },
         setup() {},
       });
       const entry = [
         'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
         'import { z } from "zod";',
-        `export default defineExtension({ name: "${name}", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { org: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) }, setup() {} });`,
+        `export default defineExtension({ name: "${name}", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) }, setup() {} });`,
       ].join("\n");
       const { itemId } = await importDeployedPlugin(env, name, {
         manifest: { ...staticManifestOf(real) },
@@ -1446,98 +1447,42 @@ describe("the org switch (plugin scope)", () => {
       return { itemId, url: `/api/v1/orgs/${env.orgId}/extensions/${name}` };
     };
 
-    it("switching on without the required config: 400 extension.config_invalid with its issues, nothing installed", async () => {
+    it("switching on installs it and reports needsConfig until the org saves its copy", async () => {
       const name = "needs-key1";
-      const { itemId, url } = await deploy(name);
+      const { url } = await deploy(name);
       const r = await env.boss({ method: "PUT", url, payload: { enabled: true } });
-      expect(r.statusCode, r.body).toBe(400);
-      const error = r.json().error as { code: string; details: { path: string }[] };
-      expect(error.code).toBe("extension.config_invalid");
-      expect(error.details.map((d) => d.path)).toEqual(["apiKey"]);
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json().extension).toMatchObject({
+        plugin: name,
+        enabled: true,
+        configurable: true,
+        needsConfig: true,
+      });
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+      const saved = await env.boss({
+        method: "PUT",
+        url: `${url}/overrides`,
+        payload: { values: { apiKey: "k-1" } },
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` });
       expect(
-        await env.db
-          .selectFrom("catalog_item_org_switches")
-          .select("enabled")
-          .where("item_id", "=", itemId)
-          .execute(),
-      ).toHaveLength(0);
-      expect(
-        await env.db
-          .selectFrom("extension_org_configs")
-          .select("enabled")
-          .where("plugin", "=", name)
-          .execute(),
-      ).toHaveLength(0);
+        (list.json().extensions as { plugin: string }[]).find((e) => e.plugin === name),
+      ).toMatchObject({ enabled: true, overrideState: "copy", needsConfig: false });
     });
 
-    it("switching on with the config in the same PUT installs and saves it", async () => {
+    it("the switch body takes no config: 400 validation_failed, nothing installed", async () => {
       const name = "needs-key2";
-      const { url } = await deploy(name);
+      const { itemId, url } = await deploy(name);
       const r = await env.boss({
         method: "PUT",
         url,
         payload: { enabled: true, config: { apiKey: "k-1" } },
       });
-      expect(r.statusCode, r.body).toBe(200);
-      expect(r.json().extension).toMatchObject({ plugin: name, enabled: true });
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
-      expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
-        enabled: true,
-        config: { apiKey: "k-1" },
-      });
-    });
-
-    it("a config write that fails after the switch rolls the switch back too (one transaction)", async () => {
-      const name = "needs-key4";
-      const { url } = await deploy(name);
-      const on = await env.boss({
-        method: "PUT",
-        url,
-        payload: { enabled: true, config: { apiKey: "k-3" } },
-      });
-      expect(on.statusCode, on.body).toBe(200);
-      const preview = await env.boss({ method: "PUT", url, payload: { enabled: false } });
-      expect(preview.statusCode, preview.body).toBe(200);
-      const confirm = preview.json().confirm as string;
-      const configs = env.k.app.get(OrgExtensionConfigs);
-      const realPut = configs.put.bind(configs);
-      const spy = vi.spyOn(configs, "put").mockImplementation(async (...args) => {
-        if (args[5]?.validateOnly) return realPut(...args);
-        throw new Error("config write failed");
-      });
-      try {
-        const r = await env.boss({
-          method: "PUT",
-          url,
-          payload: { enabled: false, confirm, config: { apiKey: "k-4" } },
-        });
-        expect(r.statusCode).toBe(500);
-      } finally {
-        spy.mockRestore();
-      }
-      // the uninstall and the switch row were rolled back with the failed config write
-      const installs = await env.db.selectFrom("plugin_installs").select("status").execute();
-      expect(installs.map((i) => i.status)).toEqual(["installed"]);
-      expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
-        enabled: true,
-        config: { apiKey: "k-3" },
-      });
-    });
-
-    it("switching on after the config was saved installs", async () => {
-      const name = "needs-key3";
-      const { url } = await deploy(name);
-      const saved = await env.boss({
-        method: "PUT",
-        url,
-        payload: { config: { apiKey: "k-2" } },
-      });
-      expect(saved.statusCode, saved.body).toBe(200);
-      const r = await env.boss({ method: "PUT", url, payload: { enabled: true } });
-      expect(r.statusCode, r.body).toBe(200);
-      expect(r.json().extension).toMatchObject({ plugin: name, enabled: true });
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+      expect(r.statusCode, r.body).toBe(400);
+      expect(r.json().error.code).toBe("validation_failed");
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+      expect(await switchRow(itemId)).toBeUndefined();
     });
   });
 

@@ -33,10 +33,9 @@ import { type FieldLevel, fieldLevels } from "./org-levels.js";
 
 type Obj = Record<string, unknown>;
 
-/** One field of {@link OrgOverrideView}: a read-only or overridable deployment field. */
+/** One field of {@link OrgOverrideView}: an overridable deployment field (the only kind listed). */
 export interface OrgOverrideField {
   path: string;
-  level: "readonly" | "override";
   secret: boolean;
   /** The platform's current value (non-secret) or only whether it is set (secret). */
   platform: { value?: unknown; set?: boolean };
@@ -48,16 +47,16 @@ export interface OrgOverrideField {
 
 /**
  * What an org admin sees of an extension's two-level config (spec A §5.3 to §5.6): whether the org
- * follows the platform or keeps a copy, the read-only and overridable fields (hidden fields never
- * appear), and whether the effective config is valid. Secrets give `set` only, never a value, and
+ * follows the platform or keeps a copy, the overridable fields (platform-only fields never appear),
+ * and whether the effective config is valid. Secrets give `set` only, never a value, and
  * are never compared.
  */
 export interface OrgOverrideView {
   state: "following" | "copy";
   /**
-   * The deployment form JSON Schema restricted to the read-only and overridable top-level
-   * properties (as the platform form gets it, with `x-ui`, `x-secret`, `x-org`); hidden properties,
-   * their `required` entries and hints naming them are removed. Null when the extension has no
+   * The deployment form JSON Schema restricted to the overridable top-level properties (as the
+   * platform form gets it, with `x-ui`, `x-secret`); platform-only properties, their `required`
+   * entries and hints naming them are removed. Null when the extension has no
    * deployment schema or it cannot be converted.
    */
   schema: JsonSchema | null;
@@ -91,8 +90,9 @@ interface Running {
   levels: Map<string, FieldLevel>;
 }
 
+/** A path's level: its top-level key's; a key the schema does not list is `platform` (not shown). */
 const levelOf = (levels: Map<string, FieldLevel>, path: string): FieldLevel =>
-  levels.get(path.split(".")[0] as string) ?? "hidden";
+  levels.get(path.split(".")[0] as string) ?? "platform";
 
 const notOverridable = (plugin: string, paths: string[]) =>
   new ApiError(
@@ -150,7 +150,7 @@ export class OrgOverrides {
     return run;
   }
 
-  /** The org's view (read-only and overridable fields, the copy state and validity). */
+  /** The org's view (overridable fields, the copy state and validity). */
   async view(orgId: string, plugin: string): Promise<OrgOverrideView> {
     return this.render(orgId, await this.runningFor(orgId, plugin));
   }
@@ -159,7 +159,7 @@ export class OrgOverrides {
    * Saves overridable fields (`values` keyed by field dot path: `null` clears, omitted keeps;
    * secret fields too, as in the platform form) and secret record entries. The first save creates
    * the copy from the platform's non-secret overridable values plus `values` (secret fields start
-   * empty). A path that is not an overridable field of the schema (read-only, hidden, unknown) ->
+   * empty). A path that is not an overridable field of the schema (platform-only, unknown) ->
    * 400 `extension.field_not_overridable`; an invalid result (an empty required secret included)
    * -> 400 `extension.config_invalid`, nothing written. Audits `extension.org_override_saved`.
    */
@@ -287,7 +287,7 @@ export class OrgOverrides {
 
   /**
    * Takes the platform's current values of non-secret overridable fields into the copy (spec A
-   * §5.5); the copy stays a copy. A secret, read-only, hidden or unknown path -> 400
+   * §5.5); the copy stays a copy. A secret, platform-only or unknown path -> 400
    * `extension.field_not_overridable`; no copy -> 404 `extension.no_org_override`. Audits
    * `extension.org_override_taken`.
    */
@@ -538,22 +538,20 @@ export class OrgOverrides {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const held = row ? new Set(await this.secretPathsHeld(orgId, run.inst.name)) : new Set();
-    // readonly values and secret state as the running instance has them (defaults applied, as
-    // the platform form shows); overridable values raw, as a copy stores and `take` copies them
+    // secret state as the running instance has it; non-secret values raw, as a copy stores and
+    // `take` copies them, else as the running instance has them (defaults applied, as the
+    // platform form shows)
     const parsed = run.inst.config;
     const raw = await this.host.rawDeploymentConfig(run.inst.name);
     const fields: OrgOverrideField[] = [];
     for (const f of run.schema ? configFields(run.schema) : []) {
-      const level = levelOf(run.levels, f.path);
-      if (level === "hidden") continue;
+      if (levelOf(run.levels, f.path) !== "override") continue;
       const secret = f.meta?.secret === true;
-      const pv =
-        level === "override" && !secret
-          ? (getPath(raw, f.path) ?? getPath(parsed, f.path))
-          : getPath(parsed, f.path);
+      const pv = secret
+        ? getPath(parsed, f.path)
+        : (getPath(raw, f.path) ?? getPath(parsed, f.path));
       const field: OrgOverrideField = {
         path: f.path,
-        level,
         secret,
         platform: secret
           ? { set: pv !== undefined }
@@ -561,7 +559,7 @@ export class OrgOverrides {
             ? {}
             : { value: structuredClone(pv) },
       };
-      if (row && level === "override") {
+      if (row) {
         if (secret) field.org = { set: held.has(f.path) };
         else {
           const ov = getPath(row.config, f.path);
@@ -590,14 +588,14 @@ export class OrgOverrides {
 }
 
 /**
- * The form JSON Schema an org may see (spec A §5.6, "hidden fields are not sent to the org at
- * all"): a copy with only the read-only and overridable top-level properties, `required` limited
- * to them, and root `x-ui` hints naming a hidden field dropped (`secrets[]` by path; `order` lists
+ * The form JSON Schema an org may see (spec A §5.6, platform-only fields are not sent to the org
+ * at all): a copy with only the overridable top-level properties, `required` limited to them, and
+ * root `x-ui` hints naming a platform-only field dropped (`secrets[]` by path; `order` lists
  * none). Values are never in it: `configJsonSchema` already strips secret defaults and examples.
  */
 export function orgFormSchema(js: JsonSchema, levels: Map<string, FieldLevel>): JsonSchema {
   const out = structuredClone(js) as Record<string, unknown>;
-  const shown = (key: string) => (levels.get(key) ?? "hidden") !== "hidden";
+  const shown = (key: string) => levels.get(key) === "override";
   const props = out.properties;
   if (typeof props === "object" && props !== null) {
     out.properties = Object.fromEntries(
@@ -625,11 +623,11 @@ function touchedPaths(values: Record<string, unknown>, entries: readonly SecretE
 }
 
 /**
- * Issues as an org may see them: an issue on a hidden field would name a field the org never
- * sees, so those collapse into one root issue.
+ * Issues as an org may see them: an issue on a platform-only field would name a field the org
+ * never sees, so those collapse into one root issue.
  */
 export function orgIssues(issues: ConfigIssue[], levels: Map<string, FieldLevel>): ConfigIssue[] {
-  const shown = issues.filter((i) => i.path !== "" && levelOf(levels, i.path) !== "hidden");
+  const shown = issues.filter((i) => i.path !== "" && levelOf(levels, i.path) === "override");
   if (shown.length === issues.length) return issues;
   return [
     ...shown,

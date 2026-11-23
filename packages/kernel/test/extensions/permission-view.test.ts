@@ -17,7 +17,7 @@ const base: PermissionSet = {
   provides: [],
   requires: [],
   optional: [],
-  config: { deployment: [], org: [] },
+  config: { deployment: [] },
   tables: [],
   permissions: {
     secrets: false,
@@ -37,17 +37,13 @@ describe("permissionGroups", () => {
     expect(permissionGroups(base)).toEqual([]);
   });
 
-  it("a secret at both levels is two distinct items, prefixed like the config group", () => {
+  it("a secret field is prefixed like the config group", () => {
     const groups = permissionGroups({
       ...base,
-      config: {
-        deployment: [{ path: "appSecret", secret: true }],
-        org: [{ path: "appSecret", secret: true }],
-      },
+      config: { deployment: [{ path: "appSecret", secret: true }] },
     });
     const secrets = groups.find((g) => g.category === "secrets");
-    expect(secrets?.items).toEqual(["deployment:appSecret", "org:appSecret"]);
-    expect(new Set(secrets?.entries.map((e) => e.value)).size).toBe(2);
+    expect(secrets?.items).toEqual(["deployment:appSecret"]);
   });
 
   it("按类别分组，敏感项为密钥、公开路由、工具、hook（及下面的敏感能力）；公开路由与普通路由分开", () => {
@@ -55,8 +51,7 @@ describe("permissionGroups", () => {
       ...base,
       provides: ["channel@1"],
       config: {
-        deployment: [],
-        org: [
+        deployment: [
           { path: "token", secret: true },
           { path: "id", secret: false },
         ],
@@ -86,14 +81,14 @@ describe("permissionGroups", () => {
       items: ["channel@1"],
       entries: [{ value: "channel@1", sensitive: true, reason: "channel" }],
     });
-    expect(by.config?.items).toEqual(["org:token", "org:id"]);
+    expect(by.config?.items).toEqual(["deployment:token", "deployment:id"]);
     expect(by.secrets).toEqual({
       category: "secrets",
       sensitive: true,
-      items: ["secret store", "org:token"],
+      items: ["secret store", "deployment:token"],
       entries: [
         { value: "secret store", sensitive: true, reason: "secrets" },
-        { value: "org:token", sensitive: true, reason: "secrets" },
+        { value: "deployment:token", sensitive: true, reason: "secrets" },
       ],
     });
     expect(by.http).toEqual({

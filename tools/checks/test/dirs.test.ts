@@ -49,7 +49,7 @@ describe("scan scope of the plugin-scoped checks", () => {
       "Extension permissions",
       "Plugin pack",
       "Config forms",
-      "Org override",
+      "Config classification",
       "Themes",
       "Tool design",
       "Tool key length",

@@ -2,6 +2,7 @@ import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { templateGuideOf } from "../extensions/plugin-guides.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -86,6 +87,8 @@ export class OrgCatalogService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Why a plugin's extension cannot run (the `unavailable` state's reason). */
     @Inject(ExtensionAvailability) private readonly availability: ExtensionAvailability,
+    /** The effective config of an extension for the org: a wanted plugin whose config is not valid needs input. */
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
@@ -135,7 +138,7 @@ export class OrgCatalogService {
     if (items.length === 0) return [];
     const sw = new Map(switches.map((r) => [r.item_id, r.enabled]));
     const ids = items.map((i) => i.id);
-    const [versions, pluginInstalls, configs, requests] = await Promise.all([
+    const [versions, pluginInstalls, requests] = await Promise.all([
       this.db
         .selectFrom("catalog_item_versions")
         .select([
@@ -156,12 +159,6 @@ export class OrgCatalogService {
         .select(["id", "item_id", "version"])
         .where("org_id", "=", orgId)
         .where("status", "in", [...LIVE_INSTALL_STATUSES])
-        .execute(),
-      this.db
-        .selectFrom("extension_org_configs")
-        .select("plugin")
-        .where("org_id", "=", orgId)
-        .where("config", "is not", null)
         .execute(),
       this.db
         .selectFrom("catalog_requests")
@@ -185,7 +182,6 @@ export class OrgCatalogService {
         return v ? [v] : [];
       }),
     );
-    const configured = new Set(configs.map((c) => c.plugin));
     const owners = await ownersOf(
       this.db,
       items.flatMap((i) => (i.owner_org_id === null ? [] : [i.owner_org_id])),
@@ -260,9 +256,8 @@ export class OrgCatalogService {
         const needsInputs =
           (await connectorTemplatesOn(this.db, orgId, i.id, templateIds)).size > 0 ||
           (m?.extension !== undefined &&
-            ext?.config?.org !== undefined &&
-            !ext.config.org.safeParse({}).success &&
-            !configured.has(m.name));
+            ext !== undefined &&
+            !(await this.effective.get(orgId, m.name)).ok);
         // Wanted but not installed and needing nothing: the sync has not installed it (yet, or its
         // install failed); `off`, so an org admin can switch it on (the worker start retries it)
         state = needsInputs ? "needs_config" : "off";
