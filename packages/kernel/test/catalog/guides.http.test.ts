@@ -117,8 +117,7 @@ const guideUrl = (itemId: string, guideId = "demo", query = "") =>
 type Block =
   | { kind: "markdown"; text: string }
   | { kind: "code"; language: string; title: string | null; text: string }
-  | { kind: "check"; id: string; label: string }
-  | { kind: "shell-action"; action: string; label: string };
+  | { kind: "check"; id: string; label: string };
 type Rendered = {
   itemId: string;
   plugin: string;
@@ -662,8 +661,6 @@ describe("setup guides v2: device-connection", () => {
     "",
     "Org {{orgName}} ({{orgId}}) at {{publicUrl}}.",
     "",
-    "::shell-action connect-this-machine Connect this machine",
-    "",
   ].join("\n");
 
   const devicePlugin = () =>
@@ -687,14 +684,25 @@ describe("setup guides v2: device-connection", () => {
         unresolved: [],
         title: "Connect a machine through dev-guide",
       });
-      expect(g.blocks.map((b) => b.kind)).toEqual(["markdown", "shell-action"]);
-      expect(g.blocks[1]).toEqual({
-        kind: "shell-action",
-        action: "connect-this-machine",
-        label: "Connect this machine",
-      });
+      expect(g.blocks.map((b) => b.kind)).toEqual(["markdown"]);
       expect(prose(g)).toContain(`Org Acme (${env.orgId}) at <${PUBLIC_URL}>.`);
     }
+  });
+
+  it("refuses to import a device-connection guide with a check line", async () => {
+    const bytes = await pluginTgz({
+      manifest: { name: "dev-guide", setupGuides: [{ id: "connect", place: "device-connection" }] },
+      files: { "guides/connect.md": `${DEVICE_DOC}\n::check capybara:public-url Public URL\n` },
+      extension: { manifest: {} },
+    });
+    const r = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(bytes),
+    });
+    expect(r.statusCode, r.body).toBeGreaterThanOrEqual(400);
+    expect(r.body).toContain("is not allowed in place device-connection");
   });
 
   it("renders the platform preview with the member audience and an unresolved orgId", async () => {
@@ -706,7 +714,7 @@ describe("setup guides v2: device-connection", () => {
     expect(r.statusCode, r.body).toBe(200);
     const g = (r.json() as { guide: Rendered }).guide;
     expect(g).toMatchObject({ place: "device-connection", audience: "member", target: null });
-    expect(g.blocks.map((b) => b.kind)).toEqual(["markdown", "shell-action"]);
+    expect(g.blocks.map((b) => b.kind)).toEqual(["markdown"]);
     expect(g.unresolved).toEqual([
       { name: "orgId", reason: "no_org" },
       { name: "orgName", reason: "no_org" },
@@ -747,11 +755,7 @@ describe("setup guides v2: device-connection", () => {
     expect(m.get("fake-dial-in")).toMatchObject({ itemId, guideId: "connect" });
     expect(m.has("nope")).toBe(false);
     const g = await render(itemId, "", env.mem, "connect");
-    expect(g.blocks).toContainEqual({
-      kind: "shell-action",
-      action: "connect-this-machine",
-      label: "Connect this machine",
-    });
+    expect(g.blocks.map((b) => b.kind)).toEqual(["markdown", "code"]);
     expect(JSON.stringify(g.blocks)).toContain(PUBLIC_URL);
     expect(g.unresolved).toEqual([]);
   });

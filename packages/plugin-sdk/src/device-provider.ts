@@ -193,10 +193,13 @@ export interface DeviceRef {
   handle: SandboxHandle | null;
 }
 
-/** One limit line of a {@link DeviceReport} (shown as is; the provider enforces it). */
+/**
+ * One limit line of a {@link DeviceReport} (shown as is; the provider enforces it). `value` is
+ * text too: words in it get a Chinese form; pure data (a path, a size) may carry `en` only.
+ */
 export interface DeviceReportLimit {
   label: DeviceText;
-  value: string;
+  value: DeviceText;
 }
 
 /**
@@ -208,6 +211,13 @@ export interface DeviceReportLimit {
  * without a revision change: announce such a change with `ctx.devices.reportChanged`, and the
  * kernel stores the new text without invalidating anything. `home` is the owner's home directory
  * (absolute) or null; `reset` says whether the provider can reset the device's files.
+ *
+ * `changeHint` (optional) says in the provider's own words who can change the device's limits and
+ * how (for a local connection: the machine's owner, with a command on that machine; for a
+ * container: the super admin's deployment config of the extension). The device page shows it
+ * under the limits, and the kernel appends it to a refusal that cites the report (an escalated
+ * call the provider does not allow now), so a person and the model learn the way out. State the
+ * mechanism, not advice for one situation.
  */
 export interface DeviceReport {
   revision: string;
@@ -215,6 +225,7 @@ export interface DeviceReport {
   home: string | null;
   limits: DeviceReportLimit[];
   reset: boolean;
+  changeHint?: DeviceText;
 }
 
 /** Size limits {@link parseDeviceReport} enforces. */
@@ -225,6 +236,7 @@ export const DEVICE_REPORT_LIMITS = Object.freeze({
   limitLabelChars: 60,
   limitValueChars: 60,
   homeChars: 4096,
+  changeHintChars: 400,
 });
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -254,7 +266,11 @@ function parseText(v: unknown, max: number, what: string): DeviceText {
 export function parseDeviceReport(value: unknown): DeviceReport {
   const L = DEVICE_REPORT_LIMITS;
   if (!isRecord(value)) throw new TypeError("device report must be an object");
-  exactKeys(value, ["revision", "description", "home", "limits", "reset"], "device report");
+  exactKeys(
+    value,
+    ["revision", "description", "home", "limits", "reset", "changeHint"],
+    "device report",
+  );
   const { revision, home, limits, reset } = value;
   if (typeof revision !== "string" || revision === "" || revision.length > L.revisionChars) {
     throw new TypeError(
@@ -276,15 +292,24 @@ export function parseDeviceReport(value: unknown): DeviceReport {
     const what = `device report limits[${i}]`;
     if (!isRecord(raw)) throw new TypeError(`${what} must be an object`);
     exactKeys(raw, ["label", "value"], what);
-    if (typeof raw.value !== "string" || raw.value === "" || raw.value.length > L.limitValueChars) {
-      throw new TypeError(
-        `${what}.value must be a non-empty string of at most ${L.limitValueChars} characters`,
-      );
-    }
-    return { label: parseText(raw.label, L.limitLabelChars, `${what}.label`), value: raw.value };
+    return {
+      label: parseText(raw.label, L.limitLabelChars, `${what}.label`),
+      value: parseText(raw.value, L.limitValueChars, `${what}.value`),
+    };
   });
   if (typeof reset !== "boolean") throw new TypeError("device report reset must be a boolean");
-  return { revision, description, home, limits: parsedLimits, reset };
+  const changeHint =
+    value.changeHint === undefined
+      ? undefined
+      : parseText(value.changeHint, L.changeHintChars, "device report changeHint");
+  return {
+    revision,
+    description,
+    home,
+    limits: parsedLimits,
+    reset,
+    ...(changeHint !== undefined && { changeHint }),
+  };
 }
 
 /**

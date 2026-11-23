@@ -103,9 +103,11 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
-  // A new setup's owner ceiling: no running outside the sandbox, the open network (the design's
-  // shipped default), sandboxed work reads the whole machine minus the deny list.
-  ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "machine" },
+  // A new setup's owner ceiling (aligned with Claude Code, maintainer 2026-11-23): commands run in
+  // the sandbox, and one call may run outside it when the conversation's permission profile
+  // approves it; the open network (the design's shipped default); sandboxed work reads the whole
+  // machine minus the deny list.
+  ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "machine" },
   keepAwake: "while-busy",
   projectPaths: [],
 };

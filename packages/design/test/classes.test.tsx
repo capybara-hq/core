@@ -5,8 +5,10 @@ import { css, parseCss } from "./css-rules";
 // never branches on width), so the stylesheet is the thing to prove; the DOM halves are in
 // list-detail.test.tsx and templates.test.tsx.
 
+// a long selector the formatter wraps reads as one line: no space inside its parentheses
+const norm = (s: string) => s.replace(/\(\s+/g, "(").replace(/\s+\)/g, ")");
 const decl = (file: string, selector: string, prop: string, at: string | null = null) =>
-  parseCss(css(file)).find((r) => r.selector === selector && r.at === at)?.decls[prop];
+  parseCss(css(file)).find((r) => norm(r.selector) === selector && r.at === at)?.decls[prop];
 
 describe("template forms per size class", () => {
   it("ListPage cards: auto-fill columns of at least layout.card-min, so two once two fit", () => {
@@ -16,14 +18,18 @@ describe("template forms per size class", () => {
     expect(css("tokens.css")).toMatch(/--cb-layout-card-min: 280px;/);
   });
 
-  it("FormSection: the 240 label column stacks above the fields while the body is under 792", () => {
-    const at = "cb-body (max-width: 791px)";
-    expect(decl("templates.css", ".cb-form-section", "grid-template-columns", at)).toBe(
+  it("FormSection: stacked by default; the 240 label column only by count and while it fits", () => {
+    expect(decl("templates.css", ".cb-form-section", "grid-template-columns")).toBe(
       "minmax(0, 1fr)",
     );
+    const columns =
+      '.cb-template:not([data-template="SettingsPage"]):has(.cb-form-section ~ .cb-form-section ~ .cb-form-section) .cb-form-section:not([data-layout="stacked"])';
     expect(
-      decl("templates.css", ".cb-form-section", "grid-template-columns", "(max-width: 840px)"),
-    ).toBe("minmax(0, 1fr)");
+      decl("templates.css", columns, "grid-template-columns", "cb-body (min-width: 792px)"),
+    ).toBe("240px minmax(0, 1fr)");
+    expect(decl("templates.css", columns, "grid-template-columns", "(max-width: 840px)")).toBe(
+      "minmax(0, 1fr)",
+    );
   });
 
   it("SettingsPage: the 200 sub-nav stacks above the content by container; compact is a sticky row", () => {

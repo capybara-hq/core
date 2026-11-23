@@ -4,6 +4,7 @@ import {
   type Ref,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useState,
@@ -19,6 +20,7 @@ import {
 } from "../shell/index";
 import { hasTabRow } from "../shell/page-header";
 import { type Column, DataTable } from "../table/index";
+import { assertSectionGroups } from "./section-layout";
 
 /** What a template's root gives the head inside it: where to report the title element. */
 type TemplateScroll = { setTitle(el: HTMLElement | null): void; barHidden: boolean };
@@ -85,6 +87,11 @@ export function TemplateFrame({
     [rootRef],
   );
   const scroll = useMemo(() => ({ setTitle, barHidden }), [barHidden]);
+  // Columns by count (spec §5.3): the stylesheet counts sibling sections, so a page that splits
+  // three or more across wrappers is told in development and tests (after every render).
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production" && scroller !== null) assertSectionGroups(scroller);
+  });
   return (
     <TemplateScrollContext.Provider value={scroll}>
       <div

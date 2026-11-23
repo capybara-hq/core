@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
+  DEVICE_REPORT_LIMITS,
   EXTENSION_POINTS,
   isFileSystemGoneError,
   isProjectPathRefusedError,
@@ -208,16 +209,54 @@ describe("SandboxLimits", () => {
     expect(() =>
       parseDeviceReport({
         ...ok,
-        limits: Array(9).fill({ label: { en: "cpu" }, value: "1" }),
+        limits: Array(9).fill({ label: { en: "cpu" }, value: { en: "1" } }),
       }),
     ).toThrow(TypeError);
     const full = {
       ...ok,
       home: "/home/me",
-      limits: [{ label: { en: "CPU", zh: "处理器" }, value: "2" }],
+      limits: [
+        { label: { en: "CPU", zh: "处理器" }, value: { en: "2 cores", zh: "2 核" } },
+        { label: { en: "Disk" }, value: { en: "10 GB" } },
+      ],
     };
     expect(parseDeviceReport(full)).toEqual(full);
+    // a limit value is text: a bare string, an empty or overlong form or an extra key is refused
+    const limitWith = (value: unknown) => ({ ...ok, limits: [{ label: { en: "CPU" }, value }] });
+    expect(() => parseDeviceReport(limitWith("2"))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "" }))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "x".repeat(61) }))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "2", zh: "x".repeat(61) }))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "2", fr: "2" }))).toThrow(TypeError);
+    expect(parseDeviceReport(limitWith({ en: "x".repeat(60), zh: "二" }))).toEqual(
+      limitWith({ en: "x".repeat(60), zh: "二" }),
+    );
     expect(() => parseDeviceReport({ ...ok, reset: "no" })).toThrow(TypeError);
+  });
+
+  it("parseDeviceReport keeps an optional localized changeHint within its size", () => {
+    const ok = {
+      revision: "r1",
+      description: { en: "Docker container" },
+      home: null,
+      limits: [],
+      reset: true,
+    };
+    const hinted = {
+      ...ok,
+      changeHint: { en: "The super admin sets these.", zh: "由超级管理员设置。" },
+    };
+    expect(parseDeviceReport(hinted)).toEqual(hinted);
+    expect(parseDeviceReport(ok)).not.toHaveProperty("changeHint");
+    expect(() => parseDeviceReport({ ...ok, changeHint: "plain" })).toThrow(TypeError);
+    expect(() => parseDeviceReport({ ...ok, changeHint: { en: "" } })).toThrow(TypeError);
+    expect(() => parseDeviceReport({ ...ok, changeHint: { en: "x", de: "y" } })).toThrow(TypeError);
+    expect(() =>
+      parseDeviceReport({
+        ...ok,
+        changeHint: { en: "x".repeat(DEVICE_REPORT_LIMITS.changeHintChars + 1) },
+      }),
+    ).toThrow(TypeError);
   });
 
   it("isProjectPathRefusedError is duck-typed and keeps the reason", () => {

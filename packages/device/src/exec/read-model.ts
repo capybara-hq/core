@@ -40,7 +40,12 @@ function checkedDeviceId(deviceId: string): string {
 
 const tempParentName = (checkedId: string) => `capybara-op-${checkedId}`;
 
-/** The name of a connection's private temporary parent inside the macOS user temp dir. */
+/**
+ * The name of a connection's private temporary parent: on macOS inside the user temp dir
+ * (`<userTemp>/capybara-op-<deviceId>`), on Linux inside the connection's own directory, beside
+ * its workspace, skills and tmp roots (`<workDir>/capybara-op-<deviceId>`, the worker's
+ * `privateTempBase`).
+ */
 export function privateTempParentName(deviceId: string): string {
   return tempParentName(checkedDeviceId(deviceId));
 }

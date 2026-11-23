@@ -44,6 +44,8 @@ it.runIf(process.platform === "darwin")(
         secretAndStateDenies: [stateDir],
         otherConnectionDenies: [],
         unreadableConnections: [],
+        mountReexposedDenies: [],
+        mountReexposureProblem: null,
         restrictedDeniedReadRoots: [stateDir],
         preparation: {
           skillsRoot: roots.skills,

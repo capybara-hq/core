@@ -1,5 +1,34 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.98
+
+### Patch Changes
+
+- d68c9fc: Device reports can say how to change a device's limits: `DeviceReport.changeHint` (`{ en, zh? }`,
+  in the provider's words). The device page shows it under the limits, and the kernel appends it to
+  the refusals that cite the report (an escalated call the device does not allow now, a network the
+  device side keeps on the allowlist). A provider's permission support may name who keeps a closed
+  crossing closed (`limitedBy: { outsideSandbox?: "owner", openPublic?: "owner" }`): the kernel then
+  names the owner of the machine the device runs on instead of the provider.
+- f880c74: New device dialog: the device type is a select with the chosen provider's description as its
+  help (read-only with one provider), the dialog is the wider 640 one, and every setup guide shows
+  "Ask an agent" in its head beside the title instead of at the foot of the guide.
+- 4323bd1: Form sections stand in two columns only when the page has three or more; one or two stack (the
+  template decides from its section count). The device page merges its network tab into the
+  overview (about, network, recent changes and files as sections, then the danger zone); projects
+  stays its own tab, stacked.
+- ef9ac57: Desktop and native shells no longer manage local devices (maintainer decision 2026-11-23): local
+  devices are connected only with `capybara-device`. The SDK drops the shell capability `device@2`
+  (`SHELL_CAPABILITY_KEYS.device`, `DeviceCapabilityV2`, `ThisMachineConnection`, `DeviceRunningOp`,
+  `DeviceCeilingRequest`, `KeepAwakeMode`, `DeviceConnection`) and the setup-guide directive
+  `::shell-action` (`SetupGuideShellAction`, `SetupGuideShellActionLine`, the `shell-action` block,
+  `SetupGuidePlaceInfo.shellActions`, `SETUP_GUIDE_LIMITS.shellActions`); a leftover
+  `::shell-action` line is now plain text. `GET /api/v1/meta` no longer reports
+  `features.localDevices` (`protocols.device` stays). The web drops the 本机 block on the device
+  page, the 本机 mark in the device list and picker, and the 连接本机 button in 新建设备.
+- Updated dependencies [4323bd1]
+  - @capybara-hq/design@0.2.0-rc.42
+
 ## 0.1.0-rc.97
 
 ### Patch Changes

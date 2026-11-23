@@ -46,7 +46,8 @@ import {
 
 /** The owner ceiling a new setup writes (B-14). */
 /** A new install's owner ceiling: in the sandbox only, the open network, the whole machine. */
-const NEW_INSTALL = { outsideSandbox: false, network: "open", projectReach: "machine" };
+/** A new connection's owner ceiling: outside the sandbox per approved call, the open network. */
+const NEW_INSTALL = { outsideSandbox: true, network: "open", projectReach: "machine" };
 /** An owner's sandbox-only policy with the allowlist network. */
 const SANDBOX_ONLY = {
   outsideSandbox: false,
@@ -79,6 +80,8 @@ let out: string[];
 let err: string[];
 let sleeps: number[];
 let opened: string[];
+/** Whether the host's /usr/bin/python3 is executable, as the docker-mode check sees it. */
+let hostPython = true;
 
 const pending = {
   status: 400,
@@ -92,6 +95,7 @@ beforeEach(async () => {
   err = [];
   sleeps = [];
   opened = [];
+  hostPython = true;
   tokenAnswers = [];
   server = createServer((req, res) => {
     let raw = "";
@@ -147,6 +151,7 @@ const run = (
     ...(kill && { kill }),
     ps: ourPs,
     sandboxAvailable: () => sandbox,
+    hostProbes: { isExecutable: () => hostPython, commandLineTools: () => hostPython },
     env: { XDG_CONFIG_HOME: join(home, "cfg") },
     home,
     platform,
@@ -466,15 +471,21 @@ describe("login", () => {
     expect(JSON.parse(readFileSync(credFile(), "utf8")).maxFrameBytes).toBe(4_194_304);
   });
 
-  it("a new install writes the sandbox-only, open-network default and says how to widen it", async () => {
+  it("a new install writes the outside-per-approved-call, open-network default and says how to narrow it", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    // written, not just defaulted: version 4, in the sandbox only, the open network
+    // written, not just defaulted: version 4, outside the sandbox per approved call, the open network
     const file = JSON.parse(readFileSync(policyPath(stateDir()), "utf8"));
     expect(file).toMatchObject({ version: 4, ownerCeiling: NEW_INSTALL, projectPaths: [] });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(helloOutside()).toBe(false);
-    expect(out.filter((l) => l === sandboxOnlyLoginLine("env-1"))).toHaveLength(1);
+    expect(helloOutside()).toBe(true);
+    expect(out.filter((l) => l === outsideSandboxLoginLine("env-1"))).toHaveLength(1);
+    expect(outsideSandboxLoginLine("env-1")).toContain(
+      "capybara-device ceiling set --outside-sandbox off -c env-1",
+    );
+    // the risk text is shown once, at the login that turned it on
+    expect(out.filter((l) => l === outsideSandboxRiskText("env-1"))).toHaveLength(1);
+    expect(out).not.toContain(sandboxOnlyLoginLine("env-1"));
     expect(sandboxOnlyLoginLine("env-1")).toContain(
       "capybara-device ceiling set --outside-sandbox on -c env-1",
     );
@@ -485,16 +496,14 @@ describe("login", () => {
       projectReachLoginLine("machine", 0, "env-1"),
     ]);
     expect(projectReachLoginLine("machine", 0, "env-1")).toMatch(/^Project reach: machine \(/);
-    expect(out).not.toContain(outsideSandboxLoginLine("env-1"));
-    expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
-  it("an organization without outside-sandbox runs gets the same default", async () => {
+  it("an organization without outside-sandbox runs gets the same default and is told so", async () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, outsideSandbox: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
-    expect(out).not.toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
+    expect(out).toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
   });
 
@@ -605,8 +614,15 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
-    expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1"));
+    expect(out).toContain(outsideSandboxLoginLine("env-1"));
+    expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1", true));
+    // the ceiling already allows running outside: no hint to widen it
+    expect(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1", true)).not.toContain(
+      "--outside-sandbox on",
+    );
+    expect(restrictedUnavailableLoginLine("bubblewrap is missing", "env-1", false)).toContain(
+      "--outside-sandbox on -c env-1",
+    );
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
   });
 
@@ -615,14 +631,82 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(out).toContain(sandboxOnlyLoginLine("env-1"));
-    expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
-    out.length = 0;
-    writeOutsideAllowedPolicy(stateDir());
-    tokenAnswers = [granted];
-    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(out).toContain(outsideSandboxLoginLine("env-1"));
     expect(out).not.toContain(outsideSandboxRiskText("env-1"));
+    expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
+  });
+
+  it("--mode docker without the host python3: refused with the fix, before the deployment is asked", async () => {
+    hostPython = false;
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(1);
+    expect(err.join("\n")).toContain("/usr/bin/python3");
+    expect(err.join("\n")).toContain("sudo apt install python3");
+    expect(seen).toEqual([]);
+    expect(existsSync(credFile())).toBe(false);
+    out.length = 0;
+    err.length = 0;
+    expect(await run(["login", "--url", base, "--mode", "docker"], "darwin")).toBe(1);
+    expect(err.join("\n")).toContain("xcode-select --install");
+    // OS mode never needs it
+    err.length = 0;
+    expect(await run(["login", "--url", base])).toBe(0);
+  });
+
+  it("--mode docker on macOS without the command line tools: refused though the shim exists", async () => {
+    hostPython = true;
+    const tools = false;
+    const r = await runCli(["login", "--url", base, "--mode", "docker"], {
+      ps: ourPs,
+      sandboxAvailable: () => sandbox,
+      hostProbes: { isExecutable: () => true, commandLineTools: () => tools },
+      env: { XDG_CONFIG_HOME: join(home, "cfg") },
+      home,
+      platform: "darwin",
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+      sleep: async () => {},
+      openBrowser: () => {},
+    });
+    expect(r).toBe(1);
+    expect(err.join("\n")).toContain("xcode-select --install");
+    expect(seen).toEqual([]);
+  });
+
+  it("re-login of a docker device without python3 writes the credential and warns", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
+    hostPython = false;
+    out.length = 0;
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out.join("\n")).toContain("Warning:");
+    expect(out.join("\n")).toContain("/usr/bin/python3");
+    expect(JSON.parse(readFileSync(credFile(), "utf8"))).toMatchObject({ mode: "docker" });
+  });
+
+  it("a new docker device beside another connection is refused late, leaving no directory", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    hostPython = false;
+    err.length = 0;
+    tokenAnswers = [grantedAs({ deviceId: "env-2" })];
+    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(1);
+    expect(err.join("\n")).toContain("Nothing was stored");
+    expect(existsSync(stateDir("env-2"))).toBe(false);
+  });
+
+  it("re-login of an os device passing --mode docker is not refused or warned", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    hostPython = false;
+    out.length = 0;
+    tokenAnswers = [granted];
+    const code = await run(["login", "--url", base, "--mode", "docker"]);
+    expect(err).toEqual([]);
+    expect(code).toBe(0);
+    expect(out.join("\n")).not.toContain("Warning:");
+    expect(JSON.parse(readFileSync(credFile(), "utf8"))).toMatchObject({ mode: "os" });
   });
 
   it("points at the installed login service instead of start", async () => {

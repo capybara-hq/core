@@ -40,24 +40,25 @@ describe("MetaController features.push", () => {
   });
 });
 
-describe("MetaController local devices", () => {
-  it("no dial-in provider loaded: localDevices false, the SDK's major as the range", async () => {
+describe("MetaController device protocol range", () => {
+  it("no dial-in provider loaded: the SDK's major as the range", async () => {
     const m = await controller(undefined).c.meta();
-    expect(m.features.localDevices).toBe(false);
     expect(m.protocols.device).toEqual({
       min: DEVICE_PROTOCOL_VERSION,
       max: DEVICE_PROTOCOL_VERSION,
     });
   });
 
-  it("only a provider speaking another protocol: localDevices false", async () => {
+  it("only a provider speaking another protocol: the SDK's major as the range", async () => {
     const m = await controller(undefined, ["fake-dial-in/1"]).c.meta();
-    expect(m.features.localDevices).toBe(false);
+    expect(m.protocols.device).toEqual({
+      min: DEVICE_PROTOCOL_VERSION,
+      max: DEVICE_PROTOCOL_VERSION,
+    });
   });
 
-  it("a provider speaking capybara-device: localDevices true, its declared major as the range", async () => {
+  it("a provider speaking capybara-device: its declared major as the range", async () => {
     const m = await controller(undefined, ["fake-dial-in/1", "capybara-device/7"]).c.meta();
-    expect(m.features.localDevices).toBe(true);
     expect(m.protocols.device).toEqual({ min: 7, max: 7 });
   });
 });

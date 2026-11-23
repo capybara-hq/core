@@ -634,6 +634,10 @@ describe.each([true, false])(
       // the provider's description of the device, in the report it stored (same revision)
       await sql`UPDATE capybara.devices SET report = report || ${JSON.stringify({
         description: { en: "Runs commands on a test machine." },
+        changeHint: {
+          en: "The test machine's operator changes this.",
+          zh: "由测试机的操作员更改。",
+        },
       })}::jsonb WHERE id = ${f.deviceId}`.execute(raw);
       const review = vi.spyOn(k.app.get(CommandReviewService), "review");
       const step = await f.step();
@@ -648,7 +652,11 @@ describe.each([true, false])(
       expect(review).not.toHaveBeenCalled();
       const text = JSON.stringify((await f.results())[0]?.content);
       expect(text).toContain(
-        `but ${escalationDeviceOffWhy("Runs commands on a test machine.")}, so it did not run`,
+        `but ${escalationDeviceOffWhy("Runs commands on a test machine.", "The test machine's operator changes this.")}, so it did not run`,
+      );
+      // the provider's change hint, in English, is part of the refusal
+      expect(text).toContain(
+        "as the device's provider says: The test machine's operator changes this)",
       );
       expect(text).not.toMatch(/capybara-device/);
     });

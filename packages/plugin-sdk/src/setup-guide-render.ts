@@ -13,7 +13,6 @@ import {
   SETUP_GUIDE_PLACE_INFO,
   type SetupGuideAudience,
   type SetupGuidePlace,
-  type SetupGuideShellAction,
   type SetupGuideVariableType,
 } from "./setup-guide.js";
 import {
@@ -27,16 +26,13 @@ import {
   revertSentinels,
   SETUP_GUIDE_VARIABLE_RE,
   scanGuide,
-  shellActionMarkerIndex,
 } from "./setup-guide-parse.js";
 
-/** A block of a rendered guide: sanitized Markdown, a code block, a check row, or a
- * shell action button. */
+/** A block of a rendered guide: sanitized Markdown, a code block or a check row. */
 export type SetupGuideBlock =
   | { kind: "markdown"; text: string }
   | { kind: "code"; language: string; title: string | null; text: string }
-  | { kind: "check"; id: string; label: string }
-  | { kind: "shell-action"; action: SetupGuideShellAction; label: string };
+  | { kind: "check"; id: string; label: string };
 
 /** A guide document rendered for one mode, audience and set of values. */
 export interface RenderedSetupGuideDoc {
@@ -386,22 +382,6 @@ export function renderSetupGuide(
       if (check !== undefined) {
         flush();
         blocks.push({ kind: "check", id: check.id, label: check.label });
-      }
-      continue;
-    }
-    const a = shellActionMarkerIndex(node);
-    if (a !== undefined) {
-      const sa = scan.shellActions[a];
-      if (sa !== undefined) {
-        flush();
-        // the validator limits the action to the place's; a stored guide of another shape is skipped
-        if ((info.shellActions as readonly string[]).includes(sa.action)) {
-          blocks.push({
-            kind: "shell-action",
-            action: sa.action as SetupGuideShellAction,
-            label: sa.label,
-          });
-        }
       }
       continue;
     }

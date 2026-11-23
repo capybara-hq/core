@@ -622,6 +622,8 @@ export function fixtureCeiling(roots: DeviceOwnerCeiling["roots"]): DeviceOwnerC
     secretAndStateDenies: [],
     otherConnectionDenies: [],
     unreadableConnections: [],
+    mountReexposedDenies: [],
+    mountReexposureProblem: null,
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,

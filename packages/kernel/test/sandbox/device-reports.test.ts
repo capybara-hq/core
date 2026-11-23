@@ -68,7 +68,7 @@ const report = (revision: string): DeviceReport => ({
   revision,
   description: { en: `Device at ${revision}`, zh: `设备 ${revision}` },
   home: null,
-  limits: [{ label: { en: "CPU" }, value: "2" }],
+  limits: [{ label: { en: "CPU" }, value: { en: "2 cores", zh: "2 核" } }],
   reset: true,
 });
 

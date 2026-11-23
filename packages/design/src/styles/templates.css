@@ -104,13 +104,50 @@
 }
 
 /*
- * FormSection (spec §5.3): the title column (240) and the field card (panel, radius md, space.4
- * padding, space.3 between fields); sections are separated by spacing (the frame's space.6).
+ * FormSection (spec §5.3): the head (the h2 title over a prose-small muted description) above the
+ * field card (panel, radius md, space.4 padding, space.3 between fields); sections are separated
+ * by spacing (the frame's space.6). Columns by count (spec §5.3): a template holding three or
+ * more sibling sections (never a SettingsPage, whose sub-nav is the title column) puts each head
+ * in a 240 column beside its card, while the label column fits (the body leaves content-min for
+ * the fields, §4.3 "side columns fit", and always below 841); one or two sections stay stacked.
  */
 .cb-form-section {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: var(--cb-space-7);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--cb-space-3);
+}
+@container cb-body (min-width: 792px) {
+  .cb-template:not([data-template="SettingsPage"]):has(
+      .cb-form-section ~ .cb-form-section ~ .cb-form-section
+    )
+    .cb-form-section:not([data-layout="stacked"]) {
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: var(--cb-space-7);
+  }
+  /* After columned sections the danger zone sits in their field column, not under their titles. */
+  .cb-template:not([data-template="SettingsPage"]):has(
+      .cb-form-section ~ .cb-form-section ~ .cb-form-section
+    )
+    .cb-form-section:not([data-layout="stacked"])
+    ~ .cb-danger-zone {
+    margin-left: calc(240px + var(--cb-space-7));
+  }
+}
+@media (max-width: 840px) {
+  .cb-template:not([data-template="SettingsPage"]):has(
+      .cb-form-section ~ .cb-form-section ~ .cb-form-section
+    )
+    .cb-form-section:not([data-layout="stacked"]) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--cb-space-3);
+  }
+  .cb-template:not([data-template="SettingsPage"]):has(
+      .cb-form-section ~ .cb-form-section ~ .cb-form-section
+    )
+    .cb-form-section:not([data-layout="stacked"])
+    ~ .cb-danger-zone {
+    margin-left: 0;
+  }
 }
 .cb-form-section-head {
   display: flex;
@@ -138,29 +175,6 @@
 .cb-form-section-fields[data-flush="true"] {
   gap: 0;
   padding: 0;
-}
-/*
- * Stacked: the head above a fields card across the full width (an editor), at every width. Every
- * section of a SettingsPage is stacked: the sub-nav already holds the titles' column.
- */
-.cb-form-section[data-layout="stacked"],
-.cb-settings-content .cb-form-section {
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--cb-space-3);
-}
-/* A label column beside its fields needs the body to leave content-min for the fields (spec §4.3
-   "side columns fit"): a container query on the body's content box, and always below 841. */
-@media (max-width: 840px) {
-  .cb-form-section {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--cb-space-3);
-  }
-}
-@container cb-body (max-width: 791px) {
-  .cb-form-section {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--cb-space-3);
-  }
 }
 
 /* Settings: the head across the content width, then a 200px sub-nav beside the section content. */
@@ -1294,25 +1308,8 @@ a.cb-object-name:hover {
   border: 1px solid color-mix(in srgb, var(--cb-fail) 45%, transparent);
   border-radius: var(--cb-radius-md);
 }
-/* After form sections the zone sits in their field column, not under their titles. */
-.cb-form-section ~ .cb-danger-zone {
-  margin-left: calc(240px + var(--cb-space-7));
-}
-/* Stacked sections (every SettingsPage section) have no title column: the zone spans their width. */
-.cb-form-section[data-layout="stacked"] ~ .cb-danger-zone,
-.cb-settings-content .cb-form-section ~ .cb-danger-zone {
-  margin-left: 0;
-}
-@media (max-width: 840px) {
-  .cb-form-section ~ .cb-danger-zone {
-    margin-left: 0;
-  }
-}
-@container cb-body (max-width: 791px) {
-  .cb-form-section ~ .cb-danger-zone {
-    margin-left: 0;
-  }
-}
+/* After columned form sections the zone sits in their field column (the FormSection rules above);
+   after stacked ones (one or two sections, every SettingsPage) it spans their width. */
 .cb-danger-zone-title {
   margin: 0;
   padding: var(--cb-space-3) var(--cb-space-4);

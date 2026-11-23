@@ -68,10 +68,16 @@ signature for the lifecycle and the conformance suite.
 **`networkAllowlist: true`** is a static declaration, not a probe: a provider that cannot restrict outbound hosts does not implement
 `device-provider@1`.
 
-**`report(device, signal)`** answers `DeviceReport` (`{ revision, description: {en, zh?}, home, limits[], reset }`, checked by
+**`report(device, signal)`** answers `DeviceReport` (`{ revision, description: {en, zh?}, home, limits[], reset, changeHint? }`, checked by
 `parseDeviceReport` with the sizes in `DEVICE_REPORT_LIMITS`): what the device page shows (a description, the owner's home or
-null, up to 8 limit lines, whether the provider can reset the files). It is shown to people and never used for enforcement.
-The kernel stores the parsed report in `devices.report` (migration 0175) and refreshes it under the exclusive lifecycle lease
+null, up to 8 limit lines `{ label, value }` whose label and value are both text `{en, zh?}`: words in a value get a zh form,
+pure data such as a path may carry `en` only; whether the provider can reset the files, and `changeHint`: who changes the limits
+and how, in the provider's words). It is shown to people and never used for enforcement. The kernel appends `changeHint.en` to every refusal
+that cites the report (`escalationCeilingWhy` for the `provider` and `owner` layers, the device network refusal), worded
+neutrally ("to change this, as the device's provider says: …"). The permission support's optional `limitedBy: { outsideSandbox?,
+openPublic? }` (value `owner`, only on a closed crossing) makes `effectiveDeviceSandbox` name the `owner` layer instead of
+`provider`; `deviceSideLayer` treats both alike (they clamp the sandbox network, never an org's per-call grants).
+The kernel stores the parsed report in `devices.report` (`0176_device_report.sql`; `0179_device_report_limit_text.sql` turned older string limit values into `{en}`) and refreshes it under the exclusive lifecycle lease
 after a create and a resume, through a bounded call raced against its deadline (a provider that ignores the signal is given up
 at the bound); a failed or invalid report leaves the stored one and never fails the lifecycle step.
 
@@ -685,8 +691,13 @@ suite in `@capybara-hq/testing` checks it):
   (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
   the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
-  path to a denied one are unreadable and it cannot be listed, a bind mount of a denied directory stays readable, and
-  more than 4096 carved roots refuses machine reach. `policy.json` is format 4; an older file is refused at start
+  path to a denied one are unreadable and it cannot be listed, and more than 4096 carved roots refuses machine reach.
+  Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system
+  mounted inside it and elsewhere, an overlay layer, a loop image) are denied too, from `/proc/self/mountinfo` at each
+  ceiling read (`exec/linux-mountinfo.ts`, `mountReexposedDenies`, every reach); mounts of unknown content (an
+  unmounted automount point, an unresolvable overlay layer, an unreadable loop backing file) are denied wholesale; a
+  table it cannot read or decide (`mountReexposureProblem`) refuses machine reach with `machineReachMountRefusal`,
+  never a guess (paths reach then trusts the listed paths). `policy.json` is format 4; an older file is refused at start
   and rewritten from the closed policy by `ceiling set` (`PolicyVersionError`, `replacementPolicy`).
 - **Packages that ship `.idea` / `.vscode` do not install in the sandbox.** The editor denies hold
   below `node_modules` too (a directory moved or linked out of it would carry the configuration

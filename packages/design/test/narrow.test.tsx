@@ -159,14 +159,13 @@ describe("size-class widths in the stylesheets", () => {
     const templates = css("templates.css");
     const shell = css("shell.css");
     expect(decls(shell, ".cb-body-content")).toContain("container: cb-body / inline-size;");
-    for (const [sel, width] of [
-      [".cb-form-section", "791px"],
-      [".cb-settings-grid", "751px"],
-    ] as const) {
-      expect(media(templates, "(max-width: 840px)")).toContain(sel);
-      expect(media(templates, `(max-width: 840px)`)).not.toContain("959");
-      expect(templates).toContain(`@container cb-body (max-width: ${width}) {`);
-    }
+    // FormSection: stacked by default, columns (by count) only from a body of 792 and above 840
+    expect(templates).toContain("@container cb-body (min-width: 792px) {");
+    expect(media(templates, "(max-width: 840px)")).toContain(".cb-form-section");
+    // SettingsPage: the sub-nav stacks by container and below 841
+    expect(media(templates, "(max-width: 840px)")).toContain(".cb-settings-grid");
+    expect(media(templates, "(max-width: 840px)")).not.toContain("959");
+    expect(templates).toContain("@container cb-body (max-width: 751px) {");
   });
 
   it("the compact chrome (the floating row) is shown below 600 only", () => {

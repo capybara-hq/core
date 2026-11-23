@@ -71,19 +71,4 @@ describe("GuideDocument (design spec §6.9)", () => {
       expect(code.getAttribute("data-framed")).toBe("false");
     }
   });
-
-  it("an action block draws what renderAction returns, nothing without it", () => {
-    const only = [{ kind: "action", id: "connect-this-machine", label: "Connect" }] as const;
-    const { rerender } = wrap(<GuideDocument blocks={[...only]} />);
-    expect(screen.queryByText("Connect")).toBeNull();
-    rerender(
-      <DesignProvider locale="zh">
-        <GuideDocument
-          blocks={[...only]}
-          renderAction={(b) => <button type="button">{b.label}</button>}
-        />
-      </DesignProvider>,
-    );
-    expect(screen.getByRole("button", { name: "Connect" })).toBeTruthy();
-  });
 });

@@ -33,8 +33,8 @@ const wider = (a: DeviceNetworkMode, b: DeviceNetworkMode) =>
 type Choice = DeviceNetworkMode | "follow";
 
 /**
- * Network (device provider design §6.3, §6.6): one settings section, identical for every
- * provider. The device's owner follows the organization (`mode: null`), opens it to the internet (private
+ * Network (device provider design §6.3, §6.6): one section of the device's overview, identical
+ * for every provider. The device's owner follows the organization (`mode: null`), opens it to the internet (private
  * networks blocked), keeps it to an allowlist whose own hosts only narrow the organization's list
  * (none of its own follows the org's hosts), or closes it, saved with `PATCH { network }`. An
  * option above `sandbox.networkCeiling` is disabled and names the layer that set it; the kernel
@@ -107,9 +107,11 @@ function NetworkForm({
     choice !== initial ||
     (choice === "allowlist" && hosts.join("\n") !== s.allowedDomains.join("\n"));
   // the layer that set the ceiling: the device's own layer no longer limits it, so anything but
-  // the platform or the org is the provider
+  // the platform, the org or the machine's owner is the provider
   const layer =
-    s.layer.network === "platform" || s.layer.network === "org" ? s.layer.network : "provider";
+    s.layer.network === "platform" || s.layer.network === "org" || s.layer.network === "owner"
+      ? s.layer.network
+      : "provider";
   const limit = (n: DeviceNetworkMode) =>
     wider(n, s.networkCeiling)
       ? {
