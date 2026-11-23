@@ -227,7 +227,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       `GET ${O}/settings`,
       { radios: 4, kv: 1, items: 0, switches: 0, groups: 0, hints: 0 },
     ],
-    // the 用途默认 tab: the kernel's nine purposes, each its own section over its model select
+    // the purposes tab: the kernel's nine purposes, each its own section over its model select
     [
       "/settings/models?tab=purposes",
       `GET ${O}/model-purposes`,

@@ -253,7 +253,7 @@ function ModelsBody({
   });
 
   if (header.activeTab === "purposes") {
-    // The drafts live in this component: a switch to 模型 and back keeps them. One section per
+    // The drafts live in this component: a switch to the models tab and back keeps them. One section per
     // purpose (a SettingsPage always stacks them: its sub-nav is the title column).
     return (
       <SettingsPage

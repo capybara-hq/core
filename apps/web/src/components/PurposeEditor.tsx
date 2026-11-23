@@ -205,7 +205,7 @@ export function usePurposeDrafts({
 
 /**
  * One model purpose's section (a FormSection; shared by the deployment defaults and the org
- * overrides). The head holds the label, the muted 「已覆盖」 mark and the one line under it; the card
+ * overrides). The head holds the label, the muted "overridden" mark and the one line under it; the card
  * holds the warnings, the model select and the folded parameters:
  * - `scope: "deployment"`: edits the deployment default (`view.default`); 「未设置」 clears it;
  * - `scope: "org"`: edits the org's override (`view.override`); the default option

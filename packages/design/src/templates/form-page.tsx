@@ -131,7 +131,7 @@ export function FormSection({
 }: {
   id: string;
   title: string;
-  /** Beside the title: a state word (a muted 已覆盖), never an action (spec §5.3). */
+  /** Beside the title: a state word (a muted "overridden"), never an action (spec §5.3). */
   marks?: ReactNode;
   description?: string;
   /** `stacked`: the head above the card even where the page's sections stand in columns. */

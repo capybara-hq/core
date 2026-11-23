@@ -279,7 +279,7 @@ function ModelsBody({
   });
 
   if (tab === "purposes") {
-    // The drafts live in this component: a switch to 模型 and back keeps them. One section per
+    // The drafts live in this component: a switch to the models tab and back keeps them. One section per
     // purpose, siblings, so the template counts them (three or more stand in columns).
     return (
       <ListPage header={header} {...(actionRow !== undefined ? { actionRow } : {})}>
