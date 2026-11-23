@@ -1050,21 +1050,25 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       const me = await member();
       const env = await create(me.req, "Adds");
       const svc = k.app.get(DevicesService);
-      const refused = async (hosts: string[]) => {
+      // each refusal names its reason in its detail (the decision's copy reads it)
+      const refused = async (
+        hosts: string[],
+        reason: "network_closed" | "follows_org" | "host_not_addable" = "host_not_addable",
+      ) => {
         const err = await svc.addNetworkHostsIn(orgId, me.id, env.id, hosts, "web").then(
           () => null,
           (e: unknown) => e,
         );
         expect(err).toBeInstanceOf(ApiError);
-        expect(err).toMatchObject({ code: "device.network_not_allowed" });
+        expect(err).toMatchObject({ code: "device.network_not_allowed", details: [{ reason }] });
         return (err as ApiError).message;
       };
       // following its org (mode null) or the org's whole allowlist: every addable host is in
-      expect(await refused(["b.dev"])).toContain("follows its organization's hosts");
+      expect(await refused(["b.dev"], "follows_org")).toContain("follows its organization's hosts");
       expect((await patch(me.req, env.id, { network: { mode: "allowlist" } })).statusCode).toBe(
         200,
       );
-      await refused(["b.dev"]);
+      await refused(["b.dev"], "follows_org");
 
       const own = await patch(me.req, env.id, { network: { mode: "allowlist", hosts: ["a.dev"] } });
       expect(own.statusCode, own.body).toBe(200);
@@ -1199,7 +1203,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         svc.addNetworkHostsIn(orgId, other.id, env.id, ["c.dev"], "web"),
       ).rejects.toMatchObject({ code: "device.not_found" });
       expect((await patch(me.req, env.id, { network: { mode: "none" } })).statusCode).toBe(200);
-      await refused(["c.dev"]);
+      await refused(["c.dev"], "network_closed");
     } finally {
       await setOrgNetwork(null);
     }
@@ -1249,6 +1253,8 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       const res = await viaPat({ network });
       expect(res.statusCode, res.body).toBe(400);
       expect(errCode(res)).toBe("device.network_not_allowed");
+      // the PATCH route's own refusal names no reason: the web shows its default copy
+      expect((res.json() as { error: { details?: unknown } }).error.details).toBeUndefined();
     }
     const renamed = await viaPat({ name: "By token" });
     expect(renamed.statusCode, renamed.body).toBe(200);

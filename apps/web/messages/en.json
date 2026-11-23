@@ -382,7 +382,12 @@
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
       "not_running": "The device stopped before it could be read. Try again; it will be started first.",
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
-      "network_not_allowed": "This network is wider than your organization, the platform or the provider allows for this device, or a host is outside the organization's list.",
+      "network_not_allowed": {
+        "default": "This network is wider than your organization, the platform or the provider allows for this device, or a host is outside the organization's list.",
+        "network_closed": "The hosts can't be added: network access is now turned off for this device's sandbox. Deny the request, or turn the network on in the device's network settings first.",
+        "follows_org": "The hosts can't be added: this device no longer has a host list of its own and follows the organization's hosts instead. Deny the request; to allow a host outside them, an org admin adds it to the organization's device network list.",
+        "host_not_addable": "The hosts can't be added to this device's list: the organization's hosts no longer include them. Deny the request, or ask an org admin (or a super admin for a host outside the platform's list) to allow the host."
+      },
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
       "provider_unavailable": "This device's provider is off in this organization, not installed, or takes no machines. Ask an org admin to switch it on.",

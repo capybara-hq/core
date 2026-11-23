@@ -340,7 +340,7 @@ describe("网络", () => {
     await user.click(radio(E.network.open));
     await user.click(screen.getByRole("button", { name: E.network.save }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(en.errors.device.network_not_allowed);
+    expect(alert.textContent).toContain(en.errors.device.network_not_allowed.default);
   });
 
   it("a change invalidates the list, the device and its permission previews", async () => {

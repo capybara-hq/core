@@ -825,7 +825,8 @@ export class DevicesService {
    * and the instance marked for its next use). Refuses with `device.network_not_allowed`, writing
    * nothing, unless the stored network is `allowlist` with a host list of its own (a device
    * following its org's hosts already allows every host its list could name) and every host may
-   * join that list (`deviceListAddRefusal`). Hosts its list already covers change nothing; own
+   * join that list (`deviceListAddRefusal`); its detail `reason` says which (`network_closed`,
+   * `follows_org`, `host_not_addable`), for the decision's copy. Hosts its list already covers change nothing; own
    * hosts the org's hosts no longer cover (in effect nowhere) leave the list with the addition.
    */
   async addNetworkHostsIn(
@@ -868,11 +869,13 @@ export class DevicesService {
       throw new ApiError(
         "device.network_not_allowed",
         "Network access is turned off for this device's sandbox; its owner changes that on the device page",
+        [{ reason: "network_closed" }],
       );
     if (own.networkMode !== "allowlist" || own.networkHosts.length === 0)
       throw new ApiError(
         "device.network_not_allowed",
         "This device has no host list of its own: it follows its organization's hosts, which already include every host its list could name; an organization admin adds another host to the organization's device network list",
+        [{ reason: "follows_org" }],
       );
     const wanted = [...new Set(hosts.map((h) => h.toLowerCase()))];
     for (const host of wanted) {
@@ -889,6 +892,7 @@ export class DevicesService {
         throw new ApiError(
           "device.network_not_allowed",
           `${host} cannot be added to this device's network list: ${why}`,
+          [{ reason: "host_not_addable" }],
         );
     }
     const covers = (list: readonly string[], h: string) =>
