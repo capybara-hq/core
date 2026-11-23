@@ -95,7 +95,7 @@ Anti-goals (a failure even if it works)
  │  component)      │         │  pipes bytes)│  openStream      │  │  profile in fs      │
  └──────────────────┘         └──────────────┘                  │  └ CDP                 │
                                      ▲                          └────────────────────────┘
- agent ── browser tools ── browser plugin (server) ── ctx.deviceAccess.ensureService / openStream ┘
+ agent ── browser tools ── browser plugin (server) ── ctx.deviceAccess.ensureService / request ──┘
 ```
 
 - **Kernel (core)**: the device stream (provider capability + relay + viewer endpoint),
@@ -217,7 +217,11 @@ surface is small (amended 2026-11-23 after mapping the kernel):
   device (§5): the kernel writes the spec's files into the service's state directory, runs the
   command review on the launch argv (fail closed), and starts it through the provider. Returns the
   service's status.
-- `openStream(call, target)`: a stream from the plugin server to the service's socket, for tool calls.
+- `request(call, { service, body, timeoutMs })`: one request / response to the service's socket, for
+  tool calls. Tool calls run on API / worker replicas, not on the gateway, and their payloads are
+  small (snapshots, actions; a screenshot is capped to the device's frame capacity), so this rides
+  the provider's ordinary request path (for local devices the existing Redis relay). Streams are
+  only for viewers (§6.2). Provider side: optional `serviceRequest?(h, name, body, opts)`.
 - `streamTicket({ conversationId, accountId, target })`: a viewer ticket (§6.2); the account must be
   the conversation's owner.
 - `reportBlockedHosts(call, hosts)`: the daemon saw requests refused by the device's allowlist during
