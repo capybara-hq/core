@@ -2752,6 +2752,12 @@ export interface OpenExternalCapabilityV1 {
     open(url: string): Promise<void>;
 }
 
+// @public @deprecated
+export type OrgAccess = "readonly" | "override";
+
+// @public @deprecated
+export function orgAccess<T extends z.ZodTypeAny>(schema: T, _access: OrgAccess): T;
+
 // @public
 export interface OrgDeletedPayload {
     orgId: string;

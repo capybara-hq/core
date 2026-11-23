@@ -6,6 +6,8 @@ import {
   type ExtensionManifest,
   ExtensionManifestError,
   isSecret,
+  type OrgAccess,
+  orgAccess,
   parseExtensionPoint,
   secret,
   staticManifestOf,
@@ -32,17 +34,35 @@ describe("defineExtension", () => {
     expect(defineExtension(m)).toBe(m);
     expect(() => defineExtension(valid({ permissions }))).toThrow(/device-provider@1/);
   });
-  it("accepts config.deployment and rejects any other config key, naming it", () => {
+  it("accepts config.deployment, drops a legacy config.org and rejects any other key", () => {
     const deployment = z.object({ region: z.string() });
     expect(defineExtension(valid({ config: { deployment } }))).toBeDefined();
-    const org = { config: { deployment, org: z.object({}) } } as unknown as ExtensionManifest;
-    expect(() => defineExtension({ ...valid(), ...org })).toThrow(
-      /config\.org was removed: move org fields into config\.deployment/,
-    );
+    // a module packed before core#720: config.org is dropped, deployment kept, input untouched
+    const org = z.object({ token: z.string() });
+    const legacy = { ...valid(), config: { deployment, org } } as unknown as ExtensionManifest;
+    const defined = defineExtension(legacy);
+    expect(defined.config).toEqual({ deployment });
+    expect(Object.keys(defined.config ?? {})).toEqual(["deployment"]);
+    expect(defined.config?.deployment).toBe(deployment);
+    expect(Object.keys(legacy.config ?? {})).toEqual(["deployment", "org"]);
+    expect(staticManifestOf(defined).config).toEqual({
+      deployment: [{ path: "region", secret: false, hot: false }],
+    });
     const other = { config: { connection: z.object({}) } } as unknown as ExtensionManifest;
     expect(() => defineExtension({ ...valid(), ...other })).toThrow(
       /config\.connection is not a config level/,
     );
+    const both = {
+      config: { deployment, org, connection: z.object({}) },
+    } as unknown as ExtensionManifest;
+    expect(() => defineExtension({ ...valid(), ...both })).toThrow(/config\.connection/);
+  });
+  it("orgAccess is a deprecated no-op exported from the package index", () => {
+    const field = secret(z.string());
+    expect(orgAccess(field, "override")).toBe(field);
+    expect(orgAccess(field, "readonly")).toBe(field);
+    expect(field.meta()).toEqual({ secret: true });
+    expectTypeOf<OrgAccess>().toEqualTypeOf<"readonly" | "override">();
   });
   it("rejects missing setup", () => {
     // biome-ignore lint/suspicious/noExplicitAny: 构造缺 setup 的畸形清单

@@ -482,6 +482,12 @@ describe("packPlugin: other behavior", () => {
       /version.*0\.1\.0.*0\.2\.0/,
     );
   });
+
+  it("refuses a module that still declares config.org (only modules packed before core#720 load with it)", async () => {
+    await expect(packPlugin(fixture("legacy-config-org"), out)).rejects.toThrow(
+      /config\.org was removed: move org fields into config\.deployment/,
+    );
+  });
 });
 
 describe("packPlugin: config schemas (extension config forms spec §4.5)", () => {
