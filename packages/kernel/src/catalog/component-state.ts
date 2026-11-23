@@ -686,6 +686,57 @@ export async function connectorTemplatesOn(
   return new Set(ids.filter((id) => !off.has(id)));
 }
 
+/** A component switch an install writes for the templates the org chose (or left out). */
+export interface TemplateSwitch {
+  componentId: string;
+  name: string;
+  plugin: string | null;
+  from: boolean | null;
+  to: boolean;
+}
+
+/**
+ * The org's choice of a plugin's connector templates at install (the wizard's choose step), read
+ * with the plugin installed: `on` the chosen template ids, `switches` the org switches that make
+ * exactly those on (a chosen one off now -> on, a left-out one on now -> off), `refused` chosen ids
+ * that cannot come on in the org (disabled, not offered) and left-out ids of a builtin plugin
+ * (locked on). Template ids without a component row are left to the caller.
+ */
+export async function connectorTemplateChoice(
+  db: KernelSchemaDb,
+  orgId: string,
+  itemId: string,
+  chosen: ReadonlySet<string>,
+): Promise<{ on: Set<string>; switches: TemplateSwitch[]; refused: string[] }> {
+  const comps = await loadComponents(db, "connector_template", { itemId });
+  const st = await loadScopeState(db, "connector_template", comps);
+  const on = new Set<string>();
+  const switches: TemplateSwitch[] = [];
+  const refused: string[] = [];
+  for (const c of comps) {
+    const p = pluginFactsOf(st, c.itemId, orgId);
+    const installed = p && { ...p, installed: true };
+    const listed = listedIn(st, c.id, orgId);
+    const sw = switchOf(st, c.id, orgId);
+    const now = componentOn(c, installed, listed, sw);
+    const want = chosen.has(c.name);
+    if (want) {
+      if (!componentOn(c, installed, listed, true)) {
+        refused.push(c.name);
+        continue;
+      }
+      on.add(c.name);
+    } else if (now && componentLocked(c, p)) {
+      refused.push(c.name);
+      continue;
+    }
+    if (now !== want) {
+      switches.push({ componentId: c.id, name: c.name, plugin: c.plugin, from: sw, to: want });
+    }
+  }
+  return { on, switches, refused };
+}
+
 /** The org's live connectors made from platform connector template `id` (they stay its own). */
 export async function connectorsMadeFrom(
   db: KernelSchemaDb,
