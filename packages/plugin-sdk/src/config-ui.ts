@@ -161,10 +161,10 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 /**
  * An extension config schema as a JSON Schema for forms (the input side, defaults included, no
  * `$schema`):
- * - meta `secret: true` becomes `"x-secret": true`, `hot: true` becomes `"x-hot": true`, `org`
- *   (`orgAccess`) becomes `"x-org"`, `ui`
- *   becomes `"x-ui"` (a JSON copy of the hints); `title` / `description` are filled from
- *   `x-ui.label.en` / `x-ui.help.en` when the node has none;
+ * - meta `secret: true` becomes `"x-secret": true`, `hot: true` becomes `"x-hot": true`,
+ *   `platformOnly: true` (`platformOnly`) becomes `"x-platform-only": true`, `ui` becomes
+ *   `"x-ui"` (a JSON copy of the hints); `title` / `description` are filled from `x-ui.label.en` /
+ *   `x-ui.help.en` when the node has none;
  * - unrepresentable types become `{ "x-unsupported": true }` instead of throwing;
  * - under a secret node no value is published: `default` / `examples` / `const` / `enum` and
  *   `x-ui.options` / `x-ui.presets` are removed from it and all its descendants.
@@ -180,8 +180,8 @@ export function configJsonSchema(schema: z.ZodTypeAny): JsonSchema {
       delete js.secret;
       if (js.hot === true) js["x-hot"] = true;
       delete js.hot;
-      if (js.org !== undefined) js["x-org"] = js.org;
-      delete js.org;
+      if (js.platformOnly === true) js["x-platform-only"] = true;
+      delete js.platformOnly;
       if ("ui" in js) {
         // A JSON copy: hints are data, and the scrub must never mutate the schema's meta.
         const hints = JSON.parse(JSON.stringify(js.ui ?? null)) as unknown;
@@ -382,7 +382,7 @@ function itemsOf(node: JsonSchema): JsonSchema | null {
  */
 export function validateConfigUi(
   schema: JsonSchema,
-  level: "deployment" | "org" | "connection",
+  level: "deployment" | "connection",
 ): ConfigUiProblem[] {
   const problems: ConfigUiProblem[] = [];
   const L = CONFIG_UI_LIMITS;
@@ -406,17 +406,13 @@ export function validateConfigUi(
 
   const visit = (node: JsonSchema, path: string, isRoot: boolean, depth: number): void => {
     const report = (message: string) => problems.push({ path, message });
-    if (node["x-org"] !== undefined) {
-      const org = node["x-org"];
+    if (node["x-platform-only"] !== undefined) {
       if (level !== "deployment")
-        report(`x-org is only allowed at the deployment level, not ${level}`);
-      else if (depth !== 1) report("x-org is only allowed on a top-level field of the config");
-      else if (org !== "readonly" && org !== "override") {
-        report(`x-org must be "readonly" or "override", not ${JSON.stringify(org)}`);
-      } else if (org === "readonly" && node["x-secret"] === true) {
-        report(
-          'x-org "readonly" on a secret field: an org never sees a secret, so there is nothing to show',
-        );
+        report(`x-platform-only is only allowed at the deployment level, not ${level}`);
+      else if (depth > 1)
+        report("x-platform-only is only allowed on the config root or a top-level field");
+      else if (node["x-platform-only"] !== true) {
+        report(`x-platform-only must be true, not ${JSON.stringify(node["x-platform-only"])}`);
       }
     }
     const text = (value: unknown, what: string, max: number, plainOk = false) => {

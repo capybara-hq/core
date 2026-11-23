@@ -37,6 +37,34 @@ The platform runs several replicas, so:
   verifies this.
 - Hooks observe or deny; they never rewrite.
 
+## Config
+
+An extension declares one config schema, `config: { deployment: z.object({ ... }) }`. The super
+admin sets it for the platform. Every top-level field is **overridable** by default: an org
+follows the platform's value until an org admin saves the org's own copy. Mark a field the platform
+alone sets, and orgs never see, with `platformOnly(...)`; `platformOnly(z.object({ ... }))` marks
+the whole schema (for a plugin with no work done for an org). The mark goes on the root or on a
+top-level field only; a nested field has its top-level key's level.
+
+```ts
+import { platformOnly, secret } from "@capybara-hq/plugin-sdk";
+import { z } from "zod";
+
+config: {
+  deployment: z.object({
+    baseUrl: z.string().url().default("https://api.example.com"), // overridable
+    apiKey: secret(z.string()),                                    // overridable secret
+    adminKey: platformOnly(secret(z.string()).optional()),         // platform only
+  }),
+},
+```
+
+- Work done for an org reads the call's `config` (the effective config: platform config with the
+  org's copy applied to the overridable fields), never `ctx.config` (the platform's values).
+- An org that saves a copy brings its own value for every overridable secret. Platform-only
+  secrets stay in the effective config; never send one to an endpoint taken from an overridable
+  field, because an org could point that endpoint at a server it controls.
+
 ## Setup checks
 
 A setup guide's `::check <id> <label>` line (see `plugin-format`) runs a check of the plugin's

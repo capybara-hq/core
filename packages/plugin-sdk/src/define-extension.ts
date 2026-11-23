@@ -33,7 +33,7 @@ export interface ExtensionManifest {
    * unknown slot or version is only dropped when the host resolves the slots (`resolveUiSlots`).
    */
   ui?: UiContribution[];
-  config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
+  config?: { deployment?: z.ZodTypeAny };
   migrations?: string;
   setup(ctx: ExtensionContext): void | Promise<void>;
   /**

@@ -111,7 +111,7 @@ export interface PluginExtensionSection {
    * extension not loaded on a replica still gets its form; each ≤
    * {@link CONFIG_UI_LIMITS}`.configSchemaBytes`. Not part of the `manifest_mismatch` comparison.
    */
-  configSchemas?: { deployment?: JsonSchema; org?: JsonSchema };
+  configSchemas?: { deployment?: JsonSchema };
   /** Browser code, styles and assets (needs `permissions.client: true`); see {@link PluginClientSection}. */
   client?: PluginClientSection;
 }
@@ -239,7 +239,7 @@ const staticExtensionManifest = z.strictObject({
   optional: z.array(z.string()),
   permissions: z.record(z.string(), z.unknown()),
   ui: z.array(z.record(z.string(), z.unknown())).optional(),
-  config: z.strictObject({ deployment: configFields, org: configFields }),
+  config: z.strictObject({ deployment: configFields }),
 });
 
 const configSchemaJson = z
@@ -295,9 +295,7 @@ const extensionSection = z.strictObject({
   manifest: staticExtensionManifest,
   migrations: dotPath("migrations").optional(),
   ui: dotPath("ui").optional(),
-  configSchemas: z
-    .strictObject({ deployment: configSchemaJson.optional(), org: configSchemaJson.optional() })
-    .optional(),
+  configSchemas: z.strictObject({ deployment: configSchemaJson.optional() }).optional(),
   client: clientSection.optional(),
 });
 
@@ -594,14 +592,15 @@ const schema = z
         `"${em.sdk}" has no upper bound: use a range such as ^0.1.0 so a future major SDK is not assumed compatible`,
       );
     }
-    for (const k of ["deployment", "org"] as const) {
-      const seen = new Set<string>();
-      for (const f of em.config[k]) {
-        if (seen.has(f.path)) {
-          issue(["extension", "manifest", "config", k], `duplicate config path "${f.path}"`);
-        }
-        seen.add(f.path);
+    const seen = new Set<string>();
+    for (const f of em.config.deployment) {
+      if (seen.has(f.path)) {
+        issue(
+          ["extension", "manifest", "config", "deployment"],
+          `duplicate config path "${f.path}"`,
+        );
       }
+      seen.add(f.path);
     }
     // Name, version, sdk range, extension point refs, permissions, UI contributions: the same
     // rules as defineExtension (with a placeholder setup).

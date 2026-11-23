@@ -24,7 +24,7 @@ const staticManifest = (over: Partial<StaticExtensionManifest> = {}): StaticExte
   requires: [],
   optional: [],
   permissions: {},
-  config: { deployment: [], org: [] },
+  config: { deployment: [] },
   ...over,
 });
 

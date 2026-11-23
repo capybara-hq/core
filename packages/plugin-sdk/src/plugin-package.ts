@@ -66,7 +66,7 @@ export interface StaticExtensionManifest {
   optional: string[];
   permissions: ExtensionPermissions;
   ui?: ExtensionManifest["ui"];
-  config: { deployment: StaticConfigField[]; org: StaticConfigField[] };
+  config: { deployment: StaticConfigField[] };
 }
 
 /**
@@ -194,7 +194,6 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest 
     permissions: jsonClone(m.permissions ?? {}),
     config: {
       deployment: configFieldsOf(m.config?.deployment).sort(byPath),
-      org: configFieldsOf(m.config?.org).sort(byPath),
     },
   };
   if (m.ui !== undefined) out.ui = jsonClone(m.ui);
