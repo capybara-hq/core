@@ -199,7 +199,7 @@ export function useDeploymentConfig({
     }
   };
 
-  const copies = view.fields.some((f) => f.org === "override") ? (
+  const copies = view.fields.some((f) => f.level === "override") ? (
     <ExtensionOrgCopies name={view.plugin} variant={sheet ? "divided" : "guide"} />
   ) : null;
 

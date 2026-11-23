@@ -109,10 +109,7 @@ describe("channel webhook inbound (dual replica, api+worker / gateway)", () => {
     expect(ag.status, JSON.stringify(ag.json)).toBe(201);
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES ('fake-im:t1', 'u-owner', ${ownerId})`.execute(raw);
-    const en = await call("PUT", `${base}/extensions/fake-im`, {
-      enabled: true,
-      config: { url: im.book("acme").url },
-    });
+    const en = await call("PUT", `${base}/extensions/fake-im`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
     const ch = await call("POST", `${base}/channels`, {
       plugin: "fake-im",

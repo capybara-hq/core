@@ -35,11 +35,8 @@ const webExtension = (plugin: string) => ({
   version: "0.1.0",
   enabled: true,
   configurable: false,
-  config: null,
-  secrets: [],
   permissions: [],
   provides: [],
-  orgConfigSchema: null,
 });
 
 type Point = {

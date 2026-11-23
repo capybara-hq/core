@@ -634,6 +634,13 @@ export interface ConfigUiSection {
 }
 
 // @public
+export function configUrlFetch(net: Pick<ExtensionNet, "fetch">, opts: {
+    url: string;
+    platform?: string | readonly string[] | undefined;
+    orgId?: string | undefined;
+}): typeof fetch;
+
+// @public
 export type ConfigWidget = "text" | "textarea" | "url" | "number" | "select" | "radio" | "switch" | "checkbox" | "tristate" | "tags" | "json";
 
 // @public
@@ -1161,10 +1168,10 @@ export class DialInProtocolError extends Error {
 
 // @public
 export interface Directory {
-    configured?(orgConfig: unknown, config?: unknown): boolean;
+    configured?(config: unknown): boolean;
     listMembers(args: {
-        orgConfig: unknown;
-        config?: unknown;
+        config: unknown;
+        orgId?: string;
         cursor?: string;
         signal: AbortSignal;
     }): Promise<{
@@ -1518,7 +1525,6 @@ export interface ExtensionImageGenerateResult {
 export interface ExtensionManifest {
     config?: {
         deployment?: z.ZodTypeAny;
-        org?: z.ZodTypeAny;
     };
     dispose?(ctx: ExtensionContext): void | Promise<void>;
     migrations?: string;
@@ -2117,6 +2123,9 @@ export function isNetDeniedError(e: unknown): e is NetDeniedError;
 
 // @public
 export function isPermissionProfile(value: unknown): value is PermissionProfile;
+
+// @public
+export function isPlatformOnly(schema: z.ZodTypeAny): boolean;
 
 // @public
 export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError;
@@ -2735,15 +2744,6 @@ export interface OpenExternalCapabilityV1 {
 }
 
 // @public
-export type OrgAccess = "readonly" | "override";
-
-// @public
-export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess): T;
-
-// @public
-export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
-
-// @public
 export interface OrgDeletedPayload {
     orgId: string;
 }
@@ -2966,6 +2966,9 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
 }
 
 // @public
+export function platformOnly<T extends z.ZodTypeAny>(schema: T): T;
+
+// @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
 
 // @public
@@ -3028,7 +3031,6 @@ export interface PluginExtensionSection {
     client?: PluginClientSection;
     configSchemas?: {
         deployment?: JsonSchema;
-        org?: JsonSchema;
     };
     entry: string;
     manifest: StaticExtensionManifest;
@@ -4045,7 +4047,6 @@ export interface StaticConfigField {
 export interface StaticExtensionManifest {
     config: {
         deployment: StaticConfigField[];
-        org: StaticConfigField[];
     };
     name: string;
     optional: string[];
@@ -4893,7 +4894,7 @@ export function validateChannelCard(card: unknown): string[];
 export function validateClientSection(s: unknown): string[];
 
 // @public
-export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org" | "connection"): ConfigUiProblem[];
+export function validateConfigUi(schema: JsonSchema, level: "deployment" | "connection"): ConfigUiProblem[];
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
@@ -5002,11 +5003,11 @@ export interface WebFetchPage {
 
 // @public
 export interface WebFetchProvider {
-    configured?(orgConfig: unknown, config?: unknown): boolean;
+    configured?(config: unknown): boolean;
     fetch(args: {
         url: string;
-        orgConfig: unknown;
-        config?: unknown;
+        config: unknown;
+        orgId?: string;
         signal: AbortSignal;
     }): Promise<WebFetchPage>;
 }
@@ -5024,14 +5025,14 @@ export type WebProviderErrorKind = "not_found" | "blocked" | "auth" | "rate_limi
 
 // @public
 export interface WebSearchProvider {
-    configured?(orgConfig: unknown, config?: unknown): boolean;
+    configured?(config: unknown): boolean;
     search(args: {
         query: string;
         allowedDomains?: string[];
         blockedDomains?: string[];
         maxResults: number;
-        orgConfig: unknown;
-        config?: unknown;
+        config: unknown;
+        orgId?: string;
         signal: AbortSignal;
     }): Promise<{
         results: WebSearchResult[];

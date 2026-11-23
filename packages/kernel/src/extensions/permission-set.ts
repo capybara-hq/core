@@ -21,7 +21,7 @@ export interface PermissionSet {
   provides: string[];
   requires: string[];
   optional: string[];
-  config: { deployment: PermissionConfigField[]; org: PermissionConfigField[] };
+  config: { deployment: PermissionConfigField[] };
   /** 插件迁移里 `CREATE TABLE` 的表名（插件自己 schema 下的不带前缀）。 */
   tables: string[];
   permissions: {
@@ -151,7 +151,6 @@ export async function computePermissionSet(
     optional: manifest.optional,
     config: {
       deployment: fieldsOf(manifest.config?.deployment),
-      org: fieldsOf(manifest.config?.org),
     },
     tables,
     permissions: manifest.permissions,
@@ -166,7 +165,7 @@ export function buildPermissionSet(input: {
   provides: readonly string[];
   requires?: readonly string[] | undefined;
   optional?: readonly string[] | undefined;
-  config: { deployment: PermissionConfigField[]; org: PermissionConfigField[] };
+  config: { deployment: PermissionConfigField[] };
   tables: readonly string[];
   permissions?: ExtensionPermissions | undefined;
   warningsDigest?: string | undefined;
@@ -179,7 +178,6 @@ export function buildPermissionSet(input: {
     optional: sortedUnique(input.optional),
     config: {
       deployment: [...input.config.deployment].sort(byPath),
-      org: [...input.config.org].sort(byPath),
     },
     tables: sortedUnique(input.tables),
     permissions: {
@@ -217,7 +215,7 @@ export function buildPermissionSet(input: {
 
 /**
  * The stable string keys of a permission set (sorted), such as `provides:channel@1`,
- * `config.org.secret:apiKey`, `table:todos`, `permissions.tools:write`,
+ * `config.deployment.secret:apiKey`, `table:todos`, `permissions.tools:write`,
  * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
  * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`,
  * `permissions.dialin:capybara-device/6`.
@@ -230,10 +228,8 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const r of s.provides ?? []) keys.push(`provides:${r}`);
   for (const r of s.requires ?? []) keys.push(`requires:${r}`);
   for (const r of s.optional ?? []) keys.push(`optional:${r}`);
-  for (const level of ["deployment", "org"] as const) {
-    for (const f of s.config?.[level] ?? []) {
-      keys.push(`config.${level}${f.secret ? ".secret" : ""}:${f.path || "<root>"}`);
-    }
+  for (const f of s.config?.deployment ?? []) {
+    keys.push(`config.deployment${f.secret ? ".secret" : ""}:${f.path || "<root>"}`);
   }
   for (const t of s.tables ?? []) keys.push(`table:${t}`);
   if (p.secrets) keys.push("permissions.secrets");

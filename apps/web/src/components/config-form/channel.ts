@@ -1,20 +1,23 @@
 import type { JsonSchema } from "../../lib/json-schema";
 import type { FieldMeta } from "./model";
-import { orgConfig, orgFormMeta } from "./org";
 
 /**
- * The channel connection adapter (`POST /channels`, `PATCH /channels/:id` `config`): the same
- * whole-object semantics as the org config: an untouched secret is omitted (kept), a cleared one
- * `null`, a replaced one its new value.
+ * The channel connection adapter (`POST /channels`, `PATCH /channels/:id` `config`): the whole
+ * object is sent; an untouched secret is omitted (kept), a cleared one `null`, a replaced one its
+ * new value. The form's value already has that shape.
  */
 
 /** `secrets: [{ path, set }]` of a connection → per-field meta (none when creating). */
 export const channelFormMeta = (
   secrets?: readonly { path: string; set: boolean }[],
-): Record<string, FieldMeta> => orgFormMeta(secrets);
+): Record<string, FieldMeta> =>
+  Object.fromEntries((secrets ?? []).map((s) => [s.path, { secretSet: s.set }]));
 
 /** The form's value as the connection `config`. */
-export const channelConfig = (value: unknown): Record<string, unknown> => orgConfig(value);
+export const channelConfig = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 
 type Mode = "long_connection" | "webhook";
 

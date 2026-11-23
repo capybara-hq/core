@@ -31,6 +31,7 @@ report(
   values.network ? "Bootstrap manifest (with npm and the marketplace)" : "Bootstrap manifest",
   await checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root, {
     write: values.write,
+    fixedSet: true,
     composeFiles: BOOTSTRAP_COMPOSE_FILES.map((f) => join(root, f)),
     haproxyFile: join(root, SANDBOX_PROXY_HAPROXY),
     sandboxRuntime: {

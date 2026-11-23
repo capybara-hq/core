@@ -239,7 +239,6 @@
       "not_found": "扩展未安装。",
       "not_enabled": "该扩展未在本组织启用，请到「设置 → 扩展」中启用。",
       "config_invalid": "配置不正确：",
-      "no_org_config": "该扩展没有组织级配置。",
       "dependency_missing": "请先启用它依赖的扩展。",
       "has_dependents": "还有其他已启用的扩展依赖它。",
       "config_readonly": "这个字段由启动配置给出，只读。",
@@ -2774,7 +2773,7 @@
     "jsonHint": "填写 JSON 值。",
     "linesHint": "每行一项。",
     "hot": "即时生效",
-    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} platform {平台配置} other {只读}}",
+    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} other {只读}}",
     "tristate": {
       "default": "默认",
       "on": "开",
@@ -2813,8 +2812,7 @@
       "unset": "未配置"
     },
     "level": {
-      "hidden": "组织不可见",
-      "readonly": "组织只读",
+      "platform": "仅平台",
       "override": "组织可覆盖"
     }
   },
@@ -3026,13 +3024,7 @@
       "components": "界面组件",
       "dialIn": "机器接入（协议）"
     },
-    "configTitle": "组织配置",
-    "save": "保存配置",
-    "saveLabel": "保存 {plugin} 的配置",
-    "saveAndEnable": "保存并启用",
-    "saveAndEnableLabel": "保存 {plugin} 的配置并启用",
-    "configFirstHint": "先填写组织配置再启用",
-    "configSaved": "「{plugin}」的配置已保存。",
+    "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
@@ -3132,8 +3124,6 @@
       "embedRoutes": "嵌入页路由",
       "provides": "扩展点"
     },
-    "missingRequired": "缺少必填项：{fields}",
-    "listSep": "、",
     "toolSwitches": {
       "title": "工具",
       "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
@@ -5484,7 +5474,6 @@
         "alreadyOn": "{name} 已启用，无需再填写。",
         "backToPlugin": "返回插件",
         "connectorStep": "连接器：{name}",
-        "extensionStep": "扩展配置",
         "confirmStep": "确认",
         "name": "连接器名称",
         "slug": "标识（slug）",
@@ -5497,9 +5486,6 @@
         "personalMembersHint": "这个连接器使用个人凭据：每位成员之后各自连接。",
         "noneHint": "这个连接器不需要凭据。",
         "dcrHint": "客户端会自动注册，不需要填写。",
-        "extensionHint": "插件会在本组织启用它的扩展；有组织配置的请填写（已启用的扩展不改配置）。",
-        "extensionNone": "没有需要填写的扩展配置。",
-        "extensionEnabled": "{name}：已在本组织启用，保持现有配置。",
         "connectorKept": "{name}：本组织已有它的连接器，将保留现有连接器，无需填写。",
         "summary": "启用后本组织会得到：",
         "summaryExtension": "扩展 {name}",

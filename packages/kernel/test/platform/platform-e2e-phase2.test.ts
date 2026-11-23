@@ -1,4 +1,4 @@
-import { defineExtension, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
+import { defineExtension, platformOnly, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -100,7 +100,7 @@ const decide = (who: Req, id: string, body: Record<string, unknown>) =>
 
 /** An extension installed on the platform whose deployment API key is missing (spec §14.2). */
 async function importKeyedExtension(): Promise<string> {
-  const config = { deployment: z.object({ apiKey: secret(z.string().min(1)) }) };
+  const config = { deployment: z.object({ apiKey: platformOnly(secret(z.string().min(1))) }) };
   const real = defineExtension({
     name: NAME,
     version: "1.0.0",
@@ -111,9 +111,9 @@ async function importKeyedExtension(): Promise<string> {
     setup() {},
   });
   const entry = [
-    'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
+    'import { defineExtension, platformOnly, secret } from "@capybara-hq/plugin-sdk";',
     'import { z } from "zod";',
-    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: secret(z.string().min(1)) }) }, setup() {} });`,
+    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: platformOnly(secret(z.string().min(1))) }) }, setup() {} });`,
   ].join("\n");
   const bytes = await pluginTgz({
     manifest: { name: NAME },

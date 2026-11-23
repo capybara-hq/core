@@ -336,26 +336,17 @@ describe("context@1 providers at run start", () => {
     expect(await contexts(conv)).toHaveLength(1);
   });
 
-  it("a stored org config that no longer validates switches the provider off", async () => {
+  it("an org copy that no longer validates switches the provider off", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await run(owner, conv, 1);
-    // e.g. after a plugin upgrade: the org's stored config no longer matches the schema
-    await sql`UPDATE capybara.extension_org_configs SET config = '{"label": 5}'::jsonb
-      WHERE plugin = ${PLUGIN} AND org_id = ${orgId}`.execute(raw);
-    lines.length = 0;
+    // e.g. after a plugin upgrade: the org's stored copy no longer matches the schema
+    await sql`INSERT INTO capybara.extension_org_overrides (plugin, org_id, config)
+      VALUES (${PLUGIN}, ${orgId}, '{"mode": "bogus"}'::jsonb)`.execute(raw);
+    await k.app.get(EffectiveConfigs).invalidate(orgId, PLUGIN);
     await run(owner, conv, 2);
-    // not asked, and its recorded text is blanked (as for an invalid effective config)
+    // not asked, and its recorded text is blanked (as for any invalid effective config)
     expect(calls()).toHaveLength(1);
     expect((await contexts(conv)).map((e) => e.payload.text)).toEqual(["fake context", ""]);
-    expect(
-      lines.some(
-        (l) =>
-          l.level === "warn" &&
-          l.context === "ExtensionPointDefaults" &&
-          (l as { extension?: string }).extension === PLUGIN &&
-          l.msg.includes("stored org config is invalid"),
-      ),
-    ).toBe(true);
   });
 
   it("an eval conversation's run in the run worker never asks the providers", async () => {

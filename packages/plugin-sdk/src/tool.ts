@@ -235,8 +235,7 @@ export interface ToolCallContext {
    * The key of this logical call for idempotent side effects: 64 lowercase hex characters derived
    * from the conversation, the run and `callId`. The same for every invocation of the call
    * (each `InputRequired` round), different for every other call, including a later call the
-   * model makes to retry it. Optional in the type so older extensions compile; the kernel always
-   * passes it.
+   * model makes to retry it.
    */
   idempotencyKey?: string;
   signal: AbortSignal;
@@ -244,10 +243,9 @@ export interface ToolCallContext {
   resume?: { state: unknown; answer: FormAnswer | null };
   /**
    * The extension's effective deployment config for this org: the platform's deployment config
-   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
-   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
-   * for work done for this org. Optional in the type so older extensions compile; the kernel
-   * always passes it.
+   * with the org's copy applied to the overridable fields (every field not marked `platformOnly`),
+   * or the platform's config (equal to `ctx.config`) while the org follows it. Use it, not
+   * `ctx.config`, for work done for this org.
    */
   config?: unknown;
   /** Where the conversation comes from. The kernel always passes it. */

@@ -353,6 +353,8 @@
                   }
                 },
                 "org": {
+                  "deprecated": true,
+                  "description": "Ignored: written only by packers before core#720.",
                   "maxItems": 1000,
                   "type": "array",
                   "items": {
@@ -379,8 +381,7 @@
                 }
               },
               "required": [
-                "deployment",
-                "org"
+                "deployment"
               ],
               "additionalProperties": false
             }
@@ -420,6 +421,8 @@
               "additionalProperties": {}
             },
             "org": {
+              "deprecated": true,
+              "description": "Ignored: written only by packers before core#720.",
               "type": "object",
               "propertyNames": {
                 "type": "string"

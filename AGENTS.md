@@ -96,9 +96,10 @@ Each line is the rule you must not miss; the skill has the rest.
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
 - **Config:** env prefix `CAPYBARA_`, nesting with `__`, env wins; extension deployment config may
   also live in PG (env > file / Nacos > PG > default); invalid extension config never fails startup.
-  A deployment field may carry an org level (`orgAccess(schema, "readonly" | "override")`, `x-org`;
-  no level = platform only, hidden): orgs follow the platform until they save a copy of the
-  overridable fields, and every org-bound extension call carries the effective config for the org.
+  Deployment fields are org-overridable by default; `platformOnly(schema)` (`x-platform-only`) marks
+  a field or the whole schema platform-only (hidden from orgs); there is no `config.org`: orgs
+  follow the platform until they save a copy of the overridable fields, and every org-bound
+  extension call carries the effective config for the org.
   [adding-config](.agents/skills/adding-config/SKILL.md)
 - **Kernel:** standard Nest: `@Injectable` providers, one module each, explicit `@Inject` on every
   constructor parameter, config through `KernelConfigService`, DTOs via `createZodDto`
@@ -131,8 +132,9 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Extensions:** in-process, full trust (approval is governance, not a sandbox); lifecycle changes
   never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
   (required ones are `builtin`; `builtin: true` entries are builtin but imported after the
-  extensions load and may fail without stopping the start; the rest optional preinstalls, off in
-  every org until switched on; a deployment may add pinned entries through
+  extensions load and may fail without stopping the start; the required / builtin set is exactly
+  object-store-s3, skills-core and file-preview (`check:bootstrap`); the rest optional preinstalls,
+  off in every org until switched on; a deployment may add pinned entries through
   `bootstrap.extraManifest`, merged, never overriding);
   `device-provider@1` is a `multi`, brokered, org-scoped point (several providers side by side; the
   resolver refuses unknown point names); the dial-in channel is a kernel service on `ctx`
@@ -144,14 +146,16 @@ Each line is the rule you must not miss; the skill has the rest.
   `ctx.models.generateImage` (`purpose: "image"`), and policy hooks fail closed. An extension
   call made for an org carries `config`, the effective config (platform deployment config plus
   the org's copy of overridable fields: never an overridable platform secret, hidden secrets
-  stay); an org whose effective config is invalid gets no call (`needsConfig`); org admins may
-  switch off single extension tools. A setup check (`ctx.setup.check`, declared in
-  `permissions.setupChecks`) never writes and never returns a secret; it never gets an OAuth
+  stay); an overridable URL is fetched through `configUrlFetch` / `ctx.net` (`plugin-org-url-net`),
+  and an extension whose entries are not org-bound marks its config platform-only
+  (`plugin-config-unbound`); an org whose effective config is invalid gets no call
+  (`needsConfig`); org admins may switch off single extension tools. A setup check
+  (`ctx.setup.check`, declared in `permissions.setupChecks`) never writes and never returns a secret; it never gets an OAuth
   client secret or a member's token.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
-  `packages/kernel/src/net` (and a URL a person supplies to a plugin, through `ctx.net`). A
+  `packages/kernel/src/net` (and a URL a person supplies to a plugin, an overridable config URL included, through `ctx.net`). A
   platform item's scope (`all` / `optional` / `named`; an org admin may switch `all` off too,
   only built-in items are fixed) decides where it
   is on; its skills, agent templates and connector templates are platform components, one version per

@@ -1,8 +1,8 @@
 import { join } from "node:path";
+import { checkConfigClassification } from "./config-classification.js";
 import { checkConfigForms } from "./config-forms.js";
 import { checkDeps } from "./deps.js";
 import { checkMigrations } from "./migrations.js";
-import { checkOrgOverride } from "./org-override.js";
 import { checkPluginPack } from "./plugin-pack.js";
 import { checkPluginPermissions } from "./plugin-permissions.js";
 import { checkPluginState } from "./plugin-state.js";
@@ -23,8 +23,8 @@ export interface PluginCheckScope {
   root: string;
   /**
    * Plugin directories: every check runs on each (dependency boundary, extension state,
-   * permissions, pack, config forms, tool design, test imports, release metadata, and the migrations in
-   * `<plugin>/migrations`).
+   * permissions, pack, config forms, config classification, tool design, test imports, release
+   * metadata, and the migrations in `<plugin>/migrations`).
    */
   plugins: string[];
   /** Package directories held to the SDK's boundary (core: `packages/plugin-sdk`). */
@@ -66,7 +66,7 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
     { name: "Extension permissions", run: () => checkPluginPermissions(plugins) },
     { name: "Plugin pack", run: () => checkPluginPack(plugins) },
     { name: "Config forms", run: () => checkConfigForms(plugins) },
-    { name: "Org override", run: () => checkOrgOverride(plugins) },
+    { name: "Config classification", run: () => checkConfigClassification(plugins) },
     { name: "Themes", run: () => checkThemes(plugins) },
     {
       name: "Tool design",

@@ -711,7 +711,7 @@ async function bundleExtension(
       }
       extension.ui = "./ui";
     }
-    if (config.schemas.deployment !== undefined || config.schemas.org !== undefined) {
+    if (config.schemas.deployment !== undefined) {
       extension.configSchemas = config.schemas;
     }
     const client = await buildClient(dir, stage);

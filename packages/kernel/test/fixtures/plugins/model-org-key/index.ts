@@ -4,13 +4,12 @@ import {
   ModelError,
   type ModelProvider,
   type ModelStreamEvent,
-  orgAccess,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** The key is overridable and required: the platform may leave it empty for orgs to fill in. */
-const Config = z.object({ apiKey: orgAccess(secret(z.string().min(1)), "override") });
+const Config = z.object({ apiKey: secret(z.string().min(1)) });
 
 /**
  * A model provider every org configures with its own key (model platform spec B §5.5): installed

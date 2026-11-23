@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { defineExtension, secret, staticManifestOf, ToolError } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  platformOnly,
+  secret,
+  staticManifestOf,
+  ToolError,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AgentsService } from "../../src/agents/agents.service.js";
@@ -154,7 +160,6 @@ describe("registration", () => {
       "extensions.points",
       "extensions.previewers",
       "extensions.save-org-config",
-      "extensions.set-org-config",
       "extensions.set-point-default",
       "extensions.set-previewers",
       "extensions.set-tool-enabled",
@@ -651,7 +656,7 @@ describe("connectors and extensions", () => {
  */
 describe("an extension waiting for its deployment config", () => {
   const NAME = "keyed-ai";
-  const config = { deployment: z.object({ apiKey: secret(z.string().min(1)) }) };
+  const config = { deployment: z.object({ apiKey: platformOnly(secret(z.string().min(1))) }) };
   const real = defineExtension({
     name: NAME,
     version: "1.0.0",
@@ -662,9 +667,9 @@ describe("an extension waiting for its deployment config", () => {
     setup() {},
   });
   const entry = [
-    'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
+    'import { defineExtension, platformOnly, secret } from "@capybara-hq/plugin-sdk";',
     'import { z } from "zod";',
-    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: secret(z.string().min(1)) }) }, setup() {} });`,
+    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: platformOnly(secret(z.string().min(1))) }) }, setup() {} });`,
   ].join("\n");
   const ADMIN_PATH = `admin console → Extensions → ${NAME} → fill in the deployment config`;
   let itemId: string;

@@ -30,6 +30,13 @@ const api = (routes: Parameters<typeof stubApi>[0]) =>
     [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [] }),
     [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
     "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+    [`GET ${BASE}/extensions/fake-im/overrides`]: () =>
+      json(200, {
+        state: "following",
+        valid: true,
+        issues: [],
+        fields: [{ path: "url", secret: false, platform: { value: "http://dir.test" } }],
+      }),
     ...routes,
   });
 const MEMBER: Me = {
@@ -43,8 +50,7 @@ const FAKE_IM = {
   enabled: false,
   needsConfig: true,
   configurable: true,
-  config: null,
-  secrets: [{ path: "token", set: true }],
+  overrideState: "following",
   permissions: [
     {
       category: "provides",
@@ -69,24 +75,14 @@ const FAKE_IM = {
     },
   ],
   provides: ["channel@1", "directory@1"],
-  orgConfigSchema: {
-    type: "object",
-    properties: {
-      url: { type: "string", format: "uri" },
-      token: { type: "string", "x-secret": true },
-    },
-    required: ["url"],
-  },
 };
-/** fake-im with its required org config saved: switchable. */
-const FAKE_IM_SET = { ...FAKE_IM, needsConfig: false, config: { url: "http://dir.test" } };
+/** fake-im with a valid effective config: switchable. */
+const FAKE_IM_SET = { ...FAKE_IM, needsConfig: false };
 const CORE = {
   plugin: "core-dir",
   version: "1.0.0",
   enabled: true,
   configurable: false,
-  config: null,
-  secrets: [],
   permissions: [
     {
       category: "provides",
@@ -96,7 +92,6 @@ const CORE = {
     },
   ],
   provides: ["directory-core@1"],
-  orgConfigSchema: null,
 };
 
 beforeEach(() => {
@@ -280,7 +275,7 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
   });
 
   it.each(["zh", "en"] as const)(
-    "a row opens its Sheet: the config form on top, the state, the permissions folded into one line (%s)",
+    "a row opens its Sheet: the overrides form on top, the state, the permissions folded into one line (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
       api({
@@ -289,15 +284,17 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const user = userEvent.setup();
       const sheet = await openSheet(user, "fake-im");
-      expect(within(sheet).getByText(m.configTitle)).toBeTruthy();
-      expect(within(sheet).getByRole("textbox", { name: /^url/ })).toBeTruthy();
-      expect(within(sheet).getByRole("button", { name: fill(m.saveLabel) })).toBeTruthy();
-      // The regions in order (spec §6.7): 组织配置, 状态, 权限; no status line on a saved config
+      expect(await within(sheet).findByRole("textbox", { name: /^url/ })).toBeTruthy();
+      expect(
+        within(sheet).getByRole("button", { name: msgs[locale].extensions.overrides.saveLabel }),
+      ).toBeTruthy();
+      // The regions in order (spec §6.7): Config, Status, Permissions; no status line on a valid
+      // config
       expect(
         within(sheet)
           .getAllByRole("heading", { level: 3 })
           .map((h) => h.textContent),
-      ).toEqual([m.configTitle, m.stateTitle, m.permissions]);
+      ).toEqual([m.overrides.title, m.stateTitle, m.permissions]);
       expect(sheet.querySelector('[data-part="callout"]')).toBeNull();
       // Folded: one line with the categories' counts and the 「敏感」 mark
       const summary = within(sheet).getByRole("button", { expanded: false });
@@ -355,13 +352,10 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
     "a member reads the same list: tabs and chips from `provides`, states, no switch; the Sheet has no config or permissions (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
-      const member = ({
-        config: _c,
-        secrets: _s,
-        orgConfigSchema: _o,
-        permissions: _p,
-        ...rest
-      }: typeof FAKE_IM) => ({ ...rest, needsConfig: false });
+      const member = ({ overrideState: _o, permissions: _p, ...rest }: typeof FAKE_IM) => ({
+        ...rest,
+        needsConfig: false,
+      });
       const calls = api({
         [`GET ${BASE}/extensions`]: () =>
           json(200, {
@@ -405,10 +399,8 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       ).toEqual([m.stateTitle]);
       expect(within(sheet).getByText(m.capabilitiesTitle)).toBeTruthy();
       expect(within(sheet).getByText(new RegExp(m.capability.directory))).toBeTruthy();
-      expect(within(sheet).queryByText(m.configTitle)).toBeNull();
       expect(within(sheet).queryByText(m.permissions)).toBeNull();
       expect(within(sheet).queryByRole("textbox")).toBeNull();
-      expect(within(sheet).queryByRole("button", { name: fill(m.saveLabel) })).toBeNull();
       expect(calls.some((c) => String(c.url).includes("file-previewers"))).toBe(false);
     },
   );
@@ -427,7 +419,6 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
                 configurable: false,
                 secrets: [],
                 permissions: [],
-                orgConfigSchema: null,
                 available: false,
               },
             ],
@@ -467,7 +458,6 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
                 secrets: [],
                 permissions: [],
                 provides: [],
-                orgConfigSchema: null,
                 required: true,
                 needsConfig: false,
               },
@@ -548,35 +538,12 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
     );
   });
 
-  it("组织级配置：密钥不动则省略 → PUT config", async () => {
-    const calls = api({
-      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
-      [`PUT ${BASE}/extensions/fake-im`]: () =>
-        json(200, { extension: { ...FAKE_IM, config: { url: "http://dir.test" } } }),
-    });
-    await renderRouteWithCache("/extensions", lastStubRoutes());
-    const user = userEvent.setup();
-    const sheet = await openSheet(user, "fake-im");
-    const save = within(sheet).getByRole("button", { name: "Save config of fake-im" });
-    expect(save).toHaveProperty("disabled", true);
-    await user.type(within(sheet).getByRole("textbox", { name: /^url/ }), "http://dir.test");
-    await user.click(save);
-    await vi.waitFor(() =>
-      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
-        config: { url: "http://dir.test" },
-      }),
-    );
-    expect(await screen.findByText(fill(en.extensions.configSaved))).toBeTruthy();
-  });
-
   it.each(["zh", "en"] as const)(
-    "off with a required org field unset: 待配置, the switch waits for the config; 保存并启用 sends both in one PUT (%s)",
+    "off with the effective config invalid: 待配置, the switch waits, the Sheet says to configure first (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
       const calls = api({
         [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
-        [`PUT ${BASE}/extensions/fake-im`]: () =>
-          json(200, { extension: { ...FAKE_IM_SET, enabled: true } }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", { name: fill(m.enableLabel) });
@@ -586,78 +553,52 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       await user.click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
       const sheet = await openSheet(user, "fake-im");
-      // One warn line names what is missing; no red error on the pristine form
-      const notice = within(sheet).getByText(m.missingRequired.replace("{fields}", "url"));
+      const notice = within(sheet).getByText(m.configFirstHint);
       expect(notice.closest('[data-part="callout"]')?.getAttribute("data-tone")).toBe("warn");
-      expect(within(sheet).queryByText(msgs[locale].configForm.errors.required)).toBeNull();
-      const saveEnable = within(sheet).getByRole("button", {
-        name: fill(m.saveAndEnableLabel),
-      });
-      expect(saveEnable.textContent).toBe(m.saveAndEnable);
-      expect(within(sheet).getByRole("button", { name: fill(m.saveLabel) })).toBeTruthy();
-      await user.type(within(sheet).getByRole("textbox", { name: /^url/ }), "http://dir.test");
-      await user.click(saveEnable);
-      await vi.waitFor(() =>
-        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
-          enabled: true,
-          config: { url: "http://dir.test" },
-        }),
-      );
-      expect(await screen.findByText(fill(m.enabledToast))).toBeTruthy();
-      expect(screen.queryByText(m.missingRequired.replace("{fields}", "url"))).toBeNull();
-      expect(isDisabled(screen.getByRole("switch", { name: fill(m.enableLabel) }))).toBe(false);
+      // One form, no save-and-enable: the overrides form has its own save
+      expect(await within(sheet).findByRole("textbox", { name: /^url/ })).toBeTruthy();
+      expect(within(sheet).getAllByRole("button", { name: m.overrides.saveLabel })).toHaveLength(1);
     },
   );
 
-  it("a saved config with its required fields: the switch is on offer, no hint", async () => {
+  it("on with the effective config invalid and a copy to fill in: the Sheet says so", async () => {
+    api({
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
+    });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    const sheet = await openSheet(userEvent.setup(), "fake-im");
+    expect(within(sheet).getByText(en.extensions.configFirstHint)).toBeTruthy();
+  });
+
+  it("the effective config invalid but nothing the org can override: no hint", async () => {
+    const platformOnly = { ...FAKE_IM, configurable: false, overrideState: "none" };
+    api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [platformOnly] }) });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    expect(await screen.findByText(en.extensions.needsConfig)).toBeTruthy();
+    const sheet = await openSheet(userEvent.setup(), "fake-im");
+    expect(within(sheet).queryByText(en.extensions.configFirstHint)).toBeNull();
+  });
+
+  it("a valid effective config: the switch is on offer, no hint", async () => {
     api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }) });
     await renderRouteWithCache("/extensions", lastStubRoutes());
     const toggle = await screen.findByRole("switch", { name: "Enable fake-im" });
     expect(isDisabled(toggle)).toBe(false);
     expect(screen.queryByText(en.extensions.needsConfig)).toBeNull();
     const sheet = await openSheet(userEvent.setup(), "fake-im");
-    expect(
-      within(sheet).getByRole("button", { name: "Save config of fake-im and enable" }),
-    ).toBeTruthy();
     expect(within(sheet).queryByText(en.extensions.configFirstHint)).toBeNull();
   });
 
-  it.each(["switch", "saveAndEnable"] as const)(
-    "extension.config_invalid on enabling (%s) marks the form's fields, not the install callout",
-    async (via) => {
-      const calls = api({
-        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }),
-        [`PUT ${BASE}/extensions/fake-im`]: () =>
-          json(400, {
-            error: {
-              code: "extension.config_invalid",
-              message: "Invalid organization config for extension fake-im",
-              details: [{ path: "url", segments: ["url"], message: "url is not reachable" }],
-            },
-          }),
-      });
-      await renderRouteWithCache("/extensions", lastStubRoutes());
-      const user = userEvent.setup();
-      if (via === "switch") {
-        await user.click(await screen.findByRole("switch", { name: "Enable fake-im" }));
-      } else {
-        const sheet = await openSheet(user, "fake-im");
-        await user.click(
-          within(sheet).getByRole("button", { name: "Save config of fake-im and enable" }),
-        );
-      }
-      await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
-      // The switch's refusal opens the Sheet by itself
-      const sheet = await screen.findByRole("dialog", { name: "fake-im" });
-      // the kernel's text stays out: the field says it in the page's words
-      expect(await within(sheet).findByText(en.configForm.errors.invalid)).toBeTruthy();
-      expect(within(sheet).queryByText("url is not reachable")).toBeNull();
-      expect(screen.queryByText(en.errors.plugin.install_failed)).toBeNull();
-      expect(
-        within(sheet).getByRole("textbox", { name: /^url/ }).getAttribute("aria-invalid"),
-      ).toBe("true");
-    },
-  );
+  it("#plugin=<name> opens that extension's Sheet, and closing it clears the hash", async () => {
+    api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE] }) });
+    window.history.replaceState(null, "", "/#plugin=fake-im");
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    const sheet = await screen.findByRole("dialog", { name: "fake-im" });
+    expect(within(sheet).getByText(en.extensions.stateTitle)).toBeTruthy();
+    await userEvent.setup().keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "fake-im" })).toBeNull());
+    expect(window.location.hash).toBe("");
+  });
 
   it("the org settings nav has no 扩展 (it is the workspace page)", async () => {
     api({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });

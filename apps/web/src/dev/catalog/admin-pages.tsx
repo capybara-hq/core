@@ -128,17 +128,15 @@ const EXTENSIONS: OrgExtension[] = [
   plugin: plugin as string,
   version: version as string,
   enabled: enabled as boolean,
-  configurable: true,
-  config: null,
-  secrets: [],
+  // An extension with overridable fields is configurable, and an org that saved no copy follows
+  configurable: needsConfig as boolean,
   permissions: [],
-  orgConfigSchema: null,
   provides: provides as string[],
   needsConfig: needsConfig as boolean,
   available: true,
   switchable: true,
   catalogItem: { itemId: `item-${plugin}`, scope: "optional" },
-  overrideState: "none",
+  overrideState: needsConfig ? "following" : "none",
 })) as OrgExtension[];
 
 const RUN_STATUSES = ["completed", "failed", "running", "completed", "aborted"] as const;

@@ -1,4 +1,9 @@
-import { defineExtension, PUSH_PROVIDER_EXTENSION_POINT, secret } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  PUSH_PROVIDER_EXTENSION_POINT,
+  platformOnly,
+  secret,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { keyCheck } from "./check.js";
 import { fakePushProbe, makeFakePush } from "./push.js";
@@ -11,12 +16,15 @@ export { type FakePushSend, fakePushProbe, makeFakePush } from "./push.js";
  * `["com.example.app"]`) and an optional secret `key`. Every send attempt is recorded in
  * `plugin_fake_push.sends` (counted across replicas) and on `fakePushProbe().sends` (in process).
  * Its platform setup guide (`guides/fake-push-key.md`, place `extension-deployment`) has one check,
- * `fake-push-key` (`check.ts`), which reads `key`.
+ * `fake-push-key` (`check.ts`), which reads `key`. Platform-only: push delivery is the kernel's,
+ * never an org-bound call (spec §5.3).
  */
-const DeploymentConfig = z.object({
-  apps: z.array(z.string().min(1)).default(["com.example.app"]),
-  key: secret(z.string()).optional(),
-});
+const DeploymentConfig = platformOnly(
+  z.object({
+    apps: z.array(z.string().min(1)).default(["com.example.app"]),
+    key: secret(z.string()).optional(),
+  }),
+);
 
 export default defineExtension({
   name: "fake-push",

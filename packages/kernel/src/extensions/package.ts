@@ -265,7 +265,7 @@ export function permissionSetOfSection(
     provides: m.provides,
     requires: m.requires,
     optional: m.optional,
-    config: { deployment: strip(m.config.deployment), org: strip(m.config.org) },
+    config: { deployment: strip(m.config.deployment) },
     tables,
     permissions: m.permissions,
     warningsDigest: warningsDigest(migrationWarnings(migrationSql, m.name)),

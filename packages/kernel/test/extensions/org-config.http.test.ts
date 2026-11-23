@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -45,7 +50,7 @@ beforeAll(async () => {
       marketplaces: { official: { enabled: false } },
       http: { port: 0 },
       log: { level: "debug" },
-      extensions: [fx("fixture"), fx("orgcfg")],
+      extensions: [fx("fixture"), fx("orgcfg"), fakeExtensionEntry("fake-web")],
       extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("debug", { write: (l) => lines.push(l) }) },
@@ -88,26 +93,26 @@ async function session(login: string): Promise<Req> {
   return req;
 }
 
-async function createOrg(req: Req): Promise<string> {
-  const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
+async function createOrg(req: Req, name = "Acme"): Promise<string> {
+  const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
   return (res.json() as { org: { id: string } }).org.id;
 }
 
-const body = { enabled: true, config: { appId: "app-1", appSecret: SECRET } };
+const body = { enabled: true };
 
-describe("组织插件配置 HTTP", () => {
+describe("org extension HTTP", () => {
   it("the application provides OrgExtensionConfigs; host.manifests() in load order", () => {
     expect(
       k.app
         .get(ExtensionHost)
         .manifests()
         .map((m) => m.name),
-    ).toEqual(["fixture", "orgcfg"]);
+    ).toEqual(["fixture", "orgcfg", "fake-web"]);
     expect(typeof k.app.get(OrgExtensionConfigs).list).toBe("function");
   });
 
-  it("admin PUT 200、GET 列出；响应体、审计与日志都不含密钥值", async () => {
+  it("admin PUT 200 (enablement only), GET lists; audited by the actor; no config in the view", async () => {
     const ownerReq = await session("owner");
     const orgId = await createOrg(ownerReq);
     const admin = await accounts.createLocal({ login: "adm", password: PW, displayName: "Adm" });
@@ -119,27 +124,23 @@ describe("组织插件配置 HTTP", () => {
       url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
       payload: body,
     });
-    expect(put.statusCode).toBe(200);
-    expect(put.json()).toMatchObject({
-      extension: {
-        plugin: "orgcfg",
-        version: "1.2.3",
-        enabled: true,
-        configurable: true,
-        config: { appId: "app-1", webhook: { path: "/hook" } },
-        secrets: [
-          { path: "appSecret", set: true },
-          { path: "webhook.token", set: false },
-        ],
-      },
+    expect(put.statusCode, put.body).toBe(200);
+    const ext = (put.json() as { extension: Record<string, unknown> }).extension;
+    expect(ext).toMatchObject({
+      plugin: "orgcfg",
+      version: "1.2.3",
+      enabled: true,
+      configurable: true,
+      overrideState: "following",
+      // its required overridable fields are empty on the platform and the org has no copy
+      needsConfig: true,
     });
-    expect(put.body).not.toContain(SECRET);
+    for (const f of ["config", "secrets", "orgConfigSchema"]) expect(ext).not.toHaveProperty(f);
 
     const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
     const plugins = (list.json() as { extensions: { plugin: string }[] }).extensions;
-    expect(plugins.map((p) => p.plugin)).toEqual(["fixture", "orgcfg"]);
-    expect(list.body).not.toContain(SECRET);
+    expect(plugins.map((p) => p.plugin)).toEqual(["fixture", "orgcfg", "fake-web"]);
 
     const audits = await db
       .selectFrom("audit_events")
@@ -148,12 +149,56 @@ describe("组织插件配置 HTTP", () => {
       .execute();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.actor_account_id).toBe(admin.id);
-    expect(JSON.stringify(audits[0]?.detail)).not.toContain(SECRET);
+    expect(audits[0]?.detail).toEqual({ enabled: true });
+  });
 
-    expect(await k.app.get(OrgExtensionConfigs).get(orgId, "orgcfg")).toMatchObject({
-      config: { appSecret: SECRET },
+  it("a web provider whose platform key is empty needs config until the org saves its copy", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const on = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/fake-web`,
+      payload: { enabled: true },
     });
-    expect(lines.length).toBeGreaterThan(0);
+    expect(on.statusCode, on.body).toBe(200);
+    const view = async () =>
+      (
+        (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` })).json() as {
+          extensions: Record<string, unknown>[];
+        }
+      ).extensions.find((e) => e.plugin === "fake-web");
+    expect(await view()).toMatchObject({
+      enabled: true,
+      configurable: true,
+      overrideState: "following",
+      needsConfig: true,
+    });
+    const save = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/fake-web/overrides`,
+      payload: { values: { token: SECRET } },
+    });
+    expect(save.statusCode, save.body).toBe(200);
+    expect(save.body).not.toContain(SECRET);
+    expect(await view()).toMatchObject({
+      enabled: true,
+      configurable: true,
+      overrideState: "copy",
+      needsConfig: false,
+    });
+    // another org still follows the empty platform key
+    const other = await createOrg(req, "Beta");
+    await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${other}/extensions/fake-web`,
+      payload: { enabled: true },
+    });
+    const otherView = (
+      (await req({ method: "GET", url: `/api/v1/orgs/${other}/extensions` })).json() as {
+        extensions: Record<string, unknown>[];
+      }
+    ).extensions.find((e) => e.plugin === "fake-web");
+    expect(otherView).toMatchObject({ overrideState: "following", needsConfig: true });
     expect(lines.join("\n")).not.toContain(SECRET);
   });
 
@@ -172,7 +217,7 @@ describe("组织插件配置 HTTP", () => {
     const a = await memReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(a.statusCode).toBe(200);
     const list = (a.json() as { extensions: Record<string, unknown>[] }).extensions;
-    expect(list.map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
+    expect(list.map((e) => e.plugin)).toEqual(["fixture", "orgcfg", "fake-web"]);
     for (const e of list) {
       for (const f of ["config", "secrets", "orgConfigSchema", "permissions"])
         expect(e).not.toHaveProperty(f);
@@ -180,8 +225,6 @@ describe("组织插件配置 HTTP", () => {
       expect(e.provides).toEqual(expect.any(Array));
       expect(e).toMatchObject({ enabled: expect.any(Boolean), version: expect.any(String) });
     }
-    expect(a.body).not.toContain(SECRET);
-    expect(a.body).not.toContain("app-1");
     // the admin keeps the full view
     const adminList = await ownerReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     const full = (adminList.json() as { extensions: Record<string, unknown>[] }).extensions;
@@ -194,9 +237,8 @@ describe("组织插件配置 HTTP", () => {
     }
     expect(full.some((e) => (e.provides as string[]).length > 0)).toBe(true);
     expect(full.find((e) => e.plugin === "orgcfg")).toMatchObject({
-      config: { appId: "app-1" },
-      secrets: expect.any(Array),
-      orgConfigSchema: expect.any(Object),
+      permissions: expect.any(Array),
+      configurable: true,
     });
 
     // guests read nothing of the catalog or skills either: member is the floor
@@ -242,7 +284,7 @@ describe("组织插件配置 HTTP", () => {
     expect(e.statusCode).toBe(403);
   });
 
-  it("错误码：未加载插件 404、无 org schema 传 config 400、配置不合法 400 带 details、未知字段 400", async () => {
+  it("errors: an unloaded extension 404; config or any other unknown field in the body 400", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const nf = await req({
@@ -252,23 +294,17 @@ describe("组织插件配置 HTTP", () => {
     });
     expect(nf.statusCode).toBe(404);
     expect(errCode(nf)).toBe("extension.not_found");
-    const noCfg = await req({
-      method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/fixture`,
-      payload: { config: { a: 1 } },
-    });
-    expect(noCfg.statusCode).toBe(400);
-    expect(errCode(noCfg)).toBe("extension.no_org_config");
-    const bad = await req({
-      method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
-      payload: { config: { appId: 1, appSecret: SECRET } },
-    });
-    expect(bad.statusCode).toBe(400);
-    expect(bad.json()).toMatchObject({
-      error: { code: "extension.config_invalid", details: [{ path: "appId" }] },
-    });
-    expect(bad.body).not.toContain(SECRET);
+    // the org config is the org's copy (`…/overrides`): the body is strict
+    for (const ext of ["fixture", "orgcfg"]) {
+      const withConfig = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/${ext}`,
+        payload: { enabled: true, config: { appId: "x", appSecret: SECRET } },
+      });
+      expect(withConfig.statusCode).toBe(400);
+      expect(errCode(withConfig)).toBe("validation_failed");
+      expect(withConfig.body).not.toContain(SECRET);
+    }
     const extra = await req({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
@@ -276,6 +312,13 @@ describe("组织插件配置 HTTP", () => {
     });
     expect(extra.statusCode).toBe(400);
     expect(errCode(extra)).toBe("validation_failed");
+    expect(
+      await db
+        .selectFrom("extension_org_configs")
+        .select("plugin")
+        .where("org_id", "=", orgId)
+        .execute(),
+    ).toEqual([]);
   });
 
   describe("plugin scope", () => {
@@ -327,14 +370,14 @@ describe("组织插件配置 HTTP", () => {
           }
         ).extensions;
       const out = await list();
-      expect(out.map((e) => e.plugin)).toEqual(["orgcfg"]);
+      expect(out.map((e) => e.plugin)).toEqual(["orgcfg", "fake-web"]);
       expect(out[0]).toMatchObject({ catalogItem: { scope: "named" }, switchable: true });
       await db
         .updateTable("catalog_items")
         .set({ scope: "optional" })
         .where("id", "=", itemId)
         .execute();
-      expect((await list()).map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
+      expect((await list()).map((e) => e.plugin)).toEqual(["fixture", "orgcfg", "fake-web"]);
     });
 
     it("enabled:false on an all plugin records the switch off, on a builtin one is plugin.scope_locked; an extension without an item is unchanged", async () => {

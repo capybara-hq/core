@@ -1,15 +1,15 @@
-import { defineExtension, orgAccess } from "@capybara-hq/plugin-sdk";
+import { defineExtension, platformOnly } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
- * Deployment schema with an object-level refinement across fields and one overridable field
- * (spec A §5.4a): in `strict` mode the endpoint must be https. The refinement reads `endpoint`
+ * Deployment schema with an object-level refinement across fields, one platform-only field and one
+ * overridable field (spec A §5.4a): in `strict` mode the endpoint must be https. The refinement reads `endpoint`
  * without guarding its absence, as real plugins do (openai-compatible's superRefine).
  */
 export const OrgrefinedDeploymentSchema = z
   .object({
-    mode: z.enum(["strict", "loose"]),
-    endpoint: orgAccess(z.string(), "override"),
+    mode: platformOnly(z.enum(["strict", "loose"])),
+    endpoint: z.string(),
   })
   .superRefine((v, c) => {
     if (v.mode === "strict" && !v.endpoint.startsWith("https://")) {

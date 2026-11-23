@@ -31,8 +31,9 @@ export const NEEDS_CONFIG_REASON = "needs configuration in this organization";
 export const OVERRIDE_SECRETS_NAMESPACE = "kernel";
 const OVERRIDE_KEY_PREFIX = "plugin-override:";
 /**
- * Where a copy's secret field lives in `capybara.secrets` (under the org): a namespace of its own,
- * distinct from the org-only `plugin-config:<plugin>:<path>` (spec A §5.8).
+ * Where a copy's secret field lives in `capybara.secrets` (under the org): a key prefix of its
+ * own, distinct from the retired org config secrets `plugin-config:<plugin>:<path>` (spec A §5.8;
+ * no longer read, purged by a later contract migration).
  */
 export const overrideSecretKey = (plugin: string, path: string) =>
   `${OVERRIDE_KEY_PREFIX}${plugin}:${path}`;
@@ -97,11 +98,11 @@ export function platformOverrideValues(schema: z.ZodTypeAny, platform: unknown):
 
 /**
  * The deployment config an org with a copy runs with, before validation (spec A §5.4): the
- * platform's values of the hidden and read-only keys, and for each `override` key the copy's value
- * (its non-secret part and its own secrets). An `override` key the copy does not hold (one that
- * became overridable after the copy was made) takes the platform's value with every secret leaf
- * removed: a copy never falls back to a platform secret, required or not. Copy values of keys that
- * are no longer `override` are ignored.
+ * platform's values of the platform-only keys (their secrets included: an org cannot set them),
+ * and for each `override` key the copy's value (its non-secret part and its own secrets). An
+ * `override` key the copy does not hold (one that became overridable after the copy was made)
+ * takes the platform's value with every secret leaf removed: a copy never falls back to a platform
+ * secret, required or not. Copy values of keys that are no longer `override` are ignored.
  */
 export function mergeCopy(schema: z.ZodTypeAny, platform: unknown, copy: StoredCopy): Obj {
   const levels = fieldLevels(schema);

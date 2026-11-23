@@ -39,6 +39,7 @@ import {
   tabCounts,
 } from "../../../lib/extension-capabilities";
 import { capabilityGroups, type OrgExtension } from "../../../lib/extensions";
+import { useHashItem } from "../../../lib/hash-item";
 import { roleAtLeast } from "../../../lib/members";
 import { orgExtensionsQuery } from "../../../lib/query/channels";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -55,17 +56,20 @@ import NotFound from "../not-found";
  * the enable switch, which is its plugin's switch (spec §5 rule 7): switching it off answers the
  * plugin's switch-off preview first (what it takes away, the agents that use it), confirmed in a
  * dialog with the preview's hash. Rows needing attention (待配置, a refused switch) come first,
- * then those on, then the rest, by name. An extension that is off and whose saved org config lacks
- * a required field cannot be switched on (待配置: the switch is read-only, the Sheet says why and
- * its 保存并启用 saves the config and enables it in one PUT). An `all` or builtin plugin's
- * extension is on in every org (read-only switch); one the deployment cannot run now is 不可用.
+ * then those on, then the rest, by name. An extension whose effective config for the org is not
+ * valid (the kernel's `needsConfig`) is Needs config: while it is off its switch here is read-only, and
+ * the Sheet says the org must fill in its own copy of the overridable fields first (the plugins
+ * page may switch it on anyway; it then stays Needs config until the copy is valid). A builtin
+ * plugin's extension is on in every org (read-only switch); one the deployment cannot run now is
+ * Unavailable.
  *
- * A row opens a Sheet: the org config form on top (保存配置 / 保存并启用), the state line (with why a
- * switch was refused: a missing dependency, dependents that remain, which can be force-disabled, or
- * the kernel's reason; a refused switch opens the Sheet by itself), 立即同步 for directory-sync
- * extensions, 应用此插件的外观 for a plugin on in the org that suggests an appearance (client
- * extensions spec §6.5: a dry run listed in a confirm dialog, then applied), and the permissions
- * folded into one line that opens the full blocks. Members read the
+ * A row opens a Sheet: the org's copy of the overridable deployment fields on top (following the
+ * platform, or the org's saved copy; only for an extension with overridable fields), the state
+ * line (with why a switch was refused: a missing dependency, dependents that remain, which can be
+ * force-disabled, or the kernel's reason; a refused switch opens the Sheet by itself), Sync now
+ * for directory-sync extensions, "Apply this plugin's appearance" for a plugin on in the org that
+ * suggests an appearance (client extensions spec §6.5: a dry run listed in a confirm dialog, then
+ * applied), and the permissions folded into one line that opens the full blocks. Members read the
  * same list without the switch, and a Sheet with the capabilities and the state only (the kernel
  * gives them no config, secrets or permissions, P2-13, only the points each provides: their tabs
  * and chips come from those).
@@ -181,7 +185,11 @@ function ExtensionList({
   const tc = useTranslations("extensions.columns");
   const locale = useLocale();
   const capabilityLabel = useCapabilityLabel();
-  const [open, setOpen] = useState<string | null>(null);
+  // The open Sheet is kept in the URL hash (`#plugin=<name>`): other pages deep-link to it
+  const hashPlugin = useHashItem("plugin");
+  const open = hashPlugin.id;
+  const setOpen = (plugin: string | null) =>
+    plugin === null ? hashPlugin.close() : hashPlugin.open(plugin);
   const actions = useOrgExtensionActions({ orgId, canEdit, extensions, onOpen: setOpen });
   const { rows, busy } = actions;
   const sorted = sortExtensions(
