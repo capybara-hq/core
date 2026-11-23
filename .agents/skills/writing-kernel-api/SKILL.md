@@ -232,6 +232,34 @@ Production runs multiple replicas, and consecutive requests from the same user l
 
 Do not use in-process Maps, timers or local events to hold cross-request state. The dual-replica acceptance test (`packages/testing/test/m1-acceptance.test.ts`) exposes this kind of defect.
 
+## The org scope (row level security)
+
+Every query on a table with an `org_id` column runs under an **org scope** (RLS spec
+`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`, issue #115): `infra/database/org-scope.ts`
+keeps it in AsyncLocalStorage, and the kernel pool (`infra/database/scoped-dialect.ts`) copies it onto
+each connection (`capybara.org_id`, `capybara.scope`, `capybara.rls`) when `db.rls` is `scoped` or
+`enforce`: transaction-local right after `BEGIN`, session-level on the first query of a pool checkout.
+Services never set it. It is set once, at entry points:
+
+| Entry point | Scope |
+|---|---|
+| An `@OrgAction` route (`OrgGuard`) | the guarded org (`bindRequestScope`) |
+| A `@SuperAdmin` route without `@OrgAction` (`AuthGuard`) | platform |
+| An extension route (`plugin-dispatch.ts`) | its caller's org; platform for a super admin's embed |
+| `runJob` (every queue processor, extension `ctx.queue` jobs too) | the job data's `orgId`, else platform |
+| `@LockedCron` / `@LockedInterval` and `ScheduledRuns.runNow` | platform |
+| A claimed run (`RunExecution.withClaim`) | the run's org |
+| A channel inbound event, a dial-in connection's frames | the connection's or device's org once resolved |
+| The start sequence, CLI admin commands | platform |
+
+Deployment-wide work inside one of them wraps exactly the deployment-wide part in
+`asPlatform(reason, fn)` (a sweep over every org, a lookup made before any org is known, a query marked
+`// org-filter: deployment-wide …`); a sweep that handles each org in turn enters `withOrgScope(orgId,
+fn)` per org. A scope entered inside a transaction applies to the queries made in it. Tests that seed
+through a raw pool are unaffected (`db.rls` is `off` by default); `setUnscopedQueryCheck` reports
+unscoped queries on org-scoped tables under the scoped pool. No PgBouncer transaction pooling unless
+`db.rls` is `off` (the session-level setting needs a session).
+
 ## Owed work: the transactional outbox
 
 Spec `docs/superpowers/specs/2026-11-12-transactional-outbox-design.md`. Post-commit work is one of two kinds; the test is: *if the process dies right after the commit, is anything wrong until someone notices?*

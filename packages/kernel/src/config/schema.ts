@@ -377,6 +377,15 @@ export const KernelConfigSchema = z.strictObject({
               "How long an idle PostgreSQL connection stays in the pool, in milliseconds",
           }),
         ),
+      rls: z
+        .enum(["off", "scoped", "enforce"])
+        .default("off")
+        .meta(
+          meta({
+            description:
+              "Row level security (RLS spec, issue #115): off sends nothing; scoped sets the caller's org scope on every PostgreSQL connection (one extra round trip per pool query and per transaction) while the policies admit every row; enforce makes the policies filter every org-scoped table by that scope. Needs a session-capable connection (no PgBouncer transaction pooling) unless off",
+          }),
+        ),
     })
     .prefault({} as never),
   redis: z

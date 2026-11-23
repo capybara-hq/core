@@ -24,6 +24,7 @@ import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform, withOrgScope } from "../infra/database/org-scope.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { DirectorySync } from "../orgs/directory-sync.js";
@@ -214,8 +215,26 @@ export class ChannelInbound {
     await this.redis.set(key, DEDUPE_DONE, "EX", MESSAGE_DEDUPE_TTL_SECONDS);
   }
 
-  /** 入站任务的处理（worker 上执行；失败抛错由队列重试）。 */
+  /**
+   * Handles one inbound job (on a worker; a throw makes the queue retry). The event works in the
+   * org of its connection (RLS spec §5.3: each inbound event enters its org once resolved); the
+   * job itself runs in the platform scope, since its data names only the connection.
+   */
   async handle(connectionId: string, e: InboundEvent): Promise<void> {
+    // org-filter: resolves the org of a kernel-held connection id (the inbound job's own), the
+    // one lookup made before the event's org scope is known
+    const conn = await asPlatform("inbound event: resolve the connection's org", () =>
+      this.kdb
+        .selectFrom("channel_connections")
+        .select("org_id")
+        .where("id", "=", connectionId)
+        .executeTakeFirst(),
+    );
+    const run = () => this.handleInOrg(connectionId, e);
+    return conn ? withOrgScope(conn.org_id, run) : run();
+  }
+
+  private async handleInOrg(connectionId: string, e: InboundEvent): Promise<void> {
     if (e.type === "directory_changed") {
       const row = await this.connections.row(connectionId);
       if (row?.status === "active" && row.pluginEnabled) {

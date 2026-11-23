@@ -16,6 +16,7 @@ import {
 } from "../identity/auth.guard.js";
 import { SessionService } from "../identity/sessions.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { withRequestScopeSlot } from "../infra/database/org-scope.js";
 import { withLogContext } from "../log-context.js";
 import { authorizeOrgAction } from "../orgs/org.guard.js";
 import { redactPath } from "./error.filter.js";
@@ -141,7 +142,8 @@ function registerRequestLog(fastify: FastifyInstance, log: Logger & { debug?: Lo
     };
     reply.raw.once("finish", accessLine);
     reply.raw.once("close", accessLine);
-    withLogContext({ reqId: req.id }, done);
+    // an empty org scope slot the guards bind (RLS spec §5.1), then the log context
+    withRequestScopeSlot(() => withLogContext({ reqId: req.id }, done));
   });
 }
 
