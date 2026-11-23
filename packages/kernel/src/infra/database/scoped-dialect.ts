@@ -59,13 +59,10 @@ class ScopedConnection implements DatabaseConnection {
     private readonly orgTables: (conn: DatabaseConnection) => Promise<ReadonlySet<string>>,
   ) {}
 
-  // cancellation (an aborted query) goes to the inner connection, which knows the backend
+  // cancellation (an aborted query) goes to the inner connection, which knows the backend; the
+  // kernel passes no abort signal to queries, so terminating a whole session is never asked for
   cancelQuery(provider: ControlConnectionProvider): Promise<void> {
     return this.inner.cancelQuery?.(provider) ?? Promise.resolve();
-  }
-
-  killSession(provider: ControlConnectionProvider): Promise<void> {
-    return this.inner.killSession?.(provider) ?? Promise.resolve();
   }
 
   collectSessionInfo(): Promise<void> {
