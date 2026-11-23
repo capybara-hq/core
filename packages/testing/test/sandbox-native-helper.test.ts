@@ -18,7 +18,7 @@ async function nativeFixture() {
   const root = join(temporary, "owned");
   const helper = join(temporary, "native-files.py");
   await mkdir(root);
-  await writeFile(helper, sdk.SANDBOX_RUNTIME_SOURCE.files[0]?.source ?? "", { mode: 0o600 });
+  await writeFile(helper, sdk.SANDBOX_RUNTIME_SOURCE.current[0]?.source ?? "", { mode: 0o600 });
   let calls = 0;
   let disposed = false;
   const fixture: SandboxNativeFixture = {

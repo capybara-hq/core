@@ -19,4 +19,10 @@ other credential files (`~/.pgpass`, `~/.my.cnf`, `~/.Xauthority`, `~/.ICEauthor
 `~/.config/hub`, `~/.boto`, `~/.dockercfg`, `~/.smbcredentials`, `~/.terraformrc`,
 `~/.yarnrc.yml`, `~/.databrickscfg`, `~/.passwd-s3fs`, `~/.erlang.cookie`, `~/.curlrc`,
 `~/.wgetrc`, `~/.claude.json`) and more shell, REPL and editor histories.
-`linux-sandbox.py` changed: a provider staging it needs the new digest.
+`SANDBOX_RUNTIME_SOURCE` now has three parts so a runtime change no longer has to land in step
+with the images that stage it: `files` (the staged set, unchanged: still the `linux-sandbox.py`
+released images stage, so device-docker keeps working), `current` (the newest bytes, which
+`capybara-device` runs; this launcher declares `features: ["fileReadRoots"]`) and `accepted` (by
+name, every digest a staged copy may have). The device sends file roots only to a launcher that
+declares them; otherwise the files stay unreadable as before. New types `SandboxRuntimeFile` and
+`SandboxRuntimeFeature`.

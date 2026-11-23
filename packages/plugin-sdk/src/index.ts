@@ -33,7 +33,11 @@ export * from "./permissions.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./push.js";
-export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
+export {
+  SANDBOX_RUNTIME_SOURCE,
+  type SandboxRuntimeFeature,
+  type SandboxRuntimeFile,
+} from "./sandbox-runtime-source.js";
 export {
   isSandboxHomeWriteDenied,
   isSandboxMoveDenied,

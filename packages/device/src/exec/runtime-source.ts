@@ -79,7 +79,7 @@ export async function stagePrivateSource(
 export async function stageRuntimeSource(stateDir: string): Promise<string> {
   // Bundle 2 added the Linux launcher next to the native helper; this device stages only the helper.
   if (SANDBOX_RUNTIME_SOURCE.version !== 2) throw new Error("Unsupported runtime bundle");
-  const file = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "native-files.py");
+  const file = SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "native-files.py");
   if (!file || createHash("sha256").update(file.source).digest("hex") !== file.sha256)
     throw new Error("Runtime source hash mismatch");
   return stagePrivateSource(stateDir, file.name, file.source);

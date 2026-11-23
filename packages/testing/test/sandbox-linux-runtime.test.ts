@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   runSandboxPermissionConformance,
@@ -14,6 +15,7 @@ import {
   execResult,
   IMAGE,
   RUNTIME_DIR,
+  stageLauncher,
   stageMutant,
   startDevice,
   startEndpoints,
@@ -257,6 +259,36 @@ describe.skipIf(unavailable !== null)(
         expect(out).not.toMatch(/LISTED|EXECUTED|SUB|APPENDED/);
         expect(out).not.toContain(SECRET);
         expect(device.run(`cat ${dir}/granted.txt`)).toBe("granted");
+      });
+
+      it("the staged launcher, which predates file roots, grants none: the file stays unreadable", async (context) => {
+        requireSupport(context);
+        // released image providers stage SANDBOX_RUNTIME_SOURCE.files while the current launcher
+        // is ahead of them; handed file roots anyway, that launcher must not widen the reach
+        const staged = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+        if (!staged || staged.features?.includes("fileReadRoots")) return context.skip(); // promoted: the staged launcher enforces file roots itself
+        const dir = `${sibling}/staged-files`;
+        device.run(`mkdir -p ${dir} && printf ${SECRET} > ${dir}/beside.txt`);
+        const runtime = stageLauncher(device, "staged", staged.source);
+        const older = new Agent(device, { runtime, candidateArch: true });
+        await older.ready;
+        try {
+          const result = await run(
+            restricted(),
+            `cat ${dir}/beside.txt; printf ran > ran`,
+            { readFileRoots: [`${dir}/beside.txt`] },
+            older,
+          );
+          const launch = result.events?.find((event) => event.event === "launch") as unknown as {
+            roots: { kind: string }[];
+          };
+          expect(launch.roots.map((r) => r.kind)).not.toContain("readFiles");
+          expect(decode(result.stdout)).not.toContain(SECRET);
+          expect(device.run(`cat ${root}/ran`)).toBe("ran");
+        } finally {
+          older.close();
+          device.run(`rm -f ${root}/ran`);
+        }
       });
 
       it("refuses a link, a directory or a FIFO as a file root, and a misrecorded one", async (context) => {

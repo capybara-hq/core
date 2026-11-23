@@ -1167,8 +1167,11 @@ def run_sealed(request, control, runtime):
                                 "endpoints": [{"address": "127.0.0.1", "port": forwarder.port}]}
         report_r, report_w = os.pipe()
         files = read_files(request)
-        body = {"mode": "exec",
-                "roots": {"read": read, "write": write, "readFiles": read_files_pinned},
+        launcher_roots = {"read": read, "write": write}
+        if read_files_pinned:
+            # only when the device sent file roots, which it does only for a launcher declaring them
+            launcher_roots["readFiles"] = read_files_pinned
+        body = {"mode": "exec", "roots": launcher_roots,
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
                 "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"],

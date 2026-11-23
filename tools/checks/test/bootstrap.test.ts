@@ -523,6 +523,8 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         { name: "linux-sandbox.py", source: "print('linux')\n" },
       ];
       const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+      /** A current launcher ahead of the staged one, accepted while the change is between steps. */
+      const current = sha("print('linux with file roots')\n");
       /** `sha256sum` output: two spaces between digest and name, one file per line. */
       const sums = (entries: [string, string][]) =>
         entries.map(([digest, name]) => `${digest}  ${name}\n`).join("");
@@ -530,7 +532,13 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         const commit = await repoCommit(files);
         return checkBootstrap(await npmManifest(commit), dir, {
           network: network(),
-          sandboxRuntime: runtime,
+          sandboxRuntime: {
+            files: runtime,
+            accepted: {
+              "native-files.py": [sha(runtime[0]?.source ?? "")],
+              "linux-sandbox.py": [sha(runtime[1]?.source ?? ""), current],
+            },
+          },
         });
       };
 
@@ -539,6 +547,16 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
           [SUMS]: sums([
             ["0".repeat(64), "capybara-operation.py"],
             [sha(runtime[1]?.source ?? ""), "linux-sandbox.py"],
+            [sha(runtime[0]?.source ?? ""), "native-files.py"],
+          ]),
+        });
+        expect(f).toEqual([]);
+      });
+
+      it("passes when SHA256SUMS lists a file with another digest the SDK accepts", async () => {
+        const f = await check({
+          [SUMS]: sums([
+            [current, "linux-sandbox.py"],
             [sha(runtime[0]?.source ?? ""), "native-files.py"],
           ]),
         });
@@ -556,7 +574,7 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         expect(rules(f)).toEqual(["bootstrap-sandbox-runtime"]);
         expect(f[0]?.message).toMatch(
           new RegExp(
-            `^plugins/device-docker/image/runtime/SHA256SUMS at [0-9a-f]{12} of .* lists native-files\\.py as ${stale}, but core's SDK source hashes to ${sha(runtime[0]?.source ?? "")}`,
+            `^plugins/device-docker/image/runtime/SHA256SUMS at [0-9a-f]{12} of .* lists native-files\\.py as ${stale}, but core's SDK accepts ${sha(runtime[0]?.source ?? "")} for it`,
           ),
         );
         expect(f[0]?.message).toContain("restage the device-docker image in capybara-hq/plugins");
