@@ -103,7 +103,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const made = new Set(all.flatMap((c) => (c.platformTemplateId ? [c.platformTemplateId] : [])));
   const templates = (offered.data?.components ?? [])
     .filter((c) => c.kind === "connector_template" && c.pluginOn && !made.has(c.id))
-    .sort((a, b) => componentLabel(a, locale).localeCompare(componentLabel(b, locale)));
+    .sort((a, b) => componentLabel(a, locale).localeCompare(componentLabel(b, locale), locale));
   const disabled = all.filter((c) => c.status === "disabled");
   // A tab only when it holds something different from "all".
   const active = tab === "disabled" && disabled.length > 0 ? "disabled" : "all";
