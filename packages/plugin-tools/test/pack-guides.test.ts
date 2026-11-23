@@ -201,4 +201,16 @@ describe("packPlugin: setup guides v2 without an extension", () => {
       /setupGuides x-setup: guides\/x-setup\.md:\d+: check bot-token needs the plugin's extension/,
     );
   });
+
+  it("fails on a check line in a device-connection guide", async () => {
+    const manifest = JSON.parse(await readFile(join(dir, PLUGIN_MANIFEST_FILE), "utf8"));
+    manifest.setupGuides = [{ id: "x-setup", place: "device-connection" }];
+    await writeFile(join(dir, PLUGIN_MANIFEST_FILE), JSON.stringify(manifest));
+    await guide("x-setup.md", "# Connect\n\n::check capybara:public-url Public URL\n");
+    await expect(packPlugin(dir, out)).rejects.toThrow(
+      /setupGuides x-setup: guides\/x-setup\.md:3: check capybara:public-url is not allowed in place device-connection \(guide x-setup\)/,
+    );
+    const f = await checkPluginPack([dir]);
+    expect(f.map((x) => x.rule)).toEqual(["plugin-pack"]);
+  });
 });

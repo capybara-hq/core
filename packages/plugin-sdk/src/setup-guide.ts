@@ -67,6 +67,8 @@ export interface SetupGuidePlaceInfo {
   variables: Readonly<Record<string, SetupGuideVariableType>>;
   drift: boolean;
   shellActions: readonly SetupGuideShellAction[];
+  /** Whether guides of the place may use check lines (a place with no target has nothing to check). */
+  checks: boolean;
 }
 
 const COMMON_VARIABLES = {
@@ -90,6 +92,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
     },
     drift: true,
     shellActions: [],
+    checks: true,
   },
   "connector-template": {
     modes: [],
@@ -104,6 +107,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
     },
     drift: true,
     shellActions: [],
+    checks: true,
   },
   "extension-deployment": {
     modes: [],
@@ -111,6 +115,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
     variables: { ...COMMON_VARIABLES, pluginName: "text", signInCallbackUrl: "url" },
     drift: false,
     shellActions: [],
+    checks: true,
   },
   "device-connection": {
     modes: [],
@@ -118,6 +123,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
     variables: { publicUrl: "url", orgId: "token", orgName: "text", pluginName: "token" },
     drift: false,
     shellActions: ["connect-this-machine"],
+    checks: false,
   },
 };
 
@@ -279,7 +285,15 @@ export function validateSetupGuide(input: {
         err(a.line, `unknown shell action "${a.action}" (known: ${info.shellActions.join(", ")})`);
       }
     }
-    if (input.pluginChecks !== undefined) {
+    if (!info.checks) {
+      for (const c of parsed.checks) {
+        err(
+          c.line,
+          `check ${c.id} is not allowed in place ${input.place}${input.id !== undefined ? ` (guide ${input.id})` : ""}: guides of this place have no target to check, so remove the line`,
+        );
+      }
+    }
+    if (input.pluginChecks !== undefined && info.checks) {
       for (const c of parsed.checks) {
         if (c.source === "plugin" && !input.pluginChecks.includes(c.id)) {
           err(c.line, `check ${c.id} is not declared in the extension's permissions.setupChecks`);

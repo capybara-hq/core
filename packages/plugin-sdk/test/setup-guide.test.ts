@@ -96,10 +96,14 @@ describe("places and paths", () => {
       audiences: ["member"],
       drift: false,
       shellActions: ["connect-this-machine"],
+      checks: false,
       variables: { publicUrl: "url", orgId: "token", orgName: "text", pluginName: "token" },
     });
     for (const p of SETUP_GUIDE_PLACES) {
-      if (p !== "device-connection") expect(SETUP_GUIDE_PLACE_INFO[p].shellActions).toEqual([]);
+      if (p !== "device-connection") {
+        expect(SETUP_GUIDE_PLACE_INFO[p].shellActions).toEqual([]);
+        expect(SETUP_GUIDE_PLACE_INFO[p].checks).toBe(true);
+      }
     }
   });
 
@@ -394,6 +398,15 @@ describe("::shell-action lines", () => {
 
   it("accepts a device-connection guide with the action and a variable in prose", () => {
     expect(errors(v(doc("Connect {{orgName}}.", "", line), { place }))).toEqual([]);
+  });
+
+  it("refuses check lines: the place has no target to check", () => {
+    expect(
+      errors(v(doc("::check capybara:public-url Public URL", "", "::check key-ok Key"), { place })),
+    ).toEqual([
+      "guides/slack-app.md:3: check capybara:public-url is not allowed in place device-connection (guide slack-app): guides of this place have no target to check, so remove the line",
+      "guides/slack-app.md:5: check key-ok is not allowed in place device-connection (guide slack-app): guides of this place have no target to check, so remove the line",
+    ]);
   });
 
   it("refuses an action without a label, with variables, unknown, or in another place", () => {
