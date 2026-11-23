@@ -505,6 +505,8 @@ export class EventLog {
   }
 
   /** The append itself, in the context's transaction (both callers open or join one). */
+  // org-filter: the log writer is keyed by conversation id only; every append path resolved the
+  // conversation in its org first (access check, run claim, channel binding)
   private async write(
     conversationId: string,
     events: AppendEvent[],

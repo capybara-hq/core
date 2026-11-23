@@ -633,6 +633,7 @@ export class ExtensionAdmin {
     }
     const built = [...clients].map(([plugin, c]) => ({ plugin, build: c.build }));
     if (built.length === 0) return { clients, reports };
+    // org-filter: super admin's extension view (ExtensionAdmin): client reports of every org
     const ranked = this.db
       .selectFrom("extension_client_reports")
       .selectAll()

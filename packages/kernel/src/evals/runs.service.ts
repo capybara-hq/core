@@ -444,6 +444,7 @@ export class EvalRunsService {
         )
         .select("v.definition")
         .where("a.id", "=", agentId)
+        .where("a.org_id", "=", orgId)
         .executeTakeFirst();
       model = (current?.definition as unknown as AgentDefinition | undefined)?.model;
     }
@@ -485,6 +486,7 @@ export class EvalRunsService {
         ).as("subagent_source"),
       ])
       .where("set_id", "=", setId)
+      .where("org_id", "=", orgId)
       .orderBy("created_at")
       .orderBy("id")
       .execute();
@@ -614,11 +616,12 @@ export class EvalRunsService {
    * 集合的 agent 已删除 → `agent.not_found`（删除 agent 会取消它的运行；之后再估算 / 启动只会建出全部跳过的运行）。
    * 在事务里调用时 FOR SHARE，与删除 agent 互斥。
    */
-  private async assertAgentLive(agentId: string, forShare = false): Promise<void> {
+  private async assertAgentLive(orgId: string, agentId: string, forShare = false): Promise<void> {
     let q = this.d.db
       .selectFrom("agents")
       .select("id")
       .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
       .where("deleted_at", "is", null);
     if (forShare) q = q.forShare();
     if (!(await q.executeTakeFirst())) {
@@ -632,7 +635,7 @@ export class EvalRunsService {
     input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean; tokenCap?: number },
   ): Promise<{ estimate: EvalEstimate } & EvalTokenCaps> {
     const set = await this.liveSet(orgId, setId);
-    await this.assertAgentLive(set.agent_id);
+    await this.assertAgentLive(orgId, set.agent_id);
     const caps = this.tokenCaps(input.tokenCap);
     const versionDef = await this.checkCandidate(orgId, set.agent_id, input.candidate);
     const plans = await this.plan(orgId, setId, input.mode, input.candidate, versionDef);
@@ -669,7 +672,7 @@ export class EvalRunsService {
     auditDetail?: Record<string, unknown>,
   ): Promise<EvalRunView> {
     const set = await this.liveSet(orgId, setId);
-    await this.assertAgentLive(set.agent_id);
+    await this.assertAgentLive(orgId, set.agent_id);
     const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
     const versionDef = await this.checkCandidate(orgId, set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
@@ -726,13 +729,14 @@ export class EvalRunsService {
       .forShare()
       .executeTakeFirst();
     if (!locked) throw setNotFound();
-    await this.assertAgentLive(agentId, true);
+    await this.assertAgentLive(orgId, agentId, true);
     const alive = new Set(
       (
         await db
           .selectFrom("eval_cases")
           .select("id")
           .where("set_id", "=", setId)
+          .where("org_id", "=", orgId)
           .where(
             "id",
             "in",
@@ -806,7 +810,7 @@ export class EvalRunsService {
   }
 
   /** 各运行的汇总（只算已结束的）。 */
-  private async summaries(rows: RunRow[]): Promise<Map<string, EvalSummary>> {
+  private async summaries(orgId: string, rows: RunRow[]): Promise<Map<string, EvalSummary>> {
     const finished = rows
       .filter((r) => !(ACTIVE_EVAL_STATUSES as readonly string[]).includes(r.status))
       .map((r) => r.id);
@@ -833,6 +837,7 @@ export class EvalRunsService {
           FILTER (WHERE label IS NOT NULL)`.as("human_rate"),
       ])
       .where("run_id", "in", finished)
+      .where("org_id", "=", orgId)
       .groupBy("run_id")
       .execute();
     for (const id of finished) {
@@ -884,7 +889,7 @@ export class EvalRunsService {
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
     if (!r) throw runNotFound();
-    const sums = await this.summaries([r]);
+    const sums = await this.summaries(orgId, [r]);
     return EvalRunsService.toView(r, sums.get(r.id) ?? null);
   }
 
@@ -898,7 +903,7 @@ export class EvalRunsService {
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .execute();
-    const sums = await this.summaries(rows);
+    const sums = await this.summaries(orgId, rows);
     return rows.map((r) => EvalRunsService.toView(r, sums.get(r.id) ?? null));
   }
 
@@ -1147,6 +1152,7 @@ export class EvalRunsService {
             .innerJoin("eval_sets as es", "es.id", "er.set_id")
             .select("er.id")
             .whereRef("er.id", "=", "eval_results.run_id")
+            .where("er.org_id", "=", orgId)
             .where("es.deleted_at", "is", null),
         ),
       )

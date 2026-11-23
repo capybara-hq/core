@@ -1106,6 +1106,7 @@ export class OrgAgentTemplates {
             .selectFrom("agent_templates")
             .select("platform_template_id")
             .where("id", "=", t.id)
+            .where("org_id", "=", orgId)
             .executeTakeFirst()
         )?.platform_template_id ??
         null;

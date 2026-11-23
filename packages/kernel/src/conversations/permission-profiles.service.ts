@@ -188,6 +188,7 @@ export class PermissionProfilesService {
         permission_consent: consent ? JSON.stringify(consent) : null,
       })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
     await this.transitions.recordLocked(
       {

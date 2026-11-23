@@ -730,6 +730,7 @@ export class ApprovalsService {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .forUpdate()
       .execute();
     await t
@@ -759,6 +760,7 @@ export class ApprovalsService {
     const row = await t
       .selectFrom("approvals")
       .selectAll()
+      .where("org_id", "=", input.orgId)
       .where("run_id", "=", input.runId)
       .where("call_id", "=", input.callId)
       .where("attempt", "=", input.attempt ?? 1)
@@ -815,6 +817,7 @@ export class ApprovalsService {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .forUpdate()
       .execute();
     const detail: SecureInputDetail = { personFields: input.personFields, target: input.target };
@@ -847,6 +850,7 @@ export class ApprovalsService {
       const row = await t
         .selectFrom("approvals")
         .selectAll()
+        .where("org_id", "=", input.orgId)
         .where("run_id", "=", input.runId)
         .where("call_id", "=", input.callId)
         .where("attempt", "=", input.attempt)
@@ -921,6 +925,7 @@ export class ApprovalsService {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .forUpdate()
       .execute();
     // only the device's owner is ever asked: never another account the caller names
@@ -935,6 +940,7 @@ export class ApprovalsService {
     const last = await t
       .selectFrom("approvals")
       .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("org_id", "=", input.orgId)
       .where("run_id", "=", input.runId)
       .where("call_id", "=", input.callId)
       .executeTakeFirst();
@@ -1023,6 +1029,7 @@ export class ApprovalsService {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .forUpdate()
       .execute();
     // only a member of the org is asked, and only about a live connector of the org
@@ -1044,6 +1051,7 @@ export class ApprovalsService {
     const last = await t
       .selectFrom("approvals")
       .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("org_id", "=", input.orgId)
       .where("run_id", "=", input.runId)
       .where("call_id", "=", input.callId)
       .executeTakeFirst();
@@ -1157,6 +1165,7 @@ export class ApprovalsService {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
       .forUpdate()
       .execute();
     // only the device's owner is ever asked: never another account the caller names
@@ -1178,6 +1187,7 @@ export class ApprovalsService {
     const last = await t
       .selectFrom("approvals")
       .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("org_id", "=", input.orgId)
       .where("run_id", "=", input.runId)
       .where("call_id", "=", input.callId)
       .executeTakeFirst();
@@ -1820,6 +1830,7 @@ export class ApprovalsService {
             } satisfies SecureInputDetail),
           })
           .where("id", "=", id)
+          .where("org_id", "=", orgId)
           .execute();
         return { leaked };
       }
@@ -1896,6 +1907,7 @@ export class ApprovalsService {
           }),
       })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .returningAll()
       .executeTakeFirstOrThrow();
     if (approved && before.command?.permissionCandidate) {
@@ -2106,6 +2118,7 @@ export class ApprovalsService {
       )
       .select(["s.account_id", "v.definition"])
       .where("s.id", "=", served.taskId)
+      .where("s.org_id", "=", a.orgId)
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
     if (task?.account_id !== decidedBy) return;
@@ -2242,6 +2255,8 @@ export class ApprovalsService {
    * 详情，不做处理人校验（内核内部用：渠道出站投递组装 IM 审批卡片）；不存在返回 null。
    * 不得直接回给请求方——HTTP 接口用 {@link get}。
    */
+  // org-filter: approvalId comes from an approval event payload in the conversation's own event
+  // log (channel outbound cards), kernel-written, never caller input
   async describe(id: string): Promise<ApprovalView | null> {
     const row = await this.db
       .selectFrom("approvals")
@@ -2254,6 +2269,8 @@ export class ApprovalsService {
   }
 
   /** 某个工具调用最近一次的工具审批（attempt 最大者，网络询问除外）；没有则返回 null。 */
+  // org-filter: runId is the runtime's own run (a uuid) whose call the tool pipeline is handling;
+  // never caller input
   async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.db
       .selectFrom("approvals")
@@ -2268,6 +2285,8 @@ export class ApprovalsService {
   }
 
   /** The latest secure input request of a tool call (highest attempt); null when it has none. */
+  // org-filter: runId is the runtime's own run (a uuid) whose call the tool pipeline is handling;
+  // never caller input
   async secureInputForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.db
       .selectFrom("approvals")
@@ -2282,6 +2301,8 @@ export class ApprovalsService {
   }
 
   /** The network ask of a tool call (at most one per call); null when it has none. */
+  // org-filter: runId is the runtime's own run (a uuid) whose call the tool pipeline is handling;
+  // never caller input
   async networkForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.db
       .selectFrom("approvals")
@@ -2296,6 +2317,8 @@ export class ApprovalsService {
   }
 
   /** The git push ask of a tool call (at most one per call); null when it has none. */
+  // org-filter: runId is the runtime's own run (a uuid) whose call the tool pipeline is handling;
+  // never caller input
   async gitForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.db
       .selectFrom("approvals")
@@ -2310,6 +2333,8 @@ export class ApprovalsService {
   }
 
   /** The command review ask of a tool call (at most one per call); null when it has none. */
+  // org-filter: runId is the runtime's own run (a uuid) whose call the tool pipeline is handling;
+  // never caller input
   async commandForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.db
       .selectFrom("approvals")
@@ -2339,6 +2364,7 @@ export class ApprovalsService {
     return r.record ? { outcome: r.outcome, record: r.record } : { outcome: r.outcome };
   }
 
+  // org-filter: id is the approval of the kernel-written timeout job payload (Waits), not caller input
   @Transactional()
   private async expireIn(id: string): Promise<{
     outcome: "expired" | "not_due" | "settled";
@@ -2372,6 +2398,8 @@ export class ApprovalsService {
    * 在调用方的事务内（`mandatory`）取消运行的全部 pending 审批（运行在等待中被中止），各写
    * `approval_decided{cancelled}`（处理人为 null）。返回被取消的记录；调用方提交后发布事件。
    */
+  // org-filter: runId is the run the kernel is stopping or finishing (Waits, RunFinish), not caller
+  // input
   @Transactional({ propagation: "mandatory" })
   async cancelPendingIn(runId: string): Promise<ApprovalRecord[]> {
     const t = this.db.db;
@@ -2450,6 +2478,7 @@ export class ApprovalsService {
         .updateTable("approvals")
         .set({ status: "cancelled", decided_at: sql<Date>`now()` })
         .where("id", "=", row.id)
+        .where("org_id", "=", orgId)
         .returningAll()
         .executeTakeFirstOrThrow();
       const seq = await this.decidedEvent(toRecord(row), "cancelled");
@@ -2472,6 +2501,9 @@ export class ApprovalsService {
    * and emits the domain event `approval.decided{skipped}` after the commit (its IM card update is
    * owed by the append, transactional outbox spec §8.1).
    */
+  // org-filter: conversationId is the conversation the caller wrote the author's message in and
+  // holds locked (ConversationsService, checked in its org); the tree is its sub-agents'
+  // conversations, and every row below is read from that tree
   @Transactional({ propagation: "mandatory" })
   async skipNetworkIn(
     conversationId: string,
@@ -2533,6 +2565,8 @@ export class ApprovalsService {
     if (orgId !== undefined) q = q.where("org_id", "=", orgId);
     const row = await q.executeTakeFirst();
     if (!row) return false;
+    // org-filter: the conversation of the approval row read just above (org-filtered when the
+    // caller passes orgId; otherwise a kernel-written approval id, see expireIn)
     await t
       .selectFrom("conversations")
       .select("id")
@@ -2548,6 +2582,8 @@ export class ApprovalsService {
   }): Promise<string[]> {
     const found = [...new Set((await ids.execute()).map((r) => r.conversation_id))];
     if (found.length === 0) return [];
+    // org-filter: the ids come from the caller's query over approvals of a conversation tree it
+    // already holds (skipNetworkIn)
     const rows = await this.db.db
       .selectFrom("conversations")
       .select("id")
@@ -2559,6 +2595,7 @@ export class ApprovalsService {
   }
 
   /** `conversationId` and its sub-agents' conversations at any depth (at most 16 levels). */
+  // org-filter: sub-agent conversations live in their parent's org; the root is the caller's
   private async subtreeOf(conversationId: string): Promise<string[]> {
     const all = [conversationId];
     let level = [conversationId];
@@ -2662,6 +2699,8 @@ export class ApprovalsService {
   }
 
   /** agent id → 当前版本定义里的名字。 */
+  // org-filter: the agent ids come from the conversations of approval rows the callers already
+  // read in their org (views)
   private async agentNames(ids: string[]): Promise<Map<string, string>> {
     if (ids.length === 0) return new Map();
     const rows = await this.db
@@ -2711,6 +2750,7 @@ export class ApprovalsService {
     const connectorIds = [
       ...new Set(recs.flatMap((r) => (r.connectorId === null ? [] : [r.connectorId]))),
     ];
+    // org-filter: connector ids from approval rows the callers already read in their org
     const apps =
       connectorIds.length === 0
         ? []

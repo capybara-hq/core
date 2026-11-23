@@ -73,6 +73,7 @@ export class RunDeletion {
               .selectFrom("background_tasks as b")
               .select("b.id")
               .whereRef("b.sandbox_conversation_id", "=", "c.id")
+              .whereRef("b.org_id", "=", "c.org_id")
               .where("b.status", "=", RUNNING_TASK_STATUS),
           ),
         ]),
@@ -82,6 +83,8 @@ export class RunDeletion {
       .execute();
   }
 
+  // org-filter: the id is the deleted root (ConversationsService.remove checked writable(orgId)
+  // first, or the outbox row it wrote); only a deleted conversation is acted on
   async stopTree(conversationId: string, byAccountId: string | null): Promise<void> {
     const root = await this.db
       .selectFrom("conversations")
@@ -107,6 +110,7 @@ export class RunDeletion {
     await this.background.stopForDeletedConversation(conversationId);
   }
 
+  // org-filter: locks a conversation stopTree / stopDeletedConversation / the org sweep resolved
   @Transactional({ propagation: "requires_new" })
   private async stopConversationIn(
     conversationId: string,

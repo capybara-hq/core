@@ -119,6 +119,7 @@ export async function wakeDecisionIn(
     .selectFrom("conversations")
     .select(["queue_paused", "deleted_at", "tree_stopped_at"])
     .where("id", "=", conv.rootId)
+    .where("org_id", "=", conv.orgId)
     .executeTakeFirst();
   if (!root || root.queue_paused || !isLive(root.deleted_at)) return null;
   const treeStopped = root.tree_stopped_at !== null;

@@ -1031,6 +1031,8 @@ export class SandboxService {
   async currentInstance(
     deviceId: string,
   ): Promise<{ createdAt: Date; provider: string | null } | null> {
+    // org-filter: deviceId is the device its caller already resolved in its org (the tool's bound
+    // device); the instance row is keyed by its device
     const row = await this.db
       .selectFrom("device_instances")
       .select(["status", "handle", "created_at", "provider"])
@@ -1084,6 +1086,8 @@ export class SandboxService {
     const token = randomUUID();
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
+      // org-filter: deviceId comes from an org-scoped background task row or a kernel-written
+      // operation intent, never caller input; the instance row is keyed by its device
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -1504,6 +1508,7 @@ export class SandboxService {
       provider: p.plugin,
     });
     try {
+      // org-filter: the device this holder entered under its lease after readRow's org check
       await this.db
         .updateTable("device_instances")
         .set((eb) => ({ fs_status: "lost", generation: eb("generation", "+", 1) }))
@@ -2113,6 +2118,7 @@ export class SandboxService {
         .selectFrom("device_instances")
         .select("instance_limits")
         .where("device_id", "=", ctx.deviceId)
+        .where("org_id", "=", ctx.orgId)
         .executeTakeFirst();
       if (!row) return;
       const held = { ...e, limits: row.instance_limits };
@@ -2150,6 +2156,8 @@ export class SandboxService {
   }
 
   private async readRow(ctx: { orgId: string; deviceId: string }): Promise<Row | undefined> {
+    // org-filter: reads org_id and throws foreign below: a filter would turn another org's device
+    // into a missing one
     const row = await this.db
       .selectFrom("device_instances")
       .selectAll()
@@ -2220,6 +2228,7 @@ export class SandboxService {
         .updateTable("device_instances")
         .set((eb) => ({ generation: eb("generation", "+", 1) }))
         .where("device_id", "=", env)
+        .where("org_id", "=", ctx.orgId)
         .execute();
       await this.register(env, lease.token);
       // other holders (any conversation of the device) may be running: only the dead holders'
@@ -2303,6 +2312,7 @@ export class SandboxService {
   private async leave(env: string, e: Entered): Promise<void> {
     await this.unregister(env, e.lease.token);
     await e.lease.release();
+    // org-filter: the device this holder entered under its lease after readRow's org check
     await this.db
       .updateTable("device_instances")
       .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
@@ -2519,6 +2529,8 @@ export class SandboxService {
         c.device_id,
         async (lease) => {
           const id = c.device_id;
+          // org-filter: deployment-wide suspension sweep (worker) over every org's idle instances,
+          // re-read under each device's lease
           const row = await this.db
             .selectFrom("device_instances")
             .selectAll()
@@ -2580,6 +2592,8 @@ export class SandboxService {
     let n = 0;
     await inPool(await this.candidates(mine), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
+        // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
+        // re-read under each device's lease
         const row = await this.db
           .selectFrom("device_instances")
           .selectAll()
@@ -2606,6 +2620,8 @@ export class SandboxService {
    * abandoned instead ({@link abandonInstance}) and the call returns (#675). The provider only
    * needs to be loaded: a device is deleted while its org has the provider off too.
    */
+  // org-filter: deviceId is the payload of the kernel's sandbox-destroy-for job, owed by the
+  // transaction that soft-deleted the device in its org; never caller input
   async destroyDevice(deviceId: string): Promise<void> {
     const row = await this.db
       .selectFrom("device_instances")
@@ -2680,6 +2696,7 @@ export class SandboxService {
    * nothing retries the row; a plugin of that name installed again destroys it as before.
    */
   private async abandonInstance(deviceId: string, provider: string): Promise<void> {
+    // org-filter: only from destroyDevice: the kernel destroy job's device, not caller input
     const written = await this.db
       .with("a", (db) =>
         db
@@ -2744,6 +2761,8 @@ export class SandboxService {
       { intent: true },
     );
     try {
+      // org-filter: deviceId is the payload of the kernel's sandbox-reset-files job (enqueued after
+      // the org-checked device request), not caller input
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -2793,6 +2812,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
+      // org-filter: deviceId comes from the deployment-wide retire-legacy-tasks worker's due list,
+      // not caller input
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -2831,6 +2852,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
+      // org-filter: reads the device's own org; deviceId comes from the deployment-wide reconcile
+      // sweep, not caller input
       const device = await this.db
         .selectFrom("devices")
         .select(["org_id", "provider"])
@@ -2842,6 +2865,7 @@ export class SandboxService {
         .selectFrom("device_instances")
         .selectAll()
         .where("device_id", "=", deviceId)
+        .where("org_id", "=", orgId)
         .executeTakeFirst();
       const fence = row ? { gen: row.generation } : null;
       if (row && fence) await this.fenced(lease, deviceId, fence, {});
@@ -2949,6 +2973,8 @@ export class SandboxService {
   /** {@link reconcileMarked} for the devices of one provider. */
   private async reconcileMarkedOf(p: DeviceProviderEntry, limit: number): Promise<number> {
     const cursorKey = reconcileCursorKey(p.plugin);
+    // org-filter: deployment-wide reconcile sweep (worker) over every org's marked devices of
+    // this provider
     const page = (after: string, n: number) =>
       this.db
         .selectFrom("devices as d")
@@ -3058,7 +3084,7 @@ export class SandboxService {
      * reason is noted, the destroy follows).
      */
     const cancelOnResume = async (
-      o: { id: string; provider: string; instanceGeneration: string },
+      o: { id: string; orgId: string; provider: string; instanceGeneration: string },
       live: Row & { handle: SandboxHandle },
     ): Promise<{ cancelled: string[] } | "skip" | { failed: string }> => {
       if (live.status !== "suspended" || !isKnownProvider(o.provider)) return "skip";
@@ -3080,6 +3106,7 @@ export class SandboxService {
             "execution_ref",
           ])
           .where("operation_id", "=", m.refId)
+          .where("org_id", "=", o.orgId)
           .where("device_id", "=", id)
           .executeTakeFirst();
         if (intent?.revoke_acknowledged === true) continue;
@@ -3191,6 +3218,8 @@ export class SandboxService {
           sweep_failed_at: null,
         });
       this.log.info("instance that may run legacy work destroyed", { deviceId: id });
+      // org-filter: the device this retirement gate holds under its exclusive lease; the instance
+      // row is keyed by its device
       now = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -3241,6 +3270,8 @@ export class SandboxService {
           sweep_failed_at: null,
         });
       this.log.info("instance that may run legacy work destroyed by name", { deviceId: id });
+      // org-filter: the device this retirement gate holds under its exclusive lease; the instance
+      // row is keyed by its device
       now = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -3379,6 +3410,8 @@ export class SandboxService {
    */
   private async fenced(lease: SandboxLease, id: string, fence: Fence, set: Patch): Promise<Date> {
     if (lease.signal.aborted) throw new SandboxLockLostError(id);
+    // org-filter: fenced write on the device this holder leases (entered after the org check, or a
+    // sweep's device); the fence generation guards it
     const r = await this.db
       .updateTable("device_instances")
       .set({ ...set, generation: fence.gen + 1 })
@@ -3395,6 +3428,8 @@ export class SandboxService {
   private async candidates(
     due: (eb: ExpressionBuilder<KernelDatabase, "device_instances">) => Expression<SqlBool>,
   ): Promise<{ device_id: string; running_since: Date | null }[]> {
+    // org-filter: deployment-wide sweep candidates (suspension and destruction workers) across
+    // every org
     return await this.db
       .selectFrom("device_instances")
       .select(["device_id", "running_since"])
@@ -3441,6 +3476,8 @@ export class SandboxService {
       return await fn(lease);
     } catch (err) {
       this.log.warn("sandbox maintenance failed; will retry", { deviceId, err });
+      // org-filter: sweep bookkeeping on the device this deployment-wide sweep holds under its
+      // lease
       await this.db
         .updateTable("device_instances")
         .set({ sweep_failed_at: sql<Date>`now()` })
@@ -3503,6 +3540,8 @@ export class SandboxService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!live) throw deviceNotFound();
+    // org-filter: reads org_id and throws foreign below (the device itself was just checked in
+    // ctx.orgId)
     const read = await this.db
       .selectFrom("device_instances")
       .selectAll()
@@ -4023,6 +4062,7 @@ export class SandboxService {
     const r = await this.db
       .deleteFrom("device_instances")
       .where("device_id", "=", id)
+      .where("org_id", "=", row.org_id)
       .where("generation", "=", fence.gen)
       .executeTakeFirst();
     if (Number(r.numDeletedRows) !== 1) throw new SandboxLockLostError(id, "generation");
@@ -4051,6 +4091,8 @@ export class SandboxService {
   private deviceGone(
     eb: ExpressionBuilder<KernelDatabase, "device_instances">,
   ): Expression<SqlBool> {
+    // org-filter: deployment-wide sweep condition: a deleted device of any org, correlated to
+    // the instance row
     return eb.or([
       eb.exists(
         eb

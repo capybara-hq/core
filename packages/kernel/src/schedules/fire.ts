@@ -117,6 +117,8 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  * triggers takes the task run (`linkStartedRunIn`), and the run tracker follows it to its end.
  */
 @Injectable()
+// org-filter: the sched-fire / sched-settle job handler (worker only): the task run id is the
+// kernel-written job payload, and every other id is read from that run's own task row
 export class ScheduledTaskFirer {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
@@ -158,7 +160,7 @@ export class ScheduledTaskFirer {
     // a Redis read: outside the claim's transaction
     const offline =
       pre.fired_at === null && pre.device_id !== null && pre.mode === "new"
-        ? await this.deviceOffline(pre.device_id)
+        ? await this.deviceOffline(pre.org_id, pre.device_id)
         : false;
     const claimed = await this.claim(taskRunId, pre.org_id, offline);
     if (claimed === null || "skip" in claimed) return;
@@ -463,6 +465,7 @@ export class ScheduledTaskFirer {
           .updateTable("conversations")
           .set({ scheduled_task_id: task.id })
           .where("id", "=", conv.id)
+          .where("org_id", "=", task.orgId)
           .execute();
         return conv.id;
       },
@@ -510,6 +513,7 @@ export class ScheduledTaskFirer {
       .updateTable("conversations")
       .set({ scheduled_task_id: task.id })
       .where("id", "=", conv.id)
+      .where("org_id", "=", task.orgId)
       .execute();
     await t
       .insertInto("channel_deliveries")
@@ -685,11 +689,12 @@ export class ScheduledTaskFirer {
    * connected now ({@link DialInRelay.online}). A provider not loaded here is not asked: the run's
    * own sandbox use refuses it (`device.unavailable`).
    */
-  private async deviceOffline(deviceId: string): Promise<boolean> {
+  private async deviceOffline(orgId: string, deviceId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("devices")
       .select(["provider", "deleted_at"])
       .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!row || row.deleted_at !== null) return true;
     const p = this.providers.forDevice(row.provider);

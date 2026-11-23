@@ -179,6 +179,8 @@ export class AdminAgents {
     const db = this.db.db;
     const builtinPlugins = await builtinSkillPlugins(db);
     const agentIds = [...byOrg.values()].flat().map((a) => a.id);
+    // org-filter: super admin's cross-org agent list; skills are matched by the agent ids loaded
+    // across orgs above (origin_agent_id is unique to one org's agent), not by caller input
     const sharedRows = await db
       .selectFrom("skills")
       .select(["id", "origin_agent_id"])

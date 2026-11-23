@@ -103,6 +103,8 @@ export async function isAgentVisibleTo(
   agentId: string,
   accountId: string,
 ): Promise<boolean> {
+  // org-filter: visibleTo requires the account's membership in the agent's own org; callers load
+  // the agent with their org filter first (isAgentVisibleIn is the org-pinned variant)
   const row = await db
     .selectFrom("agents")
     .select("id")
@@ -181,6 +183,8 @@ export class AgentLookup {
   }
 
   /** 按给定 id 顺序组装视图（调用方已完成可见性判定）。 */
+  // org-filter: assembles views for ids the caller already resolved with its org and visibility
+  // filter (get / listVisible and the services' own org-filtered reads)
   async views(ids: string[]): Promise<AgentView[]> {
     if (ids.length === 0) return [];
     const db = this.db;

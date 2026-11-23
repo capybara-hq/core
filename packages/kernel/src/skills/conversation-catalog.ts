@@ -156,6 +156,7 @@ export async function cancelRequestIn(
     .updateTable("skill_change_requests")
     .set({ status: "cancelled", decided_at: sql<Date>`now()` })
     .where("id", "=", req.id)
+    .where("org_id", "=", req.org_id)
     .execute();
   await audit(deps.db.db, {
     actorAccountId: how.actorAccountId,

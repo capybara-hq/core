@@ -270,7 +270,7 @@ export class BackgroundTasks {
     if (read.kind === "ok") return { ...read.value, source: "live" };
     const unavailable: OutputUnavailable = {
       reason: read.reason,
-      provider: await this.providerOf(task.deviceId),
+      provider: await this.providerOf(task.orgId, task.deviceId),
     };
     if (task.status !== "running") {
       const ev = await this.eventLog.findByIdem(task.conversationId, finishedEventKey(task.id));
@@ -286,12 +286,13 @@ export class BackgroundTasks {
   }
 
   /** The provider of the device the task ran on (`devices.provider`); null when none is known. */
-  private async providerOf(deviceId: string | null): Promise<string | null> {
+  private async providerOf(orgId: string, deviceId: string | null): Promise<string | null> {
     if (deviceId === null) return null;
     const row = await this.db.db
       .selectFrom("devices")
       .select("provider")
       .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
     return row?.provider ?? null;
   }

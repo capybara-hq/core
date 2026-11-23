@@ -97,15 +97,4 @@ export class DeviceTargets {
     if (!row) return "deleted";
     return row.machine_id === null ? "revoked" : "active";
   }
-
-  /** The org of a live device, or null (missing or deleted). */
-  async orgOf(deviceId: string): Promise<string | null> {
-    const row = await this.db
-      .selectFrom("devices")
-      .select("org_id")
-      .where("id", "=", deviceId)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    return row?.org_id ?? null;
-  }
 }

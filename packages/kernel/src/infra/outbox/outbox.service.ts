@@ -114,6 +114,8 @@ export class OutboxService {
       if (dueNow(job)) this.deliverAfterCommit(row.id);
       return true;
     }
+    // org-filter: by the unique (queue, job_id) of the conflicting insert just above; job ids are
+    // kernel-built and the outbox is deployment-wide
     const stored = await this.db
       .selectFrom("outbox")
       .select(["job_name", "data"])

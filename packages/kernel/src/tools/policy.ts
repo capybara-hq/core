@@ -199,6 +199,7 @@ export function createDecidePolicy(
         const mine = await db
           .selectFrom("connector_tool_account_policies")
           .select("policy")
+          .where("org_id", "=", ctx.orgId)
           .where("connector_id", "=", tool.source.connectorId)
           .where("account_id", "=", ctx.accountId)
           .where("tool_name", "=", tool.source.name)
@@ -248,6 +249,7 @@ export function createDecidePolicy(
       )
       .select(["agent_versions.definition"])
       .where("agents.id", "=", ctx.agentId)
+      .where("agents.org_id", "=", ctx.orgId)
       .executeTakeFirst();
     const currentDef =
       current === undefined ? undefined : normalizeStoredDefinition(current.definition);
@@ -402,6 +404,7 @@ async function parentAgentSetting(
     )
     .select(["a.id", "v.definition"])
     .where("c.id", "=", ctx.parentConversationId ?? "")
+    .where("c.org_id", "=", ctx.orgId)
     .executeTakeFirst();
   if (!row || row.id === ctx.agentId) return undefined;
   const policies = normalizeStoredDefinition(row.definition).toolPolicies as

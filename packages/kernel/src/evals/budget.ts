@@ -24,6 +24,8 @@ export const usageTokens = (u: ModelUsage): number =>
  * 累加用量：`UPDATE … RETURNING`，累加后 ≥ 上限且运行仍在执行 → 同一语句置 `capped`、记 `finished_at`。
  * 运行已不在（被删）时返回 `{ used: 0, capped: true }`，调用方同样停下。
  */
+// org-filter: by run id only; callers pass a run id read under an org filter or from a kernel-written
+// eval job payload (worker), never a raw caller-supplied id
 export async function consumeTokens(
   db: KernelSchemaDb,
   runId: string,
@@ -56,6 +58,8 @@ export const TOO_MANY_ERRORS = {
  * 同一语句置 `failed`、记原因与 `finished_at`；成功 → 清零。返回运行是否因此被熔断。
  * 多个任务并发时「连续」按写入顺序计（近似），足以挡住「每个请求都失败」的运行。
  */
+// org-filter: by run id only; callers pass a run id read under an org filter or from a kernel-written
+// eval job payload (worker), never a raw caller-supplied id
 export async function recordOutcome(
   db: KernelSchemaDb,
   runId: string,
@@ -94,6 +98,8 @@ export async function recordOutcome(
  * 运行停下（取消 / 越限 / 熔断 / 删除评测集）时：还在等评委的结果（`judge_status = 'pending'`）记 `skipped`，
  * 否则这些用例永远算不上做完。给了 `caseId` 只处理该用例。在途的评委请求做完后写不进来（条件是 pending），用量照样计入。
  */
+// org-filter: by run id only; callers pass a run id read under an org filter or from a kernel-written
+// eval job payload (worker), never a raw caller-supplied id
 export async function skipPendingJudges(
   db: KernelSchemaDb,
   runId: string,
@@ -145,6 +151,8 @@ export class EvalBudget {
    * worker 每做完一个用例、取消、入队失败时都调用。Joins the caller's transaction (the lock is released with it),
    * else runs in its own.
    */
+  // org-filter: by run id only; callers pass a run id read under an org filter or from a
+  // kernel-written eval job payload (worker), never a raw caller-supplied id
   @Transactional()
   async recountCases(runId: string): Promise<void> {
     const db = this.db.db;
@@ -194,7 +202,11 @@ export class EvalBudget {
     if (scope.agentId !== undefined) {
       const agentId = scope.agentId;
       q = q.where("set_id", "in", (eb) =>
-        eb.selectFrom("eval_sets").select("id").where("agent_id", "=", agentId),
+        eb
+          .selectFrom("eval_sets")
+          .select("id")
+          .where("agent_id", "=", agentId)
+          .where("org_id", "=", scope.orgId),
       );
     }
     const runs = await q.returning("id").execute();
@@ -216,6 +228,7 @@ export class EvalBudget {
    * A run that stopped (cancelled, its set deleted): its results not started yet are `skipped`,
    * the pending judges too, and the progress is recounted, in the caller's transaction.
    */
+  // org-filter: by run id only; callers cancelled the run under an org filter in the same transaction
   @Transactional({ propagation: "mandatory" })
   async skipRun(runId: string): Promise<void> {
     await this.db
