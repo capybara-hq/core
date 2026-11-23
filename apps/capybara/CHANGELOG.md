@@ -1,5 +1,28 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.98
+
+### Patch Changes
+
+- d0fbb13: Kernel device follow-ups: adding hosts to a device's list from a network approval asserts every
+  authority lock of its prelude, not only the device's; a failed project list never shows the
+  machine's own error text; the test-only `DialInMachines.revoke` is gone. A network ask decision
+  the device refuses (its network closed, it follows the org's hosts, or the host is no longer
+  addable) names the reason, and the web says what changed and what the person can do.
+- 1365ca1: The devices page holds the New device action's place with a placeholder while the list loads, so
+  the button no longer pops into the header after load.
+- f3dbb74: The kernel never proposes a sandbox approval for the new device deny entries (mise's config
+  directory and home config files, Maven and Gradle credential files): it reads them from
+  `DEVICE_DENIED_SECRET_PATHS` in the plugin SDK.
+- 91346a7: The image pins device-local rc.4 (`@capybara-hq/plugin-device-local@0.1.0-rc.4`): an unreadable or
+  too-long shared project root list keeps the stored roots, the limits text tries shorter roots, and
+  the "+N more" suffix no longer shows English in the zh UI.
+- 7e42a47: The image pins device-local rc.5 (`@capybara-hq/plugin-device-local@0.1.0-rc.5`): the connect guide
+  names the device in its commands (`-c <device id>`) and no longer mentions the desktop app.
+- Updated dependencies [d68c9fc]
+- Updated dependencies [ef9ac57]
+  - @capybara-hq/kernel@0.1.0-rc.75
+
 ## 0.1.0-rc.97
 
 ### Patch Changes

@@ -1,5 +1,30 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.22
+
+### Patch Changes
+
+- 0eb3412: `SetupGuidePlaceInfo` gains `checks`, whether guides of a place may use `::check` lines. It is
+  false for `device-connection` (a device guide has no target to check): `validateSetupGuide`, and so
+  `capybara-plugin check` / `pack` and the kernel's import, now refuse a check line there instead of
+  the web drawing nothing.
+- ef9ac57: Desktop and native shells no longer manage local devices (maintainer decision 2026-11-23): local
+  devices are connected only with `capybara-device`. The SDK drops the shell capability `device@2`
+  (`SHELL_CAPABILITY_KEYS.device`, `DeviceCapabilityV2`, `ThisMachineConnection`, `DeviceRunningOp`,
+  `DeviceCeilingRequest`, `KeepAwakeMode`, `DeviceConnection`) and the setup-guide directive
+  `::shell-action` (`SetupGuideShellAction`, `SetupGuideShellActionLine`, the `shell-action` block,
+  `SetupGuidePlaceInfo.shellActions`, `SETUP_GUIDE_LIMITS.shellActions`); a leftover
+  `::shell-action` line is now plain text. `GET /api/v1/meta` no longer reports
+  `features.localDevices` (`protocols.device` stays). The web drops the 本机 block on the device
+  page, the 本机 mark in the device list and picker, and the 连接本机 button in 新建设备.
+- Updated dependencies [d68c9fc]
+- Updated dependencies [21c1852]
+- Updated dependencies [0eb3412]
+- Updated dependencies [d649c6b]
+- Updated dependencies [ef9ac57]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.60
+  - @capybara-hq/kernel@0.1.0-rc.75
+
 ## 0.1.0-rc.21
 
 ### Patch Changes
