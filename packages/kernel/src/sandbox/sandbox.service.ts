@@ -138,6 +138,7 @@ import {
   appliedWider,
   type DeviceLimits,
   type EffectiveDevicePolicy,
+  installedWider,
   instanceLimitsJson,
   orgEffectiveHosts,
   providerLimits,
@@ -183,6 +184,8 @@ const RECONCILE_RETRY_SECONDS = 600;
 const reconcileCursorKey = (plugin: string): string => `capk:sandbox-reconcile-cursor:${plugin}`;
 /** The bound on one cloud `permissionSupport` read under a lifecycle lease (B-15). */
 const PERMISSION_SUPPORT_TIMEOUT_MS = 30_000;
+/** The bound on one `appliedNetwork` read under a lifecycle lease (issue #766). */
+const APPLIED_NETWORK_TIMEOUT_MS = 30_000;
 /** How long the suspension sweep holds the intent on a sandbox past `maxRunningMinutes` (ms). */
 const SWEEP_INTENT_WAIT_MS = 1000;
 /** Rows one sweep handles at most, and the provider calls it runs at once. */
@@ -1018,6 +1021,56 @@ export class SandboxService {
       return false;
     if (!this.fsBound(p, rec, target)) return true;
     return wider && !sameAppliedExact(rec.unapplied, target);
+  }
+
+  /**
+   * Under the exclusive lease, at a lifecycle step on the instance `handle` of `row` (issue #766):
+   * whether the network the provider reports it enforces (`appliedNetwork`) may allow more than
+   * the recorded limits ({@link installedWider}), so the desired limits must be applied again even
+   * though the record matches them. It closes the residual of a provider whose `update` cannot
+   * honor the fence: a stale holder's late `update` that landed after the newer holder's. Only a
+   * provider with both `update` and `appliedNetwork` is asked. An unknown answer, a failed read or
+   * an abort counts as wider (fail closed: applying the desired limits never widens anything).
+   * Never throws.
+   */
+  private async installedNetworkWider(
+    id: string,
+    p: DeviceProviderEntry,
+    row: Row,
+    handle: SandboxHandle,
+    signal: AbortSignal,
+    want: DeviceLimits,
+  ): Promise<boolean> {
+    const read = p.impl.appliedNetwork?.bind(p.impl);
+    if (!read || !p.impl.update) return false;
+    const recorded = readInstanceLimits(row.instance_limits).applied;
+    let installed: unknown;
+    try {
+      const sig = AbortSignal.any([signal, AbortSignal.timeout(APPLIED_NETWORK_TIMEOUT_MS)]);
+      installed = await read(handle, sig);
+    } catch (err) {
+      if (!signal.aborted)
+        this.log.warn(
+          "cannot read the instance's installed network; applying the desired limits again",
+          { deviceId: id, provider: p.plugin, err },
+        );
+      return true;
+    }
+    const wider = installedWider(installed, recorded, appliedOf(want));
+    if (wider)
+      this.log.warn(
+        "the instance's installed network allows more than its record; applying again",
+        {
+          deviceId: id,
+          provider: p.plugin,
+          recorded: recorded?.network.kind ?? null,
+          installed:
+            typeof installed === "object" && installed !== null
+              ? String((installed as { kind?: unknown }).kind)
+              : null,
+        },
+      );
+    return wider;
   }
 
   /**
@@ -3630,11 +3683,14 @@ export class SandboxService {
       const createdAt = row.created_at.getTime();
       const fsResets = row.fs_resets;
       if (handle && isInstance(row, gone) && row.status === "running") {
-        const created = await this.create(ctx, p, held, row, fence, signal, want);
+        const created = await this.createSettled(ctx, p, held, row, fence, signal, want);
         return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
       if (handle && row.status === "running") {
-        if (this.mustApply(row, p, want)) {
+        if (
+          this.mustApply(row, p, want) ||
+          (await this.installedNetworkWider(id, p, row, handle, signal, want))
+        ) {
           const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
           if (created)
             return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
@@ -3647,7 +3703,11 @@ export class SandboxService {
         if (r === "resumed") {
           const incarnation = { provider: p.plugin, generation: String(createdAt) };
           // the new limits first: the row says running only once the instance runs with them
-          if (this.mustApply(row, p, want)) {
+          // (and again when the instance's installed network allows more than the record: #766)
+          if (
+            this.mustApply(row, p, want) ||
+            (await this.installedNetworkWider(id, p, row, handle, signal, want))
+          ) {
             let created: Instance | null;
             try {
               created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
@@ -3711,7 +3771,7 @@ export class SandboxService {
           deviceId: id,
         });
       }
-      const created = await this.create(ctx, p, held, row, fence, signal, want);
+      const created = await this.createSettled(ctx, p, held, row, fence, signal, want);
       // had_instance only ever becomes true: any earlier instance (even if a rebuild failed since)
       // makes this one a restart on the kept files
       return {
@@ -3730,6 +3790,33 @@ export class SandboxService {
         );
       throw err;
     }
+  }
+
+  /**
+   * {@link create} from {@link ensure}, then, for a provider whose limits are fixed at its file
+   * system (the new instance keeps the network its file system enforces, E2B), the installed
+   * network check of {@link installedNetworkWider} on the new instance (issue #766): wider than
+   * the record applies the desired limits again before the use. Any other provider's new instance
+   * got the desired limits at `create`.
+   */
+  private async createSettled(
+    ctx: SandboxUseContext,
+    p: DeviceProviderEntry,
+    held: SandboxLease,
+    row: Row,
+    fence: Fence,
+    signal: AbortSignal,
+    want: DeviceLimits,
+  ): Promise<Instance> {
+    const created = await this.create(ctx, p, held, row, fence, signal, want);
+    if (p.impl.limitsApplyAt !== "fileSystem") return created;
+    // the row as the create committed it (its new instance generation and record)
+    const fresh = await this.readRow(ctx);
+    if (!fresh) return created;
+    if (!(await this.installedNetworkWider(ctx.deviceId, p, fresh, created.handle, signal, want)))
+      return created;
+    const again = await this.applyLimits(ctx, p, held, fresh, created.handle, fence, signal, want);
+    return again ?? created;
   }
 
   /**

@@ -108,6 +108,10 @@ import { z } from "zod";
  *   {@link holdNextFakeSandboxUpdate} holds the next `update` after it captured its
  *   arguments and before it checks and stores (a request in flight; the hold ignores the
  *   signal, as a request already sent does), logging `update-held <id> <token> <label>`.
+ * - `reportsNetwork` (deployment config or {@link FakeSandboxOptions}; off by default): gives the
+ *   provider an `appliedNetwork` that answers the network in the instance's `meta.json` (what its
+ *   last `create` or applied `update` got; a test may write a wider one there, as a stale replica's
+ *   late unfenced `update` would), logging `applied-network <id>` in `ops.log`.
  * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no
  *   projects unless a test asks): lists one directory as `DeviceProvider.list` does, with the
  *   instance's directories mapped as for `readFile`, and adds a `scan` that suggests nothing.
@@ -147,6 +151,7 @@ const Deployment = platformOnly(
     list: z.boolean().optional(),
     refusePaths: z.array(z.string()).optional(),
     fencing: z.enum(["enforce", "ignore"]).optional(),
+    reportsNetwork: z.boolean().optional(),
   }),
 );
 
@@ -178,6 +183,8 @@ export interface FakeSandboxOptions {
   refusePaths?: string[];
   /** `enforce` (default): lifecycle calls honor their fence; `ignore`: every call applies. */
   fencing?: "enforce" | "ignore";
+  /** Gives the provider an `appliedNetwork` read from the instance's `meta.json` (see the file header). */
+  reportsNetwork?: boolean;
 }
 
 /** One line of `root/limits.log`: the limits an operation got. */
@@ -471,6 +478,23 @@ export async function fakeSandboxState(
 export async function fakeSandboxMeta(root: string, id: string): Promise<FakeSandboxMeta | null> {
   const s = await readFile(join(instanceDir(root, id), "meta.json"), "utf8").catch(() => null);
   return s === null ? null : (JSON.parse(s) as FakeSandboxMeta);
+}
+
+/**
+ * Makes the instance enforce `network` behind the kernel's back (its `meta.json`, what
+ * `appliedNetwork` answers), as a stale replica's late unfenced `update` would.
+ */
+export async function setFakeSandboxNetwork(
+  root: string,
+  id: string,
+  network: SandboxLimits["network"],
+): Promise<void> {
+  const meta = await fakeSandboxMeta(root, id);
+  if (meta === null) throw new Error(`fake sandbox ${id} has no instance`);
+  const file = join(instanceDir(root, id), "meta.json");
+  const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`;
+  await writeFile(tmp, JSON.stringify({ ...meta, limits: { ...meta.limits, network } }));
+  await rename(tmp, file);
 }
 
 const ROOT_RE = /(^|[\s'"=:(<>|;&])(\/workspace|\/skills|\/tmp)(?=$|[/\s'"):;<>|&])/g;
@@ -955,6 +979,15 @@ export function createFakeSandbox(
       return mode;
     };
   }
+  if (options.reportsNetwork === true) {
+    provider.appliedNetwork = async (h, signal) => {
+      signal.throwIfAborted();
+      const meta = await fakeSandboxMeta(root, h.id);
+      if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+      await log(`applied-network ${h.id}`);
+      return meta.limits.network;
+    };
+  }
   Object.assign(
     provider,
     managedSurface(provider, {
@@ -984,9 +1017,8 @@ export function defineFakeDevice(name: string, description?: string) {
     permissions: {},
     config: { deployment: Deployment },
     setup(ctx) {
-      const { root, updateMode, limitsApplyAt, list, refusePaths, fencing } = ctx.config as z.infer<
-        typeof Deployment
-      >;
+      const { root, updateMode, limitsApplyAt, list, refusePaths, fencing, reportsNetwork } =
+        ctx.config as z.infer<typeof Deployment>;
       ctx.provide(
         DEVICE_PROVIDER_EXTENSION_POINT,
         createFakeSandbox(root, {
@@ -996,6 +1028,7 @@ export function defineFakeDevice(name: string, description?: string) {
           ...(list !== undefined && { list }),
           ...(refusePaths !== undefined && { refusePaths }),
           ...(fencing !== undefined && { fencing }),
+          ...(reportsNetwork !== undefined && { reportsNetwork }),
         }),
       );
     },

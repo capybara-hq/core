@@ -411,7 +411,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   recreates the instance on the same files (the existing "recreated" notice). `update` carries the
   holder's fence token and its target is recorded as `pending` first, so a stale replica's late
   `update` cannot leave the instance wider than the record (see "Fencing token" under Lifecycle;
-  providers that cannot fence, like E2B, state the residual race in their README). A non-gone `update`
+  providers that cannot fence, like E2B, state the residual race in their README and implement `appliedNetwork`, which
+  closes it at the next lifecycle step). A non-gone `update`
   failure recreates on instance-bound providers; after an abort, or on a provider with
   `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance is quarantined
   (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful
@@ -557,6 +558,16 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   the arrival order) and `limitsState` says `pendingNextUse`. Tests: the "device update fencing (two replicas)" cases of `test/sandbox/mode-limits.dual.test.ts` (the
   fake's `fencing: "ignore"` shows the race without the fence; `holdNextFakeSandboxUpdate` holds a call in flight) and
   the "fencing token and update intent" cases of `mode-limits.test.ts`.
+  **Installed network** (issue #766): a provider that cannot fence its `update` (E2B) implements `appliedNetwork` (a
+  read of what its backend enforces, never resuming the instance). Under the exclusive lease, on a resumed instance, a
+  running one `ensure` holds, and a new instance of a `limitsApplyAt: "fileSystem"` provider (`createSettled`; an
+  instance-bound provider's new instance got the desired limits at `create`), `installedNetworkWider` compares it with
+  the recorded `applied` (`installedWider` in `modes.ts`): wider (open public over a list, or a host no recorded entry
+  covers), null, or a failed read applies the desired limits again through `applyLimits` (intent, holder's token);
+  equal or narrower changes nothing. A shared use reads nothing, so a late stale call that lands while the instance
+  keeps running is narrowed at its next resume or rebuild. Only asked when the provider also has `update`. Tests: the
+  "installed network wider than the record (#766)" cases of `mode-limits.test.ts` (the fake's `reportsNetwork`,
+  `setFakeSandboxNetwork`) and the red-proof case of `mode-limits.dual.test.ts`.
 - **Access**: the kernel checks the conversation owner's access to the device when it acquires the instance for a tool call; a loss fails the tool with `device.forbidden` / `device.not_found`.
 - **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on instances idle (no command from any session of the device) longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
   (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`

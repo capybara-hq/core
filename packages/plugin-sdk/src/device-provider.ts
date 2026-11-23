@@ -421,7 +421,9 @@ export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedEr
  * equal token is the same holder and is accepted); `create` seeds the new instance's token and
  * should refuse when the instance it would replace carries a higher one; `destroy` /
  * `destroyByName` should refuse an instance carrying a higher token. A provider that cannot (no
- * conditional write in its backend) ignores the token and states the residual race in its README.
+ * conditional write in its backend) ignores the token and states the residual race in its README;
+ * it should implement {@link DeviceProvider.appliedNetwork}, so the kernel narrows a late stale
+ * `update` again at the next lifecycle step.
  * The fence is `undefined` only from an older kernel that sends none: freshness is then unproven,
  * so a provider answers `recreate` to an in-place change it would otherwise fence, seeds 0 at
  * `create` and destroys without a check. `null` (destroy only) means the kernel has no fence for
@@ -513,6 +515,21 @@ export interface DeviceProvider {
     signal: AbortSignal,
     fence: DeviceFence,
   ): Promise<"updated" | "recreate">;
+  /**
+   * The network the instance `h` enforces now, as the provider's backend reports it, or null when
+   * the provider cannot tell (optional; read only with {@link DeviceProvider.update}). A read
+   * only: it must not resume, start or change the instance, and must respond to `signal`.
+   *
+   * For a provider whose `update` cannot honor the fence (no conditional write in its backend), a
+   * stale holder's late `update` can leave the instance wider than the kernel's record. At a
+   * lifecycle step under the exclusive lease (a resumed instance, a running one the use holds
+   * exclusively, an instance created on kept files whose limits are fixed at the file system)
+   * the kernel compares this answer with the limits it recorded and, when it allows more (the
+   * open public network over an allowlist, or a host the record does not cover), is null or
+   * fails, applies the desired limits again through `update` with its own fence. Equal or
+   * narrower changes nothing.
+   */
+  appliedNetwork?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxLimits["network"] | null>;
   /**
    * Creates a device's file system. `name` looks like `cap-device-<deviceId>`. If a file
    * system with this name already exists, return it.

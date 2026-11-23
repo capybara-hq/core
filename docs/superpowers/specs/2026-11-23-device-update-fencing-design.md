@@ -447,6 +447,18 @@ fenced write runs outside any ambient transaction (`runOutsideTransaction`). The
 cases live in `mode-limits.dual.test.ts` rather than a new file (the test-portfolio check refuses
 a new app file with at most 5 tests).
 
+Implementation notes for #766 (open question 5): the kernel had no installed-network evidence to
+compare (`networkFromInfo` above was device-e2b's internal `appliedNetwork`, never passed to the
+kernel; the permission support report carries only capabilities). The SDK gains an optional
+`DeviceProvider.appliedNetwork(h, signal)`: the network the instance enforces now as the backend
+reports it, or null. `ensure` asks it, only for a provider that also has `update`, on a resumed
+instance, a running instance it holds exclusively, and a new instance of a `limitsApplyAt:
+"fileSystem"` provider (whose new instance keeps the file system's network). Wider than the recorded
+`applied` (open public over a list, or a host no recorded entry covers), null, or a failed read
+applies the desired limits again through `applyLimits` (intent first, the holder's token); equal or
+narrower changes nothing. Shared uses read nothing, so the window closes at the next resume or
+rebuild. device-e2b implements it from `GET /sandboxes/{id}` (plugins follow-up after the SDK release).
+
 The questions as asked:
 
 
