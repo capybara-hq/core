@@ -236,14 +236,14 @@ export const devicePickable = (e: Device): boolean => {
 
 /**
  * Whether the person may create a device: a device provider is on in the org (creating needs the
- * same role as reading the list, so whoever reads it may create one). The Devices page's 新建设备
+ * same role as reading the list, so whoever reads it may create one). The Devices page's "New device"
  * and the composer's device picker share it.
  */
 export const canCreateDevice = (list: DeviceList): boolean => list.providers.length > 0;
 
 /**
  * Whether the new conversation's device picker shows at all: a device provider is on in the org, or
- * the person has a device (with none, the picker only offers 新建设备).
+ * the person has a device (with none, the picker only offers "New device").
  */
 export const deviceChoiceShown = (list: DeviceList): boolean =>
   canCreateDevice(list) || list.items.length > 0;

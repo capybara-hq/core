@@ -109,7 +109,7 @@ export type PickerProps = {
   value: string;
   /**
    * An icon before the value on the button, in the chip's own muted ink (the device chip's
-   * `cpu` while the conversation will run without a device: 「不用设备」).
+   * `cpu` while the conversation will run without a device: "No device").
    */
   icon?: IconName;
   /**

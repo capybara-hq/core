@@ -216,11 +216,11 @@ export type DeviceChoice = {
   /**
    * Undefined when the person has no device and cannot create one (no device provider is on in
    * the org): the composer then has no device picker. With no device but a provider, the picker
-   * reads 「不用设备」 and offers only 新建设备.
+   * reads "No device" and offers only "New device".
    */
   picker: PickerProps | undefined;
   /**
-   * The new-device dialog the picker's 新建设备 opened (the Devices page's, `DeviceCreateDialog`):
+   * The new-device dialog the picker's "New device" opened (the Devices page's, `DeviceCreateDialog`):
    * the composer draws it while set.
    */
   create?: { onClose(): void };
@@ -245,8 +245,8 @@ const PROJECT_ITEM = "project:";
  * the pick.
  *
  * With no device at all but a device provider on in the org ({@link canCreateDevice}), there is
- * nothing to pick: the button leads with the device icon and says 「不用设备」 (the first send goes
- * without one), and the menu holds only 新建设备 (the Devices page's new-device dialog, which
+ * nothing to pick: the button leads with the device icon and says "No device" (the first send goes
+ * without one), and the menu holds only "New device" (the Devices page's new-device dialog, which
  * `create` asks the composer to draw) and the note.
  */
 export function useDeviceChoice(orgId: string, list: DeviceList | undefined): DeviceChoice {

@@ -444,7 +444,7 @@ export function useNewConversationPage(
         ) : null}
         {permission.dialog}
         {device.create && devices ? (
-          // the device picker's 新建设备: the Devices page's dialog (it opens the new device)
+          // the device picker's "New device": the Devices page's dialog (it opens the new device)
           <DeviceCreateDialog
             orgId={orgId}
             providers={devices.providers}
