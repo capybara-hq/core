@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Finding,
@@ -37,7 +38,14 @@ import {
  * - `org-filter-stale`: an exemption that covers no unfiltered org-scoped query (the query gained
  *   a filter or moved), so markers cannot pile up;
  * - `org-filter-schema`: the schema could not be read (no `KernelDatabase`, or a member whose row
- *   type is not a local interface), so the check cannot know the tables.
+ *   type is not a local interface), so the check cannot know the tables;
+ * - `org-filter-platform` (RLS spec §10, decision 7): a query covered by a marker whose reason says
+ *   "deployment-wide" is not inside an `asPlatform(…)` call (in one of its arguments), so once RLS
+ *   is enforced it would see only the rows of whatever scope its caller had;
+ * - `org-filter-policy` (RLS spec §7, phase 3): an org-scoped table without row level security in
+ *   the kernel migrations (`packages/kernel/src/migrations/*.sql`): each needs `ENABLE ROW LEVEL
+ *   SECURITY`, `FORCE ROW LEVEL SECURITY` and a `CREATE POLICY … ON <table>`, in the migration that
+ *   adds the table or a later one (SQL comments do not count).
  *
  * Limits (heuristic, text-based like the other checks): an org filter added through a helper
  * whose call does not mention `org_id` is not seen (exempt it, naming the helper); a query built
@@ -52,12 +60,16 @@ export const ORG_FILTER_RULES = [
   "org-filter-reason",
   "org-filter-stale",
   "org-filter-schema",
+  "org-filter-platform",
+  "org-filter-policy",
 ] as const;
 
 export const MIN_REASON = 12;
 const MARKER = /^\s*org-filter:\s*(.*)$/;
 const SCHEMA = "packages/kernel/src/db/kernel-schema.ts";
 const KERNEL_SRC = "packages/kernel/src";
+const MIGRATIONS = "packages/kernel/src/migrations";
+const DEPLOYMENT_WIDE = /\bdeployment[- ]wide\b/i;
 
 const QUERY_METHODS = new Set(["selectFrom", "updateTable", "deleteFrom", "mergeInto"]);
 const FILTER_METHODS = new Set([
@@ -245,6 +257,13 @@ export function checkOrgFilterFile(p: ParsedFile, tables: Set<string>): Finding[
   });
 
   const text = (n: Node) => p.source.slice(n.start, n.end);
+  // the line of `.selectFrom(` (a chain often starts lines above it)
+  const queryLine = (node: Node) =>
+    p.lineOf(
+      node.type === "CallExpression"
+        ? (((node.callee as Node).property as Node).start as number)
+        : node.start,
+    );
   const findings: Finding[] = [];
   const markers = markersOf(p);
 
@@ -333,21 +352,45 @@ export function checkOrgFilterFile(p: ParsedFile, tables: Set<string>): Finding[
     return undefined;
   };
 
+  /** Whether `q` sits in an argument of an `asPlatform(…)` call. */
+  const inPlatform = (q: Node): boolean => {
+    let child = q;
+    let cur = parents.get(q);
+    while (cur) {
+      if (cur.type === "CallExpression" && cur.callee !== child) {
+        const callee = cur.callee as Node;
+        const name =
+          callee.type === "Identifier"
+            ? (callee.name as string)
+            : callee.type === "MemberExpression"
+              ? propName(callee)
+              : undefined;
+        if (name === "asPlatform") return true;
+      }
+      child = cur;
+      cur = parents.get(cur);
+    }
+    return false;
+  };
+
   for (const { node, table } of queries) {
     if (filtered(node)) continue;
     const marker = coveringMarker(node);
     if (marker) {
       marker.used = true;
+      if (DEPLOYMENT_WIDE.test(marker.reason) && !inPlatform(node)) {
+        findings.push({
+          file: p.file,
+          line: queryLine(node),
+          rule: "org-filter-platform",
+          message: `query on org-scoped table "${table}" is marked deployment-wide but runs outside asPlatform: wrap the deployment-wide part in asPlatform("<reason>", () => …) (RLS spec §10), or say in the marker why it is not deployment-wide`,
+        });
+      }
       continue;
     }
     findings.push({
       file: p.file,
-      // the line of `.selectFrom(` (a chain often starts lines above it)
-      line: p.lineOf(
-        node.type === "CallExpression"
-          ? (((node.callee as Node).property as Node).start as number)
-          : node.start,
-      ),
+      line: queryLine(node),
       rule: "org-filter",
       message: `query on org-scoped table "${table}" has no org_id filter: add .where("org_id", "=", orgId) (or join through an org-scoped table that is filtered), or put "// org-filter: <reason>" above the statement (deployment-wide read, super-admin route, job iterating orgs, already scoped by …)`,
     });
@@ -377,7 +420,7 @@ export function checkOrgFilterFile(p: ParsedFile, tables: Set<string>): Finding[
 export function checkOrgFilter(root: string): Finding[] {
   const tables = orgScopedTables(root);
   if (!(tables instanceof Set)) return [tables];
-  const findings: Finding[] = [];
+  const findings: Finding[] = [...checkPolicies(root, tables)];
   for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {
     if (isTest || file.endsWith(SCHEMA)) continue;
     const parsed = parseFile(file);
@@ -386,6 +429,47 @@ export function checkOrgFilter(root: string): Finding[] {
       continue;
     }
     findings.push(...checkOrgFilterFile(parsed, tables));
+  }
+  return findings;
+}
+
+/**
+ * `org-filter-policy`: every org-scoped table has row level security enabled and forced and a
+ * policy in some kernel migration. Reported on the table's line in the schema.
+ */
+export function checkPolicies(root: string, tables: Set<string>): Finding[] {
+  const dir = join(root, MIGRATIONS);
+  const sqlText = (existsSync(dir) ? readdirSync(dir) : [])
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => readFileSync(join(dir, f), "utf8"))
+    .join("\n")
+    // comments never count
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
+  const schemaFile = join(root, SCHEMA);
+  const schemaLines = readFileSync(schemaFile, "utf8").split("\n");
+  const findings: Finding[] = [];
+  for (const t of [...tables].sort()) {
+    const name = `(?:capybara\\.)?"?${t}"?`;
+    const has = (re: string) => new RegExp(re, "i").test(sqlText);
+    const missing = [
+      has(`\\bALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${name}\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`)
+        ? undefined
+        : "ENABLE ROW LEVEL SECURITY",
+      has(`\\bALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${name}\\s+FORCE\\s+ROW\\s+LEVEL\\s+SECURITY`)
+        ? undefined
+        : "FORCE ROW LEVEL SECURITY",
+      has(`\\bCREATE\\s+POLICY\\s+"?\\w+"?\\s+ON\\s+${name}(?![a-z0-9_])`) ? undefined : "a policy",
+    ].filter((m): m is string => m !== undefined);
+    if (missing.length === 0) continue;
+    const idx = schemaLines.findIndex((l) => new RegExp(`^\\s*"?${t}"?\\s*:`).test(l));
+    findings.push({
+      file: schemaFile,
+      line: idx >= 0 ? idx + 1 : 1,
+      rule: "org-filter-policy",
+      message: `org-scoped table "${t}" has no ${missing.join(", no ")} in the kernel migrations: a table with org_id ships its RLS policy (ENABLE and FORCE ROW LEVEL SECURITY, CREATE POLICY org_scope ON ${t} USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id))) in the migration that adds it (RLS spec §7)`,
+    });
   }
   return findings;
 }
