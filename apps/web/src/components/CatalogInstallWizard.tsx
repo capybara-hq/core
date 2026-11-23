@@ -18,6 +18,7 @@ import { useRouter } from "../i18n/navigation";
 import { ApiClientError, issueLines } from "../lib/api";
 import {
   type ConnectorInstallInput,
+  descriptionOf,
   displayNameOf,
   endpointLeaves,
   getPath,
@@ -554,13 +555,15 @@ export function TemplateStep({
   credentialsOnly?: boolean;
 }) {
   const t = useTranslations("catalog.org.install");
+  const locale = useLocale();
   const auth = template.auth;
   const oauth = isOAuth(auth);
+  const description = descriptionOf(template, locale);
   return (
     <Stack gap={16}>
-      {template.description !== "" && (
+      {description !== "" && (
         <Text variant="prose" tone="muted">
-          {template.description}
+          {description}
         </Text>
       )}
       {!credentialsOnly && (

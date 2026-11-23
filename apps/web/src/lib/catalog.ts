@@ -425,7 +425,10 @@ export interface PluginReviewClient {
 export interface PluginReviewTemplate {
   id: string;
   displayName: LocalizedName;
+  /** The English or only text ("" without one); show it with `descriptionOf`. */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh?: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -882,7 +885,10 @@ export interface OrgCatalogItem
 export interface OrgCatalogTemplate {
   id: string;
   displayName: LocalizedName | null;
+  /** The English or only text ("" without one); show it with `descriptionOf`. */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh?: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
