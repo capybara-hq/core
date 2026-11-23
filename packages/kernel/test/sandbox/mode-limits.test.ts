@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type DeviceProvider, ToolError } from "@capybara-hq/plugin-sdk";
+import { type DeviceProvider, StaleFenceError, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -13,6 +13,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import { SandboxLockLostError } from "../../src/sandbox/leases.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   mapSandboxError,
@@ -486,6 +487,110 @@ describe("a changed mode on use", () => {
       pendingNextUse: false,
       pendingFilesReset: true,
     });
+  });
+});
+
+// device update fencing design §7, §9: every lifecycle call carries the holder's committed
+// fencing generation; the intent of an update is recorded before it is sent
+describe("fencing token and update intent", () => {
+  const hostsOf = (rec: Record<string, unknown> | null | undefined) =>
+    (rec?.network as { hosts?: string[] } | undefined)?.hosts ?? [];
+  /** The row as another connection sees it now (only committed writes). */
+  const committed = async () =>
+    (
+      await sql<{ generation: number; instance_limits: Record<string, unknown> | null }>`
+        SELECT generation, instance_limits FROM capybara.device_instances
+        WHERE device_id = ${deviceId}`.execute(raw)
+    ).rows[0];
+
+  it("create and update carry the generation already committed, and the intent precedes the update", async () => {
+    const base = fake({ updateMode: "updated" });
+    const seen: { op: string; token: number; row: Awaited<ReturnType<typeof committed>> }[] = [];
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      create: async (a: Parameters<DeviceProvider["create"]>[0]) => {
+        seen.push({ op: "create", token: a.fence.token, row: await committed() });
+        return base.create(a);
+      },
+      update: async (...a: Parameters<NonNullable<DeviceProvider["update"]>>) => {
+        seen.push({ op: "update", token: a[3].token, row: await committed() });
+        return (base.update as NonNullable<DeviceProvider["update"]>)(...a);
+      },
+    });
+    const s = service();
+    await setAutoMode("off");
+    await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
+    });
+    await use(s);
+    expect(seen.map((c) => c.op)).toEqual(["create", "update"]);
+    for (const c of seen) expect(c.token).toBe(c.row?.generation);
+    // the intent: what was in force stays `applied`, the target is `pending` while the call runs
+    const during = seen[1]?.row?.instance_limits;
+    expect(hostsOf(during)).not.toContain("example.com");
+    expect(hostsOf(during?.pending as Record<string, unknown> | undefined)).toContain(
+      "example.com",
+    );
+    // answered `updated`: recorded, the intent cleared
+    const after = await record();
+    expect(after?.pending).toBeUndefined();
+    expect(hostsOf(after)).toContain("example.com");
+  });
+
+  it("a StaleFenceError from update is a lost lease: nothing recreated, nothing recorded", async () => {
+    const base = fake({ updateMode: "updated" });
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      update: async () => {
+        throw new StaleFenceError("a newer holder applied a higher token", { current: 99 });
+      },
+    });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
+    });
+    await expect(use(s)).rejects.toBeInstanceOf(SandboxLockLostError);
+    expect(await ops("create")).toHaveLength(1);
+    expect(await ops("destroy")).toHaveLength(0);
+    expect(await status()).toBe("running");
+    expect((await fakeSandboxMeta(root, first.h.id))?.limits.network).not.toMatchObject({
+      hosts: expect.arrayContaining(["example.com"]),
+    });
+    // never recorded as applied; the intent stays for the next holder
+    const rec = await record();
+    expect(hostsOf(rec)).not.toContain("example.com");
+    expect(rec?.pending).toBeDefined();
+    expect(warned).toContain(
+      "a device provider refused a stale lifecycle call; the lease was lost",
+    );
+  });
+
+  it("a recorded intent whose applied limits match the desired ones is applied again at the next use", async () => {
+    provider = fake({ updateMode: "updated" });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    const rec = await record();
+    // an update sent by a holder that never heard back, to limits the org since left again
+    await sql`UPDATE capybara.device_instances
+      SET instance_limits = ${JSON.stringify({
+        ...rec,
+        pending: { ...rec, network: { kind: "allowlist", hosts: ["wide.example"] } },
+      })}::jsonb WHERE device_id = ${deviceId}`.execute(raw);
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(true);
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    const updates = (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.limits.network).toMatchObject({ kind: "allowlist" });
+    expect(
+      updates[0]?.limits.network.kind === "allowlist" && updates[0].limits.network.hosts,
+    ).not.toContain("wide.example");
+    expect((await record())?.pending).toBeUndefined();
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
   });
 });
 

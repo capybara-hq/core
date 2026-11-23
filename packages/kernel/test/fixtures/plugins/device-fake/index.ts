@@ -49,6 +49,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   type SandboxStopResult,
+  StaleFenceError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -95,6 +96,15 @@ import { z } from "zod";
  *   `update`. `limitsApplyAt` is declared as given. Every limits a `create-fs`, `create` or
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
+ * - fencing (device update fencing design §6.3): `create` seeds the instance's token (`fence` in its
+ *   `meta.json`, next to the limits), `update` refuses a lower token with `StaleFenceError` and
+ *   stores a higher one with the limits in one atomic file write (rename), `destroy` /
+ *   `destroyByName` refuse an instance holding a higher token; a refusal logs `stale-fence <id>
+ *   <op> <token> <current>` in `ops.log`. `fencing: "ignore"` (deployment config or
+ *   {@link FakeSandboxOptions}) applies every call as before, so a test can show the race the
+ *   fence closes. {@link holdNextFakeSandboxUpdate} holds the next `update` after it captured its
+ *   arguments and before it checks and stores (a request in flight; the hold ignores the
+ *   signal, as a request already sent does), logging `update-held <id> <token> <label>`.
  * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no
  *   projects unless a test asks): lists one directory as `DeviceProvider.list` does, with the
  *   instance's directories mapped as for `readFile`, and adds a `scan` that suggests nothing.
@@ -131,6 +141,7 @@ const Deployment = z.object({
   limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
   list: z.boolean().optional(),
   refusePaths: z.array(z.string()).optional(),
+  fencing: z.enum(["enforce", "ignore"]).optional(),
 });
 
 /** Whether `path` is one of `refused` or below one (device paths, compared normalized). */
@@ -159,6 +170,8 @@ export interface FakeSandboxOptions {
   list?: boolean;
   /** `list` refuses these device paths and everything below them (`ProjectPathRefusedError`, "Refused by the test provider"). */
   refusePaths?: string[];
+  /** `enforce` (default): lifecycle calls honor their fence; `ignore`: every call applies. */
+  fencing?: "enforce" | "ignore";
 }
 
 /** One line of `root/limits.log`: the limits an operation got. */
@@ -167,6 +180,8 @@ export interface FakeSandboxLimitsEntry {
   /** The file system id (`create-fs`) or the instance id. */
   id: string;
   limits: SandboxLimits;
+  /** The fence token a `create` or `update` got (absent: none given). */
+  fence?: number;
 }
 
 /** Every limits `create-fs`, `create` and `update` got, oldest first. */
@@ -198,6 +213,8 @@ export interface FakeSandboxMeta {
   /** The id of the file system the instance mounts. */
   fileSystem: string;
   limits: SandboxLimits;
+  /** The highest fence token the instance applied (seeded by `create`, raised by `update`). */
+  fence?: number;
 }
 
 const instanceDir = (root: string, id: string) => join(root, "instances", id);
@@ -328,6 +345,22 @@ export async function readFakeSandboxOps(root: string): Promise<string[][]> {
     .split("\n")
     .filter((l) => l !== "")
     .map((l) => l.split(" "));
+}
+
+/**
+ * Holds the next `update` of the fake under `root` after it captured its arguments and before it
+ * checks its fence and stores (see the file header) until {@link releaseFakeSandboxUpdate} with
+ * the same `label`; exactly one update takes each hold.
+ */
+export async function holdNextFakeSandboxUpdate(root: string, label: string): Promise<void> {
+  await mkdir(join(root, "holds"), { recursive: true });
+  await writeFile(join(root, "holds", "next"), label);
+}
+
+/** Lets the update held under `label` go on. */
+export async function releaseFakeSandboxUpdate(root: string, label: string): Promise<void> {
+  await mkdir(join(root, "holds"), { recursive: true });
+  await writeFile(join(root, "holds", `${label}.release`), "");
 }
 
 /** 设置慢操作延迟。 */
@@ -481,6 +514,50 @@ export function createFakeSandbox(
   };
   writeShims(binDir);
   const log = (line: string) => appendFile(join(root, "ops.log"), `${line}\n`);
+  const enforce = options.fencing !== "ignore";
+  /** Writes an instance's meta.json in one atomic step (limits and fence together). */
+  const writeMeta = async (id: string, meta: FakeSandboxMeta) => {
+    const file = join(instanceDir(root, id), "meta.json");
+    const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`;
+    await writeFile(tmp, JSON.stringify(meta));
+    await rename(tmp, file);
+  };
+  /** Throws `StaleFenceError` when the instance holds a higher token than `token` (enforced). */
+  const checkFence = async (
+    id: string,
+    op: string,
+    meta: FakeSandboxMeta,
+    token: number | undefined,
+  ) => {
+    if (!enforce || token === undefined) return;
+    const current = meta.fence ?? 0;
+    if (token >= current) return;
+    await log(`stale-fence ${id} ${op} ${token} ${current}`);
+    throw new StaleFenceError(
+      `fake sandbox ${id} applied fence ${current}; ${op} carries ${token}`,
+      {
+        current,
+      },
+    );
+  };
+  /** Takes the armed hold, if any, and waits until it is released (the signal is ignored). */
+  const holdUpdate = async (id: string, token: number | undefined) => {
+    const next = join(root, "holds", "next");
+    const label = await readFile(next, "utf8").catch(() => null);
+    if (label === null) return;
+    const taken = join(root, "holds", `${label}.taken`);
+    // exactly one update takes a hold: the rename succeeds once
+    if (
+      !(await rename(next, taken).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return;
+    await log(`update-held ${id} ${token ?? "none"} ${label}`);
+    const release = join(root, "holds", `${label}.release`);
+    while (!(await exists(release))) await sleep(10, new AbortController().signal);
+  };
   const logLimits = (e: FakeSandboxLimitsEntry) =>
     appendFile(join(root, "limits.log"), `${JSON.stringify(e)}\n`);
   const delay = async (op: keyof FakeSandboxDelays, signal: AbortSignal) => {
@@ -599,7 +676,7 @@ export function createFakeSandbox(
       await log(`destroy-fs-by-name ${name}`);
     },
 
-    async create({ name, image, limits, fileSystem, signal }) {
+    async create({ name, image, limits, fileSystem, signal, fence }) {
       await delay("create", signal);
       await refuseOpen(limits);
       if (!(await stat(fileSystemDir(root, fileSystem.id)).catch(() => null))) {
@@ -613,10 +690,11 @@ export function createFakeSandbox(
         image: image ?? null,
         fileSystem: fileSystem.id,
         limits,
+        fence: fence?.token ?? 0,
       };
-      await writeFile(join(dir, "meta.json"), JSON.stringify(meta));
+      await writeMeta(id, meta);
       await writeFile(join(dir, "state"), "running");
-      await logLimits({ op: "create", id, limits });
+      await logLimits({ op: "create", id, limits, ...(fence && { fence: fence.token }) });
       await log(`create ${id} ${name}`);
       return { id };
     },
@@ -642,16 +720,22 @@ export function createFakeSandbox(
       await log(`suspend ${h.id}`);
     },
 
-    async destroy(h, signal) {
+    async destroy(h, signal, fence) {
       await delay("destroy", signal);
+      const meta = await fakeSandboxMeta(root, h.id);
+      if (meta !== null) await checkFence(h.id, "destroy", meta, fence?.token);
       await killEverything(h);
       await rm(instanceDir(root, h.id), { recursive: true, force: true });
       await log(`destroy ${h.id}`);
     },
 
-    async destroyByName(name, signal) {
+    async destroyByName(name, signal, fence) {
       await delay("destroy", signal);
       const ids = await readdir(join(root, "instances")).catch(() => [] as string[]);
+      for (const id of ids) {
+        const meta = await fakeSandboxMeta(root, id);
+        if (meta?.name === name) await checkFence(id, "destroy-by-name", meta, fence?.token);
+      }
       for (const id of ids) {
         if ((await fakeSandboxMeta(root, id))?.name === name) {
           await killEverything({ id });
@@ -844,20 +928,24 @@ export function createFakeSandbox(
   }
   const mode = options.updateMode ?? "none";
   if (mode !== "none") {
-    provider.update = async (h, limits, signal) => {
+    provider.update = async (h, limits, signal, fence) => {
       await delay("update", signal);
+      if ((await fakeSandboxMeta(root, h.id)) === null)
+        throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+      await logLimits({ op: "update", id: h.id, limits, ...(fence && { fence: fence.token }) });
+      // a request in flight: held after its arguments were taken, before the check and store
+      await holdUpdate(h.id, fence?.token);
       const meta = await fakeSandboxMeta(root, h.id);
       if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
-      await logLimits({ op: "update", id: h.id, limits });
+      await checkFence(h.id, "update", meta, fence?.token);
       await log(`update ${h.id} ${mode}`);
       await refuseOpen(limits);
       if (mode === "throw") throw new Error("fake update failed");
-      if (mode === "updated") {
-        await writeFile(
-          join(instanceDir(root, h.id), "meta.json"),
-          JSON.stringify({ ...meta, limits }),
-        );
-      }
+      const raised =
+        enforce && fence !== undefined ? Math.max(meta.fence ?? 0, fence.token) : meta.fence;
+      // the token is stored with the limits, in the same atomic write
+      if (mode === "updated")
+        await writeMeta(h.id, { ...meta, limits, ...(raised !== undefined && { fence: raised }) });
       return mode;
     };
   }
@@ -890,7 +978,7 @@ export function defineFakeDevice(name: string, description?: string) {
     permissions: {},
     config: { deployment: Deployment },
     setup(ctx) {
-      const { root, updateMode, limitsApplyAt, list, refusePaths } = ctx.config as z.infer<
+      const { root, updateMode, limitsApplyAt, list, refusePaths, fencing } = ctx.config as z.infer<
         typeof Deployment
       >;
       ctx.provide(
@@ -901,6 +989,7 @@ export function defineFakeDevice(name: string, description?: string) {
           ...(limitsApplyAt !== undefined && { limitsApplyAt }),
           ...(list !== undefined && { list }),
           ...(refusePaths !== undefined && { refusePaths }),
+          ...(fencing !== undefined && { fencing }),
         }),
       );
     },

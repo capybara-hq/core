@@ -196,7 +196,7 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
     createFileSystem: (a) => inner.createFileSystem(a),
     destroyFileSystem: (fs, sig) => inner.destroyFileSystem(fs, sig),
     destroyFileSystemByName: (n, sig) => inner.destroyFileSystemByName(n, sig),
-    destroyByName: (n, sig) => inner.destroyByName(n, sig),
+    destroyByName: (n, sig, f) => inner.destroyByName(n, sig, f),
     async create(a) {
       const old = byName.get(a.name);
       if (old) await removeFakeSandbox(root, old);
@@ -205,7 +205,7 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
     },
     resume: (h, s) => inner.resume(r(h), s),
     suspend: (h, s) => inner.suspend(r(h), s),
-    destroy: (h, s) => inner.destroy(r(h), s),
+    destroy: (h, s, f) => inner.destroy(r(h), s, f),
     exec: (h, a) => inner.exec(r(h), a),
     readFile: (h, p, o) => inner.readFile(r(h), p, o),
     writeFile: (h, p, d, s) => inner.writeFile(r(h), p, d, s),
