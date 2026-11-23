@@ -16,6 +16,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MarketplacesService } from "../../src/catalog/marketplaces.service.js";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
+import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -167,6 +168,7 @@ async function run(manifest: MergedBootstrapManifest, dir?: string, sync = true)
   return k.app.get(BootstrapService).run({
     manifest,
     imports: k.app.get(PluginImport),
+    updater: k.app.get(PlatformPluginUpdater),
     ...(dir !== undefined && { dir }),
   });
 }

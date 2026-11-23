@@ -18,15 +18,21 @@ import { packageRootOf, syncPackage } from "../extensions/sync.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
-import { CatalogImportModule } from "./catalog.module.js";
+import { CatalogImportModule, CatalogModule } from "./catalog.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
+import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 
 /** {@link openCatalogCli}'s result: the extension CLI context plus the catalog services. */
 export interface CatalogCli extends ExtensionCli {
   catalog: CatalogService;
   /** Plugin import (prepare / confirm). The CLI acts without an account (actor `null`). */
   imports: PluginImport;
+  /**
+   * The platform plugin update (`capybara bootstrap` raises a pinned plugin without an extension
+   * with it), acting without an account (actor `null`).
+   */
+  updater: PlatformPluginUpdater;
 }
 
 /** What the CLI can do with the deployment's object store, and why not when it cannot. */
@@ -201,8 +207,9 @@ class CliStorage extends PrefixedStorage {
 
 /**
  * The CLI's plugin catalog context (`capybara plugins *`): {@link openExtensionCli} with the
- * catalog's {@link CatalogImportModule}, so {@link PluginImport} and {@link CatalogService} are the
- * kernel's providers. Imports run with actor `null` (the operator of the
+ * catalog's {@link CatalogImportModule} and {@link CatalogModule} (whose platform plugin update
+ * `capybara bootstrap` raises a pinned plugin without an extension with), so {@link PluginImport},
+ * {@link CatalogService} and {@link PlatformPluginUpdater} are the kernel's providers. Imports run with actor `null` (the operator of the
  * deployment, like `capybara extensions install`: no super-admin re-check, audits without an
  * actor, permission snapshots written with source `cli`). Files of the plugin (skills, connector
  * templates, icons) go to the deployment's object store, set up in-process from the declared or
@@ -215,7 +222,10 @@ export async function openCatalogCli(
   log: KernelLogger,
   opts: { resolveFrom?: string } = {},
 ): Promise<CatalogCli> {
-  const cli = await openExtensionCli(config, log, { ...opts, modules: [CatalogImportModule] });
+  const cli = await openExtensionCli(config, log, {
+    ...opts,
+    modules: [CatalogImportModule, CatalogModule],
+  });
   let syncDir: string | undefined;
   const removeSyncDir = async () => {
     if (syncDir !== undefined) await rm(syncDir, { recursive: true, force: true }).catch(() => {});
@@ -242,6 +252,7 @@ export async function openCatalogCli(
       ...cli,
       catalog,
       imports,
+      updater: cli.app.get(PlatformPluginUpdater),
       async close() {
         await cli.close();
         await removeSyncDir();

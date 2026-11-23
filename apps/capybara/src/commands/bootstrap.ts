@@ -121,6 +121,7 @@ export async function runBootstrap(
               manifest,
               dir,
               imports: cli.imports,
+              updater: cli.updater,
               ...(carry !== undefined && { carry }),
               // What the first pass obtained is not downloaded again
               ...(packages !== undefined && { packages }),

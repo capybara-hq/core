@@ -5,6 +5,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
+import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -420,7 +421,12 @@ describe("single-provider extension points: one enabled provider", () => {
     ]);
     const bs = k.app.get(BootstrapService);
     const run = () =>
-      bs.run({ manifest: boot.manifest, dir: boot.dir, imports: k.app.get(PluginImport) });
+      bs.run({
+        manifest: boot.manifest,
+        dir: boot.dir,
+        imports: k.app.get(PluginImport),
+        updater: k.app.get(PlatformPluginUpdater),
+      });
     try {
       const err = await run().then(
         () => null,

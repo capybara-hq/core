@@ -621,10 +621,12 @@ export class PlatformPluginUpdater {
   /**
    * Runs an update confirmed with the preview's `diffHash` (see the class comment). A version an
    * org upload waits with, or an item whose first version waits, -> 409 `catalog.item_pending`
-   * (confirmed in 待确认 instead, pre-flight F8).
+   * (confirmed in the admin console's pending confirmations instead, pre-flight F8). `actor`
+   * null: the kernel itself (the bootstrap step raising a pinned plugin without an extension): no
+   * super admin is re-checked and the audits name no account.
    */
   async update(
-    actor: string,
+    actor: string | null,
     itemId: string,
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> } = {},
@@ -634,7 +636,7 @@ export class PlatformPluginUpdater {
   }
 
   private async updateLocked(
-    actor: string,
+    actor: string | null,
     itemId: string,
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> },
@@ -774,7 +776,7 @@ export class PlatformPluginUpdater {
   /** `plugin.platform_update_failed`, in a transaction of its own. */
   @Transactional({ propagation: "requires_new" })
   private async auditFailure(
-    actor: string,
+    actor: string | null,
     diff: UpdateDiff,
     f: { step: string; code: string; rolledBack: boolean },
     opts: { actorTokenId?: string },
@@ -794,7 +796,7 @@ export class PlatformPluginUpdater {
    */
   @Transactional({ propagation: "requires_new" })
   private async commit(
-    actor: string,
+    actor: string | null,
     itemId: string,
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> },
@@ -803,11 +805,18 @@ export class PlatformPluginUpdater {
     owner?: OwnerMode,
     confirmPending?: string,
   ): Promise<UpdateDiff> {
-    if (owner === undefined) await this.adminLock.lockAndAuthorize(actor);
+    if (owner !== undefined && actor === null) {
+      throw new Error("an owner update needs the acting account");
+    }
+    // null: the kernel itself (the bootstrap step), no super admin to re-check
+    if (owner === undefined && actor !== null) await this.adminLock.lockAndAuthorize(actor);
     // The global lock order (ruling P3-50): the orgs (sorted; the acting owner org's admin
     // re-checked at its place), then the item, then its components; an org deletion locks its org
     // row, then the items it owns
-    const liveOrgs = await this.lockUpdateOrgs(itemId, owner && { orgId: owner.orgId, actor });
+    const liveOrgs = await this.lockUpdateOrgs(
+      itemId,
+      owner && actor !== null ? { orgId: owner.orgId, actor } : undefined,
+    );
     const named = await this.db
       .selectFrom("catalog_items")
       .select("name")
@@ -987,7 +996,7 @@ export class PlatformPluginUpdater {
    * are the org's) when the credential shape changed.
    */
   private async prepare(
-    actor: string,
+    actor: string | null,
     itemId: string,
     version: string,
     c: ConnectorChange,

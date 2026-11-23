@@ -94,7 +94,7 @@ describe("capybara bootstrap with git entries", () => {
         ],
       },
     );
-    const r = await cli.bootstrap.run({ manifest, imports: cli.imports });
+    const r = await cli.bootstrap.run({ manifest, imports: cli.imports, updater: cli.updater });
     expect(r.results).toEqual([
       { name: "cli-ext", action: "installed", version: "1.0.0", extra: true },
     ]);
