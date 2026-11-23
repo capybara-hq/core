@@ -436,8 +436,24 @@ describe("credentials", () => {
 describe("a plugin with a template connector", () => {
   let itemId = "";
 
-  it("plugins.install asks the template's credential under connectors.<templateId>. and installs with it", async () => {
+  it("plugins.install with templatesOn asks only for the chosen templates", async () => {
     itemId = await importPlugin(env, await guidePlugin());
+    // a template left out is not asked for
+    expect((await personFieldsOf("plugins.install", { itemId, templatesOn: [] })).fields).toEqual(
+      [],
+    );
+    const chosen = await personFieldsOf("plugins.install", { itemId, templatesOn: [TEMPLATE_ID] });
+    expect(chosen.fields.map((f) => f.path)).toEqual([
+      `connectors.${TEMPLATE_ID}.credential.token`,
+    ]);
+    // the route's own limits: an id is a non-empty string
+    expect(op("plugins.install").input.safeParse({ itemId, templatesOn: [""] }).success).toBe(
+      false,
+    );
+  });
+
+  it("plugins.install asks the template's credential under connectors.<templateId>. and installs with it", async () => {
+    // the plugin the test above imported
     const t = await personFieldsOf("plugins.install", {
       itemId,
       templates: { [TEMPLATE_ID]: { endpoint: { url: env.mcp.url } } },

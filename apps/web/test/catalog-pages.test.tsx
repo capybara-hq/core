@@ -1894,33 +1894,26 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     }
   });
 
-  it("a default-off template has no step, is not counted in the summary and is not submitted", async () => {
-    params.current = { itemId: ID };
-    const t = en.catalog.org.install;
-    const tpl = (id: string, extra: Record<string, unknown>) => ({
-      id,
-      displayName: { zh: id, en: id },
-      description: "",
-      plugin: "connector-mcp",
-      connector: "mcp",
-      endpoint: { url: "https://mcp.example.com" },
-      editableEndpoint: [],
-      ...extra,
-    });
-    const calls = stubApi({
+  /** A connector template of the choose-step tests (an MCP endpoint, no editable fields). */
+  const chooseTpl = (id: string, extra: Record<string, unknown>) => ({
+    id,
+    displayName: { zh: `${id}-zh`, en: id },
+    description: "",
+    plugin: "connector-mcp",
+    connector: "mcp",
+    endpoint: { url: "https://mcp.example.com" },
+    editableEndpoint: [],
+    ...extra,
+  });
+  /** An uninstalled plugin with these templates, its switch answering on. */
+  const stubChoose = (templates: unknown[]) =>
+    stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
           item: orgItem({ name: "github" }),
           hasIcon: false,
           extension: null,
-          templates: [
-            tpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false }),
-            tpl("github-pat", {
-              auth: { type: "bearer", ownership: "personal" },
-              ownership: "personal",
-              defaultOff: true,
-            }),
-          ],
+          templates,
           dependencies: [],
           skills: [],
           agents: [],
@@ -1930,72 +1923,177 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
       [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
         json(200, { item: orgItem({ name: "github", state: "on" }) }),
     });
+  const chooseList = (label: string) => screen.findByRole("list", { name: label });
+  const box = (name: string) => screen.getByRole("checkbox", { name }) as HTMLInputElement;
+
+  it("the choose step checks default-on templates and not default-off ones; as it is, only the default set is created", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const calls = stubChoose([
+      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
+      chooseTpl("bigquery", {
+        auth: { type: "oauth_code", client: "manual" },
+        ownership: "org",
+        defaultOff: true,
+        on: false,
+        description: "Query BigQuery datasets.",
+      }),
+    ]);
     await renderInstall();
-    // Only the on template has a step; the personal token is not asked for
-    expect(await screen.findByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
-    expect(screen.queryByText(fill(t.connectorStep, { name: "github-pat" }))).toBeNull();
-    expect(screen.queryByText(t.personalHint)).toBeNull();
+    const list = await chooseList(t.chooseStep);
+    expect(template("WizardPage")).toBeTruthy();
+    expect(box("gh").checked).toBe(true);
+    expect(box("bigquery").checked).toBe(false);
+    // each row says what its step asks for, with its description and the hint on unchosen ones
+    expect(within(list).getByText(t.need.none)).toBeTruthy();
+    expect(within(list).getByText(t.need.client)).toBeTruthy();
+    expect(within(list).getByText("Query BigQuery datasets.")).toBeTruthy();
+    expect(screen.getByText(t.chooseHint)).toBeTruthy();
+    // the template's step follows; the default-off one has none
+    expect(screen.getByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
+    expect(screen.queryByText(fill(t.connectorStep, { name: "bigquery" }))).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     const user = userEvent.setup();
-    const next = screen.getByRole("button", { name: t.next }) as HTMLButtonElement;
-    expect(next.disabled).toBe(false);
-    await user.click(next);
+    await user.click(screen.getByRole("button", { name: t.next }));
+    await user.click(screen.getByRole("button", { name: t.next }));
     expect(screen.getByText(fill(t.summaryTemplates, { n: 1 }))).toBeTruthy();
     await user.click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    expect(switchInputs(calls)).toEqual({
+      connectors: { gh: { name: "gh", slug: "gh" } },
+      templatesOn: ["gh"],
+    });
+  });
+
+  it("checking a default-off template adds its step and creates it; unchecking a default-on one drops its step", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const calls = stubChoose([
+      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
+      chooseTpl("bigquery", {
+        auth: { type: "none" },
+        ownership: "org",
+        defaultOff: true,
+        on: false,
+      }),
+    ]);
+    await renderInstall();
+    await chooseList(t.chooseStep);
+    const user = userEvent.setup();
+    await user.click(box("bigquery"));
+    expect(screen.getByText(fill(t.connectorStep, { name: "bigquery" }))).toBeTruthy();
+    await user.click(box("gh"));
+    expect(screen.queryByText(fill(t.connectorStep, { name: "gh" }))).toBeNull();
+    // choose -> bigquery -> confirm
+    await user.click(screen.getByRole("button", { name: t.next }));
+    expect(screen.getByRole("textbox", { name: t.name })).toHaveProperty("value", "bigquery");
+    await user.click(screen.getByRole("button", { name: t.next }));
+    expect(screen.getByText(fill(t.summaryTemplates, { n: 1 }))).toBeTruthy();
+    expect(screen.getByText(/1 unchecked connector is not created/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    expect(switchInputs(calls)).toEqual({
+      connectors: { bigquery: { name: "bigquery", slug: "bigquery" } },
+      templatesOn: ["bigquery"],
+    });
+  });
+
+  it("with nothing checked the plugin is still switched on, creating no connector", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const calls = stubChoose([
+      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
+      chooseTpl("bigquery", { auth: { type: "none" }, ownership: "org", defaultOff: true }),
+    ]);
+    await renderInstall();
+    await chooseList(t.chooseStep);
+    const user = userEvent.setup();
+    await user.click(box("gh"));
+    await user.click(screen.getByRole("button", { name: t.next }));
+    await user.click(screen.getByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    expect(switchInputs(calls)).toEqual({ templatesOn: [] });
+  });
+
+  it("a single default-on template opens on its own step, without the choose step", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const calls = stubChoose([
+      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
+    ]);
+    await renderInstall();
+    expect(await screen.findByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
+    expect(screen.queryByText(t.chooseStep)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: t.next }));
+    await user.click(screen.getByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    // no choice made: the kernel takes the templates on in the org
     expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });
   });
 
-  it("a template the org already has a connector for has no step, says the connector is kept, and is not submitted", async () => {
+  it("the choose step speaks Chinese: the step, the hint, the marks and the zh names and descriptions", async () => {
+    params.current = { itemId: ID };
+    const t = zh.catalog.org.install;
+    stubChoose([
+      chooseTpl("gh", {
+        auth: { type: "none" },
+        ownership: "org",
+        defaultOff: false,
+        on: true,
+        description: "GitHub tools.",
+        descriptionZh: "GitHub 工具。",
+      }),
+      chooseTpl("pg", {
+        auth: { type: "none" },
+        ownership: "org",
+        defaultOff: true,
+        editableEndpoint: ["url"],
+        endpoint: {},
+      }),
+    ]);
+    await renderInstall({ locale: "zh" });
+    const list = await chooseList(t.chooseStep);
+    expect(box("gh-zh").checked).toBe(true);
+    expect(within(list).getByText("GitHub 工具。")).toBeTruthy();
+    expect(within(list).getByText(t.need.none)).toBeTruthy();
+    expect(within(list).getByText(t.need.endpoint)).toBeTruthy();
+    expect(screen.getByText(t.chooseHint)).toBeTruthy();
+  });
+
+  it("a template the org already has a connector for is kept on the choose step, has no step and is not submitted", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
     const GH_ICON = `/api/v1/orgs/o1/connector-templates/tpl-gh/icon?v=1.0.0`;
-    const tpl = (id: string, extra: Record<string, unknown>) => ({
-      id,
-      displayName: { zh: id, en: id },
-      description: "",
-      plugin: "connector-mcp",
-      connector: "mcp",
-      endpoint: { url: "https://mcp.example.com" },
-      editableEndpoint: [],
-      ...extra,
-    });
-    const calls = stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () =>
-        json(200, {
-          item: orgItem({ name: "github" }),
-          hasIcon: false,
-          extension: null,
-          templates: [
-            tpl("gh", {
-              auth: { type: "none" },
-              ownership: "org",
-              defaultOff: false,
-              connected: false,
-              icon: GH_ICON,
-            }),
-            tpl("github-pat", {
-              auth: { type: "bearer", ownership: "personal" },
-              ownership: "personal",
-              defaultOff: false,
-              connected: true,
-              icon: null,
-            }),
-          ],
-          dependencies: [],
-          skills: [],
-          agents: [],
-          missingTemplates: [],
-        }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
-        json(200, { item: orgItem({ name: "github", state: "on" }) }),
-    });
+    const calls = stubChoose([
+      chooseTpl("gh", {
+        auth: { type: "none" },
+        ownership: "org",
+        defaultOff: false,
+        connected: false,
+        icon: GH_ICON,
+      }),
+      chooseTpl("github-pat", {
+        auth: { type: "bearer", ownership: "personal" },
+        ownership: "personal",
+        defaultOff: false,
+        connected: true,
+        icon: null,
+      }),
+    ]);
     await renderInstall();
+    const list = await chooseList(t.chooseStep);
+    // the kept one is locked on, and says so; the rows carry the template icons
+    expect(box("github-pat").checked).toBe(true);
+    expect(box("github-pat").disabled).toBe(true);
+    expect(within(list).getByText(t.need.kept)).toBeTruthy();
+    expect(list.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
     // Only the template without a connector has a step; the kept one asks for nothing
-    expect(await screen.findByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
+    expect(screen.getByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
     expect(screen.queryByText(fill(t.connectorStep, { name: "github-pat" }))).toBeNull();
-    expect(screen.queryByText(t.personalHint)).toBeNull();
     const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: t.next }));
+    expect(screen.queryByText(t.personalHint)).toBeNull();
     await user.click(screen.getByRole("button", { name: t.next }));
     // The confirm step says the existing connector is kept; both connectors count in the summary
     expect(screen.getByText(fill(t.connectorKept, { name: "github-pat" }))).toBeTruthy();
@@ -2010,7 +2108,10 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await user.click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-    expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });
+    expect(switchInputs(calls)).toEqual({
+      connectors: { gh: { name: "gh", slug: "gh" } },
+      templatesOn: ["gh", "github-pat"],
+    });
   });
 
   it("a 409 catalog.dependency_unresolved names the dependency and its range", async () => {

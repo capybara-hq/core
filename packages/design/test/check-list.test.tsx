@@ -135,6 +135,37 @@ describe("CheckList", () => {
     }
   });
 
+  it("a row with a mark draws the tile before the name inside the checkbox text, the description under the name", async () => {
+    render(
+      <Harness
+        selectAll={false}
+        rows={[
+          {
+            id: "bq",
+            title: "Google BigQuery",
+            mark: { text: "Google BigQuery", image: null },
+            description: "Query datasets.",
+            checked: false,
+          },
+        ]}
+      />,
+    );
+    const box = screen.getByRole("checkbox", { name: "Google BigQuery" }) as HTMLInputElement;
+    const row = document.querySelector('[data-part="check-list-row"]') as HTMLElement;
+    expect(row.getAttribute("data-marked")).toBe("true");
+    const named = row.querySelector('[data-part="check-list-named"]') as HTMLElement;
+    const mark = named.querySelector('[data-part="object-mark"]') as HTMLElement;
+    expect(mark.getAttribute("data-size")).toBe("24");
+    expect(mark.getAttribute("aria-hidden")).toBe("true");
+    // the initial without an image; clicking the tile toggles the row (it is the checkbox's text)
+    expect(mark.textContent).toBe("G");
+    await userEvent.click(mark);
+    expect(box.checked).toBe(true);
+    expect(
+      ruleOf(controls, '.cb-check-list-row[data-marked="true"] .cb-check-list-description'),
+    ).toMatch(/padding-left:\s*calc\(22px \+ 24px \+ var\(--cb-space-2\)\)/);
+  });
+
   it("without a title or onCheckAll there is no head row", () => {
     render(<Harness selectAll={false} />);
     expect(document.querySelector('[data-part="check-list-all"]')).toBeNull();

@@ -3,7 +3,7 @@ import type { AdminExtension } from "../admin-extensions";
 import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
-import { installTemplates, type OrgCatalogDetail } from "../catalog";
+import { hasChooseStep, installTemplates, type OrgCatalogDetail } from "../catalog";
 import type { ChannelConnection } from "../channels";
 import {
   maybeOwnTemplate,
@@ -216,7 +216,11 @@ async function prefetchFirstTemplateGuide(
   from: "templates" | "missingTemplates",
 ): Promise<void> {
   const detail = qc.getQueryData<OrgCatalogDetail>(orgCatalogItemQuery(orgId, itemId).queryKey);
-  if (detail === undefined || (from === "templates" && detail.item.state === "on")) return;
+  if (detail === undefined) return;
+  // an install that is on asks nothing; one that opens on its choose step shows no guide first
+  if (from === "templates" && (detail.item.state === "on" || hasChooseStep(detail.templates))) {
+    return;
+  }
   const first =
     from === "templates" ? installTemplates(detail.templates)[0] : detail.missingTemplates[0];
   const guide = first?.guide;
