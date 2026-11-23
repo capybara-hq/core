@@ -267,6 +267,16 @@ export const CHECKS: readonly CheckEntry[] = [
     inAll: true,
   },
   {
+    name: "org-filter",
+    cli: "org-filter",
+    ciMode: "full",
+    reason:
+      "cheap (about a second, part of `pnpm check`) and whole-tree: the org-scoped tables come from the kernel schema, so a migration adding org_id makes untouched files violate, and a stale exemption is only seen by scanning every file",
+    description:
+      "Kernel queries on tables with an org_id column filter by it or carry a reasoned `// org-filter:` exemption.",
+    inAll: true,
+  },
+  {
     name: "sdk-api",
     cli: "sdk-api",
     ciMode: "full",
