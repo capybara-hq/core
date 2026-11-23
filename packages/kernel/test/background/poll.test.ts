@@ -249,7 +249,7 @@ async function conversation(): Promise<Conv> {
  * of the conversation's claimed run does: the managed route under the run's claim fence, the exec
  * admitted by the real operation intents.
  */
-const inSandbox = (
+const execInDevice = (
   c: Conv,
   command: string,
 ): Promise<{ exitCode: number | null; stdout: string }> =>
@@ -426,7 +426,9 @@ describe("polling", () => {
     // the next call's dispatched exec finds the instance gone: its outcome stays unknown (never
     // retried under a new identity) and the instance is rebuilt on the kept files (the gone
     // after dispatch branch of SandboxService.withOperations)
-    await expect(inSandbox(c, "true")).rejects.toBeInstanceOf(SandboxOperationOutcomeUnknownError);
+    await expect(execInDevice(c, "true")).rejects.toBeInstanceOf(
+      SandboxOperationOutcomeUnknownError,
+    );
     const rebuilt = await db
       .selectFrom("device_instances")
       .select(["handle", "status"])
@@ -434,7 +436,7 @@ describe("polling", () => {
       .executeTakeFirstOrThrow();
     expect(rebuilt.status).toBe("running");
     expect(rebuilt.handle).not.toEqual(row.handle);
-    expect((await inSandbox(c, "true")).exitCode).toBe(0);
+    expect((await execInDevice(c, "true")).exitCode).toBe(0);
     expect(await job.pollOnce()).toBe(1);
     expect(await store.get(t.id)).toMatchObject({
       status: "lost",
@@ -574,7 +576,7 @@ describe("stopping", () => {
     const c = await conversation();
     const t = await launch(c, "echo started; sleep 309");
     await waitFor(
-      async () => (await inSandbox(c, `grep -q started ${t.outputPath}`)).exitCode === 0,
+      async () => (await execInDevice(c, `grep -q started ${t.outputPath}`)).exitCode === 0,
       10_000,
       "output",
     );

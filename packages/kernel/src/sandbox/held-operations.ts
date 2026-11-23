@@ -22,9 +22,8 @@ export type HeldProvider = Pick<
     args: Omit<Parameters<DeviceProvider["exec"]>[1], "tag" | "actor">,
   ): Promise<ExecResult>;
   /**
-   * A managed background start (dormant until the paired activation): admitted, persisted and
-   * acknowledged by the service under the same stable operation identity. Present only on the
-   * operation-held provider; the protocol-2 adapter has none.
+   * A managed background start: admitted, persisted and acknowledged by the service under the
+   * same stable operation identity. Present only when the provider owns background executions.
    */
   backgroundStart?(h: SandboxHandle, args: ManagedStartArgs): Promise<SandboxExecutionRef>;
 };
@@ -245,25 +244,5 @@ export function createHeldOperations(
           },
         } satisfies Pick<HeldProvider, "backgroundStart">)
       : {}),
-  };
-}
-
-/** Temporary v2 callback adapter. Removed with the coordinated Task 8 cutover. */
-export function createLegacyHeldProvider(
-  provider: DeviceProvider,
-  tag: string,
-  actor: Parameters<DeviceProvider["exec"]>[1]["actor"],
-  before: () => Promise<void>,
-): HeldProvider {
-  return {
-    exec: async (h, args) => {
-      await before();
-      return provider.exec(h, { ...args, tag, actor });
-    },
-    readFile: provider.readFile.bind(provider),
-    writeFile: provider.writeFile.bind(provider),
-    stat: provider.stat.bind(provider),
-    ...(provider.list ? { list: provider.list.bind(provider) } : {}),
-    ...(provider.scan ? { scan: provider.scan.bind(provider) } : {}),
   };
 }

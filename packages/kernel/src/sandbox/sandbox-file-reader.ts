@@ -1,5 +1,5 @@
 import { SandboxScopeDeniedError, ToolError } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -14,10 +14,6 @@ import {
   mapSandboxError,
 } from "../tools/builtins/sandbox/common.js";
 import type { OperationInvocation } from "./operation-intents.js";
-import {
-  PERMISSION_CONTEXT_ACTIVATION,
-  permissionContextActive,
-} from "./permission-context-types.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /** What {@link SandboxFileReader.read} reads. */
@@ -33,24 +29,23 @@ export interface SandboxFileReadInput {
   maxBytes: number;
   signal: AbortSignal;
   /**
-   * The tool call the read serves (the `Platform` call): once the activation gate is on, the read
-   * is a managed operation of that call under the run's current execution claim.
+   * The tool call the read serves (the `Platform` call): the read is a managed operation of that
+   * call under the run's current execution claim.
    */
   callId?: string;
 }
 
-/** How long one gate-on read may wait for admission (as a builtin tool call's operations). */
+/** How long one read may wait for admission (as a builtin tool call's operations). */
 const READ_OPERATION_DEADLINE_MS = 30_000;
 
 /**
  * Reads one file from a conversation's sandbox for the kernel (skill authoring spec: a package
  * the agent built is registered from its sandbox). The same stat -> readFile sequence as the
- * `Deliver` tool, with the same path checks, in the device of the conversation's tree (holder =
- * the root conversation); no attachment sync and no `device_paths` record.
+ * `Deliver` tool, with the same path checks, in the device of the conversation's tree (the root's
+ * device, the calling conversation its holder); no attachment sync and no `device_paths` record.
  *
- * Once the activation gate is on, {@link read} never takes the raw use: it is a managed operation
- * of the serving tool call (`input.callId`) under the run's current execution claim, and without
- * them nothing is entered (permission activation W3-L).
+ * {@link read} is a managed operation of the serving tool call (`input.callId`) under the run's
+ * current execution claim, and without them nothing is entered (permission activation W3-L).
  *
  * Throws `ApiError` 422 `sandbox.file_invalid_path` / `sandbox.file_not_found` /
  * `sandbox.file_is_directory` / `sandbox.file_too_large`; provider and device failures go through
@@ -62,15 +57,11 @@ export class SandboxFileReader {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationDevices) private readonly devices: Pick<ConversationDevices, "forTool">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "withSandbox"> &
-      Partial<Pick<SandboxService, "withOperations">>,
+    private readonly sandbox: Pick<SandboxService, "withOperations">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /** The paired activation gate: once on, every read is a managed operation. */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   async read(input: SandboxFileReadInput): Promise<Uint8Array> {
-    if (!permissionContextActive(this.activation)) return this.readWith(input);
     // the run this read serves: its current execution claim and the tool call, else nothing runs
     const claim = currentExecutionClaim();
     if (!claim || input.callId === undefined || claim.conversationId !== input.conversationId) {
@@ -95,7 +86,7 @@ export class SandboxFileReader {
   }
   private async readWith(
     input: SandboxFileReadInput,
-    invocation?: Omit<OperationInvocation, "ordinal">,
+    invocation: Omit<OperationInvocation, "ordinal">,
   ): Promise<Uint8Array> {
     const { orgId, path: given, maxBytes: max } = input;
     // the shape is checked before the sandbox is entered (nothing starts for a bad path)
@@ -103,24 +94,18 @@ export class SandboxFileReader {
     try {
       const root = await rootConversationOf(this.db.db, input.conversationId);
       const deviceId = await this.devices.forTool(orgId, root);
-      const enter: SandboxService["withSandbox"] = invocation
-        ? (ctx, fn, signal) => {
-            if (!this.sandbox.withOperations)
-              throw new SandboxScopeDeniedError("Operation admission is unavailable");
-            return this.sandbox.withOperations(ctx, invocation, fn, signal);
-          }
-        : this.sandbox.withSandbox.bind(this.sandbox);
-      return await enter(
+      return await this.sandbox.withOperations(
         {
           orgId,
           deviceId,
-          holderConversationId: invocation ? input.conversationId : root,
+          holderConversationId: input.conversationId,
           actor: {
             accountId: input.actorAccountId,
             conversationId: input.conversationId,
-            ...(invocation && { runId: invocation.claim.runId }),
+            runId: invocation.claim.runId,
           },
         },
+        invocation,
         async (h, p, info, signal) => {
           const path = invalidPathAsApiError(() => checkPath(given, info.roots));
           const st = await p.stat(h, path, signal);

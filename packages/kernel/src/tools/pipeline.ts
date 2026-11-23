@@ -72,10 +72,6 @@ import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js
 import { PermissionAutoGrants } from "../sandbox/permission-auto-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
-import {
-  PERMISSION_CONTEXT_ACTIVATION,
-  permissionContextActive,
-} from "../sandbox/permission-context-types.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import {
   type CommandReview,
@@ -650,7 +646,7 @@ const FAIL_CLOSED_CODES: ReadonlySet<string> = new Set([
 /** What the model gets when the permission check of its call refused (fail closed). */
 export const permissionCheckFailedText = (why: string): string =>
   `The permission check for this call could not be completed (${why.replace(/\.$/, "")}), so it did not run. Retry the call once; if it fails again, ask the user to check the conversation's permission profile or to approve the call again.`;
-/** The builtins whose device entry is the managed operation route once activated. */
+/** The builtins whose device entry is the managed operation route. */
 const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
   BUILTIN.Bash,
   BUILTIN.Read,
@@ -1043,8 +1039,6 @@ export class ToolPipeline {
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
-    /** The paired activation gate: on, the managed builtins take the permission review. */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
     /** Starts a cloud device before its first managed call is reviewed (absent: never). */
     @Optional()
     @Inject(SandboxService)
@@ -1062,12 +1056,10 @@ export class ToolPipeline {
     private readonly toolReview?: ToolAskReviewer,
   ) {
     this.deps = {
-      // the builtins that enter a device on the managed operation route once activated (common.ts
+      // the builtins that enter a device on the managed operation route (common.ts
       // `inToolSandbox`, `inSandboxPreparation`): their review is the permission review, whose
-      // approvals issue the exact call grants admission reads; dormant, none (the command review)
-      permissionOperations: permissionContextActive(activation)
-        ? MANAGED_OPERATION_TOOLS
-        : new Set<string>(),
+      // approvals issue the exact call grants admission reads
+      permissionOperations: MANAGED_OPERATION_TOOLS,
       get db() {
         return kdb.db;
       },

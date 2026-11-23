@@ -48,13 +48,12 @@ import { seedConversation } from "../../helpers/tool-fixtures.js";
 import { startRun } from "../../runtime/permission-context-fixture.js";
 
 /**
- * B-17 / B-18 (permission activation W3-K): with the one activation gate on, every builtin that
- * enters a device (Read, Write, Edit, Glob, Grep, Deliver, foreground and background Bash,
- * FetchAttachment, Skill and GenerateImage's device copy) goes through the managed operation route: the managed writer records
- * the marked `device_paths` before the tool's first provider operation, every operation is a
- * managed one, and the legacy `withSandbox` route is never entered. A call reviewed against
- * another working root than the held evidence's fails as stale before its callback. With the gate
- * off the legacy route stays.
+ * B-17 / B-18 (permission activation W3-K): every builtin that enters a device (Read, Write,
+ * Edit, Glob, Grep, Deliver, foreground and background Bash, FetchAttachment, Skill and
+ * GenerateImage's device copy) goes through the managed operation route: the managed writer
+ * records the marked `device_paths` before the tool's first provider operation, and every
+ * operation is a managed one. A call reviewed against another working root than the held
+ * evidence's fails as stale before its callback.
  */
 
 const CLOUD = "@managed-builtins-test";
@@ -323,8 +322,8 @@ const ATTACHMENT = "11111111-2222-4333-8444-555555555555";
 /** Files of the kernel object store stub (skill versions), by key. */
 const stored = new Map<string, Uint8Array>();
 
-/** The builtin deps as `BuiltinTools` builds them; `gate` passes the managed writer, required. */
-function depsOf(gate: boolean): SandboxToolDeps {
+/** The builtin deps as `BuiltinTools` builds them. */
+function depsOf(): SandboxToolDeps {
   return {
     sandbox: k.app.get(SandboxService),
     devices: k.app.get(ConversationDevices),
@@ -356,10 +355,7 @@ function depsOf(gate: boolean): SandboxToolDeps {
     } as never,
     eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
-    ...(gate && {
-      managedDeviceContext: k.app.get(ManagedDeviceContextRecorder),
-      managedDeviceContextRequired: true,
-    }),
+    managedDeviceContext: k.app.get(ManagedDeviceContextRecorder),
   };
 }
 
@@ -428,9 +424,9 @@ async function runTool(
   f: Fixture,
   name: string,
   input: Record<string, unknown>,
-  opts: { gate?: boolean; over?: Partial<BuiltinCallContext> } = {},
+  opts: { over?: Partial<BuiltinCallContext> } = {},
 ): Promise<unknown> {
-  const deps = depsOf(opts.gate ?? true);
+  const deps = depsOf();
   // the project skill path reads no database
   const tools: BuiltinTool[] = [
     ...sandboxTools(deps),
@@ -486,23 +482,21 @@ async function markedPaths(f: Fixture) {
 }
 
 /**
- * Asserts the call went through the managed route only: the provider was reached, every entry
- * after the marked paths existed, and the legacy route was never entered.
+ * Asserts the call went through the managed route: the provider was reached, every entry after
+ * the marked paths existed.
  */
-function expectManaged(legacy: { mock: { calls: unknown[] } }, methods: string[]): void {
-  expect(legacy.mock.calls).toHaveLength(0);
+function expectManaged(methods: string[]): void {
   expect(reached.map((r) => r.method)).toEqual(expect.arrayContaining(methods));
   expect(reached.length).toBeGreaterThan(0);
   for (const r of reached) expect(r.marked).toBeGreaterThan(0);
 }
 
-describe("builtin tools on the managed route with the activation gate on", () => {
+describe("builtin tools on the managed route", () => {
   it("Write records the marked paths before its first operation and writes through managed operations", async () => {
     const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "Write", { file_path: "/workspace/a.txt", content: "hello" });
     expect(textOf(r)).toContain("Created /workspace/a.txt");
-    expectManaged(legacy, ["stat", "writeFile"]);
+    expectManaged(["stat", "writeFile"]);
     expect(await markedPaths(f)).toEqual([
       {
         permissionContextVersion: 1,
@@ -517,10 +511,9 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/r.txt", content: "line one" });
     const g = await sibling(f);
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(g, "Read", { file_path: "/workspace/r.txt" });
     expect(textOf(r)).toContain("line one");
-    expectManaged(legacy, ["stat", "readFile"]);
+    expectManaged(["stat", "readFile"]);
     expect(await markedPaths(g)).toHaveLength(1);
   });
 
@@ -528,7 +521,6 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/e.txt", content: "old text" });
     const g = await sibling(f);
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     // never read in this conversation: the read-before-write guard answers, after the reads
     const r = await runTool(g, "Edit", {
       file_path: "/workspace/e.txt",
@@ -536,7 +528,7 @@ describe("builtin tools on the managed route with the activation gate on", () =>
       new_string: "new",
     });
     expect(textOf(r)).toMatch(/Read/);
-    expectManaged(legacy, ["stat", "readFile"]);
+    expectManaged(["stat", "readFile"]);
     expect(await markedPaths(g)).toHaveLength(1);
   });
 
@@ -544,10 +536,9 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/g.txt", content: "x" });
     const g = await sibling(f);
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(g, "Glob", { pattern: "*.txt" });
     expect(textOf(r)).toContain("/workspace/g.txt");
-    expectManaged(legacy, ["stat", "exec"]);
+    expectManaged(["stat", "exec"]);
     expect(await markedPaths(g)).toHaveLength(1);
   });
 
@@ -555,10 +546,9 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/h.txt", content: "needle" });
     const g = await sibling(f);
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(g, "Grep", { pattern: "needle" });
     expect(textOf(r)).toContain("/workspace/h.txt");
-    expectManaged(legacy, ["stat", "exec"]);
+    expectManaged(["stat", "exec"]);
     expect(await markedPaths(g)).toHaveLength(1);
   });
 
@@ -566,31 +556,28 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/d.txt", content: "deliver me" });
     const g = await sibling(f);
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(g, "Deliver", { file_path: "/workspace/d.txt" });
     expect(textOf(r)).toContain("Delivered d.txt");
-    expectManaged(legacy, ["stat", "readFile"]);
+    expectManaged(["stat", "readFile"]);
     expect(await markedPaths(g)).toHaveLength(1);
   });
 
   it("foreground Bash runs its command through a managed exec after the marked paths", async () => {
     const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "Bash", { command: "echo managed-hi", description: "Say hi" });
     expect(textOf(r)).toContain("managed-hi");
-    expectManaged(legacy, ["exec"]);
+    expectManaged(["exec"]);
   });
 
   it("background Bash launches through the managed start after the marked paths", async () => {
     const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "Bash", {
       command: "sleep 30",
       description: "Wait",
       run_in_background: true,
     });
     expect(textOf(r)).toContain("Started");
-    expectManaged(legacy, ["backgroundStart"]);
+    expectManaged(["backgroundStart"]);
     const task = await f.db
       .selectFrom("background_tasks")
       .select(["operation_id", "launch_state"])
@@ -643,12 +630,10 @@ describe("builtin tools on the managed route with the activation gate on", () =>
 
   it("FetchAttachment copies into its directory through the managed preparation after the marked paths", async () => {
     const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "FetchAttachment", { file: "notes.txt" });
     expect(textOf(r)).toMatch(
       /Copied notes\.txt to \/workspace\/attachments\/[0-9a-f]{12}\/notes\.txt/,
     );
-    expect(legacy).not.toHaveBeenCalled();
     expect(await markedPaths(f)).toHaveLength(1);
     expect(reached).toEqual([{ method: "prepare", marked: 1 }]);
   });
@@ -661,37 +646,33 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     });
     const g = await sibling(f);
     await projectRoot(g, "/workspace");
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(g, "Skill", { skill: "project:demo" });
     expect(textOf(r)).toContain("Do the demo.");
-    expectManaged(legacy, ["readFile"]);
+    expectManaged(["readFile"]);
     expect(await markedPaths(g)).toHaveLength(1);
   });
 
   it("Skill copies a plugin skill through the trusted preparation after the marked paths", async () => {
     const f = await seed();
     await catalogSkill(f, "plug");
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "Skill", { skill: "plug" });
     expect(textOf(r)).toContain("Plug body.");
     expect(textOf(r)).toMatch(/copied to \/skills\/plug@/);
-    expectManaged(legacy, ["prepare"]);
+    expectManaged(["prepare"]);
   });
 
   it("GenerateImage writes its device copy through managed operations after the marked paths", async () => {
     const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "GenerateImage", { prompt: "a fox", file_path: "/workspace/f.png" });
     expect(textOf(r)).toMatch(
       /Also written to the device \(same bytes as artifact [0-9a-f-]{36}\): \/workspace\/f\.png/,
     );
-    expectManaged(legacy, ["stat", "writeFile"]);
+    expectManaged(["stat", "writeFile"]);
     expect(await markedPaths(f)).toHaveLength(1);
   });
 
   it("GenerateImage reviewed against another root than the held evidence's is stale: nothing written", async () => {
     const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(
       f,
       "GenerateImage",
@@ -700,7 +681,6 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     );
     // the images are delivered; the device line carries the stale refusal
     expect(textOf(r)).toContain(`Not written to the device: ${MANAGED_DEVICE_CONTEXT_STALE_TEXT}`);
-    expect(legacy).not.toHaveBeenCalled();
     expect(reached).toEqual([]);
     expect(await markedPaths(f)).toEqual([]);
   });
@@ -736,14 +716,11 @@ describe("a call reviewed against another root than the held evidence's", () => 
     input: Record<string, unknown>,
     against: string,
   ): Promise<void> {
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const err = await failure(runTool(f, name, input, { over: { reviewedAgainstRoot: against } }));
     expect(err).toBeInstanceOf(ToolError);
     expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
-    expect(legacy).not.toHaveBeenCalled();
     expect(reached).toEqual([]);
     expect(await markedPaths(f)).toEqual([]);
-    legacy.mockRestore();
   }
   /**
    * The same call reviewed against the workspace in a conversation whose admission falls back to
@@ -836,26 +813,5 @@ describe("a call reviewed against another root than the held evidence's", () => 
   it("the trusted preparation of an attachment copy", async () => {
     const f = await seed();
     await expectStale(f, "FetchAttachment", { file: "notes.txt" }, "/workspace/other");
-  });
-});
-
-describe("builtin tools with the activation gate off", () => {
-  it("keep the legacy route: no managed operation and no marked paths", async () => {
-    const f = await seed();
-    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const managed = vi.spyOn(k.app.get(SandboxService), "withOperations");
-    const r = await runTool(
-      f,
-      "Write",
-      { file_path: "/workspace/off.txt", content: "off" },
-      { gate: false },
-    );
-    expect(textOf(r)).toContain("Created /workspace/off.txt");
-    expect(legacy).toHaveBeenCalledTimes(1);
-    expect(managed).not.toHaveBeenCalled();
-    expect(reached).toEqual([]);
-    const paths = await markedPaths(f);
-    expect(paths).toHaveLength(1);
-    expect(paths[0]).not.toHaveProperty("permissionContextVersion");
   });
 });

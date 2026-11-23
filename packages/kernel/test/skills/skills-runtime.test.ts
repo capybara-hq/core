@@ -525,11 +525,8 @@ describe("Skill handler", () => {
                 payload: snapshot,
               } as ConversationEvent as never),
       },
-      // the activated tree: neither device route may be entered by these calls
+      // the device may not be entered by these calls
       sandbox: {
-        withSandbox: async () => {
-          throw new Error("sandbox must not be used");
-        },
         withOperations: async () => {
           throw new Error("sandbox must not be used");
         },

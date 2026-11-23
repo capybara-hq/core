@@ -234,9 +234,8 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
       ...(d.decidePolicy !== undefined && { decidePolicy: d.decidePolicy }),
     },
     d.networkGrants,
-    // the command review, review facts, permission authority, call grants, auto grants, locks
-    // and the activation gate: absent in a hand-built pipeline
-    undefined,
+    // the command review, review facts, permission authority, call grants, auto grants and
+    // locks: absent in a hand-built pipeline
     undefined,
     undefined,
     undefined,

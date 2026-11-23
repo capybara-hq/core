@@ -1275,7 +1275,6 @@ describe("整轮回放", () => {
       [
         k.app.get(SandboxService),
         [
-          "withSandbox",
           "withOperations",
           "withPreparation",
           "withBrowse",

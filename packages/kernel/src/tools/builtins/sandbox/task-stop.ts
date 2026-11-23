@@ -131,7 +131,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { task_id } = input as TaskStopInput;
       // another account's run never reads or stops on the owner's device (activated)
-      assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
+      assertDeviceOfRunAccount(ctx);
       const env = await taskEnv(deps, ctx);
       const task = await ownedTask(env, ctx, task_id);
       await recheckDevice(env, ctx);

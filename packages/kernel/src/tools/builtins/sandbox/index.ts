@@ -34,8 +34,8 @@ export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
 
 /**
  * The sandbox builtins (M5 T8): Bash / Read / Write / Edit / Glob / Grep / Deliver / FetchAttachment,
- * all run in the conversation's device (`SandboxService.withSandbox`). Attachments are not copied
- * into it by a sandbox call: `FetchAttachment` is the only way in, writing one file under
+ * all run in the conversation's device (`SandboxService.withOperations`). Attachments are not
+ * copied into it by a sandbox call: `FetchAttachment` is the only way in, writing one file under
  * `<workspace>/attachments/<conversation>` (the instance's roots, environments spec §13.1).
  * Unavailable without a provider for it. Allowed by default; with the org setting
  * `sandboxToolPolicy` set to ask, every one but Read / Glob / Grep / FetchAttachment needs approval

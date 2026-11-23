@@ -606,8 +606,8 @@ async function recordDenial(
 /**
  * Writes the images into the call's device at `filePath` (several: `-1`, `-2`… before the
  * extension, {@link generateImagePaths}) with `Write`'s checks (spec §5.3): the device entry every
- * builtin takes ({@link inToolSandbox}: the managed route and its marked device paths once
- * activated), each path checked as `Write` checks it, and under its path lease a directory refused
+ * builtin takes ({@link inToolSandbox}: the managed route and its marked device paths),
+ * each path checked as `Write` checks it, and under its path lease a directory refused
  * and an existing file replaced only when this conversation read it and it is unchanged
  * ({@link assertReadAndUnchanged}). The images are already delivered, so a copy that cannot be made
  * is a line of the result, not a tool error: no device, or the reason the copy stopped, after the

@@ -53,12 +53,10 @@ import {
 } from "../../src/sandbox/permission-runtime-reports.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { managedSandboxDeps } from "../../src/tools/builtins/builtin-tools.js";
 import {
   attachmentsDir,
   attachmentsRoot,
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
-  inSandbox,
   inSandboxOperations,
   type SandboxSession,
   type SandboxToolDeps,
@@ -260,7 +258,6 @@ const depsOf = (
     eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
     managedDeviceContext: k.app.get(ManagedDeviceContextRecorder),
-    managedDeviceContextRequired: true,
     ...over,
   }) as SandboxToolDeps;
 const ctxOf = (f: Fixture, claim: ExecutionClaim = f.claim): BuiltinCallContext => ({
@@ -568,16 +565,6 @@ describe("managed device context writer in the real common.ts route", () => {
     expect(await managedPaths(f)).toEqual([]);
   });
 
-  it("a missing writer on the activated route fails before entering, preparation or the callback", async () => {
-    const f = await seed();
-    const enter = vi.spyOn(k.app.get(SandboxService), "withOperations");
-    const err = await failure(call(f, depsOf({ managedDeviceContext: undefined })));
-    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
-    expect(enter).not.toHaveBeenCalled();
-    expect(order).toEqual([]);
-    expect(await managedPaths(f)).toEqual([]);
-  });
-
   it("a rolled-back append notifies nothing and runs no callback", async () => {
     const f = await seed();
     const events = k.app.get(EventLog);
@@ -618,41 +605,6 @@ describe("managed device context writer in the real common.ts route", () => {
     const f = await seed();
     const err = await failure(inSandboxOperations(depsOf(), ctxOf(f), async () => "ran"));
     expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
-    expect(order).toEqual([]);
-    expect(await managedPaths(f)).toEqual([]);
-  });
-
-  it("the one activation gate decides whether builtin tools pass and require the managed writer", () => {
-    const recorder = k.app.get(ManagedDeviceContextRecorder);
-    // production (no provider for the token): the gate is on, so the writer is passed and required
-    expect(managedSandboxDeps(recorder, undefined)).toEqual({
-      managedDeviceContext: recorder,
-      managedDeviceContextRequired: true,
-    });
-    // an explicit false (the dormant seam) keeps the legacy writer
-    expect(managedSandboxDeps(recorder, false)).toEqual({});
-    // the gate on passes the injected writer and requires it
-    expect(managedSandboxDeps(recorder, true)).toEqual({
-      managedDeviceContext: recorder,
-      managedDeviceContextRequired: true,
-    });
-  });
-
-  it("with the gate on, a legacy sandbox route refuses before entering instead of writing old-mode paths", async () => {
-    const f = await seed();
-    const enter = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const err = await failure(
-      k.app.get(RunExecution).withClaim(
-        f.claim,
-        () => true,
-        () =>
-          inSandbox(depsOf(), ctxOf(f), async () => {
-            order.push("callback");
-          }),
-      ),
-    );
-    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
-    expect(enter).not.toHaveBeenCalled();
     expect(order).toEqual([]);
     expect(await managedPaths(f)).toEqual([]);
   });

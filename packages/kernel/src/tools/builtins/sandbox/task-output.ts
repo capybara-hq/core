@@ -179,9 +179,9 @@ export async function ownedTask(
 }
 
 /**
- * The per-call access re-check of every sandbox tool (`inSandbox`): the conversation's device
- * may still be used by its owner. The task tools read a task's own instance without `inSandbox`,
- * so they check here first; errors become the tools' errors.
+ * The per-call access re-check of every sandbox tool (`inToolSandbox`): the conversation's
+ * device may still be used by its owner. The task tools read a task's own instance without
+ * `inToolSandbox`, so they check here first; errors become the tools' errors.
  */
 export async function recheckDevice(env: TaskEnv, ctx: BuiltinCallContext): Promise<void> {
   try {
@@ -263,7 +263,7 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
       // another account's run never reads or stops on the owner's device (activated)
-      assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
+      assertDeviceOfRunAccount(ctx);
       const env = await taskEnv(deps, ctx);
       // A sub-agent's agentId is answered, not refused: where its report arrives is the answer
       // (acceptance 2026-11-13: guidance the model is expected to follow is not a failed call).

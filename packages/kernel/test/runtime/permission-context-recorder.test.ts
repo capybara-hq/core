@@ -110,7 +110,6 @@ beforeEach(async () => {
     [
       k.app.get(SandboxService),
       [
-        "withSandbox",
         "withOperations",
         "withPreparation",
         "withBrowse",

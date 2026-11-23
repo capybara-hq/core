@@ -18,7 +18,6 @@ import {
 import { runOutsideTransaction } from "../infra/database/transaction-host.js";
 import {
   createHeldOperations,
-  createLegacyHeldProvider,
   type HeldProvider,
   type ManagedStartArgs,
   withKernelGeneration,
@@ -218,7 +217,7 @@ function parseDeferred(raw: string | null): DeferredNotice | null {
   }
 }
 
-/** The third argument of the `withSandbox` callback. */
+/** The third argument of a use's callback ({@link SandboxService.withOperations} and others). */
 export interface SandboxUseInfo {
   /** This call created the instance (first use, or a rebuild). */
   fresh: boolean;
@@ -250,6 +249,36 @@ export interface SandboxUseInfo {
 /** {@link SandboxUseInfo} before the roots are read from the handle. */
 type EnteredInfo = Omit<SandboxUseInfo, "roots" | "contextEvidence">;
 
+/** The callback of an operation use or a kernel read: every provider call admitted first. */
+export type SandboxUseCallback<T> = (
+  h: SandboxHandle,
+  p: HeldProvider,
+  info: SandboxUseInfo,
+  signal: AbortSignal,
+) => Promise<T>;
+/** An entry bound to one route (its invocation or kernel read), as a caller hands it on. */
+export type SandboxUseEntry = <T>(
+  ctx: SandboxUseContext,
+  fn: SandboxUseCallback<T>,
+  signal: AbortSignal,
+) => Promise<T>;
+/**
+ * How a use reaches the provider: an operation invocation (every call admitted and claimed), a
+ * trusted preparation (staging only) or a kernel read. There is no raw route.
+ */
+type UseRoute<T> =
+  | { kind: "operations"; invocation: OperationSessionInvocation; fn: SandboxUseCallback<T> }
+  | {
+      kind: "preparation";
+      run: (
+        h: SandboxHandle,
+        p: DeviceProvider,
+        info: SandboxUseInfo,
+        signal: AbortSignal,
+      ) => Promise<T>;
+    }
+  | { kind: "kernelRead"; read: KernelReadInvocation; fn: SandboxUseCallback<T> };
+
 type Row = Selectable<DeviceInstancesTable>;
 type Patch = UpdateObject<KernelDatabase, "device_instances">;
 type ExecArgs = Parameters<DeviceProvider["exec"]>[1];
@@ -267,11 +296,6 @@ interface Instance {
   handle: SandboxHandle;
   createdAt: number;
 }
-
-/**
- * The provider {@link SandboxService.withSandbox} passes to its callback: every `exec` carries the
- * holder's tag and the caller's actor, so the callback passes neither.
- */
 
 /**
  * The provider {@link SandboxService.ifRunning} passes to its callback: every `exec` carries the
@@ -564,9 +588,9 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * deleted, plus one instance attached to it that comes and goes; all conversations bound to the
  * device (and their sub-agents) share both.
  *
- * - **Lazy creation**: the first {@link withSandbox} creates the file system
- *   (`createFileSystem`, name `cap-device-<deviceId>`) and then the instance on it; state lives
- *   in `device_instances`. A file system gone at the provider is never replaced silently:
+ * - **Lazy creation**: the first use ({@link withOperations} and the others) creates the file
+ *   system (`createFileSystem`, name `cap-device-<deviceId>`) and then the instance on it; state
+ *   lives in `device_instances`. A file system gone at the provider is never replaced silently:
  *   `fs_status` becomes `lost` and uses fail with `device.files_lost` until
  *   {@link resetFileSystem}.
  * - **Leases** (phase C, spec §10, {@link SandboxLeases}), keyed by device id: using an
@@ -996,7 +1020,7 @@ export class SandboxService {
 
   /**
    * The instance the device records now (its `created_at`), while it has one that runs or is
-   * suspended; null otherwise. Read without a lease: a caller inside `withSandbox` reads the
+   * suspended; null otherwise. Read without a lease: a caller inside a use reads the
    * instance its own lease keeps.
    */
   async currentInstance(
@@ -1017,8 +1041,8 @@ export class SandboxService {
    * `instance.createdAt` (background tasks, spec 2026-11-05-background-bash-design §4.3). It never
    * creates, resumes or rebuilds one: an instance that is missing, suspended, being created or
    * destroyed (or recorded with another provider) is `not_running`, one that records another
-   * instance is `other_instance`. Otherwise `fn` runs under a shared lease, as a `withSandbox`
-   * holder does (its tag on every exec, crashed holders' operations revoked exactly), and
+   * instance is `other_instance`. Otherwise `fn` runs under a shared lease, as a use's
+   * holder does (crashed holders' operations revoked exactly), with its tag on every exec, and
    * `last_used_at` moves forward when it ends. Waits for the lease up to `sandbox.lockWaitSeconds`
    * (`sandbox.busy`); `signal` (optional) ends the wait with its abort reason. The signal passed
    * to `fn` aborts with `signal` or when the lease is lost. Errors of `fn` (`SandboxGoneError`
@@ -1117,23 +1141,6 @@ export class SandboxService {
     return this.leases.pathLease(deviceId, path, signal, PATH_LEASE_WAIT_MS);
   }
 
-  /**
-   * Runs `fn` on the device's instance: take a lease → make sure the instance runs (file
-   * system, create / resume / rebuild, under the exclusive lease) → `fn` under a shared lease →
-   * update `last_used_at` → release.
-   * - Waiting longer than `sandbox.lockWaitSeconds` throws `sandbox.busy` (409); `signal` aborts
-   *   the wait and the creation / resume.
-   * - The fourth argument of `fn` combines `signal` with the lease's: use it for commands, so they
-   *   stop when the lease is lost.
-   * - The provider passed to `fn` labels every `exec` with this holder's tag and `ctx.actor`.
-   * - When `fn` throws `SandboxGoneError` (the instance is gone) the instance is rebuilt on the
-   *   kept files (or the one another holder rebuilt is taken) and `fn` runs once more with
-   *   `restarted: true`; a second `gone` is thrown. Other errors are thrown as they are.
-   * - Lost files throw `device.files_lost` (409), also when `fn` throws
-   *   `FileSystemGoneError` (the files are then recorded lost, ruling R24).
-   * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
-   *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
-   */
   /** Trusted staging only. The callback receives no exec, browsing or lifecycle methods. */
   async withPreparation<T>(
     ctx: SandboxUseContext,
@@ -1144,12 +1151,12 @@ export class SandboxService {
   ): Promise<T> {
     return this.withSandboxUse(
       ctx,
-      async () => {
-        throw new Error("Preparation callback was not installed");
+      {
+        kind: "preparation",
+        run: (h, provider, info, sig) =>
+          this.prepareFor(ctx, h, provider, info, purpose, roots, fn, sig),
       },
       signal,
-      undefined,
-      (h, provider, info, sig) => this.prepareFor(ctx, h, provider, info, purpose, roots, fn, sig),
     );
   }
   private async prepareFor<T>(
@@ -1357,7 +1364,7 @@ export class SandboxService {
       ctx.actor.conversationId !== ctx.holderConversationId
     )
       throw new SandboxScopeDeniedError("The kernel read does not match its run start");
-    return this.withSandboxUse(ctx, fn, signal, undefined, undefined, read);
+    return this.withSandboxUse(ctx, { kind: "kernelRead", read, fn }, signal);
   }
 
   async withOperations<T>(
@@ -1371,38 +1378,34 @@ export class SandboxService {
     ) => Promise<T>,
     signal: AbortSignal,
   ): Promise<T> {
-    return this.withSandboxUse(ctx, fn, signal, invocation);
-  }
-  async withSandbox<T>(
-    ctx: SandboxUseContext,
-    fn: (
-      h: SandboxHandle,
-      p: HeldProvider,
-      info: SandboxUseInfo,
-      signal: AbortSignal,
-    ) => Promise<T>,
-    signal: AbortSignal,
-  ): Promise<T> {
-    return this.withSandboxUse(ctx, fn, signal);
+    return this.withSandboxUse(ctx, { kind: "operations", invocation, fn }, signal);
   }
 
+  /**
+   * Every use of the device's instance ({@link withOperations}, {@link withPreparation},
+   * {@link withKernelRead}; there is no raw route): take a lease → make sure the instance runs
+   * (file system, create / resume / rebuild, under the exclusive lease) → the route's callback
+   * under a shared lease → update `last_used_at` → release.
+   * - Waiting longer than `sandbox.lockWaitSeconds` throws `sandbox.busy` (409); `signal` aborts
+   *   the wait and the creation / resume.
+   * - The fourth argument of `fn` combines `signal` with the lease's: use it for commands, so they
+   *   stop when the lease is lost.
+   * - The provider passed to `fn` admits and claims every call (an operation or a kernel read)
+   *   before it reaches the provider; a preparation gets only the staging methods.
+   * - When `SandboxGoneError` is raised outside a dispatched operation (staging, context
+   *   evidence), the instance is rebuilt on the kept files (or the one another holder rebuilt is
+   *   taken) and the route runs once more with `restarted: true`; a second `gone` is thrown. A
+   *   gone after a durable dispatch stays unknown: the instance is rebuilt, the call is not
+   *   retried. Other errors are thrown as they are.
+   * - Lost files throw `device.files_lost` (409), also when `fn` throws
+   *   `FileSystemGoneError` (the files are then recorded lost, ruling R24).
+   * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
+   *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
+   */
   private async withSandboxUse<T>(
     ctx: SandboxUseContext,
-    fn: (
-      h: SandboxHandle,
-      p: HeldProvider,
-      info: SandboxUseInfo,
-      signal: AbortSignal,
-    ) => Promise<T>,
+    route: UseRoute<T>,
     signal: AbortSignal,
-    invocation?: OperationSessionInvocation,
-    trusted?: (
-      h: SandboxHandle,
-      p: DeviceProvider,
-      info: SandboxUseInfo,
-      signal: AbortSignal,
-    ) => Promise<T>,
-    kernelRead?: KernelReadInvocation,
   ): Promise<T> {
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const env = ctx.deviceId;
@@ -1416,7 +1419,7 @@ export class SandboxService {
     let left = false;
     try {
       try {
-        return await this.runAs(e, ctx, p, fn, signal, invocation, trusted, kernelRead);
+        return await this.runAs(e, ctx, p, route, signal);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         const notSentGone = goneBeforeSent(err);
@@ -1463,16 +1466,7 @@ export class SandboxService {
           ? { fresh: true, restarted: false, filesReset: true }
           : { fresh: true, restarted: true };
         try {
-          return await this.runAs(
-            { ...e, info },
-            ctx,
-            p,
-            fn,
-            signal,
-            invocation,
-            trusted,
-            kernelRead,
-          );
+          return await this.runAs({ ...e, info }, ctx, p, route, signal);
         } catch (err2) {
           if (isFileSystemGoneError(err2)) throw await this.filesGone(env, p, e);
           throw err2;
@@ -1609,48 +1603,99 @@ export class SandboxService {
     return e;
   }
 
-  /** Runs `fn` as the holder `e`: its tag and the caller's actor on every exec, its lease's signal. */
+  /** Runs the route as the holder `e`, under its lease's signal. */
   private async runAs<T>(
     e: Entered,
     ctx: SandboxUseContext,
     p: DeviceProviderEntry,
-    fn: (
-      h: SandboxHandle,
-      p: HeldProvider,
-      info: SandboxUseInfo,
-      signal: AbortSignal,
-    ) => Promise<T>,
+    route: UseRoute<T>,
     signal: AbortSignal,
-    invocation?: OperationSessionInvocation,
-    trusted?: (
-      h: SandboxHandle,
-      p: DeviceProvider,
-      info: SandboxUseInfo,
-      signal: AbortSignal,
-    ) => Promise<T>,
-    kernelRead?: KernelReadInvocation,
   ): Promise<T> {
     const sig = AbortSignal.any([signal, e.lease.signal]);
-    if (trusted) return trusted(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
+    if (route.kind === "preparation")
+      return route.run(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
     const env = ctx.deviceId;
-    if (kernelRead)
-      return fn(
+    if (route.kind === "kernelRead")
+      return route.fn(
         e.handle,
-        this.kernelReadProvider(e, ctx, p, kernelRead, sig),
+        this.kernelReadProvider(e, ctx, p, route.read, sig),
         { ...e.info, roots: rootsOf(e.handle) },
         sig,
       );
+    const { invocation, fn } = route;
     let ordinal = 0;
     // a provider's background starts are told the held instance's kernel generation
     const held = withKernelGeneration(p.impl, String(e.createdAt));
-    const impl = invocation
-      ? createHeldOperations(held, e.handle, sig, async (method, input, invoke, preflight) => {
-          const identity = { ...invocation, ordinal: ordinal++ };
-          sig.throwIfAborted();
-          await this.register(env, e.lease.token);
-          const refreshPending = () =>
-            runOutsideTransaction(() =>
-              this.operationIntents.pending(
+    const impl = createHeldOperations(
+      held,
+      e.handle,
+      sig,
+      async (method, input, invoke, preflight) => {
+        const identity = { ...invocation, ordinal: ordinal++ };
+        sig.throwIfAborted();
+        await this.register(env, e.lease.token);
+        const refreshPending = () =>
+          runOutsideTransaction(() =>
+            this.operationIntents.pending(
+              ctx,
+              identity,
+              {
+                provider: p.plugin,
+                providerVersion: p.version,
+                generation: String(e.createdAt),
+              },
+              method,
+              input,
+              e.lease.token,
+              sig,
+            ),
+          );
+        const pending = await refreshPending();
+        // An acknowledged start returns its recorded exact ref; it never dispatches again.
+        if (pending.state === "background-running" && pending.execution_ref)
+          return parseSandboxExecutionRef(pending.execution_ref) as Awaited<
+            ReturnType<typeof invoke>
+          >;
+        if (pending.state === "completed")
+          return (await this.operationIntents.result(pending)) as Awaited<
+            ReturnType<typeof invoke>
+          >;
+        let current: typeof pending;
+        try {
+          current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+        } catch (error) {
+          if (!(error instanceof PermissionAdmissionStale)) throw error;
+          await refreshPending();
+          current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+        }
+        // Kernel checks on the admitted scope come before any dispatch state is written.
+        if (preflight && current.state !== "completed" && current.state !== "background-running") {
+          try {
+            await preflight(parseSandboxOperationScope(current.scope), sig);
+          } catch (error) {
+            if (
+              current.state === "admitted" &&
+              (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
+            ) {
+              const kind = failureKindOf(error);
+              await runOutsideTransaction(() =>
+                this.operationIntents.refusePreDispatch(ctx, identity, {
+                  kind,
+                  message: error.message,
+                }),
+              );
+            }
+            throw error;
+          }
+        }
+        const reconciling = ["dispatching", "started-or-unknown"].includes(pending.state);
+        // a dial-in device's machine must be connected before a new dispatch is recorded: its
+        // typed answer (offline, machine revoked, device deleted) proves nothing was sent
+        if (!reconciling && current.state === "admitted" && this.relay && servesDialIn(p))
+          await this.relay.connection(env);
+        const admitted = reconciling
+          ? await runOutsideTransaction(() =>
+              this.operationIntents.claimReconciliation(
                 ctx,
                 identity,
                 {
@@ -1661,160 +1706,78 @@ export class SandboxService {
                 method,
                 input,
                 e.lease.token,
-                sig,
+              ),
+            )
+          : await runOutsideTransaction(() =>
+              this.operationIntents.claimDispatch(
+                ctx,
+                identity,
+                e.lease.token,
+                method === "backgroundStart"
+                  ? backgroundBinding(input as ManagedStartArgs, e.handle.id)
+                  : undefined,
               ),
             );
-          const pending = await refreshPending();
-          // An acknowledged start returns its recorded exact ref; it never dispatches again.
-          if (pending.state === "background-running" && pending.execution_ref)
-            return parseSandboxExecutionRef(pending.execution_ref) as Awaited<
-              ReturnType<typeof invoke>
-            >;
-          if (pending.state === "completed")
-            return (await this.operationIntents.result(pending)) as Awaited<
-              ReturnType<typeof invoke>
-            >;
-          let current: typeof pending;
-          try {
-            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
-          } catch (error) {
-            if (!(error instanceof PermissionAdmissionStale)) throw error;
-            await refreshPending();
-            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
-          }
-          // Kernel checks on the admitted scope come before any dispatch state is written.
-          if (
-            preflight &&
-            current.state !== "completed" &&
-            current.state !== "background-running"
-          ) {
-            try {
-              await preflight(parseSandboxOperationScope(current.scope), sig);
-            } catch (error) {
-              if (
-                current.state === "admitted" &&
-                (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
-              ) {
-                const kind = failureKindOf(error);
-                await runOutsideTransaction(() =>
-                  this.operationIntents.refusePreDispatch(ctx, identity, {
-                    kind,
-                    message: error.message,
-                  }),
-                );
-              }
-              throw error;
-            }
-          }
-          const reconciling = ["dispatching", "started-or-unknown"].includes(pending.state);
-          // a dial-in device's machine must be connected before a new dispatch is recorded: its
-          // typed answer (offline, machine revoked, device deleted) proves nothing was sent
-          if (!reconciling && current.state === "admitted" && this.relay && servesDialIn(p))
-            await this.relay.connection(env);
-          const admitted = reconciling
-            ? await runOutsideTransaction(() =>
-                this.operationIntents.claimReconciliation(
-                  ctx,
-                  identity,
-                  {
-                    provider: p.plugin,
-                    providerVersion: p.version,
-                    generation: String(e.createdAt),
-                  },
-                  method,
-                  input,
-                  e.lease.token,
-                ),
+        if (admitted.state === "revoked")
+          throw admitted.outcome_unknown
+            ? new SandboxOperationOutcomeUnknownError(
+                "The background task was stopped before its start was confirmed; it is not started again and its cancellation is owed",
               )
-            : await runOutsideTransaction(() =>
-                this.operationIntents.claimDispatch(
-                  ctx,
-                  identity,
-                  e.lease.token,
-                  method === "backgroundStart"
-                    ? backgroundBinding(input as ManagedStartArgs, e.handle.id)
-                    : undefined,
-                ),
+            : new SandboxScopeDeniedError(
+                "The background task was stopped or settled before it launched; nothing was started",
               );
-          if (admitted.state === "revoked")
-            throw admitted.outcome_unknown
-              ? new SandboxOperationOutcomeUnknownError(
-                  "The background task was stopped before its start was confirmed; it is not started again and its cancellation is owed",
-                )
-              : new SandboxScopeDeniedError(
-                  "The background task was stopped or settled before it launched; nothing was started",
-                );
-          if (admitted.state === "background-running" && admitted.execution_ref)
-            return parseSandboxExecutionRef(admitted.execution_ref) as Awaited<
-              ReturnType<typeof invoke>
-            >;
-          if (admitted.state === "completed")
-            return (await this.operationIntents.result(admitted)) as Awaited<
-              ReturnType<typeof invoke>
-            >;
-          sig.throwIfAborted();
-          let result: Awaited<ReturnType<typeof invoke>>;
-          try {
-            result = await invoke(parseSandboxOperationScope(admitted.scope), sig);
-          } catch (error) {
-            if (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error)) {
-              if (["dispatching", "started-or-unknown"].includes(pending.state)) {
-                await runOutsideTransaction(() =>
-                  this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
-                );
-                throw new SandboxOperationOutcomeUnknownError(
-                  "The recorded operation remains unknown; changed runtime authority cannot prove it had no effect",
-                  { cause: error },
-                );
-              }
-              const kind = failureKindOf(error);
-              await runOutsideTransaction(() =>
-                this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
-                  $failure: { kind, message: error.message },
-                }),
-              );
-              throw error;
-            }
-            await runOutsideTransaction(() =>
-              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
-            );
-            // The machine's files are gone (R24): the operation stays unknown, and the caller still
-            // records the files lost so later calls fail without reaching the machine.
-            if (isFileSystemGoneError(error)) throw error;
-            // A transport/gone error after durable dispatch cannot justify a new identity retry.
-            throw new SandboxOperationOutcomeUnknownError(
-              "The operation outcome must be reconciled with its recorded identity",
-              { cause: error },
-            );
-          }
-          // The provider has returned: storage/serialization errors cannot establish denial.
-          if (method === "backgroundStart") {
-            try {
-              await runOutsideTransaction(() =>
-                this.operationIntents.acknowledgeBackground(
-                  admitted.operation_id,
-                  admitted.execution_id,
-                  result as SandboxExecutionRef,
-                  e.handle.id,
-                ),
-              );
-            } catch (error) {
+        if (admitted.state === "background-running" && admitted.execution_ref)
+          return parseSandboxExecutionRef(admitted.execution_ref) as Awaited<
+            ReturnType<typeof invoke>
+          >;
+        if (admitted.state === "completed")
+          return (await this.operationIntents.result(admitted)) as Awaited<
+            ReturnType<typeof invoke>
+          >;
+        sig.throwIfAborted();
+        let result: Awaited<ReturnType<typeof invoke>>;
+        try {
+          result = await invoke(parseSandboxOperationScope(admitted.scope), sig);
+        } catch (error) {
+          if (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error)) {
+            if (["dispatching", "started-or-unknown"].includes(pending.state)) {
               await runOutsideTransaction(() =>
                 this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
               );
               throw new SandboxOperationOutcomeUnknownError(
-                "The start returned but could not be acknowledged; reconcile the same identity",
+                "The recorded operation remains unknown; changed runtime authority cannot prove it had no effect",
                 { cause: error },
               );
             }
-            return result;
+            const kind = failureKindOf(error);
+            await runOutsideTransaction(() =>
+              this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
+                $failure: { kind, message: error.message },
+              }),
+            );
+            throw error;
           }
+          await runOutsideTransaction(() =>
+            this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+          );
+          // The machine's files are gone (R24): the operation stays unknown, and the caller still
+          // records the files lost so later calls fail without reaching the machine.
+          if (isFileSystemGoneError(error)) throw error;
+          // A transport/gone error after durable dispatch cannot justify a new identity retry.
+          throw new SandboxOperationOutcomeUnknownError(
+            "The operation outcome must be reconciled with its recorded identity",
+            { cause: error },
+          );
+        }
+        // The provider has returned: storage/serialization errors cannot establish denial.
+        if (method === "backgroundStart") {
           try {
             await runOutsideTransaction(() =>
-              this.operationIntents.complete(
+              this.operationIntents.acknowledgeBackground(
                 admitted.operation_id,
-                identity.claim.executionId,
-                result,
+                admitted.execution_id,
+                result as SandboxExecutionRef,
+                e.handle.id,
               ),
             );
           } catch (error) {
@@ -1822,16 +1785,33 @@ export class SandboxService {
               this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
             );
             throw new SandboxOperationOutcomeUnknownError(
-              "The operation returned but its result could not be retained; reconcile the same identity",
+              "The start returned but could not be acknowledged; reconcile the same identity",
               { cause: error },
             );
           }
           return result;
-        })
-      : createLegacyHeldProvider(p.impl, e.lease.token, ctx.actor, () =>
-          this.register(env, e.lease.token),
-        );
-    const contextEvidence = invocation?.contextEvidence
+        }
+        try {
+          await runOutsideTransaction(() =>
+            this.operationIntents.complete(
+              admitted.operation_id,
+              identity.claim.executionId,
+              result,
+            ),
+          );
+        } catch (error) {
+          await runOutsideTransaction(() =>
+            this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+          );
+          throw new SandboxOperationOutcomeUnknownError(
+            "The operation returned but its result could not be retained; reconcile the same identity",
+            { cause: error },
+          );
+        }
+        return result;
+      },
+    );
+    const contextEvidence = invocation.contextEvidence
       ? await this.heldContextEvidence(ctx, p, e)
       : undefined;
     const info: SandboxUseInfo = {
@@ -1839,7 +1819,7 @@ export class SandboxService {
       roots: rootsOf(e.handle),
       ...(contextEvidence && { contextEvidence }),
     };
-    if (invocation?.beforeUser)
+    if (invocation.beforeUser)
       await invocation.beforeUser(
         {
           prepare: (purpose, roots, stage) =>
@@ -3700,7 +3680,7 @@ export class SandboxService {
       // Lease lost (or the device read failed) before the handle was recorded: destroy the new
       // instance (best effort) so it does not leak. A provider that reuses instances by name
       // (Ruling M10) may then hit the one the new holder just resumed or created; that heals:
-      // its next provider call throws SandboxGoneError (or resume returns gone) and withSandbox
+      // its next provider call throws SandboxGoneError (or resume returns gone) and the use
       // rebuilds in place. The file system is never touched here.
       await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
         this.log.warn("cannot destroy sandbox created after the lock was lost", {
