@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/plugin-sdk": patch
+"@capybara-hq/plugin-tools": patch
 ---
 
 `SetupGuidePlaceInfo` gains `checks`, whether guides of a place may use `::check` lines. It is
