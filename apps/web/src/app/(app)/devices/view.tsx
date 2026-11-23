@@ -8,7 +8,13 @@ import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useDeviceName } from "../../../components/use-device-name";
-import { type Device, deviceCeilingMark, deviceState, providerLabel } from "../../../lib/devices";
+import {
+  canCreateDevice,
+  type Device,
+  deviceCeilingMark,
+  deviceState,
+  providerLabel,
+} from "../../../lib/devices";
 import { labelLocale } from "../../../lib/extension-label";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -41,7 +47,7 @@ function Devices({ orgId }: { orgId: string }) {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   // New device needs a provider to create on: without one it is not offered
-  const canCreate = list.kind === "ready" && list.data.providers.length > 0;
+  const canCreate = list.kind === "ready" && canCreateDevice(list.data);
   const header = {
     path: [...scope, { label: "devices" }],
     title: t("title"),

@@ -1534,6 +1534,7 @@
     "pickModel": "Switch model",
     "pickDevice": "Device",
     "deviceNote": "Fixed once the first message is sent",
+    "noDevice": "No device",
     "deviceOffline": "Your local devices are offline, so this conversation starts without a device. Start capybara-device on the machine to use it.",
     "deviceLocked": "A conversation keeps its device",
     "projectGroup": "Project",
