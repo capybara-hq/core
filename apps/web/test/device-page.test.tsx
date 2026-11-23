@@ -176,6 +176,36 @@ describe("one device page for every provider", () => {
     expect(screen.getByText(Z.detail.filesAndSuspendNote)).toBeTruthy();
   });
 
+  it("概览 shows the provider's change hint in the page language, and none without one", async () => {
+    const changeHint = {
+      en: "Only the computer's owner changes these, on the computer.",
+      zh: "只有电脑的所有者能在电脑上更改这些。",
+    };
+    const { unmount } = await renderDevice(dev({ report: { ...REPORT, changeHint } }), {
+      locale: "zh",
+    });
+    expect(await screen.findByText(changeHint.zh)).toBeTruthy();
+    expect(screen.queryByText(changeHint.en)).toBeNull();
+    unmount();
+    await renderDevice(dev({ report: { ...REPORT, changeHint } }));
+    expect(await screen.findByText(changeHint.en)).toBeTruthy();
+  });
+
+  it("网络 names the machine's owner when its limit keeps the network on the allowlist", async () => {
+    await renderDevice(
+      dev({
+        sandbox: sandbox({
+          network: "allowlist",
+          networkCeiling: "allowlist",
+          layer: { network: "owner", outsideSandbox: "owner" },
+        }),
+      }),
+    );
+    await openTab(E.detail.tabNetwork);
+    expect(radio(E.network.open).disabled).toBe(true);
+    expect(screen.getByText(E.network.limited.owner)).toBeTruthy();
+  });
+
   it("a device without a report says its provider did not answer", async () => {
     await renderDevice(dev({ report: null }));
     expect(await screen.findByText(E.overview.noReport)).toBeTruthy();

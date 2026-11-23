@@ -846,6 +846,7 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
       "outsideSandbox",
       "background",
       "unavailableReason",
+      "limitedBy",
     ],
     what,
   );
@@ -890,6 +891,24 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
       `Invalid ${what}: an instance boundary claims no restricted scope, outside escalation or per-operation hosts`,
     );
   if (o.unavailableReason !== undefined) string(o.unavailableReason, 4096);
+  let limitedBy: { outsideSandbox?: "owner"; openPublic?: "owner" } | undefined;
+  if (o.limitedBy !== undefined) {
+    const l = strictRecord(o.limitedBy, ["outsideSandbox", "openPublic"], `${what} limitedBy`);
+    limitedBy = {};
+    for (const [key, open] of [
+      ["outsideSandbox", outsideSandbox],
+      ["openPublic", network.openPublic],
+    ] as const) {
+      if (l[key] === undefined) continue;
+      if (l[key] !== "owner")
+        throw new DeviceProtocolError(`Invalid ${what}: limitedBy.${key} must be owner`);
+      if (open)
+        throw new DeviceProtocolError(
+          `Invalid ${what}: limitedBy.${key} names who keeps a closed crossing closed, but it is open`,
+        );
+      limitedBy[key] = "owner";
+    }
+  }
   return freeze({
     version: 2,
     boundary: o.boundary,
@@ -900,6 +919,7 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
     ...(o.unavailableReason !== undefined
       ? { unavailableReason: o.unavailableReason as string }
       : {}),
+    ...(limitedBy !== undefined && Object.keys(limitedBy).length > 0 ? { limitedBy } : {}),
   });
 }
 

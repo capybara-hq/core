@@ -206,6 +206,40 @@ describe("per-call sandbox escalation", () => {
       expect(escalationRefusedText(text, "/work")).not.toMatch(/Full access/);
     }
   });
+  it("a refusal from the machine's owner or the provider names that layer and appends the change hint", () => {
+    const hint =
+      "Only the computer's owner changes this connection's limits, on the computer: capybara-device ceiling set -c d1 --outside-sandbox on.";
+    const owner = escalationCeilingWhy({
+      layer: "owner",
+      boundary: "operation",
+      description: "Never runs outside the sandbox.",
+      changeHint: hint,
+    });
+    expect(owner).toBe(
+      "the owner of the machine this device runs on does not allow running outside the sandbox on it now: Never runs outside the sandbox (to change this, as the device's provider says: Only the computer's owner changes this connection's limits, on the computer: capybara-device ceiling set -c d1 --outside-sandbox on)",
+    );
+    expect(owner).not.toMatch(/provider does not allow/);
+    expect(
+      escalationCeilingWhy({
+        layer: "provider",
+        boundary: "operation",
+        changeHint: "Ask the super admin.",
+      }),
+    ).toBe(
+      "this device's provider does not allow running outside the sandbox now (to change this, as the device's provider says: Ask the super admin)",
+    );
+    // no report: the layer alone
+    expect(escalationCeilingWhy({ layer: "owner", boundary: "operation" })).toBe(
+      "the owner of the machine this device runs on does not allow running outside the sandbox on it now",
+    );
+    // an instance has no outside whatever the hint says
+    expect(
+      escalationCeilingWhy({ layer: "owner", boundary: "instance", changeHint: hint }),
+    ).toMatch(/no outside of its sandbox/);
+    expect(escalationRefusedText(owner, "/work")).toMatch(
+      /^This Bash call asked to run outside the sandbox, but the owner of the machine .*--outside-sandbox on\), so it did not run\./,
+    );
+  });
   it("a ceiling or an unattended run refuses it with an actionable text", () => {
     expect(build(escalated, { escalationRefusal: ESCALATION_CEILING_WHY })).toEqual({
       kind: "unsupported",

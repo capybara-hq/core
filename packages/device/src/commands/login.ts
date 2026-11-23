@@ -109,29 +109,43 @@ export function projectReachLoginLine(
 }
 
 /**
- * The line `login` prints when the owner ceiling keeps every call in the sandbox (the default of a
- * new setup): commands run in the sandbox under every profile, Full access included.
+ * The line `login` prints when the owner ceiling keeps every call in the sandbox (the owner turned
+ * it off): commands run in the sandbox under every profile, Full access included.
  */
 export const sandboxOnlyLoginLine = (deviceId: string): string =>
   "This machine's owner ceiling keeps every command in the sandbox, Full access included: no " +
   `call runs outside it. ${widenCeilingHint(deviceId)}`;
 
-/** The line `login` prints when the owner ceiling allows running outside the sandbox. */
+/**
+ * The line `login` prints when the owner ceiling allows running outside the sandbox (the default of
+ * a new setup): commands run in the sandbox, and a call that asks to run outside it runs only when
+ * the conversation's permission profile approves it.
+ */
 export const outsideSandboxLoginLine = (deviceId: string): string =>
   "This machine's owner ceiling allows running outside the sandbox: commands still run in the " +
-  "sandbox, and one approved call may run as you. Turn it off with " +
-  `\`capybara-device ceiling set --outside-sandbox off -c ${deviceId}\`.`;
+  "sandbox, and a call that asks to run outside it runs as you only as the conversation's " +
+  "permission profile decides (the person approves it, the review model does, or the Auto " +
+  "profile grants it). " +
+  `Turn it off with \`capybara-device ceiling set --outside-sandbox off -c ${deviceId}\`.`;
 
 /** Added when the organization does not allow running outside the sandbox while the owner does. */
 export const OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE =
   "This organization does not allow running outside the sandbox, so every call stays in the " +
   "sandbox here.";
 
-/** The line `login` prints when sandboxed work cannot run here (no OS sandbox). */
-export function restrictedUnavailableLoginLine(reason: string, deviceId: string): string {
+/**
+ * The line `login` prints when sandboxed work cannot run here (no OS sandbox); with the ceiling
+ * still keeping every call in the sandbox (`outsideOn` false), how the owner widens it.
+ */
+export function restrictedUnavailableLoginLine(
+  reason: string,
+  deviceId: string,
+  outsideOn: boolean,
+): string {
   return (
     `The OS sandbox is unavailable on this machine (${reason}), so sandboxed work cannot run ` +
-    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker. ${widenCeilingHint(deviceId)}`
+    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker.` +
+    (outsideOn ? "" : ` ${widenCeilingHint(deviceId)}`)
   );
 }
 
@@ -167,8 +181,8 @@ function defaultOpen(platform: NodeJS.Platform) {
 }
 
 /**
- * A new setup writes the default policy: no running outside the sandbox, the open network and the
- * whole machine as the project reach. Written under the policy lock, and only while no policy file
+ * A new setup writes the default policy: running outside the sandbox per approved call, the open
+ * network and the whole machine as the project reach. Written under the policy lock, and only while no policy file
  * exists: an existing policy is the owner's choice and is never changed here (a file in another
  * format version is rewritten only by the owner's `capybara-device ceiling set`). Returns whether
  * this call created the file.
@@ -527,7 +541,8 @@ export async function login(
         }
         out(networkLoginLine(ceiling.network, deviceId));
         out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths, deviceId));
-        if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox, deviceId));
+        if (noSandbox !== undefined)
+          out(restrictedUnavailableLoginLine(noSandbox, deviceId, ceiling.outsideSandbox));
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(
