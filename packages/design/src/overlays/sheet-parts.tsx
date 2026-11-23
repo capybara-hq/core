@@ -1,4 +1,4 @@
-import type { ComponentPropsWithRef, ReactNode } from "react";
+import { type ComponentPropsWithRef, type ReactNode, useId } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { LinkPendingMark, useDesignLink } from "../provider";
@@ -13,22 +13,42 @@ import { LinkPendingMark, useDesignLink } from "../provider";
  */
 export function SheetGroup({
   label,
+  heading,
   part,
   children,
 }: {
   /** The group's accessible name (drawn nowhere). */
   label?: string;
+  /**
+   * A small muted heading drawn above the group (a drill-in page's provider groups, §6.59), which
+   * also names it.
+   */
+  heading?: string;
   part?: string;
   children: ReactNode;
 }) {
-  return (
+  const id = useId();
+  const group = (
     <div
       className="cb-sheet-group"
       data-part={part ?? "sheet-group"}
-      {...(label ? { role: "group", "aria-label": label } : {})}
+      {...(heading
+        ? { role: "group", "aria-labelledby": id }
+        : label
+          ? { role: "group", "aria-label": label }
+          : {})}
     >
       {children}
     </div>
+  );
+  if (!heading) return group;
+  return (
+    <>
+      <h3 className="cb-sheet-group-heading" data-part="sheet-group-heading" id={id}>
+        {heading}
+      </h3>
+      {group}
+    </>
   );
 }
 

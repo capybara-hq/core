@@ -383,6 +383,18 @@
 .cb-account-slot + .cb-sheet-group {
   margin-top: var(--cb-touch-sheet-inset);
 }
+/* A group's heading (a drill-in page's provider, §6.59): micro muted on the rows' text inset. */
+.cb-sheet-group-heading {
+  margin: 0;
+  padding: 0 var(--cb-space-4) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  font-weight: 500;
+}
+.cb-sheet-group + .cb-sheet-group-heading {
+  margin-top: var(--cb-touch-sheet-inset);
+}
 .cb-sheet-row {
   position: relative;
   display: flex;
@@ -551,6 +563,14 @@
   .cb-sheet-option {
     height: var(--cb-touch-row);
   }
+  /* the model page's search field (§6.16.2): a touch target's height */
+  .cb-options-search {
+    height: var(--cb-touch-hit);
+  }
+}
+/* A sheet option focused quietly on a drill-in push (§2.5): no ring until a key. */
+.cb-sheet-option:has([data-quiet-focus="true"]:focus-visible) {
+  outline: none;
 }
 
 /* An entry of a desktop-only page (plan Task 29): not offered on touch (the pointer, not the width). */

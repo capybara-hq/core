@@ -119,6 +119,7 @@ export {
   filterMenuEntries,
   MENU_COLLISION_PADDING,
   MENU_FILTER_THRESHOLD,
+  type MenuFilter,
   type MenuPlacementInput,
   menuPlacement,
 } from "./menu";
@@ -146,6 +147,14 @@ export {
   TaskList,
 } from "./panels";
 export { PersonFieldRow, type PersonFieldRowProps } from "./person-field";
+export {
+  type ArrangedPickerGroup,
+  type ArrangedPickerItem,
+  arrangePickerGroups,
+  filterPickerGroups,
+  LONG_PICKER_THRESHOLD,
+  pickerItemCount,
+} from "./picker-groups";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export {

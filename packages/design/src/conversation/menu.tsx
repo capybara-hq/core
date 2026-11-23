@@ -32,6 +32,8 @@ export type ConvMenuEntry =
       icon?: IconName | ReactNode;
       /** A tag after the label ("agent 默认"). */
       tag?: string;
+      /** More text the filter matches besides the label (a model's provider name). */
+      keywords?: string;
       /**
        * A sentence under the label and tag (a permission profile's explanation): the item grows
        * to two lines and takes it as its accessible description.
@@ -111,7 +113,15 @@ export type ConvMenuProps = {
   listbox?: boolean;
   /** The id of the element that names the menu, in place of `label`. */
   labelledBy?: string;
+  /**
+   * An anchored menu's own filter (the model menu, §6.16.3): shown above `threshold` items (in
+   * place of {@link MENU_FILTER_THRESHOLD}), with its own field label and empty line.
+   */
+  filter?: MenuFilter;
 };
+
+/** A filter field of its own for an anchored menu: when it shows and what it says. */
+export type MenuFilter = { threshold: number; label: string; empty: string };
 
 /** An anchored menu with more items than this has a filter field at its top. */
 export const MENU_FILTER_THRESHOLD = 10;
@@ -157,7 +167,8 @@ export function menuPlacement(i: MenuPlacementInput): {
 }
 
 /**
- * The entries a filter query keeps (case-insensitive substring of the label): the matching items,
+ * The entries a filter query keeps (case-insensitive substring of the label or of the item's
+ * `keywords`): the matching items,
  * each group label that still heads a match, and the notes; separators drop while filtering. An
  * empty query keeps everything.
  */
@@ -169,7 +180,11 @@ export function filterMenuEntries(entries: ConvMenuEntry[], query: string): Conv
   for (const e of entries) {
     if (e.kind === "label") label = e;
     else if (e.kind === "note") out.push(e);
-    else if (e.kind === "item" && e.label.toLocaleLowerCase().includes(q)) {
+    else if (
+      e.kind === "item" &&
+      (e.label.toLocaleLowerCase().includes(q) ||
+        (e.keywords?.toLocaleLowerCase().includes(q) ?? false))
+    ) {
       if (label !== null) {
         out.push(label);
         label = null;
@@ -397,6 +412,7 @@ export function ConvMenu({
   inline,
   listbox,
   labelledBy,
+  filter,
 }: ConvMenuProps): JSX.Element {
   // Notes are not items, so screen readers skip them inside a menu: they describe the menu (m14).
   const noteId = useId();
@@ -473,6 +489,7 @@ export function ConvMenu({
       sideOffset={sideOffset}
       triggerRef={triggerRef}
       listbox={listbox === true}
+      filter={filter}
       onClose={() => setOpen(false)}
       onTabOut={(dir) => {
         tabOut.current = dir;
@@ -553,8 +570,10 @@ function AnchoredContent({
   onClose,
   onTabOut,
   size,
+  filter,
 }: {
   size: "narrow" | "default" | "wide" | "touch";
+  filter: MenuFilter | undefined;
   shared: Record<string, unknown>;
   entries: ConvMenuEntry[];
   noteId: string;
@@ -577,7 +596,9 @@ function AnchoredContent({
   // The side it opens on (menuPlacement, once); the height is CSS's, from Radix's live room on
   // that side, so it stays right after a resize, a zoom or a phone keyboard.
   const [side, setSide] = useState<"top" | "bottom">(inline ? inlineSide : "bottom");
-  const filterable = itemCount(entries) > MENU_FILTER_THRESHOLD;
+  const filterable = itemCount(entries) > (filter?.threshold ?? MENU_FILTER_THRESHOLD);
+  const filterLabel = filter?.label ?? t("menu.filter");
+  const noMatch = filter?.empty ?? t("menu.noMatch");
   const shown = filterable ? filterMenuEntries(entries, query) : entries;
   // notes and segments (the mode menu's effort) stay in view under the scrolling list; a note
   // before the first item (the mode menu's notice) leads the list instead
@@ -716,8 +737,8 @@ function AnchoredContent({
           data-part="menu-filter"
           type="text"
           value={query}
-          placeholder={t("menu.filter")}
-          aria-label={t("menu.filter")}
+          placeholder={filterLabel}
+          aria-label={filterLabel}
           aria-controls={listId}
           aria-describedby={countId}
           autoComplete="off"
@@ -732,7 +753,7 @@ function AnchoredContent({
           {query.trim() === ""
             ? ""
             : matches.length === 0
-              ? t("menu.noMatch")
+              ? noMatch
               : t("menu.count").replace("{n}", String(matches.length))}
         </div>
       ) : null}
@@ -749,7 +770,7 @@ function AnchoredContent({
         ))}
         {matches.length === 0 ? (
           <div className="cb-cmenu-empty" data-part="menu-empty">
-            {t("menu.noMatch")}
+            {noMatch}
           </div>
         ) : null}
       </div>
