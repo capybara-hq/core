@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLeases, SandboxLockLostError } from "../../src/sandbox/leases.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   fakeSandboxMeta,
   holdNextFakeSandboxUpdate,
@@ -210,8 +211,10 @@ describe("device modes (two replicas)", () => {
  * late call by its lower token, and the intent A recorded first makes B apply the desired list
  * even though the record of what succeeded already matched it. With the fake set to ignore the
  * fence, the same race ends with the provider enforcing A's wider list while PG records the narrow
- * one: the proof that the test measures the race. These replica pairs run on their own provider
- * roots, next to the pair above.
+ * one: the proof that the test measures the race. A provider that cannot honor the fence (E2B)
+ * reports the network it enforces (`appliedNetwork`), so the next lifecycle step on either replica
+ * narrows that wider list again (issue #766). These replica pairs run on their own provider roots,
+ * next to the pair above.
  */
 
 const fencingKernels: TestKernel[] = [];
@@ -226,7 +229,9 @@ const fencingCfg = (root: string, fencing: "enforce" | "ignore") =>
     http: { port: 0 },
     roles: ["api"],
     extensions: [SANDBOX_FAKE],
-    extensionConfig: { "device-fake": { root, updateMode: "updated", fencing } },
+    extensionConfig: {
+      "device-fake": { root, updateMode: "updated", fencing, reportsNetwork: true },
+    },
     extensionPermissions: { autoApprove: true },
   });
 
@@ -399,7 +404,7 @@ describe("device update fencing (two replicas)", () => {
     expect(rec?.pending).toBeUndefined();
   });
 
-  it("without the fence the same race leaves the provider wider than the record (red proof)", async () => {
+  it("without the fence the same race leaves the provider wider than the record (red proof); the next lifecycle step narrows it", async () => {
     const { root, a, b } = await fencingReplicas("ignore");
     const r = await race(root, a, b, false);
     expect(await r.useB).toEqual(r.created);
@@ -413,5 +418,21 @@ describe("device update fencing (two replicas)", () => {
     const rec = await r.recorded();
     expect(hostsOf(rec)).not.toContain("b.example");
     expect(rec?.pending).toBeUndefined();
+
+    // #766: the record already matches the desired list, so only the installed network can tell.
+    // The idle sweep suspends the instance; the next use (on the replica that sent the stale call)
+    // resumes it, reads the wider network and applies the desired list again with its own token
+    const before = (await updates(root)).length;
+    await b.app.get(SandboxService).suspendIdle(new Date(Date.now() + 24 * 60 * 60_000));
+    expect(await r.use(a)).toEqual(r.created);
+    const sent = (await updates(root)).slice(before);
+    expect(sent.map((e) => hostsOf(e.limits).includes("b.example"))).toEqual([false]);
+    expect(hostsOf((await fakeSandboxMeta(root, r.created.id as string))?.limits)).not.toContain(
+      "b.example",
+    );
+    expect(await r.recorded()).toEqual(rec);
+    const ops = await readFakeSandboxOps(root);
+    expect(ops.filter((o) => o[0] === "applied-network")).toHaveLength(1);
+    expect(ops.filter((o) => o[0] === "create")).toHaveLength(1);
   });
 });

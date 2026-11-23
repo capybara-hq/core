@@ -961,6 +961,7 @@ export class DeviceOfflineError extends Error {
 
 // @public
 export interface DeviceProvider {
+    appliedNetwork?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxLimits["network"] | null>;
     background?: SandboxBackground;
     browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
     readonly concurrentExec: true;
