@@ -1,4 +1,5 @@
 import { signedInTarget } from "./auth-sources";
+import { documentHost } from "./headers";
 import { kernelUrl, readBody } from "./kernel-proxy";
 import { trustedPeer } from "./peer";
 import { HOME_PATH } from "./routes";
@@ -46,16 +47,18 @@ export function isNativeFormPost(req: Request): boolean {
 
 /**
  * Whether the submission comes from a page of this site: `Sec-Fetch-Site: same-origin` when the
- * browser sends it, else an `Origin` whose host is the request's. Neither: refused (every current
- * browser sends one of them on a form POST), so another site cannot sign a visitor in to its own
- * account.
+ * browser sends it, else an `Origin` whose host is the one the browser addressed. Neither: refused
+ * (every current browser sends one of them on a form POST), so another site cannot sign a visitor
+ * in to its own account. The addressed host is the CSP's (`documentHost`: a valid
+ * `X-Forwarded-Host`, else `Host`), so both checks agree when a proxy other than server.mjs fronts
+ * Next; behind server.mjs, which drops client-sent forwarding headers, both read `Host`.
  */
 function sameOrigin(req: Request): boolean {
   const site = req.headers.get("sec-fetch-site");
   if (site !== null) return site === "same-origin";
   const origin = req.headers.get("origin");
   if (origin === null || origin === "null") return false;
-  const host = req.headers.get("host") ?? new URL(req.url).host;
+  const host = documentHost(req.headers) ?? new URL(req.url).host;
   try {
     return new URL(origin).host === host;
   } catch {

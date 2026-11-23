@@ -149,6 +149,27 @@ describe("native sign-in POST", () => {
     );
     expect(same.headers.getSetCookie()).toEqual(SESSION_COOKIES);
   });
+
+  it("without Sec-Fetch-Site, the Origin is compared with the host the CSP names", async () => {
+    // a reverse proxy (not server.mjs) that rewrites Host and forwards the browser's host
+    const post = (origin: string) =>
+      proxy(
+        new NextRequest("http://internal:3000/login", {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            host: "internal:3000",
+            "x-forwarded-host": "web.example",
+            origin,
+          },
+          body: "login=a&password=b",
+        }),
+      );
+    expect((await post("http://internal:3000")).headers.getSetCookie()).toEqual([]);
+    expect(kernelCalls("/api/v1/auth/login")).toEqual([]);
+    const res = await post(WEB);
+    expect(res.headers.getSetCookie()).toEqual(SESSION_COOKIES);
+  });
 });
 
 describe("credentials in a page URL", () => {
