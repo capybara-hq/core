@@ -474,23 +474,37 @@ describe("SendMessage to a sub-agent", () => {
       await accountsFor(db).createLocal({ login: "speaker", password: PW, displayName: "S" })
     ).id;
     await testMembers(db).add(orgId, speakerId, "member", ownerId);
-    await db
-      .updateTable("runs")
-      .set({ status: "completed", finished_at: new Date() })
-      .where("id", "=", ctx.runId)
-      .execute();
+    // The child's finished delivery wakes the parent (`subagent.delivered` → ensureRun) after its
+    // commit, at any time: once the first run is no longer active, ensureRun may lock the
+    // conversation row and insert a wake run. Swap the runs in one transaction that takes that lock
+    // first, as ensureRun does, so the two serialize: an ensureRun after it sees the later run
+    // active (no wake run); a direct insert would hold the run's index entry while waiting for the
+    // row lock ensureRun holds before its own insert, a deadlock.
     const laterRunId = randomUUID();
-    await db
-      .insertInto("runs")
-      .values({
-        id: laterRunId,
-        conversation_id: conv,
-        status: "running",
-        agent_version: ctx.agentVersion,
-        trigger_account_id: speakerId,
-        trigger_seq: 0,
-      })
-      .execute();
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", conv)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      await trx
+        .updateTable("runs")
+        .set({ status: "completed", finished_at: new Date() })
+        .where("id", "=", ctx.runId)
+        .execute();
+      await trx
+        .insertInto("runs")
+        .values({
+          id: laterRunId,
+          conversation_id: conv,
+          status: "running",
+          agent_version: ctx.agentVersion,
+          trigger_account_id: speakerId,
+          trigger_seq: 0,
+        })
+        .execute();
+    });
     const later: ToolStepContext = { ...ctx, runId: laterRunId, accountId: speakerId };
     const out = await send(later, "ts1", childId, "FOLLOW-UP: from the speaker");
     expect(out.isError, out.content).toBe(false);
