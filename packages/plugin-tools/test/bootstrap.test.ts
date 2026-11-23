@@ -300,10 +300,7 @@ describe("bootstrap git entries: root paths, parity and refusals", () => {
       );
       const bad = await syncBootstrapExtra({ root: r.dir, file: f, write: true });
       expect(bad.findings.map((x) => [x.rule, x.message])).toEqual([
-        [
-          "bootstrap-extra-path",
-          "other: ./trees/claude-x: the tree is plugin claude-x, not other",
-        ],
+        ["bootstrap-extra-path", "other: ./trees/claude-x: the tree is plugin claude-x, not other"],
       ]);
     } finally {
       rmSync(r.dir, { recursive: true, force: true });
