@@ -1,6 +1,7 @@
 ---
 "@capybara-hq/kernel": patch
 "@capybara-hq/capybara": patch
+"@capybara-hq/web": patch
 ---
 
 Connector template descriptions in zh and en: component lists, the install wizard's templates
