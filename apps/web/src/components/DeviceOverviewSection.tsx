@@ -45,7 +45,10 @@ export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; dev
             {report !== null && report.limits.length > 0 && (
               <KeyValue
                 keyWidth="14ch"
-                rows={report.limits.map((l) => ({ k: deviceText(l.label, lang), v: l.value }))}
+                rows={report.limits.map((l) => ({
+                  k: deviceText(l.label, lang),
+                  v: deviceText(l.value, lang),
+                }))}
               />
             )}
             {report?.changeHint !== undefined && (

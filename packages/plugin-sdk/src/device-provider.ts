@@ -193,10 +193,13 @@ export interface DeviceRef {
   handle: SandboxHandle | null;
 }
 
-/** One limit line of a {@link DeviceReport} (shown as is; the provider enforces it). */
+/**
+ * One limit line of a {@link DeviceReport} (shown as is; the provider enforces it). `value` is
+ * text too: words in it get a Chinese form; pure data (a path, a size) may carry `en` only.
+ */
 export interface DeviceReportLimit {
   label: DeviceText;
-  value: string;
+  value: DeviceText;
 }
 
 /**
@@ -289,12 +292,10 @@ export function parseDeviceReport(value: unknown): DeviceReport {
     const what = `device report limits[${i}]`;
     if (!isRecord(raw)) throw new TypeError(`${what} must be an object`);
     exactKeys(raw, ["label", "value"], what);
-    if (typeof raw.value !== "string" || raw.value === "" || raw.value.length > L.limitValueChars) {
-      throw new TypeError(
-        `${what}.value must be a non-empty string of at most ${L.limitValueChars} characters`,
-      );
-    }
-    return { label: parseText(raw.label, L.limitLabelChars, `${what}.label`), value: raw.value };
+    return {
+      label: parseText(raw.label, L.limitLabelChars, `${what}.label`),
+      value: parseText(raw.value, L.limitValueChars, `${what}.value`),
+    };
   });
   if (typeof reset !== "boolean") throw new TypeError("device report reset must be a boolean");
   const changeHint =

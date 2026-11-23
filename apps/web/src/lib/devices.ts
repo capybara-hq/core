@@ -133,7 +133,7 @@ export interface DeviceReport {
   revision: string;
   description: DeviceText;
   home: string | null;
-  limits: { label: DeviceText; value: string }[];
+  limits: { label: DeviceText; value: DeviceText }[];
   reset: boolean;
   /** Who can change the device's limits and how, in its provider's words; absent when none. */
   changeHint?: DeviceText;

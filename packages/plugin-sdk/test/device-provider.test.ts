@@ -209,15 +209,28 @@ describe("SandboxLimits", () => {
     expect(() =>
       parseDeviceReport({
         ...ok,
-        limits: Array(9).fill({ label: { en: "cpu" }, value: "1" }),
+        limits: Array(9).fill({ label: { en: "cpu" }, value: { en: "1" } }),
       }),
     ).toThrow(TypeError);
     const full = {
       ...ok,
       home: "/home/me",
-      limits: [{ label: { en: "CPU", zh: "处理器" }, value: "2" }],
+      limits: [
+        { label: { en: "CPU", zh: "处理器" }, value: { en: "2 cores", zh: "2 核" } },
+        { label: { en: "Disk" }, value: { en: "10 GB" } },
+      ],
     };
     expect(parseDeviceReport(full)).toEqual(full);
+    // a limit value is text: a bare string, an empty or overlong form or an extra key is refused
+    const limitWith = (value: unknown) => ({ ...ok, limits: [{ label: { en: "CPU" }, value }] });
+    expect(() => parseDeviceReport(limitWith("2"))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "" }))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "x".repeat(61) }))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "2", zh: "x".repeat(61) }))).toThrow(TypeError);
+    expect(() => parseDeviceReport(limitWith({ en: "2", fr: "2" }))).toThrow(TypeError);
+    expect(parseDeviceReport(limitWith({ en: "x".repeat(60), zh: "二" }))).toEqual(
+      limitWith({ en: "x".repeat(60), zh: "二" }),
+    );
     expect(() => parseDeviceReport({ ...ok, reset: "no" })).toThrow(TypeError);
   });
 

@@ -1042,7 +1042,7 @@ export interface DeviceReport {
 // @public
 export interface DeviceReportLimit {
     label: DeviceText;
-    value: string;
+    value: DeviceText;
 }
 
 // @public
