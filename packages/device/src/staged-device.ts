@@ -28,6 +28,7 @@ import { readStrictOwnerCeiling } from "./exec/operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "./exec/operation-worker.js";
 import type { EnvironmentInputs, VerifiedRuntime } from "./exec/runtime-manifest.js";
 import { deviceSandboxHome, osRoots, RootGuard } from "./exec/shared.js";
+import { HOST_PYTHON } from "./host-python.js";
 import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
 import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
@@ -36,8 +37,7 @@ import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
-/** The interpreter the trusted helpers run with, by absolute path (never looked up on PATH). */
-export const HOST_PYTHON = "/usr/bin/python3";
+export { HOST_PYTHON };
 /** How long a stopped operation gets to end on its own before it is killed (machine stop). */
 export const MACHINE_STOP_GRACE_MS = 2000;
 /**
