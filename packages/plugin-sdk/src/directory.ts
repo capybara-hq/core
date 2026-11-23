@@ -28,6 +28,11 @@ export interface Directory {
      * for work done for this org.
      */
     config: unknown;
+    /**
+     * The org the call is made for. Pass it to `configUrlFetch` (`orgId`) or `ctx.net.fetch`, so a
+     * URL an org set is checked against that org's network rules. The kernel always sets it.
+     */
+    orgId?: string;
     cursor?: string;
     signal: AbortSignal;
   }): Promise<{ members: DirectoryMember[]; next?: string }>;

@@ -138,6 +138,7 @@ export async function fetchPage(
       fetched = await resolved.impl.fetch({
         url,
         config: resolved.config,
+        orgId: ctx.orgId,
         signal: ctx.signal,
       });
     } catch (e) {

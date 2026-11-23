@@ -1171,6 +1171,7 @@ export interface Directory {
     configured?(config: unknown): boolean;
     listMembers(args: {
         config: unknown;
+        orgId?: string;
         cursor?: string;
         signal: AbortSignal;
     }): Promise<{
@@ -4997,6 +4998,7 @@ export interface WebFetchProvider {
     fetch(args: {
         url: string;
         config: unknown;
+        orgId?: string;
         signal: AbortSignal;
     }): Promise<WebFetchPage>;
 }
@@ -5021,6 +5023,7 @@ export interface WebSearchProvider {
         blockedDomains?: string[];
         maxResults: number;
         config: unknown;
+        orgId?: string;
         signal: AbortSignal;
     }): Promise<{
         results: WebSearchResult[];

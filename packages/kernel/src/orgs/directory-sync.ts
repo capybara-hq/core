@@ -509,6 +509,7 @@ export class DirectorySync {
         signal.throwIfAborted();
         const r = await directory.listMembers({
           config,
+          orgId,
           ...(cursor !== undefined && { cursor }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(DIRECTORY_PAGE_TIMEOUT_MS)]),
         });

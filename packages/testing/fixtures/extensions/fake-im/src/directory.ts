@@ -18,8 +18,8 @@ export const FakeImDirectoryConfig = z.object({ directoryUrl: z.string().url().o
  * platform config: `listMembers` GETs `<directoryUrl>/members?cursor=<c>` (header `x-pid`) from the
  * effective config it is given, and throws on anything but 200 (the kernel then treats the round as
  * incomplete and removes nobody). An org's own `directoryUrl` goes through `configUrlFetch`, so it
- * reaches the network through `ctx.net` (the platform's value is fetched directly); `listMembers`
- * gets no org id, so `ctx.net` applies the deployment's rules. `configured()` is true iff
+ * reaches the network through `ctx.net` with the call's `orgId` (the platform's value is fetched
+ * directly), so the org's network rules apply. `configured()` is true iff
  * `directoryUrl` is set. dir-mini and dir-opt reuse it.
  */
 export function makeFakeImDirectory(ctx: {
@@ -29,11 +29,11 @@ export function makeFakeImDirectory(ctx: {
   return {
     configured: (config) =>
       FakeImDirectoryConfig.safeParse(config).data?.directoryUrl !== undefined,
-    async listMembers({ config, cursor, signal }) {
+    async listMembers({ config, orgId, cursor, signal }) {
       const directoryUrl = FakeImDirectoryConfig.parse(config).directoryUrl;
       if (directoryUrl === undefined) throw new Error("fake-im directory: directoryUrl is not set");
       const platform = FakeImDirectoryConfig.safeParse(ctx.config).data?.directoryUrl;
-      const get = configUrlFetch(ctx.net, { url: directoryUrl, platform });
+      const get = configUrlFetch(ctx.net, { url: directoryUrl, platform, orgId });
       const q = cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
       const res = await get(`${directoryUrl}/members${q}`, {
         signal,
