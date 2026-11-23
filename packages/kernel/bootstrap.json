@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "62dd9054c20b4344ac6e97a82778cfc911863bd9"
+    "commit": "80dbc32d9fa23df5bf61ed7cc764cb996de0773b"
   },
   "plugins": [
     {
@@ -90,8 +90,8 @@
       "name": "device-docker",
       "source": "npm",
       "npm": "@capybara-hq/plugin-device-docker",
-      "version": "0.1.0-rc.22",
-      "integrity": "sha512-cbxrv0s9YfMT8rw4TygcRYxrb6x0JPVF2WwtdQtT13lHsQmyOSxIT1GJAHxs5GxUZeRIwrt38AaIGXL/NIqvJA==",
+      "version": "0.1.0-rc.23",
+      "integrity": "sha512-xR28dC3NPIsRaG4jprsvWa7nFZkc7aURbl7o16TTP7j0oNBEhkkZcj2EQRRfz3/XpRMKSxqVT2tdK3KMK3y0AQ==",
       "required": false
     },
     {
