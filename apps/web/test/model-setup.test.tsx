@@ -161,7 +161,7 @@ describe("the opt-in provider case, end to end in the web app", () => {
     expect(screen.queryByText(zh.setupLayout.waitingDeployment)).toBeNull();
     home.unmount();
 
-    // the step page in the setup frame: the warn line and the service with "Turn on"
+    // the step page in the setup frame: the warn line and the service with its switch
     resetNavigation("/settings/models");
     renderFrame(shellOf(orgAdmin, { readiness: NOT_ENABLED }), <OrgModelsView />);
     expect(await screen.findByText(zh.models.org.providers.orgFixable)).toBeTruthy();
@@ -178,7 +178,7 @@ describe("the opt-in provider case, end to end in the web app", () => {
 
     const user = userEvent.setup();
     await user.click(
-      within(row).getByRole("button", {
+      within(row).getByRole("switch", {
         name: zh.models.org.providers.enableLabel.replace("{plugin}", "Anthropic 模型"),
       }),
     );
@@ -198,7 +198,10 @@ describe("the opt-in provider case, end to end in the web app", () => {
         .closest("li") as HTMLElement,
     );
     await vi.waitFor(() => expect(onRow.getByText(zh.extensions.enabled)).toBeTruthy());
-    expect(onRow.queryByRole("button", { name: /启用/ })).toBeNull();
+    const on = onRow.getByRole("switch", {
+      name: zh.models.org.providers.enableLabel.replace("{plugin}", "Anthropic 模型"),
+    });
+    expect(on.getAttribute("aria-checked")).toBe("true");
     expect(await screen.findByRole("switch", { name: "Claude X" })).toBeTruthy();
   });
 
@@ -211,7 +214,7 @@ describe("the opt-in provider case, end to end in the web app", () => {
     const before = calls.length;
     const user = userEvent.setup();
     await user.click(
-      await screen.findByRole("button", {
+      await screen.findByRole("switch", {
         name: en.models.org.providers.enableLabel.replace("{plugin}", "Anthropic models"),
       }),
     );
@@ -415,8 +418,8 @@ describe("/settings/models: 模型服务", () => {
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
     expect(within(row).getByText(en.extensions.needsConfig)).toBeTruthy();
-    // no "Turn on" while it waits for config: configuring comes first
-    expect(within(row).queryByRole("button", { name: /Turn on/ })).toBeNull();
+    // no switch while it waits for config: configuring comes first
+    expect(within(row).queryByRole("switch")).toBeNull();
     const user = userEvent.setup();
     await user.click(
       within(row).getByRole("button", {
@@ -465,8 +468,52 @@ describe("/settings/models: 模型服务", () => {
       ),
     ).toBeTruthy();
     expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(row).queryByRole("switch")).toBeNull();
     // the warn line is for org_fixable only
     expect(screen.queryByText(en.models.org.providers.orgFixable)).toBeNull();
+  });
+
+  it("a platform default (scope all) service the org may opt out of: the state and a switch that turns it off", async () => {
+    const on = anthropic({ enabled: true, catalogItem: { itemId: "i1", scope: "all" } });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/readiness": () => json(200, MODEL_READY),
+      "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [] }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [] }),
+      "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [on] }),
+      "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
+      "PUT /api/v1/orgs/o1/extensions/anthropic": () =>
+        json(200, { extension: { ...on, enabled: false } }),
+    });
+    await renderRouteWithCache("/settings/models", lastStubRoutes(), {
+      me: orgAdmin,
+      readiness: MODEL_READY,
+    });
+    const services = await screen.findByRole("list", { name: en.models.org.providers.title });
+    const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
+    expect(within(row).getByText(en.plugins.state.platformDefault)).toBeTruthy();
+    const toggle = within(row).getByRole("switch", {
+      name: en.models.org.providers.enableLabel.replace("{plugin}", "Anthropic models"),
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await userEvent.setup().click(toggle);
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: false }),
+    );
+  });
+
+  it.each([
+    ["a platform-wide (required) service", { required: true }],
+    ["a service the org may not switch", { switchable: false }],
+  ])("%s on in the org: its state, no switch", async (_what, over) => {
+    orgKernel([anthropic({ enabled: true, ...over })], MODEL_READY);
+    await renderRouteWithCache("/settings/models", lastStubRoutes(), {
+      me: orgAdmin,
+      readiness: MODEL_READY,
+    });
+    const services = await screen.findByRole("list", { name: en.models.org.providers.title });
+    const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
+    expect(within(row).queryByRole("switch")).toBeNull();
   });
 
   it.each([
