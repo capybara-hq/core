@@ -1,5 +1,30 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.80
+
+### Patch Changes
+
+- 36738ec: A background start's reference names the provider's own instance generation (device-local's bound
+  machine generation), so the kernel no longer compares it with its own generation: it matches the
+  ref by operation id and handle id and pins the task to the generation it recorded. Every
+  background Bash on a device-local device was left unconfirmed ("its start was not confirmed; it is
+  being reconciled") and never settled; scheduled recovery now acknowledges those starts. A start
+  stopped before it was confirmed now ends `stopped` once the provider acknowledges its operation
+  revoke, instead of running until its retention expires (#765).
+- ab71de9: The plugin enable wizard opens on a 选择连接器 / "Choose connectors" step when the plugin has more
+  than one connector template or a default-off one: every template with its icon, name, description
+  and a mark saying what its step needs (nothing, an OAuth client, an address, a credential). Default-on
+  templates start checked, default-off ones unchecked, one the org already has a connector for is kept
+  (locked on); only checked templates get a step and a connector. The org install body
+  (`PUT …/catalog/:itemId/switch` inputs, `POST …/catalog/:itemId/install`) takes `templatesOn`: the
+  template ids to switch on with the install; the plugin's other templates are switched off in the org
+  (audited `component.org_switched`) and stay available on /connectors. Unknown, disabled or not offered
+  ids are refused (`validation_failed` at `templatesOn`); absent keeps the templates on in the org now.
+  The Platform operation `plugins.install` takes `templatesOn` too. The design `CheckList` row takes an
+  optional `mark` (a 24 px mark tile before the name).
+- Updated dependencies [36738ec]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.66
+
 ## 0.1.0-rc.79
 
 ### Patch Changes
