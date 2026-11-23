@@ -10,6 +10,7 @@ import {
   type ExtensionNet,
   type Logger,
   type PromptInfo,
+  platformOnly,
   type ToolContent,
   ToolError,
   type ToolResult,
@@ -67,19 +68,22 @@ const CLIENT_INFO = { name: "capybara-fake-connector", version: "0.1.0" };
 /** The kernel's pipeline timeout (through the signal) decides, not the SDK's default 60 s. */
 const REQUEST_TIMEOUT_MS = 3_600_000;
 
-const DeploymentConfig = z.object({
-  /** The auth hint `inspect` reports behind a 401. */
-  inspectAuth: z.enum(["bearer", "api_key"]).default("bearer"),
-  /**
-   * The connector kind it provides (default `fake`). A deployment that loads no other connector
-   * extension can name it `mcp`, so clients that know only the official kinds (the web install
-   * wizard) drive it like an MCP connector.
-   */
-  kind: z
-    .string()
-    .regex(/^[a-z][a-z0-9-]{0,31}$/)
-    .default("fake"),
-});
+/** Platform-only: connector@1 calls carry no org config (spec §5.3). */
+const DeploymentConfig = platformOnly(
+  z.object({
+    /** The auth hint `inspect` reports behind a 401. */
+    inspectAuth: z.enum(["bearer", "api_key"]).default("bearer"),
+    /**
+     * The connector kind it provides (default `fake`). A deployment that loads no other connector
+     * extension can name it `mcp`, so clients that know only the official kinds (the web install
+     * wizard) drive it like an MCP connector.
+     */
+    kind: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,31}$/)
+      .default("fake"),
+  }),
+);
 
 /** The `_meta` key of a remote tool that names the remote tool serving it (its route). */
 export const FAKE_ROUTE_META = "fake/route";

@@ -1,5 +1,6 @@
 import {
   defineExtension,
+  platformOnly,
   secret,
   ToolError,
   type ToolHandler,
@@ -18,19 +19,23 @@ import {
   proxyCheck,
   throwCheck,
 } from "./checks.js";
-import { FakeImOrgConfig, fakeImDirectory } from "./directory.js";
+import { FakeImDirectoryConfig, fakeImDirectory } from "./directory.js";
 import { fakeImIdentitySource } from "./identity.js";
 
 export { FakeImConnection, fakeImWebhook, makeFakeImChannel } from "./channel.js";
-export { FakeImOrgConfig, fakeImDirectory } from "./directory.js";
+export { FakeImDirectoryConfig, fakeImDirectory } from "./directory.js";
 export { fakeImIdentitySource } from "./identity.js";
 
-/** 部署级配置：平台地址与登录用的 OAuth 客户端（clientSecret 走密钥存储）。 */
+/**
+ * Deployment config: the platform address and the OAuth client for login (clientSecret goes to the
+ * secret store), platform-only; and the org-overridable `directoryUrl` of the directory.
+ */
 const Deployment = z.object({
-  platformUrl: z.string().url(),
-  tenant: z.string().min(1).default("t1"),
-  clientId: z.string().min(1),
-  clientSecret: secret(z.string().min(1)),
+  platformUrl: platformOnly(z.string().url()),
+  tenant: platformOnly(z.string().min(1).default("t1")),
+  clientId: platformOnly(z.string().min(1)),
+  clientSecret: platformOnly(secret(z.string().min(1))),
+  ...FakeImDirectoryConfig.shape,
 });
 export type FakeImDeployment = z.infer<typeof Deployment>;
 
@@ -102,7 +107,7 @@ export default defineExtension({
       "pad-to-limit",
     ],
   },
-  config: { deployment: Deployment, org: FakeImOrgConfig },
+  config: { deployment: Deployment },
   setup(ctx) {
     const config = () => Deployment.parse(ctx.config);
     ctx.provide(

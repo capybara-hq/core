@@ -68,17 +68,21 @@ beforeAll(async () => {
   });
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
-  for (const [plugin, config] of [
-    ["everything", undefined],
-    ["dir-mini", { url: "http://127.0.0.1:9/dir" }],
-  ] as const) {
+  for (const plugin of ["everything", "dir-mini"]) {
     const res = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
-      payload: { enabled: true, ...(config !== undefined && { config }) },
+      payload: { enabled: true },
     });
     expect(res.statusCode, res.body).toBe(200);
   }
+  // dir-mini's directory is the org's copy of its overridable `directoryUrl`
+  const copy = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/extensions/dir-mini/overrides`,
+    payload: { values: { directoryUrl: "http://127.0.0.1:9/dir" } },
+  });
+  expect(copy.statusCode, copy.body).toBe(200);
   const ag = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

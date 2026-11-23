@@ -617,7 +617,7 @@ describe("部署级插件配置入 PG（审查重点 5）", () => {
       baseUrl: "override",
       apiKey: "override",
     });
-    expect(field(v, "host")).not.toHaveProperty("org");
+    expect(field(v, "host")).toMatchObject({ level: "platform" });
 
     // with every overridable field set, orgs have nothing they must configure
     const full = await admin({

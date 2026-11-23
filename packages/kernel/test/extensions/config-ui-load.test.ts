@@ -145,32 +145,18 @@ describe("config UI hints: load-time validation, static schemas, issue message k
     expect(warnings[0]?.msg).toMatch(/form schema/);
   });
 
-  it("a hint conversion that throws: the org list, the org config refusal and the channel schema still answer", async () => {
+  it("a hint conversion that throws: the org list and the channel schema still answer", async () => {
     const before = logs.length;
     const orgId = await createOrgWithProviders(k as TestKernel, admin, "Throw");
     for (let i = 0; i < 2; i++) {
       const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
       expect(list.statusCode, list.body).toBe(200);
-      const exts = (
-        list.json() as {
-          extensions: { plugin: string; configurable: boolean; orgConfigSchema: unknown }[];
-        }
-      ).extensions;
-      // the other extensions are still listed; this one has no form schema
+      const exts = (list.json() as { extensions: { plugin: string; configurable: boolean }[] })
+        .extensions;
+      // the other extensions are still listed; this one has an overridable field
       expect(exts.some((e) => e.plugin === "badhints")).toBe(true);
-      expect(exts.find((e) => e.plugin === "throwhints")).toMatchObject({
-        configurable: true,
-        orgConfigSchema: null,
-      });
+      expect(exts.find((e) => e.plugin === "throwhints")).toMatchObject({ configurable: true });
     }
-    // a refused org config still names its issues (the messages path never throws)
-    const bad = await admin({
-      method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/throwhints`,
-      payload: { enabled: true, config: { team: 5 } },
-    });
-    expect(bad.statusCode, bad.body).toBe(400);
-    expect(bad.json()).toMatchObject({ error: { code: "extension.config_invalid" } });
     // the channel connection schema: an empty object schema, never a 500
     for (let i = 0; i < 2; i++) {
       const res = await admin({
@@ -200,38 +186,10 @@ describe("config UI hints: load-time validation, static schemas, issue message k
     expect(refused.json()).toMatchObject({ error: { code: "extension.config_invalid" } });
     // one warning per schema and level, not one per request
     const warned = logs.slice(before).filter((l) => l.level === "warn");
-    expect(warned.filter((l) => l.plugin === "throwhints")).toHaveLength(1);
-    expect(warned.filter((l) => l.plugin === "throwhints")[0]?.msg).toMatch(/org config form/);
+    // the org list builds no form schema of its own
+    expect(warned.filter((l) => l.plugin === "throwhints")).toHaveLength(0);
     expect(warned.filter((l) => l.plugin === "chan-throwhints")).toHaveLength(1);
     expect(warned.filter((l) => l.plugin === "chan-throwhints")[0]?.msg).toMatch(/connection/);
-  });
-
-  it("valid org hints pass through (x-ui, x-hot); a custom issue names its message key", async () => {
-    const orgId = await createOrgWithProviders(k as TestKernel, admin);
-    const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
-    expect(list.statusCode, list.body).toBe(200);
-    const ext = (
-      list.json() as { extensions: { plugin: string; orgConfigSchema: Schema | null }[] }
-    ).extensions.find((e) => e.plugin === "badhints");
-    expect(ext?.orgConfigSchema?.["x-ui"]).toMatchObject({
-      messages: { taken: { en: "Already taken" } },
-    });
-    expect(ext?.orgConfigSchema?.properties.team).toMatchObject({
-      "x-hot": true,
-      "x-ui": { label: { en: "Team" } },
-    });
-    const bad = await admin({
-      method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/badhints`,
-      payload: { enabled: true, config: { team: "taken" } },
-    });
-    expect(bad.statusCode, bad.body).toBe(400);
-    expect(bad.json()).toMatchObject({
-      error: {
-        code: "extension.config_invalid",
-        details: [{ path: "", segments: [], messageKey: "taken" }],
-      },
-    });
   });
 
   it("an unloaded install record: the package's configSchemas.deployment as schema (validated false); without it, schema null", async () => {

@@ -21,7 +21,7 @@ export const deploycfgProbe = (): DeploycfgProbe => {
 /** Platform-only as a whole: a required field left empty keeps the extension pending. */
 export const DeploycfgSchema = platformOnly(
   z.object({
-    /** 必填：没配时插件待配置。 */
+    /** Required: the extension waits for config while it is unset. */
     endpoint: z.string().min(1),
     region: z.string().default("us"),
     greeting: z.string().default("hi").meta({ hot: true }),
@@ -33,7 +33,7 @@ export const DeploycfgSchema = platformOnly(
     mode: z.string().default("auto"),
     tags: z.array(z.string()).default([]),
     headers: z.record(z.string(), z.string()).default({}),
-    /** 为 true 时 setup 抛错（测试非 hot 改动重新加载失败）。 */
+    /** When true, setup throws (tests a failed reload after a non-hot change). */
     failSetup: z.boolean().default(false),
   }),
 );

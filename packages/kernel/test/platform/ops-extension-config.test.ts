@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { defineExtension, orgAccess, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
+import { defineExtension, platformOnly, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -25,35 +25,35 @@ import { consentAndSubmit } from "../helpers/secure-input.js";
 
 /**
  * Extension config through the `Platform` tool (platform web parity spec §4, §7.2, Task 9): the
- * deployment config (read, write, clear), the org config and the org's copy of overridable fields
- * (read, write, take, save, drop). Secrets are person fields: the model names them in `askPerson`,
+ * deployment config (read, write, clear) and the org's copy of overridable fields (read, take,
+ * save, drop). Secrets are person fields: the model names them in `askPerson`,
  * the person types them on the card, and they reach the service only through `personInputs`.
  * Values appear in no event, approval, audit row or log line.
  */
 
 const NAME = "person-cfg";
+// `baseUrl` is required and overridable, and the platform leaves it empty: every org needs a copy
 const DEPLOYMENT = z.object({
-  region: z.string().default("us"),
-  endpoint: orgAccess(z.string().url().optional(), "override"),
-  token: orgAccess(secret(z.string().min(1).optional()), "override"),
-  master: secret(z.string().min(1).optional()),
+  region: platformOnly(z.string().default("us")),
+  endpoint: z.string().url().optional(),
+  token: secret(z.string().min(1).optional()),
+  master: platformOnly(secret(z.string().min(1).optional())),
+  baseUrl: z.string().url(),
 });
-const ORG = z.object({ baseUrl: z.string().url(), apiKey: secret(z.string().min(1)) });
 const real = defineExtension({
   name: NAME,
   version: "1.0.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: {},
-  config: { deployment: DEPLOYMENT, org: ORG },
+  config: { deployment: DEPLOYMENT },
   setup() {},
 });
 const entry = [
-  'import { defineExtension, orgAccess, secret } from "@capybara-hq/plugin-sdk";',
+  'import { defineExtension, platformOnly, secret } from "@capybara-hq/plugin-sdk";',
   'import { z } from "zod";',
   `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: {`,
-  '  deployment: z.object({ region: z.string().default("us"), endpoint: orgAccess(z.string().url().optional(), "override"), token: orgAccess(secret(z.string().min(1).optional()), "override"), master: secret(z.string().min(1).optional()) }),',
-  "  org: z.object({ baseUrl: z.string().url(), apiKey: secret(z.string().min(1)) }),",
+  '  deployment: z.object({ region: platformOnly(z.string().default("us")), endpoint: z.string().url().optional(), token: secret(z.string().min(1).optional()), master: platformOnly(secret(z.string().min(1).optional())), baseUrl: z.string().url() }),',
   "}, setup() {} });",
 ].join("\n");
 
@@ -133,7 +133,6 @@ describe("registration", () => {
       "extensions.platform-set-config",
       "extensions.platform-clear-config",
       "extensions.org-config",
-      "extensions.set-org-config",
       "extensions.take-org-config",
       "extensions.save-org-config",
       "extensions.drop-org-config",
@@ -142,26 +141,22 @@ describe("registration", () => {
     }
     expect(op("extensions.platform-clear-config").rememberable).toBe(false);
     expect(op("extensions.drop-org-config").rememberable).toBe(false);
-    for (const id of [
-      "extensions.platform-set-config",
-      "extensions.set-org-config",
-      "extensions.save-org-config",
-    ]) {
-      expect(op(id).omits, id).toContain(
-        id === "extensions.set-org-config" ? "force" : "secretEntries",
-      );
+    // the org config is the org's copy: no operation writes a separate org config
+    expect(ops.get("extensions.set-org-config")).toBeNull();
+    for (const id of ["extensions.platform-set-config", "extensions.save-org-config"]) {
+      expect(op(id).omits, id).toContain("secretEntries");
       expect(op(id).personFields, id).toBeTypeOf("function");
     }
   });
 });
 
 describe("plugins.set-enabled before the org config exists", () => {
-  it("returns plugin.needs_input whose next step names extensions.set-org-config", async () => {
+  it("returns plugin.needs_input whose next step names extensions.save-org-config", async () => {
     const o = op("plugins.set-enabled");
     const input = o.input.parse({ itemId, enabled: true });
     const pre = await o.precheck?.(input, ctxOf(env.rootId));
     expect(pre).toMatchObject({ ok: false, code: "plugin.needs_input" });
-    expect((pre as { message: string }).message).toContain("extensions.set-org-config");
+    expect((pre as { message: string }).message).toContain("extensions.save-org-config");
   });
 });
 
@@ -241,6 +236,7 @@ describe("the org's copy of the overridable fields", () => {
       { extension: NAME, values: {} },
       ctxOf(env.rootId),
     );
+    // the copy's secrets: platform-only `master` is not the org's to set
     expect(target.fields.map((f) => f.path)).toEqual(["token"]);
 
     const c = withInputs(env.rootId, { token: COPY_TOKEN });
@@ -248,7 +244,8 @@ describe("the org's copy of the overridable fields", () => {
       "extensions.save-org-config",
       {
         extension: NAME,
-        values: { endpoint: "https://org.example.com" },
+        // the first save must be valid on its own: the required baseUrl
+        values: { endpoint: "https://org.example.com", baseUrl: "https://base.example.com" },
         askPerson: ["token"],
       },
       c,
@@ -327,7 +324,7 @@ type Ev<T extends ConversationEvent["type"]> = Extract<ConversationEvent, { type
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t: T) =>
   evs.filter((e): e is Ev<T> => e.type === t);
 
-describe("extensions.set-org-config through the Platform tool (acceptance 1 and 2)", () => {
+describe("extensions.save-org-config through the Platform tool (acceptance 1 and 2)", () => {
   it("asks for the API key on the card, stores it from the sealed value, and leaks it nowhere", async () => {
     const res = await env.root({
       method: "POST",
@@ -347,51 +344,50 @@ describe("extensions.set-org-config through the Platform tool (acceptance 1 and 
     const convId = await createConv(env.root, env.orgId, agentId);
     const call = {
       action: "call",
-      operation: "extensions.set-org-config",
+      operation: "extensions.save-org-config",
       params: {
         extension: NAME,
         values: { baseUrl: "https://api.example.com" },
-        askPerson: ["apiKey"],
+        askPerson: ["token"],
       },
     };
     await postMessage(env.root, env.orgId, convId, `tool:Platform:${JSON.stringify(call)}`);
     // the person approves the call, then types the key in the secure input request: the decision
     // seals it for the resumed call
     const { paths } = await consentAndSubmit(env.db, env.root, env.orgId, convId, {
-      apiKey: ORG_KEY,
+      token: ORG_KEY,
     });
-    expect(paths).toEqual(["apiKey"]);
+    expect(paths).toEqual(["token"]);
     await waitForTerminal(env.db, convId, 1, 30_000);
     const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
     expect(result?.isError, result?.content).toBe(false);
-    expect(result?.content).toContain("`apiKey`: entered by the person");
+    expect(result?.content).toContain("`token`: entered by the person");
 
-    // the org config view shows the key set, never its value
+    // the org's view: the copy is valid now; the key shows as set, never its value
     const list = await env.root({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` });
     expect(list.statusCode, list.body).toBe(200);
-    const ext = (
-      list.json() as {
-        extensions: {
-          plugin: string;
-          config: Record<string, unknown> | null;
-          secrets: { path: string; set: boolean }[];
-        }[];
-      }
-    ).extensions.find((e) => e.plugin === NAME);
-    expect(ext?.secrets).toContainEqual({ path: "apiKey", set: true });
-    expect(ext?.config).toMatchObject({ baseUrl: "https://api.example.com" });
+    const ext = (list.json() as { extensions: Record<string, unknown>[] }).extensions.find(
+      (e) => e.plugin === NAME,
+    );
+    expect(ext).toMatchObject({ configurable: true, overrideState: "copy", needsConfig: false });
     const read = (await run("extensions.org-config", { extension: NAME }, ctxOf(env.rootId))) as {
-      orgConfig: { secrets: { path: string; set: boolean }[] };
+      configurable: boolean;
+      needsConfig: boolean;
+      deploymentCopy: { fields: { path: string; org?: { set?: boolean } }[] };
     };
-    expect(read.orgConfig.secrets).toContainEqual({ path: "apiKey", set: true });
+    expect(read).toMatchObject({ configurable: true, needsConfig: false });
+    expect(read).not.toHaveProperty("orgConfig");
+    expect(read.deploymentCopy.fields.find((f) => f.path === "token")?.org).toEqual({
+      set: true,
+    });
 
-    const audit = await audits("org.plugin_config.updated");
+    const audit = await audits("extension.org_override_saved");
     expect(audit.map((r) => r.detail)).toContainEqual(
       expect.objectContaining({
         via: "agent",
-        operation: "extensions.set-org-config",
+        operation: "extensions.save-org-config",
         agentConversationId: convId,
-        inputsProvided: ["apiKey"],
+        inputsProvided: ["token"],
       }),
     );
 

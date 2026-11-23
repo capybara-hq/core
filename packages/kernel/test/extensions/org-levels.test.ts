@@ -1,4 +1,4 @@
-import { platformOnly, secret } from "@capybara-hq/plugin-sdk";
+import { configJsonSchema, platformOnly, secret } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { parseDeploymentConfig } from "../../src/extensions/cli.js";
@@ -106,6 +106,28 @@ describe("org field levels (spec A §5.1, §5.4a)", () => {
       ),
     ).toEqual({ a: "platform", b: "platform" });
     expect(jsonSchemaFieldLevels(undefined).size).toBe(0);
+  });
+
+  // the static form (an unloaded module's JSON Schema) and the loaded schema agree on every level
+  it.each([
+    [
+      "platformOnly(x).optional()",
+      z.object({ a: platformOnly(z.string()).optional(), b: z.string() }),
+    ],
+    [
+      "platformOnly(x).default()",
+      z.object({ a: platformOnly(z.string()).default("d"), b: z.string() }),
+    ],
+    ["secret(platformOnly(x))", z.object({ a: secret(platformOnly(z.string())), b: z.string() })],
+    [
+      "platformOnly(x.default())",
+      z.object({ a: platformOnly(z.string().default("d")), b: z.number() }),
+    ],
+    ["a root platformOnly", platformOnly(z.object({ a: z.string(), b: secret(z.string()) }))],
+  ])("fieldLevels equals jsonSchemaFieldLevels(configJsonSchema(s)) for %s", (_name, s) => {
+    const loaded = Object.fromEntries(fieldLevels(s));
+    expect(Object.fromEntries(jsonSchemaFieldLevels(configJsonSchema(s)))).toEqual(loaded);
+    expect(loaded.a).toBe("platform");
   });
 });
 

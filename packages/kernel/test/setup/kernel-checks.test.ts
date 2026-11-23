@@ -194,7 +194,7 @@ describe("kernel channel checks over the routes", () => {
     const en = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/fake-im`,
-      payload: { enabled: true, config: { url: im.book(orgId).url } },
+      payload: { enabled: true },
     });
     expect(en.statusCode, en.body).toBe(200);
     itemId = await seedFakeImGuideItem(db, DOC);

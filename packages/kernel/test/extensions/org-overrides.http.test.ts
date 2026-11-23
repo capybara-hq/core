@@ -277,6 +277,19 @@ describe("mergeCopy (the copy half of the effective config)", () => {
       }),
     ).toEqual({ host: "h", url: "o", key: "own-key", nested: { id: "oid", token: "own-tok" } });
   });
+
+  it("keeps a platform-only secret in the effective config (an org cannot set it)", () => {
+    const withMaster = z.object({
+      master: platformOnly(secret(z.string())),
+      url: z.string(),
+    });
+    const merged = mergeCopy(
+      withMaster,
+      { master: "PLAT-master", url: "p" },
+      { config: { url: "o", master: "smuggled" }, secrets: { master: "smuggled-secret" } },
+    );
+    expect(merged).toEqual({ master: "PLAT-master", url: "o" });
+  });
 });
 
 describe("org copies of overridable config", () => {

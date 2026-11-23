@@ -163,7 +163,7 @@ describe("setupCheck ids in the permission snapshot", () => {
   const set = (setupChecks?: string[]) =>
     buildPermissionSet({
       provides: [],
-      config: { deployment: [], org: [] },
+      config: { deployment: [] },
       tables: [],
       permissions: mf("chk-snap", setupChecks).permissions,
     });

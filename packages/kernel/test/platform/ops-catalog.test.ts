@@ -160,7 +160,6 @@ describe("registration", () => {
       "extensions.points",
       "extensions.previewers",
       "extensions.save-org-config",
-      "extensions.set-org-config",
       "extensions.set-point-default",
       "extensions.set-previewers",
       "extensions.set-tool-enabled",

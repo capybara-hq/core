@@ -430,9 +430,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       .mockImplementation(async <T>(org: string, point: string) =>
         point === "context" && org === orgId
           ? {
-              providers: [
-                { extension: "ctx-probe", impl: provider as T, orgConfig: {}, config: {} },
-              ],
+              providers: [{ extension: "ctx-probe", impl: provider as T, config: {} }],
               failed: new Set<string>(),
             }
           : real<T>(org, point),

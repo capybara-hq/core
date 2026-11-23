@@ -12,7 +12,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
-import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
@@ -121,7 +120,7 @@ beforeAll(async () => {
     const en = await req({
       method: "PUT",
       url: `/api/v1/orgs/${org}/extensions/fake-im`,
-      payload: { enabled: true, config: { url: im.book(org).url } },
+      payload: { enabled: true },
     });
     expect(en.statusCode, en.body).toBe(200);
   }
@@ -401,7 +400,7 @@ describe("setup checks: reading and running", () => {
       const on = await owner({
         method: "PUT",
         url: `/api/v1/orgs/${orgId}/extensions/fake-im`,
-        payload: { enabled: true, config: { url: im.book(orgId).url } },
+        payload: { enabled: true },
       });
       expect(on.statusCode, on.body).toBe(200);
     }
@@ -504,17 +503,16 @@ describe("setup checks: reading and running", () => {
     await redis.del(slots);
   });
 
-  it("org config secrets cannot be read: the check is not run (fail closed)", async () => {
+  it("the org's effective config cannot be read: the check is not run (fail closed)", async () => {
     const id = await connection();
     const spy = vi
-      .spyOn(k.app.get(OrgExtensionConfigs), "get")
+      .spyOn(k.app.get(EffectiveConfigs), "get")
       .mockRejectedValue(new Error("decrypt failed"));
     try {
-      const s = await runOk("proxy", { connectionId: id });
-      expect(s).toMatchObject({
-        status: "unknown",
-        reason: { en: "Checks are temporarily unavailable; retry later." },
-      });
+      // the target cannot be prepared: the run is refused before any check runs
+      const r = await run("proxy", { connectionId: id });
+      expect(r.statusCode).toBe(500);
+      expect(r.body).not.toContain("decrypt failed");
     } finally {
       spy.mockRestore();
     }

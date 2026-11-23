@@ -4,6 +4,7 @@ import {
   type ExternalIdentity,
   type IdentitySource,
   IdentitySourceRefused,
+  platformOnly,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -27,7 +28,8 @@ export interface FakeIdpCode {
 export const fakeIdpCode = (c: FakeIdpCode): string =>
   Buffer.from(JSON.stringify(c)).toString("base64url");
 
-const Deployment = z.object({ tenant: z.string(), clientSecret: secret(z.string()) });
+/** Platform-only: identity-source@1 calls carry no org config (spec §5.3). */
+const Deployment = platformOnly(z.object({ tenant: z.string(), clientSecret: secret(z.string()) }));
 
 /** 测试用 `identity-source@1`：授权地址带上 state / nonce / 租户；回调把授权码解成外部身份。 */
 export default defineExtension({

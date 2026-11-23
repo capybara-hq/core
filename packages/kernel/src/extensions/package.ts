@@ -265,8 +265,7 @@ export function permissionSetOfSection(
     provides: m.provides,
     requires: m.requires,
     optional: m.optional,
-    // the static manifest has no org config any more (the permission set still has the key)
-    config: { deployment: strip(m.config.deployment), org: [] },
+    config: { deployment: strip(m.config.deployment) },
     tables,
     permissions: m.permissions,
     warningsDigest: warningsDigest(migrationWarnings(migrationSql, m.name)),

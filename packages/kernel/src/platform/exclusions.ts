@@ -535,6 +535,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
   // models
   // orgs
   {
+    route: "PUT /api/v1/orgs/:orgId/extensions/:extension",
+    category: "internal",
+    reason:
+      "The web's direct switch of an extension; an extension's org switch is its plugin's switch, which plugins.set-enabled mirrors (with its uninstall preview), and the org's config of an extension is its copy of the overridable fields (extensions.save-org-config)",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/extensions/:extension/directory/sync",
     category: "human-only",
     reason: "Adds and removes org members from the directory; only an admin, by hand, starts it",

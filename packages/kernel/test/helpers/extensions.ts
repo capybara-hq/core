@@ -9,7 +9,6 @@ import type { Kysely } from "kysely";
 import type { core } from "zod";
 import { ClientBuilds } from "../../src/client/client-builds.service.js";
 import type { KernelDeps } from "../../src/ctx/create-ctx.js";
-import type { Keyring } from "../../src/ctx/secrets.js";
 import { ExtensionApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionBlobs } from "../../src/extensions/blobs.js";
 import type { EffectiveConfig, EffectiveConfigs } from "../../src/extensions/effective-config.js";
@@ -191,30 +190,21 @@ export function replicaStatusFor(
   return s;
 }
 
-/**
- * Org extension configs over `db` (its own pool) and `host`; `onSecrets` receives the secret values
- * handled (the kernel masks them in its logs).
- */
+/** Org extension enablement over `db` (its own pool) and `host`. */
 export function orgConfigsFor(
   db: Kysely<any>,
-  keyring: Keyring,
   host: ExtensionHost,
-  o: {
-    onSecrets?: (values: string[]) => void;
-    installed?: { name: string; version: string }[];
-  } = {},
+  o: { installed?: { name: string; version: string }[] } = {},
 ): OrgExtensionConfigs {
   const h = handlesFor(db);
-  const quiet = { warn() {}, addOrgSecrets: o.onSecrets ?? (() => {}) } as unknown as KernelLogger;
+  const quiet = { warn() {}, addOrgSecrets() {} } as unknown as KernelLogger;
   return new OrgExtensionConfigs(
     h.db,
     h.txHost,
-    keyring,
     host,
     orgLockFor(db),
     { list: async () => o.installed ?? [] } as unknown as ExtensionInstalls,
     new KernelEvents(quiet),
-    quiet,
     // no org copies here: every org runs with the platform's (loaded) config
     {
       get: async (_orgId: string, plugin: string) => ({

@@ -45,7 +45,7 @@ export const NEEDS_INPUT =
 
 /** `plugin.needs_input` when what is missing is its extension's org config (an agent can set it). */
 export const needsOrgConfig = (extension: string): string =>
-  `This plugin's extension ${extension} needs its org config first: read what is missing with extensions.org-config, fill it in with extensions.set-org-config (the person enters secrets in a secure input request; the org's own copy of overridable platform fields is extensions.save-org-config), then call plugins.set-enabled again.`;
+  `This plugin's extension ${extension} needs its org config first: read what is missing with extensions.org-config, fill in the org's own copy of the overridable fields with extensions.save-org-config (the person enters secrets in a secure input request), then call plugins.set-enabled again.`;
 
 /** The English name of a plugin as next steps and messages name it. */
 const enName = (i: OrgCatalogItem): string => localized(i.displayName, i.name).en;
@@ -92,17 +92,12 @@ const row = (i: OrgCatalogItem, role: ErrorRole) => ({
   request: i.request,
 });
 
-const hasConfigFields = (schema: OrgExtensionView["orgConfigSchema"]): boolean => {
-  const props = (schema as { properties?: unknown } | null)?.properties;
-  return typeof props === "object" && props !== null && Object.keys(props).length > 0;
-};
-
 /**
  * Why switching the plugin on needs input first, as the `plugin.needs_input` message, or null: its
- * extension's org config misses required values (an agent fills it in with
- * `extensions.set-org-config`), or connector templates without their connector, or anything else
- * the item's `needs_config` stands for (connector input: `plugins.install`, `plugins.configure-connectors`). Unlike the web's
- * install wizard, an org config form whose required values are all stored does not stop the switch.
+ * extension's effective config for the org is not valid (an agent fills in the org's copy with
+ * `extensions.save-org-config`), or connector templates without their connector, or anything else
+ * the item's `needs_config` stands for (connector input: `plugins.install`,
+ * `plugins.configure-connectors`).
  */
 function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[]): string | null {
   const own = extensions.find((e) => e.catalogItem?.itemId === item.id);
@@ -113,10 +108,7 @@ function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[
   if (item.installed !== null) return null;
   if (item.componentCounts.connectorTemplates > 0) return NEEDS_INPUT;
   if (item.componentCounts.extension === 0) return null;
-  return own !== undefined &&
-    !own.enabled &&
-    hasConfigFields(own.orgConfigSchema) &&
-    own.needsConfig
+  return own !== undefined && !own.enabled && own.configurable && own.needsConfig
     ? needsOrgConfig(own.plugin)
     : null;
 }
@@ -282,7 +274,7 @@ export class PluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.needs_input",
-            next: "When its extension's org config is missing, fill it in with extensions.set-org-config (secrets in askPerson), then call again; a plugin that needs connector input is installed with plugins.install (or plugins.configure-connectors once installed), the person entering the credentials on the card.",
+            next: "When its extension's org config is missing, fill in the org's copy with extensions.save-org-config (secrets in askPerson), then call again; a plugin that needs connector input is installed with plugins.install (or plugins.configure-connectors once installed), the person entering the credentials on the card.",
           },
           {
             code: "catalog.approval_required",

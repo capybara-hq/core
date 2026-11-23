@@ -1,26 +1,22 @@
-import { type Directory, defineExtension } from "@capybara-hq/plugin-sdk";
-import { z } from "zod";
-import { fakeImDirectory } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
-
-/** 组织级配置可不填（只用插件别的能力时）：`url` 缺省即「通讯录未配置」。 */
-const OrgConfig = z.object({ url: z.string().url().optional() });
-
-const directory: Directory = {
-  configured: (orgConfig) => OrgConfig.safeParse(orgConfig).data?.url !== undefined,
-  listMembers: (args) => fakeImDirectory.listMembers(args),
-};
+import { defineExtension } from "@capybara-hq/plugin-sdk";
+import {
+  FakeImDirectoryConfig,
+  fakeImDirectory,
+} from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /**
- * Ruling A28 测试插件：`directory@1` 实现了可选的 `configured`；组织级配置 `{ url? }` 没填时内核静默跳过
- * （不扫描、不投递、不审计），手动同步 409 `directory.not_configured`。身份源键 `dir-opt:<租户>`。
+ * Ruling A28 test extension: `directory@1` implements the optional `configured`; while the
+ * org-overridable deployment field `directoryUrl` is unset in the effective config, the kernel
+ * skips silently (no scan, no job, no audit) and a manual sync is 409 `directory.not_configured`.
+ * Identity source key `dir-opt:<tenant>`.
  */
 export default defineExtension({
   name: "dir-opt",
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["directory@1"],
-  config: { org: OrgConfig },
+  config: { deployment: FakeImDirectoryConfig },
   setup(ctx) {
-    ctx.provide("directory@1", directory);
+    ctx.provide("directory@1", fakeImDirectory);
   },
 });

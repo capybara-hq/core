@@ -229,14 +229,11 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
   // older snapshots lack `ui`, `ui.components` and `client` (read as empty / false)
   const ui = p.ui ?? { views: [], embeds: [], components: [] };
   const components = ui.components ?? [];
-  // Level-prefixed like the config group: a field at both levels (an overridable secret such as
-  // `appSecret`) is two items, not one name listed twice.
-  const secretFields = (["deployment", "org"] as const).flatMap((level) =>
-    set.config[level].filter((f) => f.secret).map((f) => `${level}:${f.path || "<root>"}`),
-  );
-  const configFields = (["deployment", "org"] as const).flatMap((level) =>
-    set.config[level].map((f) => `${level}:${f.path || "<root>"}`),
-  );
+  // Level-prefixed like the config group (`deployment:<path>`).
+  const secretFields = set.config.deployment
+    .filter((f) => f.secret)
+    .map((f) => `deployment:${f.path || "<root>"}`);
+  const configFields = set.config.deployment.map((f) => `deployment:${f.path || "<root>"}`);
   const secretItems = [...(p.secrets ? ["secret store"] : []), ...secretFields];
   const groups: Omit<PermissionGroup, "sensitive" | "entries">[] = [
     {

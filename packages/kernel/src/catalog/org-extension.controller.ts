@@ -69,18 +69,17 @@ export type OrgExtensionItem = OrgExtensionView & {
 
 /**
  * What a member sees of an extension: its state and the points it provides (names only, what the
- * 扩展 page sorts by), never the org config, the secrets' state, the config schema, the
- * permission list, the suggested appearance (members cannot apply it) or the client build (part of
+ * 扩展 page sorts by), never the permission list, the suggested appearance (members cannot apply it) or the client build (part of
  * the permission review).
  */
 export type OrgExtensionMemberItem = Omit<
   OrgExtensionItem,
-  "config" | "secrets" | "orgConfigSchema" | "permissions" | "suggestedAppearance" | "client"
+  "permissions" | "suggestedAppearance" | "client"
 >;
 
 /**
- * Org-level extension enablement and config (`/api/v1/orgs/:orgId/extensions`); responses echo only
- * non-secret config and whether each secret is set.
+ * Org-level extension enablement (`/api/v1/orgs/:orgId/extensions`); an org's config of an
+ * extension is its copy of the overridable deployment fields (the overrides routes below).
  */
 @Controller("api/v1/orgs/:orgId/extensions")
 export class OrgExtensionConfigsController {
@@ -122,21 +121,13 @@ export class OrgExtensionConfigsController {
     if (admin) return { extensions: items };
     return {
       extensions: items.map(
-        ({
-          config: _c,
-          secrets: _s,
-          orgConfigSchema: _o,
-          permissions: _p,
-          suggestedAppearance: _a,
-          client: _cl,
-          ...rest
-        }) => rest,
+        ({ permissions: _p, suggestedAppearance: _a, client: _cl, ...rest }) => rest,
       ),
     };
   }
 
   /**
-   * Writes enablement and / or config; see {@link OrgExtensionSwitch.put} for how `enabled` follows
+   * Writes enablement; see {@link OrgExtensionSwitch.put} for how `enabled` follows
    * the extension's plugin (off answers `{ preview, confirm }` until `confirm` carries the hash).
    */
   @Put(":extension")
