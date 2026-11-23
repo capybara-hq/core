@@ -32,6 +32,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { UUID_RE } from "../ui/registry.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -1421,6 +1422,19 @@ export class ConnectorsService {
       .orderBy("id")
       .execute();
     return rows.map((r) => this.summary(r));
+  }
+
+  /**
+   * Where a live connector of the org takes its icon from: its platform template and its plugin
+   * (catalog item). Unknown -> `connector.not_found`.
+   */
+  async iconRef(
+    orgId: string,
+    connectorId: string,
+  ): Promise<{ templateId: string | null; itemId: string | null }> {
+    if (!UUID_RE.test(connectorId)) throw notFound();
+    const r = await this.row(this.db, orgId, connectorId);
+    return { templateId: r.platform_template_id ?? null, itemId: r.catalog_item_id ?? null };
   }
 
   async get(orgId: string, connectorId: string, viewerAccountId: string): Promise<ConnectorDetail> {

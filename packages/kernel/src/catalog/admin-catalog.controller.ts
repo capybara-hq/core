@@ -382,6 +382,19 @@ export class AdminCatalogController {
   }
 
   /**
+   * A platform connector template's own icon (any live template; same response headers as the
+   * item icon). Unknown template -> 404 `component.not_found`; no icon of its own -> 404
+   * `catalog.icon_not_found`.
+   */
+  @Get("connector-templates/:templateId/icon")
+  async templateIcon(
+    @Param("templateId") templateId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendCatalogIcon(reply, await this.icons.readTemplateIcon(templateId, { kind: "admin" }));
+  }
+
+  /**
    * A setup guide of the item as the platform sees it (spec 2026-11-09-setup-guides-v2-design.md
    * §9.3; the admin console's connector template page): any live item, the admin audience, no org
    * (`orgName` unresolved, reason `no_org`), no target, no checks run. Unknown item -> 404

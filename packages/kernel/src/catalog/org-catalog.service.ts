@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { templateGuideOf } from "../extensions/plugin-guides.js";
+import { PluginIcons } from "../extensions/plugin-icons.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { ExtensionAvailability } from "../extensions/unavailable.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -85,6 +86,7 @@ export class OrgCatalogService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Why a plugin's extension cannot run (the `unavailable` state's reason). */
     @Inject(ExtensionAvailability) private readonly availability: ExtensionAvailability,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   /** The kernel-schema handle of the current context (the transaction, else the pool). */
@@ -98,13 +100,7 @@ export class OrgCatalogService {
    * and absent for members. Each item carries the org's pending request for it.
    */
   async list(orgId: string, accountId: string, itemId?: string): Promise<OrgCatalogItem[]> {
-    const m = await this.db
-      .selectFrom("memberships")
-      .select("role")
-      .where("org_id", "=", orgId)
-      .where("account_id", "=", accountId)
-      .executeTakeFirst();
-    const isAdmin = m !== undefined && roleAtLeast(m.role, "admin");
+    const isAdmin = await this.isOrgAdmin(orgId, accountId);
     let q = this.db
       .selectFrom("catalog_items")
       .selectAll()
@@ -301,6 +297,17 @@ export class OrgCatalogService {
    * connector templates (endpoint preset, editable paths, auth preset), dependencies, skills and
    * agent templates.
    */
+  /** The account is an admin (or owner) of the org. */
+  private async isOrgAdmin(orgId: string, accountId: string): Promise<boolean> {
+    const m = await this.db
+      .selectFrom("memberships")
+      .select("role")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+    return m !== undefined && roleAtLeast(m.role, "admin");
+  }
+
   async detail(orgId: string, accountId: string, itemId: string): Promise<OrgCatalogDetail> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     const [item] = await this.list(orgId, accountId, itemId);
@@ -337,6 +344,17 @@ export class OrgCatalogService {
         if (e instanceof ApiError) return [];
         throw e;
       });
+    const missing =
+      item.installed !== null && item.state === "needs_config"
+        ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? [])
+        : [];
+    // Each template's icon on the org's routes (its own, else the plugin's)
+    const icons = await this.icons.ofItemTemplates(
+      itemId,
+      [...templates, ...missing].map((t) => t.id),
+      { kind: "org", orgId, isAdmin: await this.isOrgAdmin(orgId, accountId) },
+    );
+    const iconOf = (templateId: string) => icons.get(templateId) ?? null;
     return {
       item,
       hasIcon: m.icon !== undefined,
@@ -346,6 +364,7 @@ export class OrgCatalogService {
           guide: guideOf(t.id),
           on: on.has(t.id),
           connected: connected.has(t.id),
+          icon: iconOf(t.id),
         }),
       ),
       dependencies: [
@@ -354,12 +373,9 @@ export class OrgCatalogService {
       ],
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
       agents: (m.agents ?? []).map((a) => packagePath(a.path)),
-      missingTemplates:
-        item.installed !== null && item.state === "needs_config"
-          ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? []).map(
-              (t) => orgTemplateView(t.id, t.file, { guide: guideOf(t.id), on: true }),
-            )
-          : [],
+      missingTemplates: missing.map((t) =>
+        orgTemplateView(t.id, t.file, { guide: guideOf(t.id), on: true, icon: iconOf(t.id) }),
+      ),
     };
   }
 

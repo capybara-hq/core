@@ -7,6 +7,7 @@ import {
   Field,
   type FieldShape,
   Input,
+  ItemList,
   type PageHeaderProps,
   Stack,
   Text,
@@ -41,7 +42,7 @@ import { retryOnMountOf } from "../lib/query/client";
 import { useAppMutation } from "../lib/query/mutation";
 import { type PageState, usePageQuery } from "../lib/query/page-query";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useCatalogErrorLines } from "./CatalogParts";
+import { ComponentSection, useCatalogErrorLines } from "./CatalogParts";
 import {
   buildCredential,
   buildOAuthClient,
@@ -327,6 +328,7 @@ function Wizard({
 }) {
   const t = useTranslations("catalog.org.install");
   const tp = useTranslations("plugins");
+  const tc = useTranslations("catalog.components");
   const locale = useLocale();
   const router = useRouter();
   const toast = useToast();
@@ -548,12 +550,27 @@ function Wizard({
                 .filter((s) => s !== null)
                 .join(" · ")}
             </Text>
-            {/* A template the org already has a connector for: it is kept, not asked for again */}
-            {kept.map((c) => (
-              <Text key={c.id} variant="small" tone="muted">
-                {t("connectorKept", { name: templateName(c) })}
-              </Text>
-            ))}
+            {/* The connector templates with their icons; one the org already has a connector for
+                is kept, not asked for again */}
+            {templates.length + kept.length > 0 && (
+              <ComponentSection
+                title={tc("templates")}
+                count={templates.length + kept.length}
+                empty={tc("templatesNone")}
+              >
+                <ItemList
+                  label={tc("templates")}
+                  rows={[...templates, ...kept].map((c) => ({
+                    id: c.id,
+                    mark: { text: templateName(c), image: c.icon ?? null },
+                    title: templateName(c),
+                    ...(kept.includes(c) && {
+                      meta: t("connectorKept", { name: templateName(c) }),
+                    }),
+                  }))}
+                />
+              </ComponentSection>
+            )}
             {detail.dependencies.length > 0 && (
               <Stack gap={4}>
                 <Text variant="small" tone="muted">
