@@ -66,6 +66,26 @@ Anti-goals
   config).
 - A third level or an "org only" level coming back under another name.
 
+## 3a. What an org is (the boundary this design relies on)
+
+Unchanged from the architecture spec (`2026-10-17-capybara-architecture-design.md` §3): one
+deployment is one enterprise or group; orgs are flat and correspond to subsidiaries or teams; accounts
+and sign-in are shared by the deployment, and an account joins orgs through invitations or directory
+mapping. The closest product analogy is Slack's enterprise plan: its org is our deployment (owners =
+super admins, org-level SSO = `identity-source@1`, one user across the org = `accounts`), its
+workspaces are our orgs (workspace admins = org admins; apps installed for all or some workspaces =
+plugin scope; workspaces setting what the org allows = org overrides). A group whose subsidiaries each
+run their own Lark tenant maps each tenant to one org.
+
+So the line is: what makes up the enterprise (sign-in, storage, sandbox infrastructure, the push apps,
+egress policy) is the platform's; how a team works (models and keys, tools, bots, connectors, devices,
+directory mapping) is the org's. Org isolation separates the data and permissions of teams in one
+enterprise under one super admin. It does not isolate an org from the super admin or from the shared
+infrastructure, and orgs are not mutually hostile customers (a hosted offering for several customers is
+one deployment per customer). The cross-org rules here (an org-set URL through `ctx.net`, no platform
+secret in an org copy, caches keyed by endpoint) exist because an org admin is not a super admin: an
+org admin must not borrow the platform's keys or the kernel's network.
+
 ## 4. Current state the builder starts from
 
 - SDK `packages/plugin-sdk/src/org-access.ts`: `OrgAccess = "readonly" | "override"`, `orgAccess()`,
@@ -142,11 +162,22 @@ An overridable value reaches an extension only in the per-call `config` of an or
 (spec A §6): extension tools, `ctx.ui` views and actions, hooks with an org, `model-provider@2`,
 `web-search@1`, `web-fetch@1`, `directory@1`, `file-preview@1`.
 
-`device-provider@1`, `connector@1`, `channel@1`, `identity-source@1` (runs before an org is known),
-`object-store@1` and `push-provider@1` calls carry no effective config. An extension whose only entries
-are these has every field platform-only; the check (§5.5) makes that an error, not a warning, so no org
-ever sees a field that does nothing. This is a classification rule, not a kernel guess: the plugin marks
-`platformOnly`, the check verifies.
+The other points keep what belongs to an org in their own org-owned records, not in the extension's
+config, so their deployment config is infrastructure (§3a):
+
+| Point | The org's part lives in | The deployment config is |
+|---|---|---|
+| `channel@1` | `channel_connections` (`org_id`): bot credentials in the connection config, several per org | API base URLs for tests and proxies |
+| `connector@1` | the org's connectors: endpoint and credentials | little or nothing |
+| `device-provider@1` | the org's devices, each on a provider the org chose | the compute host, runtime, egress proxy image: trust boundaries |
+| `object-store@1` | the kernel's per-org key prefixes | the deployment's one bucket |
+| `push-provider@1` | each person's push registrations | credentials of the app builds the deployment ships |
+| `identity-source@1` | memberships, through invitations and directory mapping | who may sign in to the deployment (runs before any org is known) |
+
+Their calls carry no effective config, so an extension whose only entries are these has every field
+platform-only; the check (§5.5) makes that an error, not a warning, so no org ever sees a field that
+does nothing. This is a classification rule, not a kernel guess: the plugin marks `platformOnly`, the
+check verifies. Making one of these points org-bound is its own design (§3 non-goals).
 
 ### 5.4 Kernel
 
