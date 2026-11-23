@@ -21,9 +21,11 @@ import {
 } from "../../src/infra/database/transaction-host.js";
 import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
+import { managedUseOn } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
@@ -157,6 +159,48 @@ async function countDevices(accountId: string): Promise<number> {
 
 const ctl = () => AbortSignal.timeout(30_000);
 
+/** A new root conversation of `accountId` in the org, bound to no device yet. */
+async function holderOf(accountId: string): Promise<string> {
+  const agentId = randomUUID();
+  await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+    VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
+  await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+    VALUES (${agentId}, 1, ${JSON.stringify({ name: "Worker" })}::jsonb, ${accountId})`.execute(
+    raw,
+  );
+  const id = randomUUID();
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+    VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
+  return id;
+}
+
+/** Where `accountId` uses `deviceId`: a new conversation of theirs holds the use. */
+async function useOf(accountId: string, deviceId: string): Promise<SandboxUseContext> {
+  const conversationId = await holderOf(accountId);
+  return {
+    orgId,
+    deviceId,
+    holderConversationId: conversationId,
+    actor: { accountId, conversationId },
+  };
+}
+
+/**
+ * Uses the device once on the managed route, as a tool call of the holder conversation does
+ * (`managedUseOn`); the call's run is settled afterwards, so the holder's next use starts its own.
+ */
+async function use<T>(
+  at: SandboxUseContext,
+  fn: Parameters<typeof managedUseOn<T>>[3],
+): Promise<T> {
+  try {
+    return await managedUseOn(k, raw, at, fn, ctl());
+  } finally {
+    await sql`UPDATE capybara.runs SET status = 'completed'
+      WHERE conversation_id = ${at.holderConversationId} AND status = 'running'`.execute(raw);
+  }
+}
+
 describe("devices API", () => {
   it("create, list, rename, delete a personal device", async () => {
     const m = await member();
@@ -284,16 +328,15 @@ describe("devices API", () => {
     // untouched
     const mine = await me.req({ method: "GET", url: `${base()}/${env.id}` });
     expect((mine.json() as { device: DeviceView }).device.name).toBe("Mine");
-    // and not usable by them through the sandbox either
+    // and not usable by them through the sandbox either (the start every managed use takes first)
     const err = await sandbox
-      .withSandbox(
+      .ensureRunning(
         {
           orgId: randomUUID(),
           deviceId: env.id,
           holderConversationId: randomUUID(),
           actor: { accountId: other.id, conversationId: randomUUID() },
         },
-        async () => "ran",
         ctl(),
       )
       .catch((e: unknown) => e);
@@ -398,27 +441,23 @@ describe("devices API", () => {
     expect((await list(me.req)).lastUsedId).toBe(a.id);
   });
 
-  it("delete waits for running commands then destroys both", async () => {
+  // A command is a managed operation admitted under the device's permission authority: deleting
+  // the device publishes a revoking device-level ceiling (`DevicesService.removeIn` ->
+  // `PermissionCeilingWrites.publishLocked`), which revokes its in-flight operations and kills
+  // them (`sandbox-operation-revoke`); the owed destruction waits for the lease, then destroys
+  // the instance and the files.
+  it("delete revokes running commands, then destroys both", async () => {
     const me = await member();
     const env = await create(me.req, "Busy");
-    const conversationId = randomUUID();
-    const at = {
-      orgId,
-      deviceId: env.id,
-      holderConversationId: conversationId,
-      actor: { accountId: me.id, conversationId },
-    };
-    // a command holding a shared lease
-    const running = sandbox.withSandbox(
-      at,
-      (h, p, _info, signal) =>
-        p.exec(h, {
-          command: "touch /workspace/started && sleep 1.5 && echo done",
-          timeoutMs: 20_000,
-          maxOutputBytes: 1000,
-          signal,
-        }),
-      ctl(),
+    const at = await useOf(me.id, env.id);
+    // a command holding a shared lease, far longer than the revocation takes
+    const running = use(at, (h, p, _info, signal) =>
+      p.exec(h, {
+        command: "touch /workspace/started && sleep 20 && echo done",
+        timeoutMs: 25_000,
+        maxOutputBytes: 1000,
+        signal,
+      }),
     );
     const started = await waitFor(
       async () => {
@@ -432,10 +471,16 @@ describe("devices API", () => {
     );
     const del = await me.req({ method: "DELETE", url: `${base()}/${env.id}` });
     expect(del.statusCode, del.body).toBe(202);
-    // the command finishes: the destruction waited for it
+    // the command is revoked and killed before it finishes
     const result = await running;
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("done");
+    expect(result.exitCode).toBeNull();
+    expect(result.timedOut).toBe(false);
+    expect(result.stdout).not.toContain("done");
+    const intents = await sql<{
+      state: string;
+    }>`SELECT state FROM capybara.sandbox_operation_intents
+      WHERE device_id = ${env.id}`.execute(raw);
+    expect(intents.rows.map((r) => r.state)).toEqual(["revoked"]);
     await waitFor(
       async () =>
         !(await db
@@ -450,7 +495,7 @@ describe("devices API", () => {
     const instances = await readdir(join(root, "instances")).catch(() => [] as string[]);
     expect(instances).toEqual([]);
     // a later use in that conversation finds no device
-    const err = await sandbox.withSandbox(at, async () => "ran", ctl()).catch((e: unknown) => e);
+    const err = await use(at, async () => "ran").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("device.not_found");
   });
@@ -498,18 +543,10 @@ describe("devices API", () => {
   it("reset files after files_lost", async () => {
     const me = await member();
     const env = await create(me.req, "Fragile");
-    const conversationId = randomUUID();
-    const at = {
-      orgId,
-      deviceId: env.id,
-      holderConversationId: conversationId,
-      actor: { accountId: me.id, conversationId },
-    };
+    const at = await useOf(me.id, env.id);
     const write = (body: string) =>
-      sandbox.withSandbox(
-        at,
-        (h, p, _i, sig) => p.writeFile(h, "/workspace/f.txt", new TextEncoder().encode(body), sig),
-        ctl(),
+      use(at, (h, p, _i, sig) =>
+        p.writeFile(h, "/workspace/f.txt", new TextEncoder().encode(body), sig),
       );
     const before = new Set(await fakeFileSystems(root));
     await write("one");
@@ -536,10 +573,8 @@ describe("devices API", () => {
       "the reset job",
     );
     await write("three");
-    const read = await sandbox.withSandbox(
-      at,
-      (h, p, _i, sig) => p.readFile(h, "/workspace/f.txt", { maxBytes: 100, signal: sig }),
-      ctl(),
+    const read = await use(at, (h, p, _i, sig) =>
+      p.readFile(h, "/workspace/f.txt", { maxBytes: 100, signal: sig }),
     );
     expect(new TextDecoder().decode(read?.data)).toBe("three");
     const running = await me.req({ method: "GET", url: `${base()}/${env.id}` });
@@ -564,16 +599,8 @@ describe("device providers (device-provider spec §6.1)", () => {
       .executeTakeFirstOrThrow();
     expect(created.detail).toMatchObject({ name: "On B", provider: "device-fake-b" });
     // its files are made at its own provider, never at the org's default one
-    const conversationId = randomUUID();
-    await sandbox.withSandbox(
-      {
-        orgId,
-        deviceId: onB.id,
-        holderConversationId: conversationId,
-        actor: { accountId: m.id, conversationId },
-      },
-      (h, p, _i, sig) => p.writeFile(h, "/workspace/b.txt", new TextEncoder().encode("b"), sig),
-      ctl(),
+    await use(await useOf(m.id, onB.id), (h, p, _i, sig) =>
+      p.writeFile(h, "/workspace/b.txt", new TextEncoder().encode("b"), sig),
     );
     expect(await fakeFileSystems(rootB)).toHaveLength(1);
     expect(new Set(await fakeFileSystems(root))).toEqual(before);
@@ -798,17 +825,8 @@ describe("device providers (device-provider spec §6.1)", () => {
   it("a device whose provider is switched off lists as available false with its stored report", async () => {
     const m = await member();
     const onB = await create(m.req, "Report", "device-fake-b");
-    const conversationId = randomUUID();
-    await sandbox.withSandbox(
-      {
-        orgId,
-        deviceId: onB.id,
-        holderConversationId: conversationId,
-        actor: { accountId: m.id, conversationId },
-      },
-      async () => "ran",
-      ctl(),
-    );
+    // started for a use of the device (the report is stored at the start)
+    await sandbox.ensureRunning(await useOf(m.id, onB.id), ctl());
     const stored = await waitFor(
       async () => {
         const res = await m.req({ method: "GET", url: `${base()}/${onB.id}` });
@@ -1295,17 +1313,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
     await setOrgNetwork(null);
     const me = await member();
     const env = await create(me.req, "Used");
-    const conversationId = randomUUID();
-    await sandbox.withSandbox(
-      {
-        orgId,
-        deviceId: env.id,
-        holderConversationId: conversationId,
-        actor: { accountId: me.id, conversationId },
-      },
-      async () => null,
-      ctl(),
-    );
+    await sandbox.ensureRunning(await useOf(me.id, env.id), ctl());
     const set = await patch(me.req, env.id, { network: { mode: "allowlist" } });
     expect(set.statusCode, set.body).toBe(200);
     expect(viewOf(set).sandbox).toMatchObject({ pendingNextUse: true });

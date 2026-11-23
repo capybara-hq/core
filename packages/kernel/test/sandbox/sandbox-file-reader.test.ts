@@ -9,11 +9,10 @@ import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
-import { recordCallStarted, startClaimedRun } from "../helpers/managed-calls.js";
+import { managedUseOn, recordCallStarted, startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -101,23 +100,36 @@ beforeEach(async () => {
   convId = await createConv(owner, orgId, (res.json() as { agent: { id: string } }).agent.id);
 });
 
-/** Writes `data` at `rel` under the conversation's workspace; returns the workspace root. */
+/**
+ * Writes `data` at `rel` under the conversation's workspace on the managed route, as a tool call
+ * of the conversation does; returns the workspace root. The call's run is settled afterwards, so
+ * a later read starts its own run.
+ */
 async function put(rel: string, data: string): Promise<string> {
   const deviceId = await k.app.get(ConversationDevices).forTool(orgId, convId);
-  const signal = new AbortController().signal;
-  return k.app.get(SandboxService).withSandbox(
-    {
-      orgId,
-      deviceId,
-      holderConversationId: convId,
-      actor: { accountId: ownerId, conversationId: convId },
-    },
-    async (h, p, info, s) => {
-      await p.writeFile(h, `${info.roots.workspace}/${rel}`, new TextEncoder().encode(data), s);
-      return info.roots.workspace;
-    },
-    signal,
-  );
+  try {
+    return await managedUseOn(
+      k,
+      raw,
+      {
+        orgId,
+        deviceId,
+        holderConversationId: convId,
+        actor: { accountId: ownerId, conversationId: convId },
+      },
+      async (h, p, info, s) => {
+        await p.writeFile(h, `${info.roots.workspace}/${rel}`, new TextEncoder().encode(data), s);
+        return info.roots.workspace;
+      },
+    );
+  } finally {
+    await db
+      .updateTable("runs")
+      .set({ status: "completed" })
+      .where("conversation_id", "=", convId)
+      .where("status", "=", "running")
+      .execute();
+  }
 }
 
 const readInput = (path: string, maxBytes: number, callId?: string) => ({

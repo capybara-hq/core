@@ -11,8 +11,6 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
-import { DevicesService } from "../../src/devices/devices.service.js";
-import { DialInMachines } from "../../src/dial-in/machines.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
@@ -38,7 +36,7 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { startClaimedRun } from "../helpers/managed-calls.js";
+import { managedUseOn, startClaimedRun } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -214,22 +212,49 @@ async function newMember(): Promise<{ id: string; req: Req; deviceId: string }> 
   return { id, req, deviceId };
 }
 
-/** Writes files into the device's file system (paths relative to `/workspace`). */
+/**
+ * Writes files into the owner's device (paths relative to `/workspace`) on the managed route, as
+ * a tool call does: a free setup conversation of the owner on the device holds the use (a free
+ * conversation writes the workspace; a bound one only its project root), so the conversation
+ * under test keeps no run or call of the setup. The setup run is settled afterwards.
+ */
 async function put(deviceId: string, files: Record<string, string>): Promise<void> {
-  await k.app.get(SandboxService).withSandbox(
-    {
-      orgId,
-      deviceId,
-      holderConversationId: "test-setup",
-      actor: { accountId: ownerId, conversationId: "test-setup" },
-    },
-    async (h, p, _info, signal) => {
-      for (const [path, text] of Object.entries(files)) {
-        await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
-      }
-    },
-    new AbortController().signal,
-  );
+  const holder = randomUUID();
+  await db
+    .insertInto("conversations")
+    .values({
+      id: holder,
+      org_id: orgId,
+      agent_id: agentId,
+      account_id: ownerId,
+      device_id: deviceId,
+      source: "web",
+    })
+    .execute();
+  try {
+    await managedUseOn(
+      k,
+      raw,
+      {
+        orgId,
+        deviceId,
+        holderConversationId: holder,
+        actor: { accountId: ownerId, conversationId: holder },
+      },
+      async (h, p, _info, signal) => {
+        for (const [path, text] of Object.entries(files)) {
+          await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
+        }
+      },
+    );
+  } finally {
+    await db
+      .updateTable("runs")
+      .set({ status: "completed" })
+      .where("conversation_id", "=", holder)
+      .where("status", "=", "running")
+      .execute();
+  }
 }
 
 const skill = (name: string, description: string) =>
