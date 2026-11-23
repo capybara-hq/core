@@ -30,7 +30,8 @@ export function wrapperChain(schema: z.ZodTypeAny): z.ZodTypeAny[] {
 /**
  * The meta of a config field merged across its wrapper chain: an outer key wins over an inner one,
  * except `secret` and `platformOnly`, which are true when any node of the chain carries them
- * (fail-safe: a wrapper's meta never hides a secret or clears a platform-only mark). Zod's `id` is left out: it names one schema instance.
+ * (fail-safe: a wrapper's meta never hides a secret or clears a platform-only mark). Zod's `id` is
+ * left out: it names one schema instance.
  */
 export function chainMeta(schema: z.ZodTypeAny): Meta {
   const out: Meta = {};
