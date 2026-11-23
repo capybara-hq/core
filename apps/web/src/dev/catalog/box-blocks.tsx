@@ -36,7 +36,7 @@ const MODELS = [
   { value: "deepseek/deepseek-chat", label: "DeepSeek / deepseek-chat" },
 ];
 
-/** A purpose row as `/admin/models` 用途默认映射 draws it (the model purposes, P1). */
+/** An item row with a field (the reference set's item-list-fields block). */
 function PurposeRow({ title, code, lines }: { title: string; code: string; lines: string[] }) {
   return (
     <ItemListItem
@@ -82,7 +82,7 @@ function itemListBlocks(): ReactNode {
           />
         </Card>
       </RefBlock>
-      {/* Item rows with fields in a flush form card: the model purposes. */}
+      {/* Item rows with fields in a flush form card (one section listing items, each with a field). */}
       <RefBlock id="item-list-fields" width={960} pad>
         <FormSection id="purposes" title="用途默认映射" description="各组织可在设置里覆盖。" flush>
           <ItemList label="用途" inset="flush">

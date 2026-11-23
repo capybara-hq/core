@@ -289,6 +289,19 @@ describe("FormPage", () => {
     expect(screen.getByRole("region", { name: "基础信息" }).id).toBe("basic");
   });
 
+  it("FormSection marks stand on the title's line in the head, the region still named by the title", () => {
+    zh(
+      <FormSection id="eval" title="评测评委" marks={<span>已覆盖</span>} description="说明">
+        <div>字段</div>
+      </FormSection>,
+    );
+    const head = document.querySelector('[data-part="form-section-head"]') as HTMLElement;
+    const line = head.querySelector('[data-part="form-section-title"]') as HTMLElement;
+    expect(line.querySelector("h2")?.textContent).toBe("评测评委");
+    expect(line.textContent).toContain("已覆盖");
+    expect(screen.getByRole("region", { name: "评测评委" }).id).toBe("eval");
+  });
+
   it("始终渲染 ActionRow", () => {
     zh(
       <FormPage header={header} actionRow={row}>

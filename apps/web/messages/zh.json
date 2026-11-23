@@ -3789,7 +3789,6 @@
         "cleared": "已清除「{model}」的价格。"
       },
       "purposes": {
-        "title": "用途默认映射",
         "description": "内核与扩展按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
       },
       "toMarket": "浏览插件市场",
@@ -3808,7 +3807,6 @@
     },
     "org": {
       "pageTitle": "模型",
-      "title": "模型用途",
       "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。",
       "noProviders": "平台还没有部署模型服务。模型服务由超级管理员在「管理 → 模型」里部署。",
       "toAdminModels": "去部署模型服务",
@@ -3836,9 +3834,11 @@
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
       "useDefault": "使用部署默认（{target}）",
+      "none": "没有可设置的用途。",
       "overridden": "已覆盖",
       "unavailable": "{target}（不可用）",
-      "params": "参数",
+      "paramsAllDefault": "参数 · 全部默认",
+      "paramsCustomized": "参数 · {n} 项已自定义",
       "save": "保存",
       "savedAll": "已保存 {n} 个用途。",
       "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。",
