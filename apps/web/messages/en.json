@@ -3837,7 +3837,6 @@
         "title": "Model services",
         "description": "This organization's models come from the model services turned on here. A service the platform deploys works here once this organization turns it on.",
         "orgFixable": "No model service is ready in this organization yet. Turn one on or finish its configuration below so agents can answer.",
-        "enable": "Turn on",
         "enableLabel": "Turn on {plugin} for this organization",
         "configure": "Configure",
         "configureLabel": "Configure {plugin}"
