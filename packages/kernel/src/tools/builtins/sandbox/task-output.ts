@@ -434,6 +434,9 @@ async function managedTaskOutput(
           : "[The task is still starting; no output yet.]";
     } else if (task.lostReason === "launch_unknown") {
       why = "[No output: whether the command started could not be confirmed.]";
+    } else if (task.status === "stopped" && task.instanceGeneration !== null) {
+      // dispatched (its instance recorded), then stopped by its operation revoke unconfirmed
+      why = "[No output: the task was stopped before its start was confirmed.]";
     }
     return result(task, [statusLine(task), why]);
   }

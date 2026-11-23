@@ -826,10 +826,11 @@ export class SandboxOperationIntents {
       .forUpdate()
       .executeTakeFirstOrThrow();
     const ref = parseSandboxExecutionRef(result);
+    // the ref's generation is the provider's own (device-local's machine names its bound
+    // generation, #765): the exact instance is the intent's generation and the held handle's id
     if (
       r.method !== "backgroundStart" ||
       ref.operationId !== r.operation_id ||
-      ref.instanceGeneration !== r.instance_generation ||
       ref.instanceId !== instanceId
     )
       throw new SandboxOperationOutcomeUnknownError(
@@ -1084,7 +1085,8 @@ export class SandboxOperationIntents {
    * Gives up on an unknown start (its retention ended, or the kernel would not send it again): the
    * task becomes terminal `lost` (`launch_unknown`), freeing its slot of `maxTasks`, while the
    * intent is revoked with an unknown outcome so the exact revoke (the operation tombstone) stays
-   * owed. A reservation that never dispatched settles as a pre-effect failure instead.
+   * owed. A reservation that never dispatched settles as a pre-effect failure instead, and a task
+   * already stopped by an acknowledged operation revoke has its record settled.
    */
   @Transactional({ propagation: "requires_new" })
   async abandonBackgroundLaunch(id: string, why: string): Promise<void> {
@@ -1151,6 +1153,23 @@ export class SandboxOperationIntents {
           stopping_at: null,
         })
         .where("id", "=", task.id)
+        .execute();
+    // a finished task whose stop was verified by its acknowledged operation revoke only (no ref
+    // ever attached): nothing is owed any more once its start can no longer be acknowledged
+    if (
+      task &&
+      task.status !== "running" &&
+      task.execution_ref === null &&
+      task.launch_state === "cancel-pending" &&
+      r.state === "revoked" &&
+      r.revoke_acknowledged
+    )
+      await this.db
+        .updateTable("background_tasks")
+        .set({ launch_state: "terminal" })
+        .where("id", "=", task.id)
+        .where("launch_state", "=", "cancel-pending")
+        .where("execution_ref", "is", null)
         .execute();
   }
   /** The recorded input of an operation (for a same-identity retry only). */

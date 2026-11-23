@@ -38,7 +38,8 @@ export class SandboxOperationReconcileJob {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(BackgroundTaskStore)
     private readonly tasks: Pick<BackgroundTaskStore, "byOperation" | "settleOwedCancel">,
-    @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
+    @Inject(BackgroundTaskStopper)
+    private readonly stopper: Pick<BackgroundTaskStopper, "stop" | "settleRevokedUnconfirmed">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     /** Where a recovered start's refusal keeps the provider's own message (never the task's). */
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: Pick<KernelLogger, "warn">,
@@ -221,6 +222,12 @@ export class SandboxOperationReconcileJob {
       { operationId: row.operation_id, admitBeforeMs: row.deadline.getTime() },
       AbortSignal.timeout(30_000),
     );
+    // a start revoked before its ref was known: the tombstone cancelled whatever it launched, so
+    // its task ends now rather than at its retention expiry
+    if (row.method === "backgroundStart") {
+      const task = await this.tasks.byOperation(row.operation_id);
+      if (task) await this.stopper.settleRevokedUnconfirmed(task);
+    }
     await this.intents.acknowledgeRevocation(operationId);
   }
   /**
@@ -271,11 +278,8 @@ export class SandboxOperationReconcileJob {
       return;
     }
     const generation = Number(row.instance_generation);
-    if (
-      !Number.isSafeInteger(generation) ||
-      ref.operationId !== row.operation_id ||
-      ref.instanceGeneration !== row.instance_generation
-    )
+    // the ref's own generation is the provider's; the incarnation is the intent's generation
+    if (!Number.isSafeInteger(generation) || ref.operationId !== row.operation_id)
       throw owed("The recorded execution reference does not match its start");
     const r = await this.sandbox.ifRunning(
       row.device_id,

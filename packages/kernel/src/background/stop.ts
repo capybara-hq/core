@@ -49,6 +49,19 @@ export const RECREATED: BackgroundFinish = {
   killPending: false,
 };
 
+/** The finish options of a stop asked for by `by`: who stopped it decides whether it may wake. */
+function stoppedByOpts(by: CancelRequester | null): { stoppedBy?: BackgroundStoppedBy } {
+  const stoppedBy: BackgroundStoppedBy | undefined =
+    by === "person"
+      ? "person"
+      : by === "conversation_deleted"
+        ? "deletion"
+        : by === "subagent_end"
+          ? "subagent_end"
+          : undefined;
+  return stoppedBy === undefined ? {} : { stoppedBy };
+}
+
 /**
  * Stops background tasks (spec 2026-11-05-background-bash-design §2.3, §4.3, permission runtime
  * cutover phase 8.3): a managed task by its exact ref on its exact instance only, through
@@ -167,6 +180,25 @@ export class BackgroundTaskStopper {
       : null;
   }
 
+  /**
+   * A managed task whose start was never confirmed (no ref) and whose exact operation revoke the
+   * provider acknowledged: the operation is tombstoned and any execution it owned cancelled
+   * (`revokeOperation`), a verified end. The task finishes `stopped` with its asker's wake rule,
+   * instead of running until its retention expires (#765). Its record stays `cancel-pending`: a
+   * ref attached later still owes the exact stop by that ref, and the retention expiry settles a
+   * record that never gets one.
+   */
+  async settleRevokedUnconfirmed(task: BackgroundTaskRow): Promise<void> {
+    const cur = (await this.store.get(task.id)) ?? task;
+    if (cur.status !== "running" || cur.executionRef !== null || !isManagedTask(cur)) return;
+    if (cur.launchState !== "dispatched" && cur.launchState !== "cancel-pending") return;
+    const by = cur.cancelRequestedBy ?? (await this.deletedConversationStop(cur));
+    await this.finisher.finish(cur, { status: "stopped" }, "", false, {
+      ...stoppedByOpts(by),
+      keepOwed: true,
+    });
+  }
+
   private async stopManaged(
     cur: BackgroundTaskRow,
     why: StopReason,
@@ -185,15 +217,7 @@ export class BackgroundTaskStopper {
     }
     // `reportedHere`: the caller's own result tells the model this finish (a TaskOutput read)
     const reported = reportedHere ?? (by === "tool" && why === "tool");
-    const stoppedBy: BackgroundStoppedBy | undefined =
-      by === "person"
-        ? "person"
-        : by === "conversation_deleted"
-          ? "deletion"
-          : by === "subagent_end"
-            ? "subagent_end"
-            : undefined;
-    const opts = stoppedBy === undefined ? {} : { stoppedBy };
+    const opts = stoppedByOpts(by);
     const pending = async () => {
       await this.store.requestCancel(cur.id, asker, true);
       return (await this.store.get(cur.id)) ?? cur;
