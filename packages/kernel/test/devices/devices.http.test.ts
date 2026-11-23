@@ -14,7 +14,11 @@ import type { DeviceList, DeviceView } from "../../src/devices/devices.service.j
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionDisplayNames } from "../../src/extensions/display-name.js";
-import { TransactionHost, withOrderedLocks } from "../../src/infra/database/transaction-host.js";
+import {
+  currentStore,
+  TransactionHost,
+  withOrderedLocks,
+} from "../../src/infra/database/transaction-host.js";
 import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
@@ -1046,21 +1050,25 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       const me = await member();
       const env = await create(me.req, "Adds");
       const svc = k.app.get(DevicesService);
-      const refused = async (hosts: string[]) => {
+      // each refusal names its reason in its detail (the decision's copy reads it)
+      const refused = async (
+        hosts: string[],
+        reason: "network_closed" | "follows_org" | "host_not_addable" = "host_not_addable",
+      ) => {
         const err = await svc.addNetworkHostsIn(orgId, me.id, env.id, hosts, "web").then(
           () => null,
           (e: unknown) => e,
         );
         expect(err).toBeInstanceOf(ApiError);
-        expect(err).toMatchObject({ code: "device.network_not_allowed" });
+        expect(err).toMatchObject({ code: "device.network_not_allowed", details: [{ reason }] });
         return (err as ApiError).message;
       };
       // following its org (mode null) or the org's whole allowlist: every addable host is in
-      expect(await refused(["b.dev"])).toContain("follows its organization's hosts");
+      expect(await refused(["b.dev"], "follows_org")).toContain("follows its organization's hosts");
       expect((await patch(me.req, env.id, { network: { mode: "allowlist" } })).statusCode).toBe(
         200,
       );
-      await refused(["b.dev"]);
+      await refused(["b.dev"], "follows_org");
 
       const own = await patch(me.req, env.id, { network: { mode: "allowlist", hosts: ["a.dev"] } });
       expect(own.statusCode, own.body).toBe(200);
@@ -1125,6 +1133,35 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         tx.run(() => svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web")),
       ).rejects.toThrow("The matching authority lock is required");
       expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
+      // the device write lock alone is not the prelude: the platform and org levels it takes
+      // (shared) are required too, checked before anything is locked or written
+      const holding = (held: [string, "shared" | "exclusive"][]) =>
+        tx.run(async () => {
+          const store = currentStore();
+          if (!store) throw new Error("no transaction");
+          store.permissionLocks = new Map(held);
+          await svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web");
+        });
+      const deviceKey = `permission-authority-device-${env.id}`;
+      const orgKey = `permission-authority-org-${orgId}`;
+      const platformKey = "permission-authority-platform-platform";
+      await expect(holding([[deviceKey, "exclusive"]])).rejects.toThrow(
+        "The matching authority lock is required",
+      );
+      await expect(
+        holding([
+          [orgKey, "shared"],
+          [deviceKey, "exclusive"],
+        ]),
+      ).rejects.toThrow("The matching authority lock is required");
+      await expect(
+        holding([
+          [platformKey, "shared"],
+          [orgKey, "shared"],
+          [deviceKey, "shared"],
+        ]),
+      ).rejects.toThrow("The matching authority lock is required");
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
       // it joins the caller's transaction after the caller's prelude: a rollback there takes the
       // addition with it
       const inCaller = (fn: () => Promise<void>) =>
@@ -1166,7 +1203,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         svc.addNetworkHostsIn(orgId, other.id, env.id, ["c.dev"], "web"),
       ).rejects.toMatchObject({ code: "device.not_found" });
       expect((await patch(me.req, env.id, { network: { mode: "none" } })).statusCode).toBe(200);
-      await refused(["c.dev"]);
+      await refused(["c.dev"], "network_closed");
     } finally {
       await setOrgNetwork(null);
     }
@@ -1216,6 +1253,8 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       const res = await viaPat({ network });
       expect(res.statusCode, res.body).toBe(400);
       expect(errCode(res)).toBe("device.network_not_allowed");
+      // the PATCH route's own refusal names no reason: the web shows its default copy
+      expect((res.json() as { error: { details?: unknown } }).error.details).toBeUndefined();
     }
     const renamed = await viaPat({ name: "By token" });
     expect(renamed.statusCode, renamed.body).toBe(200);

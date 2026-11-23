@@ -324,7 +324,7 @@ describe("a dial-in device through the sandbox tools", () => {
     });
     const run = await conversation(m);
     await run("Bash", { command: "true" });
-    await k.app.get(DialInMachines).revoke(orgId, m.accountId, m.deviceId);
+    await k.app.get(DialInMachines).revokeActive(m.deviceId, "revoked");
     await machine.closed;
     const sent = ops.length;
     const text = await toolError(run("Bash", { command: "true" }));

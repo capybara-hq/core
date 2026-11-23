@@ -40,7 +40,7 @@ import type {
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
-import { assertAuthorityHeld } from "../sandbox/permission-authority-lock.js";
+import { assertAuthorityWriteHeld } from "../sandbox/permission-authority-lock.js";
 import {
   hostsNarrowed,
   needsOpenNetwork,
@@ -814,18 +814,21 @@ export class DevicesService {
   }
 
   /**
-   * Adds `hosts` to one of the person's devices' own network list: a network approval decided
-   * "add to this device's list" (`via`: where it was decided). In a caller's transaction (the
-   * approval decision's) it joins it and requires the device's permission write lock already held
-   * there ({@link lockNetworkAddSubject} in the caller's ordered prelude; else it throws before
-   * writing); with no transaction it takes that prelude itself ({@link withOrderedLocks}). It
-   * takes no distributed lock. The write is a network change like `PATCH` ({@link networkLocked}:
-   * audited `device.network_changed` from → to, listed as a recent change, the device epoch bumped
-   * and the instance marked for its next use). Refuses with `device.network_not_allowed`, writing
-   * nothing, unless the stored network is `allowlist` with a host list of its own (a device
-   * following its org's hosts already allows every host its list could name) and every host may
-   * join that list (`deviceListAddRefusal`). Hosts its list already covers change nothing; own
-   * hosts the org's hosts no longer cover (in effect nowhere) leave the list with the addition.
+   * Adds `hosts` to one of the person's devices' own network list: a network approval decided "add
+   * to this device's list" (`via`: where it was decided). In a caller's transaction (the approval
+   * decision's) it joins it and requires the authority locks of that prelude already held there
+   * (platform and org shared, the device exclusive: {@link lockNetworkAddSubject} in the caller's
+   * ordered prelude; else it throws before locking or writing anything; the membership and device
+   * rows are locked again in the body); with no transaction it takes that prelude itself
+   * ({@link withOrderedLocks}). It takes no distributed lock. The write is a network change like `PATCH`
+   * ({@link networkLocked}: audited `device.network_changed` from → to, listed as a recent change,
+   * the device epoch bumped and the instance marked for its next use). Refuses with
+   * `device.network_not_allowed`, writing nothing, unless the stored network is `allowlist` with a
+   * host list of its own (a device following its org's hosts already allows every host its list
+   * could name) and every host may join that list (`deviceListAddRefusal`); its detail `reason`
+   * says which (`network_closed`, `follows_org`, `host_not_addable`), for the decision's copy.
+   * Hosts its list already covers change nothing; own hosts the org's hosts no longer cover (in
+   * effect nowhere) leave the list with the addition.
    */
   async addNetworkHostsIn(
     orgId: string,
@@ -835,7 +838,8 @@ export class DevicesService {
     via: "web" | "im",
   ): Promise<void> {
     if (currentStore() !== undefined) {
-      assertAuthorityHeld("device", deviceId, true);
+      // every authority level the prelude takes: platform and org shared, the device exclusive
+      assertAuthorityWriteHeld({ orgId, deviceId }, "device");
       await this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via);
       return;
     }
@@ -866,11 +870,13 @@ export class DevicesService {
       throw new ApiError(
         "device.network_not_allowed",
         "Network access is turned off for this device's sandbox; its owner changes that on the device page",
+        [{ reason: "network_closed" }],
       );
     if (own.networkMode !== "allowlist" || own.networkHosts.length === 0)
       throw new ApiError(
         "device.network_not_allowed",
         "This device has no host list of its own: it follows its organization's hosts, which already include every host its list could name; an organization admin adds another host to the organization's device network list",
+        [{ reason: "follows_org" }],
       );
     const wanted = [...new Set(hosts.map((h) => h.toLowerCase()))];
     for (const host of wanted) {
@@ -887,6 +893,7 @@ export class DevicesService {
         throw new ApiError(
           "device.network_not_allowed",
           `${host} cannot be added to this device's network list: ${why}`,
+          [{ reason: "host_not_addable" }],
         );
     }
     const covers = (list: readonly string[], h: string) =>

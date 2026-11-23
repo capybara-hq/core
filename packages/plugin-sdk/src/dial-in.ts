@@ -215,8 +215,10 @@ export interface DialInChannel {
 export interface DevicesCtx {
   /**
    * The device's report (`DeviceProvider.report`) or its permission support may have changed: the
-   * kernel reads the report again and, when its revision changed, invalidates what was approved
-   * against the old one.
+   * kernel reads the report (and the permission support of the device's instance, if any) again
+   * and stores them. When the revision changed, it invalidates what was approved against the old
+   * one; when only display text changed under the same revision, the new text is stored and no
+   * approval is invalidated.
    */
   reportChanged(deviceId: string): Promise<void>;
 }

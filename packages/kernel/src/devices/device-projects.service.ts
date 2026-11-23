@@ -657,16 +657,16 @@ async function listFailure(
 ): Promise<unknown> {
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
-  // the provider refusing the directory states its reason (shown to the person, en + zh)
+  // the provider refusing the directory states its reason (shown to the person, en + zh); any
+  // other text from the machine is not trusted and never reaches the person
   if (isProjectPathRefusedError(e)) {
     return new ApiError("device.project_refused", e.reason.en, [{ reason: e.reason }]);
   }
-  const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
   // the owner browse scope refusing the path is the device refusing it (gate on only)
   if (r.browse && isSandboxScopeDeniedError(e)) {
     return new ApiError(
       "device.project_outside_mode",
-      `The device refused ${clipped(path)}: it is outside what the device lets a project reach${why}`,
+      `The device refused ${clipped(path)}: it is outside what the device lets a project reach`,
     );
   }
   let st: { size: number; isDir: boolean } | null;
@@ -682,7 +682,7 @@ async function listFailure(
   return new ApiError(
     "device.project_path_unreadable",
     st.isDir
-      ? `${clipped(path)} is a directory the device cannot read${why}`
+      ? `${clipped(path)} is a directory the device cannot read`
       : `${clipped(path)} is a file, not a directory`,
   );
 }

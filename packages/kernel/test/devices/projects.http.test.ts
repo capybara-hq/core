@@ -191,9 +191,11 @@ function answering(
 /** What the fake machine's `browseList` answers for `p`. */
 function listAnswer(p: string): NonNullable<Answer> | null {
   // a file, an unreadable directory, a failing disk: an ordinary error
-  if (p.endsWith(".txt") || p.endsWith("/secret") || p.endsWith("/flaky")) {
+  if (p.endsWith(".txt") || p.endsWith("/flaky")) {
     return { error: { kind: "error", message: "cannot list" } };
   }
+  // an unreadable directory whose provider passes the machine's own text on in a ToolError
+  if (p.endsWith("/secret")) return { error: { kind: "tool", message: "cannot list" } };
   // the provider refuses the path (it will not serve it)
   if (p.endsWith("/locked")) {
     return { error: { kind: "refused", message: "Outside what this device serves" } };
@@ -495,6 +497,11 @@ describe("device projects", () => {
     const secret = await add(d.req, d.deviceId, { path: "secret" });
     expect(secret.statusCode, secret.body).toBe(422);
     expect(errCode(secret)).toBe("device.project_path_unreadable");
+    // the machine is not trusted: its own error text never reaches the person
+    expect((secret.json() as { error: { message: string } }).error.message).toBe(
+      `${HOME}/secret is a directory the device cannot read`,
+    );
+    expect(secret.body).not.toContain("cannot list");
     // the provider refusing the path, with the provider's text
     const locked = await add(d.req, d.deviceId, { path: "locked" });
     expect(locked.statusCode, locked.body).toBe(422);
@@ -761,6 +768,10 @@ describe("device projects", () => {
     await db.updateTable("devices").set({ mode: null }).where("id", "=", id).execute();
     const outside = service.add(orgId, d.accountId, id, { path: "../etc" });
     await expect(outside).rejects.toMatchObject({ code: "device.project_outside_mode" });
+    // the device's own text never reaches the person
+    await expect(outside).rejects.not.toMatchObject({
+      message: expect.stringContaining("outside the browse scope"),
+    });
     expect(seen.at(-1)).toEqual({ op: "list", path: "/etc" });
     expect(await service.add(orgId, d.accountId, id, { path: "", name: "ws" })).toMatchObject({
       path: workspace,

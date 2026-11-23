@@ -14,6 +14,7 @@ import {
   SandboxGoneError,
   type SandboxHandle,
   type SandboxPermissionSupport,
+  ToolError,
 } from "@capybara-hq/plugin-sdk";
 
 /**
@@ -26,7 +27,8 @@ import {
  * A machine refuses an operation by answering `{ error: { kind, message } }`: kind `gone` throws
  * `SandboxGoneError` (the instance is gone), `fileSystemGone` `FileSystemGoneError`, `refused`
  * `ProjectPathRefusedError` (the message is its reason's `en`, an optional `zh` its `zh`),
- * `offline` `DeviceOfflineError`; any other kind is an ordinary error with the message. An unconnected machine is the relay's own
+ * `offline` `DeviceOfflineError`, `tool` a `ToolError` with the message (a provider passing the
+ * machine's text on); any other kind is an ordinary error with the message. An unconnected machine is the relay's own
  * `DeviceOfflineError`.
  *
  * The machine's hello body is `{ revision: string; outsideSandbox: boolean; perOperationHosts?:
@@ -106,6 +108,8 @@ function refusal(deviceId: string, answer: unknown): Error | null {
       });
     case "offline":
       return new DeviceOfflineError(deviceId);
+    case "tool":
+      return new ToolError(message);
     default:
       return new Error(message);
   }

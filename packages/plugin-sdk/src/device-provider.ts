@@ -201,8 +201,13 @@ export interface DeviceReportLimit {
 
 /**
  * What a provider tells about a device ({@link DeviceProvider.report}): shown to people, never
- * used for enforcement. `revision` changes whenever the rest changes; `home` is the owner's home
- * directory (absolute) or null; `reset` says whether the provider can reset the device's files.
+ * used for enforcement. `revision` must change whenever anything that affects what was approved
+ * against the report changes (how operations are confined, what the device may reach): a new
+ * revision invalidates the approvals, grants and pending admissions bound to the old one.
+ * Display-only facts (for example the shared project roots shown as a limit line) may change
+ * without a revision change: announce such a change with `ctx.devices.reportChanged`, and the
+ * kernel stores the new text without invalidating anything. `home` is the owner's home directory
+ * (absolute) or null; `reset` says whether the provider can reset the device's files.
  */
 export interface DeviceReport {
   revision: string;

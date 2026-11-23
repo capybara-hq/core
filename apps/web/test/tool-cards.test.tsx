@@ -492,6 +492,38 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     });
   });
 
+  it.each(["en", "zh"] as const)(
+    "a stale list-only ask refused by the device names why and what to do (%s)",
+    async (locale) => {
+      const m = locale === "zh" ? zh : en;
+      stubApi({
+        "GET /api/v1/orgs/o1/approvals/ap1": () =>
+          json(200, {
+            approval: {
+              ...NET,
+              scopes: ["always"],
+              detail: { ...NET.detail, appliesAt: "next-use" },
+            },
+          }),
+        "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+          json(400, {
+            error: {
+              code: "device.network_not_allowed",
+              message: "kernel text",
+              details: [{ reason: "follows_org" }],
+            },
+          }),
+      });
+      renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale });
+      const add = await screen.findByRole("button", {
+        name: locale === "zh" ? /加入此设备的列表/ : "Add to this device's list",
+      });
+      await userEvent.setup().click(add);
+      expect(await screen.findByText(m.errors.device.network_not_allowed.follows_org)).toBeTruthy();
+      expect(screen.queryByText(m.errors.device.network_not_allowed.default)).toBeNull();
+    },
+  );
+
   it("decided from the log, it reads the approval for the granted hosts (this time)", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
