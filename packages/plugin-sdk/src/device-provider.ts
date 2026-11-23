@@ -439,6 +439,13 @@ export interface DeviceProvider {
   /**
    * Applies new limits to a running instance without recreating it (optional). `recreate` asks
    * the kernel to destroy the instance and create one on the same files instead.
+   *
+   * `updated` means the instance now enforces `limits.network`, and no later rebuild of the
+   * instance (resume, auto-start, a lost egress component) can enforce a wider network than this
+   * one. For a narrowing (a host removed, or a kind that allows less), answer `updated` only once
+   * no connection to a removed host survives and no new one can open; otherwise answer `recreate`
+   * or throw. A thrown `update` is the kernel's to handle (recreate, or quarantine and retry on the
+   * next use), so a repeated call with the same limits must be safe.
    */
   update?(
     h: SandboxHandle,

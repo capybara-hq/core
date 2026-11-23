@@ -401,15 +401,18 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - **The network follows running instances; the rest applies at create.** The kernel records the
   limits an instance was created with (`device_instances.instance_limits`; NULL reads as unknown, and
   an old `{ tier, egress }` record reads as unknown too). On use, when the effective network kind
-  differs, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
-  records the new limits; `"recreate"`, a gone instance, or a provider without `update` destroys and
+  differs, the recorded network allows a host the desired one does not cover, or it lacks a desired
+  host, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
+  records the new limits (for a narrowing a provider answers it only once no connection to a removed
+  host survives and no new one can open, the SDK doc of `update`; Docker applies allowlist changes
+  in place, its egress proxy closing what the new list no longer covers); `"recreate"`, a gone instance, or a provider without `update` destroys and
   recreates the instance on the same files (the existing "recreated" notice). A non-gone `update`
   failure recreates on instance-bound providers; after an abort, or on a provider with
   `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance is quarantined
   (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful
   `update` keeps the old record, and the device view says `pendingFilesReset` (「重置文件后生效」): the
-  record never claims more than is in force. Changes of `network.hosts`, `cpu`, `memoryMb` still
-  reach only instances created afterwards, and `diskMb` only file systems created afterwards. When an
+  record never claims more than is in force. Changes of `cpu` and `memoryMb` still reach only
+  instances created afterwards, and `diskMb` only file systems created afterwards. When an
   item cannot be done, say so in the README (Docker's default local volume driver does not limit
   `diskMb`; E2B's cpu / memory / disk are decided by the template).
 - **Provider refusals** (auto mode spec §4.2): a failed `createFileSystem` / `create` / `update`
