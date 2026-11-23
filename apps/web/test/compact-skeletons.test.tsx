@@ -56,6 +56,7 @@ async function holdAll(path: string) {
     c.setQueryData(readinessQuery("o1").queryKey, {
       modelProvider: "ready",
       orgFixableProviders: [],
+      unusableProviders: [],
       agents: 1,
     });
     return c;

@@ -9,9 +9,10 @@ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account
 /**
  * Whether the org can run (`/api/v1/orgs/:orgId/readiness`, web-order spec §3.8): the web app
  * decides between the shell and the setup layout with it ({@link OrgReadiness}: `ready`,
- * `org_fixable` with the providers an org admin can switch on or configure, or `none`; and the
- * agents the caller can see). Computed by {@link ReadinessService}, from extension state only,
- * never a vendor call. Humans and service tokens (`org.read`).
+ * `no_models` with the providers that are on but give no chat model and why, `org_fixable` with
+ * the providers an org admin can switch on or configure, or `none`; and the agents the caller can
+ * see). Computed by {@link ReadinessService}: extension state first, then the cached model lists
+ * of the providers past that gate. Humans and service tokens (`org.read`).
  */
 @Controller("api/v1/orgs/:orgId/readiness")
 export class ReadinessController {

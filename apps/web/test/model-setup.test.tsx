@@ -23,9 +23,15 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const NOT_ENABLED: OrgReadiness = {
   modelProvider: "org_fixable",
   orgFixableProviders: [{ provider: "anthropic", reason: "not_enabled" }],
+  unusableProviders: [],
   agents: 0,
 };
-const MODEL_READY: OrgReadiness = { modelProvider: "ready", orgFixableProviders: [], agents: 0 };
+const MODEL_READY: OrgReadiness = {
+  modelProvider: "ready",
+  orgFixableProviders: [],
+  unusableProviders: [],
+  agents: 0,
+};
 
 const orgAdmin: Me = {
   ...ME,
@@ -262,7 +268,14 @@ describe("setup steps for the model by role", () => {
 
   it("none: the super admin deploys one on /admin/models; an org admin waits for a super admin", () => {
     renderFrame(
-      shellOf(ME, { readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 } }),
+      shellOf(ME, {
+        readiness: {
+          modelProvider: "none",
+          orgFixableProviders: [],
+          unusableProviders: [],
+          agents: 0,
+        },
+      }),
     );
     const link = within(modelStep()).getByRole("link", { name: zh.chat.setup.model.action });
     expect(link.getAttribute("href")).toBe("/admin/models");
@@ -270,12 +283,118 @@ describe("setup steps for the model by role", () => {
     cleanup();
     renderFrame(
       shellOf(orgAdmin, {
-        readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
+        readiness: {
+          modelProvider: "none",
+          orgFixableProviders: [],
+          unusableProviders: [],
+          agents: 0,
+        },
       }),
     );
     expect(within(modelStep()).queryByRole("link")).toBeNull();
     expect(within(modelStep()).getByText(zh.setupLayout.model.needsDeploymentAdmin)).toBeTruthy();
     expect(within(modelStep()).getByText(zh.chat.setup.model.askAdmin)).toBeTruthy();
+  });
+});
+
+/** A provider on in the org whose platform key the vendor rejects (the Test1 case). */
+const AUTH_FAILED = (orgCanFix: boolean): OrgReadiness => ({
+  modelProvider: "no_models",
+  orgFixableProviders: [],
+  unusableProviders: [
+    {
+      provider: "deepseek",
+      displayName: { zh: "DeepSeek 模型", en: "DeepSeek models" },
+      orgCanFix,
+      reason: "list_failed",
+      errorKind: "auth",
+    },
+  ],
+  agents: 0,
+});
+/** A provider that lists, but no chat model is on in the org (the org switched them off). */
+const NO_CHAT: OrgReadiness = {
+  modelProvider: "no_models",
+  orgFixableProviders: [],
+  unusableProviders: [
+    { provider: "model-x", displayName: null, orgCanFix: true, reason: "no_chat_models" },
+  ],
+  agents: 0,
+};
+
+describe("setup steps while providers are on but give no model (no_models)", () => {
+  beforeEach(() => resetNavigation("/"));
+  const modelStep = () =>
+    within(screen.getByRole("main"))
+      .getByText(zh.setupLayout.steps.model)
+      .closest("li") as HTMLElement;
+  const sidebarModel = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-part="step-item"]')].find((el) =>
+      el.textContent?.includes(zh.setupLayout.steps.model),
+    ) as HTMLElement;
+  const problem = "DeepSeek 模型 列模型失败（密钥无效）";
+
+  it("a rejected platform key: not done; a super admin fixes it on /admin/models, the reason names the provider", () => {
+    renderFrame(shellOf(ME, { readiness: AUTH_FAILED(false) }));
+    const step = modelStep();
+    expect(step.getAttribute("data-state")).toBe("todo");
+    expect(sidebarModel().getAttribute("data-state")).toBe("todo");
+    const link = within(step).getByRole("link", { name: zh.chat.setup.model.fixAction });
+    expect(link.getAttribute("href")).toBe("/admin/models");
+    expect(
+      within(step).getByText(zh.chat.setup.model.noModelsAdminFix.replace("{problem}", problem)),
+    ).toBeTruthy();
+    // the agent step still waits for a model
+    expect(screen.getAllByText(zh.setupLayout.agent.needsModel).length).toBeGreaterThan(0);
+  });
+
+  it("a rejected key the org may replace with its own: the org admin fixes it on /settings/models", () => {
+    renderFrame(shellOf(orgAdmin, { readiness: AUTH_FAILED(true) }));
+    const step = modelStep();
+    const link = within(step).getByRole("link", { name: zh.chat.setup.model.fixAction });
+    expect(link.getAttribute("href")).toBe("/settings/models");
+    expect(
+      within(step).getByText(zh.chat.setup.model.noModelsOrgFix.replace("{problem}", problem)),
+    ).toBeTruthy();
+  });
+
+  it("a rejected platform key the org cannot replace: an org admin waits for a super admin, the sidebar says why", () => {
+    renderFrame(shellOf(orgAdmin, { readiness: AUTH_FAILED(false) }));
+    const step = modelStep();
+    expect(within(step).queryByRole("link")).toBeNull();
+    expect(step.getAttribute("data-state")).not.toBe("done");
+    expect(within(step).getByText(zh.setupLayout.model.needsDeploymentAdmin)).toBeTruthy();
+    expect(
+      within(step).getByText(zh.chat.setup.model.noModelsAskAdmin.replace("{problem}", problem)),
+    ).toBeTruthy();
+    expect(sidebarModel().getAttribute("data-state")).toBe("waiting");
+    expect(sidebarModel().textContent).toContain(
+      zh.setupLayout.model.noModelsWaiting
+        .replace("{problem}", problem)
+        .replace("{wait}", zh.setupLayout.model.needsDeploymentAdmin),
+    );
+  });
+
+  it("no chat model on in the org: a member waits for an org admin; English names the provider by id without a display name", () => {
+    renderFrame(shellOf(member, { readiness: NO_CHAT }));
+    const step = modelStep();
+    expect(within(step).queryByRole("link")).toBeNull();
+    expect(within(step).getByText(zh.setupLayout.model.waitingForOrgAdmin)).toBeTruthy();
+    expect(
+      within(step).getByText(
+        zh.chat.setup.model.noModelsAskOrgAdmin.replace("{problem}", "model-x 没有可用的对话模型"),
+      ),
+    ).toBeTruthy();
+    cleanup();
+    renderFrame(shellOf(orgAdmin, { readiness: NO_CHAT }), undefined, { locale: "en" });
+    expect(
+      screen.getByText(
+        en.chat.setup.model.noModelsOrgFix.replace(
+          "{problem}",
+          "model-x has no chat model available",
+        ),
+      ),
+    ).toBeTruthy();
   });
 });
 
@@ -323,11 +442,17 @@ describe("/settings/models: 模型服务", () => {
     orgKernel([anthropic({ available: false, reason: "needs_deployment_config" })], {
       modelProvider: "none",
       orgFixableProviders: [],
+      unusableProviders: [],
       agents: 0,
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes(), {
       me: orgAdmin,
-      readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
+      readiness: {
+        modelProvider: "none",
+        orgFixableProviders: [],
+        unusableProviders: [],
+        agents: 0,
+      },
     });
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
@@ -350,10 +475,20 @@ describe("/settings/models: 模型服务", () => {
   ] as const)(
     "no model service on the platform: %s gets the deploy link: %s",
     async (_who, me, link) => {
-      orgKernel([SEARCH], { modelProvider: "none", orgFixableProviders: [], agents: 0 });
+      orgKernel([SEARCH], {
+        modelProvider: "none",
+        orgFixableProviders: [],
+        unusableProviders: [],
+        agents: 0,
+      });
       await renderRouteWithCache("/settings/models", lastStubRoutes(), {
         me,
-        readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
+        readiness: {
+          modelProvider: "none",
+          orgFixableProviders: [],
+          unusableProviders: [],
+          agents: 0,
+        },
       });
       expect(await screen.findByText(en.models.org.noProviders)).toBeTruthy();
       const to = screen.queryByRole("link", { name: en.models.org.toAdminModels });

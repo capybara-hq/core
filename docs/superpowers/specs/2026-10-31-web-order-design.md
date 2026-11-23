@@ -222,12 +222,23 @@ around an empty table.
 A third layout beside the auth layout (sign-in, initialization, the org chooser) and the shell: the
 **setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready.
 Readiness comes from one cheap kernel read, `GET /api/v1/orgs/:orgId/readiness` (`org.read`) →
-`{ modelProvider: "ready" | "org_fixable" | "none", orgFixableProviders, agents }`, computed in one
-place (`ReadinessService`, also behind the `agents.readiness` Platform operation): `modelProvider`
-is `ready` when a model-provider extension is usable in the org (loaded, on in the org, its
-effective config valid), read from extension state and never from a vendor (a provider whose vendor
-is down still counts), per replica, from that replica's provider registry (a replica that has not
-reconciled a just-enabled provider answers otherwise for a moment); `org_fixable` when none is but
+`{ modelProvider: "ready" | "no_models" | "org_fixable" | "none", orgFixableProviders,
+unusableProviders, agents }`, computed in one place (`ReadinessService`, also behind the
+`agents.readiness` Platform operation): `modelProvider` is `ready` when the org has a chat model an
+agent can pick, by the agent form's own source (`ProviderRegistry`: the org's model lists, chat
+models neither the platform nor the org disabled). It is read in two steps: first the cheap gate, a
+model-provider extension usable in the org (loaded, on in the org, its effective config valid),
+from extension state, per replica, from that replica's provider registry (a replica that has not
+reconciled a just-enabled provider answers otherwise for a moment); only past the gate the
+providers' model lists, through the shared list cache, the list time limit and the failure markers
+(maintainer bug report 2026-11-23: a provider whose platform key the vendor rejected made the step
+done while the agent form offered no model). `no_models` when providers pass the gate but none
+gives a chat model: `unusableProviders` names each with its display name and reason, `list_failed`
+(with `errorKind`, the provider's `ModelError` kind such as `auth`, `timeout` for the kernel's list
+time limit, else `unknown`) or `no_chat_models`, and `orgCanFix` (an org admin can fix it on
+`/settings/models`: the org may hold its own copy of the provider's config, or switched the chat
+models off; else only the super admin, on `/admin/models`); a vendor that is down therefore shows
+the setup layout with the reason until it lists again. `org_fixable` when no provider passes the gate but
 an org admin can make one usable on `/settings/models`: `orgFixableProviders` names each provider
 the org's extension list shows (`offeredToOrg`) with its reason, `not_enabled` (off in the org and
 switchable; the preinstalled providers are `optional`, off in every org until switched on) or
@@ -273,11 +284,15 @@ pages through `SetupContext`; pages never read it themselves.
   |---|---|---|---|---|
   | Model, `org_fixable` | 去启用 → `/settings/models` when also an org admin (去配置 when every provider only `needs_config`); otherwise as member | 去启用 / 去配置 → `/settings/models` | "等待组织管理员配置模型服务", described as "平台提供了模型服务，组织管理员在本组织启用或配置好后就能使用。" | same as member |
   | Model, `none` | 去配置 → `/admin/models` | "需要超级管理员配置模型服务" (no action) | "等待管理员配置模型" | same as member |
+  | Model, `no_models` | 去处理 → `/settings/models` when also an org admin and the org can fix it, else → `/admin/models` when the platform can | 去处理 → `/settings/models` when the org can fix it; otherwise "需要超级管理员配置模型服务" | waits for whoever can fix it | same as member |
   | Agent | 新建 → `/agents/new` once a model exists; before that disabled with "先配置模型" | same | same | "等待管理员创建 agent" |
   | 可以稍后再做 | invite members, channels, plugins (when also an org admin) | invite members, channels, plugins | 我的连接 | — |
 
   The model step's links come from one rule, `modelConfigHref` (`apps/web/src/lib/model-config.ts`,
-  the run row's "Configure model services" uses it too). The setup sidebar marks the model step
+  the run row's "Configure model services" uses it too); `no_models` from `noModelsHref` beside it
+  (the agent form's empty model picker links there too). With `no_models` every viewer sees the
+  problem naming the provider ("DeepSeek 模型 列模型失败（密钥无效）", "… 没有可用的对话模型"): in the
+  step's description on the setup home, and before the waiting reason in the sidebar. The setup sidebar marks the model step
   current on the page it links to (`/settings/models` is a step page).
 
   A viewer with nothing to do right now also sees why, with a 刷新 button that re-reads readiness:

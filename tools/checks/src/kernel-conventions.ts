@@ -245,6 +245,15 @@ export const KC_FORWARD_REF_ALLOWLIST: readonly { path: string; reason: string }
 
 export const KC_EXCEPTIONS: readonly KcException[] = [
   {
+    rule: "kc-cache",
+    path: "packages/kernel/src/runtime/providers.ts",
+    within: "statuses",
+    reason:
+      "the model list's failure marker is a short negative marker (LIST_FAILURE_TTL_SECONDS), not " +
+      "a read-through cache: it holds the failed list's error kind so the views report why while " +
+      "they skip the vendor call; the lists themselves are @Cacheable",
+  },
+  {
     rule: "kc-global-fetch",
     path: "packages/kernel/src/log-loki.ts",
     reason:

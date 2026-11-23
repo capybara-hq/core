@@ -816,7 +816,9 @@
       "attributionSessionUrlOn": "是",
       "attributionSessionUrlNeedsPublicUrl": "已开启，但不会加链接：部署未设置 http.publicUrl",
       "attributionDefaults": "平台默认：提交 {commit}；PR {pr}。",
-      "attributionNone": "无"
+      "attributionNone": "无",
+      "noUsableModels": "已配置的模型服务没有列出可用的对话模型：{problem}。",
+      "fixModels": "去处理"
     },
     "params": {
       "default": "默认",
@@ -1602,7 +1604,12 @@
         "waiting": "等待超级管理员配置",
         "enableDescription": "平台提供了模型服务，但本组织还没有可用的。在「设置 → 模型」里启用一个或补全它的配置，智能体才能回答。",
         "askOrgAdmin": "平台提供了模型服务，组织管理员在本组织启用或配置好后就能使用。",
-        "enableAction": "去启用"
+        "enableAction": "去启用",
+        "noModelsOrgFix": "{problem}。在「设置 → 模型」里填写本组织自己的配置或启用对话模型，智能体才能回答。",
+        "noModelsAdminFix": "{problem}。在「管理 → 模型」里检查这个模型服务的配置和密钥，智能体才能回答。",
+        "noModelsAskAdmin": "{problem}。模型服务由超级管理员在「管理 → 模型」里配置。",
+        "noModelsAskOrgAdmin": "{problem}。组织管理员在「设置 → 模型」里处理好后就能使用。",
+        "fixAction": "去处理"
       },
       "agent": {
         "description": "智能体决定用哪个模型、能用哪些工具和技能。",
@@ -5785,7 +5792,20 @@
     "model": {
       "needsDeploymentAdmin": "需要超级管理员配置模型服务",
       "waitingForAdmin": "等待管理员配置模型",
-      "waitingForOrgAdmin": "等待组织管理员配置模型服务"
+      "waitingForOrgAdmin": "等待组织管理员配置模型服务",
+      "problem": {
+        "listFailed": "{provider} 列模型失败（{cause}）",
+        "noChatModels": "{provider} 没有可用的对话模型",
+        "separator": "；",
+        "cause": {
+          "auth": "密钥无效",
+          "rateLimited": "请求过于频繁",
+          "timeout": "请求超时",
+          "unavailable": "服务不可用",
+          "failed": "请求失败"
+        }
+      },
+      "noModelsWaiting": "{problem}，{wait}"
     },
     "agent": {
       "needsModel": "先配置模型",

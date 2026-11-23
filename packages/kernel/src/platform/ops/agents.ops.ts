@@ -897,7 +897,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.readiness",
         description:
-          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org; org_fixable when an org admin can make one available on Settings > Models (orgFixableProviders names each provider and its reason: not_enabled, switch it on; needs_config, fill the org's config); none when only the super admin can help; and how many agents you can see.",
+          "Whether the org can run agents: modelProvider is ready when the org has a chat model an agent can pick (the list agents.create chooses from); no_models when model providers are on but none gives one (unusableProviders names each provider and its reason: list_failed with errorKind, e.g. auth for a rejected key, or no_chat_models; orgCanFix says whether an org admin can fix it on Settings > Models, else only the super admin can on the admin Models page); org_fixable when no provider is on but an org admin can make one available on Settings > Models (orgFixableProviders names each provider and its reason: not_enabled, switch it on; needs_config, fill the org's config); none when only the super admin can help; and how many agents you can see.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
