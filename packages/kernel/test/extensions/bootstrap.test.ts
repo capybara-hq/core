@@ -46,6 +46,7 @@ import {
   runConfig,
   session,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 const PERM_A = fileURLToPath(new URL("../fixtures/plugins/perm-a/index.ts", import.meta.url));
@@ -516,6 +517,65 @@ describe("a core upgrade (Review Focus 3)", () => {
     admin = await session(k, "root");
     const off = await admin({ method: "POST", url: "/api/v1/admin/extensions/gamma/disable" });
     expect(off.statusCode, off.body).toBe(200);
+  });
+});
+
+describe("a required entry that becomes optional (core#720)", () => {
+  afterAll(stopAll);
+
+  it("owes its scope sync: an existing org whose scope is all keeps it on, now through an org install", async () => {
+    await reset();
+    const v1 = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    let k = await boot(v1);
+    await loginAdmin(k);
+    const orgId = await createOrgWithProviders(k, admin, "Existing");
+    // Always-on while required: enabled without an org row
+    expect(await isExtensionEnabled(db, orgId, "alpha")).toBe(true);
+    expect(
+      await db
+        .selectFrom("extension_org_configs")
+        .select("plugin")
+        .where("org_id", "=", orgId)
+        .where("plugin", "=", "alpha")
+        .execute(),
+    ).toEqual([]);
+    await stopAll();
+
+    const v2 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }), required: false },
+    ]);
+    k = await boot(v2);
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["builtin", "scope"])
+        .where("name", "=", "alpha")
+        .executeTakeFirst(),
+    ).toEqual({ builtin: false, scope: "all" });
+    // The scope sync the demotion owed installs the plugin in the org and enables its extension
+    // there (its config is valid, so not needs_config)
+    await waitFor(
+      async () =>
+        (await db
+          .selectFrom("plugin_installs as p")
+          .innerJoin("catalog_items as i", "i.id", "p.item_id")
+          .select("p.status")
+          .where("p.org_id", "=", orgId)
+          .where("i.name", "=", "alpha")
+          .where("p.status", "=", "installed")
+          .executeTakeFirst()) ?? false,
+      20_000,
+      "the scope sync's install of alpha",
+    );
+    expect(await isExtensionEnabled(db, orgId, "alpha")).toBe(true);
+    expect(
+      await db
+        .selectFrom("extension_org_configs")
+        .select("enabled")
+        .where("org_id", "=", orgId)
+        .where("plugin", "=", "alpha")
+        .executeTakeFirst(),
+    ).toEqual({ enabled: true });
   });
 });
 

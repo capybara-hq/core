@@ -13,6 +13,7 @@ import {
 } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
 import type { PlatformPluginUpdater } from "../catalog/plugin-upgrade.js";
+import { oweScopeItem } from "../catalog/scope-jobs.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -22,6 +23,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { PackageTgzError, unpackPackageTgz } from "../packages/tgz.js";
@@ -233,6 +235,7 @@ export class BootstrapService {
     @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     /**
      * Config-declared extension names (an entry of the same name is kept, config wins, and no
      * install record is created): the start sequence records them before the bootstrap step, the
@@ -757,7 +760,12 @@ export class BootstrapService {
    * builtin is no longer builtin and keeps scope `all` (the admin may change it from then on).
    * Only the platform item: an org-owned item of the same name (the entry then fails with
    * `plugin.name_taken`) is never touched.
+   *
+   * A demoted item owes its scope sync in the same transaction ({@link demoted}): its extension
+   * was on in every org without an org row (always-on), and from now on the sync's org install
+   * keeps it on where the scope wants it.
    */
+  @Transactional()
   private async markBuiltin(name: string, builtin: boolean): Promise<void> {
     const touch = { updated_at: sql<Date>`now()` as unknown as Date };
     if (builtin) {
@@ -778,14 +786,26 @@ export class BootstrapService {
         .execute();
       return;
     }
-    await this.db
+    const rows = await this.db
       .updateTable("catalog_items")
       .set({ builtin: false, ...touch })
       .where("name", "=", name)
       .where("owner_org_id", "is", null)
       .where("deleted_at", "is", null)
       .where("builtin", "=", true)
+      .returning("id")
       .execute();
+    await this.demoted(rows.map((r) => r.id));
+  }
+
+  /**
+   * Owes the scope sync of catalog items that just stopped being builtin, in the transaction in
+   * context. A builtin item's extension was enabled in every org without an org row and the sync
+   * left the item alone; without this sync the orgs its scope (`all`) wants it on in would lose it.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async demoted(itemIds: string[]): Promise<void> {
+    for (const id of itemIds) await oweScopeItem(this.outbox, this.db, id);
   }
 
   /**
@@ -1027,7 +1047,11 @@ export class BootstrapService {
     });
   }
 
-  /** Install records still `required` whose entry left the manifest lose `required`. */
+  /**
+   * Install records still `required` whose entry left the manifest lose `required`; the catalog
+   * items of entries that left lose `builtin` and owe their scope sync ({@link demoted}).
+   */
+  @Transactional()
   private async clearRemoved(manifest: MergedBootstrapManifest): Promise<BootstrapEntryResult[]> {
     const names = manifest.plugins.map((p) => p.name);
     let q = this.db
@@ -1045,7 +1069,7 @@ export class BootstrapService {
       .where("owner_org_id", "is", null)
       .where("deleted_at", "is", null);
     if (names.length > 0) items = items.where("name", "not in", names);
-    await items.execute();
+    await this.demoted((await items.returning("id").execute()).map((r) => r.id));
     return rows.map((r) => ({ name: r.name, action: "required_cleared", version: r.version }));
   }
 }
