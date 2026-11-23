@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -11,14 +12,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-operations.js";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
-import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { type MacWorkerRequest, removePrivateTemp } from "../src/exec/operation-worker.js";
+import { privateTempParentName } from "../src/exec/read-model.js";
 
 /**
  * A scripted stand-in for the Linux operation agent (a real child process speaking the agent's
@@ -38,6 +40,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (first) {
     first = false;
+    // the private temporary directory as the command would find it: its mode, and a file in it
+    const temp = message.env && message.env.TMPDIR;
+    if (temp && fs.existsSync(temp)) {
+      fs.writeFileSync(temp + "/made-by-command", "x");
+      fs.writeFileSync(process.env.LOG + ".temp", JSON.stringify({ temp, mode: fs.statSync(temp).mode & 0o777 }));
+    }
     if (message.op === "probe") {
       if (behaviour === "probe-garbage") process.stdout.write("not json\n");
       else if (behaviour === "probe-partial")
@@ -87,9 +95,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-const dirs: string[] = [];
+/** This file's device: its private temporary parent lies in the device's own directory. */
+const DEVICE = `linux-worker-${process.pid}`;
+const TMP_ROOT = realpathSync(mkdtempSync(join(tmpdir(), "cap-device-tmp-root-")));
+const tempParent = join(TMP_ROOT, privateTempParentName(DEVICE));
+afterAll(() => rmSync(TMP_ROOT, { recursive: true, force: true }));
+const dirs: string[] = [tempParent];
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+  dirs.push(tempParent);
 });
 
 async function fakeTransport(behaviour: string) {
@@ -113,7 +127,18 @@ async function fakeTransport(behaviour: string) {
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l) as Record<string, unknown>);
-  return { transport, lines, spawned: () => spawned, filesLock: "/state/operation-files.lock" };
+  /** What the fake agent saw of the command's TMPDIR, if it was given one that existed. */
+  const temp = async () =>
+    JSON.parse(await readFile(`${log}.temp`, "utf8")) as { temp: string; mode: number };
+  return {
+    transport,
+    lines,
+    temp,
+    // the device's own directory on the host (a container's worker ignores it)
+    privateTempBase: TMP_ROOT,
+    spawned: () => spawned,
+    filesLock: "/state/operation-files.lock",
+  };
 }
 
 const grant = (full: boolean) => ({
@@ -132,7 +157,7 @@ function execRequest(
   const identities: unknown[] = [];
   return {
     kind: "exec",
-    scope: { operationId: "op" } as never,
+    scope: { operationId: "op", deviceId: DEVICE } as never,
     grant: grant(full),
     stateDir: "/unused",
     pythonPath: "/usr/bin/python3",
@@ -170,15 +195,200 @@ describe("Linux operation worker", () => {
       expect.objectContaining({ session: { sid: 4242, start: 777 }, process: expect.any(String) }),
     ]);
     const [sent] = await fake.lines();
+    const seen = await fake.temp();
     expect(sent).toMatchObject({
       op: "exec",
       full: false,
-      writeRoots: ["/work"],
+      writeRoots: ["/work", seen.temp],
       network: { kind: "allowlist", hosts: [] },
-      env: { PATH: "/bin", HOME: "/work", TMPDIR: "/work" },
+      env: { PATH: "/bin", HOME: "/work", TMPDIR: seen.temp, TMP: seen.temp, TEMP: seen.temp },
       expect: { "linux-sandbox.py": "x" },
       filesLock: "/state/operation-files.lock",
     });
+    // its own directory, never the first write root: in the device's private parent, private
+    expect(seen.temp.startsWith(`${tempParent}/op-${process.pid}-`)).toBe(true);
+    expect(seen.mode).toBe(0o700);
+    expect((await stat(tempParent)).mode & 0o777).toBe(0o700);
+    expect(sent?.readRoots).toEqual([seen.temp]);
+    // removed with what the command left in it once the operation ended
+    await expect(stat(seen.temp)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("each restricted exec gets a fresh private temp; a dead device process's leftovers go", async () => {
+    // a crashed device process's temp (a PID above every system's maximum is never alive)
+    await mkdir(tempParent, { recursive: true, mode: 0o700 });
+    const stale = join(tempParent, "op-4194305-stale");
+    await mkdir(stale);
+    await writeFile(join(stale, "left"), "x");
+    // an entry that cannot be removed (a link in a temp's place, left alone) stops nothing else
+    const outside = await mkdtemp(join(tmpdir(), "cap-sweep-outside-"));
+    dirs.push(outside);
+    await symlink(outside, join(tempParent, "op-4194305-a-link"));
+    await symlink(outside, join(tempParent, "op-4194305-z-link"));
+    // a live process's temp is kept
+    const live = join(tempParent, `op-${process.ppid}-live`);
+    await mkdir(live);
+    const seen: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const fake = await fakeTransport("exit");
+      await (
+        await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+          execRequest(false),
+          new AbortController().signal,
+        )
+      ).completion;
+      seen.push((await fake.temp()).temp);
+    }
+    expect(seen[0]).not.toBe(seen[1]);
+    await expect(stat(stale)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await stat(live)).isDirectory()).toBe(true);
+  });
+
+  it("refuses a restricted exec whose private temp parent is denied (in any form) or a link", async () => {
+    // the owner denies the parent: refused before anything is made there or an agent runs
+    const denied = await fakeTransport("exit");
+    const deniedHandle = await linuxOperationWorker({
+      ...denied,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(
+      execRequest(false, { grant: { ...grant(false), deniedReadRoots: [tempParent] } }),
+      new AbortController().signal,
+    );
+    await expect(deniedHandle.completion).rejects.toMatchObject({
+      name: "SandboxScopeDeniedError",
+    });
+    expect(denied.spawned()).toBe(0);
+    await expect(stat(tempParent)).rejects.toMatchObject({ code: "ENOENT" });
+    // denied through another name of the same place (its canonical form is checked too)
+    const alias = join(await mkdtemp(join(tmpdir(), "cap-temp-alias-")), "root");
+    dirs.push(dirname(alias));
+    await symlink(TMP_ROOT, alias);
+    const aliased = await fakeTransport("exit");
+    const aliasedHandle = await linuxOperationWorker({
+      ...aliased,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(
+      execRequest(false, {
+        grant: { ...grant(false), deniedReadRoots: [join(alias, privateTempParentName(DEVICE))] },
+      }),
+      new AbortController().signal,
+    );
+    await expect(aliasedHandle.completion).rejects.toMatchObject({
+      name: "SandboxScopeDeniedError",
+    });
+    expect(aliased.spawned()).toBe(0);
+    // a link in its place (another process could point it anywhere)
+    const elsewhere = await mkdtemp(join(tmpdir(), "cap-temp-elsewhere-"));
+    dirs.push(elsewhere);
+    await symlink(elsewhere, tempParent);
+    const linked = await fakeTransport("exit");
+    const linkedHandle = await linuxOperationWorker({
+      ...linked,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(execRequest(false), new AbortController().signal);
+    await expect(linkedHandle.completion).rejects.toThrow(/is a symbolic link/);
+    expect(linked.spawned()).toBe(0);
+    // a host worker without the device's own directory refuses rather than guess a shared one
+    const bare = await fakeTransport("exit");
+    const { privateTempBase: _none, ...withoutRoot } = bare;
+    const bareHandle = await linuxOperationWorker({
+      ...withoutRoot,
+      baseEnv: env,
+      acquireRuntime: gate,
+    })(execRequest(false), new AbortController().signal);
+    await expect(bareHandle.completion).rejects.toMatchObject({
+      name: "SandboxPermissionUnsupportedError",
+    });
+    expect(bare.spawned()).toBe(0);
+  });
+
+  it("removes a private temp without following links, and never through a link", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "cap-temp-outside-"));
+    dirs.push(outside);
+    await writeFile(join(outside, "keep"), "x");
+    const temp = await mkdtemp(join(TMP_ROOT, "op-remove-"));
+    await mkdir(join(temp, "nested"));
+    await symlink(outside, join(temp, "nested", "link"));
+    await symlink(join(outside, "keep"), join(temp, "file-link"));
+    await removePrivateTemp("/usr/bin/python3", temp);
+    await expect(stat(temp)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(outside, "keep"), "utf8")).toBe("x");
+    // a link in the directory's place is left alone, its target untouched
+    const swapped = join(TMP_ROOT, "op-swapped");
+    await symlink(outside, swapped);
+    await expect(removePrivateTemp("/usr/bin/python3", swapped)).rejects.toThrow(
+      /not a directory of this user/,
+    );
+    expect(await readFile(join(outside, "keep"), "utf8")).toBe("x");
+    await rm(swapped);
+    // already gone: nothing to do
+    await removePrivateTemp("/usr/bin/python3", join(TMP_ROOT, "op-missing"));
+  });
+
+  it("refuses a restricted grant whose write root covers or lies inside the private temps", async () => {
+    const native = (writeRoots: string[]) =>
+      ({
+        ...execRequest(false, { grant: { ...grant(false), writeRoots } }),
+        kind: "native",
+        native: { method: "writeFile", path: join(writeRoots[0] as string, "f") },
+        purpose: "operation",
+      }) as unknown as MacWorkerRequest;
+    // another name for the device's own directory: a write root reaching the parent through a
+    // symbolic link is refused like the real path
+    const alias = join(await mkdtemp(join(tmpdir(), "cap-root-alias-")), "dir");
+    dirs.push(dirname(alias));
+    await symlink(TMP_ROOT, alias);
+    for (const [writeRoots, why] of [
+      // the device's own directory (a root holding the device's working directory, as machine
+      // or paths reach could name), the parent itself, a directory inside it
+      [[TMP_ROOT], /contains this device's working directory .*Full access/],
+      [[alias], /contains this device's working directory/],
+      [[tempParent], /lies inside this device's private temporary directories/],
+      [[join(tempParent, "op-1-x")], /lies inside/],
+      [[join(alias, privateTempParentName(DEVICE))], /lies inside/],
+    ] as const)
+      for (const request of [
+        execRequest(false, { grant: { ...grant(false), writeRoots: [...writeRoots] } }),
+        native([...writeRoots]),
+      ]) {
+        const fake = await fakeTransport("exit");
+        const handle = await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+          request,
+          new AbortController().signal,
+        );
+        await expect(handle.completion, `${request.kind} ${writeRoots}`).rejects.toThrow(why);
+        expect(fake.spawned()).toBe(0);
+      }
+    // the device's tmp root beside the parent is an ordinary write root
+    const tmpRoot = join(TMP_ROOT, "tmp");
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+        execRequest(false, { grant: { ...grant(false), writeRoots: [tmpRoot] } }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const { temp } = await fake.temp();
+    expect((await fake.lines())[0]).toMatchObject({ writeRoots: [tmpRoot, temp] });
+  });
+
+  it("a command in the device's container keeps its first write root as TMPDIR, nothing made here", async () => {
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        transport: { ...fake.transport, kind: "docker" },
+        baseEnv: env,
+        acquireRuntime: gate,
+      })(execRequest(false), new AbortController().signal)
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({ writeRoots: ["/work"], env: { TMPDIR: "/work" } });
+    expect(sent?.env).not.toHaveProperty("TMP");
+    await expect(stat(tempParent)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("a restricted exec gets the version manager variables and reads their directories", async () => {
@@ -200,11 +410,12 @@ describe("Linux operation worker", () => {
     })(request, new AbortController().signal);
     await handle.completion;
     const [sent] = await fake.lines();
+    const { temp } = await fake.temp();
     expect(sent).toMatchObject({
       // the carve returns its roots sorted by code point
-      readRoots: [join(home, ".asdf"), "/repo"].sort(),
+      readRoots: [join(home, ".asdf"), "/repo", temp].sort(),
       readFiles: [join(home, ".tool-versions")],
-      writeRoots: ["/work"],
+      writeRoots: ["/work", temp],
       env: {
         PATH: "/bin",
         HOME: "/work",
@@ -269,8 +480,11 @@ describe("Linux operation worker", () => {
         expect(root === d || root.startsWith(`${d}/`), `${root} inside ${d}`).toBe(false);
         expect(d.startsWith(`${root}/`), `${root} holds ${d}`).toBe(false);
       }
-    // beside the denied paths, and the tool homes (clear of every denied path) kept whole
-    expect(roots).toEqual(["/h/u/src", "/usr", join(home, ".asdf")].sort());
+    // beside the denied paths, and the tool homes and the private temp (clear of every denied
+    // path) kept whole
+    expect(roots).toEqual(
+      ["/h/u/src", "/usr", join(home, ".asdf"), (await fake.temp()).temp].sort(),
+    );
     // native work keeps the reach as granted: the agent checks each resolved path against denied
     const native = await fakeTransport("exit");
     await (
@@ -340,16 +554,17 @@ describe("Linux operation worker", () => {
       )
     ).completion;
     const [sent] = await fake.lines();
+    const { temp } = await fake.temp();
     expect(sent).toMatchObject({
-      readRoots: [home, "/repo"].sort(),
-      writeRoots: ["/work", home],
+      readRoots: [home, "/repo", temp].sort(),
+      writeRoots: ["/work", home, temp],
       env: {
         HOME: home,
         XDG_CACHE_HOME: "/repo/.cache",
         XDG_CONFIG_HOME: join(home, ".config"),
         XDG_DATA_HOME: join(home, ".local/share"),
         XDG_STATE_HOME: join(home, ".local/state"),
-        TMPDIR: "/work",
+        TMPDIR: temp,
       },
     });
     expect((await stat(home)).mode & 0o777).toBe(0o700);
@@ -384,7 +599,8 @@ describe("Linux operation worker", () => {
     const [fullSent] = await full.lines();
     expect(fullSent).not.toHaveProperty("readRoots");
     expect(fullSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
-    // a container's worker (no toolHome) keeps the restricted env as it was
+    // a host worker without toolHome adds no version manager variables, files or roots (only
+    // its private temporary directory)
     const container = await fakeTransport("exit");
     await (
       await linuxOperationWorker({ ...container, baseEnv: env, acquireRuntime: gate })(
@@ -393,7 +609,7 @@ describe("Linux operation worker", () => {
       )
     ).completion;
     const [containerSent] = await container.lines();
-    expect(containerSent).toMatchObject({ readRoots: [] });
+    expect(containerSent).toMatchObject({ readRoots: [(await container.temp()).temp] });
     expect(containerSent).not.toHaveProperty("readFiles");
     expect(containerSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
   });

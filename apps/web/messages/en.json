@@ -1776,7 +1776,6 @@
       "providerLabel": "Device type",
       "connected": "{name} connected.",
       "close": "Close",
-      "connectFailed": "Could not connect this machine. Try again.",
       "noGuide": "This device type has no connection guide; ask an org admin."
     },
     "detail": {
@@ -1804,31 +1803,6 @@
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
       "filesLostNoReset": "The files of this device are gone at its provider, which offers no rebuild from here.",
       "tabProjects": "Projects"
-    },
-    "thisMachine": {
-      "title": "This machine",
-      "mark": "This machine",
-      "running": "Running now",
-      "runningEmpty": "Nothing is running.",
-      "isolation": {
-        "restricted": "In the sandbox",
-        "full": "Outside the sandbox"
-      },
-      "pause": "Pause",
-      "resume": "Resume",
-      "disconnect": "Disconnect",
-      "wakeNote": "The computer was asleep",
-      "keepAwake": {
-        "title": "Keep awake",
-        "off": "Off",
-        "whileBusy": "While running",
-        "connected": "Always",
-        "held": "Holding the computer awake.",
-        "unavailable": "Cannot keep the computer awake: {reason}",
-        "cannot": "Keep awake cannot prevent: closing the lid of a Mac on battery without an external display still puts it to sleep; so do choosing Sleep, a critically low battery and thermal emergencies. On Linux, the lid switch is handled by logind, which this service cannot override."
-      },
-      "failed": "That did not go through. Try again.",
-      "widened": "Changed on this computer."
     },
     "sandbox": {
       "mark": {

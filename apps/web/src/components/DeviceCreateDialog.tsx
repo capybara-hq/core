@@ -17,7 +17,6 @@ import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useConnectThisMachine } from "../lib/use-this-machine";
 import { FormError } from "./form-error";
 import { SetupGuideSection } from "./SetupGuideSection";
 
@@ -37,8 +36,6 @@ export const WAIT_POLL_MS = 3000;
  * - A dial-in provider (a machine signs in): no name; the guide says how (a provider without one
  *   gets a line to ask an org admin), and the dialog reads the devices until one of that provider
  *   it had not seen appears, and opens its page.
- * - In the desktop shell the guide's shell-action block is a primary Connect this machine button;
- *   in a browser it draws nothing.
  */
 export function DeviceCreateDialog({
   orgId,
@@ -152,7 +149,6 @@ export function DeviceCreateDialog({
             orgId={orgId}
             guide={chosen.guide}
             query={{ audience: "member" }}
-            renderShellAction={(_, label) => <ConnectThisMachine orgId={orgId} label={label} />}
           />
         )}
         {dialIn && chosen?.guide == null && (
@@ -227,26 +223,4 @@ function useWatchNewDevice(
       onConnected(fresh);
     }
   }, [enabled, provider, list.data, list.dataUpdatedAt, onConnected]);
-}
-
-/**
- * The guide's shell-action block: the primary Connect this machine button, only in a shell that
- * offers `device@2` (a browser draws nothing). The shell's `connect` adds a connection into this
- * org and runs inside the click-driven mutation (`useConnectThisMachine`), so the shell sees the
- * person's activation; a cancel shows nothing.
- */
-function ConnectThisMachine({ orgId, label }: { orgId: string; label: string }) {
-  const t = useTranslations("devices.create");
-  const { offered, pending, failed, connect } = useConnectThisMachine(orgId);
-  if (!offered) return null;
-  return (
-    <Stack gap={8}>
-      <Stack direction="row">
-        <Button variant="primary" loading={pending} disabled={pending} onClick={connect}>
-          {label}
-        </Button>
-      </Stack>
-      {failed && <FormError message={t("connectFailed")} />}
-    </Stack>
-  );
 }

@@ -21,16 +21,14 @@ import {
 import { labelLocale } from "../lib/extension-label";
 import { DeviceNetworkSection } from "./DeviceNetworkSection";
 import { Person } from "./Person";
-import { ThisMachineSection } from "./ThisMachineSection";
 
 /**
- * Overview (device provider design §6.6), the same for every provider: the this-machine block on
- * top (only inside the desktop shell, for this machine's device), then what the provider last
- * reported (its description line in the page language and its limits as read-only rows; no
- * report on a usable device: the provider did not answer), the network setting, the recent
- * network changes and the files note. Every part is a `FormSection`, all siblings (a fragment),
- * so the template counts them and picks the layout (spec §5.3 "Columns by count"); the page puts
- * the danger zone after them.
+ * Overview (device provider design §6.6), the same for every provider: what the provider last
+ * reported (its description line in the page language and its limits as read-only rows; no report
+ * on a usable device: the provider did not answer), the network setting, the recent network
+ * changes and the files note. Every part is a `FormSection`, all siblings (a fragment), so the
+ * template counts them and picks the layout (spec §5.3 "Columns by count"); the page puts the
+ * danger zone after them.
  */
 export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; device: Device }) {
   const t = useTranslations("devices");
@@ -38,7 +36,6 @@ export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; dev
   const report = e.report;
   return (
     <>
-      <ThisMachineSection orgId={orgId} device={e} />
       {(report !== null || e.available) && (
         <FormSection id="about" title={t("overview.about")}>
           <Stack gap={8}>

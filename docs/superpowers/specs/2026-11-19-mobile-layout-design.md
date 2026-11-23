@@ -702,15 +702,14 @@ declare global {
 
 ### 9.2 Capabilities and versioning
 
-- A capability is an object of functions under a key `name@major`, e.g. `device@1`. Additive
+- A capability is an object of functions under a key `name@major`, e.g. `notify@1`. Additive
   changes (a new optional function or field) keep the key; an incompatible change is a new key
-  (`device@2`), and a shell may offer both while deployments upgrade. The web uses the highest
+  (`notify@2`), and a shell may offer both while deployments upgrade. The web uses the highest
   major it knows and **treats an absent capability as the browser** (the page behaves exactly as
   in a browser). Unknown keys are ignored. Before 0.1.0 a capability's shape may still change in
-  place under its key (AGENTS.md "Before 0.1.0"; `device@1.requestCeiling` took the device's
-  `{ outsideSandbox?, network?, projectReach? }` fields on 2026-11-20); a shell validates every
+  place under its key (AGENTS.md "Before 0.1.0"); a shell validates every
   input and refuses a shape it does not know (`failed`), so the skew fails closed.
-- **Detection is by capability, never by user agent or `kind`**: `capybaraShell?.capabilities["device@1"]`.
+- **Detection is by capability, never by user agent or `kind`**: `capybaraShell?.capabilities["notify@1"]`.
   `kind` and `platform` only choose shell attributes (§9.3), never features.
 - Web versions skew against shell versions in both directions (self-hosted deployments upgrade
   on their own schedule): the envelope `version` and the capability keys are what make that
@@ -719,7 +718,6 @@ declare global {
 
   | Capability | Owner | Purpose |
   |---|---|---|
-  | `device@1` | Desktop spec | "Connect this machine" as a local device; status of this machine's device |
   | `notify@1` | Desktop spec | OS notifications while the shell runs; a click focuses the conversation |
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
   | `signIn@1` | Desktop spec (§6.5 there) | `start()`: sign in through the system browser (`/apps/authorize`, PKCE, back through the app's `capybara://auth/callback` scheme; `features.appSignIn` in `/api/v1/meta`). Offered by the desktop shell and by the later mobile app shell, which reuses the same flow (an `ASWebAuthenticationSession` / Custom Tabs style browser session returning through its scheme) |
@@ -770,11 +768,10 @@ declare global {
   realized in design CSS.
 - **Features** that use a capability live in one small adapter in apps/web
   (`lib/shell.ts`: typed accessors returning `undefined` without the capability), so a page asks
-  "can I connect this machine" and never reads `window.capybaraShell` itself. The adapter reads
+  "can I show a native notification" and never reads `window.capybaraShell` itself. The adapter reads
   capabilities **reactively**: a `useShellCapability(key)` hook subscribes to `on("change")`
   (through `useSyncExternalStore`, `undefined` on the server and during hydration), because a
-  shell may add a capability after the page loaded (the desktop offers `device@1` only once it
-  has read the deployment's `/api/v1/meta`) or remove one; a page never caches a one-time read. A check
+  shell may add a capability after the page loaded or remove one; a page never caches a one-time read. A check
   (`web-shell-access`, §11.4) rejects other reads of the global in apps/web.
 - **`data-cap-state`** gains `shell=desktop|mobile` (after hydration) for plugin CSS.
 
@@ -790,7 +787,7 @@ declare global {
 - **Anything dangerous is confirmed by the shell**, in UI the page cannot draw or click (an OS
   dialog, or a separate shell-owned window loading the shell's own page: the desktop's shell
   dialogs, desktop spec §7.4, decided 2026-11-20):
-  connecting the machine as a device, opening a file, anything that widens what the machine
+  opening a file, anything that widens what the machine
   allows. A capability never returns a secret (a device credential, a sign-in token).
 - **User activation and one dialog at a time.** A capability call that needs a shell
   confirmation is refused unless the page has a transient user activation at the moment of the
@@ -798,8 +795,7 @@ declare global {
   forwards the call), so a page cannot raise confirmations on its own. A shell shows **at most
   one confirmation at a time per profile and origin**; further confirming calls fail with
   `busy` until it is answered. This applies to every confirming capability alike, in the desktop
-  and the mobile shell; the desktop's `device@1` (connect, resume, a widening ceiling request) is
-  the first.
+  and the mobile shell.
 - Client extensions (L2 / L3) run in the page with full trust (client extensions spec §9.6), so
   they can reach the global like the web can. This is accepted: approval is governance, and the
   shell's confirmation is the barrier for anything dangerous. `@capybara-hq/plugin-client` does
