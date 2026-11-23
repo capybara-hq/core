@@ -1298,12 +1298,67 @@ span.cb-title-btn {
   height: 100%;
   background: var(--cb-ink);
 }
-/* A context line ("deepseek-flash · 设备：个人设备 · 已暂停") breaks between its words, never inside
-   one (「已暂/停」): CJK runs keep together like Latin words, and only a word longer than the line
-   breaks anywhere (spec §6.16.17). */
-.cb-context-line {
+/* The Context section's facts (spec §6.16.17): label and value rows in `small`, the labels
+   `muted` in a column as wide as the widest, the values `ink`. A value breaks between its words,
+   never inside one (「已暂/停」): CJK runs keep together like Latin words, and only a word longer
+   than the line breaks anywhere. */
+.cb-context-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+  margin: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-context-row {
+  display: contents;
+}
+.cb-context-key {
+  color: var(--cb-muted);
+  white-space: nowrap;
+}
+.cb-context-value {
+  min-width: 0;
+  margin: 0;
+  color: var(--cb-ink);
   word-break: keep-all;
   overflow-wrap: anywhere;
+}
+/* The device's mark stands on its own line under the device. */
+.cb-context-mark {
+  display: flex;
+  margin-top: var(--cb-space-1);
+}
+.cb-property-title-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+/* The hint button: the icon on the title's line; its hit area reaches past the icon (a touch
+   target) without making the head taller. */
+.cb-property-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-faint);
+  cursor: pointer;
+}
+.cb-property-hint::before {
+  position: absolute;
+  inset: calc(-1 * var(--cb-space-2));
+  content: "";
+}
+.cb-property-hint:hover,
+.cb-property-hint[data-state="delayed-open"],
+.cb-property-hint[data-state="instant-open"] {
+  color: var(--cb-ink);
 }
 .cb-property-list {
   display: flex;

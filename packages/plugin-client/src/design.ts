@@ -13,6 +13,7 @@ export const DESIGN_NAMES = [
   "Select",
   "Spinner",
   "Stack",
+  "Switch",
   "Text",
   "Tooltip",
   "ViewBlocks",
@@ -79,6 +80,15 @@ export interface StackProps {
   justify?: "start" | "center" | "end" | "between";
   wrap?: boolean;
   children?: ReactNode;
+}
+export interface SwitchProps {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  /** The switch's accessible name (a switch draws no text of its own). */
+  label: string;
+  disabled?: boolean;
+  id?: string;
+  "aria-describedby"?: string;
 }
 export interface TextProps {
   variant?: "h1" | "h2" | "h3" | "body" | "small" | "micro" | "prose";
@@ -148,6 +158,7 @@ export const Kbd = forward<KbdProps>("Kbd");
 export const Logo = forward<LogoProps>("Logo");
 export const Spinner = forward<SpinnerProps>("Spinner");
 export const Stack = forward<StackProps>("Stack");
+export const Switch = forward<SwitchProps>("Switch");
 export const Text = forward<TextProps>("Text");
 export const Tooltip = forward<TooltipProps>("Tooltip");
 export const PropertySection = forward<PropertySectionProps>("PropertySection");

@@ -1965,8 +1965,9 @@ describe("run rows (spec §6.16.23)", () => {
     expect(row().querySelector('[data-part="run-status"]')?.textContent).toBe("Done");
     expect(document.querySelectorAll("[data-entry='run']")).toHaveLength(1);
     const props = await screen.findByRole("complementary", { name: "Properties" });
+    // the Model row already names fake-1: the last run leaves it out
     expect(props.querySelector('[data-part="context-last-run"]')?.textContent).toBe(
-      "Last run · fake-1 · 2.0s · 1,234 tokens",
+      "2.0s · 1,234 tokens",
     );
     window.history.replaceState(null, "", "/");
   });
