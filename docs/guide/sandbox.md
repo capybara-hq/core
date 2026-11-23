@@ -166,11 +166,11 @@ directory. A conversation without a project is in **free mode** (自由模式), 
 - **Adding one**: on the device page's 设置 view, the 项目 section (the 概览 view lists them
   read-only). The form takes the directory **relative to the device's base**, shown as a fixed
   prefix, and an optional name (default: the directory's name; 1-64 characters, not `.` or `..`, no
-  `/` or control characters, no leading or trailing spaces, unique on the device). The base follows
-  the device's project reach: the owner's home directory for a local device whose owner ceiling
-  has `machine` reach (reported by `capybara-device` when it connects), else the device's
-  workspace, and always the workspace on a cloud device. The device is asked whether
-  the directory exists and can be read before it is saved, so a typo fails at the form. The
+  `/` or control characters, no leading or trailing spaces, unique on the device). The base is the
+  owner's home directory for a local device in OS mode (reported by `capybara-device` when it
+  connects), else the device's workspace: a local device in Docker mode and a cloud device. The
+  device is asked whether the directory exists and can be read before it is saved, so a typo fails
+  at the form, and a directory its project reach does not allow is refused with the device's reason. The
   directory need not hold `.git` or `AGENTS.md` yet. A directory that holds the owner's home (`/`,
   `/home`, `/Users` in any case, an ancestor of the home) is refused as too broad; the home itself is
   allowed. Removing a project only drops it from the list: its files stay, and conversations bound to
@@ -181,9 +181,11 @@ directory. A conversation without a project is in **free mode** (自由模式), 
 - **What the reach allows**: a device offers what it can read within its project reach. With
   `workspace` reach, and on a cloud device, that is only the workspace; with `machine` reach on a
   local device, any directory outside the deny list, and with `paths` reach, the listed project
-  paths. A project the current reach cannot read is hidden (the section says how many), not deleted,
-  and comes back when the reach does. The device enforces its ceiling on every access anyway, so a saved path grants
-  nothing by itself.
+  paths. A saved project stays listed when the reach narrows: the device refuses it when it is used
+  (a conversation bound to it starts without the project, which is reported unavailable, and work in
+  its directory is refused with the device's reason, `project_refused`), and it works again once the
+  reach allows it. The device enforces its ceiling on every access, so a saved path grants nothing
+  by itself.
 - **Requirements**: a local device needs a `capybara-device` that supports projects (it announces
   it when it connects; the section asks you to update an older one). A cloud device needs a sandbox
   extension that implements the project calls; with one that does not, its conversations stay in
