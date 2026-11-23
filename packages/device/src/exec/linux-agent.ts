@@ -308,7 +308,11 @@ def pin_file(path):
         if error.errno in (errno.EMFILE, errno.ENFILE):
             raise TooManyRoots()
         return None
-    info = os.fstat(fd)
+    try:
+        info = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        return None
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not canonical_fd(fd, path):
         os.close(fd)
         return None

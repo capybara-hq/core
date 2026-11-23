@@ -686,8 +686,8 @@ suite in `@capybara-hq/testing` checks it):
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
   the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`): subdirectories whole, and the non-denied
   regular files directly inside each expanded directory as exact file roots (the agent pins each O_PATH|O_NOFOLLOW,
-  one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG, one link and identity on the pinned
-  descriptor, skips one renamed or deleted since the pin, and grants file reads only, never READ_DIR or EXECUTE). An
+  one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned
+  descriptor, skips one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). An
   expanded directory cannot be listed, a bind mount of a denied directory stays readable, more than 4096 carved
   directories refuses machine reach, and files past the cap or the agent's open-file limit are dropped. `policy.json` is format 4; an older file is refused at start
   and rewritten from the closed policy by `ceiling set` (`PolicyVersionError`, `replacementPolicy`).

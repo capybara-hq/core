@@ -86,6 +86,14 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.boto",
   "~/.dockercfg",
   "~/.smbcredentials",
+  "~/.terraformrc",
+  "~/.yarnrc.yml",
+  "~/.databrickscfg",
+  "~/.passwd-s3fs",
+  "~/.erlang.cookie",
+  "~/.curlrc",
+  "~/.wgetrc",
+  "~/.claude.json",
   // shell and REPL histories (commands with inlined secrets)
   "~/.bash_history",
   "~/.zsh_history",
@@ -94,6 +102,14 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.python_history",
   "~/.node_repl_history",
   "~/.sqlite_history",
+  "~/.histfile",
+  "~/.zhistory",
+  "~/.sh_history",
+  "~/.lesshst",
+  "~/.viminfo",
+  "~/.rediscli_history",
+  "~/.irb_history",
+  "~/.Rhistory",
 ]);
 
 /**

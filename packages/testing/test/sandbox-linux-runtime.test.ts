@@ -259,14 +259,14 @@ describe.skipIf(unavailable !== null)(
         expect(device.run(`cat ${dir}/granted.txt`)).toBe("granted");
       });
 
-      it("refuses a link, a directory, a FIFO or a hard-linked file as a file root, and a misrecorded one", async (context) => {
+      it("refuses a link, a directory or a FIFO as a file root, and a misrecorded one", async (context) => {
         requireSupport(context);
         const dir = `${sibling}/refused`;
         device.run(
           `mkdir -p ${dir}/sub && printf f > ${dir}/file && printf ${SECRET} > ${dir}/secret && ` +
-            `ln -s ${dir}/secret ${dir}/link && mkfifo ${dir}/fifo && ln ${dir}/secret ${dir}/twice`,
+            `ln -s ${dir}/secret ${dir}/link && mkfifo ${dir}/fifo`,
         );
-        for (const name of ["link", "sub", "fifo", "twice"]) {
+        for (const name of ["link", "sub", "fifo"]) {
           const refused = await run(restricted(), `cat ${dir}/${name}; printf ran > ran`, {
             readFileRoots: [`${dir}/${name}`],
           });
@@ -296,7 +296,7 @@ describe.skipIf(unavailable !== null)(
         ]);
       });
 
-      it("skips a file root renamed or deleted after the pin: the command runs, the path stays unreadable", async (context) => {
+      it("skips a file root renamed, deleted or hard-linked after the pin: the command runs, the path stays unreadable", async (context) => {
         requireSupport(context);
         const dir = `${sibling}/moved`;
         device.run(
@@ -327,6 +327,14 @@ describe.skipIf(unavailable !== null)(
         });
         expect(gone.events?.some((e) => e.event === "refused")).toBe(false);
         expect(device.run(`cat ${root}/ran-gone`)).toBe("ran");
+        // a file with a second name may share a denied file's inode: no rule for it
+        device.run(`ln ${dir}/secret ${dir}/twice && rm -f ${root}/ran-twice`);
+        const twice = await run(restricted(), `cat ${dir}/twice; printf ran > ran-twice`, {
+          readFileRoots: [`${dir}/twice`],
+        });
+        expect(twice.events?.some((e) => e.event === "refused")).toBe(false);
+        expect(device.run(`cat ${root}/ran-twice`)).toBe("ran");
+        expect(decode(twice.stdout)).not.toContain(SECRET);
       });
 
       it("closes every inherited descriptor above stdio, however high", async (context) => {
@@ -800,9 +808,9 @@ attempt("own-moved", own_moved)
           "                if not stat.S_ISREG(info.st_mode):\n" +
           '                    raise Refused("ROOT_CHANGED", "A pinned file root is not a regular file")\n';
         const typeless = stageMutant(device, "file-root-any-type", checks, "");
-        // the name check would refuse a directory (two or more links) on its own: drop it too
+        // the name check would skip a directory (two or more links) on its own: drop it too
         device.run(
-          `sed -i '/A pinned file root has more than one name/d; /if info.st_nlink != 1:/d' ` +
+          `sed -i 's/if where != path or info.st_nlink != 1:/if where != path:/' ` +
             `${typeless}/linux-sandbox.py`,
           "0",
         );

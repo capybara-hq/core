@@ -185,7 +185,9 @@ type, a file you cannot read or one with a second name (a hard link). Such a dir
 cannot be listed (`ls ~` fails under `machine` reach), and a file created in it after the
 operation started, or renamed, deleted or replaced by renaming another file over it before the
 command starts, is not readable by that operation (the command still runs). Secrets a shell start
-file exports (`export TOKEN=...` in `~/.bashrc`) are not covered: start files stay readable. A sandboxed Maven or Gradle build never
+file exports (`export TOKEN=...` in `~/.bashrc`) are not covered: start files stay readable.
+Neither are copies of a denied file under another name, such as an editor backup
+(`~/.my.cnf.bak`, `~/.netrc~`): only the listed names are denied. A sandboxed Maven or Gradle build never
 reads the denied settings files. On Linux Java takes the home from the password database and
 Landlock does not hide `stat`, so the build sees the files exist but cannot open them and may fail
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look

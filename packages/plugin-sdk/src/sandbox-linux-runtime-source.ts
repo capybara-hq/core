@@ -4,8 +4,8 @@
  *
  * Transport: `python3 -I linux-sandbox.py probe` prints the capability report. Otherwise one JSON
  * request on stdin: `{mode: "exec" | "native", roots: {read, write: [{path, fd, dev, ino}],
- * readFiles? (exec only: single regular files with one name, granted read without their
- * directory; one renamed or deleted since the pin is skipped, any other mismatch refused)},
+ * readFiles? (exec only: single regular files granted read without their directory; one
+ * renamed, deleted or hard-linked since the pin is skipped, a wrong type or identity refused)},
  * network: {kind: "none" | "environment"} | {kind: "endpoints", endpoints: [{address, port}]},
  * reportFd, cwd?, env?, argv (exec), timeoutMs? (exec), native (native-files request),
  * nativeFd? (exec: an inherited, consumer-verified descriptor of native-files.py, e.g. a sealed
@@ -512,11 +512,11 @@ def install_filter(table, program, listener):
 def verify_roots(native, request):
     """Validates pinned descriptors against their recorded identity without reopening paths.
     Read and write roots are directories; a file root (readFiles, exec mode only) is a regular
-    file with exactly one name whose descriptor the consumer opened O_PATH | O_NOFOLLOW, so a
-    symbolic link, directory, FIFO, socket, device or hard-linked file given as a file root is
-    refused here, as is a wrong recorded identity. A file root whose pinned file no longer sits at
-    its path (renamed or deleted since the pin: editors and atomic saves do this) is skipped:
-    no rule, no refusal, the path stays unreadable."""
+    file whose descriptor the consumer opened O_PATH | O_NOFOLLOW, so a symbolic link, directory,
+    FIFO, socket or device given as a file root is refused here, as is a wrong recorded identity.
+    A file root whose pinned file no longer sits at its path (renamed or deleted since the pin:
+    editors and atomic saves do this) or has more than one name (a hard link could share a denied
+    file's inode) is skipped: no rule, no refusal, the path stays unreadable."""
     result = {"read": [], "write": [], "readFiles": []}
     seen = []
     if request.get("roots", {}).get("readFiles") and request.get("mode") != "exec":
@@ -539,10 +539,9 @@ def verify_roots(native, request):
                     raise Refused("ROOT_CHANGED", "A pinned file root is not a regular file")
                 if identity != [info.st_dev, info.st_ino]:
                     raise Refused("ROOT_CHANGED", "A pinned root no longer names its recorded object")
-                if where != path:
-                    continue  # renamed or deleted since the pin: grant nothing for it
-                if info.st_nlink != 1:
-                    raise Refused("ROOT_CHANGED", "A pinned file root has more than one name")
+                if where != path or info.st_nlink != 1:
+                    # renamed, deleted or given a second name since the pin: grant nothing for it
+                    continue
             elif not stat.S_ISDIR(info.st_mode) or identity != [info.st_dev, info.st_ino] \
                     or where != path:
                 raise Refused("ROOT_CHANGED", "A pinned root no longer names its recorded object")
