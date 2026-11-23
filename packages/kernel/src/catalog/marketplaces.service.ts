@@ -76,8 +76,11 @@ import { compareVersions, newestFirst, sameRelease } from "./versions.js";
 
 /** 官方清单来源的 id。 */
 export const OFFICIAL_MARKETPLACE_ID = "official";
-/** Neutral: the official marketplace lists the upstream project's plugins under any platform name. */
-const OFFICIAL_MARKETPLACE_NAME = "Official marketplace";
+/**
+ * The official marketplace lists the upstream project's plugins, so it carries the project's name
+ * under any platform name.
+ */
+const OFFICIAL_MARKETPLACE_NAME = "Capybara";
 /** 企业清单的可选令牌：secrets 的 namespace `kernel`、org `_deployment`、键 `catalog-token:<id>`（preflight #65）。 */
 const SECRETS_NAMESPACE = "kernel";
 const tokenKey = (id: string) => `catalog-token:${id}`;
@@ -111,6 +114,11 @@ export type MarketplaceForm = "http" | "git";
 /** 一个清单来源（后台列表）。令牌不回显，只给 `hasToken`。 */
 export interface MarketplaceView {
   id: string;
+  /**
+   * The label: the official marketplace's is "Capybara"; a config-managed one shows its
+   * marketplace.json `owner.name` (its config name before a refresh read one); a custom one, the
+   * name the admin gave it.
+   */
   name: string;
   url: string;
   form: MarketplaceForm;
@@ -2203,7 +2211,9 @@ export class MarketplacesService {
     const count = new Map(counts.map((c) => [c.source_id, Number(c.n)]));
     return rows.map((r) => ({
       id: r.id,
-      name: r.name,
+      // A config-managed row's name is the manifest's key (`config:<name>`, the token's env name):
+      // it shows the owner its marketplace.json names once a refresh read it
+      name: r.managed === "config" ? (r.owner_name ?? r.name) : r.name,
       url: r.url,
       form: r.form,
       ref: r.ref,
