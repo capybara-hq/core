@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { packPackageTgz, readGitTree } from "@capybara-hq/kernel";
+import { packPackageTgz, readBootstrapGitPlugin, readGitTree } from "@capybara-hq/kernel";
 import {
   type FakeNpmRegistry,
   startFakeGitServer,
@@ -61,7 +61,13 @@ beforeAll(() => {
   mkdirSync(join(root, PLUGIN, ".capybara-plugin"), { recursive: true });
   writeFileSync(
     join(root, PLUGIN, ".capybara-plugin/plugin.json"),
-    JSON.stringify({ schemaVersion: 1, name: "demo", version: "1.2.3", publisher: "T" }),
+    JSON.stringify({
+      schemaVersion: 1,
+      name: "demo",
+      version: "1.2.3",
+      publisher: "T",
+      description: "Demo",
+    }),
   );
   writeFileSync(join(root, PLUGIN, "README.md"), "hello\n");
   git("add", ".");
@@ -140,6 +146,7 @@ const PLUGIN_JSON = JSON.stringify({
   name: "demo",
   version: "2.0.0",
   publisher: "T",
+  description: "Demo",
 });
 
 describe("bootstrap git entries: root paths, parity and refusals", () => {
@@ -225,6 +232,75 @@ describe("bootstrap git entries: root paths, parity and refusals", () => {
       });
       expect(unknown.findings.map((x) => x.message)).toEqual([
         "no marketplace nope in the manifest",
+      ]);
+    } finally {
+      rmSync(r.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--write pins Claude Code and skills-only trees at the version the kernel import reads (version parity)", async () => {
+    const skill = (n: string) => `---\nname: ${n}\ndescription: Says ${n}\n---\n${n}\n`;
+    const trees: Record<string, Record<string, string>> = {
+      // a Claude Code plugin with a version: that version
+      "claude-x": {
+        ".claude-plugin/plugin.json": JSON.stringify({ name: "claude-x", version: "3.1.0" }),
+        "skills/hello/SKILL.md": skill("hello"),
+      },
+      // a Claude Code plugin without one, and a skills-only tree: the entry's own version
+      "claude-bare": { "commands/ping.md": "Ping\n", "skills/bare/SKILL.md": skill("bare") },
+      "skills-x": { "skills/hi/SKILL.md": skill("hi") },
+    };
+    const r = repoWith(
+      Object.fromEntries(
+        Object.entries(trees).flatMap(([name, files]) =>
+          Object.entries(files).map(([p, d]) => [`trees/${name}/${p}`, d]),
+        ),
+      ),
+    );
+    try {
+      const f = join(r.dir, "bootstrap.extra.json");
+      const out = join(r.dir, "packs");
+      writeFileSync(
+        f,
+        JSON.stringify({
+          schemaVersion: 1,
+          marketplaces: [{ name: "mine", url: "https://git.example.com/o/r.git" }],
+          plugins: Object.keys(trees).map((name) =>
+            entry({ name, path: `./trees/${name}`, version: "0.4.0" }),
+          ),
+        }),
+      );
+      const w = await syncBootstrapExtra({ root: r.dir, file: f, write: true, out });
+      expect(w.findings).toEqual([]);
+      const pinned = JSON.parse(readFileSync(f, "utf8")).plugins as Record<string, string>[];
+      expect(pinned.map((e) => [e.name, e.version])).toEqual([
+        ["claude-x", "3.1.0"],
+        ["claude-bare", "0.4.0"],
+        ["skills-x", "0.4.0"],
+      ]);
+      for (const e of pinned) {
+        const files = await readTree(r.dir, r.head, e.path as string);
+        // the kernel reads the same version from the same tree (its bootstrap import checks it)
+        expect(
+          readBootstrapGitPlugin(files, { name: e.name as string, version: "0.4.0" }),
+        ).toMatchObject({ name: e.name, version: e.version });
+        expect(sha(readFileSync(join(out, `${e.name}-${e.version}.tgz`)))).toBe(e.integrity);
+      }
+      expect((await syncBootstrapExtra({ root: r.dir, file: f, write: false })).findings).toEqual(
+        [],
+      );
+      // a tree that is another plugin than the entry names is refused
+      writeFileSync(
+        f,
+        JSON.stringify({
+          schemaVersion: 1,
+          marketplaces: [{ name: "mine", url: "https://git.example.com/o/r.git" }],
+          plugins: [entry({ name: "other", path: "./trees/claude-x" })],
+        }),
+      );
+      const bad = await syncBootstrapExtra({ root: r.dir, file: f, write: true });
+      expect(bad.findings.map((x) => [x.rule, x.message])).toEqual([
+        ["bootstrap-extra-path", "other: ./trees/claude-x: the tree is plugin claude-x, not other"],
       ]);
     } finally {
       rmSync(r.dir, { recursive: true, force: true });

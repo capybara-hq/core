@@ -23,7 +23,6 @@ import {
   type BootstrapEntryResult,
   BootstrapFailedError,
   BootstrapService,
-  bootstrapManifestSha256,
 } from "../extensions/bootstrap.js";
 import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
 import {
@@ -415,7 +414,7 @@ export class KernelLifecycle
   private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
     const manifest = await this.manifest();
     const bootstrap = this.bootstrap;
-    if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
+    if (await bootstrap.isDone(manifest)) return false;
     try {
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({

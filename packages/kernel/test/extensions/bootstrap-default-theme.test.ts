@@ -10,8 +10,12 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { BootstrapService, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
-import { BootstrapExtraMismatchError } from "../../src/extensions/bootstrap-extra.js";
+import { BootstrapFailedError, BootstrapService } from "../../src/extensions/bootstrap.js";
+import {
+  BootstrapExtraMismatchError,
+  loadBootstrapManifest,
+} from "../../src/extensions/bootstrap-extra.js";
+import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap-manifest.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
@@ -47,6 +51,8 @@ let extraManifest: string;
  */
 let distManifest: string;
 let emptyManifest: string;
+/** The distribution's entries without its marketplace (npm only, nothing managed). */
+let npmOnlyManifest: string;
 
 /** A declarative builtin plugin with two themes (no assets). */
 const brandPkg = () =>
@@ -217,6 +223,8 @@ beforeAll(async () => {
   };
   distManifest = join(extraDir, "bootstrap.dist.json");
   await writeFile(distManifest, JSON.stringify(dist));
+  npmOnlyManifest = join(extraDir, "bootstrap.npm-only.json");
+  await writeFile(npmOnlyManifest, JSON.stringify({ ...dist, marketplaces: [] }));
   emptyManifest = join(extraDir, "bootstrap.empty.json");
   await writeFile(
     emptyManifest,
@@ -237,7 +245,7 @@ beforeEach(async () => {
   await stopAll();
   await truncateTables(
     db,
-    "capybara.bootstrap_runs, capybara.catalog_files, capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_org_configs, capybara.extension_catalog_sources, capybara.platform_theme_versions, capybara.platform_themes, capybara.catalog_item_versions, capybara.catalog_items, capybara.plugin_import_staging, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.bootstrap_runs, capybara.bootstrap_run_started, capybara.catalog_files, capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_org_configs, capybara.extension_catalog_sources, capybara.platform_theme_versions, capybara.platform_themes, capybara.catalog_item_versions, capybara.catalog_items, capybara.plugin_import_staging, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   await db.deleteFrom("marketplaces").where("id", "<>", "official").execute();
   // The migration seed (truncating accounts cascades to the settings): the built-in theme, saved
@@ -527,5 +535,61 @@ describe("the last bootstrap run tells an extra manifest apart (ruling R17)", ()
     ]);
     expect(await runs()).toContain(bootstrapManifestSha256(dropped));
     expect(await requiredInstall("fake-bootstrap-b")).toBe(false);
+    // The same extra part (none): the earlier manifest stays done, like a replica of the previous
+    // release during a rolling upgrade (ruling R18)
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
+  });
+});
+
+describe("an extra manifest added back after its removal (ruling R18)", () => {
+  it("runs again and restores required / builtin", async () => {
+    await distributed();
+    await boot(OBJECT_STORE_CONFIG, createLogger("error"), emptyManifest);
+    expect(await requiredInstall("fake-bootstrap-a")).toBe(false);
+    expect(await builtinItems()).toEqual(
+      expect.arrayContaining([{ name: "brand", builtin: false }]),
+    );
+    await stopAll();
+    const k = await boot(OBJECT_STORE_CONFIG, createLogger("error"), distManifest);
+    expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
+    expect(await builtinItems()).toEqual(
+      expect.arrayContaining([{ name: "brand", builtin: true }]),
+    );
+    const dist = await loadBootstrapManifest({ builtin: fx.manifest, extraManifest: distManifest });
+    expect(await k.app.get(BootstrapService).isDone(dist)).toBe(true);
+    // Its row was written again: one row per manifest, the latest completed run
+    expect(await runs()).toHaveLength(2);
+    expect(await db.selectFrom("bootstrap_run_started").selectAll().execute()).toEqual([]);
+  });
+});
+
+describe("a run that has written but not completed (ruling R19)", () => {
+  it("the first pass of an npm-only extra manifest already refuses a process without it", async () => {
+    // A plain deployment whose built-in manifest is not done (an upgrade changed bootstrap.json)
+    const k = await boot(OBJECT_STORE_CONFIG, createLogger("error"), null);
+    await db.deleteFrom("bootstrap_runs").execute();
+    const svc = k.app.get(BootstrapService);
+    const imports = k.app.get(PluginImport);
+    const npmOnly = await loadBootstrapManifest({
+      builtin: fx.manifest,
+      extraManifest: npmOnlyManifest,
+    });
+    // The first pass installs the required extra entry and defers the builtin one: not recorded
+    await expect(
+      svc.run({ manifest: npmOnly, dir: fx.dir, imports, deferBuiltin: true }),
+    ).rejects.toBeInstanceOf(BootstrapFailedError);
+    expect(await runs()).toEqual([]);
+    expect(await marketplaceRows()).toEqual([]);
+    expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
+    expect(await svc.extraManifestTraces()).toEqual({
+      marketplaces: [],
+      plugins: ["brand", "fake-bootstrap-a"],
+    });
+    // A process without the extra manifest whose built-in manifest is not done yet
+    await expect(svc.run({ manifest: fx.manifest, dir: fx.dir, imports })).rejects.toBeInstanceOf(
+      BootstrapExtraMismatchError,
+    );
+    expect(await runs()).toEqual([]);
+    expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
   });
 });

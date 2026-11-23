@@ -1,21 +1,14 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { parseBootstrapManifest } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { BOOTSTRAP_MANIFEST_FILE } from "../extensions/bootstrap-manifest.js";
 
-/**
- * The bootstrap manifest shipped with the kernel package (the same file as
- * `extensions/bootstrap.ts`'s `BOOTSTRAP_MANIFEST_FILE`, which this module does not import: that
- * module depends on the plugin import).
- */
-const BUNDLED_BOOTSTRAP_MANIFEST = fileURLToPath(new URL("../../bootstrap.json", import.meta.url));
-
-/** The plugin names of the bundled bootstrap manifest (an unreadable or invalid one: none). */
+/** The plugin names of the bootstrap manifest shipped with the kernel (an unreadable or invalid one: none). */
 async function bootstrapNames(): Promise<string[]> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(BUNDLED_BOOTSTRAP_MANIFEST, "utf8"));
+    raw = JSON.parse(await readFile(BOOTSTRAP_MANIFEST_FILE, "utf8"));
   } catch {
     return [];
   }

@@ -10,11 +10,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
-import {
-  BootstrapFailedError,
-  BootstrapService,
-  bootstrapManifestSha256,
-} from "../../src/extensions/bootstrap.js";
+import { BootstrapFailedError, BootstrapService } from "../../src/extensions/bootstrap.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
@@ -442,13 +438,13 @@ describe("single-provider extension points: one enabled provider", () => {
             "Required plugin sbx-req provides config-source@1, which sbx-a already provides; disable sbx-a and run the bootstrap again",
         },
       ]);
-      expect(await bs.isDone(bootstrapManifestSha256(boot.manifest))).toBe(false);
+      expect(await bs.isDone(boot.manifest)).toBe(false);
       expect(loaded(k, "sbx-a")).toBe("1.0.0");
 
       // The super admin disables sbx-a and runs the bootstrap again: the required one is enabled
       await disable("sbx-a");
       await run();
-      expect(await bs.isDone(bootstrapManifestSha256(boot.manifest))).toBe(true);
+      expect(await bs.isDone(boot.manifest)).toBe(true);
       expect((await desiredOf("sbx-req")).desired_state).toBe("enabled");
     } finally {
       await boot.cleanup();

@@ -8,7 +8,7 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { BootstrapService, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
+import { BootstrapService } from "../../src/extensions/bootstrap.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
@@ -196,9 +196,7 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
       { plugin: "fake-bootstrap-a", source: "bootstrap" },
       { plugin: "fake-bootstrap-b", source: "bootstrap" },
     ]);
-    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
-      true,
-    );
+    expect(await k.app.get(BootstrapService).isDone(fx.manifest)).toBe(true);
 
     // The object store loads with the config saved before the upgrade (approval is off, so this
     // also proves the bootstrap snapshot), and is usable

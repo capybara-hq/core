@@ -20,11 +20,15 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { BootstrapService, resolveBootstrapPackages } from "../../src/extensions/bootstrap.js";
+import { BootstrapService } from "../../src/extensions/bootstrap.js";
 import {
   type MergedBootstrapManifest,
   mergeBootstrapManifests,
 } from "../../src/extensions/bootstrap-extra.js";
+import {
+  readBootstrapGitPlugin,
+  resolveBootstrapPackages,
+} from "../../src/extensions/bootstrap-packages.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { packPackageTgz, unpackPackageTgz } from "../../src/packages/tgz.js";
 import { truncateTables } from "../helpers/db.js";
@@ -239,7 +243,7 @@ beforeEach(async () => {
   // Every case installs other plugins (ext-x only in the first), so catalog rows are enough
   await truncateTables(
     db,
-    "capybara.bootstrap_runs, capybara.plugin_import_staging, capybara.platform_themes, capybara.catalog_files, capybara.catalog_item_versions, capybara.catalog_items",
+    "capybara.bootstrap_runs, capybara.bootstrap_run_started, capybara.plugin_import_staging, capybara.platform_themes, capybara.catalog_files, capybara.catalog_item_versions, capybara.catalog_items",
   );
   await db.deleteFrom("marketplaces").where("id", "<>", "official").execute();
   srv.requests.length = 0;
@@ -321,6 +325,52 @@ describe("git entries of the extra bootstrap manifest", () => {
         }),
       ]);
     }
+  });
+
+  it("Claude Code and skills-only trees are imported at the version readBootstrapGitPlugin reads (the reader capybara-plugin bootstrap --write pins with)", async () => {
+    const skill = (n: string) => `---\nname: ${n}\ndescription: Says ${n}\n---\n${n}\n`;
+    const claude = {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "claude-x", version: "2.1.0" }),
+      "skills/hello/SKILL.md": skill("hello"),
+    };
+    const claudeBare = { "commands/ping.md": "Ping\n", "skills/bare/SKILL.md": skill("bare") };
+    const skillsOnly = { "skills/hi/SKILL.md": skill("hi") };
+    const commit = await srv.commit("trees", {
+      ...under("plugins/claude-x", claude),
+      ...under("plugins/claude-bare", claudeBare),
+      ...under("plugins/skills-x", skillsOnly),
+    });
+    const files = (t: Record<string, string>) =>
+      new Map(Object.entries(t).map(([p, d]) => [p, enc(d)]));
+    // What --write pins: the Claude manifest's version, else (no version, skills only) the entry's
+    const read = (name: string, t: Record<string, string>) =>
+      readBootstrapGitPlugin(files(t), { name, version: "0.3.0" });
+    expect(read("claude-x", claude)).toEqual({
+      kind: "claude",
+      name: "claude-x",
+      version: "2.1.0",
+      extension: false,
+    });
+    expect(read("claude-bare", claudeBare)).toMatchObject({ kind: "claude", version: "0.3.0" });
+    expect(read("skills-x", skillsOnly)).toMatchObject({ kind: "skills", version: "0.3.0" });
+    const entries = [
+      await gitEntry("claude-x", "trees", commit, claude, { version: "2.1.0" }),
+      await gitEntry("claude-bare", "trees", commit, claudeBare, { version: "0.3.0" }),
+      await gitEntry("skills-x", "trees", commit, skillsOnly, { version: "0.3.0" }),
+    ];
+    const r = await run(manifestOf(entries, [{ name: "trees", url: srv.url("trees") }]));
+    expect(r.results).toEqual([
+      { name: "claude-x", action: "imported", version: "2.1.0", extra: true },
+      { name: "claude-bare", action: "imported", version: "0.3.0", extra: true },
+      { name: "skills-x", action: "imported", version: "0.3.0", extra: true },
+    ]);
+    // Another version than the tree's own is refused by the import
+    const wrong = await gitEntry("claude-x", "trees", commit, claude, { version: "2.0.0" });
+    await expect(
+      run(manifestOf([wrong], [{ name: "trees", url: srv.url("trees") }])),
+    ).rejects.toMatchObject({
+      failures: [expect.objectContaining({ name: "claude-x", code: "catalog.invalid_manifest" })],
+    });
   });
 
   it("the catalog version records the managed marketplace source, and importFromMarketplace of the same entry is the same source", async () => {

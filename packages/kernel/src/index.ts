@@ -103,16 +103,11 @@ export {
   ExtensionBlobs,
 } from "./extensions/blobs.js";
 export {
-  BOOTSTRAP_MANIFEST_FILE,
   type BootstrapEntryResult,
   BootstrapFailedError,
   type BootstrapFailure,
-  type BootstrapResolveOptions,
   type BootstrapResult,
   BootstrapService,
-  bootstrapManifestSha256,
-  readBootstrapManifest,
-  resolveBootstrapPackages,
 } from "./extensions/bootstrap.js";
 export {
   BootstrapExtraMismatchError,
@@ -124,6 +119,17 @@ export {
   missingExtraManifestMessage,
   readBootstrapExtraManifest,
 } from "./extensions/bootstrap-extra.js";
+export {
+  BOOTSTRAP_MANIFEST_FILE,
+  bootstrapManifestSha256,
+  readBootstrapManifest,
+} from "./extensions/bootstrap-manifest.js";
+export {
+  type BootstrapGitPlugin,
+  type BootstrapResolveOptions,
+  readBootstrapGitPlugin,
+  resolveBootstrapPackages,
+} from "./extensions/bootstrap-packages.js";
 export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
 export {
   DEPLOYMENT_SECRETS_ORG,
