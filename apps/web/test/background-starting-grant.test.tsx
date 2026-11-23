@@ -27,8 +27,13 @@ const task = (over: Partial<BackgroundTaskView> = {}): BackgroundTaskView => ({
 const NOTICE =
   "Running work keeps the permissions it started with; a permission change applies to new operations. Revoked device or organization access can still stop it.";
 
+/** The section's hint button (the sentence is its description and its tooltip). */
+const hint = () => document.querySelector<HTMLElement>('[data-part="property-hint"]');
+const hintText = () =>
+  document.getElementById(hint()?.getAttribute("aria-describedby") ?? "")?.textContent;
+
 describe("work under way keeps its starting grant (Task 10D)", () => {
-  it("says so beside a running task, never naming a per-task profile; Stop still works", async () => {
+  it("says so in the section's hint beside a running task, never naming a per-task profile; Stop still works", async () => {
     const onStop = vi.fn();
     renderPage(
       <BackgroundSection
@@ -40,7 +45,8 @@ describe("work under way keeps its starting grant (Task 10D)", () => {
       />,
       { locale: "en" },
     );
-    expect(screen.getByText(NOTICE)).toBeTruthy();
+    expect(hint()?.getAttribute("aria-label")).toBe("About Background tasks");
+    expect(hintText()).toBe(NOTICE);
     // no recorded per-task profile exists: none is claimed
     for (const profile of ["Request approval", "Approve for me", "Full access"])
       expect(screen.queryByText(profile, { exact: false })).toBeNull();
@@ -63,6 +69,7 @@ describe("work under way keeps its starting grant (Task 10D)", () => {
       />,
       { locale: "en" },
     );
+    expect(hint()).toBeNull();
     expect(screen.queryByText(NOTICE)).toBeNull();
     unmount();
     renderPage(
@@ -75,6 +82,6 @@ describe("work under way keeps its starting grant (Task 10D)", () => {
       />,
       { locale: "zh" },
     );
-    expect(screen.getByText(zh.subagents.startingGrant)).toBeTruthy();
+    expect(hintText()).toBe(zh.subagents.startingGrant);
   });
 });

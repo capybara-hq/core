@@ -783,7 +783,7 @@ export interface ConnectorSession {
 // @public
 export interface ConnectorTemplateFile {
     defaultEnabled?: boolean;
-    description?: string;
+    description?: string | LocalizedName;
     displayName: LocalizedName;
     icon?: string;
     template: ConnectorTemplateSpec;
@@ -3747,7 +3747,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.64";
+export const SDK_VERSION = "0.1.0-rc.65";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

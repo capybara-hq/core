@@ -408,7 +408,7 @@ export const CONNECTOR_TEMPLATE_LIMITS = {
   toolPolicies: 1000,
   /** Upper bound on the characters of publisher. */
   publisherChars: 100,
-  /** Upper bound on the characters of description. */
+  /** Upper bound on the characters of description (per language when it is `{ zh, en }`). */
   descriptionChars: 1024,
   /** Upper bound on the characters of displayName per language. */
   displayNameChars: 100,

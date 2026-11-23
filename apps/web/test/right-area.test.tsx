@@ -461,7 +461,7 @@ describe("the conversation's device (environments design §4.1 item 2)", () => {
     bound(envView("e1", null, { instance: { status: "running", lastUsedAt: T } }));
     const props = await open();
     expect(
-      within(props).getByText(`Device: ${en.devices.personal} · ${en.devices.state.running}`, {
+      within(props).getByText(`${en.devices.personal} · ${en.devices.state.running}`, {
         exact: false,
       }),
     ).toBeTruthy();

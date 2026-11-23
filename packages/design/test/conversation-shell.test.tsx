@@ -158,7 +158,8 @@ describe("ConversationPage (§5.4)", () => {
 
     it("clamps to [panel-min, content − chat-min]", () => {
       expect(clampPanelWidth(560, 1024)).toBe(544);
-      expect(clampPanelWidth(400, 1600)).toBe(520);
+      expect(clampPanelWidth(400, 1600)).toBe(400);
+      expect(clampPanelWidth(200, 1600)).toBe(360);
       expect(clampPanelWidth(900, 1600)).toBe(900);
       expect(clampPanelWidth(2000, 1600)).toBe(1120);
       expect(clampPanelWidth(560, 0)).toBe(560);
@@ -172,15 +173,15 @@ describe("ConversationPage (§5.4)", () => {
       await userEvent.keyboard("{ArrowLeft}");
       expect(handle.getAttribute("aria-valuenow")).toBe("576");
       expect(localStorage.getItem(PANEL_WIDTH_KEY)).toBe("576");
-      await userEvent.keyboard("{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}");
+      await userEvent.keyboard("{ArrowRight>14/}");
       // never below layout.panel-min
-      expect(handle.getAttribute("aria-valuenow")).toBe("520");
+      expect(handle.getAttribute("aria-valuenow")).toBe("360");
     });
 
     it("reads the remembered width, clamped", () => {
       localStorage.setItem(PANEL_WIDTH_KEY, "100");
       wrap(<ConversationPage {...page({ right: "panel" })} />);
-      expect(screen.getByRole("separator").getAttribute("aria-valuenow")).toBe("520");
+      expect(screen.getByRole("separator").getAttribute("aria-valuenow")).toBe("360");
     });
 
     it("survives storage that throws", () => {
@@ -546,49 +547,118 @@ describe("blocks that fail show the failure in place", () => {
 });
 
 describe("ContextSection", () => {
-  it("shows the ratio, a meter, model · sandbox and the connectors", () => {
+  /** The labeled rows as [label, value] pairs. */
+  const rows = () =>
+    [...document.querySelectorAll('[data-part="context-row"]')].map((r) => [
+      r.querySelector("dt")?.textContent,
+      r.querySelector("dd")?.textContent,
+    ]);
+
+  it("shows the ratio, a meter and labeled rows: model, device, connectors", () => {
     wrap(
       <ContextSection
         ratio={43}
         model="opus 5.5"
-        sandbox="沙箱运行中"
+        device="个人设备 · 在线"
         connectors={["Acme 文档", "Acme 工单"]}
       />,
     );
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("43");
     expect(screen.getByText("43%")).toBeTruthy();
-    expect(screen.getByText("opus 5.5 · 沙箱运行中")).toBeTruthy();
-    expect(screen.getByText("连接器：Acme 文档、Acme 工单")).toBeTruthy();
+    expect(document.querySelector('[data-part="context-facts"]')?.tagName).toBe("DL");
+    expect(rows()).toEqual([
+      ["模型", "opus 5.5"],
+      ["设备", "个人设备 · 在线"],
+      ["连接器", "Acme 文档、Acme 工单"],
+    ]);
   });
 
-  it("the sandbox mark is warn by default and fail when asked", () => {
-    const r = wrap(
-      <ContextSection ratio={10} model="m" sandbox="Laptop" sandboxBadge="开放" connectors={[]} />,
+  it("the last run joins its parts; no rows for what is absent", () => {
+    wrap(
+      <ContextSection
+        ratio={9}
+        model="deepseek-flash"
+        connectors={[]}
+        lastRun={["27 秒", "236,137 token"]}
+      />,
     );
-    expect(screen.getByText("开放").getAttribute("data-tone")).toBe("warn");
+    expect(rows()).toEqual([
+      ["模型", "deepseek-flash"],
+      ["上次运行", "27 秒 · 236,137 token"],
+    ]);
+    expect(document.querySelector('[data-part="context-last-run"]')?.textContent).toBe(
+      "27 秒 · 236,137 token",
+    );
+  });
+
+  it("the device mark sits under the device, warn by default and fail when asked", () => {
+    const r = wrap(
+      <ContextSection ratio={10} model="m" device="Laptop" deviceBadge="开放" connectors={[]} />,
+    );
+    const mark = screen.getByText("开放");
+    expect(mark.getAttribute("data-tone")).toBe("warn");
+    expect(mark.closest("dd")?.textContent).toBe("Laptop开放");
+    expect(mark.parentElement?.className).toBe("cb-context-mark");
     r.unmount();
     wrap(
       <ContextSection
         ratio={10}
         model="m"
-        sandbox="Laptop"
-        sandboxBadge="不使用沙箱"
-        sandboxBadgeTone="fail"
+        device="Laptop"
+        deviceBadge="不使用沙箱"
+        deviceBadgeTone="fail"
         connectors={[]}
       />,
     );
     expect(screen.getByText("不使用沙箱").getAttribute("data-tone")).toBe("fail");
   });
 
-  it("a total line (tokens with sub-agents) only when given", () => {
+  it("a total row (tokens with sub-agents) only when given", () => {
     const { unmount } = wrap(
-      <ContextSection ratio={10} model="m" connectors={[]} total="含子智能体共 1,234 tokens" />,
+      <ContextSection ratio={10} model="m" connectors={[]} total="1,234 token（含子智能体）" />,
     );
-    const line = screen.getByText("含子智能体共 1,234 tokens");
-    expect(line.getAttribute("data-part")).toBe("context-total");
+    const value = screen.getByText("1,234 token（含子智能体）");
+    expect(value.getAttribute("data-part")).toBe("context-total");
+    expect(value.previousElementSibling?.textContent).toBe("合计");
     unmount();
     wrap(<ContextSection ratio={10} model="m" connectors={[]} />);
     expect(document.querySelector('[data-part="context-total"]')).toBeNull();
+  });
+});
+
+describe("PropertySection hint", () => {
+  it("an info button after the title, described by the hint; a tap toggles the tooltip", async () => {
+    wrap(
+      <PropertySection title="后台任务" hint="运行中的工作保留开始时的权限。">
+        body
+      </PropertySection>,
+    );
+    const button = screen.getByRole("button", { name: "关于「后台任务」" });
+    expect(button.getAttribute("data-part")).toBe("property-hint");
+    expect(button.closest("h3")?.textContent).toContain("后台任务");
+    const described = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+    expect(described?.textContent).toBe("运行中的工作保留开始时的权限。");
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    const user = userEvent.setup();
+    await user.pointer({ keys: "[TouchA]", target: button });
+    expect((await screen.findByRole("tooltip")).textContent).toBe("运行中的工作保留开始时的权限。");
+    await user.pointer({ keys: "[TouchA]", target: button });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("keyboard focus reaches it; no button without a hint", async () => {
+    const { unmount } = wrap(
+      <PropertySection title="后台任务" hint="说明">
+        body
+      </PropertySection>,
+    );
+    await userEvent.tab();
+    expect(document.activeElement?.getAttribute("data-part")).toBe("property-hint");
+    // focus opens it
+    expect((await screen.findByRole("tooltip")).textContent).toBe("说明");
+    unmount();
+    wrap(<PropertySection title="文件">body</PropertySection>);
+    expect(document.querySelector('[data-part="property-hint"]')).toBeNull();
   });
 });
 

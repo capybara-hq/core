@@ -30,6 +30,8 @@ export {
   type SpinnerProps,
   Stack,
   type StackProps,
+  Switch,
+  type SwitchProps,
   Text,
   type TextProps,
   Tooltip,

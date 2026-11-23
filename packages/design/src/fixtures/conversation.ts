@@ -1111,7 +1111,13 @@ export const COPY_CODE_FIXTURE: {
 // ── Properties panel, right panel, extension slots ──────────────────────────
 
 export const PANEL_FIXTURE: {
-  context: { ratio: number; model: string; sandbox: string; connectors: string[] };
+  context: {
+    ratio: number;
+    model: string;
+    device: string;
+    lastRun: string[];
+    connectors: string[];
+  };
   tasks: {
     done: number;
     total: number;
@@ -1134,7 +1140,8 @@ export const PANEL_FIXTURE: {
   context: {
     ratio: 43,
     model: "opus 5.5",
-    sandbox: "沙箱运行中",
+    device: "个人设备 · 在线",
+    lastRun: ["27 秒", "236,137 token"],
     connectors: ["Acme 文档", "Acme 工单"],
   },
   tasks: {

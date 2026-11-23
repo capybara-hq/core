@@ -87,6 +87,8 @@ export const ICON_NAMES = [
   "hand",
   "shield-check",
   "lock-open",
+  "info",
+  "volume",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -591,5 +593,20 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
   "lock-open": [
     ["rect", { width: "18", height: "11", x: "3", y: "11", rx: "2", ry: "2" }],
     ["path", { d: "M7 11V7a5 5 0 0 1 9.9-1" }],
+  ],
+  info: [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 16v-4" }],
+    ["path", { d: "M12 8h.01" }],
+  ],
+  volume: [
+    [
+      "path",
+      {
+        d: "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z",
+      },
+    ],
+    ["path", { d: "M16 9a5 5 0 0 1 0 6" }],
+    ["path", { d: "M19.364 18.364a9 9 0 0 0 0-12.728" }],
   ],
 };
