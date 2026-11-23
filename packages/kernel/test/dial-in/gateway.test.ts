@@ -323,7 +323,7 @@ describe("GET /device/connect", () => {
     );
     await sleep(300);
     expect(machine.ws.readyState).toBe(machine.ws.OPEN);
-    await machines.revoke(orgId, m.accountId, m.deviceId);
+    await machines.revokeActive(m.deviceId, "revoked");
     // the stop frame goes out before the close
     expect(await machine.next((f) => f.type === "stop")).toEqual({ type: "stop", reason: "stop" });
     const closed = await machine.closed;

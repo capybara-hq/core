@@ -162,34 +162,13 @@ describe("DialInMachines", () => {
     expect(await machines.authenticate(m.credential)).toBeNull();
   });
 
-  it("revoke ends the credential; another person's device is not_found", async () => {
+  it("revokeActive ends the credential; a second call is a no-op", async () => {
     const a = await member();
     const m = await connected(a);
-    const b = await member();
-    await expect(machines.revoke(orgId, b, m.deviceId)).rejects.toMatchObject({
-      code: "device.not_found",
-    });
-    await machines.revoke(orgId, a, m.deviceId);
+    expect(await machines.revokeActive(m.deviceId, "revoked")).toBe(m.machineId);
     expect(await machines.authenticate(m.credential)).toBeNull();
     expect(await machines.activeFor(m.deviceId)).toBeNull();
-    // idempotent
-    await machines.revoke(orgId, a, m.deviceId);
-    // a device no machine ever signed in to, of a provider that serves no dial-in channel
-    const cloud = randomUUID();
-    await db
-      .insertInto("devices")
-      .values({
-        id: cloud,
-        org_id: orgId,
-        owner_kind: "personal",
-        owner_account_id: a,
-        name: `Cloud ${cloud.slice(0, 6)}`,
-        provider: "device-fake",
-      })
-      .execute();
-    await expect(machines.revoke(orgId, a, cloud)).rejects.toMatchObject({
-      code: "device.not_found",
-    });
+    expect(await machines.revokeActive(m.deviceId, "revoked")).toBeNull();
   });
 
   it("recordConnect stores what the program reported; touch writes at most every 60 s", async () => {

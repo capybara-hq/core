@@ -3,8 +3,6 @@ import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { isDeviceBootId } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { deviceNotFound } from "../devices/errors.js";
-import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -13,7 +11,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
-import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { deviceRevokedTopic } from "./keys.js";
 import { DialInRelay } from "./relay.js";
 
@@ -77,7 +74,6 @@ export class DialInMachines {
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
-    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
   ) {}
 
   /**
@@ -246,52 +242,10 @@ export class DialInMachines {
   }
 
   /**
-   * Disconnects the machine of one of the person's own live dial-in devices, whatever its
-   * provider: revokes it and audits `device.machine_revoked`. No route calls it (the device page
-   * no longer disconnects a machine; deleting the device revokes it, {@link revokeActive}); the
-   * kernel tests revoke a connected machine with it. Anyone else's device, a cloud one or a
-   * missing one → `device.not_found`; no machine connected is a no-op.
-   */
-  @Transactional()
-  async revoke(
-    orgId: string,
-    accountId: string,
-    deviceId: string,
-    actorTokenId?: string,
-  ): Promise<void> {
-    const env = await this.db
-      .selectFrom("devices")
-      .select(["id", "provider"])
-      .where("id", "=", deviceId)
-      .where("org_id", "=", orgId)
-      .where("owner_kind", "=", "personal")
-      .where("owner_account_id", "=", accountId)
-      .where("deleted_at", "is", null)
-      .forNoKeyUpdate()
-      .executeTakeFirst();
-    if (!env) throw deviceNotFound();
-    // a dial-in device: its provider serves the dial-in channel, or a machine signed in to it
-    // (its provider may be unloaded here, and the person disconnects anyway)
-    const p = this.providers.forDevice(env.provider);
-    if (!(p !== undefined && servesDialIn(p)) && !(await this.everSignedIn(deviceId)))
-      throw deviceNotFound();
-    const machineId = await this.revokeActive(deviceId, "revoked");
-    if (machineId === null) return;
-    await audit(this.db.db, {
-      actorAccountId: accountId,
-      ...(actorTokenId !== undefined && { actorTokenId }),
-      orgId,
-      action: "device.machine_revoked",
-      target: deviceId,
-      detail: { machineId },
-    });
-  }
-
-  /**
    * Revokes the device's active machine, if any, in the caller's transaction, and after the
    * commit tells it to stop (not when `replaced`) and closes its connection for `reason`. Returns
-   * the revoked machine's id. Used by {@link issue} (`replaced`), {@link revoke} (`revoked`) and
-   * the device's deletion (`deleted`).
+   * the revoked machine's id. Used by {@link issue} (`replaced`) and the device's deletion
+   * (`deleted`).
    */
   @Transactional()
   async revokeActive(deviceId: string, reason: MachineRevocationReason): Promise<string | null> {
@@ -345,17 +299,6 @@ export class DialInMachines {
     const deviceId = row.device_id;
     afterCommit(() => this.disconnect(deviceId, machineId, "revoked", { stop: false }));
     return true;
-  }
-
-  /** Whether a machine ever signed in to the device (revoked or not). */
-  private async everSignedIn(deviceId: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select("id")
-      .where("device_id", "=", deviceId)
-      .limit(1)
-      .executeTakeFirst();
-    return row !== undefined;
   }
 
   /** The device's active machine, or null. */
