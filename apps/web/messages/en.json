@@ -2778,7 +2778,7 @@
     "jsonHint": "Enter a JSON value.",
     "linesHint": "One item per line.",
     "hot": "applies immediately",
-    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} platform {Set by the platform} other {Read-only}}",
+    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} other {Read-only}}",
     "tristate": {
       "default": "Default",
       "on": "On",

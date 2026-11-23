@@ -301,6 +301,54 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     ).toBe("/plugins/g/enable");
   });
 
+  it("a plugin whose extension needs config offers 配置 to its Sheet, off or on, and still enables without the wizard", async () => {
+    const p = en.plugins;
+    const ext = (itemId: string, name: string) => ({
+      plugin: name,
+      version: "1.0.0",
+      enabled: false,
+      configurable: true,
+      permissions: [],
+      provides: [],
+      overrideState: "following",
+      needsConfig: true,
+      catalogItem: { itemId, scope: "optional" },
+      switchable: true,
+    });
+    const items = [
+      orgItem({
+        id: "h",
+        name: "cfg-off",
+        componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
+      }),
+      orgItem({
+        id: "i",
+        name: "cfg-on",
+        state: "on",
+        installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: null },
+        componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
+      }),
+    ];
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items }),
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, { extensions: [ext("h", "cfg-off"), { ...ext("i", "cfg-on"), enabled: true }] }),
+    });
+    await renderPlugins({ locale: "en" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const off = rowOf(list, "cfg-off");
+    // enabling is not routed to the wizard (no extension step); 配置 is the lone menu item, drawn directly
+    expect(actionsOf(off, "cfg-off")).toEqual([p.action.enable, p.action.configure]);
+    expect(within(off).getByRole("link", { name: p.action.configure }).getAttribute("href")).toBe(
+      "/extensions#plugin-cfg-off",
+    );
+    expect(
+      within(rowOf(list, "cfg-on"))
+        .getByRole("link", { name: p.action.configure })
+        .getAttribute("href"),
+    ).toBe("/extensions#plugin-cfg-on");
+  });
+
   it("启用 an optional plugin without input sends the switch { enabled: true }", async () => {
     const p = zh.plugins;
     let on = false;
@@ -2036,6 +2084,46 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
       ),
     );
     expect(switchInputs(calls)).toEqual({});
+  });
+
+  it("an installed extension that still needs config sends the person on to its Sheet", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    stubApi({
+      [`GET ${ORG}/readiness`]: () =>
+        json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          item: orgItem({ name: "crm" }),
+          hasIcon: false,
+          extension: "crm",
+          templates: [],
+          dependencies: [],
+          skills: [],
+          agents: [],
+          missingTemplates: [],
+        }),
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, {
+          extensions: [
+            {
+              plugin: "crm",
+              version: "1.0.0",
+              enabled: false,
+              configurable: true,
+              permissions: [],
+              provides: [],
+              overrideState: "following",
+              needsConfig: true,
+            },
+          ],
+        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, { item: orgItem({ name: "crm", state: "on" }) }),
+    });
+    await renderInstall();
+    await userEvent.setup().click(await screen.findByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/extensions#plugin-crm"));
   });
 });
 

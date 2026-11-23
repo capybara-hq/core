@@ -294,17 +294,27 @@ export function CatalogInstallWizard({
       wizardLoading: { fields: LOADING_FIELDS },
     });
   }
-  return <Wizard orgId={orgId} detail={data.detail} header={header} frame={frame} />;
+  return (
+    <Wizard
+      orgId={orgId}
+      detail={data.detail}
+      orgExtensions={data.extensions ?? []}
+      header={header}
+      frame={frame}
+    />
+  );
 }
 
 function Wizard({
   orgId,
   detail,
+  orgExtensions,
   header,
   frame,
 }: {
   orgId: string;
   detail: OrgCatalogDetail;
+  orgExtensions: OrgExtension[];
   header(title: string): PageHeaderProps;
   frame(view: WizardView): ReactNode;
 }) {
@@ -325,6 +335,10 @@ function Wizard({
   // install is what creates its connector, so its input is needed like any other.
   // A template whose connector this org already has is not asked either: the install takes that
   // connector back (its endpoint and credentials), so an input here would be discarded.
+  const own =
+    detail.extension === null
+      ? undefined
+      : orgExtensions.find((o) => o.plugin === detail.extension);
   const templates = installTemplates(detail.templates);
   const kept = keptTemplates(detail.templates);
   const steps = [
@@ -374,7 +388,12 @@ function Wizard({
     try {
       await install.mutateAsync(body);
       toast.success(tp("toast.enabled", { name }));
-      router.push(`/plugins/${encodeURIComponent(item.id)}`);
+      // An extension that still needs config goes on to its Sheet (the wizard collects none)
+      router.push(
+        own?.needsConfig === true
+          ? `/extensions#plugin-${encodeURIComponent(own.plugin)}`
+          : `/plugins/${encodeURIComponent(item.id)}`,
+      );
     } catch (e) {
       setError({ message: failureMessage(e), extra: [...failureLines(e), ...catalogLines(e)] });
     } finally {

@@ -2766,7 +2766,7 @@
     "jsonHint": "填写 JSON 值。",
     "linesHint": "每行一项。",
     "hot": "即时生效",
-    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} platform {平台配置} other {只读}}",
+    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} other {只读}}",
     "tristate": {
       "default": "默认",
       "on": "开",

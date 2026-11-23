@@ -162,6 +162,22 @@ describe("the org form of a two-level extension config (Sheet)", () => {
     },
   );
 
+  it("the Sheet has no read-only field and no org-config section even when the view still lists one", async () => {
+    routes(FOLLOWING);
+    const { sheet } = await openSheet("en");
+    await within(sheet).findByLabelText("baseUrl");
+    // the one form comes first, then the state: no second (org-config) form region
+    const headings = within(sheet)
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings.slice(0, 2)).toEqual([en.extensions.overrides.title, en.extensions.stateTitle]);
+    for (const el of within(sheet).getAllByRole("textbox"))
+      expect((el as HTMLInputElement).readOnly).toBe(false);
+    expect(
+      within(sheet).queryByText(en.configForm.platformSet.replace("Set by", "Read-only")),
+    ).toBeNull();
+  });
+
   it("zh copy is exactly the accepted wording", () => {
     const o = zh.extensions.overrides;
     expect(zh.configForm.platformSet).toBe("平台配置");
