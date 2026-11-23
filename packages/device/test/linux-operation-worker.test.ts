@@ -113,7 +113,11 @@ async function fakeTransport(behaviour: string) {
   let spawned = 0;
   const transport: LinuxAgentTransport = {
     kind: "host",
-    bundle: { runtime: {}, expect: { "linux-sandbox.py": "x", "native-files.py": "y" } },
+    bundle: {
+      runtime: {},
+      expect: { "linux-sandbox.py": "x", "native-files.py": "y" },
+      fileReadRoots: true,
+    },
     spawn: async () => {
       spawned++;
       return spawn(process.execPath, ["-e", FAKE_AGENT], {
@@ -433,10 +437,17 @@ describe("Linux operation worker", () => {
     await mkdir(join(home, ".asdf"));
     // a stand-in machine (the real one would make the walk depend on this host): the denied
     // secret and the device's state lie under it, beside readable directories and a link
-    const tree: Record<string, Record<string, "dir" | "link" | "file">> = {
+    const tree: Record<string, Record<string, "dir" | "link" | "file" | "fifo">> = {
       "/": { h: "dir", usr: "dir", state: "dir", "top.txt": "file" },
       "/h": { u: "dir" },
-      "/h/u": { ".ssh": "dir", src: "dir", link: "link" },
+      "/h/u": {
+        ".ssh": "dir",
+        src: "dir",
+        link: "link",
+        ".bashrc": "file",
+        ".netrc": "file",
+        pipe: "fifo",
+      },
     };
     const kind = (path: string) => {
       if (path === "/") return "dir";
@@ -452,11 +463,16 @@ describe("Linux operation worker", () => {
       lstat: (path: string) => {
         const k = kind(path);
         if (!k) throw new Error("ENOENT");
-        return { isDirectory: () => k === "dir", isSymbolicLink: () => k === "link" };
+        return {
+          isDirectory: () => k === "dir",
+          isSymbolicLink: () => k === "link",
+          isFile: () => k === "file",
+        };
       },
       canOpen: () => true,
+      canRead: () => true,
     };
-    const denied = ["/h/u/.ssh", "/state"];
+    const denied = ["/h/u/.ssh", "/state", "/h/u/.netrc"];
     const fake = await fakeTransport("exit");
     await (
       await linuxOperationWorker({
@@ -484,6 +500,37 @@ describe("Linux operation worker", () => {
     // path) kept whole
     expect(roots).toEqual(
       ["/h/u/src", "/usr", join(home, ".asdf"), (await fake.temp()).temp].sort(),
+    );
+    // the regular files directly inside the expanded directories, never a denied one, a link or
+    // a FIFO, go to the agent as exact file roots
+    expect(sent?.readFileRoots).toEqual(["/h/u/.bashrc", "/top.txt"]);
+    // a launcher that does not declare file roots gets none: the same directories, and the files
+    // beside the denied paths stay unreadable rather than granted by a launcher that ignores them
+    const older = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...older,
+        transport: {
+          ...older.transport,
+          bundle: { ...older.transport.bundle, fileReadRoots: false },
+        },
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+        carveFs,
+      })(
+        execRequest(false, {
+          grant: { ...grant(false), readRoots: ["/"], deniedReadRoots: denied },
+        }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [olderSent] = await older.lines();
+    expect(olderSent).not.toHaveProperty("readFileRoots");
+    const olderTemp = (await older.temp()).temp;
+    const firstTemp = (await fake.temp()).temp;
+    expect((olderSent?.readRoots as string[] | undefined)?.filter((r) => r !== olderTemp)).toEqual(
+      roots.filter((r) => r !== firstTemp),
     );
     // native work keeps the reach as granted: the agent checks each resolved path against denied
     const native = await fakeTransport("exit");
@@ -922,7 +969,7 @@ describe("Linux agent read files", () => {
   it("appends to exactly the SDK launcher's default system roots", () => {
     const tuple = (source: string, name: string) =>
       new RegExp(`^${name} = \\(([^)]*)\\)`, "m").exec(source)?.[1];
-    const launcher = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+    const launcher = SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "linux-sandbox.py");
     const sdk = tuple(launcher?.source ?? "", "DEFAULT_SYSTEM_ROOTS");
     expect(sdk).toBeDefined();
     expect(tuple(LINUX_DEVICE_AGENT, "LAUNCHER_SYSTEM_ROOTS")).toBe(sdk);

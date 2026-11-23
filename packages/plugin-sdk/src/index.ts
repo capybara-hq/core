@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.61";
+export const SDK_VERSION = "0.1.0-rc.62";
 export * from "./agent-template.js";
 export * from "./avatar-presets.js";
 export * from "./bootstrap.js";
@@ -34,7 +34,11 @@ export * from "./platform-only.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./push.js";
-export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
+export {
+  SANDBOX_RUNTIME_SOURCE,
+  type SandboxRuntimeFeature,
+  type SandboxRuntimeFile,
+} from "./sandbox-runtime-source.js";
 export {
   isSandboxHomeWriteDenied,
   isSandboxMoveDenied,

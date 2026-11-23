@@ -64,6 +64,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import resource
 import select
 import signal
 import socket
@@ -291,6 +292,87 @@ def pin_read(path):
         os.close(parent["fd"])
         raise Refused("SCOPE_DENIED", "A granted root is neither a directory nor a file")
     return {"path": path, "fd": parent["fd"], "dev": info.st_dev, "ino": info.st_ino, "file": True}
+
+
+def pin_file(path):
+    """Pins one exact file read root of an exec (the read carve's regular files beside a denied
+    path): opened O_PATH | O_NOFOLLOW, so a link is never followed, then checked on that
+    descriptor to be a regular file with one name (a hard link could carry a denied file's inode)
+    at exactly its canonical path. Anything else, or a missing file, grants nothing (None): the
+    launcher would refuse it, and leaving one file unreadable is always safe."""
+    if not isinstance(path, str) or not path.startswith("/") or os.path.normpath(path) != path:
+        raise Refused("SCOPE_DENIED", "Supply canonical absolute file roots")
+    try:
+        fd = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as error:
+        if error.errno in (errno.EMFILE, errno.ENFILE):
+            raise TooManyRoots()
+        return None
+    try:
+        info = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not canonical_fd(fd, path):
+        os.close(fd)
+        return None
+    return {"path": path, "fd": fd, "dev": info.st_dev, "ino": info.st_ino}
+
+
+def pin_file_roots(request):
+    """Pins the exec request's exact file read roots (readFileRoots), each as pin_file does, after
+    the directories: as many as the open-file limit leaves room for (FILE_ROOT_FD_RESERVE kept for
+    the agent, the launcher and the broker); the rest are dropped, which only leaves those files
+    unreadable, never fails the operation."""
+    paths = request.get("readFileRoots", [])
+    if not isinstance(paths, list):
+        raise Refused("INVALID_REQUEST", "Supply file roots as a list")
+    soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    if soft == resource.RLIM_INFINITY:
+        budget = len(paths)
+    else:
+        try:
+            held = len(os.listdir("/proc/self/fd"))
+        except OSError:
+            held = soft
+        budget = max(0, soft - held - FILE_ROOT_FD_RESERVE)
+    pinned = []
+    try:
+        for path in paths:
+            if len(pinned) >= budget:
+                break
+            try:
+                entry = pin_file(path)
+            except TooManyRoots:
+                break
+            if entry is not None:
+                pinned.append(entry)
+    except BaseException:
+        close_pinned(pinned)
+        raise
+    return pinned
+
+
+# Descriptors left free once every root is pinned: the agent's own (files lock, report pipe,
+# forwarder sockets, subprocess pipes) and the launcher's and broker's.
+FILE_ROOT_FD_RESERVE = 256
+
+
+def raise_open_file_limit(request):
+    """Every pinned root holds one descriptor until the launcher has set its Landlock rules (the
+    carve allows up to 4096 directories and files), so the soft open-file limit is raised toward
+    the hard one to fit them; past the hard limit a pin fails with TooManyRoots."""
+    count = sum(len(request.get(key) or []) for key in ("readRoots", "writeRoots",
+                                                          "readFileRoots"))
+    needed = count + FILE_ROOT_FD_RESERVE
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft != resource.RLIM_INFINITY and soft < needed:
+        target = needed if hard == resource.RLIM_INFINITY else min(hard, needed)
+        if target > soft:
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+            except (OSError, ValueError):
+                pass
 
 
 def establish(path):
@@ -1049,7 +1131,13 @@ def run_sealed(request, control, runtime):
     for key in PROXY_KEYS:
         env.pop(key, None)
     denies = write_denies(request)
+    raise_open_file_limit(request)
     read, write, _ = pin_roots(request)
+    try:
+        read_files_pinned = pin_file_roots(request)
+    except BaseException:
+        close_pinned(read + write)
+        raise
     forwarder = None
     lock = None
     try:
@@ -1079,7 +1167,11 @@ def run_sealed(request, control, runtime):
                                 "endpoints": [{"address": "127.0.0.1", "port": forwarder.port}]}
         report_r, report_w = os.pipe()
         files = read_files(request)
-        body = {"mode": "exec", "roots": {"read": read, "write": write},
+        launcher_roots = {"read": read, "write": write}
+        if read_files_pinned:
+            # only when the device sent file roots, which it does only for a launcher declaring them
+            launcher_roots["readFiles"] = read_files_pinned
+        body = {"mode": "exec", "roots": launcher_roots,
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
                 "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"],
@@ -1097,18 +1189,18 @@ def run_sealed(request, control, runtime):
                 [sys.executable, "-I", "/proc/self/fd/%d" % runtime["linux-sandbox.py"]],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 pass_fds=[report_w, runtime["linux-sandbox.py"], runtime["native-files.py"], lock]
-                + [e["fd"] for e in read + write],
+                + [e["fd"] for e in read + write + read_files_pinned],
                 env=LAUNCHER_ENV, preexec_fn=pdeathsig)
         finally:
             os.close(report_w)
-            close_pinned(read + write)
-            read, write = [], []
+            close_pinned(read + write + read_files_pinned)
+            read, write, read_files_pinned = [], [], []
             # only the launcher holds the lock from here on (and never hands it to the command)
             os.close(lock)
             lock = None
         return supervise(launcher, report_r, body, request, control)
     finally:
-        close_pinned(read + write)
+        close_pinned(read + write + read_files_pinned)
         if lock is not None:
             os.close(lock)
         if forwarder is not None:

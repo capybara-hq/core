@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   runSandboxPermissionConformance,
@@ -14,6 +15,7 @@ import {
   execResult,
   IMAGE,
   RUNTIME_DIR,
+  stageLauncher,
   stageMutant,
   startDevice,
   startEndpoints,
@@ -223,6 +225,151 @@ describe.skipIf(unavailable !== null)(
           expect.objectContaining({ event: "refused", code: "ROOT_CHANGED" }),
         ]);
         expect(device.run(`ls ${root}`)).not.toMatch(/\bran\b/);
+      });
+
+      it("grants a pinned file root read only, without its directory, its siblings or execution", async (context) => {
+        requireSupport(context);
+        const dir = `${sibling}/files`;
+        device.run(
+          `mkdir -p ${dir}/sub && printf granted > ${dir}/granted.txt && ` +
+            `printf ${SECRET} > ${dir}/other.txt && printf '#!/bin/sh\necho EXECUTED\n' > ${dir}/run.sh && ` +
+            `chmod +x ${dir}/run.sh`,
+        );
+        const result = await run(
+          restricted(),
+          `cat ${dir}/granted.txt; echo; ls ${dir} && echo LISTED; cat ${dir}/other.txt; ` +
+            `head -c 2 ${dir}/run.sh; echo; ${dir}/run.sh; ls ${dir}/sub && echo SUB; ` +
+            `printf x >> ${dir}/granted.txt && echo APPENDED; true`,
+          { readFileRoots: [`${dir}/granted.txt`, `${dir}/run.sh`] },
+        );
+        const launch = result.events?.find((event) => event.event === "launch") as unknown as {
+          roots: { kind: string; path: string }[];
+          ruleFds: number[];
+          brokerFds: number[];
+        };
+        expect(launch.roots.filter((r) => r.kind === "readFiles").map((r) => r.path)).toEqual([
+          `${dir}/granted.txt`,
+          `${dir}/run.sh`,
+        ]);
+        // a Landlock rule each, never a broker or native-helper root
+        expect(launch.ruleFds.length).toBe(launch.brokerFds.length + 2);
+        const out = decode(result.stdout);
+        expect(out).toContain("granted");
+        expect(out).toContain("#!"); // read, not executed
+        expect(out).not.toMatch(/LISTED|EXECUTED|SUB|APPENDED/);
+        expect(out).not.toContain(SECRET);
+        expect(device.run(`cat ${dir}/granted.txt`)).toBe("granted");
+      });
+
+      it("the staged launcher, which predates file roots, grants none: the file stays unreadable", async (context) => {
+        requireSupport(context);
+        // released image providers stage SANDBOX_RUNTIME_SOURCE.files while the current launcher
+        // is ahead of them; handed file roots anyway, that launcher must not widen the reach
+        const staged = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+        if (!staged || staged.features?.includes("fileReadRoots")) return context.skip(); // promoted: the staged launcher enforces file roots itself
+        const dir = `${sibling}/staged-files`;
+        device.run(`mkdir -p ${dir} && printf ${SECRET} > ${dir}/beside.txt`);
+        const runtime = stageLauncher(device, "staged", staged.source);
+        const older = new Agent(device, { runtime, candidateArch: true });
+        await older.ready;
+        try {
+          const result = await run(
+            restricted(),
+            `cat ${dir}/beside.txt; printf ran > ran; echo FDS; ls /proc/self/fd`,
+            { readFileRoots: [`${dir}/beside.txt`] },
+            older,
+          );
+          const launch = result.events?.find((event) => event.event === "launch") as unknown as {
+            roots: { kind: string }[];
+          };
+          expect(launch.roots.map((r) => r.kind)).not.toContain("readFiles");
+          expect(decode(result.stdout)).not.toContain(SECRET);
+          // no pinned O_PATH descriptor reaches the command: ls sees only stdio and its own listing
+          const fds = decode(result.stdout).split("FDS\n")[1]?.trim().split(/\s+/);
+          expect(fds).toEqual(["0", "1", "2", "3"]);
+          expect(device.run(`cat ${root}/ran`)).toBe("ran");
+        } finally {
+          older.close();
+          device.run(`rm -f ${root}/ran`);
+        }
+      });
+
+      it("refuses a link, a directory or a FIFO as a file root, and a misrecorded one", async (context) => {
+        requireSupport(context);
+        const dir = `${sibling}/refused`;
+        device.run(
+          `mkdir -p ${dir}/sub && printf f > ${dir}/file && printf ${SECRET} > ${dir}/secret && ` +
+            `ln -s ${dir}/secret ${dir}/link && mkfifo ${dir}/fifo`,
+        );
+        for (const name of ["link", "sub", "fifo"]) {
+          const refused = await run(restricted(), `cat ${dir}/${name}; printf ran > ran`, {
+            readFileRoots: [`${dir}/${name}`],
+          });
+          expect(refused.events, name).toEqual([
+            expect.objectContaining({ event: "refused", code: "ROOT_CHANGED" }),
+          ]);
+          expect(decode(refused.stdout)).not.toContain(SECRET);
+        }
+        const wrong = await run(restricted(), "printf ran > ran", {
+          readFileRoots: [`${dir}/file`],
+          attack: { kind: "file-wrong-identity" },
+        });
+        expect(wrong.events).toEqual([
+          expect.objectContaining({ event: "refused", code: "ROOT_CHANGED" }),
+        ]);
+        expect(device.run(`ls ${root}`)).not.toMatch(/\bran\b/);
+        // native mode takes no file roots
+        const native = await agent.request({
+          op: "native",
+          mode: "native",
+          grant: restricted(),
+          readFileRoots: [`${dir}/secret`],
+          native: { method: "readFile", path: `${dir}/secret`, maxBytes: 100 },
+        });
+        expect(native.events).toEqual([
+          expect.objectContaining({ event: "refused", code: "INVALID_REQUEST" }),
+        ]);
+      });
+
+      it("skips a file root renamed, deleted or hard-linked after the pin: the command runs, the path stays unreadable", async (context) => {
+        requireSupport(context);
+        const dir = `${sibling}/moved`;
+        device.run(
+          `mkdir -p ${dir} && printf f > ${dir}/file && printf g > ${dir}/gone && ` +
+            `printf ${SECRET} > ${dir}/secret && rm -f ${root}/ran-moved ${root}/ran-gone`,
+        );
+        const swapped = await run(
+          restricted(),
+          `cat ${dir}/file; cat ${dir}/file.moved; printf ran > ran-moved`,
+          {
+            readFileRoots: [`${dir}/file`],
+            attack: {
+              kind: "swap-file-after-pin",
+              root: `${dir}/file`,
+              moved: `${dir}/file.moved`,
+              target: `${dir}/secret`,
+            },
+          },
+        );
+        expect(swapped.events?.some((e) => e.event === "refused")).toBe(false);
+        expect(device.run(`cat ${root}/ran-moved`)).toBe("ran");
+        // neither the secret now at the path nor the pinned file at its new name is readable
+        expect(decode(swapped.stdout)).not.toContain(SECRET);
+        expect(decode(swapped.stdout)).not.toMatch(/^f/);
+        const gone = await run(restricted(), `cat ${dir}/gone; printf ran > ran-gone`, {
+          readFileRoots: [`${dir}/gone`],
+          attack: { kind: "unlink-file-after-pin", root: `${dir}/gone` },
+        });
+        expect(gone.events?.some((e) => e.event === "refused")).toBe(false);
+        expect(device.run(`cat ${root}/ran-gone`)).toBe("ran");
+        // a file with a second name may share a denied file's inode: no rule for it
+        device.run(`ln ${dir}/secret ${dir}/twice && rm -f ${root}/ran-twice`);
+        const twice = await run(restricted(), `cat ${dir}/twice; printf ran > ran-twice`, {
+          readFileRoots: [`${dir}/twice`],
+        });
+        expect(twice.events?.some((e) => e.event === "refused")).toBe(false);
+        expect(device.run(`cat ${root}/ran-twice`)).toBe("ran");
+        expect(decode(twice.stdout)).not.toContain(SECRET);
       });
 
       it("closes every inherited descriptor above stdio, however high", async (context) => {
@@ -676,6 +823,53 @@ attempt("own-moved", own_moved)
         } finally {
           mutant.close();
           device.run(`rm -f ${sibling}/mutant-landlock`);
+        }
+      });
+
+      it("a file root granted EXECUTE runs it, and without the type and name checks a directory root opens it whole", async (context) => {
+        requireSupport(context);
+        const dir = `${sibling}/mutant-files`;
+        device.run(
+          `mkdir -p ${dir}/inner && printf '#!/bin/sh\necho EXECUTED\n' > ${dir}/run.sh && ` +
+            `chmod +x ${dir}/run.sh && printf ${SECRET} > ${dir}/inner/secret`,
+        );
+        const executing = stageMutant(
+          device,
+          "file-root-exec",
+          '        rule(root["fd"], FS_READ_FILE)\n',
+          '        rule(root["fd"], FS_READ_FILE | FS_EXECUTE)\n',
+        );
+        const checks =
+          "                if not stat.S_ISREG(info.st_mode):\n" +
+          '                    raise Refused("ROOT_CHANGED", "A pinned file root is not a regular file")\n';
+        const typeless = stageMutant(device, "file-root-any-type", checks, "");
+        // the name check would skip a directory (two or more links) on its own: drop it too
+        device.run(
+          `sed -i 's/if where != path or info.st_nlink != 1:/if where != path:/' ` +
+            `${typeless}/linux-sandbox.py`,
+          "0",
+        );
+        const executed = new Agent(device, { runtime: executing, candidateArch: true });
+        const opened = new Agent(device, { runtime: typeless, candidateArch: true });
+        await Promise.all([executed.ready, opened.ready]);
+        try {
+          const exec = await run(
+            restricted(),
+            `${dir}/run.sh`,
+            { readFileRoots: [`${dir}/run.sh`] },
+            executed,
+          );
+          expect(decode(exec.stdout)).toContain("EXECUTED");
+          const whole = await run(
+            restricted(),
+            `cat ${dir}/inner/secret`,
+            { readFileRoots: [`${dir}/inner`] },
+            opened,
+          );
+          expect(decode(whole.stdout)).toContain(SECRET);
+        } finally {
+          executed.close();
+          opened.close();
         }
       });
 

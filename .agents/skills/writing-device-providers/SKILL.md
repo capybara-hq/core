@@ -401,15 +401,18 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - **The network follows running instances; the rest applies at create.** The kernel records the
   limits an instance was created with (`device_instances.instance_limits`; NULL reads as unknown, and
   an old `{ tier, egress }` record reads as unknown too). On use, when the effective network kind
-  differs, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
-  records the new limits; `"recreate"`, a gone instance, or a provider without `update` destroys and
+  differs, the recorded network allows a host the desired one does not cover, or it lacks a desired
+  host, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
+  records the new limits (for a narrowing a provider answers it only once no connection to a removed
+  host survives and no new one can open, the SDK doc of `update`; Docker applies allowlist changes
+  in place, its egress proxy closing what the new list no longer covers); `"recreate"`, a gone instance, or a provider without `update` destroys and
   recreates the instance on the same files (the existing "recreated" notice). A non-gone `update`
   failure recreates on instance-bound providers; after an abort, or on a provider with
   `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance is quarantined
   (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful
   `update` keeps the old record, and the device view says `pendingFilesReset` (「重置文件后生效」): the
-  record never claims more than is in force. Changes of `network.hosts`, `cpu`, `memoryMb` still
-  reach only instances created afterwards, and `diskMb` only file systems created afterwards. When an
+  record never claims more than is in force. Changes of `cpu` and `memoryMb` still reach only
+  instances created afterwards, and `diskMb` only file systems created afterwards. When an
   item cannot be done, say so in the README (Docker's default local volume driver does not limit
   `diskMb`; E2B's cpu / memory / disk are decided by the template).
 - **Provider refusals** (auto mode spec §4.2): a failed `createFileSystem` / `create` / `update`
@@ -602,6 +605,19 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   `https://github.com/capybara-hq/plugins.git#<marketplace.commit>:plugins/sandbox-docker/image` (and `…:plugins/sandbox-docker/egress-proxy`), pinned to the same commit
   (rule `bootstrap-compose-ref` of `pnpm check:bootstrap`). The images themselves (container hardening, the egress proxy that blocks DNS rebinding by checking every resolved IP)
   are the plugin's; see its skill.
+- **SDK runtime files** (`SANDBOX_RUNTIME_SOURCE`: `native-files.py`, `linux-sandbox.py`). Two consumers with different
+  release units: `capybara-device` sends the bytes of its own bundled SDK inline with every request (always
+  `current`), while device-docker builds them into its image in capybara-hq/plugins and, running in the kernel,
+  checks the staged copy against the **host** SDK (a mismatch makes every cloud device report "The staged … does not
+  match its digest"). So the bundle has a staged set `files` (exactly what released images stage), `current` (the
+  newest bytes; inline consumers run these and use a capability only when the file declares it in `features`) and
+  `accepted` (by name, every digest a staged copy may have). A runtime change never edits `files` directly: it lands
+  in three steps, described in [tools/checks/README.md](../../../tools/checks/README.md) ("Changing the SDK runtime
+  sources"): (1) core changes `current` (new bytes in the runtime source file, the old ones kept byte for byte as
+  the staged file), the kernel keeps accepting the staged digest and a consumer gates new launcher protocol on
+  `features`, falling back to the old behaviour and never granting what the staged launcher cannot enforce; (2)
+  after that SDK is released, device-docker restages from `current` and checks against `accepted`; (3) core promotes
+  `current` to `files`, deletes the staged copy and moves `marketplace.commit` and the device-docker pin in one PR.
 - Logs and errors carry no secrets and no other orgs' ids.
 - **Restricted write policy** (`packages/plugin-sdk/src/sandbox-write-denies.ts`, one source for the
   Linux broker, `native-files.py` with `denyWrites`, the device agent and the macOS runtime's ordered
@@ -694,8 +710,15 @@ suite in `@capybara-hq/testing` checks it):
   every other connection's state and working directory and their private temps
   (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
-  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
-  path to a denied one are unreadable and it cannot be listed, and more than 4096 carved roots refuses machine reach.
+  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`): subdirectories whole, and the non-denied
+  regular files directly inside each expanded directory as exact file roots (the agent pins each O_PATH|O_NOFOLLOW,
+  one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned descriptor, skips
+  one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). The
+  worker sends file roots only when the launcher it carries declares `features: ["fileReadRoots"]`
+  (`LinuxRuntimeBundle.fileReadRoots`); with a launcher that does not, the files stay unreadable (the staged launcher
+  in `SANDBOX_RUNTIME_SOURCE.files` ignores `readFiles`, proven on a real kernel in `sandbox-linux-runtime.test.ts`). An
+  expanded directory cannot be listed, more than 4096 carved directories refuses machine reach, and files past the cap
+  or the agent's open-file limit are dropped.
   Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system
   mounted inside it and elsewhere, an overlay layer, a loop image) are denied too, from `/proc/self/mountinfo` at each
   ceiling read (`exec/linux-mountinfo.ts`, `mountReexposedDenies`, every reach); mounts of unknown content (an

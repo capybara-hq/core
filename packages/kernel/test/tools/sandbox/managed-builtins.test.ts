@@ -36,7 +36,10 @@ import {
 import { DeviceProviders } from "../../../src/sandbox/providers.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { generateImageTool } from "../../../src/tools/builtins/image/index.js";
-import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common.js";
+import {
+  type SandboxToolDeps,
+  SCOPE_DENIED_TOOL_TEXT,
+} from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../../src/tools/registry.js";
@@ -68,6 +71,11 @@ let watched = "";
 let watchedDevice = "";
 /** Set: the provider refuses a background start with its own words. */
 let startRefuses = false;
+/**
+ * Set: the provider reads only inside the operation's admitted file scope (the project root and
+ * the write roots), as a provider enforcing its read rule does; a read elsewhere is refused.
+ */
+let readsInScope = false;
 
 const markedCount = async (conversationId: string): Promise<number> => {
   const rows = await kernelDb(raw)
@@ -123,6 +131,15 @@ beforeAll(async () => {
         },
         readFile: async (path, opts) => {
           await reach("readFile");
+          const fs = scope.filesystem;
+          if (readsInScope && fs.kind === "scoped") {
+            const admitted = [
+              ...(fs.projectRoot === null ? [] : [fs.projectRoot]),
+              ...fs.writeRoots,
+            ];
+            if (!admitted.some((r) => path === r || path.startsWith(`${r}/`)))
+              throw new SandboxScopeDeniedError(`provider: ${path} is outside the read scope`);
+          }
           return base.readFile(h, path, opts);
         },
         writeFile: async (path, data, signal) => {
@@ -183,6 +200,7 @@ beforeEach(async () => {
   reached.length = 0;
   stored.clear();
   startRefuses = false;
+  readsInScope = false;
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
 });
 
@@ -650,6 +668,29 @@ describe("builtin tools on the managed route", () => {
     expect(textOf(r)).toContain("Do the demo.");
     expectManaged(["readFile"]);
     expect(await markedPaths(g)).toHaveLength(1);
+  });
+
+  it("Skill on a project skill outside the admitted scope: the device's refusal, nothing loaded", async () => {
+    const f = await seed();
+    readsInScope = true;
+    // the run start recorded a project whose root lies outside every root this call is admitted
+    // to (the conversation is not bound to it, so admission works in the workspace)
+    await projectRoot(f, "/srv/app");
+    const err = await failure(runTool(f, "Skill", { skill: "project:demo" }));
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(SCOPE_DENIED_TOOL_TEXT);
+    // the provider's own words stay out of the model's text
+    expect((err as ToolError).message).not.toContain("provider:");
+    // the read reached the device on the managed route, after the marked paths, and was refused
+    expect(reached).toEqual([{ method: "readFile", marked: 1 }]);
+    // a project skill inside the admitted scope still loads under the same provider rule
+    await runTool(f, "Write", {
+      file_path: "/workspace/.agents/skills/demo/SKILL.md",
+      content: "---\nname: demo\ndescription: A demo.\n---\nDo the demo.\n",
+    });
+    const g = await sibling(f);
+    await projectRoot(g, "/workspace");
+    expect(textOf(await runTool(g, "Skill", { skill: "project:demo" }))).toContain("Do the demo.");
   });
 
   it("Skill copies a plugin skill through the trusted preparation after the marked paths", async () => {

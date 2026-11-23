@@ -5,7 +5,9 @@
  * browser profile directories, other tool credential stores (cargo, 1Password, Vault, Terraform,
  * Claude, Codex, keyrings, pass, rclone, s3cmd), mise's config directory and the config files it
  * loads from the home (an `[env]` section may hold tokens; globbed names like `~/mise.<env>.toml`
- * are not listed), Maven and Gradle credential files, and shell histories. One source for
+ * are not listed), Maven and Gradle credential files, database and X11 credential files, and
+ * shell and REPL histories. Secrets a shell start file exports (`export TOKEN=…` in `~/.bashrc`)
+ * are not covered: start files stay readable so sandboxed shells behave as the owner's. One source for
  * the device, which denies them (and its own state directory), and the kernel, which never proposes
  * an approval for a path under one. Full access and auto mode run as the owner and do not apply
  * them: the command review does.
@@ -74,8 +76,40 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.gradle/gradle.properties",
   "~/.gradle/develocity/keys.properties",
   "~/.gradle/enterprise/keys.properties",
+  // Database, X11 session and other credential files directly in the home (machine reach on
+  // Linux grants the files beside a denied path one by one)
+  "~/.pgpass",
+  "~/.my.cnf",
+  "~/.Xauthority",
+  "~/.ICEauthority",
+  "~/.config/hub",
+  "~/.boto",
+  "~/.dockercfg",
+  "~/.smbcredentials",
+  "~/.terraformrc",
+  "~/.yarnrc.yml",
+  "~/.databrickscfg",
+  "~/.passwd-s3fs",
+  "~/.erlang.cookie",
+  "~/.curlrc",
+  "~/.wgetrc",
+  "~/.claude.json",
+  // shell and REPL histories (commands with inlined secrets)
   "~/.bash_history",
   "~/.zsh_history",
+  "~/.psql_history",
+  "~/.mysql_history",
+  "~/.python_history",
+  "~/.node_repl_history",
+  "~/.sqlite_history",
+  "~/.histfile",
+  "~/.zhistory",
+  "~/.sh_history",
+  "~/.lesshst",
+  "~/.viminfo",
+  "~/.rediscli_history",
+  "~/.irb_history",
+  "~/.Rhistory",
 ]);
 
 /**

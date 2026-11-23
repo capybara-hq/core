@@ -3419,11 +3419,9 @@ export const SANDBOX_RUNTIME_DIRECTORIES: readonly string[];
 // @public
 export const SANDBOX_RUNTIME_SOURCE: {
     readonly version: number;
-    readonly files: readonly {
-        readonly name: string;
-        readonly source: string;
-        readonly sha256: string;
-    }[];
+    readonly files: readonly SandboxRuntimeFile[];
+    readonly current: readonly SandboxRuntimeFile[];
+    readonly accepted: Readonly<Record<string, readonly string[]>>;
 };
 
 // @public
@@ -3673,6 +3671,17 @@ export interface SandboxRoots {
 export function sandboxRuntimeDirectoryOf(root: string): string | null;
 
 // @public
+export type SandboxRuntimeFeature = "fileReadRoots";
+
+// @public
+export interface SandboxRuntimeFile {
+    readonly features?: readonly SandboxRuntimeFeature[];
+    readonly name: string;
+    readonly sha256: string;
+    readonly source: string;
+}
+
+// @public
 export class SandboxScopeDeniedError extends Error {
     constructor(message: string, opts?: ErrorOptions);
     readonly sandboxScopeDenied: true;
@@ -3723,7 +3732,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.61";
+export const SDK_VERSION = "0.1.0-rc.62";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

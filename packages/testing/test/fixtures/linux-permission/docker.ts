@@ -52,8 +52,26 @@ function docker(args: string[], input?: string | Uint8Array): string {
 }
 
 /**
- * Stages a deliberately broken copy of the launcher (evidence that a test detects the defect) in
- * its own root-owned directory with the agent and native helper, and returns that directory.
+ * Stages `source` as the launcher in its own root-owned directory `<RUNTIME_DIR>/<name>`, with the
+ * agent and native helper, and returns that directory.
+ */
+export function stageLauncher(device: DeviceContainer, name: string, source: string): string {
+  const directory = `${RUNTIME_DIR}/${name}`;
+  device.run(
+    `mkdir -p ${directory} && cp ${RUNTIME_DIR}/agent.py ${RUNTIME_DIR}/native-files.py ${directory}/`,
+    "0",
+  );
+  docker(
+    ["exec", "-i", "-u", "0", device.name, "sh", "-c", `cat > ${directory}/linux-sandbox.py`],
+    source,
+  );
+  device.run(`chmod 644 ${directory}/*`, "0");
+  return directory;
+}
+
+/**
+ * Stages a deliberately broken copy of the current launcher (evidence that a test detects the
+ * defect) with {@link stageLauncher}, and returns its directory.
  */
 export function stageMutant(
   device: DeviceContainer,
@@ -61,19 +79,9 @@ export function stageMutant(
   from: string,
   to: string,
 ): string {
-  const linux = SANDBOX_RUNTIME_SOURCE.files.find((file) => file.name === "linux-sandbox.py");
+  const linux = SANDBOX_RUNTIME_SOURCE.current.find((file) => file.name === "linux-sandbox.py");
   if (!linux?.source.includes(from)) throw new Error(`mutation ${name} no longer applies`);
-  const directory = `${RUNTIME_DIR}/mutant-${name}`;
-  device.run(
-    `mkdir -p ${directory} && cp ${RUNTIME_DIR}/agent.py ${RUNTIME_DIR}/native-files.py ${directory}/`,
-    "0",
-  );
-  docker(
-    ["exec", "-i", "-u", "0", device.name, "sh", "-c", `cat > ${directory}/linux-sandbox.py`],
-    linux.source.replace(from, to),
-  );
-  device.run(`chmod 644 ${directory}/*`, "0");
-  return directory;
+  return stageLauncher(device, `mutant-${name}`, linux.source.replace(from, to));
 }
 
 export const HARDENING = [
@@ -131,7 +139,7 @@ export function startDevice(): DeviceContainer {
     }
   };
   try {
-    for (const file of SANDBOX_RUNTIME_SOURCE.files) {
+    for (const file of SANDBOX_RUNTIME_SOURCE.current) {
       if (createHash("sha256").update(file.source).digest("hex") !== file.sha256) {
         throw new Error(`${file.name} does not match its bundle digest`);
       }

@@ -44,7 +44,7 @@ export interface NativeHelperLaunch {
 // directory roots; the ancestor descriptor never becomes a NativeFiles data grant.
 /** The native helper by name: the bundle also carries the Linux launcher, so order is not relied on. */
 const NATIVE_FILES_SOURCE =
-  SANDBOX_RUNTIME_SOURCE.files.find((file) => file.name === "native-files.py")?.source ?? "";
+  SANDBOX_RUNTIME_SOURCE.current.find((file) => file.name === "native-files.py")?.source ?? "";
 
 export const PRELUDE = String.raw`
 import os,json,sys,errno
