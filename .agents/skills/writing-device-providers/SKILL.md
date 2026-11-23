@@ -684,9 +684,11 @@ suite in `@capybara-hq/testing` checks it):
   every other connection's state and working directory and their private temps
   (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
-  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
-  path to a denied one are unreadable and it cannot be listed, a bind mount of a denied directory stays readable, and
-  more than 4096 carved roots refuses machine reach. `policy.json` is format 4; an older file is refused at start
+  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`): subdirectories whole, and the non-denied
+  regular files directly inside each expanded directory as exact file roots (the agent pins each O_PATH|O_NOFOLLOW,
+  one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned descriptor and
+  grants file reads only, never READ_DIR or EXECUTE). An expanded directory cannot be listed, a bind mount of a denied
+  directory stays readable, and more than 4096 carved roots (files included) refuses machine reach. `policy.json` is format 4; an older file is refused at start
   and rewritten from the closed policy by `ceiling set` (`PolicyVersionError`, `replacementPolicy`).
 - **Packages that ship `.idea` / `.vscode` do not install in the sandbox.** The editor denies hold
   below `node_modules` too (a directory moved or linked out of it would carry the configuration

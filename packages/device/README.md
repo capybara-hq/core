@@ -175,23 +175,27 @@ connection's sandboxed work is refused with a message naming it and
 `capybara-device logout -c <id>`, because the deny list could not be built; escalated calls and the
 owner report keep working.
 
-Linux residuals of the deny list, stated plainly. Landlock grants directories, so a denied path is
-carved out of the whole machine by granting its siblings: files directly inside a directory on the
-path to a denied one are unreadable, and such a directory cannot be listed (for example `~/.bashrc`
-and `~/.gitconfig` when `~/.ssh` is denied, unless a tool home grants them; likewise files
-directly in `~/.cargo`, `~/.claude`, `~/.codex`, `~/.terraform.d`, `~/.local`, `~/.local/share`,
-`~/mise`, `~/.m2`, `~/.gradle`, `~/.gradle/develocity` and `~/.gradle/enterprise`, so cargo cannot
-read `~/.cargo/config.toml` and Maven cannot read `~/.m2/toolchains.xml` for a project under the
-home: use the `paths` reach or an escalated call there). A sandboxed Maven or Gradle build never
+Linux residuals of the deny list, stated plainly. Landlock only grants, so a denied path is
+carved out of the whole machine by granting what lies beside it: in each directory on the path to
+a denied one, the subdirectories off every denied path are granted whole and the regular files
+directly inside it are granted one by one as exact file reads (for example `~/.bashrc` and
+`~/.gitconfig` when `~/.ssh` is denied, and `~/.cargo/config.toml` beside a denied
+`~/.cargo/credentials`). A denied file is never among them, nor a symbolic link, another file
+type, a file you cannot read or one with a second name (a hard link). Such a directory still
+cannot be listed (`ls ~` fails under `machine` reach), and a file created in it after the
+operation started, or replaced by renaming another file over it, is not readable by that
+operation. A sandboxed Maven or Gradle build never
 reads the denied settings files. On Linux Java takes the home from the password database and
 Landlock does not hide `stat`, so the build sees the files exist but cannot open them and may fail
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look
 absent. Repository credentials reach a build only through an escalated call. Gradle init scripts
 and a `GRADLE_USER_HOME` moved elsewhere are not covered. A bind mount or second
 mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
-4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. Every
-granted root is held open by the operation agent, so its open-file limit (often a soft limit of
-1024) can refuse an operation before that cap, also with many listed project paths. macOS
+4096 carved roots (directories and files together) refuses machine reach for that operation: use
+the `paths` reach instead. Every granted root is held open by the operation agent until the
+sandbox is set up; the agent raises its soft open-file limit to fit them, so only a hard limit
+below that (rare) refuses an operation before the cap, with a message naming the limit and the
+`paths` reach. macOS
 Seatbelt denies the paths directly and has none of these.
 
 Commands get a minimal environment (`PATH`, `LANG`,

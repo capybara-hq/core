@@ -3,7 +3,8 @@
  * beside `native-files.py` by a trusted consumer that verifies both digests.
  *
  * Transport: `python3 -I linux-sandbox.py probe` prints the capability report. Otherwise one JSON
- * request on stdin: `{mode: "exec" | "native", roots: {read, write: [{path, fd, dev, ino}]},
+ * request on stdin: `{mode: "exec" | "native", roots: {read, write: [{path, fd, dev, ino}],
+ * readFiles? (exec only: single regular files granted read without their directory)},
  * network: {kind: "none" | "environment"} | {kind: "endpoints", endpoints: [{address, port}]},
  * reportFd, cwd?, env?, argv (exec), timeoutMs? (exec), native (native-files request),
  * nativeFd? (exec: an inherited, consumer-verified descriptor of native-files.py, e.g. a sealed
@@ -13,7 +14,9 @@
  * every root, shared by all operations of the device; see native-files.py DeviceFilesLock)}`.
  * Root descriptors are pinned once by the consumer and inherited; the launcher verifies their
  * identity and never reopens a root pathname. Landlock rules, broker metadata checks and the
- * native helper all use those same descriptors. JSON events (`launch`, `exit`, `refused`) go to
+ * native helper all use those same descriptors. A file root (`readFiles`) is an O_PATH, no-follow
+ * descriptor of the regular file itself; it becomes one Landlock rule granting file reads only
+ * (no directory listing, no execution) and never reaches the broker or the native helper. JSON events (`launch`, `exit`, `refused`) go to
  * reportFd, which the restricted child cannot write. SIGTERM cancels the whole owned tree.
  * Full access never uses this launcher: it has no restricted filters.
  *
@@ -506,10 +509,15 @@ def install_filter(table, program, listener):
 # ---- roots and Landlock -------------------------------------------------------------------
 
 def verify_roots(native, request):
-    """Validates pinned descriptors against their recorded identity without reopening paths."""
-    result = {"read": [], "write": []}
+    """Validates pinned descriptors against their recorded identity without reopening paths.
+    Read and write roots are directories; a file root (readFiles, exec mode only) is a regular
+    file whose descriptor the consumer opened O_PATH | O_NOFOLLOW, so a symbolic link, directory,
+    FIFO, socket or device given as a file root is refused here."""
+    result = {"read": [], "write": [], "readFiles": []}
     seen = []
-    for kind in ("read", "write"):
+    if request.get("roots", {}).get("readFiles") and request.get("mode") != "exec":
+        raise Refused("INVALID_REQUEST", "File roots serve exec mode only")
+    for kind in ("read", "write", "readFiles"):
         for entry in request.get("roots", {}).get(kind, []):
             path, fd = entry.get("path"), entry.get("fd")
             if not isinstance(path, str) or type(fd) is not int or not native.valid_path(path) \
@@ -521,8 +529,10 @@ def verify_roots(native, request):
             except OSError:
                 raise Refused("ROOT_CHANGED", "A pinned root descriptor is not available")
             identity = [entry.get("dev"), entry.get("ino")]
-            if not stat.S_ISDIR(info.st_mode) or identity != [info.st_dev, info.st_ino] \
-                    or where != path:
+            if kind == "readFiles" and not stat.S_ISREG(info.st_mode):
+                raise Refused("ROOT_CHANGED", "A pinned file root is not a regular file")
+            if (kind != "readFiles" and not stat.S_ISDIR(info.st_mode)) \
+                    or identity != [info.st_dev, info.st_ino] or where != path:
                 raise Refused("ROOT_CHANGED", "A pinned root no longer names its recorded object")
             os.set_inheritable(fd, False)
             result[kind].append({"path": path, "fd": fd})
@@ -549,6 +559,10 @@ def landlock_ruleset(roots, system_roots, network_mediated, brokered_writes=Fals
     for root in roots["write"]:
         # Brokered: the command reads its write roots; the broker performs every write.
         rule(root["fd"], FS_READ if brokered_writes else FS_ALL)
+    for root in roots["readFiles"]:
+        # The file's own inode, read only: no READ_DIR (a file has no listing to grant, and its
+        # directory gets no rule from it) and no EXECUTE.
+        rule(root["fd"], FS_READ_FILE)
     opened = []
     try:
         for path in system_roots:
@@ -1885,8 +1899,9 @@ def device_files_lock(request, roots, system_roots):
         raise Refused("INVALID_REQUEST", "The files lock descriptor is not open")
     if not stat.S_ISREG(info.st_mode) or not where.startswith("/") or where.endswith(" (deleted)"):
         raise Refused("INVALID_REQUEST", "The files lock is not a regular file")
-    reach = [r["path"] for r in roots["read"] + roots["write"]] + list(system_roots)
-    for entry in roots["read"] + roots["write"]:
+    granted = roots["read"] + roots["write"] + roots["readFiles"]
+    reach = [r["path"] for r in granted] + list(system_roots)
+    for entry in granted:
         try:
             reach.append(os.readlink("/proc/self/fd/%d" % entry["fd"]))
         except OSError:
