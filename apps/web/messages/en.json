@@ -239,7 +239,6 @@
       "not_found": "The extension is not installed.",
       "not_enabled": "The extension is not enabled for this organization. Enable it under Settings → Extensions.",
       "config_invalid": "The config is invalid:",
-      "no_org_config": "This extension has no organization config.",
       "dependency_missing": "Enable the extensions it depends on first.",
       "has_dependents": "Other enabled extensions depend on this extension.",
       "config_readonly": "This field comes from the startup config and is read-only.",

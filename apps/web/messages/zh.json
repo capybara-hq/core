@@ -239,7 +239,6 @@
       "not_found": "扩展未安装。",
       "not_enabled": "该扩展未在本组织启用，请到「设置 → 扩展」中启用。",
       "config_invalid": "配置不正确：",
-      "no_org_config": "该扩展没有组织级配置。",
       "dependency_missing": "请先启用它依赖的扩展。",
       "has_dependents": "还有其他已启用的扩展依赖它。",
       "config_readonly": "这个字段由启动配置给出，只读。",
