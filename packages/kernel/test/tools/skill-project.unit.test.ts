@@ -1,12 +1,15 @@
 import { ToolError, type ToolResult } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import type { SandboxToolDeps } from "../../src/tools/builtins/sandbox/common.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
+import { managedCall, managedRoute, managedSandbox } from "../helpers/managed-tool-stubs.js";
 
 /**
  * Project root spec §4.5: `Skill` loads `project:<name>` from the root conversation's latest
  * `project_root` and reads `<root>/.agents/skills/<name>/SKILL.md` through the device provider.
- * Stubbed deps: the project path never touches the database or file storage.
+ * Stubbed deps: the project path never touches the database or file storage. The device is
+ * entered on the managed route, the only one production takes.
  */
 
 type ProjectRoot = EventPayload<"project_root">;
@@ -43,6 +46,8 @@ interface Setup {
   readError?: Error;
   /** The device's mode now (default auto: the project's root is outside the sandbox roots). */
   mode?: "auto" | "sandbox";
+  /** The legacy route instead (only its dormant-only test, deleted with that route). */
+  legacy?: boolean;
 }
 
 function setup(s: Setup) {
@@ -68,6 +73,13 @@ function setup(s: Setup) {
       throw new Error("a project skill writes nothing");
     },
   };
+  const withSandbox: SandboxToolDeps["sandbox"]["withSandbox"] = async (_c, fn, sig) =>
+    fn(
+      { id: "e1", roots: ROOTS } as never,
+      p as never,
+      { fresh: false, restarted: false, roots: ROOTS } as never,
+      sig,
+    );
   const tool = skillLoadTool({
     db: {} as never,
     storage: {} as never,
@@ -82,15 +94,10 @@ function setup(s: Setup) {
         return undefined;
       }) as never,
     },
-    sandbox: {
-      withSandbox: async (_c, fn, sig) =>
-        fn(
-          { id: "e1", roots: ROOTS } as never,
-          p as never,
-          { fresh: false, restarted: false, roots: ROOTS } as never,
-          sig,
-        ),
-    },
+    sandbox: s.legacy
+      ? { withSandbox }
+      : managedSandbox(p, { roots: ROOTS, handle: { id: "e1", roots: ROOTS } }).sandbox,
+    ...(!s.legacy && managedRoute()),
     devices: {
       forTool: async () => "device-1",
       modeLevel: async () => ({
@@ -104,12 +111,14 @@ function setup(s: Setup) {
     config: { get: () => ({ sandbox: { limits: {} } }) as never },
   });
   const ctx = (over: Record<string, unknown> = {}) => ({
-    orgId: "org",
-    accountId: "acc",
-    agentId: "a",
-    conversationId: "root",
-    callId: "call-1",
-    signal: new AbortController().signal,
+    ...managedCall({
+      orgId: "org",
+      accountId: "acc",
+      agentId: "a",
+      conversationId: "root",
+      callId: "call-1",
+      signal: new AbortController().signal,
+    }),
     ...over,
   });
   const run = async (input: Record<string, unknown>, over: Record<string, unknown> = {}) =>
@@ -199,6 +208,7 @@ describe("Skill: project skills", () => {
       project: usable,
       mode: "sandbox",
       files: { [PATH]: skillMd("fix-issue", "Body.") },
+      legacy: true,
     });
     const e = await toolError(t.run({ skill: "project:fix-issue" }));
     expect(t.reads).toEqual([]);
