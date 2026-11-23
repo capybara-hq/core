@@ -76,7 +76,9 @@ export interface DeviceOwnerCeiling {
   /**
    * Linux: why the mount table cannot tell whether a denied path is re-exposed (unreadable,
    * malformed, not settling), or null. While set, machine project reach is refused
-   * ({@link intersectOperation}); the narrower reaches proceed with {@link mountReexposedDenies}.
+   * ({@link intersectOperation}); the narrower reaches proceed with {@link mountReexposedDenies},
+   * which then holds only what was found before the reading stopped (nothing when the table
+   * cannot be read): those reaches rely on the owner's listed paths holding no second view.
    */
   readonly mountReexposureProblem: string | null;
   /**

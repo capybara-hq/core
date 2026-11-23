@@ -396,6 +396,35 @@ describe("automount points and loop devices", () => {
   });
 });
 
+describe("case-folding and stacked block devices", () => {
+  it("a casefold directory's mount root naming the denied path in another case matches", () => {
+    const text = table(
+      ...BASE,
+      line(30, 21, "8:2", "/", "/home"),
+      line(40, 21, "8:2", "/u/.SSH", "/mnt/keys"),
+      line(41, 21, "8:2", "/U", "/mnt/u"),
+    );
+    expect([...reexposed(text).paths].sort()).toEqual(["/mnt/keys", "/mnt/u/.ssh"]);
+  });
+  it("a dm-crypt device on a loop image inside a denied directory is traced to it", () => {
+    const text = table(
+      ...BASE,
+      "90 21 253:0 / /mnt/vault rw,relatime - ext4 /dev/mapper/vault rw",
+      "91 21 253:1 / /mnt/clear rw,relatime - ext4 /dev/mapper/clear rw",
+    );
+    const slaves: Record<string, string[]> = {
+      "253:0": ["dm-3"],
+      "dm-3": ["loop4"],
+      "253:1": ["sda2"],
+    };
+    const r = mountReexposures(parseMountinfo(text), [SSH], {
+      blockSlaves: (d) => slaves[d] ?? [],
+      loopBackingFile: (n) => (n === 4 ? `${SSH}/vault.luks` : null),
+    });
+    expect(r).toEqual({ paths: ["/mnt/vault"], problem: null });
+  });
+});
+
 describe("linuxMountReexposures", () => {
   const enc = (s: string) => new TextEncoder().encode(s);
   it("reads the table through the seam", () => {

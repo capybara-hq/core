@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
 
 /**
@@ -132,6 +132,22 @@ function inside(path: string, root: string): boolean {
   return root === "/" || path === root || path.startsWith(`${root}/`);
 }
 
+/**
+ * {@link inside}, also compared case-insensitively (both sides `toLowerCase()`, as the carve
+ * does): on a case-folding directory a denied `.ssh` may be named `.SSH` by a mount root or
+ * point. Used wherever a match denies more; a match that would deny less stays exact.
+ */
+function within(path: string, root: string): boolean {
+  return inside(path, root) || inside(path.toLowerCase(), root.toLowerCase());
+}
+
+/** `path` relative to `root` (one {@link within} the other), in the exact form when it is one. */
+function rel(root: string, path: string): string {
+  return inside(path, root)
+    ? posix.relative(root, path)
+    : posix.relative(root.toLowerCase(), path.toLowerCase());
+}
+
 /** What dentry_path appends to an unlinked root in mountinfo (never part of a real path). */
 const DELETED_ROOT = "//deleted";
 /** What d_path appends to an unlinked file's path (a loop device's backing file). */
@@ -208,6 +224,12 @@ export interface MountReexposureOptions {
    */
   loopBackingFile?: (n: number) => string | null;
   /**
+   * The slaves of a block device, by `major:minor` or kernel name (`/sys/dev/block/<dev>/slaves`,
+   * `/sys/class/block/<name>/slaves`), so a dm-crypt or LVM device stacked on a loop image is
+   * traced to it. Default: none (pure).
+   */
+  blockSlaves?: (device: string) => readonly string[];
+  /**
    * The directories this device itself needs (its roots, the listed project paths): a mount of
    * unknown content that holds one of them is never denied wholesale (an indirect automount point
    * is left as is; an overlay or loop mount of unknown content is a `problem`).
@@ -238,7 +260,8 @@ interface ContentSource {
  * mount outside this model (a direct or offset point always; an indirect one, such as `/net`,
  * unless it holds a denied path or a {@link MountReexposureOptions.keep} directory, whose keys are
  * the residual; binfmt_misc is harmless); every mount of an overlay whose layer is relative or
- * does not resolve; every mount of a loop device whose backing file cannot be read. When such a
+ * does not resolve; every mount of a loop device (directly, or under a dm-crypt or LVM device whose
+ * slaves lead to it) whose backing file cannot be read. When such a
  * mount holds a `keep` directory the answer is a `problem` instead (denying it would deny the
  * device itself).
  *
@@ -263,6 +286,7 @@ export function mountReexposures(
   const limits = options.limits ?? MOUNT_REEXPOSURE_LIMITS;
   const realpath = options.realpath ?? ((path: string) => path);
   const loopBackingFile = options.loopBackingFile ?? (() => null);
+  const blockSlaves = options.blockSlaves ?? (() => []);
   const keep = (options.keep ?? []).map((p) => posix.normalize(p));
   const ids = new Set(entries.map((e) => e.mountId));
   const children = new Map<number, MountEntry[]>();
@@ -303,7 +327,7 @@ export function mountReexposures(
 
   const original = [...new Set(denied.map((p) => posix.normalize(p)))];
   const deniedSet = new Set(original);
-  const isDenied = (p: string) => [...deniedSet].some((d) => inside(p, d));
+  const isDenied = (p: string) => [...deniedSet].some((d) => within(p, d));
   const found: string[] = [];
   const deny = (p: string) => {
     if (isDenied(p)) return false;
@@ -323,6 +347,34 @@ export function mountReexposures(
     if (real === null) return null;
     return [...new Set([posix.normalize(path), posix.normalize(real)])];
   };
+  /** Loop devices behind a mount: its source, and its block device's slaves (dm-crypt, LVM). */
+  const loopCache = new Map<string, Set<number>>();
+  const loopsOf = (e: MountEntry): Set<number> => {
+    let loops = loopCache.get(e.dev);
+    if (loops === undefined) {
+      loops = new Set();
+      if (!e.dev.startsWith("0:")) {
+        const seen = new Set<string>();
+        const walk = (name: string, depth: number) => {
+          if (seen.has(name) || depth > 16) return;
+          seen.add(name);
+          for (const slave of blockSlaves(name)) {
+            const m = /^loop(\d+)$/.exec(slave);
+            if (m) loops?.add(Number(m[1]));
+            walk(slave, depth + 1);
+          }
+        };
+        walk(e.dev, 0);
+        const own = /^7:(\d+)$/.exec(e.dev); // the loop major
+        if (own) loops.add(Number(own[1]));
+      }
+      loopCache.set(e.dev, loops);
+    }
+    const out = new Set(loops);
+    const source = /^\/dev\/loop(\d+)(?:p\d+)?$/.exec(e.source);
+    if (source) out.add(Number(source[1]));
+    return out;
+  };
   for (const e of entries) {
     if (e.fsType === "overlay")
       for (const layer of overlayLayers(e)) {
@@ -335,9 +387,8 @@ export function mountReexposures(
             );
         } else sources.push({ entry: e, kind: "dir", forms: f });
       }
-    const loop = /^\/dev\/loop(\d+)(?:p\d+)?$/.exec(e.source);
-    if (loop !== null) {
-      const backing = loopBackingFile(Number(loop[1]));
+    for (const n of loopsOf(e)) {
+      const backing = loopBackingFile(n);
       const f =
         backing === null
           ? null
@@ -348,7 +399,7 @@ export function mountReexposures(
         if (!unknown.has(e.dev))
           unknown.set(
             e.dev,
-            `the backing file of ${e.source}, mounted at ${e.mountPoint}, cannot be read`,
+            `the backing file of /dev/loop${n}, under the mount at ${e.mountPoint}, cannot be read`,
           );
       } else sources.push({ entry: e, kind: "file", forms: f });
     }
@@ -386,7 +437,7 @@ export function mountReexposures(
       locations.set(dev, set);
     };
     for (const p of pending) {
-      const holders = round === 0 ? entries.filter((e) => inside(p, e.mountPoint)) : containing(p);
+      const holders = round === 0 ? entries.filter((e) => within(p, e.mountPoint)) : containing(p);
       if (holders.length === 0)
         return { paths: found, problem: `no mount in /proc/self/mountinfo holds ${p}` };
       const own: { dev: string; root: string | null }[] = [];
@@ -394,7 +445,7 @@ export function mountReexposures(
         const root = rootOf(m.root);
         own.push({
           dev: m.dev,
-          root: root === null ? null : posix.join(root, posix.relative(m.mountPoint, p)),
+          root: root === null ? null : posix.join(root, rel(m.mountPoint, p)),
         });
       }
       for (const l of own) addLocation(l.dev, l.root);
@@ -402,7 +453,7 @@ export function mountReexposures(
       // system shows it too, unless it holds P itself (an ancestor mounted inside P, whose other
       // content is not P's)
       for (const e of entries)
-        if (inside(e.mountPoint, p)) {
+        if (within(e.mountPoint, p)) {
           const root = rootOf(e.root);
           if (
             root === null ||
@@ -412,9 +463,9 @@ export function mountReexposures(
         }
       for (const source of sources)
         for (const form of source.forms) {
-          if (inside(form, p)) addLocation(source.entry.dev, source.kind === "dir" ? "/" : null);
-          else if (source.kind === "dir" && inside(p, form))
-            addLocation(source.entry.dev, posix.join("/", posix.relative(form, p)));
+          if (within(form, p)) addLocation(source.entry.dev, source.kind === "dir" ? "/" : null);
+          else if (source.kind === "dir" && within(p, form))
+            addLocation(source.entry.dev, posix.join("/", rel(form, p)));
         }
     }
     const next = new Set<string>();
@@ -423,8 +474,8 @@ export function mountReexposures(
         const form = rootOf(e.root);
         for (const r of roots) {
           let shown: string | undefined;
-          if (r === null || form === null || inside(form, r)) shown = e.mountPoint;
-          else if (inside(r, form)) shown = posix.join(e.mountPoint, posix.relative(form, r));
+          if (r === null || form === null || within(form, r)) shown = e.mountPoint;
+          else if (within(r, form)) shown = posix.join(e.mountPoint, rel(form, r));
           if (shown !== undefined && !isDenied(shown)) next.add(shown);
         }
       }
@@ -449,6 +500,8 @@ export interface LinuxMountReadOptions {
   realpath?: (path: string) => string | null;
   /** `/sys/block/loopN/loop/backing_file`, or null when it cannot be read. */
   loopBackingFile?: (n: number) => string | null;
+  /** See {@link MountReexposureOptions.blockSlaves}. */
+  blockSlaves?: (device: string) => readonly string[];
   /** See {@link MountReexposureOptions.keep}. */
   keep?: readonly string[];
 }
@@ -466,6 +519,18 @@ function nodeLoopBackingFile(n: number): string | null {
     return readFileSync(`/sys/block/loop${n}/loop/backing_file`, "utf8").replace(/\n$/, "");
   } catch {
     return null;
+  }
+}
+
+function nodeBlockSlaves(device: string): string[] {
+  if (!/^(?:\d+:\d+|[\w.-]+)$/.test(device)) return [];
+  const dir = device.includes(":")
+    ? `/sys/dev/block/${device}/slaves`
+    : `/sys/class/block/${device}/slaves`;
+  try {
+    return readdirSync(dir);
+  } catch {
+    return []; // not a block device, or no slaves
   }
 }
 
@@ -498,6 +563,7 @@ export function linuxMountReexposures(
     return mountReexposures(parseMountinfo(text), denied, {
       realpath: options.realpath ?? nodeRealpath,
       loopBackingFile: options.loopBackingFile ?? nodeLoopBackingFile,
+      blockSlaves: options.blockSlaves ?? nodeBlockSlaves,
       ...(options.keep ? { keep: options.keep } : {}),
     });
   } catch (e) {
