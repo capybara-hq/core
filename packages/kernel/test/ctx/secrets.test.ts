@@ -7,6 +7,7 @@ import {
   createKeyring,
   createSecrets,
   initialPasswordAad,
+  platformSealedInputAad,
   platformSealedRevealAad,
   pushTokenAad,
   rewrapToCurrentMasterKey,
@@ -204,6 +205,7 @@ describe("ctx.secrets", () => {
       dataKeys: 0,
       initialPasswords: 0,
       sealedReveals: 0,
+      sealedInputs: 0,
       pushTokens: 0,
     });
     expect(await createSecrets(db, createKeyring(k2, []), "ns-rot").get("rotorg", "k")).toBe(
@@ -263,6 +265,11 @@ describe("rewrapToCurrentMasterKey", () => {
       DROP CONSTRAINT IF EXISTS platform_sealed_reveals_org_id_fkey,
       DROP CONSTRAINT IF EXISTS platform_sealed_reveals_recipient_account_id_fkey,
       DROP CONSTRAINT IF EXISTS platform_sealed_reveals_conversation_id_fkey`.execute(db);
+    // sealed approval inputs reference an approval, an account and a conversation
+    await sql`ALTER TABLE capybara.platform_sealed_inputs
+      DROP CONSTRAINT IF EXISTS platform_sealed_inputs_approval_id_fkey,
+      DROP CONSTRAINT IF EXISTS platform_sealed_inputs_recipient_account_id_fkey,
+      DROP CONSTRAINT IF EXISTS platform_sealed_inputs_conversation_id_fkey`.execute(db);
   });
   afterAll(async () => {
     // Restore the foreign keys exactly as migration 0090 creates them (the seeded rows go first)
@@ -288,13 +295,52 @@ describe("rewrapToCurrentMasterKey", () => {
         FOREIGN KEY (conversation_id) REFERENCES capybara.conversations(id) ON DELETE CASCADE`.execute(
       db,
     );
+    // and as migration 0169 creates them
+    await db.withSchema("capybara").deleteFrom("platform_sealed_inputs").execute();
+    await sql`ALTER TABLE capybara.platform_sealed_inputs
+      ADD CONSTRAINT platform_sealed_inputs_approval_id_fkey
+        FOREIGN KEY (approval_id) REFERENCES capybara.approvals(id) ON DELETE CASCADE,
+      ADD CONSTRAINT platform_sealed_inputs_recipient_account_id_fkey
+        FOREIGN KEY (recipient_account_id) REFERENCES capybara.accounts(id) ON DELETE CASCADE,
+      ADD CONSTRAINT platform_sealed_inputs_conversation_id_fkey
+        FOREIGN KEY (conversation_id) REFERENCES capybara.conversations(id) ON DELETE CASCADE`.execute(
+      db,
+    );
   });
   beforeEach(async () => {
     await db.withSchema("capybara").deleteFrom("secrets").execute();
     await db.withSchema("capybara").deleteFrom("org_data_keys").execute();
     await db.withSchema("capybara").deleteFrom("account_initial_passwords").execute();
     await db.withSchema("capybara").deleteFrom("platform_sealed_reveals").execute();
+    await db.withSchema("capybara").deleteFrom("platform_sealed_inputs").execute();
   });
+
+  const sealInput = async (
+    ring: ReturnType<typeof createKeyring>,
+    approvalId: string,
+    expired = false,
+  ) => {
+    const paths = ["b.secret", "a.token"];
+    const w = ring.wrap(
+      Buffer.from(JSON.stringify({ "a.token": `t-${approvalId}`, "b.secret": "s" })),
+      platformSealedInputAad(approvalId, paths),
+    );
+    await db
+      .withSchema("capybara")
+      .insertInto("platform_sealed_inputs")
+      .values({
+        approval_id: approvalId,
+        recipient_account_id: "recipient",
+        conversation_id: "conv",
+        run_id: "run",
+        call_id: approvalId,
+        paths,
+        master_key_id: w.masterKeyId,
+        ciphertext: w.data,
+        expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3_600_000),
+      })
+      .execute();
+  };
 
   const sealReveal = async (
     ring: ReturnType<typeof createKeyring>,
@@ -352,6 +398,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 5,
       initialPasswords: 0,
       sealedReveals: 0,
+      sealedInputs: 0,
       pushTokens: 0,
     });
     expect(new Set((await dataKeyIds()).values())).toEqual(new Set([ring2.currentId]));
@@ -369,6 +416,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 0,
       initialPasswords: 1,
       sealedReveals: 0,
+      sealedInputs: 0,
       pushTokens: 0,
     });
     const rows = await db
@@ -398,6 +446,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 0,
       initialPasswords: 0,
       sealedReveals: 1,
+      sealedInputs: 0,
       pushTokens: 0,
     });
     const rows = await db
@@ -420,6 +469,43 @@ describe("rewrapToCurrentMasterKey", () => {
         )
         .toString(),
     ).toBe("cap_inv_inv-live");
+  });
+
+  it("rewraps unexpired sealed approval inputs (AAD bound to their paths) and leaves expired ones", async () => {
+    const ring1 = createKeyring(k1, []);
+    await sealInput(ring1, "appr-live");
+    await sealInput(ring1, "appr-expired", true);
+    const ring2 = createKeyring(k2, [k1]);
+    expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
+      dataKeys: 0,
+      initialPasswords: 0,
+      sealedReveals: 0,
+      sealedInputs: 1,
+      pushTokens: 0,
+    });
+    const rows = await db
+      .withSchema("capybara")
+      .selectFrom("platform_sealed_inputs")
+      .select(["approval_id", "paths", "master_key_id", "ciphertext"])
+      .orderBy("approval_id")
+      .execute();
+    expect(rows.map((r) => [r.approval_id, r.master_key_id])).toEqual([
+      ["appr-expired", ring1.currentId],
+      ["appr-live", ring2.currentId],
+    ]);
+    const live = rows[1] as { paths: string[]; master_key_id: string; ciphertext: Uint8Array };
+    expect(
+      JSON.parse(
+        createKeyring(k2, [])
+          .unwrap(
+            live.master_key_id,
+            Buffer.from(live.ciphertext),
+            platformSealedInputAad("appr-live", live.paths),
+          )
+          .toString(),
+      ),
+    ).toEqual({ "a.token": "t-appr-live", "b.secret": "s" });
+    expect((await rewrapToCurrentMasterKey(handlesOf(db), ring2)).sealedInputs).toBe(0);
   });
 
   it("rewraps sealed push tokens; they open with the new key alone", async () => {
@@ -452,6 +538,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 0,
       initialPasswords: 0,
       sealedReveals: 0,
+      sealedInputs: 0,
       pushTokens: 1,
     });
     const row = await db
