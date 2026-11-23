@@ -44,6 +44,7 @@ jobs:
       e2e: ${{ steps.plan.outputs.e2e }}
       docker: ${{ steps.plan.outputs.docker }}
       bootstrap-network: ${{ steps.plan.outputs.bootstrap-network }}
+      device-image-pin-network: ${{ steps.plan.outputs.device-image-pin-network }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,7 +76,7 @@ jobs:
 
   # Cheap or whole-repo checks and build artifacts: always run in full. Tests are in the test job.
   ci:
-    # needs the plan only for the network half of check:bootstrap below
+    # needs the plan only for the network halves of check:bootstrap and check:device-image-pin
     needs: changes
     runs-on: ubuntu-latest
     permissions:
@@ -124,6 +125,11 @@ jobs:
       - name: Bootstrap manifest against npm and the marketplace
         if: needs.changes.outputs.bootstrap-network == 'true'
         run: pnpm check:bootstrap --network
+      # The network half of check:device-image-pin (the pinned digests in the registry): by diff on
+      # PRs (the pin or the check's code changed), always on main and in release.yml.
+      - name: Device image pin against the registry
+        if: needs.changes.outputs.device-image-pin-network == 'true'
+        run: pnpm check:device-image-pin --network
       # model-fake (published from core) and the fake extensions of @capybara-hq/testing; the
       # official plugins are packed and published by capybara-hq/plugins.
       - name: Pack model-fake and the fake extensions

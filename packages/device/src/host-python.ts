@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
+import { unpinnedArchitectureProblem } from "./exec/docker-image.js";
 
 /** The interpreter the trusted helpers run with, by absolute path (never looked up on PATH). */
 export const HOST_PYTHON = "/usr/bin/python3";
@@ -34,6 +35,29 @@ export const commandLineToolsInstalled: CommandLineToolsCheck = () => {
 export interface HostProbes {
   isExecutable?: ExecutableCheck;
   commandLineTools?: CommandLineToolsCheck;
+  /** The architecture docker mode would run on (default: `process.arch`). */
+  arch?: string;
+}
+
+/** Why a docker-mode device cannot run on this host, with the JSON error code of login. */
+export interface DockerHostProblem {
+  code: "docker_unsupported_architecture" | "host_python_missing";
+  message: string;
+}
+
+/**
+ * Why a docker-mode device cannot run on this host, or undefined when it can: an architecture the
+ * pinned sandbox image has no platform for, or a missing host interpreter ({@link hostPythonProblem}).
+ */
+export function dockerHostProblem(
+  platform: NodeJS.Platform,
+  probes: HostProbes = {},
+): DockerHostProblem | undefined {
+  const arch = unpinnedArchitectureProblem(probes.arch);
+  if (arch !== undefined) return { code: "docker_unsupported_architecture", message: arch };
+  const python = hostPythonProblem(platform, probes);
+  if (python !== undefined) return { code: "host_python_missing", message: python };
+  return undefined;
 }
 
 /**

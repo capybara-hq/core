@@ -172,6 +172,7 @@ const HELPER_MODULES = [
   "linux-runtime",
   "linux-agent",
   "docker-operations",
+  "docker-image",
   "operation-supervisor",
   "operation-worker",
   "native-helper-client",

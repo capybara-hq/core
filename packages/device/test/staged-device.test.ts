@@ -23,6 +23,7 @@ import {
   REPLACED_MESSAGE,
 } from "../src/client.js";
 import { connectionDir, machineDirOfConnection } from "../src/connections.js";
+import { SANDBOX_IMAGE_PIN } from "../src/exec/docker-image.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
@@ -169,7 +170,7 @@ function staged(
     ...(o.dispose && { dispose: o.dispose }),
     selfCheckRetryMs: o.clock ? 100 : 0,
     ...(o.clock && { selfCheckNow: o.clock }),
-    containerImageDigest: async () => o.imageDigest ?? `sha256:${"f".repeat(64)}`,
+    containerImageDigest: async () => o.imageDigest ?? SANDBOX_IMAGE_PIN.index,
     verifyRuntime: async (env, options) => {
       verifications.push(options);
       environments.push(env);
@@ -457,13 +458,14 @@ describe("staged device parts: fix round", () => {
   it("a docker-mode device attests its container's image id (M-2)", async () => {
     const released: string[] = [];
     const container: OperationContainerHost = {
+      imagePlatform: "amd64",
       operationContainer: async () => ({
         name: "capybara-device-d",
         user: "1000:1000",
         release: () => released.push("capybara-device-d"),
       }),
     };
-    const digest = `sha256:${"9".repeat(64)}`;
+    const digest = SANDBOX_IMAGE_PIN.platforms.amd64.config;
     const s = staged({
       cred: credential({ mode: "docker" }),
       platform: "linux",
@@ -488,6 +490,37 @@ describe("staged device parts: fix round", () => {
     await expect(tag.device.binder.bind(request(G1, B1, null), signal())).rejects.toThrow(
       /not a sha256 digest/,
     );
+    // only the pinned image is attested: another digest, or another platform's, binds nothing
+    for (const imageDigest of [
+      `sha256:${"9".repeat(64)}`,
+      SANDBOX_IMAGE_PIN.platforms.arm64.config,
+      SANDBOX_IMAGE_PIN.platforms.arm64.manifest,
+    ]) {
+      const other = staged({
+        cred: credential({ mode: "docker" }),
+        platform: "linux",
+        container,
+        imageDigest,
+      });
+      await expect(other.device.binder.bind(request(G1, B1, null), signal())).rejects.toThrow(
+        /not the pinned sandbox image/,
+      );
+      expect(other.environments).toEqual([]);
+    }
+    // the containerd store reports the index or the platform's manifest digest: both are pinned
+    for (const imageDigest of [
+      SANDBOX_IMAGE_PIN.index,
+      SANDBOX_IMAGE_PIN.platforms.amd64.manifest,
+    ]) {
+      const ok = staged({
+        cred: credential({ mode: "docker" }),
+        platform: "linux",
+        container,
+        imageDigest,
+      });
+      await ok.device.binder.bind(request(G1, B1, null), signal());
+      expect(ok.environments[0]?.providerImageDigest).toBe(imageDigest);
+    }
   });
 
   it("dispose releases what construction acquired (M-5)", async () => {

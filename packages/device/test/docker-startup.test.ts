@@ -20,7 +20,7 @@ vi.mock("node:child_process", async (importOriginal) => {
       child.stdin = null;
       child.kill = () => {};
       queueMicrotask(() => {
-        if (args[0] === "info") child.stdout.emit("data", Buffer.from("29.0.0\n"));
+        if (args[0] === "info") child.stdout.emit("data", Buffer.from("aarch64\n"));
         child.emit("close", 0);
       });
       return child;
@@ -42,7 +42,9 @@ describe("the docker-mode device container at startup", () => {
       deviceId: "dev1",
       policy: () => DEFAULT_POLICY,
     });
-    expect(calls).toEqual([["docker", "info", "--format", "{{.ServerVersion}}"]]);
+    expect(calls).toEqual([["docker", "info", "--format", "{{.Architecture}}"]]);
+    // the daemon's architecture picks the pinned digests the bind accepts
+    expect(container.imagePlatform).toBe("arm64");
     // nothing to kill at stop either: the operation backend stops its own work exactly
     expect("dispose" in container).toBe(false);
     expect("killAll" in container).toBe(false);

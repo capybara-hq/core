@@ -403,14 +403,24 @@ sleeping machine as offline, as for a lost network.
 ## Docker mode
 
 `login --mode docker` runs every operation in one container per device
-(`capybara-device-<deviceId>`, started on first use from
-`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release). On Linux it runs
+(`capybara-device-<deviceId>`, started on first use from the sandbox image this release pins by
+digest, `ghcr.io/capybara-hq/capybara-sandbox@sha256:…`, never by tag). On Linux it runs
 as your own uid:gid, so it can write the mounted directories you own (a root user falls back to the
 image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`,
 `<dir>/skills` (read only) and `<dir>/tmp` are mounted at `/workspace`, `/skills` and `/tmp`; the
 container has a read-only root file system, a pids limit of 1024, `--cap-drop ALL`,
 `no-new-privileges`, and the policy's `cpu` and `memoryMb` as `--cpus`, `--memory` and an equal
 `--memory-swap`.
+
+The pinned digests (`packages/device/src/exec/docker-image.ts`: the multi-platform index, and the
+manifest and config of linux/amd64 and linux/arm64) are part of the program's verified bytes. At
+every bind the program checks that the container's image id is one of them for the daemon's
+architecture and attests nothing otherwise; a container made from another image is recreated from
+the pinned digest once idle (files kept). Docker mode refuses an architecture without a pinned
+platform (JSON error code `docker_unsupported_architecture`). To pull from a mirror, set
+`CAPYBARA_DEVICE_IMAGE_REPOSITORY` to its repository (e.g. `registry.example.com/capybara-sandbox`,
+no tag or digest); the digest stays pinned, so the mirror must preserve it (`crane copy`,
+`docker buildx imagetools create`).
 
 Docker mode also needs the host's `/usr/bin/python3` (macOS: with the command line tools, `xcode-select --install`; Debian or
 Ubuntu: `sudo apt install python3`; Fedora or RHEL: `sudo dnf install python3`): the program runs its

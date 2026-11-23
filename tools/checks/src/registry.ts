@@ -209,6 +209,15 @@ export const CHECKS: readonly CheckEntry[] = [
     inAll: true,
   },
   {
+    name: "device-image-pin",
+    cli: "device-image-pin",
+    ciMode: "full",
+    reason: CHEAP,
+    description:
+      "The device's sandbox image pin names the official repository by digest for every platform.",
+    inAll: true,
+  },
+  {
     name: "release-metadata",
     cli: "release-metadata",
     ciMode: "full",
