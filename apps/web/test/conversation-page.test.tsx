@@ -1344,7 +1344,6 @@ describe("the properties panel's device mark", () => {
         ...ENV_SANDBOX,
         ownNetwork: "open",
         outsideSandbox: true,
-        restrictedProjectReach: "os-user",
         layer: { network: null, outsideSandbox: null },
       },
     });

@@ -75,6 +75,9 @@ describe("state", () => {
   it("stateDir follows XDG_CONFIG_HOME, else ~/.config", () => {
     expect(stateDir({ XDG_CONFIG_HOME: "/x" }, "/h")).toBe("/x/capybara-device");
     expect(stateDir({}, "/h")).toBe("/h/.config/capybara-device");
+    // XDG Base Directory spec: a relative value is invalid and ignored
+    expect(stateDir({ XDG_CONFIG_HOME: "cfg" }, "/h")).toBe("/h/.config/capybara-device");
+    expect(stateDir({ XDG_CONFIG_HOME: "./cfg" }, "/h")).toBe("/h/.config/capybara-device");
     // the kernel refuses approvals under the SDK's copy of this default
     expect(stateDir({}, "/h")).toBe(join("/h", DEVICE_DEFAULT_STATE_PATH.slice(2)));
   });

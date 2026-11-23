@@ -286,6 +286,62 @@ describe("login --json", () => {
     expect(existsSync(join(home, "y"))).toBe(false);
   });
 
+  it.each([
+    ["the same directory", (d: string) => d],
+    ["a directory inside it", (d: string) => join(d, "nested")],
+    ["a directory containing it", (d: string) => join(d, "..")],
+  ])(
+    "a new connection's --dir overlapping another connection's (%s) is refused",
+    async (_, pick) => {
+      const dir = join(home, "work", "a");
+      tokenAnswers = [grantedAs({ deviceId: "dev-a", deviceName: "Laptop" })];
+      expect(await run(["login", "--url", base, "--dir", dir])).toBe(0);
+      out.length = 0;
+      tokenAnswers = [grantedAs({ deviceId: "dev-b", credential: "cap_dev_b" })];
+      expect(await run(["login", "--url", base, "--json", "--dir", pick(dir)])).toBe(1);
+      const last = events().at(-1);
+      expect(last).toMatchObject({ event: "error", code: "work_dir_overlap" });
+      expect(String(last?.message)).toContain(`Laptop (dev-a)`);
+      expect(String(last?.message)).toContain("--dir");
+      expect(readdirSync(join(machineDir(), "connections"))).toEqual(["dev-a"]);
+      expect(existsSync(join(dir, "nested"))).toBe(false);
+    },
+  );
+
+  it("a --dir reaching another connection's directory through a symlink is refused", async () => {
+    const dir = join(home, "work", "a");
+    tokenAnswers = [grantedAs({ deviceId: "dev-a" })];
+    expect(await run(["login", "--url", base, "--dir", dir])).toBe(0);
+    symlinkSync(join(home, "work"), join(home, "link"));
+    out.length = 0;
+    tokenAnswers = [grantedAs({ deviceId: "dev-b" })];
+    expect(
+      await run(["login", "--url", base, "--json", "--dir", join(home, "link", "a", "x")]),
+    ).toBe(1);
+    expect(events().at(-1)).toMatchObject({ event: "error", code: "work_dir_overlap" });
+  });
+
+  it.each([
+    ["inside the machine directory", () => join(machineDir(), "w")],
+    ["containing the machine directory", () => home],
+  ])("a --dir %s is refused", async (_, pick) => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--json", "--dir", pick()])).toBe(1);
+    const last = events().at(-1);
+    expect(last).toMatchObject({ event: "error", code: "work_dir_overlap" });
+    expect(String(last?.message)).toContain(machineDir());
+    expect(existsSync(credFile())).toBe(false);
+  });
+
+  it("logging in again keeps the connection's own directory: no overlap with itself", async () => {
+    const dir = join(home, "work", "a");
+    tokenAnswers = [grantedAs({ deviceId: "dev-a" })];
+    expect(await run(["login", "--url", base, "--dir", dir])).toBe(0);
+    tokenAnswers = [grantedAs({ deviceId: "dev-a", credential: "new" })];
+    expect(await run(["login", "--url", base, "--dir", dir])).toBe(0);
+    expect(readCredential(stateDir("dev-a"))).toMatchObject({ credential: "new", dir });
+  });
+
   it("an empty device or org name is not stored", async () => {
     tokenAnswers = [grantedAs({ deviceName: "", orgName: "" })];
     expect(await run(["login", "--url", base])).toBe(0);

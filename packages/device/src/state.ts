@@ -146,11 +146,19 @@ export function replacementPolicy(): Policy {
 
 type Env = Record<string, string | undefined>;
 
-/** `$XDG_CONFIG_HOME/capybara-device`, or `~/.config/capybara-device`. */
-export function stateDir(env: Env = process.env, home: string = homedir()): string {
+/**
+ * `$XDG_CONFIG_HOME` when it is set to an absolute path, else undefined. The XDG Base Directory
+ * spec treats a relative value as invalid; honoring it would put the state under whatever the
+ * current directory is (the service runs in another one).
+ */
+export function xdgConfigHome(env: Env = process.env): string | undefined {
   const xdg = env.XDG_CONFIG_HOME;
-  const base = xdg !== undefined && xdg !== "" ? xdg : join(home, ".config");
-  return join(base, "capybara-device");
+  return xdg !== undefined && isAbsolute(xdg) ? xdg : undefined;
+}
+
+/** `$XDG_CONFIG_HOME/capybara-device` (absolute values only), or `~/.config/capybara-device`. */
+export function stateDir(env: Env = process.env, home: string = homedir()): string {
+  return join(xdgConfigHome(env) ?? join(home, ".config"), "capybara-device");
 }
 
 export function credentialPath(dir: string): string {
