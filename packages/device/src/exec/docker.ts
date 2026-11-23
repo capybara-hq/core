@@ -4,7 +4,12 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { join, resolve } from "node:path";
 import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { Policy } from "../state.js";
-import { type PinnedPlatform, pinnedPlatform, sandboxImageReference } from "./docker-image.js";
+import {
+  matchPinnedImage,
+  type PinnedPlatform,
+  pinnedPlatform,
+  sandboxImageReference,
+} from "./docker-image.js";
 import type { OperationContainerHost } from "./docker-operations.js";
 import { osRoots } from "./shared.js";
 import { DeviceOpError } from "./types.js";
@@ -130,6 +135,8 @@ export interface DockerContainerOptions {
 }
 
 interface Inspected {
+  /** The image id the container was created from. */
+  Image: string;
   Config: { Image: string; Labels: Record<string, string> | null };
   State: { Running: boolean };
   Mounts: { Source: string; Destination: string; RW: boolean }[];
@@ -256,10 +263,12 @@ export class DockerContainer implements OperationContainerHost {
       mkdirSync(r, { recursive: true });
     }
     let c = await this.inspect();
-    // other flags, an older format, a lost bridge or stale mounts: recreated, never repaired
+    // other flags, an older format, another image, a lost bridge or stale mounts: recreated, never
+    // repaired
     if (
       c !== null &&
       (!this.matches(c) ||
+        !this.pinnedImage(c) ||
         !("bridge" in (c.NetworkSettings.Networks ?? {})) ||
         !(await this.seesHostRoots(c)))
     ) {
@@ -273,13 +282,26 @@ export class DockerContainer implements OperationContainerHost {
         ["run", "-d", "--name", this.name, "--label", `${SPEC_LABEL}=${spec}`, ...runArgs],
         "creating the container",
       );
-      // created on the default bridge
+      // created on the default bridge, from the pinned digest: anything else is never used
+      const made = await this.inspect();
+      if (made === null || !this.pinnedImage(made)) {
+        await docker(["rm", "-f", this.name]).catch(() => {});
+        throw new DeviceOpError(
+          "error",
+          `the device container was not created from the pinned sandbox image (${made?.Image ?? "gone"})`,
+        );
+      }
       this.spec = spec;
     } else {
       if (!c.State.Running) await this.mustDocker(["start", this.name], "starting the container");
       this.spec = c.Config.Labels?.[SPEC_LABEL];
     }
     this.ready = true;
+  }
+
+  /** Whether a container runs a pinned digest of the sandbox image (`docker-image.ts`). */
+  private pinnedImage(c: Inspected): boolean {
+    return matchPinnedImage(c.Image, this.imagePlatform) !== undefined;
   }
 
   /** Whether the container in use still exists, runs and carries the spec it was made with. */

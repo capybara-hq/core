@@ -86,20 +86,25 @@ docker paths of login and start. No kernel, SDK, protocol or plugin contract cha
   container and helper containers) names the digest, never a tag. The registry and the tag are
   untrusted; only content addressing counts.
 - **Attestation at bind.** `verify` (`staged-device.ts`) already reads the running container's image
-  id. It now also `docker image inspect`s it and accepts only when the id is the pinned `config`
+  id (`docker inspect --type container`) and accepts only when the id is the pinned `config`
   digest of the host's architecture (classic image store) or the pinned `index` / `manifest`
   digest (containerd image store, the default of fresh Docker 29 / Docker Desktop installs, where
   the image id is the index digest). Anything else throws `RuntimeManifestError`: no runtime
   identity, nothing attested, nothing admitted (fail closed, the same path as a changed install).
+  The container host applies the same check whenever it creates or reuses the container
+  (`ensureContainer`): a container from another image is recreated once idle, and a freshly
+  created one that is not the pinned image is removed and the operation refused, so no container
+  the operations use escapes the pin, also after a bind.
   A host architecture without a pinned platform refuses docker mode at login and start with a
   readable message.
 - Because the run flags now carry the digest, a container made from the old tag has another spec
   label and is recreated, once idle, by the existing `ensureContainer` path (files kept on the host
   mounts).
-- **Producing the pin.** `pnpm gen:device-image-pin <version>` (tools, not shipped) reads
-  `docker buildx imagetools inspect --raw` for the published version and writes the module. A
-  check (`check:device-image-pin`) verifies the module's shape offline on every PR; the network
-  half (the pinned digests resolve in the registry and match) runs in the release workflow before
+- **Producing the pin.** `pnpm gen:device-image-pin <version>` (tools, not shipped) reads the
+  published version's index and per-platform manifests from the registry API (anonymous token,
+  every byte checked against its digest; no Docker needed) and writes the module. A check
+  (`check:device-image-pin`) verifies the module's shape offline on every PR; the network half (the
+  pinned digests resolve in the registry and agree; a version tag that moved only warns) runs in the release workflow before
   `@capybara-hq/device` is published, so a pin that does not exist is never released (§6, item 3).
 
 ### 3.2 Step A: the environment fingerprint in docker mode
@@ -171,7 +176,7 @@ docker run --rm -i --name capybara-helper-<deviceId>-<random> \
 
 | | Trusted | Attested / checked by |
 |---|---|---|
-| The program's installed bytes (incl. the helper sources and the image pin) | yes | the shipped manifest (`runtimeHash`, `helperHash`) at every bind |
+| The program's installed bytes (incl. the helper sources and the image pin) | yes | the shipped manifest (`runtimeHash`, `helperHash`) at every bind; the modules that enforce the pin (`staged-device.ts`, `docker.ts`) are trusted as installed, like the rest of the program, and are not part of `helperHash` |
 | Node running the program | yes | the environment fingerprint |
 | The Docker daemon and CLI | yes (as today: it starts the device container and owns its mounts; control of the daemon is root on the host) | not attested; out of scope |
 | The sandbox image content | yes, **only at the pinned digest** | content addressing + the bind-time image check (§3.1) |

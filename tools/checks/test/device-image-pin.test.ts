@@ -61,7 +61,7 @@ describe("checkDeviceImagePin (offline)", () => {
 });
 
 /** A fake registry with an index of two platforms (plus an attestation entry) and its manifests. */
-function fakeRegistry(o: { tamper?: boolean } = {}) {
+function fakeRegistry(o: { tamper?: boolean; tagMoved?: boolean; realm?: string } = {}) {
   const blob = (o: unknown) => Buffer.from(JSON.stringify(o));
   const digest = (b: Buffer) => `sha256:${createHash("sha256").update(b).digest("hex")}`;
   const config = { amd64: `sha256:${"a".repeat(64)}`, arm64: `sha256:${"b".repeat(64)}` };
@@ -97,11 +97,11 @@ function fakeRegistry(o: { tamper?: boolean } = {}) {
     if (url.startsWith("https://ghcr.io/token?")) return reply(200, blob({ token: "anonymous" }));
     if (init?.headers?.Authorization !== "Bearer anonymous")
       return reply(401, Buffer.alloc(0), {
-        "www-authenticate":
-          'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:capybara-hq/capybara-sandbox:pull"',
+        "www-authenticate": `Bearer realm="${o.realm ?? "https://ghcr.io/token"}",service="ghcr.io",scope="repository:capybara-hq/capybara-sandbox:pull"`,
       });
     const ref = url.split("/manifests/")[1] as string;
-    const body = ref === "0.1.0-rc.9" ? index : bodies.get(ref);
+    const moved = blob({ schemaVersion: 2, manifests: [] });
+    const body = ref === "0.1.0-rc.9" ? (o.tagMoved ? moved : index) : bodies.get(ref);
     return body ? reply(200, body) : reply(404, Buffer.alloc(0));
   };
   return {
@@ -170,5 +170,25 @@ describe("device image pin against the registry", () => {
     const findings = await checkDeviceImagePinNetwork(file, r.fetchFn);
     expect(findings.map((f) => f.rule)).toEqual(["device-image-pin-registry"]);
     expect(findings[0]?.message).toContain("served bytes of");
+  });
+
+  it("only warns when the version tag moved: the pinned digests are what the device runs", async () => {
+    const r = fakeRegistry({ tagMoved: true });
+    const file = copy();
+    writePin(file, r.expected);
+    const findings = await checkDeviceImagePinNetwork(file, r.fetchFn);
+    expect(findings.map((f) => [f.rule, f.severity])).toEqual([
+      ["device-image-pin-tag-moved", "warning"],
+    ]);
+  });
+
+  it("takes a token only from the registry's own host", async () => {
+    const r = fakeRegistry({ realm: "https://evil.example.com/token" });
+    await expect(resolvePin("0.1.0-rc.9", undefined, r.fetchFn)).rejects.toThrow(
+      /realm evil.example.com is not ghcr.io/,
+    );
+    await expect(resolvePin("latest; rm", undefined, r.fetchFn)).rejects.toThrow(
+      /not a release version/,
+    );
   });
 });

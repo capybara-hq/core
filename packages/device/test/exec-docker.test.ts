@@ -259,6 +259,31 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     expect(inspect("{{.Config.Image}}")).toBe(SANDBOX_IMAGE);
   });
 
+  it("recreates a container made from another image, though its flags match", async () => {
+    // another image (a different config digest), built locally from the pinned one
+    const other = "capybara-device-test-other-image";
+    execFileSync("docker", ["build", "-q", "-t", other, "-"], {
+      input: `FROM ${SANDBOX_IMAGE}\nLABEL capybara.test=other\n`,
+    });
+    const c = new DockerContainer({ dir, deviceId: envId, policy: () => FULL_POLICY });
+    const flags = c.runFlags();
+    flags[flags.indexOf(SANDBOX_IMAGE)] = other;
+    execFileSync("docker", [
+      "run",
+      "-d",
+      "--name",
+      containerName(envId),
+      "--label",
+      `capybara.device.spec=${containerSpec(c.runFlags())}`,
+      ...flags,
+    ]);
+    await hold(c);
+    const arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], {
+      encoding: "utf8",
+    }).trim();
+    expect(matchPinnedImage(inspect("{{.Image}}"), pinnedPlatform(arch))).toBeDefined();
+  });
+
   it("reuses the container and recreates it when the mounts differ", async () => {
     await hold();
     const id1 = inspect("{{.Id}}");

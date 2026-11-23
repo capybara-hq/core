@@ -419,7 +419,7 @@ async function inspectContainerImage(name: string, signal: AbortSignal): Promise
   return new Promise((resolve, reject) => {
     execFile(
       "docker",
-      ["inspect", "--format", "{{.Image}}", name],
+      ["inspect", "--type", "container", "--format", "{{.Image}}", name],
       { signal, timeout: 30_000 },
       (error, stdout) => (error ? reject(error) : resolve(String(stdout).trim())),
     );

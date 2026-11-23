@@ -223,7 +223,33 @@ export type FetchLike = (
   headers: { get(name: string): string | null };
   arrayBuffer(): Promise<ArrayBuffer>;
   json(): Promise<unknown>;
+  body?: ReadableStream<Uint8Array> | null;
 }>;
+
+/** A response body, read no further than `max` bytes (a hostile registry cannot exhaust memory). */
+async function readCapped(r: Awaited<ReturnType<FetchLike>>, max: number, what: string) {
+  const declared = Number(r.headers.get("content-length") ?? "0");
+  if (declared > max) throw new Error(`${what}: response too large`);
+  if (!r.body) {
+    const bytes = Buffer.from(await r.arrayBuffer());
+    if (bytes.length > max) throw new Error(`${what}: response too large`);
+    return bytes;
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      throw new Error(`${what}: response too large`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
 
 function splitRepository(repository: string): { host: string; path: string } {
   const slash = repository.indexOf("/");
@@ -234,18 +260,23 @@ function splitRepository(repository: string): { host: string; path: string } {
 }
 
 /** A bearer token from the registry's `WWW-Authenticate` challenge (anonymous pull). */
-async function bearer(challenge: string, fetchFn: FetchLike): Promise<string> {
+async function bearer(challenge: string, host: string, fetchFn: FetchLike): Promise<string> {
   const params = Object.fromEntries(
     [...challenge.matchAll(/(\w+)="([^"]*)"/g)].map((m) => [m[1] as string, m[2] as string]),
   );
   if (!/^Bearer\s/i.test(challenge) || !params.realm?.startsWith("https://"))
     throw new Error(`unsupported registry challenge: ${challenge}`);
   const url = new URL(params.realm);
+  // the token comes from the registry itself, never from a host the challenge names
+  if (url.host !== host) throw new Error(`registry token realm ${url.host} is not ${host}`);
   if (params.service) url.searchParams.set("service", params.service);
   if (params.scope) url.searchParams.set("scope", params.scope);
   const r = await fetchFn(url.toString());
   if (r.status !== 200) throw new Error(`registry token request failed: HTTP ${r.status}`);
-  const body = (await r.json()) as { token?: string; access_token?: string };
+  const body = JSON.parse((await readCapped(r, 64 * 1024, "registry token")).toString("utf8")) as {
+    token?: string;
+    access_token?: string;
+  };
   const token = body.token ?? body.access_token;
   if (!token) throw new Error("registry token response has no token");
   return token;
@@ -263,13 +294,11 @@ export async function fetchManifest(
   let r = await fetchFn(url, { headers });
   if (r.status === 401) {
     const challenge = r.headers.get("www-authenticate") ?? "";
-    headers.Authorization = `Bearer ${await bearer(challenge, fetchFn)}`;
+    headers.Authorization = `Bearer ${await bearer(challenge, host, fetchFn)}`;
     r = await fetchFn(url, { headers });
   }
   if (r.status !== 200) throw new Error(`${repository}@${reference}: HTTP ${r.status}`);
-  const bytes = Buffer.from(await r.arrayBuffer());
-  if (bytes.length > MAX_MANIFEST_BYTES)
-    throw new Error(`${repository}@${reference}: manifest too large`);
+  const bytes = await readCapped(r, MAX_MANIFEST_BYTES, `${repository}@${reference}`);
   const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   if (reference.startsWith("sha256:") && digest !== reference)
     throw new Error(`${repository}@${reference}: the registry served bytes of ${digest}`);
@@ -281,13 +310,18 @@ interface IndexEntry {
   platform?: { os?: string; architecture?: string; variant?: string };
 }
 
-/** The pin of a published version, read from the registry. */
+/**
+ * The pin of a published version, read from the registry: by its tag (the generator), or by the
+ * pinned index digest (`index`, the network check: what the pin names, whatever the tag says now).
+ */
 export async function resolvePin(
   version: string,
   repository: string = OFFICIAL_SANDBOX_REPOSITORY,
   fetchFn?: FetchLike,
+  byDigest?: string,
 ): Promise<DeviceImagePin> {
-  const index = await fetchManifest(repository, version, fetchFn);
+  if (!VERSION.test(version)) throw new Error(`${version} is not a release version`);
+  const index = await fetchManifest(repository, byDigest ?? version, fetchFn);
   const manifests = (index.json.manifests ?? []) as IndexEntry[];
   if (!Array.isArray(index.json.manifests))
     throw new Error(`${repository}:${version} is not a multi-platform index`);
@@ -308,9 +342,9 @@ export async function resolvePin(
 }
 
 /**
- * The network check: the version tag names the pinned index, the index lists the pinned manifest
- * of each platform, and each manifest names the pinned config. Every byte is verified against its
- * digest.
+ * The network check: the pinned index exists, lists the pinned manifest of each platform, and each
+ * manifest names the pinned config; every byte is verified against its digest. The version tag
+ * naming another index only warns: the digests, not the tag, are what the device runs.
  */
 export async function checkDeviceImagePinNetwork(
   file: string,
@@ -323,8 +357,17 @@ export async function checkDeviceImagePinNetwork(
     return [{ file, line: 1, rule: "device-image-pin-shape", message: (e as Error).message }];
   }
   try {
-    const actual = await resolvePin(pin.version, pin.repository, fetchFn);
+    const actual = await resolvePin(pin.version, pin.repository, fetchFn, pin.index);
     const out: Finding[] = [];
+    const tagged = await fetchManifest(pin.repository, pin.version, fetchFn);
+    if (tagged.digest !== pin.index)
+      out.push({
+        file,
+        line: 1,
+        rule: "device-image-pin-tag-moved",
+        severity: "warning",
+        message: `${pin.repository}:${pin.version} now names ${tagged.digest}, not the pinned index ${pin.index}; the pinned digests still resolve`,
+      });
     const differ = (what: string, want: string, got: string) => {
       if (want !== got)
         out.push({
