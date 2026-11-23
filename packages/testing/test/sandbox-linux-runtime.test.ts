@@ -259,14 +259,14 @@ describe.skipIf(unavailable !== null)(
         expect(device.run(`cat ${dir}/granted.txt`)).toBe("granted");
       });
 
-      it("refuses a link, a directory or a FIFO as a file root, and a swapped or misrecorded one", async (context) => {
+      it("refuses a link, a directory, a FIFO or a hard-linked file as a file root, and a misrecorded one", async (context) => {
         requireSupport(context);
         const dir = `${sibling}/refused`;
         device.run(
           `mkdir -p ${dir}/sub && printf f > ${dir}/file && printf ${SECRET} > ${dir}/secret && ` +
-            `ln -s ${dir}/secret ${dir}/link && mkfifo ${dir}/fifo`,
+            `ln -s ${dir}/secret ${dir}/link && mkfifo ${dir}/fifo && ln ${dir}/secret ${dir}/twice`,
         );
-        for (const name of ["link", "sub", "fifo"]) {
+        for (const name of ["link", "sub", "fifo", "twice"]) {
           const refused = await run(restricted(), `cat ${dir}/${name}; printf ran > ran`, {
             readFileRoots: [`${dir}/${name}`],
           });
@@ -282,19 +282,6 @@ describe.skipIf(unavailable !== null)(
         expect(wrong.events).toEqual([
           expect.objectContaining({ event: "refused", code: "ROOT_CHANGED" }),
         ]);
-        const swapped = await run(restricted(), `cat ${dir}/file; printf ran > ran`, {
-          readFileRoots: [`${dir}/file`],
-          attack: {
-            kind: "swap-file-after-pin",
-            root: `${dir}/file`,
-            moved: `${dir}/file.moved`,
-            target: `${dir}/secret`,
-          },
-        });
-        expect(swapped.events).toEqual([
-          expect.objectContaining({ event: "refused", code: "ROOT_CHANGED" }),
-        ]);
-        expect(decode(swapped.stdout)).not.toContain(SECRET);
         expect(device.run(`ls ${root}`)).not.toMatch(/\bran\b/);
         // native mode takes no file roots
         const native = await agent.request({
@@ -307,6 +294,39 @@ describe.skipIf(unavailable !== null)(
         expect(native.events).toEqual([
           expect.objectContaining({ event: "refused", code: "INVALID_REQUEST" }),
         ]);
+      });
+
+      it("skips a file root renamed or deleted after the pin: the command runs, the path stays unreadable", async (context) => {
+        requireSupport(context);
+        const dir = `${sibling}/moved`;
+        device.run(
+          `mkdir -p ${dir} && printf f > ${dir}/file && printf g > ${dir}/gone && ` +
+            `printf ${SECRET} > ${dir}/secret && rm -f ${root}/ran-moved ${root}/ran-gone`,
+        );
+        const swapped = await run(
+          restricted(),
+          `cat ${dir}/file; cat ${dir}/file.moved; printf ran > ran-moved`,
+          {
+            readFileRoots: [`${dir}/file`],
+            attack: {
+              kind: "swap-file-after-pin",
+              root: `${dir}/file`,
+              moved: `${dir}/file.moved`,
+              target: `${dir}/secret`,
+            },
+          },
+        );
+        expect(swapped.events?.some((e) => e.event === "refused")).toBe(false);
+        expect(device.run(`cat ${root}/ran-moved`)).toBe("ran");
+        // neither the secret now at the path nor the pinned file at its new name is readable
+        expect(decode(swapped.stdout)).not.toContain(SECRET);
+        expect(decode(swapped.stdout)).not.toMatch(/^f/);
+        const gone = await run(restricted(), `cat ${dir}/gone; printf ran > ran-gone`, {
+          readFileRoots: [`${dir}/gone`],
+          attack: { kind: "unlink-file-after-pin", root: `${dir}/gone` },
+        });
+        expect(gone.events?.some((e) => e.event === "refused")).toBe(false);
+        expect(device.run(`cat ${root}/ran-gone`)).toBe("ran");
       });
 
       it("closes every inherited descriptor above stdio, however high", async (context) => {
@@ -763,52 +783,50 @@ attempt("own-moved", own_moved)
         }
       });
 
-      it("a file root granted its directory lists it, and without the type check a link is accepted", async (context) => {
+      it("a file root granted EXECUTE runs it, and without the type and name checks a directory root opens it whole", async (context) => {
         requireSupport(context);
         const dir = `${sibling}/mutant-files`;
         device.run(
-          `mkdir -p ${dir} && printf f > ${dir}/file && printf ${SECRET} > ${dir}/secret && ` +
-            `ln -sf ${dir}/secret ${dir}/link`,
+          `mkdir -p ${dir}/inner && printf '#!/bin/sh\necho EXECUTED\n' > ${dir}/run.sh && ` +
+            `chmod +x ${dir}/run.sh && printf ${SECRET} > ${dir}/inner/secret`,
         );
-        // Landlock refuses READ_DIR on a file rule (EINVAL): granting the file's directory is
-        // the defect a broader rule would be
-        const listing = stageMutant(
+        const executing = stageMutant(
           device,
-          "file-root-dir",
+          "file-root-exec",
           '        rule(root["fd"], FS_READ_FILE)\n',
-          '        rule(root["fd"], FS_READ_FILE)\n' +
-            '        rule(os.open(os.path.dirname(root["path"]), os.O_PATH), FS_READ)\n',
+          '        rule(root["fd"], FS_READ_FILE | FS_EXECUTE)\n',
         );
-        const typeless = stageMutant(
-          device,
-          "file-root-any-type",
-          '            if kind == "readFiles" and not stat.S_ISREG(info.st_mode):\n',
-          "            if False:\n",
+        const checks =
+          "                if not stat.S_ISREG(info.st_mode):\n" +
+          '                    raise Refused("ROOT_CHANGED", "A pinned file root is not a regular file")\n';
+        const typeless = stageMutant(device, "file-root-any-type", checks, "");
+        // the name check would refuse a directory (two or more links) on its own: drop it too
+        device.run(
+          `sed -i '/A pinned file root has more than one name/d; /if info.st_nlink != 1:/d' ` +
+            `${typeless}/linux-sandbox.py`,
+          "0",
         );
-        const listed = new Agent(device, { runtime: listing, candidateArch: true });
-        const followed = new Agent(device, { runtime: typeless, candidateArch: true });
-        await Promise.all([listed.ready, followed.ready]);
+        const executed = new Agent(device, { runtime: executing, candidateArch: true });
+        const opened = new Agent(device, { runtime: typeless, candidateArch: true });
+        await Promise.all([executed.ready, opened.ready]);
         try {
-          const list = await run(
+          const exec = await run(
             restricted(),
-            `ls ${dir}; cat ${dir}/secret`,
-            { readFileRoots: [`${dir}/file`] },
-            listed,
+            `${dir}/run.sh`,
+            { readFileRoots: [`${dir}/run.sh`] },
+            executed,
           );
-          expect(decode(list.stdout)).toContain(SECRET);
-          const link = await run(
+          expect(decode(exec.stdout)).toContain("EXECUTED");
+          const whole = await run(
             restricted(),
-            `cat ${dir}/link`,
-            { readFileRoots: [`${dir}/link`] },
-            followed,
+            `cat ${dir}/inner/secret`,
+            { readFileRoots: [`${dir}/inner`] },
+            opened,
           );
-          // without the type check the link's own O_PATH descriptor is accepted as a file root
-          // (the shipped launcher refuses it before any rule is set)
-          expect(link.events?.some((e) => e.event === "launch")).toBe(true);
-          expect(link.events?.some((e) => e.event === "refused")).toBe(false);
+          expect(decode(whole.stdout)).toContain(SECRET);
         } finally {
-          listed.close();
-          followed.close();
+          executed.close();
+          opened.close();
         }
       });
 

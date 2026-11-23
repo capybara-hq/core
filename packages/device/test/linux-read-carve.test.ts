@@ -229,7 +229,7 @@ describe("carveReadRoots", () => {
     const linked = carveReadRoots([R], withCanonicalForms([`${R}/link/x`, `${R}/link/file.txt`]));
     expect(linked.files).toEqual([`${R}/c.txt`]);
     expect(linked.roots).toEqual([`${R}/a/y`, `${R}/b`]);
-    // a case-folding directory would open the file by the denied name
+    // a case-folding directory would open the file by the denied name (compared lowered)
     expect(carveReadRoots([R], [`${R}/a/x`, `${R}/A/FILE.txt`]).files).toEqual([`${R}/c.txt`]);
     expect(carveReadRoots([R], [`${R}/a/x`, `${R}/a/FILE.TXT`]).files).toEqual([`${R}/c.txt`]);
   });
@@ -257,19 +257,38 @@ describe("carveReadRoots", () => {
     expect(carveReadRoots([R], [`${R}/a/x`]).files).toContain(`${R}/a/hard.txt`);
   });
 
-  it("counts files toward MAX_CARVED_READ_ROOTS", () => {
+  it("fills what the directories leave of MAX_CARVED_READ_ROOTS with files and drops the rest", () => {
     const many = Array.from({ length: MAX_CARVED_READ_ROOTS - 1 }, (_, i) => `d${i}`);
     const tree: Record<string, string[]> = {
-      "/w": ["secret", ...many, "f1", "f2"],
+      "/w": ["secret", ...many, "f1", "f2", "f3"],
       "/w/secret": [],
     };
     for (const m of many) tree[`/w/${m}`] = [];
+    const cut = carveReadRoots(["/w"], ["/w/secret"], fakeFs(tree));
+    expect(cut.roots).toHaveLength(MAX_CARVED_READ_ROOTS - 1);
+    expect(cut.files).toEqual(["/w/f1"]); // code-point order, the rest dropped
+    // directories alone above the cap still refuse
+    tree["/w"] = ["secret", ...many, "e1", "e2"];
+    tree["/w/e1"] = [];
+    tree["/w/e2"] = [];
     expect(() => carveReadRoots(["/w"], ["/w/secret"], fakeFs(tree))).toThrow(
       SandboxScopeDeniedError,
     );
-    tree["/w"] = ["secret", ...many, "f1"];
-    const exact = carveReadRoots(["/w"], ["/w/secret"], fakeFs(tree));
-    expect(exact.roots.length + exact.files.length).toBe(MAX_CARVED_READ_ROOTS);
+  });
+
+  it("compares with denied paths case-insensitively for directories too (only narrows)", () => {
+    const fs = fakeFs({
+      "/h": ["u"],
+      "/h/u": [".SSH", "src", "Notes.TXT"],
+      "/h/u/.SSH": ["id"],
+      "/h/u/src": [],
+    });
+    // on a case-folding directory /h/u/.SSH is the denied /h/u/.ssh: neither granted whole nor
+    // expanded into its files
+    expect(carveReadRoots(["/h"], ["/h/u/.ssh", "/h/u/notes.txt"], fs)).toEqual({
+      roots: ["/h/u/src"],
+      files: [],
+    });
   });
 });
 

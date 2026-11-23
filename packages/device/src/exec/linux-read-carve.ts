@@ -1,7 +1,10 @@
 import { accessSync, constants, lstatSync, readdirSync } from "node:fs";
 import { isAbsolute, join, normalize } from "node:path";
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
+import { fsNameBytes, fsNameString } from "./fs-names.js";
 import { within } from "./operation-types.js";
+
+export { fsNameBytes, fsNameString };
 
 /** The most read roots (directories and files together) a carve may hand to Landlock (one rule each). */
 export const MAX_CARVED_READ_ROOTS = 4096;
@@ -19,65 +22,6 @@ export interface CarveFs {
 export interface CarvedReadRoots {
   roots: string[];
   files: string[];
-}
-
-/**
- * A file name's bytes as the agent (Python, "surrogateescape") reads them: UTF-8, with each byte
- * outside a well-formed sequence as U+DC80–U+DCFF. JSON carries such a string to the agent, which
- * opens exactly the original bytes, so a directory whose name is not UTF-8 is granted, not lost.
- */
-export function fsNameString(bytes: Uint8Array): string {
-  let out = "";
-  let i = 0;
-  while (i < bytes.length) {
-    const b = bytes[i] as number;
-    if (b < 0x80) {
-      out += String.fromCharCode(b);
-      i++;
-      continue;
-    }
-    const n =
-      b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
-    let ok = n > 0 && i + n <= bytes.length;
-    for (let k = 1; ok && k < n; k++) ok = ((bytes[i + k] as number) & 0xc0) === 0x80;
-    if (ok) {
-      const c = bytes[i + 1] as number;
-      // no overlong forms, no encoded surrogates, nothing above U+10FFFF
-      ok = !(
-        (b === 0xe0 && c < 0xa0) ||
-        (b === 0xed && c > 0x9f) ||
-        (b === 0xf0 && c < 0x90) ||
-        (b === 0xf4 && c > 0x8f)
-      );
-    }
-    if (ok) {
-      out += Buffer.from(bytes.subarray(i, i + n)).toString("utf8");
-      i += n;
-    } else {
-      out += String.fromCharCode(0xdc00 + b);
-      i++;
-    }
-  }
-  return out;
-}
-
-/** The bytes {@link fsNameString} read (its inverse). */
-export function fsNameBytes(name: string): Buffer {
-  const parts: Buffer[] = [];
-  let run = "";
-  for (let i = 0; i < name.length; i++) {
-    const c = name.charCodeAt(i);
-    const next = name.charCodeAt(i + 1);
-    if (c >= 0xd800 && c <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
-      run += name.slice(i, i + 2); // a pair, whatever its low half
-      i++;
-    } else if (c >= 0xdc80 && c <= 0xdcff) {
-      parts.push(Buffer.from(run, "utf8"), Buffer.of(c - 0xdc00));
-      run = "";
-    } else run += name[i];
-  }
-  parts.push(Buffer.from(run, "utf8"));
-  return Buffer.concat(parts);
 }
 
 /**
@@ -175,18 +119,23 @@ function clean(path: string): string {
  * file root (`files`: read without listing its directory; the agent pins each no-follow and
  * grants nothing for one that changed type or has a second name). Symbolic links, other file
  * types, and entries the process cannot open (directories R_OK|X_OK, files R_OK) are skipped; a
- * root inside a denied path is dropped; a root clear of every denied path is kept as is. Throws
- * SandboxScopeDeniedError when roots and files together exceed MAX_CARVED_READ_ROOTS.
+ * root inside a denied path is dropped; a root clear of every denied path is kept as is.
+ *
+ * Budget: directories alone above MAX_CARVED_READ_ROOTS throw SandboxScopeDeniedError; files
+ * fill what the directories leave of it, in code-point order, and the rest are dropped, which only
+ * leaves those files unreadable (the agent drops more when its open-file limit is lower).
  *
  * Only the denied paths' ancestors are expanded; their other children are kept whole. A denied
  * path that does not exist still carves its existing ancestors, so creating it later grants
  * nothing. The walk follows real names only (lstat), so a denied path matters here in its
- * canonical form: the caller passes the given and canonical forms (`withCanonicalForms`); a file
- * is also left out when it equals a denied path ignoring ASCII case (a case-folding directory
- * would open it by the denied name). A root that must be expanded but is itself a symbolic link
- * is dropped, since its target's real names would never match a denied path. The default file
- * system leaves out names the launcher would refuse as roots ({@link launcherAcceptsRoot}) and
- * reads names as bytes ({@link fsNameString}).
+ * canonical form: the caller passes the given and canonical forms (`withCanonicalForms`). Every
+ * comparison with a denied path is also made case-insensitively (both sides `toLowerCase()`, a
+ * Unicode lowering), so on a case-folding directory a denied `~/.ssh` present as `~/.SSH` is
+ * neither granted whole nor as a file; on a case-sensitive one this only expands or drops a
+ * little more. A root that must be expanded but is itself a symbolic link is dropped, since its
+ * target's real names would never match a denied path. The default file system leaves out names
+ * the launcher would refuse as roots ({@link launcherAcceptsRoot}) and reads names as bytes
+ * ({@link fsNameString}).
  */
 export function carveReadRoots(
   readRoots: readonly string[],
@@ -194,12 +143,25 @@ export function carveReadRoots(
   fs: CarveFs = nodeFs(),
 ): CarvedReadRoots {
   const deniedPaths = [...new Set(denied.map(clean))];
-  const deniedFolded = deniedPaths.map((d) => d.toLowerCase());
+  const deniedFolded = [...new Set(deniedPaths.map((d) => d.toLowerCase()))];
+  // path lies inside or equals a denied path, in any given form or ignoring case
+  const insideDenied = (path: string) => {
+    if (deniedPaths.some((d) => within(path, d))) return true;
+    const folded = path.toLowerCase();
+    return deniedFolded.some((d) => within(folded, d));
+  };
+  // a denied path lies inside or equals path, likewise
+  const holdsDenied = (path: string) => {
+    if (deniedPaths.some((d) => within(d, path))) return true;
+    const folded = path.toLowerCase();
+    return deniedFolded.some((d) => within(d, folded));
+  };
   const out = new Set<string>();
-  const files = new Set<string>();
+  const files: string[] = [];
 
-  const check = () => {
-    if (out.size + files.size > MAX_CARVED_READ_ROOTS) {
+  const add = (root: string) => {
+    out.add(root);
+    if (out.size > MAX_CARVED_READ_ROOTS) {
       throw new SandboxScopeDeniedError(
         `reading the whole machine minus the denied paths needs more than ${MAX_CARVED_READ_ROOTS} ` +
           "Landlock rules on this device; limit project reach to listed paths with " +
@@ -207,23 +169,15 @@ export function carveReadRoots(
       );
     }
   };
-  const add = (root: string) => {
-    out.add(root);
-    check();
-  };
   const addFile = (file: string) => {
-    // A denied path equal to this file, or (meaninglessly for a file) below it, in any form the
-    // caller gave or ignoring ASCII case: never granted.
-    const folded = file.toLowerCase();
-    if (deniedPaths.some((d) => within(file, d) || within(d, file))) return;
-    if (deniedFolded.some((d) => within(folded, d) || within(d, folded))) return;
-    files.add(file);
-    check();
+    if (insideDenied(file) || holdsDenied(file)) return;
+    // never more than could be granted: the final cut happens once the directories are known
+    if (files.length < MAX_CARVED_READ_ROOTS) files.push(file);
   };
 
   const carve = (root: string, top: boolean) => {
-    if (deniedPaths.some((d) => within(root, d))) return; // inside or equal to a denied path
-    if (!deniedPaths.some((d) => within(d, root))) {
+    if (insideDenied(root)) return;
+    if (!holdsDenied(root)) {
       add(root);
       return;
     }
@@ -260,8 +214,10 @@ export function carveReadRoots(
   };
 
   for (const root of new Set(readRoots.map(clean))) carve(root, true);
-  const sorted = (set: Set<string>) => [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const sorted = (list: Iterable<string>) =>
+    [...new Set(list)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const budget = MAX_CARVED_READ_ROOTS - out.size;
   // No file lies under a granted directory: files come only from directories that hold a denied
   // path, and neither those nor their ancestors are ever granted whole.
-  return { roots: sorted(out), files: sorted(files) };
+  return { roots: sorted(out), files: sorted(files).slice(0, budget) };
 }

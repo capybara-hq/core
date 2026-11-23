@@ -156,6 +156,8 @@ def launch(request, endpoints):
         # Evidence only: the file root's name now holds another file (a new inode).
         os.rename(attack["root"], attack["moved"])
         os.link(attack["target"], attack["root"])
+    elif attack and attack["kind"] == "unlink-file-after-pin":
+        os.unlink(attack["root"])
     leaked = []
     if attack and attack["kind"] == "leak-fd":
         # Evidence only: a careless consumer leaves a high inheritable descriptor open.

@@ -155,4 +155,28 @@ print(json.dumps([now, want]))
     const [now, want] = JSON.parse(run.stdout) as [number, number];
     expect(now).toBe(want);
   });
+
+  it.runIf(linux)("drops file roots past the open-file limit instead of failing", () => {
+    for (let i = 0; i < 400; i++) writeFileSync(join(dir, `f${i}`), "f");
+    const program = `
+import json, os, resource, sys
+agent = {"__name__": "capybara_agent"}
+exec(sys.argv[1], agent)
+d = sys.argv[2]
+resource.setrlimit(resource.RLIMIT_NOFILE, (320, 320))  # a hard limit below the roots' need
+request = {"readRoots": [d], "writeRoots": [], "readFileRoots": ["%s/f%d" % (d, i) for i in range(400)]}
+agent["raise_open_file_limit"](request)
+read = [agent["pin"](d)]
+files = agent["pin_file_roots"](request)
+held = len(os.listdir("/proc/self/fd"))
+print(json.dumps({"dirs": len(read), "files": len(files), "free": 320 - held}))
+`;
+    const run = spawnSync("python3", ["-I", "-c", program, AGENT_PINS, dir], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    const out = JSON.parse(run.stdout) as { dirs: number; files: number; free: number };
+    expect(out.dirs).toBe(1);
+    expect(out.files).toBeGreaterThan(0);
+    expect(out.files).toBeLessThan(400);
+    expect(out.free).toBeGreaterThanOrEqual(256); // the reserve stays free
+  });
 });

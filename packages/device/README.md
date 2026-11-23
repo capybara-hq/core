@@ -183,19 +183,20 @@ directly inside it are granted one by one as exact file reads (for example `~/.b
 `~/.cargo/credentials`). A denied file is never among them, nor a symbolic link, another file
 type, a file you cannot read or one with a second name (a hard link). Such a directory still
 cannot be listed (`ls ~` fails under `machine` reach), and a file created in it after the
-operation started, or replaced by renaming another file over it, is not readable by that
-operation. A sandboxed Maven or Gradle build never
+operation started, or renamed, deleted or replaced by renaming another file over it before the
+command starts, is not readable by that operation (the command still runs). Secrets a shell start
+file exports (`export TOKEN=...` in `~/.bashrc`) are not covered: start files stay readable. A sandboxed Maven or Gradle build never
 reads the denied settings files. On Linux Java takes the home from the password database and
 Landlock does not hide `stat`, so the build sees the files exist but cannot open them and may fail
 (Maven stops with "Non-readable settings") rather than run without them; on macOS they look
 absent. Repository credentials reach a build only through an escalated call. Gradle init scripts
 and a `GRADLE_USER_HOME` moved elsewhere are not covered. A bind mount or second
 mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
-4096 carved roots (directories and files together) refuses machine reach for that operation: use
-the `paths` reach instead. Every granted root is held open by the operation agent until the
-sandbox is set up; the agent raises its soft open-file limit to fit them, so only a hard limit
-below that (rare) refuses an operation before the cap, with a message naming the limit and the
-`paths` reach. macOS
+4096 carved directories refuses machine reach for that operation: use the `paths` reach instead;
+files fill what the directories leave of the 4096 and the rest stay unreadable. Every granted root
+is held open by the operation agent until the sandbox is set up; the agent raises its soft
+open-file limit to fit them, drops files past its hard limit, and only directories past it refuse
+an operation, with a message naming the limit and the `paths` reach. macOS
 Seatbelt denies the paths directly and has none of these.
 
 Commands get a minimal environment (`PATH`, `LANG`,

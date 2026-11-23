@@ -316,14 +316,31 @@ def pin_file(path):
 
 
 def pin_file_roots(request):
-    """Pins the exec request's exact file read roots (readFileRoots), each as pin_file does."""
+    """Pins the exec request's exact file read roots (readFileRoots), each as pin_file does, after
+    the directories: as many as the open-file limit leaves room for (FILE_ROOT_FD_RESERVE kept for
+    the agent, the launcher and the broker); the rest are dropped, which only leaves those files
+    unreadable, never fails the operation."""
     paths = request.get("readFileRoots", [])
     if not isinstance(paths, list):
         raise Refused("INVALID_REQUEST", "Supply file roots as a list")
+    soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    if soft == resource.RLIM_INFINITY:
+        budget = len(paths)
+    else:
+        try:
+            held = len(os.listdir("/proc/self/fd"))
+        except OSError:
+            held = soft
+        budget = max(0, soft - held - FILE_ROOT_FD_RESERVE)
     pinned = []
     try:
         for path in paths:
-            entry = pin_file(path)
+            if len(pinned) >= budget:
+                break
+            try:
+                entry = pin_file(path)
+            except TooManyRoots:
+                break
             if entry is not None:
                 pinned.append(entry)
     except BaseException:
@@ -332,13 +349,18 @@ def pin_file_roots(request):
     return pinned
 
 
+# Descriptors left free once every root is pinned: the agent's own (files lock, report pipe,
+# forwarder sockets, subprocess pipes) and the launcher's and broker's.
+FILE_ROOT_FD_RESERVE = 256
+
+
 def raise_open_file_limit(request):
     """Every pinned root holds one descriptor until the launcher has set its Landlock rules (the
     carve allows up to 4096 directories and files), so the soft open-file limit is raised toward
     the hard one to fit them; past the hard limit a pin fails with TooManyRoots."""
     count = sum(len(request.get(key) or []) for key in ("readRoots", "writeRoots",
                                                           "readFileRoots"))
-    needed = count + 256  # the agent's, the launcher's and the broker's own descriptors
+    needed = count + FILE_ROOT_FD_RESERVE
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     if soft != resource.RLIM_INFINITY and soft < needed:
         target = needed if hard == resource.RLIM_INFINITY else min(hard, needed)
