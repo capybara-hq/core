@@ -262,7 +262,7 @@ open question 1 asks whether it ships with #748 or as a follow-up.
 | Stale `update` after B recreated the instance | B's `create` seeded the new proxy with B's token: refused. If the instance is gone (between B's remove and create), `update` answers `"recreate"` as today and A's recreate path meets §5.2's checks. |
 | Proxy crashes between the file write and the swap | Restarts from `allow.json`, list and fence together (written in one file, one rename). |
 | `allow.json` or the config volume lost | Unchanged from #705: rebuild only from the volume, else `resume` answers `gone` / `update` answers `"recreate"`; the recreate seeds the current token. |
-| Proxy holds a token higher than the row (cannot happen; §3.2 bound) | Every `update` refused: the kernel treats a thrown `update` as a recreate (instance-bound provider), which builds a fresh proxy with the current token. Fails closed and heals. |
+| Proxy holds a token higher than the row (cannot happen; §3.2 bound; a restored database could) | The refused call fails the use as lock-lost, but the kernel's fenced no-op still succeeds, so it knows the provider is ahead: it raises the row's generation past the provider's token (`StaleFenceError.current`), and the next use's token wins. Fails closed and heals at the next use (implementation note in §11). |
 | Kernel without the token, new plugin | In-place changes answer `"recreate"` (§4.4). |
 | Proxy of the previous plugin version, kernel with the token | The provider sees no control label of this version (§10) and answers `"recreate"` for allowlist changes; the recreate builds a fenced instance. |
 
@@ -439,7 +439,13 @@ fenced increment before their destroys so the token is the holder's own; the rec
 `updated` answer moved out of the `update` try, and the recreate path does a fenced write before
 its `destroy`, so a stale holder never falls into the recreate branch and destroys a newer holder's
 instance (the dual-replica test found it). `instance_limits.pending` lives in the existing JSON
-column: no migration.
+column: no migration. `StaleFenceError` never recreates; when the holder's fenced no-op write still
+succeeds, the provider is ahead of the record and the generation is raised past its token (§5.4).
+A stale refusal skips the quarantine and the exact revocation on the resumed path (the provider
+changed nothing); an aborted `update` after a lost lease still quarantines (fail closed). Every
+fenced write runs outside any ambient transaction (`runOutsideTransaction`). The dual-replica
+cases live in `mode-limits.dual.test.ts` rather than a new file (the test-portfolio check refuses
+a new app file with at most 5 tests).
 
 The questions as asked:
 

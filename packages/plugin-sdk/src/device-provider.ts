@@ -422,8 +422,10 @@ export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedEr
  * should refuse when the instance it would replace carries a higher one; `destroy` /
  * `destroyByName` should refuse an instance carrying a higher token. A provider that cannot (no
  * conditional write in its backend) ignores the token and states the residual race in its README.
- * A provider must treat a missing fence (an older kernel) as "freshness unproven": never weaker
- * than refusing an in-place change it could not fence.
+ * The fence is `undefined` only from an older kernel that sends none: freshness is then unproven,
+ * so a provider answers `recreate` to an in-place change it would otherwise fence, seeds 0 at
+ * `create` and destroys without a check. `null` (destroy only) means the kernel has no fence for
+ * the call (no device record, or the one-off legacy cleanup): destroy without a check.
  *
  * **Concurrent use** (required in `@2`): the sessions of one device share its instance, so the
  * kernel calls `exec`, `readFile`, `writeFile` and `stat` concurrently on one instance. Those four
@@ -501,7 +503,9 @@ export interface DeviceProvider {
    * `fence`: a provider that can must refuse a token lower than the one the instance applied last
    * with {@link StaleFenceError}, checked and stored in the same atomic step as the new limits (see
    * "Fencing" above); an equal or higher token with limits already in force raises the stored
-   * token and answers `updated`.
+   * token and answers `updated`. Any answer to a call whose token is not lower (`updated` or
+   * `recreate`) leaves the stored token at least that high, so an older call arriving later is
+   * still refused.
    */
   update?(
     h: SandboxHandle,
@@ -552,7 +556,7 @@ export interface DeviceProvider {
   /**
    * Drops the instance only; the file system and its files are kept. Succeeds when it does not
    * exist. `fence`: a provider should throw {@link StaleFenceError} when the instance carries a
-   * higher token; `null` when the kernel destroys without the device's lease (nothing to compare).
+   * higher token; `null` when the kernel has no fence for the call (nothing to compare).
    */
   destroy(h: SandboxHandle, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
   /**
@@ -561,7 +565,7 @@ export interface DeviceProvider {
    * side but the kernel stopped before recording the handle), and in its one-off cleanup of
    * per-conversation sandboxes with `cap-<conversationId>` names made by a `sandbox@1` provider's
    * `create`. `fence` as for {@link DeviceProvider.destroy} (`null` in that one-off cleanup,
-   * which holds no device lease).
+   * which has no device record).
    */
   destroyByName(name: string, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
   /**

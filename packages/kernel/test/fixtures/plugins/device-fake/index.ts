@@ -102,7 +102,9 @@ import { z } from "zod";
  *   `destroyByName` refuse an instance holding a higher token; a refusal logs `stale-fence <id>
  *   <op> <token> <current>` in `ops.log`. `fencing: "ignore"` (deployment config or
  *   {@link FakeSandboxOptions}) applies every call as before, so a test can show the race the
- *   fence closes. {@link holdNextFakeSandboxUpdate} holds the next `update` after it captured its
+ *   fence closes. The check and the store are check-then-write across replicas (not one atomic
+ *   step as a real provider's must be); the tests order the calls themselves.
+ *   {@link holdNextFakeSandboxUpdate} holds the next `update` after it captured its
  *   arguments and before it checks and stores (a request in flight; the hold ignores the
  *   signal, as a request already sent does), logging `update-held <id> <token> <label>`.
  * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no

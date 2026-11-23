@@ -4,6 +4,7 @@ import {
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
+  isStaleFenceError,
 } from "@capybara-hq/plugin-sdk";
 
 /**
@@ -103,6 +104,8 @@ export class SandboxProviderUnreachableError extends Error {
 
 function converted(e: unknown): unknown {
   if (e instanceof SandboxProviderUnreachableError) return e;
+  // a fence refusal is an answer, never a lost connection, whatever its cause chain holds
+  if (isStaleFenceError(e)) return e;
   const failure = providerConnectionFailure(e);
   return failure === undefined ? e : new SandboxProviderUnreachableError(failure, e);
 }

@@ -543,7 +543,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   the legacy cleanup, which holds no lease, passes `null`). Every fenced write on this path commits on its own before the
   provider call (no transaction around the lifecycle). A provider that can stores the highest token next to its state
   and throws `StaleFenceError`; the kernel handles it as `SandboxLockLostError` (`staleHolder`, warned once with both
-  tokens), checked **before** the recreate fallback of `applyLimits`, and never recreates for it. A record write that
+  tokens), checked **before** the recreate fallback of `applyLimits`, and never recreates for it; when the holder's
+  fenced no-op still succeeds, the provider is ahead of the record and `staleHolder` raises the generation past
+  `StaleFenceError.current`, so the next use heals. Fenced writes run outside any ambient transaction. A record write that
   fails after `updated` is outside the `update` try (a stale holder must not fall into the recreate branch and destroy
   the newer holder's instance), and the recreate path does a fenced write before its `destroy`.
   **Intent first**: `applyLimits` and `reconcileLimits` write the target as `instance_limits.pending` (fenced) before

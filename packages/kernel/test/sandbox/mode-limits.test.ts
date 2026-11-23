@@ -14,6 +14,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { SandboxLockLostError } from "../../src/sandbox/leases.js";
+import { appliedOf } from "../../src/sandbox/modes.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   mapSandboxError,
@@ -555,6 +556,8 @@ describe("fencing token and update intent", () => {
     await expect(use(s)).rejects.toBeInstanceOf(SandboxLockLostError);
     expect(await ops("create")).toHaveLength(1);
     expect(await ops("destroy")).toHaveLength(0);
+    // a stale holder touches nothing more (no quarantine of what a newer holder may use)
+    expect(await ops("suspend")).toHaveLength(0);
     expect(await status()).toBe("running");
     expect((await fakeSandboxMeta(root, first.h.id))?.limits.network).not.toMatchObject({
       hosts: expect.arrayContaining(["example.com"]),
@@ -563,9 +566,64 @@ describe("fencing token and update intent", () => {
     const rec = await record();
     expect(hostsOf(rec)).not.toContain("example.com");
     expect(rec?.pending).toBeDefined();
+    // here the record still holds (only the provider is ahead), so the kernel raised its generation
     expect(warned).toContain(
-      "a device provider refused a stale lifecycle call; the lease was lost",
+      "a device provider holds a fence token ahead of the device record; generation raised so the next use applies again",
     );
+  });
+
+  it("a StaleFenceError from create while the record still holds heals: the generation passes the provider's token", async () => {
+    const base = fake();
+    let refuse = true;
+    const tokens: number[] = [];
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      create: async (a: Parameters<DeviceProvider["create"]>[0]) => {
+        tokens.push(a.fence.token);
+        if (refuse) {
+          refuse = false;
+          throw new StaleFenceError("the instance holds a newer token", { current: 1000 });
+        }
+        return base.create(a);
+      },
+    });
+    const s = service();
+    // this holder still holds the record: the provider is ahead of it (a restored database)
+    await expect(use(s)).rejects.toBeInstanceOf(SandboxLockLostError);
+    expect((await committed())?.generation).toBeGreaterThan(1000);
+    expect(warned).toContain(
+      "a device provider holds a fence token ahead of the device record; generation raised so the next use applies again",
+    );
+    await use(s);
+    expect(tokens[1]).toBeGreaterThan(1000);
+  });
+
+  it("the lifecycle reconcile records its intent; an answer that changed nothing restores the record, a failure keeps it", async () => {
+    const base = fake({ updateMode: "recreate" });
+    let answer: "recreate" | "throw" = "recreate";
+    const during: (Record<string, unknown> | null | undefined)[] = [];
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      update: async (...a: Parameters<NonNullable<DeviceProvider["update"]>>) => {
+        during.push((await committed())?.instance_limits);
+        if (answer === "throw") throw new Error("provider down");
+        return (base.update as NonNullable<DeviceProvider["update"]>)(...a);
+      },
+    });
+    await setAutoMode("off");
+    await use(service());
+    const before = await record();
+    const policy = await service().devicePolicy({ orgId, deviceId });
+    const target = appliedOf({ mode: policy.mode, network: policy.network });
+    const s = service(undefined, undefined, {
+      snapshots: {
+        reconcileHeld: async () => ({ state: "reconcile-required", action: "reset-files", target }),
+      },
+    });
+    await s.reconcileLimits(deviceId);
+    expect(during[0]?.pending).toBeDefined();
+    expect(await record()).toEqual(before);
+    answer = "throw";
+    await s.reconcileLimits(deviceId);
+    expect((await record())?.pending).toBeDefined();
   });
 
   it("a recorded intent whose applied limits match the desired ones is applied again at the next use", async () => {
