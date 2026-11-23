@@ -1,5 +1,30 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.21
+
+### Patch Changes
+
+- d837927: `capybara-plugin bootstrap --write` pins git entries whose tree is a Claude Code plugin or a
+  skills-only directory: the version is read by the kernel's `readBootstrapGitPlugin` (newly
+  exported), the reader the bootstrap import identifies the tree with: `.capybara-plugin/plugin.json`,
+  else `.claude-plugin/plugin.json`, else the entry's own version (#535). A tree that is another
+  plugin than the entry names is reported as `bootstrap-extra-path`.
+- 6aa42a6: Setup guides: a `connector-template` guide names one or more templates (`templates: string[]`,
+  replacing `template`; a template still has at most one guide), so one guide can serve several
+  templates of a plugin. `{{templateId}}` / `{{templateName}}` render the template the guide is shown
+  for: the target connector's, the new `templateId` query parameter of the guide routes, or the
+  guide's only template (else unresolved with reason `no_template`). The `extension-deployment`
+  place now offers `{{signInCallbackUrl}}` (`<publicUrl>/api/v1/auth/sso/<plugin>/callback`), built
+  from the same path constant as the SSO flow's redirect URI. `capybara-plugin pack` / `check` refuse a guide naming
+  a scanned template the plugin lacks.
+- Updated dependencies [a448d91]
+- Updated dependencies [a284fac]
+- Updated dependencies [d837927]
+- Updated dependencies [6aa42a6]
+- Updated dependencies [f99d11c]
+  - @capybara-hq/kernel@0.1.0-rc.74
+  - @capybara-hq/plugin-sdk@0.1.0-rc.59
+
 ## 0.1.0-rc.20
 
 ### Minor Changes

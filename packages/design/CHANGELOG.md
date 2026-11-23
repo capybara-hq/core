@@ -1,5 +1,11 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.40
+
+### Patch Changes
+
+- e44ecab: Toasts: a touch swipe up dismisses on compact, a swipe down from 600 wide as before.
+
 ## 0.2.0-rc.39
 
 ### Patch Changes

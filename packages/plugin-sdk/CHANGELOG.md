@@ -1,5 +1,30 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.59
+
+### Minor Changes
+
+- 6aa42a6: Setup guides: a `connector-template` guide names one or more templates (`templates: string[]`,
+  replacing `template`; a template still has at most one guide), so one guide can serve several
+  templates of a plugin. `{{templateId}}` / `{{templateName}}` render the template the guide is shown
+  for: the target connector's, the new `templateId` query parameter of the guide routes, or the
+  guide's only template (else unresolved with reason `no_template`). The `extension-deployment`
+  place now offers `{{signInCallbackUrl}}` (`<publicUrl>/api/v1/auth/sso/<plugin>/callback`), built
+  from the same path constant as the SSO flow's redirect URI. `capybara-plugin pack` / `check` refuse a guide naming
+  a scanned template the plugin lacks.
+- f99d11c: `ToolCallContext.idempotencyKey`: the key of one logical tool call (64 lowercase hex, derived from
+  the conversation, the run and the call id), the same across every `InputRequired` round of the
+  call. A tool with an external side effect passes it downstream (for example as an
+  `Idempotency-Key` header). The SDK docs now state that a call id is unique only within its run and
+  that the kernel never retries a call whose result is unknown.
+
+### Patch Changes
+
+- a284fac: A device provider that finds its instance gone before a managed operation reached the machine
+  throws `DeviceRequestNotSentError` with the `SandboxGoneError` as its `cause`: the operation is
+  recorded as not started (the model is told nothing ran and may retry) instead of an unknown
+  outcome, and the kernel rebuilds the instance at once so the retry runs on it.
+
 ## 0.1.0-rc.58
 
 ### Minor Changes

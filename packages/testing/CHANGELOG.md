@@ -1,5 +1,22 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.37
+
+### Patch Changes
+
+- 48a5633: The sandbox permission conformance harness waits for killed processes to end after a cancel or a
+  timeout (polling `inspect.alive`, failing with the survivors after 10 s) instead of checking once
+  right after the operation returned: a kill is asynchronous, and a killed descendant may still be
+  delivered its signal or wait for its reaper.
+- Updated dependencies [a448d91]
+- Updated dependencies [a284fac]
+- Updated dependencies [d837927]
+- Updated dependencies [6aa42a6]
+- Updated dependencies [f99d11c]
+  - @capybara-hq/kernel@0.1.0-rc.74
+  - @capybara-hq/plugin-sdk@0.1.0-rc.59
+  - @capybara-hq/plugin-tools@0.1.0-rc.21
+
 ## 0.1.0-rc.36
 
 ### Patch Changes

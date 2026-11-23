@@ -1,5 +1,36 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.74
+
+### Minor Changes
+
+- 6aa42a6: Setup guides: a `connector-template` guide names one or more templates (`templates: string[]`,
+  replacing `template`; a template still has at most one guide), so one guide can serve several
+  templates of a plugin. `{{templateId}}` / `{{templateName}}` render the template the guide is shown
+  for: the target connector's, the new `templateId` query parameter of the guide routes, or the
+  guide's only template (else unresolved with reason `no_template`). The `extension-deployment`
+  place now offers `{{signInCallbackUrl}}` (`<publicUrl>/api/v1/auth/sso/<plugin>/callback`), built
+  from the same path constant as the SSO flow's redirect URI. `capybara-plugin pack` / `check` refuse a guide naming
+  a scanned template the plugin lacks.
+
+### Patch Changes
+
+- a448d91: Bootstrap contract (migration 0178): a recorded run counts as done only while the latest completed
+  run has the same extra-manifest part, so an extra manifest added back after its removal runs again
+  and restores `required` / `builtin` (#534). A run records itself as started before its first write
+  (`bootstrap_run_started`, with its extra entries), so a process without
+  `CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST` is refused from the first pass of an npm-only extra manifest on
+  (#533). `BootstrapService.isDone` takes the manifest instead of its sha256.
+- d837927: `capybara-plugin bootstrap --write` pins git entries whose tree is a Claude Code plugin or a
+  skills-only directory: the version is read by the kernel's `readBootstrapGitPlugin` (newly
+  exported), the reader the bootstrap import identifies the tree with: `.capybara-plugin/plugin.json`,
+  else `.claude-plugin/plugin.json`, else the entry's own version (#535). A tree that is another
+  plugin than the entry names is reported as `bootstrap-extra-path`.
+- Updated dependencies [a284fac]
+- Updated dependencies [6aa42a6]
+- Updated dependencies [f99d11c]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.59
+
 ## 0.1.0-rc.73
 
 ### Patch Changes

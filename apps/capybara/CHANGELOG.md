@@ -1,5 +1,46 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.96
+
+### Patch Changes
+
+- a448d91: Bootstrap contract (migration 0178): a recorded run counts as done only while the latest completed
+  run has the same extra-manifest part, so an extra manifest added back after its removal runs again
+  and restores `required` / `builtin` (#534). A run records itself as started before its first write
+  (`bootstrap_run_started`, with its extra entries), so a process without
+  `CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST` is refused from the first pass of an npm-only extra manifest on
+  (#533). `BootstrapService.isDone` takes the manifest instead of its sha256.
+- 7190039: Web: a native form post's same-origin check compares the Origin with the host the CSP names
+  (a valid `X-Forwarded-Host`, else `Host`), so both agree behind a proxy other than server.mjs.
+- a284fac: A device provider that finds its instance gone before a managed operation reached the machine
+  throws `DeviceRequestNotSentError` with the `SandboxGoneError` as its `cause`: the operation is
+  recorded as not started (the model is told nothing ran and may retry) instead of an unknown
+  outcome, and the kernel rebuilds the instance at once so the retry runs on it.
+- 8f225e9: The image pins device-docker rc.23 (`@capybara-hq/plugin-device-docker@0.1.0-rc.23`): the provider's
+  own scripts run on a root-owned system PATH, so a tool planted in a writable PATH directory can no
+  longer lift the in-sandbox time limit or run as root (capybara-hq/plugins#106).
+- f770795: `capybara secrets rewrap` also rewraps unexpired sealed approval inputs (`platform_sealed_inputs`),
+  so a resumed Platform call still reads them after the old master key is removed, and prints their
+  count.
+- 6aa42a6: Setup guides: a `connector-template` guide names one or more templates (`templates: string[]`,
+  replacing `template`; a template still has at most one guide), so one guide can serve several
+  templates of a plugin. `{{templateId}}` / `{{templateName}}` render the template the guide is shown
+  for: the target connector's, the new `templateId` query parameter of the guide routes, or the
+  guide's only template (else unresolved with reason `no_template`). The `extension-deployment`
+  place now offers `{{signInCallbackUrl}}` (`<publicUrl>/api/v1/auth/sso/<plugin>/callback`), built
+  from the same path constant as the SSO flow's redirect URI. `capybara-plugin pack` / `check` refuse a guide naming
+  a scanned template the plugin lacks.
+- e44ecab: Toasts: a touch swipe up dismisses on compact, a swipe down from 600 wide as before.
+- f99d11c: `ToolCallContext.idempotencyKey`: the key of one logical tool call (64 lowercase hex, derived from
+  the conversation, the run and the call id), the same across every `InputRequired` round of the
+  call. A tool with an external side effect passes it downstream (for example as an
+  `Idempotency-Key` header). The SDK docs now state that a call id is unique only within its run and
+  that the kernel never retries a call whose result is unknown.
+- Updated dependencies [a448d91]
+- Updated dependencies [d837927]
+- Updated dependencies [6aa42a6]
+  - @capybara-hq/kernel@0.1.0-rc.74
+
 ## 0.1.0-rc.95
 
 ### Patch Changes

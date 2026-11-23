@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.96
+
+### Patch Changes
+
+- Updated dependencies [e44ecab]
+  - @capybara-hq/design@0.2.0-rc.40
+
 ## 0.1.0-rc.95
 
 No changes in this release.
