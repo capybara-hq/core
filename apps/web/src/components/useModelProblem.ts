@@ -26,8 +26,8 @@ const CAUSE: Record<ModelListErrorKind, Cause> = {
 
 /**
  * Why the org has no model to pick (readiness `no_models`), one clause per provider that is on but
- * gives none, naming it: 「DeepSeek 列模型失败（密钥无效）」, 「DeepSeek 没有可用的对话模型」. Null for
- * any other readiness (or none read).
+ * gives none, naming it ("DeepSeek could not list its models (key rejected)", "DeepSeek has no chat
+ * model available"). Null for any other readiness (or none read).
  */
 export function useModelProblem(r: OrgReadiness | null | undefined): string | null {
   const t = useTranslations("setupLayout.model.problem");
