@@ -22,6 +22,9 @@ import {
 /** The daily share sweep's name (scheduler key and lock; no `:`). */
 export const SHARE_SWEEP_JOB = "share-sweep";
 
+/** When the daily share sweep runs (the deployment's time zone). */
+export const SHARE_SWEEP_CRON = "40 3 * * *";
+
 /** Rows per batch (one transaction per batch of revokes; one query per batch of reads). */
 const BATCH = 200;
 /** Snapshots of shares expired or revoked longer ago than this are deleted (rows kept). */
@@ -85,7 +88,7 @@ export class ShareSweepJob {
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
-  @LockedCron("40 3 * * *", { name: SHARE_SWEEP_JOB })
+  @LockedCron(SHARE_SWEEP_CRON, { name: SHARE_SWEEP_JOB })
   async sweep(signal?: AbortSignal): Promise<void> {
     const r = await this.runOnce(signal);
     if (r.revoked + r.freed + r.orphans > 0) this.log.info("share sweep done", { ...r });
