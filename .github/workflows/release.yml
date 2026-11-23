@@ -191,6 +191,11 @@ jobs:
       - name: Bootstrap manifest against npm and the marketplace
         run: pnpm check:bootstrap --network
 
+      # The network half of check:device-image-pin: capybara-device runs its sandbox image only by
+      # the pinned digests, so a release never ships a pin the registry does not serve.
+      - name: Device image pin against the registry
+        run: pnpm check:device-image-pin --network
+
       # tsc -b of every workspace package: the libraries are published from their dist.
       - name: Build
         run: pnpm build

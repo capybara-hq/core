@@ -179,6 +179,15 @@ describe("release.yml", () => {
       expect(job.steps[i]?.if).toBeUndefined();
     });
 
+    it("checks the device's sandbox image pin against the registry before publishing", () => {
+      const names = job.steps.map((s) => s.name);
+      const i = names.indexOf("Device image pin against the registry");
+      expect(i).toBeGreaterThan(-1);
+      expect(i).toBeLessThan(names.indexOf("Publish to npm"));
+      expect(job.steps[i]?.run).toBe("pnpm check:device-image-pin --network");
+      expect(job.steps[i]?.if).toBeUndefined();
+    });
+
     it("publishes the libraries and model-fake only: every other plugin moves (A3b)", () => {
       const root = fileURLToPath(new URL("../../../package.json", import.meta.url));
       const scripts = (
@@ -346,6 +355,27 @@ describe("ci.yml bootstrap network check", () => {
     expect(job.needs).toBe("changes");
     const step = job.steps.find((s) => s.run === "pnpm check:bootstrap --network");
     expect(step?.if).toBe("needs.changes.outputs.bootstrap-network == 'true'");
+  });
+});
+
+// The network half of check:device-image-pin needs the registry: by diff on PRs (the plan's
+// device-image-pin-network output), always on main (planAll) and in release.yml.
+describe("ci.yml device image pin network check", () => {
+  const ci = parse(
+    readFileSync(
+      fileURLToPath(new URL("../../../.github/workflows/ci.yml", import.meta.url)),
+      "utf8",
+    ),
+  ) as { jobs: Record<string, Job & { outputs?: Record<string, string> }> };
+
+  it("runs in the ci job when the plan says so", () => {
+    expect(ci.jobs.changes?.outputs?.["device-image-pin-network"]).toBe(
+      "${{ steps.plan.outputs.device-image-pin-network }}",
+    );
+    const step = (ci.jobs.ci as Job).steps.find(
+      (s) => s.run === "pnpm check:device-image-pin --network",
+    );
+    expect(step?.if).toBe("needs.changes.outputs.device-image-pin-network == 'true'");
   });
 });
 

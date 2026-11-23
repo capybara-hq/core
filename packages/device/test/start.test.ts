@@ -76,7 +76,7 @@ const stagedParts = (calls: string[] = []) =>
   }) as unknown as StagedDevice;
 
 describe("start: docker mode needs the host python3", () => {
-  const attempt = async (mode: "os" | "docker", isExecutable: () => boolean) => {
+  const attempt = async (mode: "os" | "docker", isExecutable: () => boolean, arch = "x64") => {
     writeCredential(dir, { ...cred, mode });
     const err: string[] = [];
     const created: string[] = [];
@@ -85,7 +85,7 @@ describe("start: docker mode needs the host python3", () => {
       out: () => {},
       err: (l) => err.push(l),
       proc: Object.assign(new EventEmitter(), { pid: 4260 }) as never,
-      hostProbes: { isExecutable, commandLineTools: isExecutable },
+      hostProbes: { isExecutable, commandLineTools: isExecutable, arch },
       createStaged: () => {
         created.push("staged");
         return stagedParts();
@@ -103,6 +103,14 @@ describe("start: docker mode needs the host python3", () => {
     expect(r.err.join("\n")).toContain("keeps failing");
     expect(r.created).toEqual([]);
     expect(existsSync(pidPath(dir))).toBe(false);
+  });
+
+  it("refuses an architecture the pinned sandbox image has no platform for", async () => {
+    const r = await attempt("docker", () => true, "s390x");
+    expect(r.code).toBe(1);
+    expect(r.err.join("\n")).toContain("not available on this architecture (s390x)");
+    expect(r.created).toEqual([]);
+    expect((await attempt("os", () => true, "s390x")).code).toBe(0);
   });
 
   it("starts when it is there, and OS mode never asks", async () => {

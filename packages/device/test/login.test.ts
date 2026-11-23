@@ -82,6 +82,7 @@ let sleeps: number[];
 let opened: string[];
 /** Whether the host's /usr/bin/python3 is executable, as the docker-mode check sees it. */
 let hostPython = true;
+let hostArch = "x64";
 
 const pending = {
   status: 400,
@@ -96,6 +97,7 @@ beforeEach(async () => {
   sleeps = [];
   opened = [];
   hostPython = true;
+  hostArch = "x64";
   tokenAnswers = [];
   server = createServer((req, res) => {
     let raw = "";
@@ -151,7 +153,11 @@ const run = (
     ...(kill && { kill }),
     ps: ourPs,
     sandboxAvailable: () => sandbox,
-    hostProbes: { isExecutable: () => hostPython, commandLineTools: () => hostPython },
+    hostProbes: {
+      isExecutable: () => hostPython,
+      commandLineTools: () => hostPython,
+      arch: hostArch,
+    },
     env: { XDG_CONFIG_HOME: join(home, "cfg") },
     home,
     platform,
@@ -650,6 +656,18 @@ describe("login", () => {
     expect(err.join("\n")).toContain("xcode-select --install");
     // OS mode never needs it
     err.length = 0;
+    expect(await run(["login", "--url", base])).toBe(0);
+  });
+
+  it("--mode docker on an architecture without a pinned image platform: refused, nothing stored", async () => {
+    hostArch = "s390x";
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--mode", "docker", "--json"])).toBe(1);
+    expect([...out, ...err].join("\n")).toContain("docker_unsupported_architecture");
+    expect(seen).toEqual([]);
+    expect(existsSync(credFile())).toBe(false);
+    err.length = 0;
+    out.length = 0;
     expect(await run(["login", "--url", base])).toBe(0);
   });
 

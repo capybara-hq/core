@@ -52,6 +52,8 @@
     "check:test-portfolio": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/test-portfolio.ts",
     "check:synced-skills": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/synced-skills.ts",
     "check:skills-frontmatter": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/skills-frontmatter.ts",
+    "check:device-image-pin": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/device-image-pin.ts",
+    "gen:device-image-pin": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-device-image-pin.ts",
     "check:compose-haproxy": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/compose-haproxy.ts",
     "check:release-metadata": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/release-metadata.ts",
     "check:agent-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/agent-docs.ts",

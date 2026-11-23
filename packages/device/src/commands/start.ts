@@ -5,7 +5,7 @@ import { CommandLog } from "../command-log.js";
 import { DEVICE_ID_PATTERN } from "../connections.js";
 import type { LiveStatus } from "../control/protocol.js";
 import { startControlServer } from "../control/server.js";
-import { type HostProbes, hostPythonProblem } from "../host-python.js";
+import { dockerHostProblem, type HostProbes } from "../host-python.js";
 import { KeepAwake } from "../keep-awake.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
@@ -84,11 +84,11 @@ export async function start(deps: StartDeps): Promise<number> {
     return 1;
   }
   if (cred.mode === "docker") {
-    const problem = hostPythonProblem(deps.service?.platform ?? process.platform, deps.hostProbes);
+    const problem = dockerHostProblem(deps.service?.platform ?? process.platform, deps.hostProbes);
     if (problem !== undefined) {
       err(
-        `Cannot start: ${problem} A login service of this device keeps failing to start until ` +
-          "that is installed.",
+        `Cannot start: ${problem.message} A login service of this device keeps failing to start ` +
+          "until that is resolved.",
       );
       return 1;
     }

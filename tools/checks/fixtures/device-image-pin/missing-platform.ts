@@ -1,0 +1,12 @@
+// fixture of check:device-image-pin
+export const SANDBOX_IMAGE_PIN = {
+  repository: "ghcr.io/capybara-hq/capybara-sandbox",
+  version: "0.1.0-rc.5",
+  index: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  platforms: {
+    amd64: {
+      manifest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      config: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    },
+  },
+};

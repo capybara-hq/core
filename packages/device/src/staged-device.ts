@@ -121,6 +121,8 @@ export interface StagedDeviceOptions {
   selfCheckRetryMs?: number;
   /** The clock of the self-check retry interval (default: `Date.now`). */
   selfCheckNow?: () => number;
+  /** Where a docker-mode bind logs which pinned image digest the container matched. */
+  log?: (line: string) => void;
   /** The image id (`sha256:…`) the docker-mode device's running container was created from. */
   containerImageDigest?: (containerName: string, signal: AbortSignal) => Promise<string>;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
@@ -191,11 +193,28 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
 
   const containerImage = async (): Promise<string> => {
     const signal = AbortSignal.timeout(60_000);
-    const held = await (o.container as OperationContainerHost).operationContainer(signal);
+    const container = o.container as OperationContainerHost;
+    const held = await container.operationContainer(signal);
     try {
       const digest = await (o.containerImageDigest ?? inspectContainerImage)(held.name, signal);
       if (!/^sha256:[0-9a-f]{64}$/.test(digest))
         throw new Error(`The device container's image id is not a sha256 digest: ${digest}`);
+      // only the pinned image is attested: anything else binds no runtime identity (fail closed)
+      const { matchPinnedImage, pinnedPlatform, SANDBOX_IMAGE_PIN } = await import(
+        "./exec/docker-image.js"
+      );
+      const platform =
+        "imagePlatform" in container ? container.imagePlatform : pinnedPlatform(process.arch);
+      const matched = matchPinnedImage(digest, platform);
+      if (matched === undefined) {
+        const { RuntimeManifestError } = await import("./exec/runtime-manifest.js");
+        throw new RuntimeManifestError(
+          `The device container runs image ${digest}, not the pinned sandbox image ` +
+            `${SANDBOX_IMAGE_PIN.version} (${SANDBOX_IMAGE_PIN.index}) for ${platform ?? process.arch}`,
+        );
+      }
+      // which digest matched: a change in how Docker reports image ids shows here
+      o.log?.(`device container image ${digest} is the pinned ${matched} digest`);
       return digest;
     } finally {
       held.release();
@@ -400,7 +419,7 @@ async function inspectContainerImage(name: string, signal: AbortSignal): Promise
   return new Promise((resolve, reject) => {
     execFile(
       "docker",
-      ["inspect", "--format", "{{.Image}}", name],
+      ["inspect", "--type", "container", "--format", "{{.Image}}", name],
       { signal, timeout: 30_000 },
       (error, stdout) => (error ? reject(error) : resolve(String(stdout).trim())),
     );

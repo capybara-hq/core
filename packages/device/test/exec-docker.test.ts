@@ -20,9 +20,13 @@ import {
   containerSpec,
   containerUser,
   DockerContainer,
-  SANDBOX_IMAGE,
-  SANDBOX_IMAGE_TAG,
 } from "../src/exec/docker.js";
+import {
+  matchPinnedImage,
+  pinnedPlatform,
+  SANDBOX_IMAGE_PIN,
+  sandboxImageReference,
+} from "../src/exec/docker-image.js";
 import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
 import { osRoots, prepareDeviceDir } from "../src/exec/shared.js";
 import { DEFAULT_POLICY, type OwnerCeilingPolicy } from "../src/state.js";
@@ -35,6 +39,7 @@ const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
 
 /** The policy these tests were written against: the owner allows Full access. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
+const SANDBOX_IMAGE = sandboxImageReference({});
 const hasDocker = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Polls `cond` until it holds; the test's own timeout bounds the wait. */
@@ -43,9 +48,10 @@ const until = async (cond: () => boolean): Promise<void> => {
 };
 
 describe("docker container constants", () => {
-  it("pins the published sandbox image tag", () => {
-    expect(SANDBOX_IMAGE_TAG).toBe("0.1.0-rc.5");
-    expect(SANDBOX_IMAGE).toBe("ghcr.io/capybara-hq/capybara-sandbox:0.1.0-rc.5");
+  it("runs the sandbox image by its pinned index digest, never a tag", () => {
+    expect(sandboxImageReference({})).toBe(
+      `ghcr.io/capybara-hq/capybara-sandbox@${SANDBOX_IMAGE_PIN.index}`,
+    );
     expect(containerName("env_1")).toBe("capybara-device-env_1");
   });
 });
@@ -241,6 +247,41 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
       }
       expect(readFileSync(join(dir, "workspace", "proj", "out.log"), "utf8")).toBe("background\n");
     }
+  });
+
+  it("creates the container from the pinned digest: its image id is a pinned digest", async () => {
+    await hold();
+    const image = inspect("{{.Image}}");
+    const arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], {
+      encoding: "utf8",
+    }).trim();
+    expect(matchPinnedImage(image, pinnedPlatform(arch))).toBeDefined();
+    expect(inspect("{{.Config.Image}}")).toBe(SANDBOX_IMAGE);
+  });
+
+  it("recreates a container made from another image, though its flags match", async () => {
+    // another image (a different config digest), built locally from the pinned one
+    const other = "capybara-device-test-other-image";
+    execFileSync("docker", ["build", "-q", "-t", other, "-"], {
+      input: `FROM ${SANDBOX_IMAGE}\nLABEL capybara.test=other\n`,
+    });
+    const c = new DockerContainer({ dir, deviceId: envId, policy: () => FULL_POLICY });
+    const flags = c.runFlags();
+    flags[flags.indexOf(SANDBOX_IMAGE)] = other;
+    execFileSync("docker", [
+      "run",
+      "-d",
+      "--name",
+      containerName(envId),
+      "--label",
+      `capybara.device.spec=${containerSpec(c.runFlags())}`,
+      ...flags,
+    ]);
+    await hold(c);
+    const arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], {
+      encoding: "utf8",
+    }).trim();
+    expect(matchPinnedImage(inspect("{{.Image}}"), pinnedPlatform(arch))).toBeDefined();
   });
 
   it("reuses the container and recreates it when the mounts differ", async () => {

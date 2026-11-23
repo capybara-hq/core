@@ -8,6 +8,7 @@ import {
   type SandboxRoots,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import type { PinnedPlatform } from "./docker-image.js";
 import {
   checkLinuxRestrictedGrant,
   type LinuxBackendDependencies,
@@ -41,6 +42,8 @@ import { acquireSealedRuntime, stageRuntimeSource } from "./runtime-source.js";
 
 /** What the device container lends one operation: its running container, held until release. */
 export interface OperationContainerHost {
+  /** The image platform the daemon runs (default: this host's), for the bind-time image check. */
+  readonly imagePlatform?: PinnedPlatform | undefined;
   operationContainer(
     signal: AbortSignal,
   ): Promise<{ name: string; user: string; release: () => void }>;

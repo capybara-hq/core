@@ -4,14 +4,15 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { join, resolve } from "node:path";
 import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { Policy } from "../state.js";
+import {
+  matchPinnedImage,
+  type PinnedPlatform,
+  pinnedPlatform,
+  sandboxImageReference,
+} from "./docker-image.js";
 import type { OperationContainerHost } from "./docker-operations.js";
 import { osRoots } from "./shared.js";
 import { DeviceOpError } from "./types.js";
-
-/** The version of the published sandbox images this program runs commands in. */
-export const SANDBOX_IMAGE_TAG = "0.1.0-rc.5";
-
-export const SANDBOX_IMAGE = `ghcr.io/capybara-hq/capybara-sandbox:${SANDBOX_IMAGE_TAG}`;
 
 /** The image's `sandbox` user. */
 const IMAGE_USER = "1000:1000";
@@ -88,16 +89,31 @@ function docker(
   });
 }
 
-/** Whether the docker CLI can reach a daemon, and why not. */
-export async function dockerAvailability(): Promise<{ ok: true } | { ok: false; reason: string }> {
+/**
+ * Whether the docker CLI can reach a daemon, and why not; when it can, the pinned platform of the
+ * daemon's architecture (the image platform it pulls), or a reason when the pin has none.
+ */
+export async function dockerAvailability(): Promise<
+  { ok: true; platform: PinnedPlatform } | { ok: false; reason: string }
+> {
+  let r: DockerRun;
   try {
-    const r = await docker(["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 10_000 });
-    if (r.code === 0) return { ok: true };
-    const why = r.stderr.toString("utf8").trim().split("\n")[0] ?? "";
-    return { ok: false, reason: `Docker is not available${why ? `: ${why}` : ""}` };
+    r = await docker(["info", "--format", "{{.Architecture}}"], { timeoutMs: 10_000 });
   } catch {
     return { ok: false, reason: "the docker command was not found" };
   }
+  if (r.code !== 0) {
+    const why = r.stderr.toString("utf8").trim().split("\n")[0] ?? "";
+    return { ok: false, reason: `Docker is not available${why ? `: ${why}` : ""}` };
+  }
+  const arch = r.stdout.toString("utf8").trim();
+  const platform = pinnedPlatform(arch);
+  if (platform === undefined)
+    return {
+      ok: false,
+      reason: `the Docker daemon's architecture (${arch || "unknown"}) has no pinned sandbox image`,
+    };
+  return { ok: true, platform };
 }
 
 /** The pids limit of a container (as the cloud sandbox). */
@@ -112,9 +128,15 @@ export interface DockerContainerOptions {
    * operation finds it idle with other flags). An unreadable policy refuses the operation.
    */
   policy: () => Policy;
+  /** The daemon's image platform (from {@link dockerAvailability}); default: this host's. */
+  platform?: PinnedPlatform;
+  /** The environment the image repository override is read from (default: `process.env`). */
+  env?: NodeJS.ProcessEnv;
 }
 
 interface Inspected {
+  /** The image id the container was created from. */
+  Image: string;
   Config: { Image: string; Labels: Record<string, string> | null };
   State: { Running: boolean };
   Mounts: { Source: string; Destination: string; RW: boolean }[];
@@ -123,7 +145,8 @@ interface Inspected {
 }
 
 /**
- * The docker-mode device's one long-lived container of the published sandbox image: the device
+ * The docker-mode device's one long-lived container of the pinned sandbox image (by digest, from
+ * `docker-image.ts`): the device
  * directory's workspace, skills (read only) and tmp are mounted at /workspace, /skills and /tmp.
  * It hosts the permission operations (`docker-operations.ts`): each one holds the container
  * through {@link operationContainer}, so it is never recreated under a running operation. A change
@@ -133,6 +156,8 @@ interface Inspected {
 export class DockerContainer implements OperationContainerHost {
   readonly roots: SandboxRoots = ROOTS;
   readonly name: string;
+  /** The image platform the daemon runs: the pinned digests a container's image id may match. */
+  readonly imagePlatform: PinnedPlatform | undefined;
   private readonly dir: string;
   private readonly hostRoots: SandboxRoots;
   private chain: Promise<unknown> = Promise.resolve();
@@ -147,6 +172,7 @@ export class DockerContainer implements OperationContainerHost {
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
     this.hostRoots = osRoots(this.dir);
     this.name = containerName(opts.deviceId);
+    this.imagePlatform = opts.platform ?? pinnedPlatform(process.arch);
   }
 
   private serial<T>(f: () => Promise<T>): Promise<T> {
@@ -199,7 +225,7 @@ export class DockerContainer implements OperationContainerHost {
         : []),
       "--entrypoint",
       "sleep",
-      SANDBOX_IMAGE,
+      sandboxImageReference(this.opts.env),
       "infinity",
     ];
   }
@@ -237,10 +263,12 @@ export class DockerContainer implements OperationContainerHost {
       mkdirSync(r, { recursive: true });
     }
     let c = await this.inspect();
-    // other flags, an older format, a lost bridge or stale mounts: recreated, never repaired
+    // other flags, an older format, another image, a lost bridge or stale mounts: recreated, never
+    // repaired
     if (
       c !== null &&
       (!this.matches(c) ||
+        !this.pinnedImage(c) ||
         !("bridge" in (c.NetworkSettings.Networks ?? {})) ||
         !(await this.seesHostRoots(c)))
     ) {
@@ -254,13 +282,26 @@ export class DockerContainer implements OperationContainerHost {
         ["run", "-d", "--name", this.name, "--label", `${SPEC_LABEL}=${spec}`, ...runArgs],
         "creating the container",
       );
-      // created on the default bridge
+      // created on the default bridge, from the pinned digest: anything else is never used
+      const made = await this.inspect();
+      if (made === null || !this.pinnedImage(made)) {
+        await docker(["rm", "-f", this.name]).catch(() => {});
+        throw new DeviceOpError(
+          "error",
+          `the device container was not created from the pinned sandbox image (${made?.Image ?? "gone"})`,
+        );
+      }
       this.spec = spec;
     } else {
       if (!c.State.Running) await this.mustDocker(["start", this.name], "starting the container");
       this.spec = c.Config.Labels?.[SPEC_LABEL];
     }
     this.ready = true;
+  }
+
+  /** Whether a container runs a pinned digest of the sandbox image (`docker-image.ts`). */
+  private pinnedImage(c: Inspected): boolean {
+    return matchPinnedImage(c.Image, this.imagePlatform) !== undefined;
   }
 
   /** Whether the container in use still exists, runs and carries the spec it was made with. */
@@ -355,5 +396,7 @@ export async function createDockerContainer(
 ): Promise<DockerContainer> {
   const available = await dockerAvailability();
   if (!available.ok) throw new Error(available.reason);
-  return new DockerContainer(opts);
+  // an invalid repository override fails here, at start, not at the first operation
+  sandboxImageReference(opts.env);
+  return new DockerContainer({ ...opts, platform: available.platform });
 }
