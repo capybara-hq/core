@@ -1,5 +1,25 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.99
+
+### Patch Changes
+
+- 61e77a7: The new conversation's device picker no longer opens an empty list: with no device but a device
+  provider on, it reads "No device" and offers only New device (the Devices page's dialog); with no
+  way to create one it is gone. The org Models page shows a locked model service's state on a
+  disabled switch, as the Extensions page does.
+- ae21a49: Settings → Models gives each model service the Extensions page's on / off switch, so org admins can
+  switch a service off there too, including one the platform turns on by default (scope `all`), which
+  keeps its "on by platform default" state beside the switch. Locked services (platform-wide, not
+  switchable, unavailable, or waiting for config while off) keep their state with no switch.
+- 8e9fe85: Org readiness agrees with the agent form: the model step is ready only when the org has a chat
+  model an agent can pick (the same cached lists and time limit as the agent form's model list).
+  Providers that are on but give no model make the new state `no_models`, with each provider and
+  why (its list failed, with the error kind such as `auth`, or it has no chat model on in the org).
+  The setup checklist names the provider and the problem and links to `/admin/models` or
+  `/settings/models`; the agent form says the configured model services list no usable model
+  instead of asking to install a provider.
+
 ## 0.1.0-rc.98
 
 ### Patch Changes
