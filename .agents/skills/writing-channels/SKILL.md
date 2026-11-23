@@ -284,8 +284,8 @@ interface IdentitySource {
 
 ```ts
 interface Directory {
-  configured?(orgConfig: unknown): boolean;
-  listMembers(args: { orgConfig; cursor?; signal }): Promise<{ members: DirectoryMember[]; next?: string }>;
+  configured?(config: unknown): boolean;
+  listMembers(args: { config; cursor?; signal }): Promise<{ members: DirectoryMember[]; next?: string }>;
 }
 ```
 

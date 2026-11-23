@@ -148,9 +148,9 @@ Each line is the rule you must not miss; the skill has the rest.
   the org's copy of overridable fields: never an overridable platform secret, hidden secrets
   stay); an overridable URL is fetched through `configUrlFetch` / `ctx.net` (`plugin-org-url-net`),
   and an extension whose entries are not org-bound marks its config platform-only
-  (`plugin-config-unbound`); an org whose effective config is invalid gets no call (`needsConfig`); org admins may
-  switch off single extension tools. A setup check (`ctx.setup.check`, declared in
-  `permissions.setupChecks`) never writes and never returns a secret; it never gets an OAuth
+  (`plugin-config-unbound`); an org whose effective config is invalid gets no call
+  (`needsConfig`); org admins may switch off single extension tools. A setup check
+  (`ctx.setup.check`, declared in `permissions.setupChecks`) never writes and never returns a secret; it never gets an OAuth
   client secret or a member's token.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
