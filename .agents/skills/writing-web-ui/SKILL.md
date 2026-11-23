@@ -49,6 +49,15 @@ wrappers throw in development and tests (`assertSectionGroups` in the template f
 page passes the loaded page's section list, so the count and the layout do not change on load.
 A SettingsPage is always stacked. Tests read the layout with `formSectionLayout(template)`.
 
+**API types are checked against the kernel.** The types in `apps/web/src/lib/*.ts` are written by
+hand (the web never imports the kernel), and `pnpm check:web-api-parity` compares each
+`apiFetch<T>(path, init)` with the kernel route it reaches: a field the route does not return, a
+type it does not match, an enum value on one side only, a body field the route refuses. Type the
+call with what that route answers (a shared type's route-only field is optional; a response that
+differs per route gets its own `Pick` / `Omit`), call through `apiFetch` with a path built from
+constants and one-expression helpers so the check can resolve it, and tag a field the web fills
+itself `/** @clientOnly … */`. Details: [tools/checks/README.md](../../../tools/checks/README.md).
+
 **Icons are components.** Use `<Icon name="search" size={14} />` (or an `IconButton` with an `Icon` and an `aria-label`) from `@capybara-hq/design`; never a character as an icon (`▾ ✓ ✕ ⋯ ⠿ ▤ ●`…; rule `design-char-icon`) and never an icon library in `apps/web`. A missing icon is added to `packages/design/scripts/gen-icons.mjs` (`pnpm --filter @capybara-hq/design gen:icons`).
 
 ## Choosing a template (spec §5)

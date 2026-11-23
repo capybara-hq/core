@@ -201,6 +201,13 @@ async create(@ZBody(WidgetCreateBody) body: z.infer<typeof CreateSchema>) {}
 
 `createZodDto` (`src/infra/validation/create-zod-dto.ts`) turns a zod schema into a named DTO class; `@ZBody(Dto)` / `@ZQuery(Dto)` / `@ZParam(Dto)` pass the DTO to the global validation pipe (no decorator metadata, so a bare `@Body()` typed with a DTO is never validated and `kc-zod-pipe` rejects it) and feed the OpenAPI document (`http.swagger`, served at `/docs`). A failure returns 400 `validation_failed` with `details` as the list of field problems. Route parameters that need validation go through a `@ZParam` DTO too (decision R20), so `details[].path` names the parameter. Give every string an upper bound (`max`) to prevent oversized input.
 
+Declare every controller method's return type (`Promise<{ items: ItemView[] }>`, a union for
+answers that differ): `pnpm check:web-api-parity` compares it, and the `z.input` of the
+`@ZBody` schema, with the web's hand-written types, so a renamed, dropped or narrowed field fails
+there naming the route; fix the web type it names in the same change. A view field read from a
+column typed `string` that only holds an enum is typed as that enum (`kind: ReportBodyInput["kind"]`),
+or the web cannot switch on it safely.
+
 ## People in responses
 
 A response that shows a person carries their avatar through `identity/account-avatar.ts`: join
