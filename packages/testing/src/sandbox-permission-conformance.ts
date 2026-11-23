@@ -235,7 +235,10 @@ export interface SandboxPermissionFixture {
     readFile(path: string): Promise<Uint8Array | null>;
     /** Permission bits (`st_mode & 0o7777`), or null when missing. */
     mode(path: string): Promise<number | null>;
-    /** The subset of `pids` still running on the device. */
+    /**
+     * The subset of `pids` still running on the device (a zombie waiting for its reaper may count
+     * either way: the harness polls until the killed ones are gone).
+     */
     alive(pids: readonly number[]): Promise<number[]>;
     /**
      * Runs a Python 3 program (`python3 - ...args`, program on stdin) as the device user in a
@@ -741,6 +744,21 @@ export async function runSandboxPermissionConformance(
   };
   const waitFor = (path: string, pending: Promise<unknown>) =>
     waitForFile(fixture.inspect.readFile, path, pending);
+  /**
+   * Asserts that every process of `pids` ends. A kill is asynchronous: the operation can report
+   * its cancel or timeout while a killed descendant is still being delivered its signal or waits
+   * for its reaper, so this polls `alive` until none is left, failing with the survivors after
+   * 10 s.
+   */
+  const ended = async (pids: readonly number[], message: string) => {
+    const deadline = Date.now() + 10_000;
+    let left = await fixture.inspect.alive(pids);
+    while (left.length > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      left = await fixture.inspect.alive(left);
+    }
+    assert.deepEqual(left, [], message);
+  };
   const receipts = async () =>
     Promise.all([granted, ...ungranted].map((endpoint) => endpoint.receipts()));
   const connect = (endpoint: SandboxPermissionEndpoint) =>
@@ -1000,7 +1018,7 @@ export async function runSandboxPermissionConformance(
     abort.abort();
     const stopped = await cancelled;
     assert.equal(stopped.exitCode, null, "a cancelled operation has no exit code");
-    assert.deepEqual(await fixture.inspect.alive(pids), [], "cancellation ends every descendant");
+    await ended(pids, "cancellation ends every descendant");
     await exec(grant, "touch release-keep");
     assert.equal((await keepAlive).exitCode, 0, "the sibling operation survives the cancel");
     assert.equal(text(await fixture.inspect.readFile(at(root, "kept"))), "done");
@@ -1009,7 +1027,7 @@ export async function runSandboxPermissionConformance(
     const timed = await exec(grant, `(sleep 1005 & echo $! > p4); sleep 1006`, signal, 1000);
     assert.equal(timed.timedOut, true, "a restricted timeout is reported");
     const p4 = Number(text(await fixture.inspect.readFile(at(root, "p4"))));
-    assert.deepEqual(await fixture.inspect.alive([p4]), [], "timeout ends background children");
+    await ended([p4], "timeout ends background children");
   };
 
   /**
