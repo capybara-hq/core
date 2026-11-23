@@ -17,6 +17,7 @@ import {
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
+import type { HelperLauncher } from "./helper-launcher.js";
 import type { OrphanProcesses } from "./mac-orphans.js";
 import type { NativeHelperRequest, NativeHelperResult } from "./native-helper-client.js";
 import {
@@ -47,6 +48,13 @@ export interface MacOperationBackendOptions {
   stateDir: string;
   roots: DeviceOwnerCeiling["roots"];
   pythonPath: string;
+  /**
+   * How the supervisor runs its output helpers (default: `pythonPath` on the host); a docker-mode
+   * device runs them in helper containers.
+   */
+  helpers?: HelperLauncher;
+  /** The private directory retained output spools live in (default: `stateDir`). */
+  outputDir?: string;
   /**
    * The runtime hash this generation's binding attested. Restricted launches run only the sealed
    * runtime with this hash; without it they are refused.
@@ -176,6 +184,8 @@ export interface LocalBackendHost {
   artifactTarget?: (target: { outputPath: string; artifactRoot: string }) => {
     outputPath: string;
     artifactRoot: string;
+    /** The program-made directory a helper container mounts to reach the artifact root. */
+    artifactMount?: string;
   };
   /** Called once per recorded launch identity a previous device process left running. */
   reapOrphan?: SupervisorOptions["reapOrphan"];
@@ -272,6 +282,8 @@ export async function createLocalOperationBackend(
     deviceId: options.deviceId,
     instanceGeneration: options.instanceGeneration,
     pythonPath: options.pythonPath,
+    ...(options.helpers ? { helpers: options.helpers } : {}),
+    ...(options.outputDir ? { outputDir: options.outputDir } : {}),
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(host.startWorker ? { start: host.startWorker } : {}),
     ...(host.reapOrphan ? { reapOrphan: host.reapOrphan } : {}),

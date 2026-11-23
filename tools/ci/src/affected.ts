@@ -59,6 +59,13 @@ export interface Plan {
    * always on main.
    */
   bootstrapNetwork: boolean;
+  /**
+   * Run the network half of check:device-image-pin (`pnpm check:device-image-pin --network`: the
+   * device's pinned sandbox image digests exist in the registry and agree with its version tag).
+   * It needs the registry, so on a PR only when the pin or the check's code changed
+   * ({@link DEVICE_IMAGE_PIN_NETWORK_INPUTS}); always on main, and release.yml runs it too.
+   */
+  deviceImagePinNetwork: boolean;
 }
 
 /**
@@ -189,6 +196,16 @@ const BOOTSTRAP_NETWORK_INPUTS: ((f: string) => boolean)[] = [
 ];
 const isBootstrapNetworkInput = (f: string) => BOOTSTRAP_NETWORK_INPUTS.some((m) => m(f.trim()));
 
+/**
+ * Inputs of the network half of check:device-image-pin: the pin (the device's docker-image.ts)
+ * and the check's own code (tools/checks' device-image-pin.ts and its CLI).
+ */
+const DEVICE_IMAGE_PIN_NETWORK_INPUTS = new Set([
+  "packages/device/src/exec/docker-image.ts",
+  "tools/checks/src/device-image-pin.ts",
+  "tools/checks/src/cli/device-image-pin.ts",
+]);
+
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
   if (GITHUB_NO_TESTS.has(f)) return true;
@@ -217,6 +234,7 @@ export function planAll(reason: string): Plan {
     e2e: true,
     docker: true,
     bootstrapNetwork: true,
+    deviceImagePinNetwork: true,
   };
 }
 
@@ -232,6 +250,7 @@ function planNone(reason: string): Plan {
     e2e: false,
     docker: false,
     bootstrapNetwork: false,
+    deviceImagePinNetwork: false,
   };
 }
 
@@ -336,6 +355,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     e2e: manifestChanged || hits(["apps/web", "apps/capybara", ...e2ePlugins]),
     docker: manifestChanged || hits(DOCKER_ROOTS) || webImageChanged(files, ws, depsOf),
     bootstrapNetwork: files.some(isBootstrapNetworkInput),
+    deviceImagePinNetwork: files.some((f) => DEVICE_IMAGE_PIN_NETWORK_INPUTS.has(f.trim())),
   };
 }
 
@@ -406,5 +426,6 @@ export function toOutputs(plan: Plan): Record<string, string> {
     e2e: String(plan.e2e),
     docker: String(plan.docker),
     "bootstrap-network": String(plan.bootstrapNetwork),
+    "device-image-pin-network": String(plan.deviceImagePinNetwork),
   };
 }

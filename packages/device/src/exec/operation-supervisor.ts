@@ -25,6 +25,7 @@ import {
   type SandboxStopResult,
   SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
+import { type HelperLauncher, hostHelperLauncher } from "./helper-launcher.js";
 import { type OrphanProcesses, reapOrphans } from "./mac-orphans.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
 import { digest, type LocalExecAuthority, type LocalOperationGrant } from "./operation-types.js";
@@ -135,6 +136,10 @@ export interface SupervisorOptions {
    */
   onLiveEnded?: (operationId: string) => void;
   pythonPath?: string;
+  /** How the output helpers run (default: `pythonPath`, or `/usr/bin/python3`, on the host). */
+  helpers?: HelperLauncher;
+  /** The private directory retained output spools live in (default: `stateDir`). */
+  outputDir?: string;
   outputBarrier?: (name: string) => Promise<void>;
   beforePersist?: () => void;
   /**
@@ -258,8 +263,12 @@ export class MacOperationSupervisor {
   private draining = false;
   /** Set by {@link close}: a superseded supervisor never writes the shared journal again. */
   private closed = false;
+  private readonly helpers: HelperLauncher;
+  private readonly outputDir: string;
   constructor(private readonly options: SupervisorOptions) {
     this.now = options.now ?? Date.now;
+    this.helpers = options.helpers ?? hostHelperLauncher(options.pythonPath ?? "/usr/bin/python3");
+    this.outputDir = options.outputDir ?? options.stateDir;
     this.file = join(options.stateDir, `operation-journal-${digest(options.deviceId)}.json`);
     this.rollbackFile = `${this.file}.rollback`;
     this.decisionFile = `${this.file}.decision`;
@@ -305,11 +314,7 @@ export class MacOperationSupervisor {
               !entry.output.expired &&
               JSON.stringify(old?.output) !== JSON.stringify(entry.output)
             )
-              finalizeRecoveredOutput(
-                options.stateDir,
-                options.pythonPath ?? "/usr/bin/python3",
-                entry.output.locator,
-              );
+              finalizeRecoveredOutput(this.outputDir, this.helpers, entry.output.locator);
           }
           // Readable decision bytes are not proof of the former syscall's outcome. Validate
           // and finalize all evidence anew before exposing the successor after restart.
@@ -922,10 +927,10 @@ export class MacOperationSupervisor {
       try {
         await request.beforeLaunch();
         const spool = await ManagedOutputSpool.create({
-          privateRoot: this.options.stateDir,
+          privateRoot: this.outputDir,
           ...request.managedOutput,
           ref: entry.ref,
-          pythonPath: request.pythonPath,
+          helpers: this.helpers,
           barrier: this.options.outputBarrier,
           publish: (locator) =>
             this.serial(() => {
@@ -1038,13 +1043,13 @@ export class MacOperationSupervisor {
     if (live) return { spool: live, temporary: false };
     if (!entry.output) throw Error("Retained output lost");
     const spool = await ManagedOutputSpool.openExisting({
-      privateRoot: this.options.stateDir,
-      artifactRoot: this.options.stateDir,
+      privateRoot: this.outputDir,
+      artifactRoot: this.outputDir,
       outputPath: "unused",
       ref: entry.ref,
       locator: entry.output.locator,
       cleanup,
-      pythonPath: this.options.pythonPath ?? "/usr/bin/python3",
+      helpers: this.helpers,
       publish: async () => {
         throw Error("Recovered output cannot append");
       },

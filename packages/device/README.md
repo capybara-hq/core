@@ -403,8 +403,8 @@ sleeping machine as offline, as for a lost network.
 ## Docker mode
 
 `login --mode docker` runs every operation in one container per device
-(`capybara-device-<deviceId>`, started on first use from
-`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release). On Linux it runs
+(`capybara-device-<deviceId>`, started on first use from the sandbox image this release pins by
+digest, `ghcr.io/capybara-hq/capybara-sandbox@sha256:…`, never by tag). On Linux it runs
 as your own uid:gid, so it can write the mounted directories you own (a root user falls back to the
 image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`,
 `<dir>/skills` (read only) and `<dir>/tmp` are mounted at `/workspace`, `/skills` and `/tmp`; the
@@ -412,13 +412,27 @@ container has a read-only root file system, a pids limit of 1024, `--cap-drop AL
 `no-new-privileges`, and the policy's `cpu` and `memoryMb` as `--cpus`, `--memory` and an equal
 `--memory-swap`.
 
-Docker mode also needs the host's `/usr/bin/python3` (macOS: with the command line tools, `xcode-select --install`; Debian or
-Ubuntu: `sudo apt install python3`; Fedora or RHEL: `sudo dnf install python3`): the program runs its
-trusted helpers on the host with it, by absolute path, even though the work runs in the container.
-`login --mode docker` and `start` check for it first and refuse with that hint; a refused login
-stores nothing (JSON error code `host_python_missing`; a re-login of an existing docker device
-writes its credential and warns instead). A login service keeps failing to start until it is
-installed.
+The pinned digests (`packages/device/src/exec/docker-image.ts`: the multi-platform index, and the
+manifest and config of linux/amd64 and linux/arm64) are part of the program's verified bytes. At
+every bind the program checks that the container's image id is one of them for the daemon's
+architecture and attests nothing otherwise; a container made from another image is recreated from
+the pinned digest once idle (files kept). Docker mode refuses an architecture without a pinned
+platform (JSON error code `docker_unsupported_architecture`). To pull from a mirror, set
+`CAPYBARA_DEVICE_IMAGE_REPOSITORY` to its repository (e.g. `registry.example.com/capybara-sandbox`,
+no tag or digest); the digest stays pinned, so the mirror must preserve it (`crane copy`,
+`docker buildx imagetools create`).
+
+Docker mode needs no interpreter on the host. The program's trusted helpers (the retained
+output of background tasks, skills preparation, and the probe of the image's interpreter for the
+environment fingerprint) run in short-lived helper containers of the same pinned image
+(`capybara-helper-<deviceId>-…`, label `capybara.device.helper`): no network, a read-only root,
+`--cap-drop ALL`, `no-new-privileges`, no log driver, as the device container's user, with only
+the step's host directories mounted at the same paths (skills preparation: `<dir>/skills`; a
+background task's output: the connection's `output` directory and `<dir>/workspace` or
+`<dir>/tmp`). A link the work plants in the workspace can reach only those mounts, never the rest
+of the host. Leftover helper containers of a killed run are removed at the next start. A program running as root on
+Linux runs both containers as the image's `sandbox` user (uid 1000), which cannot write the
+root-owned device directories: run the program as an ordinary user.
 
 The container is always on Docker's default bridge: an escalated call has the container's whole network.
 Restricted work inside it is confined by the Linux launcher (Landlock, the seccomp broker and the

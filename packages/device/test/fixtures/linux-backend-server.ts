@@ -11,7 +11,9 @@ import {
   type SandboxExecOptions,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
+import { containerUser } from "../../src/exec/docker.js";
 import { createDockerOperationBackend } from "../../src/exec/docker-operations.js";
+import { containerHelperLauncher } from "../../src/exec/helper-launcher.js";
 import {
   createHostOperationBackend,
   type LocalOperationBackend,
@@ -86,6 +88,13 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
             hostRoots: message.hostRoots as { workspace: string; skills: string; tmp: string },
             readOwnerCeiling: read,
             container: {
+              // as a real local-Docker device: its trusted helpers run in helper containers (of
+              // the fixture container's image, which stands in for the pinned one here)
+              helpers: containerHelperLauncher({
+                deviceId,
+                image: String(message.image),
+                user: containerUser(),
+              }),
               operationContainer: async () => ({
                 name: container,
                 user: String(message.user),

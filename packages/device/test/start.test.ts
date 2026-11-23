@@ -75,8 +75,8 @@ const stagedParts = (calls: string[] = []) =>
     },
   }) as unknown as StagedDevice;
 
-describe("start: docker mode needs the host python3", () => {
-  const attempt = async (mode: "os" | "docker", isExecutable: () => boolean) => {
+describe("start: docker mode needs a pinned image platform, never the host python3", () => {
+  const attempt = async (mode: "os" | "docker", arch = "x64") => {
     writeCredential(dir, { ...cred, mode });
     const err: string[] = [];
     const created: string[] = [];
@@ -85,7 +85,7 @@ describe("start: docker mode needs the host python3", () => {
       out: () => {},
       err: (l) => err.push(l),
       proc: Object.assign(new EventEmitter(), { pid: 4260 }) as never,
-      hostProbes: { isExecutable, commandLineTools: isExecutable },
+      hostProbes: { arch },
       createStaged: () => {
         created.push("staged");
         return stagedParts();
@@ -95,21 +95,20 @@ describe("start: docker mode needs the host python3", () => {
     return { code, err, created };
   };
 
-  it("refuses with the install hint and builds nothing", async () => {
-    const r = await attempt("docker", () => false);
+  it("refuses an architecture the pinned sandbox image has no platform for", async () => {
+    const r = await attempt("docker", "s390x");
     expect(r.code).toBe(1);
-    expect(r.err.join("\n")).toContain("/usr/bin/python3");
-    expect(r.err.join("\n")).toContain("install");
+    expect(r.err.join("\n")).toContain("not available on this architecture (s390x)");
     expect(r.err.join("\n")).toContain("keeps failing");
     expect(r.created).toEqual([]);
     expect(existsSync(pidPath(dir))).toBe(false);
+    expect((await attempt("os", "s390x")).code).toBe(0);
   });
 
-  it("starts when it is there, and OS mode never asks", async () => {
-    expect((await attempt("docker", () => true)).code).toBe(0);
-    const os = await attempt("os", () => false);
-    expect(os.code).toBe(0);
-    expect(os.err).toEqual([]);
+  it("starts on a pinned architecture, with no python3 check at all", async () => {
+    const r = await attempt("docker");
+    expect(r.code).toBe(0);
+    expect(r.err.join("\n")).not.toContain("python3");
   });
 });
 

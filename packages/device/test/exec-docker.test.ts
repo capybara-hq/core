@@ -20,9 +20,13 @@ import {
   containerSpec,
   containerUser,
   DockerContainer,
-  SANDBOX_IMAGE,
-  SANDBOX_IMAGE_TAG,
 } from "../src/exec/docker.js";
+import {
+  matchPinnedImage,
+  pinnedPlatform,
+  SANDBOX_IMAGE_PIN,
+  sandboxImageReference,
+} from "../src/exec/docker-image.js";
 import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
 import { osRoots, prepareDeviceDir } from "../src/exec/shared.js";
 import { DEFAULT_POLICY, type OwnerCeilingPolicy } from "../src/state.js";
@@ -35,6 +39,7 @@ const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
 
 /** The policy these tests were written against: the owner allows Full access. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
+const SANDBOX_IMAGE = sandboxImageReference({});
 const hasDocker = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Polls `cond` until it holds; the test's own timeout bounds the wait. */
@@ -43,9 +48,10 @@ const until = async (cond: () => boolean): Promise<void> => {
 };
 
 describe("docker container constants", () => {
-  it("pins the published sandbox image tag", () => {
-    expect(SANDBOX_IMAGE_TAG).toBe("0.1.0-rc.5");
-    expect(SANDBOX_IMAGE).toBe("ghcr.io/capybara-hq/capybara-sandbox:0.1.0-rc.5");
+  it("runs the sandbox image by its pinned index digest, never a tag", () => {
+    expect(sandboxImageReference({})).toBe(
+      `ghcr.io/capybara-hq/capybara-sandbox@${SANDBOX_IMAGE_PIN.index}`,
+    );
     expect(containerName("env_1")).toBe("capybara-device-env_1");
   });
 });
@@ -111,37 +117,40 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     const state = join(base, "state");
     mkdirSync(state, { mode: 0o700 });
     const hostRoots = osRoots(dir);
-    const backend = await createDockerOperationBackend(
-      {
-        deviceId: envId,
-        instanceGeneration: "g",
-        stateDir: state,
-        pythonPath: "/usr/bin/python3",
-        runtimeHash: "h",
-        hostRoots,
-        readOwnerCeiling: async () => ({
-          revision: "one",
-          outsideSandbox: true,
-          network: "allowlist",
-          roots: hostRoots,
-          projectReach: "workspace",
-          allowedDomains: [],
-          projectPaths: [],
-          secretAndStateDenies: [],
-          otherConnectionDenies: [],
-          unreadableConnections: [],
-          mountReexposedDenies: [],
-          mountReexposureProblem: null,
-          restrictedDeniedReadRoots: [],
-          preparation: {
-            skillsRoot: hostRoots.skills,
-            attachmentsBase: join(hostRoots.workspace, "attachments"),
-          },
-        }),
-        container: ex,
-      },
-      { acquireRuntime: async () => ({ release: () => {} }) },
-    );
+    const makeBackend = () =>
+      createDockerOperationBackend(
+        {
+          deviceId: envId,
+          instanceGeneration: "g",
+          stateDir: state,
+          // no host interpreter: every trusted helper runs in a helper container
+          pythonPath: "/nonexistent/python3",
+          runtimeHash: "h",
+          hostRoots,
+          readOwnerCeiling: async () => ({
+            revision: "one",
+            outsideSandbox: true,
+            network: "allowlist",
+            roots: hostRoots,
+            projectReach: "workspace",
+            allowedDomains: [],
+            projectPaths: [],
+            secretAndStateDenies: [],
+            otherConnectionDenies: [],
+            unreadableConnections: [],
+            mountReexposedDenies: [],
+            mountReexposureProblem: null,
+            restrictedDeniedReadRoots: [],
+            preparation: {
+              skillsRoot: hostRoots.skills,
+              attachmentsBase: join(hostRoots.workspace, "attachments"),
+            },
+          }),
+          container: ex,
+        },
+        { acquireRuntime: async () => ({ release: () => {} }) },
+      );
+    const backend = await makeBackend();
     const support = await backend.permissionSupport({ id: envId }, live);
     expect(support).toMatchObject({ outsideSandbox: true, background: true });
 
@@ -210,6 +219,33 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     expect(readFileSync(join(dir, "workspace", "proj", "full.log"), "utf8")).toBe(
       "full-background\n",
     );
+    // the retained output's spool lives in the state directory's output directory only
+    expect(readdirSync(join(state, "output")).some((n) => n.endsWith(".spool"))).toBe(true);
+    // after a restart (a new backend on the same state), the retained output is read back
+    // through a recovered spool in a new helper container
+    const restarted = await makeBackend();
+    const read = await restarted
+      .forExecution(authority(fs.operationId))
+      .background.readOutput({ id: envId }, fullRef, { offset: 0, maxBytes: 4096, signal: live });
+    expect("data" in read && Buffer.from(read.data).toString()).toBe("full-background\n");
+    // skills preparation writes the host skills directory behind the read-only mount (it needs
+    // restricted support; linux-operation-worker.test.ts runs it where Landlock is unavailable)
+    if (support.restricted !== null) {
+      const prep = await restarted.prepare(
+        { id: envId },
+        {
+          operationId: "prep-1",
+          deviceId: envId,
+          purpose: "skills",
+          writeRoots: ["/skills/new"],
+          tag: "s",
+        },
+        live,
+      );
+      await prep.writeFile("/skills/new/SKILL.md", new TextEncoder().encode("skill"), live);
+      expect(readFileSync(join(dir, "skills", "new", "SKILL.md"), "utf8")).toBe("skill");
+      expect(inContainer("cat /skills/new/SKILL.md")).toBe("skill");
+    }
     // Docker Desktop's file sharing drops Landlock's inode rules on the bind mounts: the
     // self-check reports restricted unavailable there instead of denying every command
     if (support.restricted === null)
@@ -241,6 +277,41 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
       }
       expect(readFileSync(join(dir, "workspace", "proj", "out.log"), "utf8")).toBe("background\n");
     }
+  });
+
+  it("creates the container from the pinned digest: its image id is a pinned digest", async () => {
+    await hold();
+    const image = inspect("{{.Image}}");
+    const arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], {
+      encoding: "utf8",
+    }).trim();
+    expect(matchPinnedImage(image, pinnedPlatform(arch))).toBeDefined();
+    expect(inspect("{{.Config.Image}}")).toBe(SANDBOX_IMAGE);
+  });
+
+  it("recreates a container made from another image, though its flags match", async () => {
+    // another image (a different config digest), built locally from the pinned one
+    const other = "capybara-device-test-other-image";
+    execFileSync("docker", ["build", "-q", "-t", other, "-"], {
+      input: `FROM ${SANDBOX_IMAGE}\nLABEL capybara.test=other\n`,
+    });
+    const c = new DockerContainer({ dir, deviceId: envId, policy: () => FULL_POLICY });
+    const flags = c.runFlags();
+    flags[flags.indexOf(SANDBOX_IMAGE)] = other;
+    execFileSync("docker", [
+      "run",
+      "-d",
+      "--name",
+      containerName(envId),
+      "--label",
+      `capybara.device.spec=${containerSpec(c.runFlags())}`,
+      ...flags,
+    ]);
+    await hold(c);
+    const arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], {
+      encoding: "utf8",
+    }).trim();
+    expect(matchPinnedImage(inspect("{{.Image}}"), pinnedPlatform(arch))).toBeDefined();
   });
 
   it("reuses the container and recreates it when the mounts differ", async () => {

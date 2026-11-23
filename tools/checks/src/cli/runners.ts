@@ -4,6 +4,11 @@ import { checkAgentDocs } from "../agent-docs.js";
 import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
+import {
+  checkDeviceImagePin,
+  DEVICE_IMAGE_PIN_FILE,
+  DEVICE_SOURCE_DIR,
+} from "../device-image-pin.js";
 import { checkSdkComments } from "../english-comments.js";
 import { checkDesignI18n, checkI18n, checkWebI18nKeys } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
@@ -83,5 +88,10 @@ export const RUNNERS: Record<string, NamedCheck> = {
         join(root, "docker/compose.yaml"),
         join(root, "docker/sandbox-proxy/haproxy.cfg"),
       ),
+  },
+  "device-image-pin": {
+    name: "device image pin",
+    run: () =>
+      checkDeviceImagePin(join(root, DEVICE_IMAGE_PIN_FILE), join(root, DEVICE_SOURCE_DIR)),
   },
 };

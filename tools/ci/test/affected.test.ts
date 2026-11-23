@@ -309,6 +309,30 @@ describe("planFromFiles: by diff", () => {
     expect(planAll("push").bootstrapNetwork).toBe(true);
   });
 
+  it("the network half of check:device-image-pin runs only when the pin or the check changes", () => {
+    // this workspace holds packages/device, so its other files do not run everything
+    const device: Workspace = { ...ws, packages: [...ws.packages, pkg("packages/device")] };
+    const devicePlan = (f: string) => planFromFiles([f], device);
+    for (const f of [
+      "packages/device/src/exec/docker-image.ts",
+      "tools/checks/src/device-image-pin.ts",
+      "tools/checks/src/cli/device-image-pin.ts",
+    ]) {
+      expect(devicePlan(f).deviceImagePinNetwork, f).toBe(true);
+    }
+    for (const f of [
+      "packages/device/src/exec/docker.ts",
+      "tools/checks/test/device-image-pin.test.ts",
+      "packages/kernel/bootstrap.json",
+      "docs/plan.md",
+    ]) {
+      expect(devicePlan(f).deviceImagePinNetwork, f).toBe(false);
+    }
+    expect(plan(".github/workflows/ci.yml").deviceImagePinNetwork).toBe(true);
+    expect(planAll("push").deviceImagePinNetwork).toBe(true);
+    expect(toOutputs(planAll("push"))["device-image-pin-network"]).toBe("true");
+  });
+
   it("packages without a test dir are not passed to vitest", () => {
     expect(plan("tools/no-tests/src/x.ts")).toMatchObject({ testDirs: ["tools/checks"] });
   });

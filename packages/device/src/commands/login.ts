@@ -17,11 +17,11 @@ import {
   listConnections,
   unreadableConnections,
 } from "../connections.js";
+import { dockerHostProblem, type HostProbes } from "../docker-host.js";
 import { withCanonicalForms, within } from "../exec/operation-types.js";
 import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
-import { type HostProbes, hostPythonProblem } from "../host-python.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
@@ -363,7 +363,8 @@ export async function login(
       1,
     );
   }
-  // Docker mode needs the host's python3: refused before anything is requested or stored.
+  // Docker mode needs a pinned image platform for this architecture: refused before anything is
+  // requested or stored.
   // (only when this machine has no connection yet: then the device is certainly a new one; with
   // others, an existing device keeps its mode and --mode is ignored, so it is checked below)
   if (
@@ -371,9 +372,9 @@ export async function login(
     listConnections(deps.machineDir).length === 0 &&
     unreadableConnections(deps.machineDir).length === 0
   ) {
-    const problem = hostPythonProblem(platform, deps.hostProbes);
+    const problem = dockerHostProblem(platform, deps.hostProbes);
     if (problem !== undefined)
-      return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
+      return fail(problem.code, `${problem.message} Nothing was stored.`, 1);
   }
   // Before the person approves anything: a credential the kernel issues must have a place here.
   try {
@@ -487,14 +488,14 @@ export async function login(
           }
         }
         if (served === undefined && mode === "docker") {
-          const problem = hostPythonProblem(platform, deps.hostProbes);
+          const problem = dockerHostProblem(platform, deps.hostProbes);
           if (problem !== undefined) {
             try {
               rmdirSync(connDir);
             } catch {
               // not empty or already gone
             }
-            return fail("host_python_missing", `${problem} Nothing was stored.`, 1);
+            return fail(problem.code, `${problem.message} Nothing was stored.`, 1);
           }
         }
         // Recreates a lost directory, marker or root: the device starts afresh.
@@ -516,10 +517,10 @@ export async function login(
           err(`Cannot read the local policy in ${connDir}: ${(e as Error).message}`);
         }
         // an existing docker device keeps its mode: the requirement applies to it, but the new
-        // credential is still written (start refuses until the host has python3)
-        const hostPython =
+        // credential is still written (start refuses until that is resolved)
+        const dockerProblem =
           served !== undefined && mode === "docker"
-            ? hostPythonProblem(platform, deps.hostProbes)
+            ? dockerHostProblem(platform, deps.hostProbes)?.message
             : undefined;
         /** Why sandboxed work cannot run here: the OS sandbox is missing (OS mode only). */
         let noSandbox: string | undefined;
@@ -576,10 +577,8 @@ export async function login(
         out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths, deviceId));
         if (noSandbox !== undefined)
           out(restrictedUnavailableLoginLine(noSandbox, deviceId, ceiling.outsideSandbox));
-        if (hostPython !== undefined)
-          out(
-            `Warning: ${hostPython} Until then capybara-device start refuses to run this device.`,
-          );
+        if (dockerProblem !== undefined)
+          out(`Warning: ${dockerProblem} capybara-device start refuses to run this device here.`);
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(

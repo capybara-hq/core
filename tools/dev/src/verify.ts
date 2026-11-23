@@ -117,6 +117,13 @@ export function verifySteps(plan: Plan, base: string, opts: VerifyOptions = {}):
       title: "Bootstrap manifest against npm and the marketplace",
       cmd: ["pnpm", "check:bootstrap", "--network"],
     });
+  // likewise when the device's image pin or its check changed: it needs the registry
+  if (plan.deviceImagePinNetwork)
+    steps.push({
+      id: "device-image-pin-network",
+      title: "Device image pin against the registry",
+      cmd: ["pnpm", "check:device-image-pin", "--network"],
+    });
   steps.push({
     id: "commitlint",
     title: "Commit messages",
