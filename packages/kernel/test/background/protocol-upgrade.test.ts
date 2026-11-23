@@ -24,7 +24,7 @@ import { RetirementPendingError, type SandboxService } from "../../src/sandbox/s
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor, retirementFor } from "../helpers/identity.js";
-import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { managedUse, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -159,9 +159,10 @@ const ctxFor = (deviceId: string) => ({
   holderConversationId: seed.conversationId,
   actor: { accountId: seed.accountId, conversationId: seed.conversationId },
 });
-/** One ordinary use: the instance it ran on. */
+/** One ordinary use on the managed route (as a tool call does): the instance it ran on. */
 const use = (s: SandboxService, deviceId: string) =>
-  s.withSandbox(
+  managedUse(
+    s,
     ctxFor(deviceId),
     async (h, _p, info) => ({ id: h.id, fresh: info.fresh }),
     signal(),
