@@ -1,7 +1,7 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
 import {
   FakeImDirectoryConfig,
-  fakeImDirectory,
+  makeFakeImDirectory,
 } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /**
@@ -17,6 +17,6 @@ export default defineExtension({
   provides: ["directory@1"],
   config: { deployment: FakeImDirectoryConfig },
   setup(ctx) {
-    ctx.provide("directory@1", fakeImDirectory);
+    ctx.provide("directory@1", makeFakeImDirectory(ctx));
   },
 });

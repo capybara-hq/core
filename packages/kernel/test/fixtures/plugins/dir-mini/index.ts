@@ -1,6 +1,6 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { fakeImDirectory } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
+import { makeFakeImDirectory } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /**
  * A test extension that only provides `directory@1`: the fake-im implementation under another name
@@ -15,6 +15,6 @@ export default defineExtension({
   provides: ["directory@1"],
   config: { deployment: z.object({ directoryUrl: z.string().url() }) },
   setup(ctx) {
-    ctx.provide("directory@1", fakeImDirectory);
+    ctx.provide("directory@1", makeFakeImDirectory(ctx));
   },
 });

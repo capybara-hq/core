@@ -509,10 +509,12 @@ describe("setup checks: reading and running", () => {
       .spyOn(k.app.get(EffectiveConfigs), "get")
       .mockRejectedValue(new Error("decrypt failed"));
     try {
-      // the target cannot be prepared: the run is refused before any check runs
-      const r = await run("proxy", { connectionId: id });
-      expect(r.statusCode).toBe(500);
-      expect(r.body).not.toContain("decrypt failed");
+      const s = await runOk("proxy", { connectionId: id });
+      expect(s).toMatchObject({
+        status: "unknown",
+        reason: { en: "Checks are temporarily unavailable; retry later." },
+      });
+      expect(JSON.stringify(s)).not.toContain("decrypt failed");
     } finally {
       spy.mockRestore();
     }

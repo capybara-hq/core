@@ -19,11 +19,11 @@ import {
   proxyCheck,
   throwCheck,
 } from "./checks.js";
-import { FakeImDirectoryConfig, fakeImDirectory } from "./directory.js";
+import { FakeImDirectoryConfig, makeFakeImDirectory } from "./directory.js";
 import { fakeImIdentitySource } from "./identity.js";
 
 export { FakeImConnection, fakeImWebhook, makeFakeImChannel } from "./channel.js";
-export { FakeImDirectoryConfig, fakeImDirectory } from "./directory.js";
+export { FakeImDirectoryConfig, makeFakeImDirectory } from "./directory.js";
 export { fakeImIdentitySource } from "./identity.js";
 
 /**
@@ -123,7 +123,7 @@ export default defineExtension({
       ),
     );
     ctx.provide("identity-source@1", fakeImIdentitySource);
-    ctx.provide("directory@1", fakeImDirectory);
+    ctx.provide("directory@1", makeFakeImDirectory(ctx));
     ctx.tools.register(POST_SPEC, postHandler(config));
     // setup checks for the kernel's check runner tests (checks.ts says what each does)
     ctx.setup.check("pass", passCheck);

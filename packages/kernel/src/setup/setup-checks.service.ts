@@ -554,7 +554,17 @@ export class SetupChecksService {
     if (!(await isExtensionEnabled(this.db.db, orgId, plugin))) {
       return { state: unknownState(REASONS.disabled(plugin)) };
     }
-    const eff = await this.effective.get(orgId, plugin);
+    let eff: Awaited<ReturnType<EffectiveConfigs["get"]>>;
+    try {
+      eff = await this.effective.get(orgId, plugin);
+    } catch (err) {
+      // fail closed: nothing runs and nothing is cached; the error is logged, never echoed
+      this.log.warn("setup checks: cannot read the effective config", {
+        plugin,
+        err: describeCheckError(err, (s) => s),
+      });
+      return { state: unknownState(REASONS.unavailable) };
+    }
     if (!eff.ok) {
       return {
         state: unknownState(

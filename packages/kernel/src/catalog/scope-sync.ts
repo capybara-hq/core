@@ -458,8 +458,8 @@ export class PluginScopeSync {
 
   /**
    * Whether installing the item (with the dependencies the org lacks) needs the org's input: a
-   * connector template, or an extension whose org config is required and not set in the org. The
-   * same rule as the org catalog's `needs_config`, applied to the whole tree.
+   * connector template, or an extension whose effective config for the org is not valid. The same
+   * rule as the org catalog's `needs_config`, applied to the whole tree.
    */
   async needsInput(orgId: string, itemId: string, version: string): Promise<boolean> {
     const v = await this.db

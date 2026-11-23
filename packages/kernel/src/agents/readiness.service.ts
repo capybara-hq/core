@@ -46,7 +46,7 @@ const orgCanConfigure = (v: OrgExtensionView) => v.configurable;
  * view comes from the org's extension list, which shows an extension only when it is offered to
  * the org (`offeredToOrg`): not named to other orgs only, not disabled while off.
  */
-function fixOf(v: OrgExtensionView): OrgFixableProvider["reason"] | null {
+export function fixOf(v: OrgExtensionView): OrgFixableProvider["reason"] | null {
   if (!v.available) return null;
   if (!v.enabled)
     return v.switchable && (!v.needsConfig || orgCanConfigure(v)) ? "not_enabled" : null;
