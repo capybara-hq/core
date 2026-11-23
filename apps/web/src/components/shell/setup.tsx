@@ -16,10 +16,17 @@ import {
 import { useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext } from "react";
 import { type OrgReadiness, setupReady } from "../../lib/agents";
-import { type ModelConfigViewer, modelConfigHref, modelConfigViewer } from "../../lib/model-config";
+import {
+  type ModelConfigViewer,
+  modelConfigHref,
+  modelConfigViewer,
+  noModelsHref,
+  noModelsWaitsFor,
+} from "../../lib/model-config";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
 import { setupRouteOf, under } from "../../lib/setup-routes";
+import { useModelProblem } from "../useModelProblem";
 import { navLevelOf } from "./nav";
 
 export { setupReady };
@@ -60,22 +67,44 @@ function setupRoleOf(me: Me): SetupRole {
 /** Why the model step waits (`setupLayout.model.*`). */
 type ModelWait = "needsDeploymentAdmin" | "waitingForAdmin" | "waitingForOrgAdmin";
 
+/** Who a viewer waits for, as the model step's reason says it. */
+const waitOf = (who: "orgAdmin" | "superAdmin", v: ModelConfigViewer): ModelWait =>
+  who === "orgAdmin"
+    ? "waitingForOrgAdmin"
+    : v.orgAdmin
+      ? "needsDeploymentAdmin"
+      : "waitingForAdmin";
+
 /**
  * The model step and where it is fixed ({@link modelConfigHref}, the run row's rule too):
  * `/admin/models` while only the platform can help (super admins), `/settings/models` while the org
  * can fix it itself (`org_fixable`: a provider the platform offers is off here or waits for the
  * org's config; org admins, a super admin who is not one of them waits like a member). A done step
- * links to the viewer's own models page, if any.
+ * links to the viewer's own models page, if any. `no_models` (providers on, none gives a model) is
+ * not done: it leads where {@link noModelsHref} says, else waits with `problem` (which provider
+ * and why) before who it waits for.
  */
 function modelStep(
   r: OrgReadiness,
   v: ModelConfigViewer,
   t: (key: "steps.model" | `model.${ModelWait}`) => string,
+  waitingWith: (problem: string, wait: string) => string,
+  problem: string | null,
 ): SetupStep {
   const base = { id: "model", label: t("steps.model") };
   const own = v.superAdmin ? "/admin/models" : v.orgAdmin ? "/settings/models" : undefined;
   if (r.modelProvider === "ready")
     return { ...base, state: "done", ...(own !== undefined ? { href: own } : {}) };
+  if (r.modelProvider === "no_models") {
+    const fix = noModelsHref(r, v);
+    if (fix !== null) return { ...base, state: "todo", href: fix };
+    const wait = t(`model.${waitOf(noModelsWaitsFor(r), v)}`);
+    return {
+      ...base,
+      state: "waiting",
+      reason: problem === null ? wait : waitingWith(problem, wait),
+    };
+  }
   const fixable = r.modelProvider === "org_fixable";
   const href = modelConfigHref(fixable ? "org_fixable" : "platform", v);
   if (href !== null) return { ...base, state: "todo", href };
@@ -103,9 +132,16 @@ function modelStep(
  */
 export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
   const t = useTranslations("setupLayout");
+  const problem = useModelProblem(r);
   const hasModel = r.modelProvider === "ready";
   const canCreateAgent = navLevelOf(me) !== "guest";
-  const model = modelStep(r, modelConfigViewer(me), t);
+  const model = modelStep(
+    r,
+    modelConfigViewer(me),
+    t,
+    (p, wait) => t("model.noModelsWaiting", { problem: p, wait }),
+    problem,
+  );
   const agent: SetupStep =
     r.agents > 0
       ? {
@@ -154,6 +190,29 @@ export function activeStepOf(pathname: string, steps: SetupStep[]): string {
   return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
 }
 
+/**
+ * The setup home's model description while providers are on but none gives a model: the problem,
+ * then what this viewer does about it (fix it on the page {@link noModelsHref} names, or ask who
+ * can).
+ */
+function noModelsDescription(
+  r: OrgReadiness,
+  v: ModelConfigViewer,
+  problem: string,
+  t: ReturnType<typeof useTranslations>,
+): string {
+  const href = noModelsHref(r, v);
+  const key =
+    href === "/settings/models"
+      ? "noModelsOrgFix"
+      : href === "/admin/models"
+        ? "noModelsAdminFix"
+        : noModelsWaitsFor(r) === "orgAdmin"
+          ? "noModelsAskOrgAdmin"
+          : "noModelsAskAdmin";
+  return t(`chat.setup.model.${key}`, { problem });
+}
+
 /** The icon of each optional step's row on the setup home (the workspace's own icons). */
 const LATER_ICON: Record<string, IconName> = {
   channels: "channel",
@@ -192,18 +251,27 @@ export function SetupHome({
   // work (Settings → Models), never the super admins' deployment work.
   const fixable = readiness.modelProvider === "org_fixable";
   const toSwitchOn = readiness.orgFixableProviders.some((p) => p.reason === "not_enabled");
+  const problem = useModelProblem(readiness);
   const description: Record<string, string> = {
-    model: fixable
-      ? canUpdateOrg(me)
-        ? t("chat.setup.model.enableDescription")
-        : t("chat.setup.model.askOrgAdmin")
-      : superAdmin
-        ? t("chat.setup.model.description")
-        : t("chat.setup.model.askAdmin"),
+    model:
+      problem !== null
+        ? noModelsDescription(readiness, modelConfigViewer(me), problem, t)
+        : fixable
+          ? canUpdateOrg(me)
+            ? t("chat.setup.model.enableDescription")
+            : t("chat.setup.model.askOrgAdmin")
+          : superAdmin
+            ? t("chat.setup.model.description")
+            : t("chat.setup.model.askAdmin"),
     agent: t("chat.setup.agent.description"),
   };
   const actionLabel: Record<string, string> = {
-    model: toSwitchOn ? t("chat.setup.model.enableAction") : t("chat.setup.model.action"),
+    model:
+      problem !== null
+        ? t("chat.setup.model.fixAction")
+        : toSwitchOn
+          ? t("chat.setup.model.enableAction")
+          : t("chat.setup.model.action"),
     agent: t("chat.setup.agent.action"),
   };
   const actionOf = (s: SetupStep): ReactNode => {
@@ -216,10 +284,15 @@ export function SetupHome({
         </LinkButton>
       );
     }
-    // Waiting: only the reason (who acts, or what comes first).
+    // Waiting: only the reason (who acts, or what comes first); the model's problem is already in
+    // its description.
+    const reason =
+      s.id === "model" && problem !== null
+        ? t(`setupLayout.model.${waitOf(noModelsWaitsFor(readiness), modelConfigViewer(me))}`)
+        : s.reason;
     return (
       <Text variant="small" tone="muted">
-        {s.reason}
+        {reason}
       </Text>
     );
   };

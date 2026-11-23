@@ -27,6 +27,7 @@ import { removeFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { managedCall, managedRoute, managedSandbox } from "../helpers/managed-tool-stubs.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -524,11 +525,16 @@ describe("Skill handler", () => {
                 payload: snapshot,
               } as ConversationEvent as never),
       },
+      // the activated tree: neither device route may be entered by these calls
       sandbox: {
         withSandbox: async () => {
           throw new Error("sandbox must not be used");
         },
+        withOperations: async () => {
+          throw new Error("sandbox must not be used");
+        },
       },
+      ...managedRoute(),
       devices: {
         forTool: async () => randomUUID(),
         usableNow: async () => sandboxAvailable === true,
@@ -543,14 +549,15 @@ describe("Skill handler", () => {
     });
   }
 
-  const ctx = () => ({
-    orgId,
-    accountId: ownerId,
-    agentId: "a",
-    conversationId: randomUUID(),
-    callId: "call-1",
-    signal: new AbortController().signal,
-  });
+  const ctx = () =>
+    managedCall({
+      orgId,
+      accountId: ownerId,
+      agentId: "a",
+      conversationId: randomUUID(),
+      callId: "call-1",
+      signal: new AbortController().signal,
+    });
 
   it("no sandbox provider: returns the body and says scripts are unavailable", async () => {
     const s = await seedSkill({
@@ -590,7 +597,8 @@ describe("Skill handler", () => {
       name: "nobox",
       files: { "SKILL.md": skillMd("nobox", "Nobox body."), "run.sh": "echo hi" },
     });
-    // 有沙箱提供方，但本步没有沙箱工具：withSandbox 一旦被调用，存根就抛错
+    // a device provider is on, but the step has no sandbox tools: the stubs throw if the device
+    // is entered
     const t = tool(
       { skills: [{ id: s.id, name: "nobox", description: "d", version: 1, source: s.prefix }] },
       true,
@@ -623,6 +631,7 @@ describe("Skill handler", () => {
         writes.push(path);
       },
     };
+    const device = managedSandbox(p, { roots, handle: { id: "e1", roots } });
     const t = skillLoadTool({
       db,
       storage: k.app.get(StorageService),
@@ -646,10 +655,8 @@ describe("Skill handler", () => {
                 },
               }) as never,
       },
-      sandbox: {
-        withSandbox: async (_c, fn, sig) =>
-          fn({ id: "e1", roots }, p as never, { fresh: false, restarted: false, roots }, sig),
-      },
+      sandbox: device.sandbox,
+      ...managedRoute(),
       devices: { forTool: async () => randomUUID() },
       attachments: {
         listForConversation: async () => [],
@@ -673,6 +680,11 @@ describe("Skill handler", () => {
     expect(text).toContain(`copied to ${dir}/ in the sandbox`);
     expect(text).toContain(`Write outputs under ${roots.workspace}, not ${roots.skills}.`);
     expect(text).not.toMatch(/(^|[\s(`])\/skills\/dev@/);
+    // the copy is a trusted preparation the kernel staged before the user callback, scoped to the
+    // skill's directory and the marker directory (skill-load.ts, inSandboxPreparation)
+    expect(device.staged).toEqual([
+      { purpose: "skills", roots: [dir, `${roots.skills}/.capybara`] },
+    ]);
   });
 
   describe("args", () => {

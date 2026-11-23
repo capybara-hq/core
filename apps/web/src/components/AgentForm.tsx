@@ -7,6 +7,7 @@ import {
   Field,
   FormSection,
   Input,
+  LinkButton,
   Select,
   Stack,
 } from "@capybara-hq/design";
@@ -45,6 +46,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { decodeModel as decode, encodeModel as encode } from "./agent/definition-parts";
 import type { AgentFormData } from "./agent/form-data";
 import { FormError } from "./form-error";
+import { useNoModelsHint } from "./useModelProblem";
 
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
 const NAME_MAX = 80;
@@ -101,6 +103,8 @@ export function useAgentForm(
     })),
   );
   const noModels = options.length === 0;
+  // A provider is on but gives no model: say so and where it is fixed, not "install one".
+  const noModelsHint = useNoModelsHint(orgId, noModels);
 
   const [name, setName] = useState("");
   // No org default chat model exists today: the form preselects the first available model.
@@ -289,7 +293,12 @@ export function useAgentForm(
           <Field
             label={t("form.modelLabel")}
             required
-            {...(noModels ? { error: t("form.noModels") } : {})}
+            {...(noModels ? { error: noModelsHint?.error ?? t("form.noModels") } : {})}
+            {...(noModelsHint?.href
+              ? {
+                  action: <LinkButton href={noModelsHint.href}>{t("form.fixModels")}</LinkButton>,
+                }
+              : {})}
           >
             <Select
               name="model"

@@ -16,7 +16,7 @@ import { PluginImport } from "./plugin-import.js";
 /**
  * The platform side of the catalog: marketplaces, the one import review (prepare -> confirm), the
  * items and their platform components. The CLI's `capybara plugins *` and `capybara bootstrap` run on this
- * part alone.
+ * part and `CatalogModule` (the platform plugin update a raised bootstrap pin goes through).
  */
 @Module({
   imports: [

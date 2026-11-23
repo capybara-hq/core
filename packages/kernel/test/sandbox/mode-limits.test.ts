@@ -32,6 +32,7 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import {
+  managedUse,
   type SandboxServiceDeps,
   sandboxLeasesFor,
   sandboxServiceFor,
@@ -153,8 +154,10 @@ const modeOf = async (id = deviceId) => (await record(id))?.mode;
 const networkKindOf = async (id = deviceId) =>
   ((await record(id))?.network as { kind?: string } | undefined)?.kind;
 
-const use = (s: SandboxService, runId?: string, id = deviceId) =>
-  s.withSandbox(
+/** One use of the device on the managed route (as a tool call does); `sig` defaults to 30 s. */
+const use = (s: SandboxService, runId?: string, id = deviceId, sig: AbortSignal = signal()) =>
+  managedUse(
+    s,
     {
       orgId,
       deviceId: id,
@@ -162,7 +165,7 @@ const use = (s: SandboxService, runId?: string, id = deviceId) =>
       actor: { accountId, conversationId: randomUUID(), ...(runId !== undefined && { runId }) },
     },
     async (h, _p, info) => ({ h, info }),
-    signal(),
+    sig,
   );
 
 const status = async (id = deviceId) =>
@@ -583,18 +586,7 @@ describe("a failed limits change", () => {
     await setAutoMode("off");
     await setFakeSandboxDelays(root, { update: 5000 });
     const ac = new AbortController();
-    const run = s
-      .withSandbox(
-        {
-          orgId,
-          deviceId,
-          holderConversationId: randomUUID(),
-          actor: { accountId, conversationId: randomUUID() },
-        },
-        async (h) => h,
-        ac.signal,
-      )
-      .catch((e: unknown) => e);
+    const run = use(s, undefined, deviceId, ac.signal).catch((e: unknown) => e);
     // aborted while the update runs: the instance may hold half-applied limits
     await new Promise((r) => setTimeout(r, 200));
     ac.abort();

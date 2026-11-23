@@ -19,7 +19,7 @@ import {
   readFakeSandboxOps,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { managedUse, sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -123,7 +123,8 @@ const env = () => envId;
 const conv = () => seed.conversationId;
 const actor = () => ({ accountId: seed.accountId, conversationId: conv() });
 const use = (s: SandboxService) =>
-  s.withSandbox(
+  managedUse(
+    s,
     { orgId: seed.orgId, deviceId: env(), holderConversationId: conv(), actor: actor() },
     async (h) => h,
     signal(),

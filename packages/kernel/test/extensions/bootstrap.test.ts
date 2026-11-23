@@ -15,6 +15,7 @@ import {
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
+import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -309,6 +310,7 @@ describe("a fresh deployment", () => {
       manifest: fx.manifest,
       dir: fx.dir,
       imports: k.app.get(PluginImport),
+      updater: k.app.get(PlatformPluginUpdater),
     });
     expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
     await stopAll();
@@ -688,9 +690,12 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     cleanups.push(() => rm(other, { recursive: true, force: true }));
     const k = await boot(undefined);
     await expect(
-      k.app
-        .get(BootstrapService)
-        .run({ manifest: fx.manifest, dir: other, imports: k.app.get(PluginImport) }),
+      k.app.get(BootstrapService).run({
+        manifest: fx.manifest,
+        dir: other,
+        imports: k.app.get(PluginImport),
+        updater: k.app.get(PlatformPluginUpdater),
+      }),
     ).rejects.toMatchObject({
       code: "bootstrap.missing_file",
       message: expect.stringContaining("alpha"),
@@ -917,6 +922,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
       manifest: fx.manifest,
       dir: fx.dir,
       imports: k.app.get(PluginImport),
+      updater: k.app.get(PlatformPluginUpdater),
     });
     expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
     expect(reg?.requests.length).toBe(before);
@@ -1014,6 +1020,114 @@ function recordingLogger(): {
 const OBJECT_STORE_CONFIG = {
   extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
 };
+
+/** A declarative plugin with one theme (no assets); `radius` tells the versions apart. */
+const themePkg = (name: string, version: string, radius: number) =>
+  pluginTgz({
+    manifest: { name, version },
+    files: {
+      "themes/neon.json": JSON.stringify({
+        name: { en: "neon en", zh: "neon zh" },
+        schemes: { dark: { radius: { sm: radius } }, light: { radius: { md: radius } } },
+      }),
+    },
+  });
+
+/** A skills-only plugin whose skill's description names the version. */
+const describedSkillPkg = (name: string, version: string) =>
+  pluginTgz({
+    manifest: { name, version },
+    files: {
+      "skills/hello/SKILL.md": `---\nname: hello\ndescription: Says hello ${version}.\n---\nSay hello.\n`,
+    },
+  });
+
+describe("a declarative entry whose pin moves (core#710)", () => {
+  afterAll(stopAll);
+
+  it("a raised pin becomes the platform version; one moved to another source is kept", async () => {
+    await reset();
+    const v1 = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await themePkg("brand", "1.0.0", 2), builtin: true },
+      { bytes: await describedSkillPkg("delta", "1.0.0"), required: false },
+      { bytes: await describedSkillPkg("omega", "1.0.0"), required: false },
+    ]);
+    const k = await boot(v1, OBJECT_STORE_CONFIG);
+    await loginAdmin(k);
+    // The super admin moves omega to 1.2.0 from a file, above what the manifest will pin
+    const prep = await admin({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(await describedSkillPkg("omega", "1.2.0")),
+    });
+    expect(prep.statusCode, prep.body).toBe(200);
+    const { stagingId, review } = prep.json();
+    const preview = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/imports/${stagingId}/update-preview`,
+    });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const updated = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/imports/${stagingId}/update`,
+      payload: { reviewHash: review.reviewHash, diffHash: preview.json().diffHash },
+    });
+    expect(updated.statusCode, updated.body).toBeLessThan(300);
+    await stopAll();
+
+    // The new manifest raises every declarative pin
+    const v2 = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await themePkg("brand", "1.1.0", 6), builtin: true },
+      { bytes: await describedSkillPkg("delta", "1.1.0"), required: false },
+      { bytes: await describedSkillPkg("omega", "1.1.0"), required: false },
+    ]);
+    const k2 = await boot(v2, OBJECT_STORE_CONFIG);
+    expect(await k2.app.get(BootstrapService).isDone(v2.manifest)).toBe(true);
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "fake-bootstrap-b", action: "kept", version: "0.1.0" },
+        { name: "brand", action: "upgraded", version: "1.1.0" },
+        { name: "delta", action: "upgraded", version: "1.1.0" },
+        // the super admin's version stands, and the result names it
+        { name: "omega", action: "kept", version: "1.2.0" },
+      ],
+    });
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["name", "latest_version", "platform_synced_version", "builtin"])
+        .where("name", "in", ["brand", "delta", "omega"])
+        .orderBy("name")
+        .execute(),
+    ).toEqual([
+      { name: "brand", latest_version: "1.1.0", platform_synced_version: "1.1.0", builtin: true },
+      { name: "delta", latest_version: "1.1.0", platform_synced_version: "1.1.0", builtin: false },
+      { name: "omega", latest_version: "1.2.0", platform_synced_version: "1.2.0", builtin: false },
+    ]);
+    // The platform components moved with it: the skill and the theme of the new version
+    const skills = await db
+      .selectFrom("platform_skills")
+      .select(["plugin_name", "description"])
+      .where("plugin_name", "in", ["delta", "omega"])
+      .where("deleted_at", "is", null)
+      .orderBy("plugin_name")
+      .execute();
+    expect(skills).toEqual([
+      { plugin_name: "delta", description: "Says hello 1.1.0." },
+      { plugin_name: "omega", description: "Says hello 1.2.0." },
+    ]);
+    const theme = await db
+      .selectFrom("platform_themes")
+      .select("current_version")
+      .where("plugin_name", "=", "brand")
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    expect(theme.current_version).toBe(2);
+  });
+});
 
 describe("a preinstall with a scope", () => {
   afterAll(stopAll);
@@ -1413,7 +1527,12 @@ describe("config-declared names and the lock", () => {
         prepareGit: (...a: Parameters<PluginImport["prepareGit"]>) =>
           k.app.get(PluginImport).prepareGit(...a),
       };
-      const run = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
+      const run = bootstrap.run({
+        manifest: fx.manifest,
+        dir: fx.dir,
+        imports,
+        updater: k.app.get(PlatformPluginUpdater),
+      });
       running = run;
       // twice the TTL: the key is still there only because it was renewed
       await new Promise((r) => setTimeout(r, 3_000));
@@ -1448,9 +1567,14 @@ describe("config-declared names and the lock", () => {
         prepareGit: (...a: Parameters<PluginImport["prepareGit"]>) =>
           k.app.get(PluginImport).prepareGit(...a),
       };
-      await expect(bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports })).rejects.toThrow(
-        "lock lost: lock:bootstrap",
-      );
+      await expect(
+        bootstrap.run({
+          manifest: fx.manifest,
+          dir: fx.dir,
+          imports,
+          updater: k.app.get(PlatformPluginUpdater),
+        }),
+      ).rejects.toThrow("lock lost: lock:bootstrap");
       const runs = await db
         .selectFrom("bootstrap_runs")
         .select("manifest_sha256")
@@ -1477,6 +1601,7 @@ describe("config-declared names and the lock", () => {
         manifest: fx.manifest,
         dir: fx.dir,
         imports: k.app.get(PluginImport),
+        updater: k.app.get(PlatformPluginUpdater),
       });
       expect(Date.now() - t0).toBeGreaterThanOrEqual(500);
       expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);

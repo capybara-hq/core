@@ -148,7 +148,12 @@ import {
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
 import { PermissionFacts } from "./permission-facts.js";
 import { reportOwed, supportOf } from "./permission-runtime-reports.js";
-import { type DeviceProviderEntry, DeviceProviders, servesDialIn } from "./providers.js";
+import {
+  type DeviceProviderEntry,
+  DeviceProviders,
+  isInProcessName,
+  servesDialIn,
+} from "./providers.js";
 import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
 import type { SandboxUseContext } from "./use-context.js";
@@ -2616,8 +2621,10 @@ export class SandboxService {
    * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without the
    * provider of its instance row loaded it throws and the row stays, marked `sweep_failed_at` (the
    * job is retried, and the destruction sweep finishes a deleted device once the provider is
-   * back). The provider only needs to be loaded: a device is deleted while its org has the
-   * provider off too.
+   * back). A provider that is no longer installed on this deployment (no install record, or its
+   * catalog item removed; never an in-process `@…` one) will not be back: the instance is
+   * abandoned instead ({@link abandonInstance}) and the call returns (#675). The provider only
+   * needs to be loaded: a device is deleted while its org has the provider off too.
    */
   async destroyDevice(deviceId: string): Promise<void> {
     const row = await this.db
@@ -2630,6 +2637,10 @@ export class SandboxService {
       row.provider !== null
         ? this.providers.forDevice(row.provider)
         : await this.providerOf(deviceId);
+    if (!p && row.provider !== null && !(await this.providerInstalled(row.provider))) {
+      await this.abandonInstance(deviceId, row.provider);
+      return;
+    }
     if (!p) {
       await this.db
         .updateTable("device_instances")
@@ -2659,6 +2670,81 @@ export class SandboxService {
       if (current) await this.destroyRow(current, p, lease, "device");
     } finally {
       await lease.release();
+    }
+  }
+
+  /**
+   * Whether `provider` is still installed on this deployment: an in-process `@…` provider always
+   * counts (code, not an install), a plugin while its install record exists and the catalog item
+   * it was installed from (if any) is not removed. Not loaded on this replica is a separate case.
+   */
+  private async providerInstalled(provider: string): Promise<boolean> {
+    if (isInProcessName(provider)) return true;
+    const install = await this.db
+      .selectFrom("extension_installs as i")
+      .leftJoin("catalog_items as c", "c.id", "i.catalog_item_id")
+      .select(["i.catalog_item_id", "c.id as item_id", "c.deleted_at"])
+      .where("i.name", "=", provider)
+      .executeTakeFirst();
+    if (!install) return false;
+    return install.catalog_item_id === null || (install.item_id !== null && !install.deleted_at);
+  }
+
+  /**
+   * Abandons the instance of a deleted device whose provider is no longer installed (#675): the
+   * kernel can never destroy it, so the row is kept as the record of the provider-side names
+   * (`handle`, `fs_handle`, `prev_handle`), marked `abandoned_at`, and one platform audit event
+   * (`device.instance_abandoned`, for the super admin) carries the same names. One statement, so
+   * the mark and its event commit together, and only the first call writes either (a retried job
+   * finds the row abandoned and does nothing). The sweeps iterate loaded providers only, so
+   * nothing retries the row; a plugin of that name installed again destroys it as before.
+   */
+  private async abandonInstance(deviceId: string, provider: string): Promise<void> {
+    const written = await this.db
+      .with("a", (db) =>
+        db
+          .updateTable("device_instances")
+          .set({ abandoned_at: sql<Date>`now()`, sweep_failed_at: null })
+          .where("device_id", "=", deviceId)
+          .where("provider", "=", provider)
+          .where("abandoned_at", "is", null)
+          .returning([
+            "device_id",
+            "provider",
+            "handle",
+            "fs_handle",
+            "prev_provider",
+            "prev_handle",
+          ]),
+      )
+      .insertInto("audit_events")
+      .columns(["action", "target", "detail"])
+      .expression((eb) =>
+        eb
+          .selectFrom("a")
+          .leftJoin("devices as d", "d.id", "a.device_id")
+          .select([
+            sql<string>`'device.instance_abandoned'`.as("action"),
+            "a.device_id as target",
+            sql<string>`jsonb_build_object(
+              'orgId', d.org_id,
+              'provider', a.provider,
+              'handle', a.handle,
+              'fsHandle', a.fs_handle,
+              'prevProvider', a.prev_provider,
+              'prevHandle', a.prev_handle,
+              'reason', 'provider_uninstalled'
+            )`.as("detail"),
+          ]),
+      )
+      .returning("detail")
+      .execute();
+    if (written.length > 0) {
+      this.log.warn("device instance abandoned: its provider is no longer installed", {
+        deviceId,
+        provider,
+        detail: written[0]?.detail,
+      });
     }
   }
 

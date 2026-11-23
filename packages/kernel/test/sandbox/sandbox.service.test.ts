@@ -44,6 +44,7 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import {
+  managedUse,
   type SandboxServiceDeps,
   sandboxLeasesFor,
   sandboxServiceFor,
@@ -141,7 +142,8 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, " +
+      "capybara.extension_installs, capybara.extension_packages",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-"));
@@ -161,7 +163,7 @@ beforeEach(async () => {
   conversationId = await newConversation();
 });
 
-/** The `withSandbox` context of the holder conversation in a device. */
+/** The use context of the holder conversation in a device. */
 const at = (env = envId, org = orgId, holder = conversationId) => ({
   orgId: org,
   deviceId: env,
@@ -181,19 +183,21 @@ const ops = async (op?: string) =>
 
 /** Uses the sandbox once: returns the handle and the use info. */
 const use = (s: SandboxService, env = envId, org = orgId) =>
-  s.withSandbox(at(env, org), async (h, _p, info) => ({ h, info }), signal());
+  managedUse(s, at(env, org), async (h, _p, info) => ({ h, info }), signal());
 
 const text = (s: string) => new TextEncoder().encode(s);
 /** Writes `/workspace/<name>` through the sandbox. */
 const writeIn = (s: SandboxService, name: string, body: string, env = envId) =>
-  s.withSandbox(
+  managedUse(
+    s,
     at(env),
     (h, p, _i, sig) => p.writeFile(h, `/workspace/${name}`, text(body), sig),
     signal(),
   );
 /** Reads `/workspace/<name>` through the sandbox (null when missing) with the use info. */
 const readIn = (s: SandboxService, name: string, env = envId) =>
-  s.withSandbox(
+  managedUse(
+    s,
     at(env),
     async (h, p, info, sig) => {
       const r = await p.readFile(h, `/workspace/${name}`, { maxBytes: 1000, signal: sig });
@@ -203,7 +207,7 @@ const readIn = (s: SandboxService, name: string, env = envId) =>
   );
 
 describe("没有提供方", () => {
-  it("the device is not available; withSandbox fails device.unavailable (503); the sweeps do nothing", async () => {
+  it("the device is not available; a use fails device.unavailable (503); the sweeps do nothing", async () => {
     const s = service(() => undefined);
     expect(await s.availableFor(envId, orgId)).toBe(false);
     const err = await use(s).catch((e: unknown) => e);
@@ -340,7 +344,8 @@ describe("lazy creation", () => {
     let overlap = false;
     const results = await Promise.all(
       [0, 1, 2].map(() =>
-        s.withSandbox(
+        managedUse(
+          s,
           at(),
           async (h, _p, info) => {
             active++;
@@ -365,15 +370,14 @@ describe("lazy creation", () => {
     await sql`UPDATE capybara.device_instances SET last_used_at = now() - interval '1 hour'`.execute(
       raw,
     );
-    const err = await s
-      .withSandbox(
-        at(),
-        async () => {
-          throw new Error("boom");
-        },
-        signal(),
-      )
-      .catch((e: unknown) => e);
+    const err = await managedUse(
+      s,
+      at(),
+      async () => {
+        throw new Error("boom");
+      },
+      signal(),
+    ).catch((e: unknown) => e);
     expect((err as Error).message).toBe("boom");
     const r = await row();
     expect(Date.now() - (r as { last_used_at: Date }).last_used_at.getTime()).toBeLessThan(MIN);
@@ -414,7 +418,8 @@ describe("lazy creation", () => {
     const inside = new Promise<void>((r) => {
       entered = r;
     });
-    const holder = s.withSandbox(
+    const holder = managedUse(
+      s,
       at(),
       async () => {
         entered();
@@ -424,7 +429,7 @@ describe("lazy creation", () => {
     );
     await inside;
     const ac = new AbortController();
-    const waiting = s.withSandbox(at(), async () => "x", ac.signal);
+    const waiting = managedUse(s, at(), async () => "x", ac.signal);
     ac.abort(new Error("run aborted"));
     await expect(waiting).rejects.toThrow("run aborted");
     release();
@@ -452,13 +457,15 @@ describe("空闲休眠（审查重点 3）", () => {
 
   it("休眠后文件保留", async () => {
     const s = service();
-    await s.withSandbox(
+    await managedUse(
+      s,
       at(),
       (h, p) => p.writeFile(h, "/workspace/a.txt", new TextEncoder().encode("hi"), signal()),
       signal(),
     );
     await s.suspendIdle(later(11 * MIN));
-    const text = await s.withSandbox(
+    const text = await managedUse(
+      s,
       at(),
       async (h, p) => {
         const r = await p.readFile(h, "/workspace/a.txt", { maxBytes: 100, signal: signal() });
@@ -490,7 +497,8 @@ describe("空闲休眠（审查重点 3）", () => {
     const inside = new Promise<void>((r) => {
       entered = r;
     });
-    const running = s.withSandbox(
+    const running = managedUse(
+      s,
       at(),
       async () => {
         entered();
@@ -633,7 +641,8 @@ describe("destruction after inactivity", () => {
     const s = service();
     await use(s);
     const g = gates();
-    const holder = s.withSandbox(
+    const holder = managedUse(
+      s,
       at(),
       async () => {
         g.entered();
@@ -665,7 +674,8 @@ describe("destruction after inactivity", () => {
     await use(s);
     const g = gates();
     let finished = false;
-    const holder = s.withSandbox(
+    const holder = managedUse(
+      s,
       at(),
       async () => {
         g.entered();
@@ -760,7 +770,7 @@ describe("lost files", () => {
     const s = service();
     const other = await newConversation();
     const useAs = (holder: string) =>
-      s.withSandbox(at(envId, orgId, holder), async (h, _p, info) => ({ h, info }), signal());
+      managedUse(s, at(envId, orgId, holder), async (h, _p, info) => ({ h, info }), signal());
     const a = await useAs(conversationId);
     expect((await useAs(other)).info).toEqual({
       fresh: false,
@@ -836,7 +846,8 @@ describe("lost files", () => {
 describe("actor", () => {
   it("exec carries the actor", async () => {
     const s = service();
-    await s.withSandbox(
+    await managedUse(
+      s,
       at(),
       (h, p, _i, sig) =>
         p.exec(h, { command: "true", timeoutMs: 5000, maxOutputBytes: 100, signal: sig }),
@@ -852,7 +863,8 @@ describe("锁", () => {
   it("the lock key is capk:sandbox:<device>, held while running and released after", async () => {
     const s = service();
     let seen: string | null = null;
-    await s.withSandbox(
+    await managedUse(
+      s,
       at(),
       async (_h: SandboxHandle) => {
         seen = await redis.get(`capk:sandbox:${envId}`);
@@ -887,7 +899,8 @@ const waitAborted = (sig: AbortSignal) =>
 describe("锁的防护（fix round 1）", () => {
   it("锁丢失：传给 fn 的 signal 被中止", async () => {
     const s = service(undefined, undefined, { lockTtlMs: 300 });
-    const reason = await s.withSandbox(
+    const reason = await managedUse(
+      s,
       at(),
       async (_h, _p, _info, sig) => {
         expect(sig.aborted).toBe(false);
@@ -921,7 +934,8 @@ describe("锁的防护（fix round 1）", () => {
   it("after an old holder lost its lease, a sweep does not suspend while the new holder's fn runs", async () => {
     const s = service(undefined, undefined, { lockTtlMs: 300 });
     await use(s);
-    const a = s.withSandbox(
+    const a = managedUse(
+      s,
       at(),
       async (_h, _p, _info, sig) => {
         // the lease expires: its lock and users keys are gone
@@ -932,7 +946,8 @@ describe("锁的防护（fix round 1）", () => {
     );
     await a;
     const b = gates();
-    const holderB = s.withSandbox(
+    const holderB = managedUse(
+      s,
       at(),
       async () => {
         b.entered();
@@ -956,7 +971,8 @@ describe("锁的防护（fix round 1）", () => {
     };
     const s = service();
     const g = gates();
-    const holder = s.withSandbox(
+    const holder = managedUse(
+      s,
       at(),
       async () => {
         g.entered();
@@ -1034,15 +1050,51 @@ describe("restarted is sticky (fix round 1)", () => {
 });
 
 describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", () => {
-  it("a running instance vanishes: after fn throws SandboxGoneError it is rebuilt in place and retried once, restarted is true", async () => {
+  it("a managed operation on a vanished instance: its outcome stays unknown, fn is not retried, the instance is rebuilt", async () => {
     const s = service();
     const a = await use(s);
     await removeFakeSandbox(root, a.h.id);
+    let calls = 0;
+    const err = await managedUse(
+      s,
+      at(),
+      async (h, p, _info, sig) => {
+        calls++;
+        return p.exec(h, {
+          command: "echo ok",
+          timeoutMs: 5000,
+          maxOutputBytes: 1000,
+          signal: sig,
+        });
+      },
+      signal(),
+    ).catch((e: unknown) => e);
+    // the operation was dispatched: never retried under a new identity (final review m4)
+    expect(isSandboxOperationOutcomeUnknownError(err)).toBe(true);
+    expect(calls).toBe(1);
+    const rebuilt = await row();
+    if (!rebuilt?.handle) throw new Error("expected the rebuilt instance");
+    expect(rebuilt).toMatchObject({ status: "running" });
+    expect(rebuilt.handle).not.toEqual(a.h);
+    // the holder's next use runs on the rebuilt instance and is told of the restart
+    const next = await use(s);
+    expect(next.h).toEqual(rebuilt.handle);
+    expect(next.info).toEqual({ fresh: false, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
+  });
+
+  it("gone outside a dispatched operation (staging): rebuilt in place and fn retried once, restarted is true", async () => {
+    const s = service();
+    const a = await use(s);
     const infos: unknown[] = [];
-    const out = await s.withSandbox(
+    const out = await managedUse(
+      s,
       at(),
       async (h, p, info, sig) => {
         infos.push(info);
+        if (infos.length === 1) {
+          await removeFakeSandbox(root, h.id);
+          throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+        }
         const r = await p.exec(h, {
           command: "echo ok",
           timeoutMs: 5000,
@@ -1066,17 +1118,16 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
     const s = service();
     await use(s);
     let calls = 0;
-    const err = await s
-      .withSandbox(
-        at(),
-        async (h, p, _info, sig) => {
-          calls++;
-          await removeFakeSandbox(root, h.id);
-          return p.stat(h, "/workspace", sig);
-        },
-        signal(),
-      )
-      .catch((e: unknown) => e);
+    const err = await managedUse(
+      s,
+      at(),
+      async (h) => {
+        calls++;
+        await removeFakeSandbox(root, h.id);
+        throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+      },
+      signal(),
+    ).catch((e: unknown) => e);
     expect(calls).toBe(2);
     expect(isSandboxGoneError(err)).toBe(true);
   });
@@ -1095,20 +1146,19 @@ describe("gone after a durable dispatch (final review m4)", () => {
     const a = await use(s);
     left.length = 0;
     let calls = 0;
-    const err = await s
-      .withSandbox(
-        at(),
-        async (h) => {
-          calls++;
-          // the dispatched operation's instance vanished: its outcome is unknown
-          await removeFakeSandbox(root, h.id);
-          throw new SandboxOperationOutcomeUnknownError("lost after dispatch", {
-            cause: new SandboxGoneError("the instance is gone"),
-          });
-        },
-        signal(),
-      )
-      .catch((e: unknown) => e);
+    const err = await managedUse(
+      s,
+      at(),
+      async (h) => {
+        calls++;
+        // the dispatched operation's instance vanished: its outcome is unknown
+        await removeFakeSandbox(root, h.id);
+        throw new SandboxOperationOutcomeUnknownError("lost after dispatch", {
+          cause: new SandboxGoneError("the instance is gone"),
+        });
+      },
+      signal(),
+    ).catch((e: unknown) => e);
     expect(isSandboxOperationOutcomeUnknownError(err)).toBe(true);
     // never retried under a new identity
     expect(calls).toBe(1);
@@ -1147,17 +1197,16 @@ describe("gone before the request was sent (#643)", () => {
     const a = await use(s);
     let calls = 0;
     const thrown = errorOf(new SandboxGoneError("the instance is gone"));
-    const err = await s
-      .withSandbox(
-        at(),
-        async (h) => {
-          calls++;
-          await removeFakeSandbox(root, h.id);
-          throw thrown;
-        },
-        signal(),
-      )
-      .catch((e: unknown) => e);
+    const err = await managedUse(
+      s,
+      at(),
+      async (h) => {
+        calls++;
+        await removeFakeSandbox(root, h.id);
+        throw thrown;
+      },
+      signal(),
+    ).catch((e: unknown) => e);
     expect(err).toBe(thrown);
     expect(calls).toBe(1);
     const rebuilt = await row();
@@ -1174,7 +1223,8 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
     const s = service();
     const child = randomUUID();
     const useAs = (holder?: string) =>
-      s.withSandbox(
+      managedUse(
+        s,
         at(envId, orgId, holder ?? conversationId),
         async (h, _p, info) => ({ h, info }),
         signal(),
@@ -1187,13 +1237,18 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
       restarted: false,
       roots: DEFAULT_SANDBOX_ROOTS,
     });
-    // the instance is gone during the sub-agent's command: it rebuilds and is told
-    await removeFakeSandbox(root, first.h.id);
+    // the instance is found gone during the sub-agent's use (outside a dispatched operation): it
+    // rebuilds and is told
     const infos: unknown[] = [];
-    await s.withSandbox(
+    await managedUse(
+      s,
       at(envId, orgId, child),
       async (h, p, info, sig) => {
         infos.push(info);
+        if (infos.length === 1) {
+          await removeFakeSandbox(root, h.id);
+          throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+        }
         return p.exec(h, { command: "true", timeoutMs: 5000, maxOutputBytes: 100, signal: sig });
       },
       signal(),
@@ -1287,7 +1342,14 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     expect(await ops()).toEqual([]);
     expect(await row()).toBeUndefined();
 
-    // its provider is not loaded: nothing is destroyed, the row stays for a retry
+    // its provider is installed but not loaded: nothing is destroyed, the row stays for a retry
+    const sha = "b".repeat(64);
+    await sql`INSERT INTO capybara.extension_packages
+      (sha256, name, package_name, version, size, section, blob_store, source, source_ref)
+      VALUES (${sha}, 'sandbox-old', '@test/plugin-sandbox-old', '1.0.0', 1, '{}'::jsonb, 'pg',
+        'file', 'old.tgz')`.execute(raw);
+    await sql`INSERT INTO capybara.extension_installs (name, sha256, version, source)
+      VALUES ('sandbox-old', ${sha}, '1.0.0', 'file')`.execute(raw);
     const e2 = await newDevice();
     await bind(e2);
     const b = await use(
@@ -1472,7 +1534,8 @@ describe("锁的防护（fix round 2）", () => {
   it("renewals keep failing: no successful renewal before the deadline is a lost lease and aborts fn's signal", async () => {
     const r = renewThrows(300);
     const s = service(undefined, undefined, { leases: r.leases });
-    const reason = await s.withSandbox(
+    const reason = await managedUse(
+      s,
       at(),
       async (_h, _p, _info, sig) => {
         // renewals start failing only now: how long the create took before fn decides nothing
@@ -1489,7 +1552,8 @@ describe("锁的防护（fix round 2）", () => {
     const ttl = 1500;
     const r = renewThrows(ttl);
     const s = service(undefined, undefined, { leases: r.leases });
-    const elapsed = await s.withSandbox(
+    const elapsed = await managedUse(
+      s,
       at(),
       async (_h, _p, _info, sig) => {
         r.fail();
@@ -1517,7 +1581,8 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
   it("记录是 running、实例却停了：下一次调用由提供方自动启动接上，文件还在，不重建", async () => {
     const s = service();
     const { h } = await use(s);
-    await s.withSandbox(
+    await managedUse(
+      s,
       at(),
       (hh, p, _i, sig) => p.writeFile(hh, "/workspace/a.txt", new TextEncoder().encode("a"), sig),
       signal(),
@@ -1525,7 +1590,8 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
     // 例如休眠扫描停了实例、却在写 suspended 之前丢了锁
     await provider?.suspend(h, signal());
     expect((await row())?.status).toBe("running");
-    const out = await s.withSandbox(
+    const out = await managedUse(
+      s,
       at(),
       async (hh, p, info, sig) => ({
         info,
@@ -1556,7 +1622,8 @@ describe("taking over from a crashed holder", () => {
     const s = service();
     const holdersKey = `capk:sandbox-holders:${envId}`;
     let seen: { n: number; ttl: number } = { n: 0, ttl: 0 };
-    await s.withSandbox(
+    await managedUse(
+      s,
       at(),
       async () => {
         seen = { n: await redis.hlen(holdersKey), ttl: await redis.pttl(holdersKey) };
@@ -1602,7 +1669,7 @@ describe("taking over from a crashed holder", () => {
     });
     await use(s);
     await deadHolder();
-    const r = await s.withSandbox(at(), async () => "ran", signal());
+    const r = await managedUse(s, at(), async () => "ran", signal());
     expect(r).toBe("ran");
     expect(warned).toContain(
       "cannot revoke a crashed sandbox holder's operations now; a worker retries",
@@ -1628,7 +1695,7 @@ describe("taking over from a crashed holder", () => {
     });
     await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
-    const r = await s.withSandbox(at(), async () => "ran", signal());
+    const r = await managedUse(s, at(), async () => "ran", signal());
     expect(r).toBe("ran");
     expect(warned).toContain("cannot deliver an owed operation revoke now; its job retries");
     expect(acked).toEqual([]);
@@ -1652,7 +1719,7 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
     });
     await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
-    await s.withSandbox(at(), async () => void order.push("fn"), signal());
+    await managedUse(s, at(), async () => void order.push("fn"), signal());
     expect(order).toEqual(["incarnation device-fake", "revoke op-1", "ack op-1", "fn"]);
     expect(await ops("kill-all")).toHaveLength(0);
     // later uses of the running instance revoke nothing more
@@ -1671,7 +1738,7 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
     });
     const { h } = await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
-    await expect(s.withSandbox(at(), async () => "ran", signal())).rejects.toThrow(
+    await expect(managedUse(s, at(), async () => "ran", signal())).rejects.toThrow(
       "database unavailable",
     );
     expect((await row())?.status).toBe("suspended");
@@ -1702,7 +1769,7 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
     });
     await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
-    await expect(s.withSandbox(at(), async () => "ran", signal())).rejects.toThrow(
+    await expect(managedUse(s, at(), async () => "ran", signal())).rejects.toThrow(
       "database unavailable",
     );
     expect(warned).toContain("cannot suspend the instance again after a failed revocation");

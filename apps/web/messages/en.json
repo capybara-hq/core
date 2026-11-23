@@ -815,7 +815,9 @@
       "attributionSessionUrlOn": "Yes",
       "attributionSessionUrlNeedsPublicUrl": "On, but no link is added: the deployment has no public URL (http.publicUrl)",
       "attributionDefaults": "Platform defaults: commit {commit}; pull request {pr}.",
-      "attributionNone": "None"
+      "attributionNone": "None",
+      "noUsableModels": "The configured model services list no usable chat model: {problem}.",
+      "fixModels": "Fix"
     },
     "params": {
       "default": "Default",
@@ -1601,7 +1603,12 @@
         "waiting": "Waiting for a super admin",
         "enableDescription": "The platform offers model services, but none is ready in this organization yet. Turn one on or finish its configuration under Settings → Models so agents can answer.",
         "askOrgAdmin": "The platform offers model services. You can use them once an org admin turns one on or configures it for this organization.",
-        "enableAction": "Turn on"
+        "enableAction": "Turn on",
+        "noModelsOrgFix": "{problem}. Enter this organization's own configuration or turn a chat model on under Settings → Models so agents can answer.",
+        "noModelsAdminFix": "{problem}. Check this model service's configuration and key under Admin → Models so agents can answer.",
+        "noModelsAskAdmin": "{problem}. Super admins configure model services under Admin → Models.",
+        "noModelsAskOrgAdmin": "{problem}. You can use it once an org admin fixes it under Settings → Models.",
+        "fixAction": "Fix"
       },
       "agent": {
         "description": "An agent sets the model it uses and the tools and skills it can use.",
@@ -3822,7 +3829,6 @@
         "title": "Model services",
         "description": "This organization's models come from the model services turned on here. A service the platform deploys works here once this organization turns it on.",
         "orgFixable": "No model service is ready in this organization yet. Turn one on or finish its configuration below so agents can answer.",
-        "enable": "Turn on",
         "enableLabel": "Turn on {plugin} for this organization",
         "configure": "Configure",
         "configureLabel": "Configure {plugin}"
@@ -5785,7 +5791,20 @@
     "model": {
       "needsDeploymentAdmin": "A super admin needs to set up a model service",
       "waitingForAdmin": "Waiting for an admin to set up a model",
-      "waitingForOrgAdmin": "Waiting for an org admin to set up a model service"
+      "waitingForOrgAdmin": "Waiting for an org admin to set up a model service",
+      "problem": {
+        "listFailed": "{provider} could not list its models ({cause})",
+        "noChatModels": "{provider} has no chat model available",
+        "separator": "; ",
+        "cause": {
+          "auth": "key rejected",
+          "rateLimited": "rate limited",
+          "timeout": "timed out",
+          "unavailable": "service unavailable",
+          "failed": "request failed"
+        }
+      },
+      "noModelsWaiting": "{problem}. {wait}"
     },
     "agent": {
       "needsModel": "Set up a model first",

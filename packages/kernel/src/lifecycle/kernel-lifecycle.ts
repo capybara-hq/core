@@ -12,6 +12,7 @@ import { type Kysely, sql } from "kysely";
 import type { KernelAppOptions } from "../app.js";
 import { MarketplacesService } from "../catalog/marketplaces.service.js";
 import { PluginImport } from "../catalog/plugin-import.js";
+import { PlatformPluginUpdater } from "../catalog/plugin-upgrade.js";
 import { ChannelJobs } from "../channels/jobs.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -148,6 +149,7 @@ export class KernelLifecycle
     @Inject(BootstrapDefaultsService) private readonly bootstrapDefaults: BootstrapDefaultsService,
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    @Inject(PlatformPluginUpdater) private readonly pluginUpdater: PlatformPluginUpdater,
     @Inject(KERNEL_BUS)
     private readonly bus: Pick<ExtensionContext["bus"], "publish" | "subscribe">,
     // the producers closed on every role (their consumers are the worker role's)
@@ -420,6 +422,7 @@ export class KernelLifecycle
       await bootstrap.run({
         manifest,
         imports: this.pluginImport,
+        updater: this.pluginUpdater,
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,
         ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),

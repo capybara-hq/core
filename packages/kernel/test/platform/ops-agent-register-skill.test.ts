@@ -22,11 +22,11 @@ import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { AgentSkillsService } from "../../src/skills/agent-skills.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { managedUseOn, setupConversationOn } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -62,6 +62,7 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
 let db: KernelSchemaDb;
+let raw: ReturnType<typeof createDb>;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: string;
@@ -70,7 +71,7 @@ let ops: PlatformOperations;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "cap-ops-register-skill-"));
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
-  const raw = createDb(pgc.url, 3);
+  raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   k = await startKernel(
@@ -158,7 +159,11 @@ async function agentOf(
 const zipOf = (name: string, extra: { name: string; data: string }[] = []) =>
   new Uint8Array(makeZip([{ name: "SKILL.md", data: SKILL_MD(name) }, ...extra]));
 
-/** Writes `data` at `rel` in the conversation's workspace; returns the absolute path. */
+/**
+ * Writes `data` at `rel` in the conversation's workspace on the managed route, as a tool call
+ * does, from a free setup conversation of the same account and agent on the conversation's
+ * device; returns the absolute path.
+ */
 async function putFile(
   convId: string,
   accountId: string,
@@ -166,14 +171,21 @@ async function putFile(
   data: Uint8Array,
 ): Promise<string> {
   const deviceId = await k.app.get(ConversationDevices).forTool(orgId, convId);
-  return k.app.get(SandboxService).withSandbox(
-    { orgId, deviceId, holderConversationId: convId, actor: { accountId, conversationId: convId } },
+  const { agent_id: agentId } = await db
+    .selectFrom("conversations")
+    .select("agent_id")
+    .where("id", "=", convId)
+    .executeTakeFirstOrThrow();
+  const holder = await setupConversationOn(raw, { orgId, agentId, accountId, deviceId });
+  return managedUseOn(
+    k,
+    raw,
+    { orgId, deviceId, holderConversationId: holder, actor: { accountId, conversationId: holder } },
     async (h, p, info, s) => {
       const path = `${info.roots.workspace}/${rel}`;
       await p.writeFile(h, path, data, s);
       return path;
     },
-    new AbortController().signal,
   );
 }
 

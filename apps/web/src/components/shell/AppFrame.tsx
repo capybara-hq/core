@@ -191,6 +191,7 @@ const SETUP_REFRESH_MS = 30_000;
 const NO_ORG_READINESS: OrgReadiness = {
   modelProvider: "ready",
   orgFixableProviders: [],
+  unusableProviders: [],
   agents: 1,
 };
 

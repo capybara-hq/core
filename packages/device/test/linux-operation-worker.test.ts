@@ -433,10 +433,17 @@ describe("Linux operation worker", () => {
     await mkdir(join(home, ".asdf"));
     // a stand-in machine (the real one would make the walk depend on this host): the denied
     // secret and the device's state lie under it, beside readable directories and a link
-    const tree: Record<string, Record<string, "dir" | "link" | "file">> = {
+    const tree: Record<string, Record<string, "dir" | "link" | "file" | "fifo">> = {
       "/": { h: "dir", usr: "dir", state: "dir", "top.txt": "file" },
       "/h": { u: "dir" },
-      "/h/u": { ".ssh": "dir", src: "dir", link: "link" },
+      "/h/u": {
+        ".ssh": "dir",
+        src: "dir",
+        link: "link",
+        ".bashrc": "file",
+        ".netrc": "file",
+        pipe: "fifo",
+      },
     };
     const kind = (path: string) => {
       if (path === "/") return "dir";
@@ -452,11 +459,16 @@ describe("Linux operation worker", () => {
       lstat: (path: string) => {
         const k = kind(path);
         if (!k) throw new Error("ENOENT");
-        return { isDirectory: () => k === "dir", isSymbolicLink: () => k === "link" };
+        return {
+          isDirectory: () => k === "dir",
+          isSymbolicLink: () => k === "link",
+          isFile: () => k === "file",
+        };
       },
       canOpen: () => true,
+      canRead: () => true,
     };
-    const denied = ["/h/u/.ssh", "/state"];
+    const denied = ["/h/u/.ssh", "/state", "/h/u/.netrc"];
     const fake = await fakeTransport("exit");
     await (
       await linuxOperationWorker({
@@ -485,6 +497,9 @@ describe("Linux operation worker", () => {
     expect(roots).toEqual(
       ["/h/u/src", "/usr", join(home, ".asdf"), (await fake.temp()).temp].sort(),
     );
+    // the regular files directly inside the expanded directories, never a denied one, a link or
+    // a FIFO, go to the agent as exact file roots
+    expect(sent?.readFileRoots).toEqual(["/h/u/.bashrc", "/top.txt"]);
     // native work keeps the reach as granted: the agent checks each resolved path against denied
     const native = await fakeTransport("exit");
     await (

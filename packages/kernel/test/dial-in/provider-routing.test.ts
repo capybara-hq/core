@@ -236,7 +236,7 @@ describe("GET /device/connect routes by the device's provider", () => {
     }
   });
 
-  it("closes 4400 with the provider's code when onHello refuses, without claiming the lease", async () => {
+  it("closes 4400 with the provider's code when onHello refuses, and hands the lease back", async () => {
     const d = await device();
     const e = (await rejection(
       FakeDialInMachine.connect({ url, credential: d.credential, hello: { refuse: "nope" } }),
@@ -244,7 +244,9 @@ describe("GET /device/connect routes by the device's provider", () => {
     expect(e.message).toContain(`closed before ready: ${DEVICE_CLOSE.protocol}`);
     expect(e.message).toContain("fake.refused: nope");
     expect(await kv(`hello:${d.deviceId}`)).toBeNull();
-    expect(await k.app.get(DialInRelay).online(d.deviceId)).toBe(false);
+    // the lease is claimed before onHello and handed back after the close frame is sent, so the
+    // machine may see the close before the release lands
+    await waitFor(async () => ((await k.app.get(DialInRelay).online(d.deviceId)) ? null : true));
   });
 
   it("closes 4400 on a frame over maxFrameBytes without calling onFrame", async () => {

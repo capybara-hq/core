@@ -18,7 +18,7 @@ import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgSettingsFor } from "../helpers/identity.js";
-import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { managedUse, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
  * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：超级管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
@@ -117,7 +117,8 @@ const service = () =>
   });
 
 const use = (s: SandboxService, deviceId: string, org = orgId) =>
-  s.withSandbox(
+  managedUse(
+    s,
     {
       orgId: org,
       deviceId,

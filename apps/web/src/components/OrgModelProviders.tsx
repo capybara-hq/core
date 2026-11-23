@@ -6,6 +6,7 @@ import {
   FormSection,
   ItemList,
   type ItemListRow,
+  Switch,
   versionLabel,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -24,14 +25,16 @@ export const modelProvidersOf = (extensions: readonly OrgExtension[]): OrgExtens
 /**
  * The org admin's one place to set up a model service (`/settings/models`, the setup checklist's
  * model step while the org has none on): every model service the platform offers this org as a
- * row (its icon, name, state as the Extensions page derives it) with "Turn on" while it is off and
- * the org may switch it on, and Configure where it has org config or overridable platform fields,
+ * row (its icon, name, state as the Extensions page derives it) with the Extensions page's on / off
+ * switch where the org may use it (none on a locked row: platform, not switchable, unavailable, or
+ * waiting for config while off; a scope-`all` service keeps its "on by platform default" state and
+ * the switch, since the org may opt out), and Configure where it has org config or overridable platform fields,
  * which opens the extension's Sheet (the one org config form, "Save and enable" while it is off).
  * The actions are the Extensions page's ({@link useOrgExtensionActions}). While no provider is
  * ready here but the org can make one so (readiness `org_fixable`: one is off, or waits for the
  * org's config) a warn line above the section says to turn one on or finish its configuration. Turning a service on
  * invalidates the org's readiness, models and purposes, so the setup frame, the checklist and the
- * catalog below follow. Switching a service off stays on the Extensions page.
+ * catalog below follow. Switching one off asks the Extensions page's switch-off confirmation.
  */
 export function OrgModelProviders({
   orgId,
@@ -60,7 +63,7 @@ export function OrgModelProviders({
   });
 
   const listRows: ItemListRow[] = actions.rows.map((r) => {
-    const canEnable = !r.ext.enabled && !r.locked;
+    const canSwitch = !r.locked;
     const canConfigure = r.overrides;
     const pending = actions.busy[r.ext.plugin] !== undefined;
     return {
@@ -74,7 +77,7 @@ export function OrgModelProviders({
         label: r.state.label,
         ...(r.state.tone === "warn" || r.state.tone === "fail" ? { tone: "accent" as const } : {}),
       },
-      ...(canEnable || canConfigure
+      ...(canSwitch || canConfigure
         ? {
             actions: (
               <>
@@ -88,17 +91,13 @@ export function OrgModelProviders({
                     {t("configure")}
                   </Button>
                 )}
-                {canEnable && (
-                  <Button
-                    density="dense"
-                    variant="secondary"
-                    loading={actions.busy[r.ext.plugin] === "toggle"}
+                {canSwitch && (
+                  <Switch
+                    label={t("enableLabel", { plugin: r.label })}
+                    checked={r.ext.enabled}
                     disabled={pending}
-                    aria-label={t("enableLabel", { plugin: r.label })}
-                    onClick={() => void actions.toggle(r, true)}
-                  >
-                    {t("enable")}
-                  </Button>
+                    onChange={(on) => void actions.toggle(r, on)}
+                  />
                 )}
               </>
             ),

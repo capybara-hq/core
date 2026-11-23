@@ -270,6 +270,7 @@ describe("the checklist by role", () => {
       readiness: {
         modelProvider: "org_fixable",
         orgFixableProviders: [{ provider: "anthropic", reason: "needs_config" }],
+        unusableProviders: [],
         agents: 0,
       },
     });

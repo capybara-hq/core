@@ -16,8 +16,9 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 
-// `GET /api/v1/orgs/:orgId/readiness` (acceptance round 2, finding 2): whether the org can run,
-// from extension state only (never a vendor call), and the agents visible to the caller.
+// `GET /api/v1/orgs/:orgId/readiness` (acceptance round 2, finding 2): whether the org can run
+// (extension state first, then the model lists of the providers past that gate, as the agent form
+// reads them), and the agents visible to the caller.
 
 const NEEDS_CONFIG = fileURLToPath(
   new URL("../fixtures/plugins/model-needs-config/index.ts", import.meta.url),
@@ -96,6 +97,7 @@ const readiness = async (req: Req, orgId: string) => {
   return res.json() as {
     modelProvider: string;
     orgFixableProviders: { provider: string; reason: string }[];
+    unusableProviders: Record<string, unknown>[];
     agents: number;
   };
 };
@@ -108,6 +110,7 @@ describe("org readiness", () => {
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "none",
         orgFixableProviders: [],
+        unusableProviders: [],
         agents: 0,
       });
       const anon = await k.http.inject({
@@ -121,7 +124,7 @@ describe("org readiness", () => {
     }
   });
 
-  it("a loaded provider the org enabled is ready without calling the vendor; agents count what each role sees", async () => {
+  it("a provider the org enabled whose list fails gives no models; ready once one lists a chat model; agents count what each role sees", async () => {
     // model-needs-config is configured here, so it loads; its listModels throws (vendor down)
     const k = await boot([MODEL_FAKE, NEEDS_CONFIG], {
       "model-fake": { models: [{ id: "fake-1" }] },
@@ -137,15 +140,32 @@ describe("org readiness", () => {
           { provider: "model-fake", reason: "not_enabled" },
           { provider: "model-needs-config", reason: "not_enabled" },
         ],
+        unusableProviders: [],
         agents: 0,
       });
       await enableExtensions(raw, orgId, "model-needs-config");
+      // on with a valid config, but the agent form would offer nothing: not ready
       expect(await readiness(req, orgId)).toEqual({
-        modelProvider: "ready",
-        orgFixableProviders: [],
+        modelProvider: "no_models",
+        orgFixableProviders: [{ provider: "model-fake", reason: "not_enabled" }],
+        unusableProviders: [
+          {
+            provider: "model-needs-config",
+            displayName: null,
+            orgCanFix: false,
+            reason: "list_failed",
+            errorKind: "unknown",
+          },
+        ],
         agents: 0,
       });
       await enableExtensions(raw, orgId, "model-fake");
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "ready",
+        orgFixableProviders: [],
+        unusableProviders: [],
+        agents: 0,
+      });
       const definition = {
         name: "Helper",
         instructions: "Be helpful.",
@@ -209,6 +229,7 @@ describe("org readiness", () => {
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "none",
         orgFixableProviders: [],
+        unusableProviders: [],
         agents: 0,
       });
       const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
@@ -243,12 +264,14 @@ describe("org readiness", () => {
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "org_fixable",
         orgFixableProviders: [{ provider: "model-fake", reason: "not_enabled" }],
+        unusableProviders: [],
         agents: 0,
       });
       await on();
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "ready",
         orgFixableProviders: [],
+        unusableProviders: [],
         agents: 0,
       });
     } finally {
@@ -265,12 +288,14 @@ describe("org readiness", () => {
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "org_fixable",
         orgFixableProviders: [{ provider: "model-org-key", reason: "not_enabled" }],
+        unusableProviders: [],
         agents: 0,
       });
       await enableExtensions(raw, orgId, "model-org-key");
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "org_fixable",
         orgFixableProviders: [{ provider: "model-org-key", reason: "needs_config" }],
+        unusableProviders: [],
         agents: 0,
       });
       const res = await req({
@@ -282,9 +307,103 @@ describe("org readiness", () => {
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "ready",
         orgFixableProviders: [],
+        unusableProviders: [],
         agents: 0,
       });
     } finally {
+      await k.close();
+    }
+  });
+  it("a provider whose key the vendor rejects: no_models (list_failed, auth), the org can fix it with its own key; the agent form lists nothing", async () => {
+    // the platform's key is set but rejected; the key is overridable, so the org may hold its own
+    const k = await boot([ORG_KEY], { "model-org-key": { apiKey: "bad-platform-key" } });
+    try {
+      const { req, orgId } = await ownerOrg(k);
+      await enableExtensions(raw, orgId, "model-org-key");
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "no_models",
+        orgFixableProviders: [],
+        unusableProviders: [
+          {
+            provider: "model-org-key",
+            displayName: null,
+            orgCanFix: true,
+            reason: "list_failed",
+            errorKind: "auth",
+          },
+        ],
+        agents: 0,
+      });
+      // the same answer while the failure marker skips the vendor
+      expect((await readiness(req, orgId)).unusableProviders).toMatchObject([
+        { reason: "list_failed", errorKind: "auth" },
+      ]);
+      // the agent form's source agrees: no model to pick
+      const models = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/models?kind=chat` });
+      expect(models.statusCode).toBe(200);
+      expect((models.json() as { providers: unknown[] }).providers).toEqual([]);
+      const res = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/model-org-key/overrides`,
+        payload: { values: { apiKey: "org-key-1234" } },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "ready",
+        orgFixableProviders: [],
+        unusableProviders: [],
+        agents: 0,
+      });
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("a provider that lists no chat model on in the org: no_models (no_chat_models), the org can fix it only when it switched the chat models off", async () => {
+    const k = await boot([MODEL_FAKE], {
+      "model-fake": {
+        models: [{ id: "fake-1" }, { id: "picture-1", kind: "image_generation" }],
+      },
+    });
+    try {
+      const { req, orgId } = await ownerOrg(k);
+      await enableExtensions(raw, orgId, "model-fake");
+      expect(await readiness(req, orgId)).toMatchObject({ modelProvider: "ready" });
+      // the org switched its only chat model off: an org admin can switch it on again
+      const orgOff = await req({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+        payload: { disable: ["fake-1"], enable: [] },
+      });
+      expect(orgOff.statusCode, orgOff.body).toBe(200);
+      const r = await readiness(req, orgId);
+      expect(r).toMatchObject({ modelProvider: "no_models", orgFixableProviders: [], agents: 0 });
+      expect(r.unusableProviders).toHaveLength(1);
+      expect(r.unusableProviders[0]).toMatchObject({
+        provider: "model-fake",
+        orgCanFix: true,
+        reason: "no_chat_models",
+      });
+      expect(r.unusableProviders[0]).not.toHaveProperty("errorKind");
+      // the platform switched it off too: only the super admin can help
+      await accounts.createLocal({
+        login: "ent",
+        password: PW,
+        displayName: "E",
+        superAdmin: true,
+      });
+      const ent = await session(k, "ent");
+      const off = await ent({
+        method: "PATCH",
+        url: "/api/v1/admin/models/model-fake/disabled",
+        payload: { disable: ["fake-1"], enable: [] },
+      });
+      expect(off.statusCode, off.body).toBe(200);
+      expect((await readiness(req, orgId)).unusableProviders).toMatchObject([
+        { provider: "model-fake", orgCanFix: false, reason: "no_chat_models" },
+      ]);
+    } finally {
+      await db.deleteFrom("model_disabled").execute();
       await k.close();
     }
   });

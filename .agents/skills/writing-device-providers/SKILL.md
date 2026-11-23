@@ -559,7 +559,11 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   otherwise, and for an instance row naming another provider, the use fails `device.unavailable` (503) and nothing
   changes: files and instance stay, nothing is demoted, recreated or taken over. Lifecycle work (destroy, reset, the
   sweeps, revocation delivery) needs the provider loaded only; deleting a device whose provider is not loaded fails and
-  the row stays for a retry. The sweeps (`suspendIdle`, `destroyInactive`, `reconcileMarked`, the last with a cursor per
+  the row stays for a retry, unless the provider is no longer installed on the deployment (no `extension_installs` row,
+  or its catalog item removed; never an in-process `@…` one): then `destroyDevice` abandons the instance (#675), one
+  statement that sets `device_instances.abandoned_at` (0180; the row keeps `handle` / `fs_handle` / `prev_handle`) and
+  writes the platform audit event `device.instance_abandoned` with those names, once; the job succeeds and nothing
+  retries the row. A plugin of that name installed again destroys it in the gone-sweep. The sweeps (`suspendIdle`, `destroyInactive`, `reconcileMarked`, the last with a cursor per
   provider `capk:sandbox-reconcile-cursor:<plugin>`) run per loaded provider over its own rows; rows of a provider that is
   not loaded are never touched.
 - **Which provider a new device gets**: device creation (`POST /devices`) takes a provider name, one that is on in the org
@@ -690,8 +694,12 @@ suite in `@capybara-hq/testing` checks it):
   every other connection's state and working directory and their private temps
   (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
   and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
-  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
-  path to a denied one are unreadable and it cannot be listed, and more than 4096 carved roots refuses machine reach.
+  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`): subdirectories whole, and the non-denied
+  regular files directly inside each expanded directory as exact file roots (the agent pins each O_PATH|O_NOFOLLOW,
+  one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned descriptor, skips
+  one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). An
+  expanded directory cannot be listed, more than 4096 carved directories refuses machine reach, and files past the cap
+  or the agent's open-file limit are dropped.
   Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system
   mounted inside it and elsewhere, an overlay layer, a loop image) are denied too, from `/proc/self/mountinfo` at each
   ceiling read (`exec/linux-mountinfo.ts`, `mountReexposedDenies`, every reach); mounts of unknown content (an

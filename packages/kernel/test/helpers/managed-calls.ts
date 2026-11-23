@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxHandle } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
+import {
+  type HeldProvider,
+  SandboxService,
+  type SandboxUseInfo,
+} from "../../src/sandbox/sandbox.service.js";
+import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import type { TestKernel } from "./runs.js";
 
@@ -95,4 +102,81 @@ export async function runClaimed(
     () => true,
     () => tool.run(input, ctx),
   );
+}
+
+/**
+ * Uses the device of `use` once on the managed route of a real kernel, as a tool call of a run
+ * does (`SandboxService.withOperations`): a claimed running run of the holder conversation
+ * triggered by the actor's account ({@link startClaimedRun}), the call's `tool_call_started`
+ * ({@link recordCallStarted}), then the use under the run's claim fence. Every provider call in
+ * `fn` is admitted by the real operation intents for that conversation's permission profile.
+ * The holder must be a root conversation of the actor's account in the device's org; an unbound
+ * holder is bound to the device first (admission enters only the conversation's own device). The
+ * run it starts is settled (`completed`) when the use ends, so the holder can be used again.
+ * `opts.run` reuses a running run the test already claimed instead (left as it is).
+ */
+export async function managedUseOn<T>(
+  k: TestKernel,
+  raw: Kysely<unknown>,
+  use: SandboxUseContext,
+  fn: (h: SandboxHandle, p: HeldProvider, info: SandboxUseInfo, signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal = AbortSignal.timeout(30_000),
+  opts: { run?: { runId: string; claim: ExecutionClaim } } = {},
+): Promise<T> {
+  // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
+  const db = kernelDb(raw as Kysely<any>);
+  await db
+    .updateTable("conversations")
+    .set({ device_id: use.deviceId })
+    .where("id", "=", use.holderConversationId)
+    .where("device_id", "is", null)
+    .execute();
+  const { runId, claim } =
+    opts.run ?? (await startClaimedRun(k, raw, use.holderConversationId, use.actor.accountId));
+  try {
+    const callId = randomUUID();
+    await recordCallStarted(raw, use.holderConversationId, runId, callId, "Bash");
+    return await k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () =>
+        k.app
+          .get(SandboxService)
+          .withOperations(
+            { ...use, actor: { ...use.actor, runId } },
+            { claim, callId, deadlineMs: Date.now() + 30_000 },
+            fn,
+            signal,
+          ),
+    );
+  } finally {
+    if (!opts.run)
+      await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
+  }
+}
+
+/**
+ * A free root conversation of `accountId` (agent `agentId`) already bound to `deviceId`: the
+ * holder of a setup use through {@link managedUseOn} that seeds the device's workspace (a free
+ * conversation writes the workspace; a bound one only its project root) while the conversation
+ * under test keeps no run or call of the setup. Returns its id.
+ */
+export async function setupConversationOn(
+  raw: Kysely<unknown>,
+  opts: { orgId: string; agentId: string; accountId: string; deviceId: string },
+): Promise<string> {
+  const id = randomUUID();
+  // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
+  await kernelDb(raw as Kysely<any>)
+    .insertInto("conversations")
+    .values({
+      id,
+      org_id: opts.orgId,
+      agent_id: opts.agentId,
+      account_id: opts.accountId,
+      device_id: opts.deviceId,
+      source: "web",
+    })
+    .execute();
+  return id;
 }

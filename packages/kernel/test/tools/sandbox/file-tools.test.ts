@@ -24,6 +24,7 @@ import {
 } from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
+import { managedUseOn, setupConversationOn } from "../../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -60,6 +61,7 @@ const SANDBOX_FAKE = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
+let raw: ReturnType<typeof createDb>;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: string;
@@ -81,7 +83,7 @@ beforeAll(async () => {
       },
     ),
   );
-  const raw = createDb(pgc.url, 3);
+  raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   ownerId = (
@@ -308,21 +310,26 @@ async function boundConversation(path: string): Promise<string> {
   return convId;
 }
 
-/** Writes files into the device's file system (paths relative to `/workspace`). */
+/**
+ * Writes files into the device's file system (paths relative to `/workspace`) on the managed
+ * route, as a tool call does, from a free setup conversation of the owner on the device.
+ */
 async function put(deviceId: string, files: Record<string, string>): Promise<void> {
-  await k.app.get(SandboxService).withSandbox(
+  const holder = await setupConversationOn(raw, { orgId, agentId, accountId: ownerId, deviceId });
+  await managedUseOn(
+    k,
+    raw,
     {
       orgId,
       deviceId,
-      holderConversationId: "test-setup",
-      actor: { accountId: ownerId, conversationId: "test-setup" },
+      holderConversationId: holder,
+      actor: { accountId: ownerId, conversationId: holder },
     },
     async (h, p, _info, signal) => {
       for (const [path, text] of Object.entries(files)) {
         await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
       }
     },
-    new AbortController().signal,
   );
 }
 
@@ -345,7 +352,15 @@ async function fullAccess(convId: string): Promise<void> {
   const deviceId = await deviceOf(convId);
   // the device started first, so its provider's support is known and the confirmation shows the
   // crossings it allows (a consent given before covers none, and its first start would ask again)
-  await put(deviceId, {});
+  await k.app.get(SandboxService).ensureRunning(
+    {
+      orgId,
+      deviceId,
+      holderConversationId: convId,
+      actor: { accountId: ownerId, conversationId: convId },
+    },
+    AbortSignal.timeout(30_000),
+  );
   const preview = await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null);
   if (!preview.scopeRevision) throw new Error("the device offers no Full access scope");
   await k.app.get(PermissionProfilesService).set(orgId, convId, ownerId, {

@@ -10,6 +10,16 @@ export class Providers {
     return models;
   }
 
+  // the permanent exception (KC_EXCEPTIONS): the list failure marker holding the error kind
+  async statuses(p: string): Promise<string[]> {
+    const failed = failedKey(p);
+    const recent = await this.kv.get(failed);
+    if (recent !== null) throw new Error(recent);
+    const kind = await this.kindOf(p);
+    await this.kv.set(failed, kind, "EX", 15);
+    return [];
+  }
+
   async dedupe(key: string): Promise<boolean> {
     if ((await this.redis.get(key)) === DONE) return false;
     await this.redis.set(key, "pending", "EX", 60);

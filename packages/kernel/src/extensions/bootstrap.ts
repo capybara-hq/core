@@ -12,6 +12,7 @@ import {
   type PluginImportSource,
 } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
+import type { PlatformPluginUpdater } from "../catalog/plugin-upgrade.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -210,6 +211,12 @@ const LOCK_RETRY_MS = 500;
 /** What a run imports a declarative entry or an entry's catalog version with. */
 export type BootstrapImports = Pick<PluginImport, "prepare" | "prepareGit" | "confirm">;
 
+/**
+ * What a run moves the platform to a raised pin of a plugin without an extension with (the
+ * platform plugin update, acting as the kernel).
+ */
+export type BootstrapUpdater = Pick<PlatformPluginUpdater, "preview" | "update">;
+
 /** A git entry's import: its files (unpacked from the verified pack) and where they came from. */
 interface GitEntryImport {
   files: Map<string, Uint8Array>;
@@ -337,6 +344,8 @@ export class BootstrapService {
     packages?: ReadonlyMap<string, Uint8Array>;
     /** The plugin import a declarative entry (or an entry's catalog version) goes through. */
     imports: BootstrapImports;
+    /** The platform update a raised pin of a declarative entry goes through. */
+    updater: BootstrapUpdater;
   }): Promise<BootstrapResult> {
     const manifestSha256 = bootstrapManifestSha256(o.manifest);
     // Done: no lock, no directory, no network
@@ -397,7 +406,7 @@ export class BootstrapService {
         try {
           const fetchErr = fetchFailed.get(e.name);
           if (fetchErr !== undefined) throw fetchErr;
-          const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports, {
+          const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o, {
             manifest: o.manifest,
             tree: gitTrees.get(e.name),
           });
@@ -541,7 +550,7 @@ export class BootstrapService {
     e: MergedBootstrapEntry,
     bytes: Uint8Array,
     handled: ReadonlySet<string> | undefined,
-    imports: BootstrapImports,
+    { imports, updater }: { imports: BootstrapImports; updater: BootstrapUpdater },
     /** For a git entry: the manifest (its marketplaces) and the tree oid when read from git now. */
     at: { manifest: MergedBootstrapManifest; tree: string | undefined },
   ): Promise<BootstrapEntryResult> {
@@ -610,9 +619,33 @@ export class BootstrapService {
     const builtin = e.required || e.builtin === true;
     if (!plugin.extension) {
       await this.markBuiltin(e.name, builtin);
-      if (!isNew && !(builtin && !(await this.hasLiveItem(e.name)))) {
-        return { name: e.name, action: "kept", version: e.version };
+      const live = await this.platformVersion(e.name);
+      if (live !== undefined) {
+        // As the extension path does: a version the bootstrap put there is raised to the pin; one
+        // the super admin moved to (another source, or a higher version) stays
+        if (live.source !== "bootstrap" || !isLower(live.version, e.version)) {
+          return { name: e.name, action: "kept", version: live.version };
+        }
+        if (live.disabled) {
+          // The update refuses a disabled item: the version waits in the catalog, and the super
+          // admin applies it once they enable the plugin
+          await this.importOnly(e, bytes, source, imports, git);
+          this.log.info(
+            "bootstrap: the plugin is disabled on the deployment; the pinned version is imported, not applied",
+            { plugin: e.name, version: e.version, current: live.version },
+          );
+          return { name: e.name, action: "kept", version: live.version };
+        }
+        await this.importOnly(e, bytes, source, imports, git, true);
+        const preview = await updater.preview(live.itemId, e.version);
+        await updater.update(null, live.itemId, {
+          version: e.version,
+          diffHash: preview.diffHash,
+        });
+        return { name: e.name, action: "upgraded", version: e.version };
       }
+      // A builtin entry a super admin removed is put back; an optional one stays out (Ruling 5)
+      if (!isNew && !builtin) return { name: e.name, action: "kept", version: e.version };
       const imported = await this.importOnly(e, bytes, source, imports, git);
       await this.markBuiltin(e.name, builtin);
       return { name: e.name, action: imported ? "imported" : "kept", version: e.version };
@@ -681,16 +714,40 @@ export class BootstrapService {
     return leftDisabled === undefined ? result : { ...result, leftDisabled };
   }
 
-  /** Whether a live (not deleted) platform catalog item has this name. */
-  private async hasLiveItem(name: string): Promise<boolean> {
+  /**
+   * The live (not deleted) platform catalog item of this name: its platform version (the one orgs
+   * install, else its latest) and where that version came from. undefined: no such item.
+   */
+  private async platformVersion(
+    name: string,
+  ): Promise<
+    { itemId: string; version: string; source: string | null; disabled: boolean } | undefined
+  > {
     const row = await this.db
-      .selectFrom("catalog_items")
-      .select("id")
-      .where("name", "=", name)
-      .where("owner_org_id", "is", null)
-      .where("deleted_at", "is", null)
+      .selectFrom("catalog_items as i")
+      .leftJoin("catalog_item_versions as v", (j) =>
+        j
+          .onRef("v.item_id", "=", "i.id")
+          .on("v.version", "=", sql<string>`coalesce(i.platform_synced_version, i.latest_version)`),
+      )
+      .select([
+        "i.id",
+        sql<string>`coalesce(i.platform_synced_version, i.latest_version)`.as("version"),
+        "v.source",
+        "i.disabled",
+      ])
+      .where("i.name", "=", name)
+      .where("i.owner_org_id", "is", null)
+      .where("i.deleted_at", "is", null)
       .executeTakeFirst();
-    return row !== undefined;
+    return (
+      row && {
+        itemId: row.id,
+        version: row.version,
+        source: row.source ?? null,
+        disabled: row.disabled,
+      }
+    );
   }
 
   /**
@@ -795,13 +852,17 @@ export class BootstrapService {
     return staged;
   }
 
-  /** A declarative plugin: catalog only. Returns false when that version is already imported. */
+  /**
+   * A declarative plugin: catalog only. Returns false when that version is already imported.
+   * `updateFollows`: a platform update to this version follows (it owes the scope sync).
+   */
   private async importOnly(
     e: MergedBootstrapEntry,
     bytes: Uint8Array,
     source: PluginImportSource,
     imports: BootstrapImports,
     git: GitEntryImport | undefined,
+    updateFollows = false,
   ): Promise<boolean> {
     try {
       const { stagingId, review } =
@@ -811,6 +872,7 @@ export class BootstrapService {
       await imports.confirm(null, stagingId, {
         reviewHash: review.reviewHash,
         scope: e.scope ?? "optional",
+        ...(updateFollows && { updateFollows: true }),
       });
       return true;
     } catch (err) {

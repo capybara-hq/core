@@ -489,16 +489,52 @@ export function findModel(providers: ProviderModels[], ref: ModelRef): ModelInfo
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
 
 /**
- * Whether the org can run (`GET /orgs/:id/readiness`): a loaded model-provider extension enabled
- * in the org (never a vendor call) and the number of agents the caller can see. `org_fixable`:
- * providers the platform offers this org (`orgFixableProviders`) wait for an org admin to switch
- * one on or fill its org config on `/settings/models` (the setup checklist's model step leads
- * there, `modelConfigHref`); `none`: only the super admin can help.
+ * Why a model provider's list failed (readiness `list_failed`): the provider's error kind
+ * (`auth`: the key was rejected; `timeout`; `network`, `server`, `overloaded`: the service is
+ * unavailable; `rate_limited`; …), or `unknown`.
+ */
+export type ModelListErrorKind =
+  | "rate_limited"
+  | "overloaded"
+  | "server"
+  | "timeout"
+  | "network"
+  | "auth"
+  | "invalid_request"
+  | "context_overflow"
+  | "refusal"
+  | "aborted"
+  | "unknown";
+
+/**
+ * A model provider that is on in the org but gives an agent no model to pick (readiness
+ * `no_models`): its list failed (`errorKind`), or it lists no chat model that is on in the org.
+ * `orgCanFix`: an org admin can fix it on `/settings/models` (the org's own key, or switching a
+ * chat model on), else only a super admin can on `/admin/models`.
+ */
+export type UnusableProvider = {
+  provider: string;
+  displayName: LocalizedName | null;
+  orgCanFix: boolean;
+} & ({ reason: "list_failed"; errorKind: ModelListErrorKind } | { reason: "no_chat_models" });
+
+/**
+ * Whether the org can run (`GET /orgs/:id/readiness`): `ready` when the org has a chat model an
+ * agent can pick (the agent form's list), and the number of agents the caller can see.
+ * `no_models`: providers are on but give no model (`unusableProviders`, each with why);
+ * `org_fixable`: providers the platform offers this org (`orgFixableProviders`) wait for an org
+ * admin to switch one on or fill its org config on `/settings/models` (the setup checklist's model
+ * step leads there, `modelConfigHref`); `none`: only the super admin can help.
  */
 export interface OrgReadiness {
-  modelProvider: "ready" | "org_fixable" | "none";
-  /** With `org_fixable`: the providers an org admin can make usable, and what each waits for. */
+  modelProvider: "ready" | "no_models" | "org_fixable" | "none";
+  /**
+   * With `org_fixable` (or `no_models`, other providers): the providers an org admin can make
+   * usable, and what each waits for.
+   */
   orgFixableProviders: { provider: string; reason: "not_enabled" | "needs_config" }[];
+  /** With `no_models`: the providers that are on but give no model. */
+  unusableProviders: UnusableProvider[];
   agents: number;
 }
 

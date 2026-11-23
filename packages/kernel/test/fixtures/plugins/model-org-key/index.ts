@@ -1,6 +1,7 @@
 import {
   defineExtension,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
+  ModelError,
   type ModelProvider,
   type ModelStreamEvent,
   secret,
@@ -13,7 +14,8 @@ const Config = z.object({ apiKey: secret(z.string().min(1)) });
 /**
  * A model provider every org configures with its own key (model platform spec B §5.5): installed
  * without a platform key, following orgs need configuration and the admin view shows it as
- * configured by each org. Lists one chat model named after the key's length (no key in output).
+ * configured by each org. Lists one chat model named after the key's length (no key in output); a
+ * key starting with `bad` is rejected as the vendor would (`ModelError` `auth`).
  */
 export default defineExtension({
   name: "model-org-key",
@@ -26,6 +28,9 @@ export default defineExtension({
       async listModels(opts) {
         const parsed = Config.safeParse(opts?.config ?? ctx.config);
         if (!parsed.success) throw new Error("model-org-key: no key");
+        if (parsed.data.apiKey.startsWith("bad")) {
+          throw new ModelError("auth", "model-org-key: the key is invalid");
+        }
         return [
           {
             id: `key-${parsed.data.apiKey.length}`,

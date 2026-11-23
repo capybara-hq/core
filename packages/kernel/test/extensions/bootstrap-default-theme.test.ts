@@ -6,6 +6,7 @@ import type { BootstrapExtraManifest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
+import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -485,7 +486,12 @@ describe("a replica without the extra manifest that raced one with it (ruling R1
     expect(err?.fields).toMatchObject({ marketplaces: ["dist"] });
     // The step itself refuses once it holds the lock (the CLI goes through it too)
     await expect(
-      svc.run({ manifest: fx.manifest, dir: fx.dir, imports: k.app.get(PluginImport) }),
+      svc.run({
+        manifest: fx.manifest,
+        dir: fx.dir,
+        imports: k.app.get(PluginImport),
+        updater: k.app.get(PlatformPluginUpdater),
+      }),
     ).rejects.toBeInstanceOf(BootstrapExtraMismatchError);
     expect(await runs()).toEqual(before);
     expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
@@ -516,9 +522,12 @@ describe("the last bootstrap run tells an extra manifest apart (ruling R17)", ()
     expect(err?.fields).toMatchObject({ marketplaces: [], plugins: ["brand"] });
     // The step refuses under the lock too
     await expect(
-      k.app
-        .get(BootstrapService)
-        .run({ manifest: fx.manifest, dir: fx.dir, imports: k.app.get(PluginImport) }),
+      k.app.get(BootstrapService).run({
+        manifest: fx.manifest,
+        dir: fx.dir,
+        imports: k.app.get(PluginImport),
+        updater: k.app.get(PlatformPluginUpdater),
+      }),
     ).rejects.toBeInstanceOf(BootstrapExtraMismatchError);
     expect(await runs()).toEqual(before);
   });
@@ -527,9 +536,12 @@ describe("the last bootstrap run tells an extra manifest apart (ruling R17)", ()
     const k = await boot(OBJECT_STORE_CONFIG, createLogger("error"), null);
     expect(await requiredInstall("fake-bootstrap-b")).toBe(true);
     const dropped = { ...fx.manifest, plugins: [] };
-    const r = await k.app
-      .get(BootstrapService)
-      .run({ manifest: dropped, dir: fx.dir, imports: k.app.get(PluginImport) });
+    const r = await k.app.get(BootstrapService).run({
+      manifest: dropped,
+      dir: fx.dir,
+      imports: k.app.get(PluginImport),
+      updater: k.app.get(PlatformPluginUpdater),
+    });
     expect(r.results).toEqual([
       expect.objectContaining({ name: "fake-bootstrap-b", action: "required_cleared" }),
     ]);
@@ -570,13 +582,14 @@ describe("a run that has written but not completed (ruling R19)", () => {
     await db.deleteFrom("bootstrap_runs").execute();
     const svc = k.app.get(BootstrapService);
     const imports = k.app.get(PluginImport);
+    const updater = k.app.get(PlatformPluginUpdater);
     const npmOnly = await loadBootstrapManifest({
       builtin: fx.manifest,
       extraManifest: npmOnlyManifest,
     });
     // The first pass installs the required extra entry and defers the builtin one: not recorded
     await expect(
-      svc.run({ manifest: npmOnly, dir: fx.dir, imports, deferBuiltin: true }),
+      svc.run({ manifest: npmOnly, dir: fx.dir, imports, updater, deferBuiltin: true }),
     ).rejects.toBeInstanceOf(BootstrapFailedError);
     expect(await runs()).toEqual([]);
     expect(await marketplaceRows()).toEqual([]);
@@ -586,9 +599,9 @@ describe("a run that has written but not completed (ruling R19)", () => {
       plugins: ["brand", "fake-bootstrap-a"],
     });
     // A process without the extra manifest whose built-in manifest is not done yet
-    await expect(svc.run({ manifest: fx.manifest, dir: fx.dir, imports })).rejects.toBeInstanceOf(
-      BootstrapExtraMismatchError,
-    );
+    await expect(
+      svc.run({ manifest: fx.manifest, dir: fx.dir, imports, updater }),
+    ).rejects.toBeInstanceOf(BootstrapExtraMismatchError);
     expect(await runs()).toEqual([]);
     expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
   });

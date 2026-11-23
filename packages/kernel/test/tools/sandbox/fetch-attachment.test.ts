@@ -1,4 +1,3 @@
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import { ApiError } from "../../../src/errors.js";
@@ -9,10 +8,13 @@ import {
   sandboxTools,
 } from "../../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinTool } from "../../../src/tools/registry.js";
+import { managedCall, managedRoute, managedSandbox } from "../../helpers/managed-tool-stubs.js";
 
 /**
  * Attachments on demand (spec §5.4): `FetchAttachment` copies one attachment of the conversation
  * into the device. Nothing is copied before the model asks for it; the tool is the only way in.
+ * The copy is a trusted preparation on the managed route: staged by the kernel before the user
+ * callback (`beforeUser` -> `staging.prepare("attachments", [the conversation's directory])`).
  */
 
 /** The conversation: its first 12 hex digits name the attachment directory. */
@@ -26,14 +28,15 @@ const cfg = KernelConfigSchema.parse({
   masterKey: Buffer.alloc(32, 7).toString("base64"),
 });
 
-const callCtx = () => ({
-  orgId: "o",
-  accountId: "a",
-  agentId: "g",
-  conversationId: CONV,
-  callId: "call",
-  signal: new AbortController().signal,
-});
+const callCtx = () =>
+  managedCall({
+    orgId: "o",
+    accountId: "a",
+    agentId: "g",
+    conversationId: CONV,
+    callId: "call",
+    signal: new AbortController().signal,
+  });
 
 interface Opened {
   name: string;
@@ -69,23 +72,14 @@ function rig(
     stat: async () => null,
   };
   const list = o.attachments ?? [];
+  const device = managedSandbox(p);
   const deps = {
     devices: {
       forTool: async () => "env-1",
       ...(o.usableNow !== undefined && { usableNow: async () => o.usableNow }),
     },
-    sandbox: {
-      withSandbox: async (
-        _c: unknown,
-        fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) =>
-        fn(
-          { id: "x" },
-          p,
-          { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-          new AbortController().signal,
-        ),
-    },
+    sandbox: device.sandbox,
+    ...managedRoute(),
     attachments: {
       listForConversation: async () => list,
       openForConversation: async (_o: string, _c: string, id: string) =>
@@ -107,7 +101,7 @@ function rig(
   const tools = sandboxTools(deps);
   const tool = tools.find((t) => t.spec.name === "FetchAttachment") as BuiltinTool;
   const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
-  return { files, writes, deps, tools, tool, text };
+  return { files, writes, staged: device.staged, deps, tools, tool, text };
 }
 
 describe("FetchAttachment", () => {
@@ -117,6 +111,8 @@ describe("FetchAttachment", () => {
     expect(first).toContain(`Copied 电商工行.xlsx to ${DIR}/电商工行.xlsx.`);
     expect(r.writes).toContain(`${DIR}/电商工行.xlsx`);
     expect(new TextDecoder().decode(r.files.get(`${DIR}/电商工行.xlsx`))).toBe("hi");
+    // a trusted preparation scoped to the conversation's attachment directory
+    expect(r.staged).toEqual([{ purpose: "attachments", roots: [DIR] }]);
     // the same call again: the same path, the same bytes
     const second = r.text(await r.tool.run({ file: "电商工行.xlsx" }, callCtx()));
     expect(second).toContain(`Copied 电商工行.xlsx to ${DIR}/电商工行.xlsx.`);
