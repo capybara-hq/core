@@ -254,6 +254,7 @@ it means N updates, and there is nothing to attach a scope to.
     and credentials for each, as in today's install wizard, and the connectors are created then;
     with `all` or `named` scope nothing is created until an org admin does this (the plugin shows
     "需要配置" in the org), because credentials are per org;
+    Amended by 2026-11-24-plugin-pages-redesign-design.md §5.2.2: nothing is filled on install, upgrade or enable; every template that is on becomes a connector in the org, one needing org input waits as `needs_config` (待配置), and the connector is created without an actor (`created_by` null) when no admin is acting.
   - connectors made from a template stay linked to it: when the template is updated (with its
     plugin or on its own), the endpoint, tool and default policy changes are applied to every
     connector made from it, and the update preview lists the affected orgs (today's
@@ -527,8 +528,10 @@ they win. Cited in code and docs as "ruling <id>".
   used one stays and is listed as kept.
 - **P2-8** An update clears the pins of linked copies only in orgs where the component is on.
 - **P2-9** An update creates no connector for an added template; the org needs its input.
+  Amended by 2026-11-24-plugin-pages-redesign-design.md §5.2.3: an update creates a connector for every added template in each org where the plugin is on (deferred until the connector plugin is on in that org, then created by the ensure job and the template-connector sweep).
 - **P2-10** An installed plugin with an on template lacking a connector is `needs_config` in the org,
   and `POST /orgs/:orgId/catalog/:itemId/connectors` creates the missing connectors (补充配置).
+  Amended by 2026-11-24-plugin-pages-redesign-design.md §5.2.3: plugin `needs_config` comes only from an invalid effective extension config; a missing template connector is created by install, upgrade, the ensure job, the sweep or the startup reconciler, so no plugin waits for one.
 - **P2-11** (§9, goal 5) `GET admin/components` also lists org-owned skills and agent templates
   (owner = the org, read-only in the admin console), with the tabs 全部 / 平台 / 组织创建.
 - **P2-12** Scope sync failures are kept in `plugin_scope_sync_failures` (migration 0083), one row per
@@ -1016,6 +1019,8 @@ Maintainer decision 2026-11-08: the admin 插件 → 市场 rows show icons, not
 
 Maintainer decision in acceptance (2026-11-13): getting a newer marketplace version of an installed
 plugin running took two actions (导入 vX, then 更新到 vX); that is one action now.
+
+Amended by 2026-11-24-plugin-pages-redesign-design.md §5.3: install, update and enable are one review page with no input fields; the update preview also lists the connectors an upgrade creates (created and deferred) and the orgs scope sync will now install the plugin in.
 
 - **Installed plugin, newer version:** the admin plugin list and detail show one primary 更新到 vX
   ("Update to vX"; the marketplace tab too). It stages the version (any import prepare) and opens

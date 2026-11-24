@@ -799,6 +799,8 @@ just new place ids).
 
 ### 9.3 Connector templates
 
+Amended by 2026-11-24-plugin-pages-redesign-design.md §5.3: the guide shows on the connector's 配置 form (credentials tab) only; the wizard steps and `/plugins/<itemId>/connectors` (补充配置) are gone, and the guide acknowledgement is recorded after the save.
+
 The connector template place has four pages (designer's call on which; all of them already exist):
 
 | Page | Who | Audience | Target |

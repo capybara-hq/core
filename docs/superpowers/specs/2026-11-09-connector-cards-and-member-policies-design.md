@@ -26,6 +26,7 @@ of the connector's tools agents may call with their connection without asking.
   with **配置** for a template on without its connector. The wizard keeps a slot above the template's
   input for its setup guide (setup guides v2, a later task). Members read these cards without
   actions; guests see connector cards only (the template list is a catalog read).
+  Amended by 2026-11-24-plugin-pages-redesign-design.md §5.2.4: template cards keep 启用 for default-off templates only; 需要配置 / 配置 now belongs to a connector in `needs_config` (待配置 + 配置 for admins, 待管理员配置 for members), and 配置 opens the connector's credentials tab, which also accepts an editable endpoint for a template connector.
 - Connector card of a personal-credential connector: the viewer's own state. 未连接 with **连接**
   (OAuth: `POST …/connectors/:id/connect`, back to `/connectors`; static credentials: 我的连接);
   once connected, 已连接 with **权限** (§3). Org admins see the same for their own connection.
