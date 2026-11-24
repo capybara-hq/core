@@ -369,7 +369,7 @@ export function PluginReviewBody({
                     </>
                   }
                   meta={
-                    // One line: the host (and 组织可改) is the toggle; the description, the full
+                    // One line: the host (and the org-editable note) is the toggle; the description, the full
                     // endpoint and the auth open under it (approved mockup)
                     <DisclosureLinks
                       items={[

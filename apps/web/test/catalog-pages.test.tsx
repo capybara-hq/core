@@ -1129,7 +1129,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
       expect(within(skill).getByText(fill(c.skillFiles, { n: 2 }))).toBeTruthy();
       const templates = screen.getByRole("region", { name: c.templates });
       expect(within(templates).getByText(r.needsOrgCredential)).toBeTruthy();
-      // the host line (with 组织可改) opens the full endpoint under the row
+      // the host line (with the org-editable note) opens the full endpoint under the row
       await user.click(within(templates).getByRole("button", { name: new RegExp(r.orgCanChange) }));
       expect(within(templates).getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
       const deps = screen.getByRole("region", { name: c.dependencies });
@@ -3116,7 +3116,7 @@ describe("/admin/plugins and marketplace entries", () => {
     const list = await screen.findByRole("list", { name: c.title });
     expect(within(list).getAllByRole("listitem")).toHaveLength(3);
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    // installed at an older version: the state names it, 更新到 the latest stages it for the wizard
+    // installed at an older version: the state names it, the update button stages the latest for the wizard
     const cat = row("cat-a");
     expect(cat.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
       fill(c.adopted, { version: "v1.0.0-rc.0" }),

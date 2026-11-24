@@ -294,7 +294,7 @@ describe("PluginReviewBody contents", () => {
     renderPage(<PluginReviewBody review={atlassian} />, zh);
     expect(screen.getAllByText("需要 OAuth 客户端")).toHaveLength(3);
     expect(screen.queryByRole("checkbox")).toBeNull();
-    // the full endpoint is folded; the host is on the row and is the toggle (no 端点详情 line)
+    // the full endpoint is folded; the host is on the row and is the toggle (no endpoint details line)
     const hosts = screen.getAllByRole("button", { name: "mcp.atlassian.com" });
     expect(hosts).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "端点详情" })).toBeNull();

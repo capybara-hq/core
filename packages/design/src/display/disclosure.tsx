@@ -61,7 +61,7 @@ export function Disclosure({
 export type DisclosureLinkItem = {
   /** Stable key of the item. */
   key: string;
-  /** The link's text (完整说明, 许可证全文, a host line). */
+  /** The link's text (a full description, a license, a host line). */
   summary: ReactNode;
   children: ReactNode;
 };
