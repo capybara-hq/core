@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import {
+  DeviceAccessError,
   isDeviceOfflineError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
@@ -285,6 +286,38 @@ interface Instance {
 export type TaggedProvider = Omit<DeviceProvider, "exec"> & {
   exec(h: SandboxHandle, args: Omit<ExecArgs, "tag">): Promise<ExecResult>;
 };
+
+/** The device service methods of a provider ({@link SandboxService.withDeviceServices}), bound. */
+export type DeviceServiceMethods = Pick<
+  DeviceProvider,
+  "ensureService" | "stopService" | "serviceRequest" | "openStream"
+>;
+
+function serviceMethodsOf(impl: DeviceProvider): DeviceServiceMethods {
+  return {
+    ...(impl.ensureService && { ensureService: impl.ensureService.bind(impl) }),
+    ...(impl.stopService && { stopService: impl.stopService.bind(impl) }),
+    ...(impl.serviceRequest && { serviceRequest: impl.serviceRequest.bind(impl) }),
+    ...(impl.openStream && { openStream: impl.openStream.bind(impl) }),
+  };
+}
+
+/** A device held for a stream ({@link SandboxService.holdForStream}). */
+export interface StreamHold {
+  h: SandboxHandle;
+  /** The provider's `openStream`, bound (absent when it has none). */
+  p: Pick<DeviceProvider, "openStream">;
+  /** Aborts when the caller's signal aborts or the lease is lost; the hold is then released. */
+  signal: AbortSignal;
+  /** Ends the hold (idempotent): holder record cleared, lease released, `last_used_at` moved. */
+  release(): Promise<void>;
+}
+
+const streamUnavailable = (): DeviceAccessError =>
+  new DeviceAccessError(
+    "provider_unavailable",
+    "The device is not running; use a device tool first to start it, then open the stream again.",
+  );
 
 /** What {@link SandboxService.ifRunning} did. */
 export type IfRunningResult<T> =
@@ -1054,6 +1087,40 @@ export class SandboxService {
     signal: AbortSignal,
     use: boolean,
   ): Promise<IfRunningResult<T>> {
+    const r = await this.enterIfRunning(deviceId, instance, signal, use);
+    if (r.kind !== "entered") return r;
+    const { e, p } = r;
+    const env = deviceId;
+    try {
+      const impl = tagged<TaggedProvider>(p.impl, e.lease.token, undefined, () =>
+        this.register(env, e.lease.token),
+      );
+      const sig = AbortSignal.any([signal, e.lease.signal]);
+      try {
+        return { kind: "ran", value: await fn(impl, e.handle, sig) };
+      } catch (err) {
+        if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
+        throw err;
+      }
+    } finally {
+      await this.leave(env, e);
+    }
+  }
+
+  /**
+   * The holder entry of {@link ifRunningAs} (and {@link holdForStream}): a shared lease on the
+   * running instance created at `instance.createdAt`, never creating, resuming or rebuilding one.
+   * The caller ends the holder with {@link leave}.
+   */
+  private async enterIfRunning(
+    deviceId: string,
+    instance: { createdAt: Date; exactRef?: boolean },
+    signal: AbortSignal,
+    use: boolean,
+  ): Promise<
+    | { kind: "entered"; e: Entered; p: DeviceProviderEntry }
+    | Exclude<IfRunningResult<never>, { kind: "ran" }>
+  > {
     const p = await this.loadedFor(deviceId);
     const env = deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
@@ -1089,28 +1156,87 @@ export class SandboxService {
           !instance.exactRef,
           use ? "reconciled" : "none",
         );
-        if (e) {
-          try {
-            const impl = tagged<TaggedProvider>(p.impl, lease.token, undefined, () =>
-              this.register(env, lease.token),
-            );
-            const sig = AbortSignal.any([signal, lease.signal]);
-            try {
-              return { kind: "ran", value: await fn(impl, e.handle, sig) };
-            } catch (err) {
-              if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
-              throw err;
-            }
-          } finally {
-            await this.leave(env, e);
-          }
-        }
+        if (e) return { kind: "entered", e, p };
         // the row changed between the check and the lease: classify it again
         continue;
       }
       if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
       await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
     }
+  }
+
+  /**
+   * Holds the device's running instance for a stream to one of its services (browser use spec
+   * §6.2: an open viewer counts as device use). It never creates, resumes or rebuilds an
+   * instance, like {@link ifRunning}: a device without a running instance is refused with
+   * `DeviceAccessError("provider_unavailable")`. The hold is a shared lease plus a holder record,
+   * as a `withSandbox` holder has: idle suspension and the destruction sweep (on any replica)
+   * find the lease taken in Redis and skip the device, and it counts against
+   * `sandbox.maxConcurrentCommands`. LockService's watchdog renews the lease (every TTL / 3) until
+   * `release()`, until `signal` aborts or until the lease is lost (the returned `signal` aborts
+   * then); the hold then ends as a holder leaves: the record cleared, the lease released,
+   * `last_used_at` moved forward, so the idle clock starts when the viewer goes. The holder
+   * record is written once on entry and not refreshed: a holder refreshes it before each `exec`
+   * and a hold runs none, so a record that lapses during a long hold loses nothing (it only names
+   * a token whose operations a takeover revokes, and a hold has none; the sweeps read the lease).
+   * `release()` is idempotent. `p` offers only `openStream` (absent when the provider has none).
+   */
+  async holdForStream(deviceId: string, signal: AbortSignal): Promise<StreamHold> {
+    const row = await this.db
+      .selectFrom("device_instances")
+      .select(["status", "handle", "created_at"])
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst();
+    if (row?.status !== "running" || row.handle === null) throw streamUnavailable();
+    const r = await this.enterIfRunning(deviceId, { createdAt: row.created_at }, signal, false);
+    if (r.kind !== "entered") throw streamUnavailable();
+    const { e, p } = r;
+    const sig = AbortSignal.any([signal, e.lease.signal]);
+    let released: Promise<void> | undefined;
+    const onAbort = () => void release();
+    const release = (): Promise<void> => {
+      released ??= (async () => {
+        sig.removeEventListener("abort", onAbort);
+        await this.leave(deviceId, e);
+      })();
+      return released;
+    };
+    sig.addEventListener("abort", onAbort, { once: true });
+    if (sig.aborted) {
+      await release();
+      throw abortReason(sig);
+    }
+    const impl = p.impl;
+    return {
+      h: e.handle,
+      p: impl.openStream ? { openStream: impl.openStream.bind(impl) } : {},
+      signal: sig,
+      release,
+    };
+  }
+
+  /**
+   * Runs `fn` with the device service methods of the device's provider (browser use spec §5),
+   * as any use of the device does ({@link withSandbox}: the instance is created or resumed,
+   * `last_used_at` moves forward). `admit` sees the provider's methods first, before any lease
+   * or instance work, so a provider without services is refused without touching the device.
+   */
+  async withDeviceServices<T>(
+    ctx: SandboxUseContext,
+    admit: (p: DeviceServiceMethods) => void,
+    fn: (h: SandboxHandle, p: DeviceServiceMethods, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    admit(serviceMethodsOf((await this.require(ctx.deviceId, ctx.orgId)).impl));
+    return this.withSandboxUse(
+      ctx,
+      async () => {
+        throw new Error("Device service callback was not installed");
+      },
+      signal,
+      undefined,
+      (h, provider, _info, sig) => fn(h, serviceMethodsOf(provider), sig),
+    );
   }
 
   /**
