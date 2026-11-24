@@ -5110,9 +5110,7 @@
         "title": "Install plugin",
         "steps": {
           "source": "Choose package",
-          "review": "Review",
-          "reviewConfirm": "Review and confirm",
-          "update": "Update preview"
+          "reviewConfirm": "Review and confirm"
         },
         "sourceLabel": "Source",
         "sourceFile": "Upload plugin package (.tgz)",
@@ -5278,10 +5276,6 @@
         "agentNeedsDescribed": "{label} · {host}",
         "endpointDetails": "Address details",
         "orgCanChange": "Org can change",
-        "titleUpdate": "Update plugin \"{name}\"",
-        "confirmUpdate": "Confirm update",
-        "updateHint": "Confirming adds {version} to the platform and updates the plugin to it, for every organization at once. Cancelling before you confirm changes nothing.",
-        "importedNotUpdated": "{version} was added to the plugin's versions, but updating the platform to it failed ({code}): the platform stays on {from}, and the extension and its permissions are unchanged. Retry with \"Update to {version}\" on the plugin's page.",
         "collapse": "Less",
         "configAfterEnable": "Set up on the Extensions page after enabling",
         "defaultOff": "Off by default",
@@ -5703,7 +5697,15 @@
       "scopeInstallNote": "The platform scope wants it on here: scope sync will try to install it after the update",
       "deferredNote": "Created once their connector plugin is on in this org: {names}",
       "scopeInstallFailingNote": "The platform scope wants it on here: scope sync will try to install it again after the update; the last attempt failed: {failure}",
-      "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
+      "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}",
+      "pageTitle": "Update plugin \"{name}\"",
+      "hint": "Confirming updates every organization to {version}.",
+      "confirmTo": "Update to {version}",
+      "after": "After the update",
+      "impactNone": "Nothing else changes.",
+      "ack": "I have looked over the new sensitive permissions and warnings",
+      "ackHint": "This update adds sensitive permissions or migration warnings. Look them over before confirming.",
+      "importedNotUpdated": "{version} was added to the plugin's versions, but the platform could not update to it ({code}): it stays on {from}, and the extension and its permissions are unchanged. Retry \"Update to {version}\" on the plugin's page."
     },
     "errorDetail": {
       "host": "Host: {host}",

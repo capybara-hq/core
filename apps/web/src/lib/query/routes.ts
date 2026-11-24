@@ -3,6 +3,12 @@ import type { AdminExtension } from "../admin-extensions";
 import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
+import {
+  type CatalogItem,
+  ownerOrgOf,
+  type PlatformUpdatePreview,
+  type PluginPrepared,
+} from "../catalog";
 import type { ChannelConnection } from "../channels";
 import {
   maybeOwnTemplate,
@@ -43,6 +49,7 @@ import {
   platformAuditQuery,
   platformIconsQuery,
   stagedImportQuery,
+  stagedUpdatePreviewQuery,
 } from "./admin";
 import {
   adminAgentQuery,
@@ -540,6 +547,25 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             q(catalogItemsQuery()),
           ]
         : [];
+    },
+    // An installed plugin's review is the update's: its preview marks the rows and fills the
+    // impact section.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, search }, qc) => {
+      const staging = search.get("staging") ?? "";
+      if (!superAdmin(me) || staging === "") return;
+      const name = qc.getQueryData<PluginPrepared>(stagedImportQuery(staging).queryKey)?.review
+        .name;
+      const items = qc.getQueryData<{ items: CatalogItem[] }>(catalogItemsQuery().queryKey)?.items;
+      if (name === undefined || !items?.some((i) => i.name === name && ownerOrgOf(i) === null))
+        return;
+      await qc.prefetchQuery({ ...stagedUpdatePreviewQuery(staging), retry: false });
+      // the themes it removes are named from the platform's themes
+      const preview = qc.getQueryData<PlatformUpdatePreview>(
+        stagedUpdatePreviewQuery(staging).queryKey,
+      );
+      if (preview?.themes !== undefined && preview.themes.length > 0)
+        await qc.prefetchQuery({ ...adminComponentsQuery("theme"), retry: false });
     },
   },
   {
