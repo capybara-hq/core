@@ -238,7 +238,7 @@ page shows it as not yet connected.
 | Place | Admin | Member |
 |---|---|---|
 | Connectors page card | 待配置 + 配置 (opens the connector's edit form) | 待管理员配置, no button |
-| Extensions page card (extension whose effective config is invalid) | 待配置 + 配置 (the existing config sheet) | 待管理员配置, no button |
+| Extensions page row (the page is a table; extension whose effective config is invalid) | 待配置 + 配置 (the existing config sheet) | 待管理员配置, no button |
 | Agent page connector list | 待配置 | 待配置 |
 | Tool call in a conversation | error text to the model naming that an org admin must configure the connector (existing text, `pipeline.ts`, reworded to say 待配置 in the UI string it maps to) | same |
 
