@@ -285,12 +285,11 @@ describe("device services", () => {
     await services.ensure(use(), spec(), signal(), { ifRunning: true });
     await services.ensure(use(), spec(), signal());
     await services.refresh(use(), "echo", signal());
-    // refresh of a running service: one ifRunning ensure before the apply, one after
-    expect(seen.map((c) => c.ifRunning)).toEqual([true, false, true, true]);
+    // refresh of a running service with nothing to apply: one ifRunning ensure
+    expect(seen.map((c) => c.ifRunning)).toEqual([true, false, true]);
     expect(seen[0]?.spec).toEqual(nameOnly);
     expect(seen[1]?.spec).toEqual(spec());
     expect(seen[2]?.spec).toEqual(nameOnly);
-    expect(seen[3]?.spec).toEqual(nameOnly);
   });
 });
 
@@ -487,7 +486,7 @@ describe("refresh after an allowlist change", () => {
     expect((await row())?.status).toBe("running");
   });
 
-  it("the apply under the lease has its own budget: the caller's abort does not reach the update", async () => {
+  it("the apply and the ensure after it have their own budget: a spent caller signal skips neither", async () => {
     await setHosts([]);
     await services.ensure(use(), spec(), signal());
     await setHosts(["example.com"]);
@@ -506,11 +505,19 @@ describe("refresh after an allowlist change", () => {
         expect((await readFakeSandboxOps(root)).some((o) => o[0] === "update-held")).toBe(true),
       { timeout: 10_000, interval: 20 },
     );
+    const ensuresBefore = (await readFakeSandboxOps(root)).filter(
+      (o) => o[0] === "service-if-running",
+    ).length;
     ac.abort(new Error("caller gave up"));
     expect(signals[0]?.aborted).toBe(false);
     await releaseFakeSandboxUpdate(root, "panel");
-    // the update completes and is recorded; only the ifRunning ensure after it sees the abort
-    await expect(refreshed).rejects.toThrow(/caller gave up/);
+    // the update completes and is recorded, and the ifRunning ensure after it runs on its own
+    // budget although the caller's signal is spent (a provider restarts the service there)
+    expect((await refreshed)?.state).toBe("running");
+    const ensuresAfter = (await readFakeSandboxOps(root)).filter(
+      (o) => o[0] === "service-if-running",
+    ).length;
+    expect(ensuresAfter).toBe(ensuresBefore + 1);
     expect(await updates()).toHaveLength(1);
     expect((await row())?.status).toBe("running");
     const id = await instanceId();

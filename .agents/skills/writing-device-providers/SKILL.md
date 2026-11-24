@@ -515,8 +515,8 @@ treats a dial-in device like any other (its provider, report and permission supp
   it applies the device's limits to the instance as a use's exclusive step does
   (`SandboxService.applyLimitsIfRunning`: exclusive lease with intent, deleted device re-checked,
   fence, `applyLimits` on its own budget, never the caller's wait signal; stream holds yield;
-  `sandbox.busy` while a use keeps the device, then the next use applies), then sends a second
-  `ifRunning` ensure; a provider without `update` is
+  `sandbox.busy` while a use keeps the device, then the next use applies), and once applied sends a
+  second `ifRunning` ensure on its own budget (never the caller's spent signal); a provider without `update` is
   recreated there, which ends its services. Every status carries `stateDir`, the
   service's absolute state directory, also when stopped. `ensureService(h, spec, signal,
   { ifRunning: true })` reads only `spec.name` (the kernel sends the name-only spec
