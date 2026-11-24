@@ -560,9 +560,9 @@ describe("PluginContents stages, audiences and the row slots", () => {
     expect(screen.queryByText(R.build)).toBeNull();
   });
 
-  it("detail: the plain version and no note line", () => {
+  it("detail: no head (the page has its own) and no note line", () => {
     renderPage(<PluginContents model={model(deviceE2b)} audience="platform" stage="detail" />, zh);
-    expect(screen.getByText("v0.1.0-rc.28")).toBeTruthy();
+    expect(screen.queryByText("v0.1.0-rc.28")).toBeNull();
     expect(screen.queryByText(R.configAfterInstall)).toBeNull();
     expect(screen.queryByText(R.configAfterEnable)).toBeNull();
   });

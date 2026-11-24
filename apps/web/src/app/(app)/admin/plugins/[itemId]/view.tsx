@@ -21,12 +21,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useComponentScopeText } from "../../../../../components/AdminComponents";
 import { useApplyAppearance } from "../../../../../components/ApplyAppearance";
-import {
-  ComponentSection,
-  ScopeBadge,
-  useOrigin,
-  useSourceLabel,
-} from "../../../../../components/CatalogParts";
+import { ScopeBadge, useOrigin, useSourceLabel } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { PlatformUpdateDialog } from "../../../../../components/PlatformUpdateDialog";
@@ -50,11 +45,9 @@ import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../lib/api";
 import {
   adminIconUrl,
-  agentTemplateNameOf,
   type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
-  clientFilesOf,
   compareSemver,
   declaredPermissions,
   descriptionOf,
@@ -62,18 +55,11 @@ import {
   importMarketplaceEntry,
   importPageHref,
   ownerOrgOf,
-  type PluginManifest,
   removeCatalogItem,
   setDisabled,
   shareGated,
-  skillNameOf,
-  templateIdOf,
 } from "../../../../../lib/catalog";
-import {
-  COMPONENT_ROUTES,
-  type PlatformComponent,
-  type PlatformComponentKind,
-} from "../../../../../lib/components";
+import { COMPONENT_ROUTES, type PlatformComponent } from "../../../../../lib/components";
 import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
 import { lockWhileRunning } from "../../../../../lib/header-actions";
 import {
@@ -116,7 +102,7 @@ const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation ===
  * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
  * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
  * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
- * license as a fact (全文 opens a Dialog); 删除 is the head's ⋯ menu item. 应用此插件的外观 (a plugin with a
+ * license as a fact (its full text opens a Dialog); 删除 is the head's ⋯ menu item. 应用此插件的外观 (a plugin with a
  * suggested appearance, client extensions spec §6.5) previews the platform changes in a confirm
  * dialog, then applies them. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
@@ -559,9 +545,9 @@ function usePluginComponents(): PlatformComponent[] {
 }
 
 /**
- * 组件: the contents of the version the platform runs (the one plugin contents view): the
+ * Components: the contents of the version the platform runs (the one plugin contents view): the
  * extension with its client code and client components under it, skills, connector templates,
- * agent templates and themes, each with its scope (跟随插件 or its own, linking to the component),
+ * agent templates and themes, each with its scope (follow the plugin, or its own, linking to the component),
  * the dependencies and the translation report. The license is the page's fact.
  */
 function ComponentsTab({
@@ -580,7 +566,7 @@ function ComponentsTab({
   const model = fromManifest(detail, components, locale, {
     catalog,
     slots: {
-      // The extension and a component following the plugin: 跟随插件; else its own scope
+      // The extension and a component following the plugin: "follow the plugin"; else its own scope
       scope: (_kind, c) =>
         c === undefined ? (
           <Text variant="small" tone="muted">

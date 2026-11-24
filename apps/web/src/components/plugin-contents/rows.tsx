@@ -200,6 +200,7 @@ export function SkillRows({ rows }: { rows: SkillRow[] }) {
         <ItemListItem
           key={s.key}
           title={s.name}
+          {...(s.href !== undefined && { href: s.href })}
           marks={
             <>
               {s.files !== undefined && <Badge>{tc("skillFiles", { n: s.files })}</Badge>}
@@ -258,6 +259,7 @@ export function TemplateRows({ rows }: { rows: TemplateRow[] }) {
           <ItemListItem
             key={c.key}
             title={c.name}
+            {...(c.href !== undefined && { href: c.href })}
             mark={{ text: c.name, image: c.icon ?? null }}
             marks={
               <>
@@ -335,6 +337,7 @@ export function AgentRows({ rows }: { rows: AgentRow[] }) {
           <ItemListItem
             key={a.key}
             title={a.name}
+            {...(a.href !== undefined && { href: a.href })}
             marks={
               <>
                 {a.model !== undefined && <Badge>{tier(a.model)}</Badge>}
@@ -422,6 +425,7 @@ export function ThemeRows({ rows }: { rows: ThemeRow[] }) {
         <ItemListItem
           key={th.key}
           title={th.name}
+          {...(th.href !== undefined && { href: th.href })}
           {...rowEnd(th.mark, th.trailing)}
           meta={
             th.description !== undefined && th.description !== "" ? (

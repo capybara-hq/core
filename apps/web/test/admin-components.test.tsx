@@ -888,6 +888,20 @@ describe("admin plugin detail: components and the platform update", () => {
     const skills = await screen.findByRole("list", { name: R.skills });
     const row = (name: string) => within(skills).getByText(name).closest("li") as HTMLElement;
     expect(within(row("web-research")).getByRole("link", { name: C.follow })).toBeTruthy();
+    expect(
+      within(row("summarize")).getByRole("link", { name: "summarize" }).getAttribute("href"),
+    ).toBe("/admin/skills/s3");
+    expect(within(skills).getByRole("link", { name: "web-research" })).toBeTruthy();
+    expect(
+      within(screen.getByRole("list", { name: R.templates }))
+        .getByRole("link", { name: "gh" })
+        .getAttribute("href"),
+    ).toBe("/admin/connectors/templates/c1");
+    expect(
+      within(screen.getByRole("list", { name: R.agentTemplates }))
+        .getByRole("link", { name: "researcher" })
+        .getAttribute("href"),
+    ).toBe("/admin/agents/templates/a1");
     const own = within(row("summarize")).getByRole("link", {
       name: fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.allOff, { n: 2 }) }),
     });

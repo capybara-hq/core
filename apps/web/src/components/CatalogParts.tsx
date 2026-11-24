@@ -1,16 +1,8 @@
 "use client";
 
-import {
-  Badge,
-  CodeBlock,
-  ContentSection,
-  Disclosure,
-  Stack,
-  Text,
-  versionLabel,
-} from "@capybara-hq/design";
+import { Badge, ContentSection, Disclosure, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import {
   type CatalogItem,
   dependencyOfError,
@@ -188,35 +180,6 @@ export function HiddenCharactersWarning({ texts }: { texts: (string | null | und
       {t("bidiWarning")}
     </Text>
   );
-}
-
-/**
- * A plugin version's root LICENSE text, collapsed (spec §8.4), with the hidden characters warning;
- * when it was too long to store, a line saying so. Nothing without either.
- */
-export function LicenseView({
-  text,
-  truncated,
-}: {
-  text?: string | null | undefined;
-  truncated?: boolean | undefined;
-}) {
-  const t = useTranslations("catalog.admin.review.translation");
-  if (typeof text === "string" && text !== "") {
-    return (
-      <Stack gap={4}>
-        <HiddenCharactersWarning texts={[text]} />
-        <Disclosure summary={t("license")}>
-          <CodeBlock text={text} />
-        </Disclosure>
-      </Stack>
-    );
-  }
-  return truncated === true ? (
-    <Text variant="small" tone="muted">
-      {t("licenseTruncated")}
-    </Text>
-  ) : null;
 }
 
 /**

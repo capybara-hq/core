@@ -145,14 +145,17 @@ export function PluginContents({
   return (
     <Stack gap={16}>
       <Stack gap={8}>
-        <Stack direction="row" gap={8} align="center" wrap>
-          <Text variant="h3">{head.name}</Text>
-          <Badge>{versionChip}</Badge>
-          {head.claudeCode === true && <Badge>{tt("formatClaude")}</Badge>}
-          {head.sensitive > 0 && (
-            <Badge tone="warn">{t("sensitiveCount", { n: head.sensitive })}</Badge>
-          )}
-        </Stack>
+        {/* A page of its own (the plugin pages) has its page header: no head here */}
+        {stage !== "detail" && (
+          <Stack direction="row" gap={8} align="center" wrap>
+            <Text variant="h3">{head.name}</Text>
+            <Badge>{versionChip}</Badge>
+            {head.claudeCode === true && <Badge>{tt("formatClaude")}</Badge>}
+            {head.sensitive > 0 && (
+              <Badge tone="warn">{t("sensitiveCount", { n: head.sensitive })}</Badge>
+            )}
+          </Stack>
+        )}
         {description !== "" && (
           <ExpandableProse
             summary={firstSentence(description)}

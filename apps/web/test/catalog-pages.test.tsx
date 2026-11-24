@@ -3682,7 +3682,7 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    await screen.findByRole("heading", { level: 1, name: "gh" });
+    await screen.findByRole("heading", { name: "gh" });
     const img = document.querySelector(
       '[data-part="page-header-avatar"] [data-part="object-mark"][data-size="40"] img',
     ) as HTMLImageElement;
