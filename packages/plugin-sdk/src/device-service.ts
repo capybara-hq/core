@@ -93,7 +93,9 @@ export class ServiceMessageDecoder {
     const out = new Uint8Array(n);
     let at = 0;
     while (at < n) {
-      const head = this.chunks[this.first] as Uint8Array;
+      // never undefined: callers take at most `pending` bytes
+      const head = this.chunks[this.first];
+      if (head === undefined) break;
       const k = Math.min(head.byteLength, n - at);
       out.set(head.subarray(0, k), at);
       at += k;

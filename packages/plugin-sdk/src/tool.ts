@@ -214,8 +214,10 @@ export type FormAnswer = Record<string, string | number | boolean | string[]>;
  * person, may then decide to call the tool again: that is a new call with a new `callId`.
  *
  * One logical call may still invoke the handler more than once: each `InputRequired` round
- * resumes it with `resume`. `callId` and `idempotencyKey` stay the same across those
- * invocations. A tool with an external side effect passes `idempotencyKey` downstream (for
+ * resumes it with `resume`, and a call whose device service reported refused hosts
+ * (`ctx.deviceAccess.reportBlockedHosts`) runs again, without `resume`, once the person approved
+ * the network ask and the hosts are in force. `callId` and `idempotencyKey` stay the same across
+ * those invocations. A tool with an external side effect passes `idempotencyKey` downstream (for
  * example as an `Idempotency-Key` header, or stored with the record it creates) so the effect
  * applies once per logical call and an unknown outcome can be checked against the external
  * system before retrying.

@@ -386,8 +386,8 @@ export const DEVICE_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
  * extension's behalf. It runs under the device's own sandbox (not under any one conversation's
  * operation scope), writes only in its own state directory (outside every project root; `files`
  * are written before start into its code directory, read only for the service where the provider
- * can separate code from state, else the state directory), reaches the network through the device's network setting,
- * and is killed with the instance on suspend and destroy. It speaks the service socket protocol
+ * can separate code from state, else the state directory), reaches the network through the
+ * device's network setting, and is killed with the instance on suspend and destroy. It speaks the service socket protocol
  * (`device-service.ts`).
  */
 export interface DeviceServiceSpec {
@@ -396,8 +396,9 @@ export interface DeviceServiceSpec {
   /** The provider supplies Node 22 or later. */
   runtime: "node";
   /**
-   * The script to run: one of the `files` keys. The process runs `node <stateDir>/<entry>` with the
-   * state directory as its working directory; that exact command passes the command review.
+   * The script to run: one of the `files` keys. The process runs
+   * `node <codeDir ?? stateDir>/<entry>` (the code directory where the provider keeps code apart,
+   * else the state directory) with the state directory as its working directory; that exact command passes the command review.
    */
   entry: string;
   args: string[];
@@ -775,10 +776,13 @@ export interface DeviceProvider {
    * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
    * kernel has passed the launch through the command review before it calls this.
    *
-   * With `opts.ifRunning` it never starts anything and reads only `spec.name`: a running service is
-   * kept and the device's current network limits are applied to it again (the kernel calls this
-   * after the device's allowlist changed, and before reviewing a launch); a stopped one answers
-   * its `stopped` status (with `stateDir`) and stays stopped.
+   * With `opts.ifRunning` it never starts anything and reads only `spec.name` (the kernel sends
+   * `{ name, runtime: "node", entry: "", args: [], files: {} }`, which must not be refused): a
+   * running service is kept and the device's current network limits are applied to it again,
+   * a restart for that runs the spec it was launched with and its stored code (the kernel calls
+   * this after the device's allowlist changed, and before reviewing a launch); a stopped one
+   * answers its `stopped` status (with `stateDir`, and `codeDir` where kept apart) and stays
+   * stopped.
    */
   ensureService?(
     h: SandboxHandle,

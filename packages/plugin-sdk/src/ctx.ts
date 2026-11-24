@@ -209,7 +209,8 @@ export interface DeviceAccessCtx {
   ): Promise<{ url: string; expiresAt: string }>;
   /**
    * Adds hosts to the device's network allowlist (owner only, platform and org ceilings apply);
-   * the extension's running services get the device's new limits applied.
+   * the extension's running services get the device's new limits applied. Exact host names
+   * only, as an approved network ask grants: a `*.` wildcard is refused.
    */
   addNetworkHosts(scope: DeviceAccessScope & { hosts: string[] }): Promise<void>;
   /** Answers the handoff question of this extension's tool call `callId` from the panel. */
