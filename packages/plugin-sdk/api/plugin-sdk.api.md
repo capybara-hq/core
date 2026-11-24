@@ -783,7 +783,7 @@ export interface ConnectorSession {
 // @public
 export interface ConnectorTemplateFile {
     defaultEnabled?: boolean;
-    description?: string;
+    description?: string | LocalizedName;
     displayName: LocalizedName;
     icon?: string;
     template: ConnectorTemplateSpec;
@@ -961,6 +961,7 @@ export class DeviceOfflineError extends Error {
 
 // @public
 export interface DeviceProvider {
+    appliedNetwork?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxLimits["network"] | null>;
     background?: SandboxBackground;
     browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
     readonly concurrentExec: true;
@@ -3747,7 +3748,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.64";
+export const SDK_VERSION = "0.1.0-rc.67";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

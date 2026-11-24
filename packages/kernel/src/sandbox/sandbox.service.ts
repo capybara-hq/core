@@ -15,6 +15,7 @@ import {
   type SandboxPreparationScope,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { runOutsideTransaction } from "../infra/database/transaction-host.js";
 import {
   createHeldOperations,
@@ -138,6 +139,7 @@ import {
   appliedWider,
   type DeviceLimits,
   type EffectiveDevicePolicy,
+  installedWider,
   instanceLimitsJson,
   orgEffectiveHosts,
   providerLimits,
@@ -183,6 +185,8 @@ const RECONCILE_RETRY_SECONDS = 600;
 const reconcileCursorKey = (plugin: string): string => `capk:sandbox-reconcile-cursor:${plugin}`;
 /** The bound on one cloud `permissionSupport` read under a lifecycle lease (B-15). */
 const PERMISSION_SUPPORT_TIMEOUT_MS = 30_000;
+/** The bound on one `appliedNetwork` read under a lifecycle lease (issue #766). */
+const APPLIED_NETWORK_TIMEOUT_MS = 30_000;
 /** How long the suspension sweep holds the intent on a sandbox past `maxRunningMinutes` (ms). */
 const SWEEP_INTENT_WAIT_MS = 1000;
 /** Rows one sweep handles at most, and the provider calls it runs at once. */
@@ -1018,6 +1022,63 @@ export class SandboxService {
       return false;
     if (!this.fsBound(p, rec, target)) return true;
     return wider && !sameAppliedExact(rec.unapplied, target);
+  }
+
+  /**
+   * Under the exclusive lease, at a lifecycle step on the instance `handle` of `row` (issue #766):
+   * whether the network the provider reports it enforces (`appliedNetwork`) may allow more than
+   * the recorded limits ({@link installedWider}), so the desired limits must be applied again even
+   * though the record matches them. It closes the residual of a provider whose `update` cannot
+   * honor the fence: a stale holder's late `update` that landed after the newer holder's. Only a
+   * provider with both `update` and `appliedNetwork` is asked. An unknown answer, a failed read or
+   * an abort counts as wider (fail closed: applying the desired limits never widens anything).
+   * Never throws.
+   */
+  private async installedNetworkWider(
+    id: string,
+    p: DeviceProviderEntry,
+    row: Row,
+    handle: SandboxHandle,
+    signal: AbortSignal,
+    want: DeviceLimits,
+  ): Promise<boolean> {
+    const read = p.impl.appliedNetwork?.bind(p.impl);
+    if (!read || !p.impl.update) return false;
+    const recorded = readInstanceLimits(row.instance_limits).applied;
+    let installed: unknown;
+    try {
+      const sig = AbortSignal.any([signal, AbortSignal.timeout(APPLIED_NETWORK_TIMEOUT_MS)]);
+      installed = await read(handle, sig);
+    } catch (err) {
+      if (!signal.aborted)
+        this.log.warn(
+          "cannot read the instance's installed network; applying the desired limits again",
+          { deviceId: id, provider: p.plugin, err },
+        );
+      return true;
+    }
+    try {
+      const wider = installedWider(installed, recorded, appliedOf(want));
+      if (wider) {
+        const kind =
+          typeof installed === "object" && installed !== null
+            ? (installed as { kind?: unknown }).kind
+            : null;
+        this.log.warn(
+          "the instance's installed network allows more than its record; applying again",
+          {
+            deviceId: id,
+            provider: p.plugin,
+            recorded: recorded?.network.kind ?? null,
+            installed: typeof kind === "string" ? kind : typeof kind,
+          },
+        );
+      }
+      return wider;
+    } catch {
+      // a malformed answer the comparison cannot read (a sparse host list, say): fail closed
+      return true;
+    }
   }
 
   /**
@@ -2544,27 +2605,29 @@ export class SandboxService {
       const done = await this.tryLocked(
         c.device_id,
         async (lease) => {
-          const id = c.device_id;
-          // org-filter: deployment-wide suspension sweep (worker) over every org's idle instances,
-          // re-read under each device's lease
-          const row = await this.db
-            .selectFrom("device_instances")
-            .selectAll()
-            .where("device_id", "=", id)
-            .where(due)
-            .executeTakeFirst();
-          if (!row?.handle) return false;
-          const fence = { gen: row.generation };
-          await p.impl.suspend(row.handle, opSignal(lease));
-          if (!(await lease.renew())) throw new SandboxLockLostError(id);
-          await this.fenced(lease, id, fence, {
-            status: "suspended",
-            suspended_at: sql<Date>`now()`,
-            running_since: null,
-            sweep_failed_at: null,
+          return asPlatform("deployment-wide suspension sweep", async () => {
+            const id = c.device_id;
+            // org-filter: deployment-wide suspension sweep (worker) over every org's idle instances,
+            // re-read under each device's lease
+            const row = await this.db
+              .selectFrom("device_instances")
+              .selectAll()
+              .where("device_id", "=", id)
+              .where(due)
+              .executeTakeFirst();
+            if (!row?.handle) return false;
+            const fence = { gen: row.generation };
+            await p.impl.suspend(row.handle, opSignal(lease));
+            if (!(await lease.renew())) throw new SandboxLockLostError(id);
+            await this.fenced(lease, id, fence, {
+              status: "suspended",
+              suspended_at: sql<Date>`now()`,
+              running_since: null,
+              sweep_failed_at: null,
+            });
+            this.log.info("sandbox suspended", { deviceId: id });
+            return true;
           });
-          this.log.info("sandbox suspended", { deviceId: id });
-          return true;
         },
         overdue,
       );
@@ -2608,17 +2671,19 @@ export class SandboxService {
     let n = 0;
     await inPool(await this.candidates(mine), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
-        // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
-        // re-read under each device's lease
-        const row = await this.db
-          .selectFrom("device_instances")
-          .selectAll()
-          .where("device_id", "=", id)
-          .where(mine)
-          .executeTakeFirst();
-        if (!row) return false;
-        await this.destroyRow(row, p, lease, mode);
-        return true;
+        return asPlatform("deployment-wide destruction sweep", async () => {
+          // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
+          // re-read under each device's lease
+          const row = await this.db
+            .selectFrom("device_instances")
+            .selectAll()
+            .where("device_id", "=", id)
+            .where(mine)
+            .executeTakeFirst();
+          if (!row) return false;
+          await this.destroyRow(row, p, lease, mode);
+          return true;
+        });
       });
       if (done) n++;
     });
@@ -2830,8 +2895,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
-      // org-filter: deviceId comes from the deployment-wide retire-legacy-tasks worker's due list,
-      // not caller input
+      // org-filter: deviceId comes from the retire-legacy-tasks worker's due list (kernel-held,
+      // not caller input); the worker runs it in the platform scope
       const row = await this.db
         .selectFrom("device_instances")
         .selectAll()
@@ -2870,8 +2935,8 @@ export class SandboxService {
     const lease = await this.leases.tryExclusive(deviceId);
     if (!lease) return "busy";
     try {
-      // org-filter: reads the device's own org; deviceId comes from the deployment-wide reconcile
-      // sweep, not caller input
+      // org-filter: reads the device's own org; deviceId comes from the reconcile sweep
+      // (kernel-held, not caller input), which runs in the platform scope
       const device = await this.db
         .selectFrom("devices")
         .select(["org_id", "provider"])
@@ -3026,20 +3091,22 @@ export class SandboxService {
     // org-filter: deployment-wide reconcile sweep (worker) over every org's marked devices of
     // this provider
     const page = (after: string, n: number) =>
-      this.db
-        .selectFrom("devices as d")
-        .innerJoin("device_instances as i", "i.device_id", "d.id")
-        .select("d.id")
-        .where("d.deleted_at", "is", null)
-        .where("d.permission_reconcile_required", "=", true)
-        .where("d.provider", "=", p.plugin)
-        .where("i.provider", "=", p.plugin)
-        .where("i.handle", "is not", null)
-        .where("i.status", "in", ["running", "suspended"])
-        .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
-        .orderBy(sql`d.id COLLATE "C"`)
-        .limit(n)
-        .execute();
+      asPlatform("deployment-wide reconcile sweep", () =>
+        this.db
+          .selectFrom("devices as d")
+          .innerJoin("device_instances as i", "i.device_id", "d.id")
+          .select("d.id")
+          .where("d.deleted_at", "is", null)
+          .where("d.permission_reconcile_required", "=", true)
+          .where("d.provider", "=", p.plugin)
+          .where("i.provider", "=", p.plugin)
+          .where("i.handle", "is not", null)
+          .where("i.status", "in", ["running", "suspended"])
+          .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
+          .orderBy(sql`d.id COLLATE "C"`)
+          .limit(n)
+          .execute(),
+      );
     // a keyset cursor shared by the replicas (the cron runs once per tick): each tick goes on
     // after the last device the previous one visited and wraps around, so devices that stay
     // marked never starve the ones after them
@@ -3174,11 +3241,8 @@ export class SandboxService {
         } catch {
           return { failed: `revoked start ${m.refId} has no valid execution reference` };
         }
-        if (
-          ref.operationId !== m.refId ||
-          ref.instanceGeneration !== o.instanceGeneration ||
-          ref.instanceId !== live.handle.id
-        )
+        // the intent named the incarnation above; the ref's generation is the provider's own
+        if (ref.operationId !== m.refId || ref.instanceId !== live.handle.id)
           return { failed: `revoked start ${m.refId} names another instance` };
         owed.push(ref);
       }
@@ -3489,16 +3553,18 @@ export class SandboxService {
   private async candidates(
     due: (eb: ExpressionBuilder<KernelDatabase, "device_instances">) => Expression<SqlBool>,
   ): Promise<{ device_id: string; running_since: Date | null }[]> {
-    // org-filter: deployment-wide sweep candidates (suspension and destruction workers) across
-    // every org
-    return await this.db
-      .selectFrom("device_instances")
-      .select(["device_id", "running_since"])
-      .where(due)
-      .orderBy(sql`sweep_failed_at ASC NULLS FIRST`)
-      .orderBy("last_used_at")
-      .limit(SWEEP_BATCH)
-      .execute();
+    return asPlatform("deployment-wide sweep candidates", async () => {
+      // org-filter: deployment-wide sweep candidates (suspension and destruction workers) across
+      // every org
+      return await this.db
+        .selectFrom("device_instances")
+        .select(["device_id", "running_since"])
+        .where(due)
+        .orderBy(sql`sweep_failed_at ASC NULLS FIRST`)
+        .orderBy("last_used_at")
+        .limit(SWEEP_BATCH)
+        .execute();
+    });
   }
 
   /**
@@ -3537,8 +3603,8 @@ export class SandboxService {
       return await fn(lease);
     } catch (err) {
       this.log.warn("sandbox maintenance failed; will retry", { deviceId, err });
-      // org-filter: sweep bookkeeping on the device this deployment-wide sweep holds under its
-      // lease
+      // org-filter: sweep bookkeeping on the device the calling sweep (platform scope) holds
+      // under its lease
       await this.db
         .updateTable("device_instances")
         .set({ sweep_failed_at: sql<Date>`now()` })
@@ -3633,12 +3699,28 @@ export class SandboxService {
       const createdAt = row.created_at.getTime();
       const fsResets = row.fs_resets;
       if (handle && isInstance(row, gone) && row.status === "running") {
-        const created = await this.create(ctx, p, held, row, fence, signal, want);
+        const created = await this.createSettled(ctx, p, held, row, fence, signal, want);
         return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
       if (handle && row.status === "running") {
-        if (this.mustApply(row, p, want)) {
-          const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+        const must = this.mustApply(row, p, want);
+        const installed =
+          !must && (await this.installedNetworkWider(id, p, row, handle, signal, want));
+        // aborted while reading: the instance runs as it was (no quarantine of a healthy instance
+        // for a cancel); the next exclusive step reads again
+        if (installed && signal.aborted) throw abortReason(signal);
+        if (must || installed) {
+          const created = await this.applyLimits(
+            ctx,
+            p,
+            held,
+            row,
+            handle,
+            fence,
+            signal,
+            want,
+            installed,
+          );
           if (created)
             return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
         }
@@ -3650,10 +3732,24 @@ export class SandboxService {
         if (r === "resumed") {
           const incarnation = { provider: p.plugin, generation: String(createdAt) };
           // the new limits first: the row says running only once the instance runs with them
-          if (this.mustApply(row, p, want)) {
+          // (and again when the instance's installed network allows more than the record: #766)
+          const must = this.mustApply(row, p, want);
+          const installed =
+            !must && (await this.installedNetworkWider(id, p, row, handle, signal, want));
+          if (must || installed) {
             let created: Instance | null;
             try {
-              created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+              created = await this.applyLimits(
+                ctx,
+                p,
+                held,
+                row,
+                handle,
+                fence,
+                signal,
+                want,
+                installed,
+              );
             } catch (err) {
               // refused as stale: the provider changed nothing, and the instance (the same
               // incarnation after an in-place update) may already run a newer holder's work
@@ -3714,7 +3810,7 @@ export class SandboxService {
           deviceId: id,
         });
       }
-      const created = await this.create(ctx, p, held, row, fence, signal, want);
+      const created = await this.createSettled(ctx, p, held, row, fence, signal, want);
       // had_instance only ever becomes true: any earlier instance (even if a rebuild failed since)
       // makes this one a restart on the kept files
       return {
@@ -3733,6 +3829,43 @@ export class SandboxService {
         );
       throw err;
     }
+  }
+
+  /**
+   * {@link create} from {@link ensure}, then, for a provider whose limits are fixed at its file
+   * system (the new instance keeps the network its file system enforces, E2B), the installed
+   * network check of {@link installedNetworkWider} on the new instance (issue #766): wider than
+   * the record applies the desired limits again before the use. Any other provider's new instance
+   * got the desired limits at `create`.
+   */
+  private async createSettled(
+    ctx: SandboxUseContext,
+    p: DeviceProviderEntry,
+    held: SandboxLease,
+    row: Row,
+    fence: Fence,
+    signal: AbortSignal,
+    want: DeviceLimits,
+  ): Promise<Instance> {
+    const created = await this.create(ctx, p, held, row, fence, signal, want);
+    if (p.impl.limitsApplyAt !== "fileSystem") return created;
+    // the row as the create committed it (its new instance generation and record)
+    const fresh = await this.readRow(ctx);
+    if (!fresh) return created;
+    if (!(await this.installedNetworkWider(ctx.deviceId, p, fresh, created.handle, signal, want)))
+      return created;
+    const again = await this.applyLimits(
+      ctx,
+      p,
+      held,
+      fresh,
+      created.handle,
+      fence,
+      signal,
+      want,
+      true,
+    );
+    return again ?? created;
   }
 
   /**
@@ -3901,6 +4034,11 @@ export class SandboxService {
    * instance create is recreated (warned); after an abort, or for a provider bound to its file
    * system, the instance is suspended ({@link quarantine}) and the error thrown, so the next use
    * resumes it and tries again.
+   *
+   * `installedWider`: the call narrows an instance whose installed network allows more than its
+   * record (issue #766). A provider bound to its file system that cannot apply `want` then is
+   * quarantined too, with the intent kept, instead of being recorded `unapplied` and used: the
+   * instance would run wider than the record claims.
    */
   private async applyLimits(
     ctx: SandboxUseContext,
@@ -3911,6 +4049,7 @@ export class SandboxService {
     fence: Fence,
     signal: AbortSignal,
     want: DeviceLimits,
+    installedWider = false,
   ): Promise<Instance | null> {
     const id = ctx.deviceId;
     const target = appliedOf(want);
@@ -3969,6 +4108,17 @@ export class SandboxService {
       }
     }
     if (p.impl.limitsApplyAt === "fileSystem" && !gone) {
+      if (installedWider) {
+        // the instance enforces more than the record and the provider could not narrow it: stop
+        // it, keep the intent (the next use resumes it and tries again); a file reset applies it
+        await this.quarantine(held, id, handle, p, fence, {
+          provider: p.plugin,
+          generation: String(row.created_at.getTime()),
+        });
+        throw new Error(
+          "The device's sandbox enforces a wider network than its recorded limits and the provider could not narrow it; the sandbox is stopped and the next use tries again (resetting the device's files also applies the limits)",
+        );
+      }
       await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(was, target) });
       this.log.info("sandbox limits changed; they apply when the device's files are reset", facts);
       return null;
@@ -4243,8 +4393,8 @@ export class SandboxService {
   private deviceGone(
     eb: ExpressionBuilder<KernelDatabase, "device_instances">,
   ): Expression<SqlBool> {
-    // org-filter: deployment-wide sweep condition: a deleted device of any org, correlated to
-    // the instance row
+    // org-filter: a sweep condition fragment (a deleted device of any org, correlated to the
+    // instance row), run only by candidates(), inside its asPlatform
     return eb.or([
       eb.exists(
         eb

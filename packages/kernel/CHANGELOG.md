@@ -1,5 +1,96 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.81
+
+### Minor Changes
+
+- 43eb3a1: RLS phase 2 (issue #115): the kernel carries an org scope from its entry points (org guard, super
+  admin routes, extension routes, jobs, cron ticks, run claims, channel and dial-in events, the start
+  sequence, CLI commands) and, with the new `db.rls` config (`off` by default, `scoped`, `enforce`),
+  sets it on every PostgreSQL connection. No behaviour change while `db.rls` is `off`.
+- c7b4dcf: RLS phase 3 (issue #115): migration 0182 creates `capybara.rls_admits` and one row level security
+  policy per kernel table with an `org_id` column, truly dark: no table enables RLS yet (a later
+  migration does), so nothing changes for any database role. With `db.rls: enforce` the kernel logs
+  an error at start while RLS is not enabled on the tables or its role is a superuser or has
+  BYPASSRLS, since PostgreSQL filters nothing then.
+
+### Patch Changes
+
+- 76f58f0: A background Bash start the kernel sent but could not confirm (a transport loss) no longer shows as
+  failed in the thread while the kernel reconciles it. Its result keeps the same error text for the
+  model and adds the display-only `launch_unconfirmed` view; the background tasks list gains
+  `starting`, and reconciling a start announces `changed: background`. The row reads "正在确认是否已启动"
+  / "Confirming whether it started" until the task is confirmed running or ends, and becomes a
+  failed row only when the launch is given up, revoked or refused (#790).
+- af84f8c: A provider whose `update` cannot honor the fence token (E2B) no longer leaves the instance wider than
+  the kernel's record until the limits change again (#766). The SDK adds the optional
+  `DeviceProvider.appliedNetwork(h, signal)`: the network the instance enforces now, as the provider's
+  backend reports it. Under the exclusive lease, on a resumed instance, a running one the use holds
+  exclusively, and a new instance of a provider whose limits are fixed at its file system, the kernel
+  compares it with the recorded limits; a wider network (the open public network over a list, or a host
+  the record does not cover), an unknown one or a failed read applies the desired limits again through
+  `update` with the holder's token. Equal or narrower changes nothing.
+- 3efbc4b: RLS (issue #115): queries marked deployment-wide run in the platform scope (`asPlatform`), and
+  `check:org-filter` requires that and an RLS policy for every org-scoped table. No behaviour change
+  while `db.rls` is `off`.
+- Updated dependencies [af84f8c]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.67
+
+## 0.1.0-rc.80
+
+### Patch Changes
+
+- 36738ec: A background start's reference names the provider's own instance generation (device-local's bound
+  machine generation), so the kernel no longer compares it with its own generation: it matches the
+  ref by operation id and handle id and pins the task to the generation it recorded. Every
+  background Bash on a device-local device was left unconfirmed ("its start was not confirmed; it is
+  being reconciled") and never settled; scheduled recovery now acknowledges those starts. A start
+  stopped before it was confirmed now ends `stopped` once the provider acknowledges its operation
+  revoke, instead of running until its retention expires (#765).
+- ab71de9: The plugin enable wizard opens on a 选择连接器 / "Choose connectors" step when the plugin has more
+  than one connector template or a default-off one: every template with its icon, name, description
+  and a mark saying what its step needs (nothing, an OAuth client, an address, a credential). Default-on
+  templates start checked, default-off ones unchecked, one the org already has a connector for is kept
+  (locked on); only checked templates get a step and a connector. The org install body
+  (`PUT …/catalog/:itemId/switch` inputs, `POST …/catalog/:itemId/install`) takes `templatesOn`: the
+  template ids to switch on with the install; the plugin's other templates are switched off in the org
+  (audited `component.org_switched`) and stay available on /connectors. Unknown, disabled or not offered
+  ids are refused (`validation_failed` at `templatesOn`); absent keeps the templates on in the org now.
+  The Platform operation `plugins.install` takes `templatesOn` too. The design `CheckList` row takes an
+  optional `mark` (a 24 px mark tile before the name).
+- Updated dependencies [36738ec]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.66
+
+## 0.1.0-rc.79
+
+### Patch Changes
+
+- b22a19d: Connector template descriptions in zh and en: component lists, the install wizard's templates
+  (`OrgCatalogTemplate`) and the import review (`PluginReviewTemplate`) carry `descriptionZh` next to
+  `description` (null when the template has one text). Connectors made from a platform template return that template's description
+  (`templateDescription`, `templateDescriptionZh`; its current version, under the same visibility
+  gate as its icon; null for a custom connector). A connector may also carry its own description
+  (`description`, migration 0181 `connectors.description`, plain text up to 1024 characters): org
+  admins set it in the create body or by PATCH (null or blank clears it; audited in
+  `connector.updated`), and the Platform operations `connectors.create` / `connectors.update` take it
+  too. The web shows the own description, else the template's in the page language, on the connector
+  cards of /connectors and at the top of the connector's detail page; the add-connector wizard and the
+  connector's 设置 tab edit it (the template's text as the placeholder). Template cards, the admin
+  template page, the plugin page and the install wizard pick the text for the page language too.
+- efdeb87: Rename the deployment config key `marketplaces.allowPrivateHosts` to `net.allowPrivateHosts`
+  (environment variable `CAPYBARA_NET__ALLOW_PRIVATE_HOSTS`, was
+  `CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS`). It is the one list of internal hosts for every
+  outbound request the kernel resolves itself (marketplace, archive and git downloads, npm registry
+  downloads, OAuth discovery, registration and token requests, git identity), so it now sits next to
+  `net.httpsProxy` and `net.noProxy`. Refusal hints and the web's download error name the new key.
+  A config file that still sets `marketplaces.allowPrivateHosts` fails startup as an unknown key:
+  move the list to `net.allowPrivateHosts`.
+- 2b2b48c: Kernel queries on tables with an `org_id` column now filter by it wherever the org is known (about
+  270 queries), and a schedule approval card no longer shows the name of another org's channel
+  connection when the tool input names its id (#115).
+- Updated dependencies [b22a19d]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.65
+
 ## 0.1.0-rc.78
 
 ### Patch Changes

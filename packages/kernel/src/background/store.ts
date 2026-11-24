@@ -4,6 +4,7 @@ import type { Selectable } from "kysely";
 import { sql } from "kysely";
 import type { BackgroundLaunchState, BackgroundTasksTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { BackgroundLaunchLock } from "./launch-lock.js";
@@ -329,30 +330,32 @@ export class BackgroundTaskStore {
   async failAbandonedLaunches(
     before: Date,
   ): Promise<{ id: string; conversationId: string; sandboxConversationId: string }[]> {
-    const r = await this.db
-      .updateTable("background_tasks")
-      .set({
-        status: "failed",
-        finished_at: sql<Date>`now()`,
-        lost_reason: "launch_abandoned",
-        stopping_at: null,
-        // a managed reservation that never dispatched settles; dispatch is conditional on
-        // `pending`, so a launch racing this update either wins or is refused before effects
-        launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'pending' THEN 'terminal' ELSE launch_state END`,
-      })
-      .where("status", "=", "running")
-      .where("sid", "is", null)
-      // never a dispatched, acknowledged or cancel-pending managed task
-      .where("launch_state", "in", ["legacy", "pending"])
-      .where(unclaimed)
-      .where("started_at", "<", before)
-      .returning(["id", "conversation_id", "sandbox_conversation_id"])
-      .execute();
-    return r.map((x) => ({
-      id: x.id,
-      conversationId: x.conversation_id,
-      sandboxConversationId: x.sandbox_conversation_id,
-    }));
+    return asPlatform("deployment-wide background-task poller sweep across all orgs", async () => {
+      const r = await this.db
+        .updateTable("background_tasks")
+        .set({
+          status: "failed",
+          finished_at: sql<Date>`now()`,
+          lost_reason: "launch_abandoned",
+          stopping_at: null,
+          // a managed reservation that never dispatched settles; dispatch is conditional on
+          // `pending`, so a launch racing this update either wins or is refused before effects
+          launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'pending' THEN 'terminal' ELSE launch_state END`,
+        })
+        .where("status", "=", "running")
+        .where("sid", "is", null)
+        // never a dispatched, acknowledged or cancel-pending managed task
+        .where("launch_state", "in", ["legacy", "pending"])
+        .where(unclaimed)
+        .where("started_at", "<", before)
+        .returning(["id", "conversation_id", "sandbox_conversation_id"])
+        .execute();
+      return r.map((x) => ({
+        id: x.id,
+        conversationId: x.conversation_id,
+        sandboxConversationId: x.sandbox_conversation_id,
+      }));
+    });
   }
 
   /**
@@ -450,17 +453,19 @@ export class BackgroundTaskStore {
   // org-filter: deployment-wide background-task poller sweep across all orgs; each row is
   // handled in its own org
   async runningLegacy(): Promise<BackgroundTaskRow[]> {
-    const rows = await this.db
-      .selectFrom("background_tasks")
-      .selectAll()
-      .where("status", "=", "running")
-      .where("launch_state", "=", "legacy")
-      .where("sandbox_created_at", "is not", null)
-      .where(unclaimed)
-      .orderBy("started_at", "asc")
-      .orderBy("id", "asc")
-      .execute();
-    return rows.map(toRow);
+    return asPlatform("deployment-wide background-task poller sweep across all orgs", async () => {
+      const rows = await this.db
+        .selectFrom("background_tasks")
+        .selectAll()
+        .where("status", "=", "running")
+        .where("launch_state", "=", "legacy")
+        .where("sandbox_created_at", "is not", null)
+        .where(unclaimed)
+        .orderBy("started_at", "asc")
+        .orderBy("id", "asc")
+        .execute();
+      return rows.map(toRow);
+    });
   }
 
   /**
@@ -470,17 +475,19 @@ export class BackgroundTaskStore {
   // org-filter: deployment-wide background-task poller sweep across all orgs; each row is
   // handled in its own org
   async runningManaged(): Promise<BackgroundTaskRow[]> {
-    const rows = await this.db
-      .selectFrom("background_tasks")
-      .selectAll()
-      .where("status", "=", "running")
-      .where("launch_state", "=", "acknowledged")
-      .where("execution_ref", "is not", null)
-      .where(unclaimed)
-      .orderBy("started_at", "asc")
-      .orderBy("id", "asc")
-      .execute();
-    return rows.map(toRow);
+    return asPlatform("deployment-wide background-task poller sweep across all orgs", async () => {
+      const rows = await this.db
+        .selectFrom("background_tasks")
+        .selectAll()
+        .where("status", "=", "running")
+        .where("launch_state", "=", "acknowledged")
+        .where("execution_ref", "is not", null)
+        .where(unclaimed)
+        .orderBy("started_at", "asc")
+        .orderBy("id", "asc")
+        .execute();
+      return rows.map(toRow);
+    });
   }
 
   /**
@@ -491,24 +498,26 @@ export class BackgroundTaskStore {
   // org-filter: deployment-wide background-task poller sweep across all orgs; each row is
   // handled in its own org
   async owedCancels(): Promise<BackgroundTaskRow[]> {
-    const rows = await this.db
-      .selectFrom("background_tasks")
-      .selectAll("background_tasks")
-      .leftJoin("device_instances", "device_instances.device_id", "background_tasks.device_id")
-      .where("background_tasks.status", "=", "running")
-      .where("background_tasks.launch_state", "=", "cancel-pending")
-      .where("background_tasks.execution_ref", "is not", null)
-      .where(
-        sql<boolean>`(background_tasks.stopping_at IS NULL OR background_tasks.stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`,
-      )
-      .where(
-        sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND floor(extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
-      )
-      .orderBy(sql`background_tasks.cancel_attempted_at ASC NULLS FIRST`)
-      .orderBy("background_tasks.started_at", "asc")
-      .orderBy("background_tasks.id", "asc")
-      .execute();
-    return rows.map(toRow);
+    return asPlatform("deployment-wide background-task poller sweep across all orgs", async () => {
+      const rows = await this.db
+        .selectFrom("background_tasks")
+        .selectAll("background_tasks")
+        .leftJoin("device_instances", "device_instances.device_id", "background_tasks.device_id")
+        .where("background_tasks.status", "=", "running")
+        .where("background_tasks.launch_state", "=", "cancel-pending")
+        .where("background_tasks.execution_ref", "is not", null)
+        .where(
+          sql<boolean>`(background_tasks.stopping_at IS NULL OR background_tasks.stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`,
+        )
+        .where(
+          sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND floor(extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
+        )
+        .orderBy(sql`background_tasks.cancel_attempted_at ASC NULLS FIRST`)
+        .orderBy("background_tasks.started_at", "asc")
+        .orderBy("background_tasks.id", "asc")
+        .execute();
+      return rows.map(toRow);
+    });
   }
 
   /** Records that an exact stop of the task is being attempted now (its owed-stop turn moves back). */
@@ -692,12 +701,14 @@ export class BackgroundTaskStore {
    */
   // org-filter: deployment-wide retention sweep across all orgs (finished rows past their age)
   async pruneFinished(before: Date): Promise<number> {
-    const r = await this.db
-      .deleteFrom("background_tasks")
-      .where("status", "<>", "running")
-      .where("launch_state", "in", ["legacy", "terminal"])
-      .where("finished_at", "<", before)
-      .executeTakeFirst();
-    return Number(r.numDeletedRows);
+    return asPlatform("deployment-wide retention sweep across all orgs", async () => {
+      const r = await this.db
+        .deleteFrom("background_tasks")
+        .where("status", "<>", "running")
+        .where("launch_state", "in", ["legacy", "terminal"])
+        .where("finished_at", "<", before)
+        .executeTakeFirst();
+      return Number(r.numDeletedRows);
+    });
   }
 }

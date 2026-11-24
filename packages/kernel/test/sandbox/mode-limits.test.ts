@@ -29,7 +29,9 @@ import {
   fakeSandboxState,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  removeFakeSandbox,
   setFakeSandboxDelays,
+  setFakeSandboxNetwork,
   setFakeSandboxRefuseOpenEgress,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -649,6 +651,164 @@ describe("fencing token and update intent", () => {
     ).not.toContain("wide.example");
     expect((await record())?.pending).toBeUndefined();
     expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
+  });
+});
+
+/**
+ * Issue #766: a provider whose `update` cannot honor the fence (E2B) may end up enforcing a stale
+ * replica's wider list after the newer holder's change. The instance's installed network
+ * (`appliedNetwork`) is read at a lifecycle step under the exclusive lease; wider than the record
+ * (or unknown) applies the desired limits again, equal or narrower changes nothing.
+ */
+describe("installed network wider than the record (#766)", () => {
+  const hostsOf = (rec: Record<string, unknown> | null | undefined) =>
+    ((rec?.network as { hosts?: string[] } | undefined)?.hosts ?? []).slice();
+  const later = () => new Date(Date.now() + 24 * 60 * 60_000);
+  const updates = async () => (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
+  const sentHosts = (e: Awaited<ReturnType<typeof updates>>[number] | undefined) =>
+    e?.limits.network.kind === "allowlist" ? e.limits.network.hosts : ["<open-public>"];
+
+  /** A running instance on the org's allowlist, then suspended (its next use resumes it). */
+  async function suspendedOnAllowlist(o: FakeSandboxOptions = {}) {
+    provider = fake({ updateMode: "updated", reportsNetwork: true, ...o });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    const rec = await record();
+    // a new instance is read only when its limits are fixed at its file system (createSettled)
+    const reads = (await ops("applied-network")).length;
+    expect(reads).toBe(o.limitsApplyAt === "fileSystem" ? 1 : 0);
+    // a shared use of the running instance reads nothing: the check is on lifecycle steps only
+    await use(s);
+    expect(await ops("applied-network")).toHaveLength(reads);
+    await s.suspendIdle(later());
+    return { s, first, rec };
+  }
+
+  it("a resumed instance allowing a host the record lacks gets the desired list again", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist();
+    await setFakeSandboxNetwork(root, first.h.id, {
+      kind: "allowlist",
+      hosts: [...hostsOf(rec), "wide.example"],
+    });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect(again.info).toMatchObject({ fresh: false, restarted: false });
+    expect(await ops("applied-network")).toHaveLength(1);
+    const sent = await updates();
+    expect(sent).toHaveLength(1);
+    expect(sentHosts(sent[0])).toEqual(hostsOf(rec));
+    expect(hostsOf((await fakeSandboxMeta(root, first.h.id))?.limits as never)).not.toContain(
+      "wide.example",
+    );
+    expect(await record()).toEqual(rec);
+    expect(await ops("create")).toHaveLength(1);
+  });
+
+  it("a resumed instance on the open public network while the record is a list is narrowed", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist();
+    await setFakeSandboxNetwork(root, first.h.id, { kind: "open-public", hosts: [] });
+    await use(s);
+    const sent = await updates();
+    expect(sent).toHaveLength(1);
+    expect(sentHosts(sent[0])).toEqual(hostsOf(rec));
+    expect((await fakeSandboxMeta(root, first.h.id))?.limits.network.kind).toBe("allowlist");
+  });
+
+  it("an equal or narrower installed network changes nothing", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist();
+    await use(s);
+    expect(await ops("applied-network")).toHaveLength(1);
+    await s.suspendIdle(later());
+    await setFakeSandboxNetwork(root, first.h.id, {
+      kind: "allowlist",
+      hosts: hostsOf(rec).slice(1),
+    });
+    await use(s);
+    expect(await ops("applied-network")).toHaveLength(2);
+    expect(await updates()).toHaveLength(0);
+    expect(await record()).toEqual(rec);
+  });
+
+  it("an installed network the provider cannot tell, or a failed read, applies the desired list again", async () => {
+    const { s, rec } = await suspendedOnAllowlist();
+    const base = provider;
+    let answer: "null" | "throw" = "null";
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      appliedNetwork: async () => {
+        if (answer === "throw") throw new Error("backend unavailable");
+        return null;
+      },
+    });
+    await use(s);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec)]);
+    await s.suspendIdle(later());
+    answer = "throw";
+    await use(s);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec), hostsOf(rec)]);
+    expect(warned).toContain(
+      "cannot read the instance's installed network; applying the desired limits again",
+    );
+    expect((await record())?.pending).toBeUndefined();
+  });
+
+  it("limits fixed at the file system (E2B): a wider installed network is narrowed through update", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({ limitsApplyAt: "fileSystem" });
+    await setFakeSandboxNetwork(root, first.h.id, {
+      kind: "allowlist",
+      hosts: [...hostsOf(rec), "wide.example"],
+    });
+    await use(s);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec)]);
+    expect(hostsOf((await fakeSandboxMeta(root, first.h.id))?.limits as never)).not.toContain(
+      "wide.example",
+    );
+    expect(await ops("create")).toHaveLength(1);
+  });
+
+  it("limits fixed at the file system: an update that cannot narrow a wider instance stops it and keeps the intent", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({
+      limitsApplyAt: "fileSystem",
+      updateMode: "recreate",
+    });
+    await setFakeSandboxNetwork(root, first.h.id, { kind: "open-public", hosts: [] });
+    const err = await use(s).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/enforces a wider network than its recorded limits/);
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+    expect(await status()).toBe("suspended");
+    // never recorded unapplied (that would claim the instance runs the record); the intent stays
+    const after = await record();
+    expect(after?.unapplied).toBeUndefined();
+    expect(hostsOf(after?.pending as Record<string, unknown> | undefined)).toEqual(hostsOf(rec));
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(true);
+  });
+
+  it("limits fixed at the file system: an instance created on kept files that came up wider is narrowed", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({ limitsApplyAt: "fileSystem" });
+    // the instance is gone; the next one comes up with the network its file system kept (E2B)
+    await removeFakeSandbox(root, first.h.id);
+    const base = provider;
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      create: async (a: Parameters<DeviceProvider["create"]>[0]) => {
+        const h = await base.create(a);
+        await setFakeSandboxNetwork(root, h.id, { kind: "open-public", hosts: [] });
+        return h;
+      },
+    });
+    const again = await use(s);
+    expect(again.h).not.toEqual(first.h);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec)]);
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.network.kind).toBe("allowlist");
+    expect((await record())?.pending).toBeUndefined();
+  });
+
+  it("an instance-bound provider's new instance is not read: create applied the desired limits", async () => {
+    const { s, first } = await suspendedOnAllowlist();
+    await removeFakeSandbox(root, first.h.id);
+    await use(s);
+    expect(await ops("create")).toHaveLength(2);
+    expect(await ops("applied-network")).toHaveLength(0);
+    expect(await updates()).toHaveLength(0);
   });
 });
 

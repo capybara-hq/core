@@ -51,6 +51,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { taskItem } from "./BackgroundSection";
 import { Thread } from "./Thread";
+import { backgroundLiveOf } from "./useBackgroundLive";
 import { useConversation } from "./useConversation";
 
 /** A tree status as the map's dot: a finished agent is completed, a queued one already works. */
@@ -416,22 +417,24 @@ function AgentLevel({
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, id, keys);
   const whoWaits = useWhoWaits(child.people);
+  const bgEnabled = useMemo(() => hasBackgroundTasks(child.events), [child.events]);
+  const bgQ = backgroundTasksQuery(orgId, id);
+  const bg = useQuery({ ...bgQ, enabled: bgEnabled, retryOnMount: retryOnMountOf(bgQ.queryKey) });
+  const backgroundTasks = useMemo(() => backgroundLiveOf(bg.data), [bg.data]);
   const base = useMemo(
     () =>
       buildEventTimeline(child.events, info, locale, {
         progress: child.state.progress,
         whoWaits,
         agentName: (n) => names.get(n),
+        ...(backgroundTasks ? { backgroundTasks } : {}),
       }),
-    [child.events, info, locale, child.state.progress, whoWaits, names],
+    [child.events, info, locale, child.state.progress, whoWaits, names, backgroundTasks],
   );
   const entries = useMemo(
     () => (transcript ? withDrafts(base, child.state.drafts) : base.entries),
     [transcript, base, child.state.drafts],
   );
-  const bgEnabled = useMemo(() => hasBackgroundTasks(child.events), [child.events]);
-  const bgQ = backgroundTasksQuery(orgId, id);
-  const bg = useQuery({ ...bgQ, enabled: bgEnabled, retryOnMount: retryOnMountOf(bgQ.queryKey) });
   const background = useMemo(
     () =>
       (bg.data ?? [])

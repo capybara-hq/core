@@ -2,6 +2,7 @@
 // shared by @LockedCron and @LockedInterval.
 import type { KernelLogger } from "../../log.js";
 import { withLogContext } from "../../log-context.js";
+import { asPlatform } from "../database/org-scope.js";
 import { runOutsideTransaction } from "../database/transaction-host.js";
 import type { LockService } from "../lock/lock.service.js";
 
@@ -128,67 +129,80 @@ export async function runLockedTick(
   /** Errors during the stop are expected (the job aborted, Redis closing): WARN, not ERROR. */
   const logFailure = (msg: string, fields: Record<string, unknown>) =>
     signal?.aborted ? log.warn(msg, fields) : log.error(msg, fields);
+  // a periodic sweep is deployment-wide work (RLS spec §5.1); one that handles each org in turn
+  // enters that org's scope itself
   const run = runOutsideTransaction(() =>
-    withLogContext({ cron: o.name }, async () => {
-      let tick: number | "start";
-      try {
-        if (o.start) {
-          tick = "start";
-          if (!(await lockService.lease(`cron:${o.name}:start`, "start", o.start.ttlMs))) {
-            log.info("cron skipped: start run already taken by another replica", { cron: o.name });
-            return;
+    asPlatform(`cron ${o.name}`, () =>
+      withLogContext({ cron: o.name }, async () => {
+        let tick: number | "start";
+        try {
+          if (o.start) {
+            tick = "start";
+            if (!(await lockService.lease(`cron:${o.name}:start`, "start", o.start.ttlMs))) {
+              log.info("cron skipped: start run already taken by another replica", {
+                cron: o.name,
+              });
+              return;
+            }
+          } else {
+            const t = o.tick();
+            tick = t.tick;
+            if (
+              !(await lockService.lease(
+                `cron:${o.name}:${tick}`,
+                "tick",
+                tickMarkerTtl(t.periodMs),
+              ))
+            ) {
+              log.info("cron skipped: tick already taken by another replica", {
+                cron: o.name,
+                tick,
+              });
+              return;
+            }
           }
-        } else {
-          const t = o.tick();
-          tick = t.tick;
-          if (
-            !(await lockService.lease(`cron:${o.name}:${tick}`, "tick", tickMarkerTtl(t.periodMs)))
-          ) {
-            log.info("cron skipped: tick already taken by another replica", {
+        } catch (err) {
+          logFailure("cron tick marker failed", { cron: o.name, err });
+          return;
+        }
+        let handle: Awaited<ReturnType<LockService["acquire"]>>;
+        try {
+          handle = await lockService.acquire(o.lockKey, { ttlMs: o.ttl, waitMs: 0 });
+        } catch (err) {
+          logFailure("cron lock failed", { cron: o.name, err });
+          return;
+        }
+        if (!handle) {
+          log.info("cron skipped: the previous run still holds the lock", { cron: o.name, tick });
+          return;
+        }
+        try {
+          if (signal?.aborted) {
+            log.info("cron skipped: the scheduler is stopping", { cron: o.name, tick });
+          } else {
+            // the signal aborts on the stop and when the run lock is lost (another replica may take
+            // the lock and start the next run); only jobs that read it stop, the others are
+            // idempotent sweeps that run to completion
+            await o.run(signal ? AbortSignal.any([signal, handle.lost]) : handle.lost);
+          }
+        } catch (err) {
+          if (signal?.aborted) {
+            log.info("cron run stopped by the shutdown", { cron: o.name, error: errMsg(err) });
+          } else if (handle.lost.aborted) {
+            log.warn("cron run stopped: its run lock was lost", {
               cron: o.name,
-              tick,
+              error: errMsg(err),
             });
-            return;
+          } else {
+            log.error("cron job failed", { cron: o.name, error: errMsg(err), err });
           }
+        } finally {
+          await handle
+            .release()
+            .catch((err: unknown) => logFailure("cron lock release failed", { cron: o.name, err }));
         }
-      } catch (err) {
-        logFailure("cron tick marker failed", { cron: o.name, err });
-        return;
-      }
-      let handle: Awaited<ReturnType<LockService["acquire"]>>;
-      try {
-        handle = await lockService.acquire(o.lockKey, { ttlMs: o.ttl, waitMs: 0 });
-      } catch (err) {
-        logFailure("cron lock failed", { cron: o.name, err });
-        return;
-      }
-      if (!handle) {
-        log.info("cron skipped: the previous run still holds the lock", { cron: o.name, tick });
-        return;
-      }
-      try {
-        if (signal?.aborted) {
-          log.info("cron skipped: the scheduler is stopping", { cron: o.name, tick });
-        } else {
-          // the signal aborts on the stop and when the run lock is lost (another replica may take
-          // the lock and start the next run); only jobs that read it stop, the others are
-          // idempotent sweeps that run to completion
-          await o.run(signal ? AbortSignal.any([signal, handle.lost]) : handle.lost);
-        }
-      } catch (err) {
-        if (signal?.aborted) {
-          log.info("cron run stopped by the shutdown", { cron: o.name, error: errMsg(err) });
-        } else if (handle.lost.aborted) {
-          log.warn("cron run stopped: its run lock was lost", { cron: o.name, error: errMsg(err) });
-        } else {
-          log.error("cron job failed", { cron: o.name, error: errMsg(err), err });
-        }
-      } finally {
-        await handle
-          .release()
-          .catch((err: unknown) => logFailure("cron lock release failed", { cron: o.name, err }));
-      }
-    }),
+      }),
+    ),
   );
   try {
     await (scope ? scope.track(run) : run);

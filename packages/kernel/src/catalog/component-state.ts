@@ -6,6 +6,7 @@
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
+import { templateDescription } from "./template-description.js";
 
 /** The kinds of platform components. */
 export type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
@@ -122,7 +123,10 @@ export interface ComponentRow extends ComponentScopeFacts {
   /** The current version (a connector template: the catalog version that last changed it). */
   version: string;
   description: string | null;
-  /** The description's Chinese text (a theme's or skill's `description.zh`); null without one. */
+  /**
+   * The description's Chinese text (a theme's or skill's `description.zh`, a connector template's
+   * `description.zh`); null without one.
+   */
   descriptionZh: string | null;
   /**
    * A connector template's localized display name (its file's `displayName`); null for skills and
@@ -206,8 +210,7 @@ export async function loadComponents(
         name: r.template_id,
         plugin: r.item_name,
         version: r.current_version,
-        description: typeof file?.description === "string" ? file.description : null,
-        descriptionZh: null,
+        ...templateDescription(file?.description),
         displayName: localizedName(file?.displayName),
         originOrgId: null,
       };
@@ -681,6 +684,57 @@ export async function connectorTemplatesOn(
       .map((c) => c.name),
   );
   return new Set(ids.filter((id) => !off.has(id)));
+}
+
+/** A component switch an install writes for the templates the org chose (or left out). */
+export interface TemplateSwitch {
+  componentId: string;
+  name: string;
+  plugin: string | null;
+  from: boolean | null;
+  to: boolean;
+}
+
+/**
+ * The org's choice of a plugin's connector templates at install (the wizard's choose step), read
+ * with the plugin installed: `on` the chosen template ids, `switches` the org switches that make
+ * exactly those on (a chosen one off now -> on, a left-out one on now -> off), `refused` chosen ids
+ * that cannot come on in the org (disabled, not offered) and left-out ids of a builtin plugin
+ * (locked on). Template ids without a component row are left to the caller.
+ */
+export async function connectorTemplateChoice(
+  db: KernelSchemaDb,
+  orgId: string,
+  itemId: string,
+  chosen: ReadonlySet<string>,
+): Promise<{ on: Set<string>; switches: TemplateSwitch[]; refused: string[] }> {
+  const comps = await loadComponents(db, "connector_template", { itemId });
+  const st = await loadScopeState(db, "connector_template", comps);
+  const on = new Set<string>();
+  const switches: TemplateSwitch[] = [];
+  const refused: string[] = [];
+  for (const c of comps) {
+    const p = pluginFactsOf(st, c.itemId, orgId);
+    const installed = p && { ...p, installed: true };
+    const listed = listedIn(st, c.id, orgId);
+    const sw = switchOf(st, c.id, orgId);
+    const now = componentOn(c, installed, listed, sw);
+    const want = chosen.has(c.name);
+    if (want) {
+      if (!componentOn(c, installed, listed, true)) {
+        refused.push(c.name);
+        continue;
+      }
+      on.add(c.name);
+    } else if (now && componentLocked(c, p)) {
+      refused.push(c.name);
+      continue;
+    }
+    if (now !== want) {
+      switches.push({ componentId: c.id, name: c.name, plugin: c.plugin, from: sw, to: want });
+    }
+  }
+  return { on, switches, refused };
 }
 
 /** The org's live connectors made from platform connector template `id` (they stay its own). */

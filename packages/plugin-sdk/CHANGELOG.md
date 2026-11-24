@@ -1,5 +1,39 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.67
+
+### Patch Changes
+
+- af84f8c: A provider whose `update` cannot honor the fence token (E2B) no longer leaves the instance wider than
+  the kernel's record until the limits change again (#766). The SDK adds the optional
+  `DeviceProvider.appliedNetwork(h, signal)`: the network the instance enforces now, as the provider's
+  backend reports it. Under the exclusive lease, on a resumed instance, a running one the use holds
+  exclusively, and a new instance of a provider whose limits are fixed at its file system, the kernel
+  compares it with the recorded limits; a wider network (the open public network over a list, or a host
+  the record does not cover), an unknown one or a failed read applies the desired limits again through
+  `update` with the holder's token. Equal or narrower changes nothing.
+
+## 0.1.0-rc.66
+
+### Patch Changes
+
+- 36738ec: A background start's reference names the provider's own instance generation (device-local's bound
+  machine generation), so the kernel no longer compares it with its own generation: it matches the
+  ref by operation id and handle id and pins the task to the generation it recorded. Every
+  background Bash on a device-local device was left unconfirmed ("its start was not confirmed; it is
+  being reconciled") and never settled; scheduled recovery now acknowledges those starts. A start
+  stopped before it was confirmed now ends `stopped` once the provider acknowledges its operation
+  revoke, instead of running until its retention expires (#765).
+
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- b22a19d: A connector template's `description` may be `{ zh, en }` as well as a string
+  (`ConnectorTemplateFile.description: string | LocalizedName`); the 1024-character limit applies to
+  each text. A plain string stays valid and is shown in both languages. The connector template JSON
+  Schema follows.
+
 ## 0.1.0-rc.64
 
 ### Patch Changes

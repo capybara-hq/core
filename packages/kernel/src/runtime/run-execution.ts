@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { withOrgScope } from "../infra/database/org-scope.js";
 import { TransactionHost, withTransactionFence } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
@@ -122,6 +123,11 @@ export class RunExecution {
   }
 
   withClaim<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
+    // the run works in its org (RLS spec §5.1): every query of the claimed run carries that scope
+    return withOrgScope(claim.orgId, () => this.claimed(claim, live, fn));
+  }
+
+  private claimed<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
     return invocationClaim.run(Object.freeze({ ...claim }), () =>
       withTransactionFence(async ({ shared, prelude }) => {
         const admitShared = shared && !exclusiveScope.getStore();

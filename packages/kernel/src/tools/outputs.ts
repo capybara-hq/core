@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 
 /** 文本行数（按 `\n` 切分；空串算 1 行，与按行分页读取一致）。 */
 export function countLines(s: string): number {
@@ -90,26 +91,28 @@ export async function deleteExpiredOutputs(
   db: KernelSchemaDb,
   batch = OUTPUT_CLEANUP_BATCH,
 ): Promise<number> {
-  let total = 0;
-  for (;;) {
-    const r = await db
-      .deleteFrom("tool_outputs")
-      .where(
-        "id",
-        "in",
-        db
-          .selectFrom("tool_outputs")
-          .select("id")
-          .where("expires_at", "<", sql<Date>`now()`)
-          .limit(batch)
-          .forUpdate()
-          .skipLocked(),
-      )
-      .executeTakeFirst();
-    const n = Number(r.numDeletedRows);
-    total += n;
-    if (n < batch) return total;
-  }
+  return asPlatform("deployment-wide cleanup of expired archives across all orgs", async () => {
+    let total = 0;
+    for (;;) {
+      const r = await db
+        .deleteFrom("tool_outputs")
+        .where(
+          "id",
+          "in",
+          db
+            .selectFrom("tool_outputs")
+            .select("id")
+            .where("expires_at", "<", sql<Date>`now()`)
+            .limit(batch)
+            .forUpdate()
+            .skipLocked(),
+        )
+        .executeTakeFirst();
+      const n = Number(r.numDeletedRows);
+      total += n;
+      if (n < batch) return total;
+    }
+  });
 }
 
 /** 存档不存在 / 过期 / 不属于本会话（模型可见，英文；不区分几种情况，不泄露别处的存档是否存在）。 */

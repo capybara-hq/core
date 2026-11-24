@@ -77,6 +77,7 @@
   "identity/passwords.test.ts",
   "identity/sso-paths.test.ts",
   "infra/kernel-events.test.ts",
+  "infra/org-scope.test.ts",
   "infra/process-guards.test.ts",
   "infra/queue-names.test.ts",
   "infra/queue-shutdown.test.ts",

@@ -12,7 +12,8 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
-import { BackgroundTaskStore } from "../background/store.js";
+import { type BackgroundTaskRow, BackgroundTaskStore } from "../background/store.js";
+import { EventLog } from "../conversations/event-log.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -38,16 +39,24 @@ export class SandboxOperationReconcileJob {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(BackgroundTaskStore)
     private readonly tasks: Pick<BackgroundTaskStore, "byOperation" | "settleOwedCancel">,
-    @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
+    @Inject(BackgroundTaskStopper)
+    private readonly stopper: Pick<BackgroundTaskStopper, "stop" | "settleRevokedUnconfirmed">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     /** Where a recovered start's refusal keeps the provider's own message (never the task's). */
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: Pick<KernelLogger, "warn">,
+    /** Tells a page listing the task that reconciliation moved it (a hint, its loss harmless). */
+    @Optional() @Inject(EventLog) private readonly eventLog?: Pick<EventLog, "publishChanged">,
   ) {}
   async reconcile(operationId: string): Promise<void> {
     await this.intents.expirePayload(operationId);
     const row = await this.intents.read(operationId);
     if (row.method === "backgroundStart") {
-      await this.reconcileBackground(row);
+      const before = await this.tasks.byOperation(operationId);
+      try {
+        await this.reconcileBackground(row);
+      } finally {
+        await this.announceMoved(before, operationId);
+      }
       return;
     }
     if (row.state === "revoked") {
@@ -56,6 +65,29 @@ export class SandboxOperationReconcileJob {
     }
     // Existing run/tool claim recovery owns continuation. A failed orphan never gets new authority.
     if (row.state === "dispatching") await this.intents.unknown(operationId);
+  }
+  /**
+   * After reconciling a managed start (each step commits its own transaction): when the task's
+   * launch or status moved (confirmed running, refused, given up), the pages listing it read the
+   * list again (`changed: background`, the owner and, for a sub-agent's task, the conversation
+   * that owns the sandbox), so a thread row shown as reconciling settles without a reload. A
+   * failed publish only logs.
+   */
+  private async announceMoved(
+    before: BackgroundTaskRow | undefined,
+    operationId: string,
+  ): Promise<void> {
+    if (!before || !this.eventLog) return;
+    const after = await this.tasks.byOperation(operationId);
+    if (
+      !after ||
+      (after.status === before.status &&
+        after.launchState === before.launchState &&
+        (after.executionRef === null) === (before.executionRef === null))
+    )
+      return;
+    for (const c of new Set([after.conversationId, after.sandboxConversationId]))
+      await this.eventLog.publishChanged(c, "background");
   }
   /**
    * A managed start: past its retention an unresolved launch is given up (terminal task, owed
@@ -223,6 +255,12 @@ export class SandboxOperationReconcileJob {
       { operationId: row.operation_id, admitBeforeMs: row.deadline.getTime() },
       AbortSignal.timeout(30_000),
     );
+    // a start revoked before its ref was known: the tombstone cancelled whatever it launched, so
+    // its task ends now rather than at its retention expiry
+    if (row.method === "backgroundStart") {
+      const task = await this.tasks.byOperation(row.operation_id);
+      if (task) await this.stopper.settleRevokedUnconfirmed(task);
+    }
     await this.intents.acknowledgeRevocation(operationId);
   }
   /**
@@ -273,11 +311,8 @@ export class SandboxOperationReconcileJob {
       return;
     }
     const generation = Number(row.instance_generation);
-    if (
-      !Number.isSafeInteger(generation) ||
-      ref.operationId !== row.operation_id ||
-      ref.instanceGeneration !== row.instance_generation
-    )
+    // the ref's own generation is the provider's; the incarnation is the intent's generation
+    if (!Number.isSafeInteger(generation) || ref.operationId !== row.operation_id)
       throw owed("The recorded execution reference does not match its start");
     const r = await this.sandbox.ifRunning(
       row.device_id,

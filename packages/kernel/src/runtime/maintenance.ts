@@ -5,6 +5,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
 import { OwnedPluginCleanup, OwnedPluginCleanupModule } from "../catalog/owned-plugin-cleanup.js";
+import { EventLogModule } from "../conversations/event-log.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { runJob } from "../infra/queue/run-job.js";
@@ -128,7 +129,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
   }
 
   process(job: Job, token?: string): Promise<void> {
-    return runJob(MAINTENANCE_QUEUE_NAME, job, () => this.dispatch(job, token));
+    return runJob(MAINTENANCE_QUEUE_NAME, job, () => this.dispatch(job, token), {
+      platform: "maintenance job (deployment-wide sweeps)",
+    });
   }
 
   /** Starts consuming (worker role, after the extensions loaded; built with `autorun: false`). */
@@ -259,6 +262,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     KernelScheduleModule,
     // the exact stop a revoked background start owes (SandboxOperationReconcileJob)
     BackgroundModule,
+    // the background list hint after reconciling a start (SandboxOperationReconcileJob)
+    EventLogModule,
     RuntimeModule,
     SandboxModule,
     ToolsModule,

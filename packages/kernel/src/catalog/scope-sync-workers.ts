@@ -35,17 +35,25 @@ export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
   }
 
   process(job: Job<ScopeJob>): Promise<void> {
-    return runJob(PLUGIN_SCOPE_QUEUE, job, () => {
-      if (!([SCOPE_ITEM_JOB, SCOPE_CHUNK_JOB, SCOPE_ORG_JOB] as string[]).includes(job.name)) {
-        throw new Error(`unknown plugin scope job ${job.name}`);
-      }
-      if (job.id === undefined) throw new Error("a plugin scope job has no id");
-      return this.sync.process(job.data, {
-        jobId: job.id,
-        finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
-        signal: this.stopping.signal,
-      });
-    });
+    return runJob(
+      PLUGIN_SCOPE_QUEUE,
+      job,
+      () => {
+        if (!([SCOPE_ITEM_JOB, SCOPE_CHUNK_JOB, SCOPE_ORG_JOB] as string[]).includes(job.name)) {
+          throw new Error(`unknown plugin scope job ${job.name}`);
+        }
+        if (job.id === undefined) throw new Error("a plugin scope job has no id");
+        return this.sync.process(job.data, {
+          jobId: job.id,
+          finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
+          signal: this.stopping.signal,
+        });
+      },
+      {
+        // an item or chunk job spans the orgs of a platform item; an org job carries its orgId
+        platform: "plugin scope sync of a platform item",
+      },
+    );
   }
 
   /** Starts consuming (worker role, after the extensions loaded; built with `autorun: false`). */

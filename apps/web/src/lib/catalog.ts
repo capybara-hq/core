@@ -425,7 +425,10 @@ export interface PluginReviewClient {
 export interface PluginReviewTemplate {
   id: string;
   displayName: LocalizedName;
+  /** The English or only text ("" without one); show it with `descriptionOf`. */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh?: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -882,7 +885,10 @@ export interface OrgCatalogItem
 export interface OrgCatalogTemplate {
   id: string;
   displayName: LocalizedName | null;
+  /** The English or only text ("" without one); show it with `descriptionOf`. */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh?: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -919,13 +925,26 @@ export interface OrgCatalogTemplate {
  * whose connector the org already has (`connected`): the install reuses that connector.
  */
 export function installTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => (!c.defaultOff || c.on === true) && c.connected !== true);
+  return templates.filter((c) => chosenByDefault(c) && c.connected !== true);
 }
 
 /** The templates whose existing connector the install keeps instead of asking for input. */
 export function keptTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => (!c.defaultOff || c.on === true) && c.connected === true);
+  return templates.filter((c) => chosenByDefault(c) && c.connected === true);
 }
+
+/**
+ * Whether the install wizard starts with the template chosen: on by default, or a default-off one
+ * an admin already switched on in this org.
+ */
+export const chosenByDefault = (c: OrgCatalogTemplate): boolean => !c.defaultOff || c.on === true;
+
+/**
+ * Whether the install wizard opens on its "choose connectors" step: the plugin has more than one connector
+ * template, or a default-off one (otherwise there is nothing to choose beyond the default).
+ */
+export const hasChooseStep = (templates: OrgCatalogTemplate[]): boolean =>
+  templates.length > 1 || templates.some((c) => c.defaultOff);
 
 /** `GET /orgs/:orgId/catalog/:itemId` (kernel `OrgCatalogDetail`, latest version). */
 export interface OrgCatalogDetail {
@@ -958,6 +977,11 @@ export interface ConnectorInstallInput {
 /** The org install body: template input by template id (kernel `OrgPluginInstallBody`). */
 export interface OrgInstallBody {
   connectors?: Record<string, ConnectorInstallInput>;
+  /**
+   * The template ids to switch on with the install (the wizard's choose step): exactly these make
+   * connectors, the others are switched off in the org. Absent: the templates on there now.
+   */
+  templatesOn?: string[];
 }
 
 /** What switching a plugin off in an org takes away (kernel `UninstallPreview`). */

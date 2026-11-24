@@ -56,6 +56,25 @@ END
 $$;
 ```
 
+## A kernel table with `org_id` ships its RLS policy
+
+Every kernel table with an `org_id` column has a row level security policy (Postgres RLS spec
+`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`, migration `0182_rls_policies.sql`), and
+the migration that adds such a table (or adds `org_id` to one) adds its policy too
+(`check:org-filter`, rule `org-filter-policy`):
+
+```sql
+DROP POLICY IF EXISTS org_scope ON widgets;
+CREATE POLICY org_scope ON widgets USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
+```
+
+Postgres has no `CREATE POLICY IF NOT EXISTS`, hence the `DROP POLICY IF EXISTS` first. The policies
+ship dark: no migration runs `ENABLE` / `FORCE ROW LEVEL SECURITY` until phase 5 does it for every
+table at once (maintainer decision 2026-11-24), so a new table does not enable it either. A table
+whose platform rows (`org_id` NULL) every org reads adds a second, read-only policy (`CREATE POLICY
+platform_defaults_read ON t FOR SELECT USING (org_id IS NULL)`), never an `OR org_id IS NULL` in
+`org_scope` (that would let an org delete them).
+
 ## Expand -> contract (two-step column drop)
 
 During a multi-replica rolling release, old and new versions of the code are online at the same time, so you **cannot both stop using a column and drop it in one version**.

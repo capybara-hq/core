@@ -1,5 +1,6 @@
-import { Kysely, PostgresDialect } from "kysely";
+import { Kysely } from "kysely";
 import pg from "pg";
+import { type RlsMode, ScopedPostgresDialect } from "../infra/database/scoped-dialect.js";
 
 /** 内核连接池的 PG `application_name`（便于在 pg_stat_activity 中识别）。 */
 export const KERNEL_APPLICATION_NAME = "capybara-kernel";
@@ -39,6 +40,11 @@ export function createDb(
      * without this a backend killed between two statements is an uncaught exception.
      */
     onClientError?: ((err: Error) => void) | undefined;
+    /**
+     * `db.rls`: whether every connection carries the org scope of its caller (RLS spec §5.2;
+     * `scoped-dialect.ts`). Unset = `off`, a plain pool.
+     */
+    rls?: RlsMode | undefined;
   } = {},
   // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型，由调用方自行收窄
 ): Kysely<any> {
@@ -52,5 +58,5 @@ export function createDb(
   });
   pool.on("error", onError);
   pool.on("connect", (client) => client.on("error", opts.onClientError ?? onError));
-  return new Kysely({ dialect: new PostgresDialect({ pool }) });
+  return new Kysely({ dialect: new ScopedPostgresDialect({ pool }, opts.rls ?? "off") });
 }

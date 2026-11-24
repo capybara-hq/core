@@ -634,6 +634,65 @@ describe("连接器 HTTP", () => {
     ).toHaveLength(2);
   });
 
+  it("a connector's own description: set at create or by PATCH, trimmed, cleared by null or blank; admins only", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const desc = async (id: string) =>
+      (
+        (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/${id}` })).json() as {
+          connector: { description: string | null; templateDescription: string | null };
+        }
+      ).connector;
+    // without one: none, and no template either (a custom connector)
+    const { connector: plain } = await createConnector(req, orgId);
+    expect(await desc(plain.id)).toMatchObject({ description: null, templateDescription: null });
+    const { connector: app } = await createConnector(req, orgId, {
+      slug: "docs2",
+      description: "  Team docs  ",
+    });
+    expect(await desc(app.id)).toMatchObject({ description: "Team docs" });
+    const listed = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors` });
+    expect(
+      (listed.json() as { connectors: { id: string; description: string | null }[] }).connectors
+        .map((c) => [c.id, c.description])
+        .sort(),
+    ).toEqual(
+      [
+        [plain.id, null],
+        [app.id, "Team docs"],
+      ].sort(),
+    );
+    const patch = (payload: Record<string, unknown>) =>
+      req({ method: "PATCH", url: `/api/v1/orgs/${orgId}/connectors/${app.id}`, payload });
+    const changed = await patch({ description: "Shared docs" });
+    expect(changed.statusCode, changed.body).toBe(200);
+    expect(changed.json().connector.description).toBe("Shared docs");
+    const audit = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "connector.updated")
+      .where("target", "=", app.id)
+      .execute();
+    expect(audit.map((a) => (a.detail as { description?: unknown }).description)).toEqual([
+      { from: "Team docs", to: "Shared docs" },
+    ]);
+    expect((await patch({ description: null })).json().connector.description).toBeNull();
+    await patch({ description: "again" });
+    expect((await patch({ description: "   " })).json().connector.description).toBeNull();
+    // over the limit -> 400; a member may not set it
+    const long = await patch({ description: "x".repeat(1025) });
+    expect(long.statusCode).toBe(400);
+    expect(errCode(long)).toBe("validation_failed");
+    const member = await memberSession(orgId, "mem", "member");
+    const denied = await member.req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
+      payload: { description: "mine" },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(await desc(app.id)).toMatchObject({ description: null });
+  });
+
   it("refresh：走漂移检测（新增 / 变化 → 待复核，旧定义保留；消失 → 停用）", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

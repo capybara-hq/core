@@ -262,9 +262,9 @@ function CatalogItemDetail({
               }
             >
               <Stack gap={8}>
-                {c.description !== "" && (
+                {descriptionOf(c, locale) !== "" && (
                   <Text variant="prose" tone="muted">
-                    {c.description}
+                    {descriptionOf(c, locale)}
                   </Text>
                 )}
                 <KeyValue

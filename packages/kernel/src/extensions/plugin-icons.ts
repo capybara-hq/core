@@ -7,6 +7,7 @@ import {
 } from "../catalog/catalog-content.js";
 import { iconProblem } from "../catalog/plugin-package.js";
 import { type PluginScope, requestable } from "../catalog/scope.js";
+import { type TemplateDescription, templateDescription } from "../catalog/template-description.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
@@ -194,6 +195,24 @@ export class PluginIcons {
   }
 
   /**
+   * Platform connector template id -> its description (the template file's current version,
+   * {@link templateDescription}), for the templates the reader may see under the same gate as
+   * their own icons ({@link ofTemplates}); templates without one, or hidden, are absent. The
+   * connector pages show it for connectors made from a template.
+   */
+  async templateDescriptions(
+    ids: string[],
+    scope: PluginIconScope,
+  ): Promise<Map<string, TemplateDescription>> {
+    const out = new Map<string, TemplateDescription>();
+    for (const r of await this.visibleTemplates(await this.templateRows(ids), scope)) {
+      const d = templateDescription(r.description);
+      if (d.description !== null) out.set(r.templateId, d);
+    }
+    return out;
+  }
+
+  /**
    * Reads the icon a connector shows ({@link ofConnectors}); the caller has checked that the
    * connector is the org's. No icon the reader may see -> `catalog.icon_not_found`.
    */
@@ -290,6 +309,7 @@ export class PluginIcons {
         "t.shareable as template_shareable",
         "t.current_version",
         sql<string | null>`t.file->>'icon'`.as("icon"),
+        sql<unknown>`t.file->'description'`.as("description"),
         "v.files",
         "i.id",
         "i.scope",
