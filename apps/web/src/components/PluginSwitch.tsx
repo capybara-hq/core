@@ -246,7 +246,7 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
   const enable = (i: OrgCatalogItem) =>
     run({ itemId: i.id, id: "enable" }, async () => {
       await sw.mutateAsync({ itemId: i.id, enabled: true });
-      // Say what arrived; 撤销 switches it off again without the skills confirmation (the
+      // Say what arrived; Undo switches it off again without the skills confirmation (the
       // person has just switched it on)
       const c = i.componentCounts;
       const parts = [
@@ -433,9 +433,10 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
 /**
  * The switch-off confirmation (spec §5 rule 8): what switching the plugin off removes (the
  * components it created and nothing else uses), what is disabled with it, what it keeps and why,
- * and the agents that use its components (they lose them); with nothing to lose, one sentence. A dependency install (`plugin`) is named by its plugin, from the
- * org's installs (its id until they are read). Shared by the 插件 page and the 扩展 page (an
- * extension's switch is its plugin's).
+ * and the agents that use its components (they lose them); with nothing to lose, one sentence.
+ * A dependency install (`plugin`) is named by its plugin, from the org's installs (its id until
+ * they are read). Shared by the plugins page and the extensions page (an extension's switch is
+ * its plugin's).
  */
 export function SwitchOffDialog({
   orgId,
