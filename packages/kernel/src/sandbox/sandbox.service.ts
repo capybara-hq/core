@@ -1590,12 +1590,12 @@ export class SandboxService {
    * The exclusive lease is taken with intent. Only the wait is bounded by `signal` and by
    * `sandbox.lockWaitSeconds` (`sandbox.busy` after that: a tool call holding the device keeps
    * it, and the next use applies the limits); an abort there reaches no provider. The apply under
-   * the lease has its own budget ({@link MAINTENANCE_CALL_TIMEOUT_MS} and the lease's signal),
-   * never what is left of the caller's, so a long wait never cuts an `update` or a recreate
-   * short. Taking the lease ends the device's stream holds (ruling R7), so viewers reconnect to
-   * the service as it runs afterwards. A device deleted meanwhile is left alone. `applied` with the instance now recorded (a new one after a
-   * recreate), `unchanged` when nothing had to be applied, `not_running` without a running
-   * instance.
+   * the lease has its own budget (the lifecycle steps' {@link SWEEP_OP_TIMEOUT_MS} and the lease's
+   * signal), never what is left of the caller's, so a long wait does not cut an `update` or a
+   * recreate short. Taking the lease ends the device's stream holds (ruling R7), so viewers
+   * reconnect to the service as it runs afterwards. A device deleted meanwhile is left alone.
+   * `applied` with the instance now recorded (a new one after a recreate), `unchanged` when
+   * nothing had to be applied, `not_running` without a running instance.
    */
   async applyLimitsIfRunning(
     use: SandboxUseContext,
@@ -1617,7 +1617,7 @@ export class SandboxService {
     try {
       // the apply's own budget: the caller's signal bounded only the wait (an abort mid-update
       // would quarantine the instance, one mid-recreate would leave it `creating`)
-      const sig = AbortSignal.any([AbortSignal.timeout(MAINTENANCE_CALL_TIMEOUT_MS), lease.signal]);
+      const sig = AbortSignal.any([AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS), lease.signal]);
       // under the lease the B1 snapshot writer needs: no limits change on a device carrying the
       // reconcile marker (B-11)
       await this.facts.assertCloudReconciled(use.orgId, env);

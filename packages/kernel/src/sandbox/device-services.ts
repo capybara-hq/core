@@ -64,8 +64,8 @@ export class DeviceServices {
    * the kept files, which ends the services with the old instance); once applied, a second
    * `ifRunning` ensure on the instance as it is recorded now, on its own budget
    * ({@link POST_APPLY_ENSURE_TIMEOUT_MS}, not `signal`: a provider that restarts a service on a
-   * network change does it there). It never resumes or starts anything. The status, or null without a
-   * running instance.
+   * network change does it there). It never resumes or starts anything. The status, or null
+   * without a running instance.
    */
   async refresh(
     use: SandboxUseContext,
