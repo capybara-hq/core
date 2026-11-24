@@ -154,8 +154,10 @@ const bytes = (i: number) => new TextEncoder().encode(`message ${i}`);
 describe("dial-in streams", () => {
   it("stream echoes 100 messages in order", async () => {
     let target: unknown;
+    let peer: FakeMachineStream | undefined;
     const c = await connected((o, s) => {
       target = o;
+      peer = s;
       s.onMessage((m) => void s.send(m));
     });
     const stream = await gateway.openStream(
@@ -176,8 +178,53 @@ describe("dial-in streams", () => {
     expect(got.map((m) => new TextDecoder().decode(m))).toEqual(
       Array.from({ length: 100 }, (_, i) => `message ${i}`),
     );
-    stream.close("done");
-    expect(await stream.closed).toEqual({ reason: "done" });
+    // breaking the loop closed the stream, the machine's side too
+    expect(await stream.closed).toEqual({ reason: "consumer stopped" });
+    expect(await peer?.closed).toEqual({ reason: "consumer stopped" });
+  });
+
+  it("a consumer that throws closes the stream on both sides", async () => {
+    const { stream, peer } = await openPair();
+    await peer.send(bytes(1));
+    await expect(
+      (async () => {
+        for await (const _m of stream.messages) throw new Error("consumer failed");
+      })(),
+    ).rejects.toThrow("consumer failed");
+    expect(await stream.closed).toEqual({ reason: "consumer stopped" });
+    expect(await peer.closed).toEqual({ reason: "consumer stopped" });
+  });
+
+  it("a second concurrent next() is refused", async () => {
+    const { stream, peer } = await openPair();
+    const it = stream.messages[Symbol.asyncIterator]();
+    const first = it.next();
+    await expect(it.next()).rejects.toThrow(/one consumer/);
+    await peer.send(bytes(7));
+    const r = await first;
+    expect(new TextDecoder().decode(r.value as Uint8Array)).toBe("message 7");
+    stream.close();
+  });
+
+  it("an open the machine never answers times out and is closed", async () => {
+    const c = await connected();
+    c.machine.ignoreStreamOpens = true;
+    const before = gateway.streamOpenTimeoutMs;
+    gateway.streamOpenTimeoutMs = 300;
+    try {
+      await expect(
+        gateway.openStream(c.deviceId, { target: "x" }, new AbortController().signal),
+      ).rejects.toThrow(/did not answer the stream open within 300 ms/);
+    } finally {
+      gateway.streamOpenTimeoutMs = before;
+    }
+    const opened = c.machine.streamOpens[0];
+    expect(opened).toBeDefined();
+    await waitFor(
+      async () => c.machine.streamCloses.includes(opened as string),
+      10_000,
+      "stream-close of the unanswered open",
+    );
   });
 
   it("sender waits for credit", async () => {
@@ -261,11 +308,30 @@ describe("dial-in streams", () => {
     const c = await connected();
     const key = deviceHolderAddrKey(c.deviceId);
     expect(key).toBe(`capk:device-holder-addr:${c.deviceId}`);
-    expect(await redis.get(key)).toBe(INTERNAL_URL);
+    const token = await redis.get(deviceLeaseKey(c.deviceId));
+    expect(JSON.parse((await redis.get(key)) ?? "null")).toEqual({
+      token,
+      address: INTERNAL_URL,
+    });
     expect(await redis.pttl(key)).toBeGreaterThan(0);
     expect(await gateway.holderAddress(c.deviceId)).toBe(INTERNAL_URL);
     await c.machine.close();
     await waitFor(async () => (await redis.get(key)) === null, 10_000, "address removed");
+  });
+
+  it("holder address is read only under the current lease token", async () => {
+    const deviceId = randomUUID();
+    const key = deviceHolderAddrKey(deviceId);
+    const lease = deviceLeaseKey(deviceId);
+    await redis.set(key, JSON.stringify({ token: "t-old", address: "http://old:1" }), "PX", 60_000);
+    // the lease expired (the holder is gone): no address
+    expect(await gateway.holderAddress(deviceId)).toBeNull();
+    // a takeover holds the lease before writing its address: never the old one
+    await redis.set(lease, "t-new", "PX", 60_000);
+    expect(await gateway.holderAddress(deviceId)).toBeNull();
+    await redis.set(key, JSON.stringify({ token: "t-new", address: "http://new:2" }), "PX", 60_000);
+    expect(await gateway.holderAddress(deviceId)).toBe("http://new:2");
+    await redis.del(key, lease);
   });
 
   it("openStream on a replica without the socket throws DialInStreamElsewhereError", async () => {

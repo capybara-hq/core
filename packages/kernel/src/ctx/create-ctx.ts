@@ -583,9 +583,10 @@ export function createExtensionContext(
           // DialInStreamElsewhereError. The extension's end closes its streams.
           openStream: async (deviceId, body, opts) => {
             const id = await served(deviceId);
-            const signal = opts?.signal
-              ? AbortSignal.any([lifecycle.signal, opts.signal])
-              : lifecycle.signal;
+            // the SDK requires the signal: an open nobody can abort is refused up front
+            if (!(opts?.signal instanceof AbortSignal))
+              throw new TypeError(`plugin ${name}: ctx.dialIn.openStream needs opts.signal`);
+            const signal = AbortSignal.any([lifecycle.signal, opts.signal]);
             const stream = await (access as NonNullable<typeof access>).openStream(
               id,
               body,

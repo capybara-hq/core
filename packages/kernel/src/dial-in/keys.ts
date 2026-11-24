@@ -8,8 +8,9 @@ export const deviceLeaseKey = (deviceId: string): string => `capk:device-lease:$
 
 /**
  * The internal address (`gateway.internalUrl`, or `http://<hostname>:<port>`) of the gateway
- * replica holding the machine's connection: `capk:device-holder-addr:<deviceId>`. Written by the
- * holder next to its lease, with a TTL; another replica hops a device stream there.
+ * replica holding the machine's connection, as `{ token, address }` with the holder's lease token:
+ * `capk:device-holder-addr:<deviceId>`. Written by the holder next to its lease, with a TTL, and
+ * read only while the lease still has that token; another replica hops a device stream there.
  */
 export const deviceHolderAddrKey = (deviceId: string): string =>
   `capk:device-holder-addr:${deviceId}`;

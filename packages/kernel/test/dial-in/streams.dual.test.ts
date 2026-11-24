@@ -13,6 +13,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { deviceHolderAddrKey, deviceLeaseKey } from "../../src/dial-in/keys.js";
+
+/** The address in the holder record, when it belongs to the current lease. */
+async function recordedAddress(r: Redis, deviceId: string): Promise<string | null> {
+  const [lease, raw] = await Promise.all([
+    r.get(deviceLeaseKey(deviceId)),
+    r.get(deviceHolderAddrKey(deviceId)),
+  ]);
+  if (lease === null || raw === null) return null;
+  const rec = JSON.parse(raw) as { token: string; address: string };
+  return rec.token === lease ? rec.address : null;
+}
+
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
@@ -143,7 +155,11 @@ describe("dial-in streams across replicas (dual replica)", () => {
     machine.onStream((_o, s) => s.onMessage((m) => void s.send(m)));
     await waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
     const key = deviceHolderAddrKey(deviceId);
-    await waitFor(async () => (await redis.get(key)) === addressOf(0), 10_000, "A's address");
+    await waitFor(
+      async () => (await recordedAddress(redis, deviceId)) === addressOf(0),
+      10_000,
+      "A's address",
+    );
     expect(await redis.pttl(key)).toBeGreaterThan(0);
 
     // B does not hold the socket: it refuses and the address names A
@@ -159,7 +175,11 @@ describe("dial-in streams across replicas (dual replica)", () => {
     open.push(second);
     second.onStream((_o, s) => s.onMessage((m) => void s.send(m)));
     await machine.closed;
-    await waitFor(async () => (await redis.get(key)) === addressOf(1), 10_000, "B's address");
+    await waitFor(
+      async () => (await recordedAddress(redis, deviceId)) === addressOf(1),
+      10_000,
+      "B's address",
+    );
     expect(await streamOn(1, deviceId)).toEqual({ ok: true, echo: "hi" });
     expect(await streamOn(0, deviceId)).toMatchObject({
       ok: false,

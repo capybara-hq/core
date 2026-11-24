@@ -172,6 +172,12 @@ export class FakeDialInMachine {
   readonly invalid: string[] = [];
   private handler: RequestHandler = () => ({});
   private streamHandler: StreamHandler | undefined;
+  /** Leave every `stream-open` unanswered (a machine that never opens streams). */
+  ignoreStreamOpens = false;
+  /** The ids of the `stream-open` frames received, in order. */
+  readonly streamOpens: string[] = [];
+  /** The ids of the `stream-close` frames received, in order (also of streams never opened). */
+  readonly streamCloses: string[] = [];
   /** The streams the kernel opened and that are still open, by id. */
   private readonly streams = new Map<string, FakeMachineStream>();
 
@@ -331,8 +337,10 @@ export class FakeDialInMachine {
     } else if (frame.type === "stop" && (frame.reason === "drain" || frame.reason === "stop")) {
       this.stops.push(frame.reason);
     } else if (frame.type === "stream-open" && frame.streamId !== undefined) {
-      this.openStream(frame.streamId, frame.body);
+      this.streamOpens.push(frame.streamId);
+      if (!this.ignoreStreamOpens) this.openStream(frame.streamId, frame.body);
     } else if (frame.type.startsWith("stream-") && frame.streamId !== undefined) {
+      if (frame.type === "stream-close") this.streamCloses.push(frame.streamId);
       const st = this.streams.get(frame.streamId);
       st?.onFrame(frame);
       if (frame.type === "stream-close") this.streams.delete(frame.streamId);

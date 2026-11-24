@@ -469,12 +469,16 @@ treats a dial-in device like any other (its provider, report and permission supp
   grants one more per message it consumed, so a stream never starves the connection's requests.
   Frames never touch Redis or PG, so only the gateway replica holding the socket opens a stream;
   any other replica throws `DialInStreamElsewhereError` (no holder: `DeviceOfflineError`). The
-  holder writes its internal address (`gateway.internalUrl`, default
-  `http://<hostname>:<http.port>`) under `capk:device-holder-addr:<deviceId>` next to its lease
-  (written only while it holds the lease, refreshed on ping, removed on release unless a
-  successor holds it): `DialInGateway.holderAddress` is where another replica hops. The stream
-  table is the connection's own state: the socket's close ends every stream with
-  `device-offline`; the extension's end closes its streams. Tests: `FakeDialInMachine.onStream`
+  holder writes `{ token, address }` (its lease token and internal origin, `gateway.internalUrl`,
+  default `http://<hostname>:<http.port>`) under `capk:device-holder-addr:<deviceId>` at the
+  claim and on ping, only while it holds the lease, and removes it on release unless a successor
+  holds it; `DialInGateway.holderAddress` reads it under the current lease token in one Lua step
+  (an expired lease or an unwritten takeover answers null, never a gone replica). An open the
+  machine does not answer within 15 s (`STREAM_OPEN_TIMEOUT_MS`) fails and is closed; the signal is
+  required. A consumer that breaks or throws out of `messages` closes the stream on both sides;
+  `messages` has one consumer (a concurrent `next()` rejects). The stream table is the
+  connection's own state: the socket's close ends every stream with `device-offline`; the
+  extension's end closes its streams. Tests: `FakeDialInMachine.onStream`
   (honours credit; `autoCredit = false` withholds it) and the fixture's `POST /stream` seam.
 - **Reports.** A provider stores what its machine says (in `ctx.kv` / `ctx.db`) and calls
   `ctx.devices.reportChanged(deviceId)`; the kernel reads `report()` again and moves the device's

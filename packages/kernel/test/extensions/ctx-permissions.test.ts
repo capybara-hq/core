@@ -526,6 +526,8 @@ describe("ctx 按权限清单构造", () => {
       expect(await ctx.dialIn.online("d-1")).toBe(true);
       expect(await ctx.dialIn.capacity("d-1")).toEqual({ maxFrameBytes: 4096 });
       await ctx.dialIn.stop("d-1", "drain");
+      // the signal is required: an open nobody can abort is refused before the access is asked
+      await expect(ctx.dialIn.openStream("d-1", { t: 1 }, {} as never)).rejects.toThrow(TypeError);
       const stream = await ctx.dialIn.openStream("d-1", { t: 1 }, { signal: own.signal });
       expect(a.calls.map((c) => c.method)).toEqual([
         "request",

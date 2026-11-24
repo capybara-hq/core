@@ -36,6 +36,9 @@ export const STREAM_OFFLINE_REASON = "device-offline";
 /** Reasons and errors travel at most this many characters (the envelope's limit). */
 const MAX_REASON = 500;
 
+/** How long the machine has to answer `stream-open` ({@link DialInStreams.openStream}). */
+export const STREAM_OPEN_TIMEOUT_MS = 15_000;
+
 const clip = (text: string): string =>
   text.length > MAX_REASON ? text.slice(0, MAX_REASON) : text;
 
@@ -66,6 +69,11 @@ class Stream implements DeviceStream {
       this.resolveClosed = resolve;
     });
     const next = (): Promise<IteratorResult<Uint8Array>> => {
+      // one consumer: a second next() while one waits would lose a message
+      if (this.reader !== undefined)
+        return Promise.reject(
+          new Error("A stream's messages are read by one consumer: await each next() in turn"),
+        );
       const m = this.inbox.shift();
       if (m !== undefined) {
         this.consumed();
@@ -76,9 +84,17 @@ class Stream implements DeviceStream {
         this.reader = resolve;
       });
     };
+    // a consumer that stops (break, a throw) closes the stream, like Node's stream iterators
     const iterator: AsyncIterator<Uint8Array> = {
       next,
-      return: async () => ({ value: undefined, done: true }),
+      return: async () => {
+        this.close("consumer stopped");
+        return { value: undefined, done: true };
+      },
+      throw: async (e?: unknown) => {
+        this.close("consumer stopped");
+        throw e;
+      },
     };
     this.messages = { [Symbol.asyncIterator]: () => iterator };
   }
@@ -195,13 +211,16 @@ export class DialInStreams {
   constructor(
     private readonly deviceId: string,
     private readonly transport: DialInStreamTransport,
+    /** How long the machine has to answer an open ({@link STREAM_OPEN_TIMEOUT_MS}). */
+    private readonly openTimeoutMs: () => number = () => STREAM_OPEN_TIMEOUT_MS,
   ) {}
 
   /**
    * Opens a stream: sends `stream-open` with `body` and resolves once the machine answered
    * `stream-opened` ok. A refusal rejects with the machine's error; `signal` bounds the opening
-   * only (an abort sends `stream-close` and rejects with the signal's reason); the socket's close
-   * rejects with `DeviceOfflineError`.
+   * only (an abort sends `stream-close` and rejects with the signal's reason), and so does the
+   * kernel's own deadline ({@link STREAM_OPEN_TIMEOUT_MS}: `stream-close` and a clear error); the
+   * socket's close rejects with `DeviceOfflineError`.
    */
   openStream(body: unknown, signal: AbortSignal): Promise<DeviceStream> {
     if (this.ended) return Promise.reject(new DeviceOfflineError(this.deviceId));
@@ -221,27 +240,47 @@ export class DialInStreams {
       );
     const stream = new Stream(streamId, this.transport, (id) => this.open.delete(id));
     return new Promise<DeviceStream>((resolve, reject) => {
-      const onAbort = () => {
-        if (!this.opening.delete(streamId)) return;
-        this.transport.send(JSON.stringify({ type: "stream-close", streamId, reason: "aborted" }));
-        stream.end("aborted");
-        reject(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+      let timer: NodeJS.Timeout | undefined;
+      const settle = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
       };
+      /** The open ends unanswered: the machine is told, the caller gets `error`. */
+      const giveUp = (reason: string, error: Error) => {
+        if (!this.opening.delete(streamId)) return;
+        settle();
+        this.transport.send(JSON.stringify({ type: "stream-close", streamId, reason }));
+        stream.end(reason);
+        reject(error);
+      };
+      const onAbort = () =>
+        giveUp("aborted", signal.reason instanceof Error ? signal.reason : new Error("aborted"));
       this.opening.set(streamId, {
         stream,
         resolve: (s) => {
-          signal.removeEventListener("abort", onAbort);
+          settle();
           resolve(s);
         },
         reject: (e) => {
-          signal.removeEventListener("abort", onAbort);
+          settle();
           reject(e);
         },
       });
       signal.addEventListener("abort", onAbort, { once: true });
+      const timeoutMs = this.openTimeoutMs();
+      timer = setTimeout(
+        () =>
+          giveUp(
+            "open timed out",
+            new Error(
+              `The machine did not answer the stream open within ${timeoutMs} ms; check that its program supports streams and retry`,
+            ),
+          ),
+        timeoutMs,
+      );
       if (!this.transport.send(text)) {
         this.opening.delete(streamId);
-        signal.removeEventListener("abort", onAbort);
+        settle();
         reject(new DeviceOfflineError(this.deviceId));
       }
     });

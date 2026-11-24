@@ -36,7 +36,7 @@ import {
 } from "./keys.js";
 import { DialInMachines, type MachineIdentity, type MachineRevokedMessage } from "./machines.js";
 import { LIST_TTL_MARGIN_MS } from "./relay.js";
-import { DialInStreams, isStreamFrame } from "./streams.js";
+import { DialInStreams, isStreamFrame, STREAM_OPEN_TIMEOUT_MS } from "./streams.js";
 
 /** WebSocket close codes the gateway uses (the program reads 4002 and 4003). */
 export const DEVICE_CLOSE = {
@@ -133,14 +133,31 @@ return 1
 `;
 
 /**
- * Writes the holder's address `ARGV[2]` under `KEYS[2]` for `ARGV[3]` ms, only while the lease
- * `KEYS[1]` is held by the token `ARGV[1]` (a connection that lost its lease never overwrites its
- * successor's address). Returns 1 when written.
+ * Writes the holder record `ARGV[2]` (`{ token, address }`) under `KEYS[2]` for `ARGV[3]` ms, only
+ * while the lease `KEYS[1]` is held by the token `ARGV[1]` (a connection that lost its lease never
+ * overwrites its successor's address). Returns 1 when written.
  */
 const WRITE_ADDR = `
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
 return 1
+`;
+
+/**
+ * Reads the lease `KEYS[1]` and the holder record `KEYS[2]` in one step: the record's address
+ * only when its token is the current lease's (an expired lease or a takeover whose holder has not
+ * written its address yet answers nothing, never a gone or replaced replica's address).
+ */
+const READ_ADDR = `
+local holder = redis.call('GET', KEYS[1])
+if not holder then return false end
+local raw = redis.call('GET', KEYS[2])
+if not raw then return false end
+local ok, rec = pcall(cjson.decode, raw)
+if not ok or type(rec) ~= 'table' or rec.token ~= holder or type(rec.address) ~= 'string' then
+  return false
+end
+return rec.address
 `;
 
 /**
@@ -206,14 +223,18 @@ class DeviceConnection {
     /** The local port the socket arrived on (the holder address's default port when unset). */
     private readonly localPort: number | undefined,
   ) {
-    this.streams = new DialInStreams(identity.deviceId, {
-      send: (text) => {
-        if (this.state === "closed" || this.socket.readyState !== this.socket.OPEN) return false;
-        this.socket.send(text);
-        return true;
+    this.streams = new DialInStreams(
+      identity.deviceId,
+      {
+        send: (text) => {
+          if (this.state === "closed" || this.socket.readyState !== this.socket.OPEN) return false;
+          this.socket.send(text);
+          return true;
+        },
+        maxFrameBytes: () => this.effectiveCap ?? 0,
       },
-      maxFrameBytes: () => this.effectiveCap ?? 0,
-    });
+      () => this.gw.streamOpenTimeoutMs,
+    );
   }
 
   /** This connection's streams (the socket's own state, ended with it). */
@@ -248,15 +269,22 @@ class DeviceConnection {
       "PX",
       ttl,
     );
-    // where other replicas hop a device stream to: next to the lease, refreshed with it
+    await this.writeAddress();
+  }
+
+  /**
+   * Where other replicas hop a device stream to: the holder record `{ token, address }` next to
+   * the lease (written at the claim, refreshed with the capacity), read only under that token.
+   */
+  private async writeAddress(): Promise<void> {
     await this.gw.redis.eval(
       WRITE_ADDR,
       2,
       deviceLeaseKey(this.deviceId),
       deviceHolderAddrKey(this.deviceId),
       this.token,
-      this.gw.internalAddress(this.localPort),
-      String(ttl),
+      JSON.stringify({ token: this.token, address: this.gw.internalAddress(this.localPort) }),
+      String(Math.max(this.gw.leaseTtlMs(), this.gw.pingIntervalMs * 3)),
     );
   }
 
@@ -568,6 +596,7 @@ class DeviceConnection {
         return false;
       }
       lease.lost.addEventListener("abort", onLost, { once: true });
+      await this.writeAddress();
       await this.subscribe(deviceReqTopic(env), () => this.drain());
       await this.subscribe(deviceRevokedTopic(env), (p) => {
         const message = p as Partial<MachineRevokedMessage> | null;
@@ -897,6 +926,8 @@ export class DialInGateway {
   private stopping = false;
   /** How often connections are pinged ({@link PING_INTERVAL_MS}; a test seam). */
   pingIntervalMs = PING_INTERVAL_MS;
+  /** How long a machine has to answer a stream open ({@link STREAM_OPEN_TIMEOUT_MS}; test seam). */
+  streamOpenTimeoutMs = STREAM_OPEN_TIMEOUT_MS;
   /** How often a held connection re-checks its credential ({@link REAUTH_EVERY_MS}; test seam). */
   reauthEveryMs = REAUTH_EVERY_MS;
 
@@ -942,10 +973,17 @@ export class DialInGateway {
 
   /**
    * The internal address of the gateway replica holding `deviceId`'s machine
-   * (`capk:device-holder-addr:<deviceId>`), or null when no replica holds it.
+   * (`capk:device-holder-addr:<deviceId>`, read under the current lease token), or null when no
+   * replica holds it or its holder has not recorded its address yet.
    */
-  holderAddress(deviceId: string): Promise<string | null> {
-    return this.redis.get(deviceHolderAddrKey(deviceId));
+  async holderAddress(deviceId: string): Promise<string | null> {
+    const r = await this.redis.eval(
+      READ_ADDR,
+      2,
+      deviceLeaseKey(deviceId),
+      deviceHolderAddrKey(deviceId),
+    );
+    return typeof r === "string" ? r : null;
   }
 
   /**
