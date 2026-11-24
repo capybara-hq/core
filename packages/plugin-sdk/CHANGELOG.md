@@ -1,5 +1,16 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.71
+
+### Minor Changes
+
+- b93ea83: `file-preview@1` previews skill files: `FilePreviewArgs` gains `FilePreviewSkillArgs` (`source:
+  "skill"`, with `orgId`, `accountId`, `skillId`, `version` and `path`; `file.id` is
+  `<skillId>@<version>/<path>`), and an org embed token for a skill file's previewer carries
+  `OrgEmbedClaims.skillFile` (`{ skillId, version, path }`, never with a conversation, agent or file
+  id); an extension's `embed` route sees it as `RouteCaller.skillFile` on an org caller. A previewer
+  that matches by type needs no change.
+
 ## 0.1.0-rc.70
 
 ### Patch Changes
