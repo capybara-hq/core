@@ -4,14 +4,16 @@
  *
  * `capybara-device` opens its WebSocket at `<http.publicUrl>/device/connect`, and the public URL is
  * the web origin. The kernel serves that route only on the `gateway` role, which compose does not
- * publish, so this server forwards WebSocket upgrades whose path is exactly `/device/connect` (or `/device/stream`) to a
- * gateway replica (CAPYBARA_WEB_GATEWAY_URL, an http(s) URL):
+ * publish, so this server forwards WebSocket upgrades whose path is exactly `/device/connect` or
+ * `/device/stream` ({@link isGatewayUpgradePath}) to a gateway replica (CAPYBARA_WEB_GATEWAY_URL,
+ * an http(s) URL):
  *
  * - The raw socket is piped: the original request line and headers (Authorization,
  *   X-Capybara-Device-Protocol, the WebSocket handshake) go to the gateway, then any bytes the
  *   client already sent, then both directions stream untouched. The gateway answers the handshake
  *   (101, or 401 / 426 with JSON) itself.
- * - `Host` is the gateway's; forwarding headers, cookies and this server's peer marker are not sent.
+ * - `Host` is the gateway's; forwarding headers, cookies and this server's peer marker are not
+ *   sent.
  *   A `/device/stream` upgrade alone gets one `X-Forwarded-For`: the client address this server
  *   derived ({@link GatewayProxy.clientOf}), replacing whatever the client sent, so the kernel's
  *   per-address viewer limit (trusted under its `http.trustProxy`, as for `/api`) counts each
@@ -22,8 +24,8 @@
  * `/device/stream?ticket=…` (the browser live view) is forwarded the same way, query intact; the
  * ticket is a credential and this module never logs it.
  *
- * An external proxy may route `/device/connect` and `/device/stream` to the gateway replicas directly
- * instead; then these upgrades never reach this server.
+ * An external proxy may route `/device/connect` and `/device/stream` to the gateway replicas
+ * directly instead; then these upgrades never reach this server.
  */
 
 import type { IncomingMessage } from "node:http";
@@ -33,7 +35,10 @@ import { connect as tlsConnect } from "node:tls";
 
 export const GATEWAY_URL_ENV = "CAPYBARA_WEB_GATEWAY_URL";
 export const DEVICE_CONNECT_PATH = "/device/connect";
-/** Browser live-view stream; authenticated by a `?ticket=` query, which is a credential: never log it. */
+/**
+ * Browser live-view stream; authenticated by a `?ticket=` query, which is a credential: never log
+ * it.
+ */
 export const DEVICE_STREAM_PATH = "/device/stream";
 
 export interface GatewayProxy {
@@ -47,7 +52,9 @@ export interface GatewayProxy {
   clientOf?: (req: IncomingMessage) => string | undefined;
 }
 
-/** Request headers never forwarded (forwarding, cookies, proxy credentials, our marker, the host). */
+/**
+ * Request headers never forwarded (forwarding, cookies, proxy credentials, our marker, the host).
+ */
 const DROP_REQUEST = new Set([
   "host",
   "cookie",
@@ -66,9 +73,9 @@ const DROP_REQUEST = new Set([
 const DEFAULT_KERNEL_URL = "http://localhost:8080";
 
 /**
- * The gateway web forwards /device/connect to: CAPYBARA_WEB_GATEWAY_URL, else the kernel web already
- * talks to (CAPYBARA_KERNEL_URL, default http://localhost:8080), which runs every role unless the
- * deployment splits them (then CAPYBARA_WEB_GATEWAY_URL names a gateway replica, as compose does).
+ * The gateway web forwards /device/connect and /device/stream to: CAPYBARA_WEB_GATEWAY_URL, else
+ * the kernel web already talks to (CAPYBARA_KERNEL_URL, default http://localhost:8080), which runs
+ * every role unless the deployment splits them (then CAPYBARA_WEB_GATEWAY_URL names a gateway replica, as compose does).
  * A malformed value throws, so server.mjs stops at startup instead of forwarding nowhere.
  */
 export function parseGatewayProxy(env: Record<string, string | undefined>): GatewayProxy {
@@ -85,8 +92,11 @@ export function parseGatewayProxy(env: Record<string, string | undefined>): Gate
   return { upstream };
 }
 
-/** Whether a request target's path (query ignored) is exactly `/device/connect` or `/device/stream`. */
-export function isDeviceConnectPath(target: string | undefined): boolean {
+/**
+ * Whether a request target's path (query ignored) is one this server pipes to the gateway: exactly
+ * `/device/connect` or `/device/stream`.
+ */
+export function isGatewayUpgradePath(target: string | undefined): boolean {
   const path = (target ?? "").split("?")[0];
   return path === DEVICE_CONNECT_PATH || path === DEVICE_STREAM_PATH;
 }
@@ -152,12 +162,13 @@ export function proxyDeviceConnect(
 export type UpgradeListener = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
 /**
- * The server's one `upgrade` listener: `/device/connect` and `/device/stream` go to the gateway; any other path goes
- * to `other` when given (dev: Next's HMR socket) and is refused with 404 otherwise.
+ * The server's one `upgrade` listener: `/device/connect` and `/device/stream` go to the gateway;
+ * any other path goes to `other` when given (dev: Next's HMR socket) and is refused with 404
+ * otherwise.
  */
 export function handleUpgrade(cfg: GatewayProxy, other?: UpgradeListener): UpgradeListener {
   return (req, socket, head) => {
-    if (isDeviceConnectPath(req.url)) proxyDeviceConnect(cfg, req, socket, head);
+    if (isGatewayUpgradePath(req.url)) proxyDeviceConnect(cfg, req, socket, head);
     else if (other) other(req, socket, head);
     else refuseUpgrade(socket, 404);
   };

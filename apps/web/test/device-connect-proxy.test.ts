@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEVICE_STREAM_PATH,
   handleUpgrade,
-  isDeviceConnectPath,
+  isGatewayUpgradePath,
   parseGatewayProxy,
 } from "../src/lib/device-connect-proxy";
 
@@ -121,22 +121,22 @@ describe("parseGatewayProxy", () => {
   });
 });
 
-describe("isDeviceConnectPath", () => {
+describe("isGatewayUpgradePath", () => {
   it("matches exactly /device/connect", () => {
-    expect(isDeviceConnectPath("/device/connect")).toBe(true);
-    expect(isDeviceConnectPath("/device/connect?x=1")).toBe(true);
-    expect(isDeviceConnectPath("/device/connect/")).toBe(false);
-    expect(isDeviceConnectPath("/device")).toBe(false);
-    expect(isDeviceConnectPath("/api/device/connect")).toBe(false);
+    expect(isGatewayUpgradePath("/device/connect")).toBe(true);
+    expect(isGatewayUpgradePath("/device/connect?x=1")).toBe(true);
+    expect(isGatewayUpgradePath("/device/connect/")).toBe(false);
+    expect(isGatewayUpgradePath("/device")).toBe(false);
+    expect(isGatewayUpgradePath("/api/device/connect")).toBe(false);
   });
 });
 
 describe("DEVICE_STREAM_PATH", () => {
   it("is /device/stream and matches with a query string", () => {
     expect(DEVICE_STREAM_PATH).toBe("/device/stream");
-    expect(isDeviceConnectPath("/device/stream")).toBe(true);
-    expect(isDeviceConnectPath("/device/stream?ticket=x")).toBe(true);
-    expect(isDeviceConnectPath("/device/stream/")).toBe(false);
+    expect(isGatewayUpgradePath("/device/stream")).toBe(true);
+    expect(isGatewayUpgradePath("/device/stream?ticket=x")).toBe(true);
+    expect(isGatewayUpgradePath("/device/stream/")).toBe(false);
   });
 });
 
