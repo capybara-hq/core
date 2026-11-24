@@ -276,7 +276,8 @@ export type SandboxUseEntry = <T>(
 ) => Promise<T>;
 /**
  * How a use reaches the provider: an operation invocation (every call admitted and claimed), a
- * trusted preparation (staging only) or a kernel read. There is no raw route.
+ * trusted preparation (staging only), a kernel read or the device service methods (browser use
+ * spec §5). There is no raw route.
  */
 type UseRoute<T> =
   | { kind: "operations"; invocation: OperationSessionInvocation; fn: SandboxUseCallback<T> }
@@ -289,7 +290,11 @@ type UseRoute<T> =
         signal: AbortSignal,
       ) => Promise<T>;
     }
-  | { kind: "kernelRead"; read: KernelReadInvocation; fn: SandboxUseCallback<T> };
+  | { kind: "kernelRead"; read: KernelReadInvocation; fn: SandboxUseCallback<T> }
+  | {
+      kind: "services";
+      fn: (h: SandboxHandle, p: DeviceServiceMethods, signal: AbortSignal) => Promise<T>;
+    };
 
 type Row = Selectable<DeviceInstancesTable>;
 type Patch = UpdateObject<KernelDatabase, "device_instances">;
@@ -1292,6 +1297,7 @@ export class SandboxService {
         .selectFrom("device_instances")
         .selectAll()
         .where("device_id", "=", deviceId)
+        .where("org_id", "=", orgId)
         .executeTakeFirst();
     const before = await row();
     if (!before || !this.usable(before, p, null)) throw streamUnavailable();
@@ -1320,6 +1326,7 @@ export class SandboxService {
         .updateTable("device_instances")
         .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
         .where("device_id", "=", deviceId)
+        .where("org_id", "=", orgId)
         .where("status", "=", "running")
         .execute()
         .then(
@@ -1364,15 +1371,7 @@ export class SandboxService {
     signal: AbortSignal,
   ): Promise<T> {
     admit(serviceMethodsOf((await this.require(ctx.deviceId, ctx.orgId)).impl));
-    return this.withSandboxUse(
-      ctx,
-      async () => {
-        throw new Error("Device service callback was not installed");
-      },
-      signal,
-      undefined,
-      (h, provider, _info, sig) => fn(h, serviceMethodsOf(provider), sig),
-    );
+    return this.withSandboxUse(ctx, { kind: "services", fn }, signal);
   }
 
   /**
@@ -1858,6 +1857,7 @@ export class SandboxService {
     const sig = AbortSignal.any([signal, e.lease.signal]);
     if (route.kind === "preparation")
       return route.run(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
+    if (route.kind === "services") return route.fn(e.handle, serviceMethodsOf(p.impl), sig);
     const env = ctx.deviceId;
     if (route.kind === "kernelRead")
       return route.fn(

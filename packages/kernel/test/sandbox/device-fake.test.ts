@@ -57,7 +57,7 @@ describe("device-fake", () => {
     await runDeviceServiceConformance({
       provider: p,
       handle: h,
-      dispose: () => p.destroy(h, sig()),
+      dispose: () => p.destroy(h, sig(), null),
     });
   });
 

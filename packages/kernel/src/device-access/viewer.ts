@@ -732,7 +732,7 @@ export class DeviceStreamViewers {
       } else {
         // the hold yielded to a lifecycle change: gone with the instance, else reconnect
         stream.close("device lifecycle change");
-        closeCode = (await this.instanceRunning(record.deviceId))
+        closeCode = (await this.instanceRunning(record.deviceId, record.orgId))
           ? VIEWER_CLOSE.restart
           : VIEWER_CLOSE.gone;
         end.close(closeCode, "device lifecycle change");
@@ -762,11 +762,12 @@ export class DeviceStreamViewers {
     }
   }
 
-  private async instanceRunning(deviceId: string): Promise<boolean> {
+  private async instanceRunning(deviceId: string, orgId: string): Promise<boolean> {
     const row = await this.kdb.db
       .selectFrom("device_instances")
       .select("status")
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst()
       .catch(() => undefined);
     return row?.status === "running";

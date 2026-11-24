@@ -297,7 +297,7 @@ describe("permissions.deviceAccess", () => {
   const set = (services?: string[]) =>
     buildPermissionSet({
       provides: [],
-      config: { deployment: [], org: [] },
+      config: { deployment: [] },
       tables: [],
       permissions: services ? { deviceAccess: { services } } : {},
     });

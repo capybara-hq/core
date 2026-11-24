@@ -147,7 +147,7 @@ beforeEach(async () => {
   // stop the services an earlier test left running (destroy kills them), then drop the roots
   if (root) {
     for (const r of await db.selectFrom("device_instances").selectAll().execute())
-      if (r.handle) await provider.destroy(r.handle as { id: string }, signal());
+      if (r.handle) await provider.destroy(r.handle as { id: string }, signal(), null);
     await rm(root, { recursive: true, force: true });
   }
   if (rootB) await rm(rootB, { recursive: true, force: true });
