@@ -26,10 +26,10 @@ export const modelProvidersOf = (extensions: readonly OrgExtension[]): OrgExtens
  * The org admin's one place to set up a model service (`/settings/models`, the setup checklist's
  * model step while the org has none on): every model service the platform offers this org as a
  * row (its icon, name, state as the Extensions page derives it) with the Extensions page's on / off
- * switch, disabled on a locked row (platform, not switchable, unavailable, or waiting for config
- * while off), showing its current state as the Extensions page does (a scope-`all` service keeps
+ * switch, disabled on a locked row (platform, not switchable or unavailable; a service that needs
+ * config is switched on first and configured after), showing its current state as the Extensions page does (a scope-`all` service keeps
  * its "on by platform default" state and a live switch, since the org may opt out), and Configure where it has org config or overridable platform fields,
- * which opens the extension's Sheet (the one org config form, "Save and enable" while it is off).
+ * which opens the extension's Sheet (the one org config form).
  * The actions are the Extensions page's ({@link useOrgExtensionActions}). While no provider is
  * ready here but the org can make one so (readiness `org_fixable`: one is off, or waits for the
  * org's config) a warn line above the section says to turn one on or finish its configuration. Turning a service on
