@@ -109,7 +109,7 @@ export function refuseUpgrade(socket: Duplex, status: 404 | 502, reason = "Not F
   setTimeout(() => socket.destroy(), 1000).unref();
 }
 
-/** Forwards one upgrade request whose target passed {@link isDeviceConnectPath}. */
+/** Forwards one upgrade request whose target passed {@link isGatewayUpgradePath}. */
 export function proxyDeviceConnect(
   cfg: GatewayProxy,
   req: IncomingMessage,
