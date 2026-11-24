@@ -6,7 +6,13 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { ENV_NAME_RE } from "../exec/shared.js";
-import { type LocalServiceSpec, ServiceSpecError, type ServiceSupervisor } from "./supervisor.js";
+import {
+  FILES_DIGEST_RE,
+  type LocalServiceSpec,
+  ServiceFilesNeededError,
+  ServiceSpecError,
+  type ServiceSupervisor,
+} from "./supervisor.js";
 
 /** How long before the envelope's deadline a `service.request` stops waiting, to answer in time. */
 export const DEADLINE_MARGIN_MS = 250;
@@ -22,7 +28,11 @@ export const MAX_SERVICE_REQUEST_TIMEOUT_MS = 600_000;
  *   answers the `DeviceServiceStatus`; `files` values are standard base64; `network` is the
  *   device's network as the provider holds it (its limits), absent = no network; a running service
  *   started with another network is restarted with this one; `ifRunning: true` starts nothing
- *   when the service is stopped (it answers the stopped status).
+ *   when the service is stopped (it answers the stopped status). `files` may be left out when
+ *   `filesDigest` (the provider's opaque name for the files, {@link FILES_DIGEST_RE}) is given:
+ *   a start then uses the files already in the state directory when they were written under the
+ *   same digest, and otherwise answers `files_needed` (send again with the files). A start with
+ *   neither files nor a digest answers `files_needed` too.
  * - `{ op: "service.stop", name }` answers null.
  * - `{ op: "service.status", name }` answers the `DeviceServiceStatus`.
  * - `{ op: "service.request", name, body, timeoutMs }` answers `{ body }` (base64 both ways).
@@ -33,6 +43,7 @@ export type ServiceOpBody =
       spec: LocalServiceSpec;
       network?: SandboxLimits["network"];
       ifRunning?: boolean;
+      filesDigest?: string;
     }
   | { op: "service.stop"; name: string }
   | { op: "service.status"; name: string }
@@ -43,7 +54,10 @@ export type ServiceOpAnswer =
   | { ok: true; result: unknown }
   | {
       ok: false;
-      error: { kind: "invalid" | "unsupported" | "denied" | "error"; message: string };
+      error: {
+        kind: "invalid" | "unsupported" | "denied" | "files_needed" | "error";
+        message: string;
+      };
     };
 
 /** Whether a relay body is a service op (`op` starting with `service.`), not a device operation. */
@@ -87,7 +101,12 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
   const o = record(body, "A service request");
   const op = o.op;
   if (op === "service.ensure") {
-    keys(o, ["op", "spec", "network", "ifRunning"], "service.ensure");
+    keys(o, ["op", "spec", "network", "ifRunning", "filesDigest"], "service.ensure");
+    if (
+      o.filesDigest !== undefined &&
+      (typeof o.filesDigest !== "string" || !FILES_DIGEST_RE.test(o.filesDigest))
+    )
+      invalid("service.ensure filesDigest must be 1 to 128 characters of A-Z a-z 0-9 : _ -");
     if (o.ifRunning !== undefined && typeof o.ifRunning !== "boolean")
       invalid("service.ensure ifRunning must be a boolean");
     const s = record(o.spec, "service.ensure spec");
@@ -95,9 +114,12 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
     if (s.runtime !== undefined && s.runtime !== "node")
       invalid('service.ensure spec runtime must be "node"');
     if (!Array.isArray(s.args) || s.args.length > 256) invalid("spec.args must be a string array");
-    const files: Record<string, Uint8Array> = {};
-    for (const [k, v] of Object.entries(record(s.files, "spec.files")))
-      files[k] = base64(v, `spec.files[${k}]`);
+    let files: Record<string, Uint8Array> | undefined;
+    if (s.files !== undefined) {
+      files = {};
+      for (const [k, v] of Object.entries(record(s.files, "spec.files")))
+        files[k] = base64(v, `spec.files[${k}]`);
+    }
     let env: Record<string, string> | undefined;
     if (s.env !== undefined) {
       env = {};
@@ -125,11 +147,12 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
         name: str(s.name, "spec.name", 64),
         entry: str(s.entry, "spec.entry", 512),
         args: s.args.map((a, i) => str(a, `spec.args[${i}]`, 65536)),
-        files,
+        ...(files && { files }),
         ...(env && { env }),
       },
       ...(network && { network }),
       ...(o.ifRunning === true && { ifRunning: true }),
+      ...(typeof o.filesDigest === "string" && { filesDigest: o.filesDigest }),
     };
   }
   if (op === "service.stop" || op === "service.status") {
@@ -181,6 +204,7 @@ export async function serveServiceOp(
           ok: true,
           result: await services.ensure(parsed.spec, parsed.network, signal, {
             ...(parsed.ifRunning && { ifRunning: true }),
+            ...(parsed.filesDigest !== undefined && { filesDigest: parsed.filesDigest }),
           }),
         };
       case "service.stop":
@@ -206,13 +230,15 @@ export async function serveServiceOp(
       ok: false,
       error: {
         kind:
-          error instanceof ServiceSpecError
-            ? "invalid"
-            : isSandboxPermissionUnsupportedError(error)
-              ? "unsupported"
-              : isSandboxScopeDeniedError(error)
-                ? "denied"
-                : "error",
+          error instanceof ServiceFilesNeededError
+            ? "files_needed"
+            : error instanceof ServiceSpecError
+              ? "invalid"
+              : isSandboxPermissionUnsupportedError(error)
+                ? "unsupported"
+                : isSandboxScopeDeniedError(error)
+                  ? "denied"
+                  : "error",
         message,
       },
     };

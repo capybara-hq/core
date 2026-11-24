@@ -18,6 +18,11 @@
 export const DEVICE_SERVICE_SOCKET_ENV = "CAPYBARA_SERVICE_SOCKET";
 /** Names the service's state directory (its files, its only write root). */
 export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
+/**
+ * Names the device's workspace root. Every provider sets it for every service (a spec cannot set
+ * it); a service confines the files it takes in (uploads) and lets out (downloads) to it.
+ */
+export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
 /** The largest message body, in bytes, either side may send on a service connection. */
 export const DEVICE_SERVICE_MAX_MESSAGE = 8 * 1024 * 1024;
 /** The kinds a connection's first message may name. */

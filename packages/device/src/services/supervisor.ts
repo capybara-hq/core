@@ -7,6 +7,7 @@ import {
   DEVICE_SERVICE_NAME_RE,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
+  DEVICE_SERVICE_WORKSPACE_ENV,
   type DeviceServiceStatus,
   encodeServiceMessage,
   type SandboxLimits,
@@ -25,6 +26,10 @@ export const MAX_SERVICE_SOCKET_PATH_BYTES = 103;
 const SOCKET_NAME = "s";
 /** The service's temporary directory inside the state directory. */
 const TMP_NAME = "tmp";
+/** The file in the state directory holding the digest the spec files were written under. */
+const DIGEST_NAME = ".files-digest";
+/** A provider's opaque digest of a service's files (`service.ensure` `filesDigest`). */
+export const FILES_DIGEST_RE = /^[A-Za-z0-9:_-]{1,128}$/;
 
 /** How long a started service has to create its socket before the start fails. */
 export const SERVICE_READY_TIMEOUT_MS = 15_000;
@@ -77,8 +82,11 @@ export interface LocalServiceSpec {
   /** The script to run: a relative path inside `files`. */
   entry: string;
   args: string[];
-  /** Written into the state directory before start, keyed by relative path. */
-  files: Record<string, Uint8Array>;
+  /**
+   * Written into the state directory before start, keyed by relative path. Absent: the files
+   * already there are used when they were written under the ensure's `filesDigest`.
+   */
+  files?: Record<string, Uint8Array>;
   env?: Record<string, string>;
 }
 
@@ -130,6 +138,16 @@ export class ServiceNotRunningError extends Error {
   constructor(name: string) {
     super(`The device service ${name} is not running; start it with ensureService first`);
     this.name = "ServiceNotRunningError";
+  }
+}
+
+/** A start needs the spec's files: none were sent and the state directory's do not match. */
+export class ServiceFilesNeededError extends Error {
+  constructor(name: string, why: string) {
+    super(
+      `The device service ${name} needs its files to start (${why}); send them with the ensure`,
+    );
+    this.name = "ServiceFilesNeededError";
   }
 }
 
@@ -345,7 +363,7 @@ export class ServiceSupervisor {
     spec: LocalServiceSpec,
     network: SandboxLimits["network"] | undefined,
     signal: AbortSignal,
-    opts: { ifRunning?: boolean } = {},
+    opts: { ifRunning?: boolean; filesDigest?: string } = {},
   ): Promise<DeviceServiceStatus> {
     signal.throwIfAborted();
     checkSpec(spec);
@@ -357,15 +375,18 @@ export class ServiceSupervisor {
       const launcher = this.o.launcher();
       const key = launcher?.networkKey ? await launcher.networkKey(network) : networkKey(network);
       const current = this.running.get(name);
+      if (current?.network === key) return this.status(name);
+      if (!current && opts.ifRunning) return this.status(name);
+      // a start follows: refused before a running service is stopped when its files are missing
+      if (spec.files === undefined) await this.checkStoredDigest(name, opts.filesDigest);
       if (current) {
-        if (current.network === key) return this.status(name);
         await current.proc.stop(SERVICE_STOP_GRACE_MS);
         await current.gone;
-      } else if (opts.ifRunning) return this.status(name);
+      }
       const ctl = new AbortController();
       this.startCtl.set(name, ctl);
       try {
-        return await this.start(spec, network, key, ctl.signal);
+        return await this.start(spec, network, key, ctl.signal, opts.filesDigest);
       } finally {
         if (this.startCtl.get(name) === ctl) this.startCtl.delete(name);
       }
@@ -504,6 +525,7 @@ export class ServiceSupervisor {
     network: SandboxLimits["network"] | undefined,
     key: string,
     signal: AbortSignal,
+    filesDigest: string | undefined,
   ): Promise<DeviceServiceStatus> {
     const launcher = this.o.launcher();
     if (!launcher)
@@ -518,10 +540,21 @@ export class ServiceSupervisor {
     const tmpDir = await realDirectory(stateDir, [TMP_NAME]);
     // files are (re)written on start only; everything else in the state directory is kept (the
     // service's own state, a browser profile)
-    for (const [rel, content] of Object.entries(spec.files)) {
-      const parts = rel.split("/");
-      const dir = await realDirectory(stateDir, parts.slice(0, -1));
-      await writeNewFile(join(dir, parts[parts.length - 1] as string), content);
+    if (spec.files === undefined) {
+      // checked again here: the state directory is the service's own, never trusted between
+      const stored = await readStoredDigest(stateDir);
+      if (stored === undefined || stored !== filesDigest)
+        throw new ServiceFilesNeededError(spec.name, "the stored files changed");
+    } else {
+      // a digest names exactly the files written under it: the old one goes first
+      await removeEntry(join(stateDir, DIGEST_NAME));
+      for (const [rel, content] of Object.entries(spec.files)) {
+        const parts = rel.split("/");
+        const dir = await realDirectory(stateDir, parts.slice(0, -1));
+        await writeNewFile(join(dir, parts[parts.length - 1] as string), content);
+      }
+      if (filesDigest !== undefined)
+        await writeNewFile(join(stateDir, DIGEST_NAME), Buffer.from(filesDigest));
     }
     // a socket left by an earlier run would make the bind fail
     await removeEntry(join(stateDir, SOCKET_NAME));
@@ -530,6 +563,7 @@ export class ServiceSupervisor {
       ...spec.env,
       [DEVICE_SERVICE_SOCKET_ENV]: paths.socket,
       [DEVICE_SERVICE_STATE_ENV]: stateDir,
+      [DEVICE_SERVICE_WORKSPACE_ENV]: this.o.workspace,
     };
     await this.o.beforeLaunch?.();
     // the workspace is writable by concurrent sandboxed operations: downloads may have been
@@ -588,6 +622,16 @@ export class ServiceSupervisor {
     return this.status(spec.name);
   }
 
+  /** Refuses a start without files unless the stored files were written under `digest`. */
+  private async checkStoredDigest(name: string, digest: string | undefined): Promise<void> {
+    if (digest === undefined) throw new ServiceFilesNeededError(name, "no files and no digest");
+    const stateDir = await realDirectory(this.o.deviceDir, ["svc", name]);
+    const stored = await readStoredDigest(stateDir);
+    if (stored === undefined) throw new ServiceFilesNeededError(name, "no files are stored");
+    if (stored !== digest)
+      throw new ServiceFilesNeededError(name, "the stored files have another digest");
+  }
+
   /** The alias of {@link servicePaths}: a link in this program's own 0700 directory. */
   private async makeAlias(alias: string, stateDir: string): Promise<void> {
     await mkdir(this.aliasRoot, { recursive: true, mode: 0o700 });
@@ -625,24 +669,50 @@ function nodeDirectory(): string {
   return dirname(realpathSync(process.execPath));
 }
 
+/**
+ * The digest the state directory's files were written under: read without following a link and
+ * only from a small regular file; anything else counts as none.
+ */
+async function readStoredDigest(stateDir: string): Promise<string | undefined> {
+  let fh: Awaited<ReturnType<typeof open>>;
+  try {
+    fh = await open(join(stateDir, DIGEST_NAME), constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    return undefined;
+  }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile() || st.size > 256) return undefined;
+    const text = (await fh.readFile("utf8")).trim();
+    return FILES_DIGEST_RE.test(text) ? text : undefined;
+  } finally {
+    await fh.close();
+  }
+}
+
 function checkSpec(spec: LocalServiceSpec): void {
   if (!DEVICE_SERVICE_NAME_RE.test(spec.name))
     throw new ServiceSpecError(
       `Invalid device service name ${JSON.stringify(spec.name)}: 1 to 32 characters, a lower-case letter then letters, digits and -`,
     );
-  for (const rel of Object.keys(spec.files)) checkRelativePath(rel, "A service file path");
+  const files = spec.files ?? {};
+  for (const rel of Object.keys(files)) checkRelativePath(rel, "A service file path");
   checkRelativePath(spec.entry, "The service entry");
-  if (!(spec.entry in spec.files))
+  if (spec.files !== undefined && !(spec.entry in spec.files))
     throw new ServiceSpecError(`The service entry ${spec.entry} is not one of its files`);
-  for (const rel of Object.keys(spec.files)) {
+  for (const rel of Object.keys(files)) {
     const first = rel.split("/")[0];
-    if (first === SOCKET_NAME || first === TMP_NAME)
+    if (first === SOCKET_NAME || first === TMP_NAME || first === DIGEST_NAME)
       throw new ServiceSpecError(
-        `The service file ${rel} uses a name the device reserves in the state directory (${SOCKET_NAME}, ${TMP_NAME}/)`,
+        `The service file ${rel} uses a name the device reserves in the state directory (${SOCKET_NAME}, ${TMP_NAME}/, ${DIGEST_NAME})`,
       );
   }
   for (const key of Object.keys(spec.env ?? {}))
-    if (key === DEVICE_SERVICE_SOCKET_ENV || key === DEVICE_SERVICE_STATE_ENV)
+    if (
+      key === DEVICE_SERVICE_SOCKET_ENV ||
+      key === DEVICE_SERVICE_STATE_ENV ||
+      key === DEVICE_SERVICE_WORKSPACE_ENV
+    )
       throw new ServiceSpecError(`${key} is set by the device; leave it out of the service env`);
 }
 

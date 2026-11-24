@@ -962,6 +962,9 @@ export const DEVICE_SERVICE_SOCKET_ENV = "CAPYBARA_SERVICE_SOCKET";
 export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
 
 // @public
+export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
+
+// @public
 export interface DeviceAccessCtx {
     addNetworkHosts(scope: DeviceAccessScope & {
         hosts: string[];

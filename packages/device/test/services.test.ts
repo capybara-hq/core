@@ -13,7 +13,11 @@ import {
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEVICE_SERVICE_SOCKET_ENV, DEVICE_SERVICE_STATE_ENV } from "@capybara-hq/plugin-sdk";
+import {
+  DEVICE_SERVICE_SOCKET_ENV,
+  DEVICE_SERVICE_STATE_ENV,
+  DEVICE_SERVICE_WORKSPACE_ENV,
+} from "@capybara-hq/plugin-sdk";
 import { afterEach, expect, it } from "vitest";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
@@ -571,4 +575,97 @@ it("an owner ceiling narrowed while the service runs restarts it at the next ens
   expect(f.requests[1]?.grant.hosts).toEqual(["a.example.com"]);
   await ensure();
   expect(f.requests).toHaveLength(2);
+});
+
+it("every service gets the device's workspace root, which a spec cannot set", async () => {
+  const { supervisor, workspace, echo } = await fixture();
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  expect(echo.calls[0]?.env[DEVICE_SERVICE_WORKSPACE_ENV]).toBe(workspace);
+  const refused = await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: { ...spec(), env: { [DEVICE_SERVICE_WORKSPACE_ENV]: "/" } } },
+    signal(),
+  );
+  expect(refused).toMatchObject({ ok: false, error: { kind: "invalid" } });
+});
+
+it("digest-first files: a start reuses stored files only under the same digest", async () => {
+  const { deviceDir, supervisor, echo } = await fixture();
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  const { files: _files, ...noFiles } = spec();
+  // with files and a digest: written, and the digest stored with them
+  expect(
+    await ensure({ spec: spec({ "main.js": "// v1" }), filesDigest: "sha256:v1" }),
+  ).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(await readFile(join(deviceDir, "svc", "browser", ".files-digest"), "utf8")).toBe(
+    "sha256:v1",
+  );
+  // a running service ignores files and digest
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:other" })).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(echo.calls).toHaveLength(1);
+  await supervisor.stop("browser", signal());
+  // the digest alone starts it on the stored files
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:v1" })).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(echo.calls).toHaveLength(2);
+  expect(await readFile(join(deviceDir, "svc", "browser", "main.js"), "utf8")).toBe("// v1");
+  await supervisor.stop("browser", signal());
+  // another digest without files: files_needed, nothing started
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:v2" })).toMatchObject({
+    ok: false,
+    error: { kind: "files_needed" },
+  });
+  // neither files nor a digest on a stopped service: files_needed as well
+  expect(await ensure({ spec: noFiles })).toMatchObject({
+    ok: false,
+    error: { kind: "files_needed" },
+  });
+  expect(echo.calls).toHaveLength(2);
+  // files without a digest drop the stored one: the old digest no longer matches
+  await ensure({ spec: spec({ "main.js": "// v3" }) });
+  await supervisor.stop("browser", signal());
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:v1" })).toMatchObject({
+    ok: false,
+    error: { kind: "files_needed" },
+  });
+  // a malformed digest and the reserved digest file name are invalid
+  expect(await ensure({ spec: noFiles, filesDigest: "bad digest!" })).toMatchObject({
+    ok: false,
+    error: { kind: "invalid" },
+  });
+  expect(await ensure({ spec: spec({ "main.js": "//", ".files-digest": "x" }) })).toMatchObject({
+    ok: false,
+    error: { kind: "invalid" },
+  });
+});
+
+it("a stored digest that is a link counts as none", async () => {
+  const { root, deviceDir, supervisor } = await fixture();
+  await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: spec(), filesDigest: "d1" },
+    signal(),
+  );
+  await supervisor.stop("browser", signal());
+  const digestFile = join(deviceDir, "svc", "browser", ".files-digest");
+  await writeFile(join(root, "planted"), "d1");
+  await rm(digestFile);
+  await symlink(join(root, "planted"), digestFile);
+  const { files: _f, ...noFiles } = spec();
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: noFiles, filesDigest: "d1" },
+      signal(),
+    ),
+  ).toMatchObject({ ok: false, error: { kind: "files_needed" } });
 });
