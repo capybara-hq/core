@@ -6,7 +6,9 @@
  * 只认这个 iframe 发来的（`event.source` 是它的 window）、协议与字段都对的消息，其余一律忽略：
  * - `resize`：高度夹在 {@link EMBED_MIN_HEIGHT}–{@link EMBED_MAX_HEIGHT} 之间；
  * - `navigate`：只放行站内路径（见 `isInSitePath`；交给站内路由，不经 `location`）；
- * - `toast`：显示一条提示（纯文本）。
+ * - `toast`：显示一条提示（纯文本）；
+ * - `panel-mode`：请求右侧面板进入 / 退出全屏（`full` 必须是布尔值）；只有调用方接了 `onPanelMode`
+ *   （即挂在 `conversation.panel` 槽里的嵌入页）才生效，其余槽的嵌入页发来一律忽略。
  * 发给 iframe：第一次加载后 `init`，令牌过期前 60 秒续期并发 `token`，主题切换发 `theme`。
  * 同一个 iframe 再次 `load` 说明嵌入页自己导航走了（可能已不是插件页面）：此后不再给它发任何消息，
  * 调用方在原 `src` 上重新挂载 iframe（插件的多页面应用请用 History API，不要整页跳转）。
@@ -65,7 +67,8 @@ export interface EmbedFile {
 export type EmbedChildMessage =
   | { protocol: typeof EMBED_PROTOCOL; type: "resize"; height: number }
   | { protocol: typeof EMBED_PROTOCOL; type: "navigate"; path: string }
-  | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string };
+  | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string }
+  | { protocol: typeof EMBED_PROTOCOL; type: "panel-mode"; full: boolean };
 
 /** 令牌过期前多久续期（毫秒）。 */
 export const EMBED_REFRESH_BEFORE_MS = 60_000;
@@ -145,6 +148,8 @@ export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null {
       return typeof m.text === "string" && m.text !== "" && m.text.length <= TOAST_MAX
         ? { protocol, type: "toast", text: m.text }
         : null;
+    case "panel-mode":
+      return typeof m.full === "boolean" ? { protocol, type: "panel-mode", full: m.full } : null;
     default:
       return null;
   }
@@ -212,6 +217,12 @@ export interface EmbedBridgeOptions {
   onResize(height: number): void;
   onNavigate(path: string): void;
   onToast(text: string): void;
+  /**
+   * Only for an embed mounted in the `conversation.panel` slot: asks the host to maximise (`true`)
+   * or restore (`false`) the right panel. Without it the message is ignored (the slot is the
+   * caller's fact, never the message's).
+   */
+  onPanelMode?(full: boolean): void;
   /** 续期失败（会在 {@link EMBED_RETRY_MS} 后重试）。 */
   onTokenError?(e: unknown): void;
   /** iframe 再次 load（嵌入页导航走了）：调用方在原 src 上重新挂载 iframe，挂好后调 `frameReset()`。 */
@@ -372,7 +383,8 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
       if (m.type === "resize")
         o.onResize(Math.min(EMBED_MAX_HEIGHT, Math.max(EMBED_MIN_HEIGHT, Math.round(m.height))));
       else if (m.type === "navigate") o.onNavigate(m.path);
-      else o.onToast(m.text);
+      else if (m.type === "toast") o.onToast(m.text);
+      else o.onPanelMode?.(m.full);
     },
     themeChanged() {
       const { theme, tokens } = o.readTheme();

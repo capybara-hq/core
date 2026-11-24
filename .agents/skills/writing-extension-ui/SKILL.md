@@ -243,7 +243,8 @@ The web app's `/plugin-ui/<plugin>/<rest>` is forwarded to the kernel's `/plugin
   - `resize { height }`: 0-10000, which the outer page clamps to 120-4000 pixels.
   - `navigate { path }`: only an in-site path (such as `/chat/<id>`): a single leading `/`, no `//`, backslash or control characters anywhere; no `.` / `..` segments in the path part (including `%2e` encoding), no `%2f` / `%5c` / `%00`-`%1f` / `%7f`; identical to the original after URL normalization; <= 2000 characters. Non-ASCII characters are first passed through `encodeURIComponent`. The SDK and the web app validate verbatim identically, sharing the test vectors `tools/fixtures/embed-navigate-vectors.json`.
   - `toast { text }`: non-empty, <= 500 characters, shown as plain text.
-- The outer implementation is in `apps/web/src/lib/embed-bridge.ts` and `components/chat-panel/EmbedTab.tsx`; extensions need not care about it and only follow the rules above.
+  - `panel-mode { full }`: `full` must be a boolean; asks the host to maximise (`true`) or restore (`false`) the conversation's right panel. Honoured only for an embed mounted in the `conversation.panel` slot (the host knows the slot from where it mounted the iframe, never from the message) and ignored in every other slot. The panel is drawn in another place of the page when maximised, so the host remounts the frame: the embed gets a fresh `init` and must rebuild its state from its own routes. The SDK's `parseEmbedChildMessage` does not know this message yet; send it as a plain `postMessage`.
+- The outer implementation is in `apps/web/src/lib/embed-bridge.ts` and `components/extension-ui/EmbedTab.tsx`; extensions need not care about it and only follow the rules above.
 
 ### Pages and data
 
