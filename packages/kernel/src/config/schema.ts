@@ -1418,7 +1418,7 @@ export const KernelConfigSchema = z.strictObject({
         .meta(
           meta({
             description:
-              "Origin (http or https, no path, query or credentials) other gateway replicas use to reach this replica for device stream hops, e.g. http://10.0.0.5:8080; default http://<hostname>:<http.port>",
+              "Origin (http or https, no path, query or credentials) other gateway replicas use to reach this replica for device stream hops, e.g. http://10.0.0.5:8080; default http://<hostname>:<http.port>. The hop is plain http unless this is https: keep the gateways on a private network or give them an https origin",
           }),
         ),
     })

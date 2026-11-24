@@ -174,6 +174,12 @@ serving containers down ([upgrade.md](upgrade.md#docker-compose)).
   bound twice, so with webhooks and several gateways publish a port range instead
   (`"127.0.0.1:8081-8082:8080"`, one host port per replica) and let the HTTPS proxy balance across
   those ports, or put a load balancer service inside compose in front of the gateways.
+  A browser's live view of a device reaches whichever gateway the web tier picked and hops once to
+  the gateway holding the device's machine, at that replica's `gateway.internalUrl`
+  (`CAPYBARA_GATEWAY__INTERNAL_URL`, default `http://<hostname>:<http.port>`). The hop is
+  authenticated (an HMAC under the master key) but plain http by default, so its frames (the
+  device's screen and the viewer's input) cross the network unencrypted: keep the gateways on a
+  private network, as compose does, or give each an https origin.
 - **Image source:** `CAPYBARA_VERSION` picks the tag. Its default is the version the compose file
   belongs to: every release tags its commit `v<version>`, and the compose file at that tag defaults
   to that version's images. When `CAPYBARA_IMAGE_PREFIX` is
