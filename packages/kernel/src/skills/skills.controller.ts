@@ -13,7 +13,7 @@ import {
 import type { FastifyReply } from "fastify";
 import type { z } from "zod";
 import { OwnedItems, type OwnedSkillDeletePreview } from "../catalog/owned-items.js";
-import { isInlineArtifactType, isTextArtifactType } from "../conversations/artifacts.js";
+import { isInlineArtifactType } from "../conversations/artifacts.js";
 import type { CreatedAttachment } from "../conversations/attachments.service.js";
 import {
   CurrentPrincipal,
@@ -25,7 +25,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { attachmentDisposition } from "../shares/share-open.service.js";
-import { type SkillFileList, SkillFiles } from "./skill-files.js";
+import { type SkillFileList, SkillFiles, skillFileName, skillFileSentType } from "./skill-files.js";
 import {
   SkillCreateBody,
   SkillFileContentQuery,
@@ -146,7 +146,9 @@ export class SkillsController {
    * `skill.file_not_found`. Never sniffed and sandboxed; `attachment` unless `inline=1` for a
    * raster image (HTML and SVG never inline). A text file is sent as `text/plain`, anything not
    * inline as `application/octet-stream`, the type by extension in `X-Content-Original-Type`;
-   * `X-Content-Truncated: true` when `limit` cut it.
+   * `X-Content-Truncated: true` when `limit` cut it. `as=url` (not with `limit`, 400) answers
+   * `{ url }` instead: a short-lived presigned attachment URL for that object, after the same
+   * manifest check (ruling R3: a native shell hands it to the system browser).
    */
   @Get(":id/files/content")
   @OrgAction("skills.read")
@@ -158,6 +160,11 @@ export class SkillsController {
     @Res() reply: FastifyReply,
   ): Promise<void> {
     requireUser(principal);
+    if (q.as === "url") {
+      const { url } = await this.files.downloadUrl(org.orgId, params.id, q.version, q.path);
+      await reply.header("cache-control", "private, no-store").send({ url });
+      return;
+    }
     const { file, body, truncated } = await this.files.read(
       org.orgId,
       params.id,
@@ -166,16 +173,9 @@ export class SkillsController {
       q.limit,
     );
     const inline = q.inline === "1" && isInlineArtifactType(file.contentType);
-    const name = file.path.slice(file.path.lastIndexOf("/") + 1);
+    const name = skillFileName(file.path);
     reply
-      .header(
-        "content-type",
-        inline
-          ? file.contentType
-          : isTextArtifactType(file.contentType)
-            ? "text/plain; charset=utf-8"
-            : "application/octet-stream",
-      )
+      .header("content-type", skillFileSentType(file.contentType, inline))
       .header("x-content-original-type", file.contentType)
       .header("content-disposition", inline ? "inline" : attachmentDisposition(name))
       .header("cache-control", "private, no-store")

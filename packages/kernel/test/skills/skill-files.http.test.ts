@@ -491,6 +491,87 @@ describe("skill file content", () => {
   });
 });
 
+describe("skill file download URL (as=url)", () => {
+  it("answers a presigned attachment URL for that object, never html or svg, after the sha check", async () => {
+    const s = await seedOrgSkill("tools", [
+      {
+        "SKILL.md": skillMd("tools", "x"),
+        "scripts/run.sh": "echo hi\n",
+        "logo.png": PNG,
+        "web/page.html": "<script>alert(1)</script>",
+        "pic.svg": "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+      },
+    ]);
+    const cases: [string, string, string][] = [
+      ["scripts/run.sh", "run.sh", "text/plain"],
+      ["logo.png", "logo.png", "application/octet-stream"],
+      ["web/page.html", "page.html", "text/plain"],
+      ["pic.svg", "pic.svg", "application/octet-stream"],
+    ];
+    for (const [path, name, type] of cases) {
+      // inline=1 is ignored: a download is always an attachment
+      const r = await member({ method: "GET", url: contentUrl(s.id, path, "&as=url&inline=1") });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.headers["cache-control"]).toBe("private, no-store");
+      const { url } = r.json() as { url: string };
+      expect(url).not.toContain("/api/");
+      const got = await fetch(url);
+      expect(got.status, path).toBe(200);
+      expect(got.headers.get("content-disposition"), path).toMatch(/^attachment;/);
+      expect(got.headers.get("content-disposition"), path).toContain(name);
+      expect(got.headers.get("content-type"), path).toContain(type);
+      expect(got.headers.get("content-type"), path).not.toMatch(/html|svg/);
+    }
+    // with limit: 400
+    const both = await member({
+      method: "GET",
+      url: contentUrl(s.id, "logo.png", "&as=url&limit=4"),
+    });
+    expect(both.statusCode).toBe(400);
+
+    // an object that no longer matches its manifest: 409, no URL
+    const store = k.app.get(StorageService).kernel(orgId);
+    const swapped = Buffer.from("echo bye\n");
+    await store.put(`${s.prefixes[0]}scripts/run.sh`, swapped, {
+      contentType: "application/octet-stream",
+      size: swapped.byteLength,
+    });
+    const changed = await member({
+      method: "GET",
+      url: contentUrl(s.id, "scripts/run.sh", "&as=url"),
+    });
+    expect(changed.statusCode).toBe(409);
+    expect(changed.json().error.code).toBe("skill.file_changed");
+  });
+
+  it("the visibility of the other file routes: unknown path, another org, a guest, switched off", async () => {
+    const s = await seedOrgSkill("tools", [{ "SKILL.md": skillMd("tools", "x") }]);
+    const missing = await member({ method: "GET", url: contentUrl(s.id, "nope.txt", "&as=url") });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error.code).toBe("skill.file_not_found");
+    const g = await guest({ method: "GET", url: contentUrl(s.id, "SKILL.md", "&as=url") });
+    const gDetail = await guest({ method: "GET", url: `/api/v1/orgs/${orgId}/skills/${s.id}` });
+    expect(g.statusCode).toBe(gDetail.statusCode);
+
+    const otherOrg = await createOrgWithProviders(k, owner, "Other");
+    const theirs = await seedOrgSkill("theirs", [{ "SKILL.md": skillMd("theirs", "x") }], otherOrg);
+    const r = await member({ method: "GET", url: contentUrl(theirs.id, "SKILL.md", "&as=url") });
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error.code).toBe("skill.not_found");
+
+    const p = await seedPlatformSkill("kit-skill", "kit", [
+      { "SKILL.md": skillMd("kit-skill", "x") },
+    ]);
+    await installPlugin("kit");
+    const on = await member({ method: "GET", url: contentUrl(p.id, "SKILL.md", "&as=url") });
+    expect(on.statusCode, on.body).toBe(200);
+    await switchOff(p.id);
+    const off = await member({ method: "GET", url: contentUrl(p.id, "SKILL.md", "&as=url") });
+    expect(off.statusCode).toBe(404);
+    expect(off.json().error.code).toBe("skill.not_found");
+  });
+});
+
 const DOCX_BYTES = "PK docx bytes";
 const previewersUrl = (id: string, path: string, q = "") =>
   `/api/v1/orgs/${orgId}/skills/${id}/files/previewers?path=${encodeURIComponent(path)}${q}`;
@@ -609,6 +690,28 @@ describe("file-preview@1 for skill files", () => {
     const r = await member({ method: "GET", url: previewUrl(s.id, "docx", "a.docx") });
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("skill.file_changed");
+    expect(probe().last).toBeUndefined();
+  });
+
+  it("HTML and SVG files are source only: no previewer list, render or embed token", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [
+      {
+        "SKILL.md": skillMd("docs", "x"),
+        "page.html": "<p>hi</p>",
+        "pic.svg": "<svg xmlns='http://www.w3.org/2000/svg'/>",
+      },
+    ]);
+    for (const path of ["page.html", "pic.svg"]) {
+      for (const r of [
+        await member({ method: "GET", url: previewersUrl(s.id, path) }),
+        await member({ method: "GET", url: previewUrl(s.id, "docx", path) }),
+        await member({ method: "POST", url: tokenUrl(), payload: { skillId: s.id, path } }),
+      ]) {
+        expect(r.statusCode, `${path} ${r.body}`).toBe(404);
+        expect(r.json().error.code, path).toBe("ui.not_found");
+      }
+    }
     expect(probe().last).toBeUndefined();
   });
 

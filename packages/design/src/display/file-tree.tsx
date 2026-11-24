@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons/icon";
 import { ListDetail } from "../layout/list-detail";
 
@@ -11,6 +11,10 @@ export type FileTreeProps = {
   /** The selected file's path; `null` = none. */
   selected: string | null;
   onSelect(path: string): void;
+  /**
+   * Paths drawn first among their siblings, before folders, in this order (a skill's SKILL.md).
+   */
+  pinned?: readonly string[];
 };
 
 type Node = {
@@ -20,31 +24,51 @@ type Node = {
   folder: boolean;
   size?: string | undefined;
   children: Node[];
+  /** The children by path (one lookup per segment while building). */
+  byPath: Map<string, Node>;
 };
 
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
-/** Builds the tree of folders from paths: folders first, then files, each alphabetical. */
-function buildTree(files: FileTreeFile[]): Node[] {
-  const root: Node = { path: "", name: "", depth: -1, folder: true, children: [] };
+/**
+ * Builds the tree of folders from paths: pinned paths first (in `pinned` order), then folders,
+ * then files, each alphabetical.
+ */
+function buildTree(files: FileTreeFile[], pinned: readonly string[] = []): Node[] {
+  const root: Node = {
+    path: "",
+    name: "",
+    depth: -1,
+    folder: true,
+    children: [],
+    byPath: new Map(),
+  };
   for (const f of files) {
     const parts = f.path.split("/").filter(Boolean);
     let at = root;
+    let path = "";
     parts.forEach((name, i) => {
-      const path = parts.slice(0, i + 1).join("/");
+      path = i === 0 ? name : `${path}/${name}`;
       const last = i === parts.length - 1;
-      let next = at.children.find((c) => c.path === path);
+      let next = at.byPath.get(path);
       if (!next) {
-        next = { path, name, depth: i, folder: !last, children: [] };
+        next = { path, name, depth: i, folder: !last, children: [], byPath: new Map() };
         at.children.push(next);
+        at.byPath.set(path, next);
       }
       if (last) next.size = f.size;
       at = next;
     });
   }
+  const pin = (n: Node) => {
+    const i = pinned.indexOf(n.path);
+    return i < 0 ? pinned.length : i;
+  };
   const sort = (n: Node) => {
-    n.children.sort((a, b) =>
-      a.folder !== b.folder ? (a.folder ? -1 : 1) : collator.compare(a.name, b.name),
+    n.children.sort(
+      (a, b) =>
+        pin(a) - pin(b) ||
+        (a.folder !== b.folder ? (a.folder ? -1 : 1) : collator.compare(a.name, b.name)),
     );
     n.children.forEach(sort);
   };
@@ -64,12 +88,15 @@ const parentOf = (path: string) => path.slice(0, Math.max(path.lastIndexOf("/"),
 
 /**
  * A tree of file paths (spec §6.68): folders built from the paths, open by default and collapsible,
- * a file icon and the muted size at the row end, the selected file highlighted. A WAI-ARIA tree
+ * a file icon and the muted size at the row end, the selected file highlighted (not in the stack
+ * form of a `FileBrowser` while the tree is the page), `pinned` paths first. A WAI-ARIA tree
  * with one tab stop: ArrowUp / ArrowDown move, ArrowRight opens a folder or steps into it,
  * ArrowLeft closes it or steps to the parent, Enter / Space select a file (or toggle a folder).
  */
-export function FileTree({ label, files, selected, onSelect }: FileTreeProps) {
-  const tree = useMemo(() => buildTree(files), [files]);
+export function FileTree({ label, files, selected, onSelect, pinned }: FileTreeProps) {
+  const pinKey = pinned?.join("\n") ?? "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pinKey stands for pinned's contents (a new array each render is the same order)
+  const tree = useMemo(() => buildTree(files, pinned), [files, pinKey]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [active, setActive] = useState<string | null>(null);
   const host = useRef<HTMLDivElement>(null);
@@ -194,19 +221,59 @@ export type FileBrowserProps = {
       /** The compact form's back control (returns to the tree): required with `open`. */
       onBack(): void;
     }
-);
+) & {
+    /** The selected file's path: a change while open brings the preview into view. */
+    selected?: string | null;
+  };
+
+/** Scrolls `el` into view (smoothly unless the person asked for reduced motion). */
+function bringIntoView(el: Element | null | undefined) {
+  if (!el || typeof el.scrollIntoView !== "function") return;
+  const reduced =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
+}
 
 /**
  * The two-pane layout of a file browser (spec §6.68): the tree column beside the preview when the
  * region is 580 wide or more, else the tree alone, with the preview pushed in its place and a back
- * control once a file is selected (a `ListDetail`, spec §6.47).
+ * control once a file is selected (a `ListDetail`, spec §6.47). When `open` turns true or the
+ * `selected` file changes while open, the preview is scrolled into view (the stack's pushed
+ * preview, or a two-pane preview below the fold); when `open` turns false the tree's selected row
+ * is, so back returns to where the tree was. Never on the first render.
  */
-export function FileBrowser({ label, tree, children, open = false, onBack }: FileBrowserProps) {
+export function FileBrowser({
+  label,
+  tree,
+  children,
+  open = false,
+  onBack,
+  selected,
+}: FileBrowserProps) {
+  const preview = useRef<HTMLDivElement>(null);
+  const seen = useRef<{ open: boolean; selected: string | null | undefined } | null>(null);
+  useEffect(() => {
+    const was = seen.current;
+    seen.current = { open, selected };
+    if (was === null) return;
+    if (open && (!was.open || was.selected !== selected)) {
+      bringIntoView(preview.current);
+    } else if (!open && was.open) {
+      const region = preview.current?.closest("[data-part='list-detail']");
+      bringIntoView(region?.querySelector("[data-part='list-pane'] [aria-selected='true']"));
+    }
+  }, [open, selected]);
+  const body = (
+    <div ref={preview} className="cb-filebrowser-preview" data-part="file-preview-pane">
+      {children}
+    </div>
+  );
   return (
     <ListDetail
       list={tree}
-      detail={open ? children : null}
-      preview={children}
+      detail={open ? body : null}
+      preview={body}
       onBack={() => onBack?.()}
       listMin={240}
       detailMin={340}

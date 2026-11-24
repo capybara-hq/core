@@ -2,6 +2,7 @@
 
 import {
   Button,
+  EmptyState,
   FileBrowser,
   FileTree,
   formatBytes,
@@ -17,6 +18,7 @@ import { useMemo, useState } from "react";
 import { SkillPreviewEmbed } from "../../../../components/extension-ui/SkillPreviewEmbed";
 import { FilePreviewBody } from "../../../../components/file-preview/FilePreviewBody";
 import { useOpenDownload } from "../../../../components/SessionFilePreview";
+import { ApiClientError } from "../../../../lib/api";
 import { type FileSource, sourceUrls } from "../../../../lib/file-source";
 import { skillFilesQuery } from "../../../../lib/query/skills";
 import {
@@ -26,6 +28,9 @@ import {
   skillFileName,
 } from "../../../../lib/skills";
 import { useErrorMessage } from "../../../../lib/use-error-message";
+
+/** SKILL.md leads the tree, before the folders. */
+const PINNED = [SKILL_MAIN_FILE];
 
 /** The Files tab's place in the address: the file (`?file=`) and the version (`?version=`). */
 export type FilesAddress = {
@@ -47,7 +52,8 @@ export type FilesAddress = {
  * file as its source (built-ins with no plugin, `file-preview@1` previewers that take it, the card
  * with Download for the rest). SKILL.md is selected unless `?file=` names another file; at compact
  * the tree is the page and a chosen file is pushed (back drops `?file=`). A version other than
- * the current one says so, with the way back to the current one.
+ * the current one says so, with the way back to the current one; a version the skill does not
+ * have says that instead of offering Retry.
  */
 export function FilesTab({
   orgId,
@@ -67,6 +73,24 @@ export function FilesTab({
     [files],
   );
   if (list.data === undefined) {
+    // a ?version= the skill does not have: say so and offer the current version, not Retry
+    if (
+      address.version !== null &&
+      list.error instanceof ApiClientError &&
+      list.error.code === "skill.file_not_found"
+    ) {
+      return (
+        <EmptyState
+          size="panel"
+          text={t("versionMissing", { version: address.version })}
+          action={{
+            label: t("showCurrent"),
+            variant: "default",
+            onSelect: () => address.openVersion(null),
+          }}
+        />
+      );
+    }
     if (list.error !== null) {
       return (
         <LoadFailed
@@ -99,12 +123,14 @@ export function FilesTab({
         label={t("browserLabel")}
         open={address.file !== ""}
         onBack={address.back}
+        selected={selected}
         tree={
           <FileTree
             label={t("treeLabel")}
             files={tree}
             selected={selected}
             onSelect={address.selectFile}
+            pinned={PINNED}
           />
         }
       >
@@ -141,6 +167,7 @@ function SkillFilePreview({
   file: SkillFileEntry;
 }) {
   const t = useTranslations("skills.detail");
+  const tc = useTranslations("chatPanel");
   const openDownload = useOpenDownload();
   const [picked, setPicked] = useState<string | null>(null);
   const source: FileSource = {
@@ -162,7 +189,9 @@ function SkillFilePreview({
       frame={({ state, failure, onRetry, children, previewers, previewer }) => (
         <Stack gap={12}>
           <Stack direction="row" gap={8} align="center" justify="between" wrap>
-            <Text truncate>{file.path}</Text>
+            <Text truncate title={file.path}>
+              {file.path}
+            </Text>
             <Stack direction="row" gap={8} align="center">
               {previewers.length > 1 && previewer !== undefined && (
                 <Segmented
@@ -174,7 +203,7 @@ function SkillFilePreview({
                 />
               )}
               <Button density="dense" onClick={download}>
-                {t("download")}
+                {tc("download")}
               </Button>
             </Stack>
           </Stack>

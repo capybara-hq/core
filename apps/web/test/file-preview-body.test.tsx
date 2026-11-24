@@ -4,7 +4,9 @@ import { SkillPreviewEmbed } from "../src/components/extension-ui/SkillPreviewEm
 import {
   FilePreviewBody,
   type FilePreviewBodyFrame,
+  type FilePreviewEmbedHost,
 } from "../src/components/file-preview/FilePreviewBody";
+import { ApiClientError } from "../src/lib/api";
 import type { FileSource, ShareMeta } from "../src/lib/file-source";
 import type { FileOutput } from "../src/lib/files";
 import { bodyOf, json, stubApi } from "./support/api";
@@ -217,6 +219,32 @@ describe("the file body for a skill file", () => {
     expect(calls[0]?.url).toBe(`${FILES}/previewers?version=2&path=docs%2Fa.docx`);
     const token = calls.find((c) => c.method === "POST");
     expect(bodyOf(token)).toEqual({ skillId: "s1", version: 2, path: "docs/a.docx" });
+  });
+
+  it("an embed's read of a file changed since it was listed carries the kernel's code", async () => {
+    stubApi({
+      [`GET ${FILES}/previewers`]: () => json(200, { previewers: [embedPreviewer] }),
+      [`GET ${FILES}/content`]: () =>
+        json(409, { error: { code: "skill.file_changed", message: "changed" } }),
+    });
+    let host: FilePreviewEmbedHost | undefined;
+    renderPage(
+      <FilePreviewBody
+        source={skillSource("docs/a.docx", "application/octet-stream")}
+        previewer={null}
+        onDownload={() => {}}
+        frame={frame}
+        embed={(h) => {
+          host = h;
+          return <p>embed</p>;
+        }}
+      />,
+    );
+    await screen.findByText("embed");
+    const err = await host?.read().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiClientError);
+    expect((err as ApiClientError).status).toBe(409);
+    expect((err as ApiClientError).code).toBe("skill.file_changed");
   });
 
   it("an HTML skill file offers only its source as text, whatever previewers exist", async () => {

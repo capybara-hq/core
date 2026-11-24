@@ -738,7 +738,7 @@ describe("the skill's Files tab (FileBrowser over the shared preview body)", () 
     expect(router.push).not.toHaveBeenCalled();
   });
 
-  it("at compact a chosen file is pushed in place of the tree; back returns to the tree", async () => {
+  it("a chosen file opens the browser (the pushed form at compact); back closes it and drops ?file=", async () => {
     stubApi(filesRoutes());
     await openAt("?tab=files");
     const region = screen.getByRole("region", { name: en.skills.detail.browserLabel });
@@ -749,6 +749,76 @@ describe("the skill's Files tab (FileBrowser over the shared preview body)", () 
     await user.click(within(region).getByRole("button", { name: "Back" }));
     expect(region.getAttribute("data-open")).toBe("false");
     expect(address().has("file")).toBe(false);
+  });
+
+  it("SKILL.md leads the tree, before the folders", async () => {
+    stubApi(filesRoutes());
+    await openAt("?tab=files");
+    const paths = within(tree())
+      .getAllByRole("treeitem")
+      .map((r) => r.getAttribute("data-path"));
+    expect(paths[0]).toBe("SKILL.md");
+    expect(paths[1]).toBe("assets");
+  });
+
+  it("a version the skill does not have says so and offers the current version, not Retry", async () => {
+    stubApi(
+      filesRoutes({
+        [`GET ${FILES}`]: (c: { url: string }) =>
+          params(c).get("version") === "99"
+            ? json(404, { error: { code: "skill.file_not_found", message: "x" } })
+            : json(200, V2_FILES),
+      }),
+    );
+    await openAt("?tab=files&version=99");
+    expect(
+      await screen.findByText(en.skills.detail.versionMissing.replace("{version}", "99")),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: en.skills.detail.showCurrent }));
+    expect(
+      await screen.findByText(en.skills.detail.filesOfCurrent.replace("{version}", "2")),
+    ).toBeTruthy();
+    expect(address().has("version")).toBe(false);
+  });
+
+  it("in a shell with openExternal@1 Download asks for the presigned URL and opens it", async () => {
+    const PRESIGNED = "https://store.example/bucket/x.sh?X-Amz-Signature=abc";
+    const open = vi.fn(async () => {});
+    (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
+      version: 1,
+      kind: "mobile",
+      platform: "ios",
+      capabilities: { "openExternal@1": { open } },
+      on: () => () => {},
+    };
+    const popup = vi.spyOn(window, "open");
+    try {
+      const calls = stubApi(
+        filesRoutes({
+          [`GET ${FILES}/content`]: (c: { url: string }) =>
+            params(c).get("as") === "url"
+              ? json(200, { url: PRESIGNED })
+              : new Response(TEXTS[params(c).get("path") ?? ""] ?? "", { status: 200 }),
+        }),
+      );
+      await openAt("?file=scripts/x.sh");
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-part="preview-text"]')?.textContent).toBe("echo hi"),
+      );
+      await userEvent
+        .setup()
+        .click(screen.getAllByRole("button", { name: en.chatPanel.download })[0] as HTMLElement);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledWith(PRESIGNED));
+      const asked = contentCalls(calls).filter((q) => q.get("as") === "url");
+      expect(asked.map((q) => q.toString())).toEqual(["version=2&path=scripts%2Fx.sh&as=url"]);
+      expect(popup).not.toHaveBeenCalled();
+    } finally {
+      delete (window as unknown as { capybaraShell?: unknown }).capybaraShell;
+      popup.mockRestore();
+    }
   });
 
   it("a file changed since it was listed (409) shows the failure card with Download", async () => {

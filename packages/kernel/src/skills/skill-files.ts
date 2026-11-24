@@ -1,6 +1,10 @@
 import type { ObjectStore } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { isTextArtifactType } from "../conversations/artifacts.js";
+import {
+  ARTIFACT_DOWNLOAD_TTL_SECONDS,
+  isInlineArtifactType,
+  isTextArtifactType,
+} from "../conversations/artifacts.js";
 import { type FileOutput, previewKind, trimUtf8 } from "../conversations/files.js";
 import { ApiError } from "../errors.js";
 import { StorageService } from "../storage/storage.service.js";
@@ -46,6 +50,18 @@ export interface SkillFileBytes {
   /** The file is longer than `body`. */
   truncated: boolean;
 }
+
+/**
+ * The content type a skill file is sent with: its own for an inline raster image, `text/plain`
+ * for text and code, `application/octet-stream` otherwise (never `text/html` or `image/svg+xml`).
+ */
+export function skillFileSentType(contentType: string, inline: boolean): string {
+  if (inline && isInlineArtifactType(contentType)) return contentType;
+  return isTextArtifactType(contentType) ? "text/plain; charset=utf-8" : "application/octet-stream";
+}
+
+/** The last segment of a skill file's path (its download name). */
+export const skillFileName = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
 
 const fileNotFound = () => new ApiError("skill.file_not_found", "Skill file not found");
 
@@ -127,6 +143,30 @@ export class SkillFiles {
     const truncated = body.byteLength < file.size;
     if (truncated && isTextArtifactType(file.contentType)) body = trimUtf8(body);
     return { file, body, truncated };
+  }
+
+  /**
+   * A short-lived presigned download URL for a skill file (ruling R3: a native shell's Download
+   * hands it to the system browser, as conversation files do). The object is checked against its
+   * manifest first (409 `skill.file_changed`); the URL is for that one object, always an
+   * attachment, with the type {@link skillFileSentType} gives and the last path segment as its
+   * name. It reaches the browser only, never an extension.
+   */
+  async downloadUrl(
+    orgId: string,
+    skillId: string,
+    version: number | undefined,
+    path: string,
+  ): Promise<{ url: string }> {
+    const file = await this.resolve(orgId, skillId, version, path);
+    await this.bytes(file, { keepBytes: 0 });
+    const url = await file.store.presignGet(file.key, {
+      ttlSeconds: ARTIFACT_DOWNLOAD_TTL_SECONDS,
+      downloadName: skillFileName(file.path),
+      disposition: "attachment",
+      responseContentType: skillFileSentType(file.contentType, false),
+    });
+    return { url };
   }
 
   /**

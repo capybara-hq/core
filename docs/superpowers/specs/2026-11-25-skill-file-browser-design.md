@@ -1,6 +1,6 @@
 # Skill files: a file tree with a preview, through the file preview contract
 
-Status: draft for maintainer review. The maintainer asked for "the zip previewer kind of preview" of
+Status: approved 2026-11-25. The maintainer asked for "the zip previewer kind of preview" of
 a skill's files without depending on a plugin, both steps in one go (2026-11-25).
 
 ## Why
@@ -38,7 +38,8 @@ body.
 
 - A plugin dependency: the tab works fully with no extension enabled.
 - A second preview stack: no skill-only previewers in the web; the same body, the same built-ins.
-- A storage key or object URL reaching the browser or an extension (the file preview contract's rule).
+- A storage key or object URL reaching an extension (the file preview contract's rule). The browser
+  may get a short-lived presigned download URL, as conversation files do (ruling R3).
 
 ## Data
 
@@ -63,6 +64,12 @@ visibility exactly as `GET /skills/:id` (an org's own skill, or a platform skill
   `X-Content-Type-Options: nosniff`, `Content-Disposition: attachment` unless `inline=1` is asked for a
   raster image type (png, jpeg, gif, webp), and never inline for HTML or SVG; `limit` returns at most
   that many bytes with `x-content-truncated` (the text built-ins' 1 MiB, as for conversation files).
+  `as=url` (ruling R3, for a native shell's Download, whose system browser has no session) answers
+  `{ url }` with `cache-control: private, no-store` instead of the bytes: the sha256 check first
+  (the whole object read and hashed, nothing kept; 409 `skill.file_changed`), then a presigned GET
+  of that file's own object, always `attachment` (`inline` is ignored), its type `text/plain` for
+  text and `application/octet-stream` otherwise (never `text/html` or `image/svg+xml`), named by the
+  last path segment, valid for the artifact download TTL (300 s). `as=url` with `limit` is 400.
 - Errors: unknown version or path → 404 `skill.file_not_found`; registered error codes; route schemas
   in `SKILL_ROUTES`; the Platform tool gets operations for both routes (or exclusions with reasons),
   per the platform tool rule.
@@ -77,7 +84,9 @@ visibility exactly as `GET /skills/:id` (an org's own skill, or a platform skill
   object for the call only, capped at the previewer's `maxBytes`), with routes
   `GET …/skills/:id/files/previewers?version=&path=` and
   `GET …/skills/:id/files/previews/:plugin/:previewerId?version=&path=&locale=`, the same timeouts and
-  error codes as the conversation routes.
+  error codes as the conversation routes. An HTML or SVG file (source only) gets no previewer: the
+  list, the render and the embed token all refuse it with 404 `ui.not_found`, as the share routes
+  refuse HTML.
 - Embed previewers: the org embed-token route accepts `{ skillId, version, path }`; the kernel issues a
   token only when an enabled previewer of that extension takes that file, and the claims carry the
   file reference (`OrgEmbedClaims.skillFile`). The web posts the bytes through the bridge as today.
@@ -109,6 +118,15 @@ visibility exactly as `GET /skills/:id` (an org's own skill, or a platform skill
 - Web: the tree selects SKILL.md, opens a nested file, shows text through the built-in with no
   previewers, an extension previewer when listed, the card for a binary file; `?file=` deep link;
   version switch from the 版本 tab; compact pushes the preview.
+
+## Rulings
+
+- **R3 (2026-11-25, amended by the final review)**: a native shell's Download on a skill file uses
+  the content route's `as=url` form, the same model as conversation files' `as=url`: the browser
+  gets a short-lived presigned attachment URL of that one object (it embeds the object key, as
+  conversation downloads already do); no storage key or URL ever reaches an extension. No fallback
+  for a store without presigning: `presignGet` is required by `object-store@1`. Cost: one full read
+  and hash per shell download.
 
 ## AGENTS.md rules touched
 

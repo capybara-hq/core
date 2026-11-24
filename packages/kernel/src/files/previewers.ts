@@ -19,6 +19,7 @@ import { ApiError } from "../errors.js";
 import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
+import { isHtmlType, isSvgType } from "../html/html-type.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -94,6 +95,19 @@ const skillPreviewFile = (f: ResolvedSkillFile): PreviewFile => ({
   size: f.size,
 });
 
+/**
+ * A skill's HTML and SVG files show as source text only (skill file browser spec; the web's
+ * `skillFileSourceOnly`, the share routes refuse HTML likewise): no previewer, render or embed for
+ * them (404 `ui.not_found`).
+ */
+const previewableSkillFile = (f: ResolvedSkillFile): PreviewFile => {
+  const shown = skillPreviewFile(f);
+  if (isHtmlType(shown.name, shown.contentType) || isSvgType(shown.name, shown.contentType)) {
+    throw notFound();
+  }
+  return shown;
+};
+
 /** One chunk of bytes as a stream (what {@link PreviewerRegistry.renderWith}'s `open` returns). */
 const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
   new ReadableStream<Uint8Array>({
@@ -153,8 +167,8 @@ export const FILE_PREVIEW_TIMEOUT = Symbol("FILE_PREVIEW_TIMEOUT");
  * dropped; only extensions enabled in the org), and rendering a view previewer through a read grant
  * for that one file (valid only during the call, capped at the previewer's `maxBytes`; the extension
  * never gets a storage key or URL). The file is a conversation file, a share's snapshot or a skill
- * version's file (`SkillFiles`: visibility as `GET /skills/:id`, manifest paths only). Providers are validated when they are provided (`ctx.provide`).
- * No state across requests.
+ * version's file (`SkillFiles`: visibility as `GET /skills/:id`, manifest paths only). Providers
+ * are validated when they are provided (`ctx.provide`). No state across requests.
  */
 @Injectable()
 export class PreviewerRegistry {
@@ -458,7 +472,7 @@ export class PreviewerRegistry {
     path: string,
   ): Promise<PreviewerItem[]> {
     const file = await this.d.skillFiles.resolve(orgId, skillId, version, path);
-    return (await this.accepting(orgId, skillPreviewFile(file))).map(item);
+    return (await this.accepting(orgId, previewableSkillFile(file))).map(item);
   }
 
   /**
@@ -480,10 +494,15 @@ export class PreviewerRegistry {
     locale: "zh" | "en";
   }): Promise<UiView> {
     const file = await this.d.skillFiles.resolve(t.orgId, t.skillId, t.version, t.path);
-    const shown = skillPreviewFile(file);
+    const shown = previewableSkillFile(file);
     const l = await this.viewPreviewer(t.orgId, shown, t.plugin, t.id);
     // one deadline for the read and the render: the read uses part of the render's time limit
     const deadline = Date.now() + this.timeoutMs;
+    const readTimeout = () =>
+      new ApiError(
+        "ui.timeout",
+        `The skill file could not be read within ${this.timeoutMs / 1000}s`,
+      );
     const signal = AbortSignal.timeout(this.timeoutMs);
     let bytes: Uint8Array;
     try {
@@ -497,18 +516,10 @@ export class PreviewerRegistry {
         orgId: t.orgId,
         timeoutMs: this.timeoutMs,
       });
-      throw new ApiError(
-        "ui.timeout",
-        `The skill file could not be read within ${this.timeoutMs / 1000}s`,
-      );
+      throw readTimeout();
     }
     const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      throw new ApiError(
-        "ui.timeout",
-        `The skill file could not be read within ${this.timeoutMs / 1000}s`,
-      );
-    }
+    if (remaining <= 0) throw readTimeout();
     return this.renderWith(
       l,
       t,
@@ -540,7 +551,7 @@ export class PreviewerRegistry {
     contribution: string;
   }): Promise<{ skillId: string; version: number; path: string } | null> {
     const file = await this.d.skillFiles.resolve(t.orgId, t.skillId, t.version, t.path);
-    const takes = (await this.accepting(t.orgId, skillPreviewFile(file))).some(
+    const takes = (await this.accepting(t.orgId, previewableSkillFile(file))).some(
       (l) => l.plugin === t.plugin && l.previewer.embed === t.contribution,
     );
     return takes ? { skillId: t.skillId, version: file.version, path: file.path } : null;

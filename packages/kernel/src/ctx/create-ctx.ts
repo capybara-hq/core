@@ -703,10 +703,11 @@ export function createExtensionContext(
   // the current one; a token whose current role is below the minRole of its contribution's slot is
   // refused (A38, UI slots spec §7), and a skill file's token also once the current role may no
   // longer read skills (`skills.read`; the skill's visibility itself is not re-checked). A platform
-  // token: the contribution is a `platform.page` and the account is still an active super admin. A share token (file sharing spec §7): the contribution
-  // is a `file.preview` and the share is live at the token's generation in its org with this
-  // extension enabled there (`ShareLiveness.embedLive`); returned as is (no account, no role). A
-  // token of one scope never verifies for another's slots. Anything else is null.
+  // token: the contribution is a `platform.page` and the account is still an active super admin.
+  // A share token (file sharing spec §7): the contribution is a `file.preview` and the share is
+  // live at the token's generation in its org with this extension enabled there
+  // (`ShareLiveness.embedLive`); returned as is (no account, no role). A token of one scope never
+  // verifies for another's slots. Anything else is null.
   const verifyEmbedToken = async (token: string): Promise<VerifiedEmbedClaims | null> => {
     const claims = embedTokens.verify(token, name);
     if (claims === null) return null;

@@ -7,7 +7,8 @@ import { FILES_PAGE_MAX } from "./files.js";
 /**
  * The download routes' answer form: `as=url` answers `{ url }` (the presigned location the 302
  * would send, never cached) so a page can hand a cookie-free URL to the system browser (a native
- * shell's `openExternal@1`). Shared by the attachment and the artifact download routes.
+ * shell's `openExternal@1`). Shared by the attachment and the artifact download routes and the
+ * skill file content route (there a presigned attachment URL of that file's object).
  */
 export const DOWNLOAD_AS = z.enum(["url"]);
 

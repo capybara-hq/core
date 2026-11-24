@@ -1494,6 +1494,24 @@ a.cb-attachment:hover {
   background: var(--cb-selected);
   box-shadow: inset 2px 0 0 var(--cb-accent);
 }
+/* The stack form of a FileBrowser while the tree is the page: no file is shown, none is marked */
+@container cb-ld (max-width: 579px) {
+  .cb-listdetail[data-fit="580"][data-open="false"] .cb-filetree-row[aria-selected="true"] {
+    box-shadow: none;
+  }
+  .cb-listdetail[data-fit="580"][data-open="false"]
+    .cb-filetree-row[aria-selected="true"]:not(:hover) {
+    background: none;
+  }
+}
+/* The preview pane of a FileBrowser fills the detail body (a scroll target of its own) */
+.cb-filebrowser-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
 .cb-filetree-icon {
   display: inline-flex;
   flex: none;

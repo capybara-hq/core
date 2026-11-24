@@ -428,7 +428,7 @@
       "share_pending": "共享这个技能的申请已在等待管理员处理。",
       "proposal_pending_elsewhere": "另一个对话中提出的该技能新版本正在等待管理员处理。请等待处理结果，或在那个对话中继续。",
       "file_not_found": "这个版本里没有这个文件。",
-      "file_changed": "文件内容与技能清单不一致，无法显示。请重新上传这个技能。"
+      "file_changed": "文件内容与技能清单不一致，无法显示。请联系管理员重新上传这个技能。"
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",
@@ -1402,8 +1402,6 @@
       "updated": "更新时间",
       "versionsLabel": "版本",
       "columns": {
-        "path": "路径",
-        "size": "大小",
         "version": "版本",
         "description": "描述",
         "files": "文件数",
@@ -1436,7 +1434,7 @@
       "treeLabel": "文件树",
       "fileMissing": "这个版本里没有这个文件。",
       "previewersLabel": "预览方式",
-      "download": "下载"
+      "versionMissing": "这个技能没有 v{version} 版本。"
     },
     "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。",
     "filters": {

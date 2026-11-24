@@ -1,6 +1,7 @@
 import { hasControlChars, MEDIA_NAME_MAX_CHARS, SKILL_LIMITS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { SKILL_PACKAGE_UPLOAD_MAX_BYTES } from "../conversations/attachments.service.js";
+import { DOWNLOAD_AS } from "../conversations/conversations.schemas.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 
 /** `POST /skills/uploads`: registers a skill package upload (a presigned form). */
@@ -43,13 +44,20 @@ export const SkillFilesQuery = z
   .strict();
 /**
  * `GET /skills/:id/files/content`: `path` a path of that version's manifest, `limit` at most that
- * many bytes, `inline=1` inline for a raster image (never for HTML or SVG).
+ * many bytes, `inline=1` inline for a raster image (never for HTML or SVG), `as=url` a presigned
+ * download URL instead of the bytes (not with `limit`).
  */
 export const SkillFileContentQuery = SkillFilesQuery.extend({
   path: SkillFilePathSchema,
   limit: z.coerce.number().int().min(1).max(SKILL_LIMITS.fileBytes).optional(),
   inline: z.enum(["0", "1"]).optional(),
-}).strict();
+  as: DOWNLOAD_AS.optional(),
+})
+  .strict()
+  .refine((q) => q.as === undefined || q.limit === undefined, {
+    message: "as=url cannot be combined with limit",
+    path: ["limit"],
+  });
 
 /** `?version=&path=` of `GET /skills/:id/files/previewers`: one file of a version. */
 export const SkillFilePreviewersQuery = SkillFilesQuery.extend({

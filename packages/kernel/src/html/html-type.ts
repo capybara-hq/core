@@ -19,6 +19,11 @@ export function isHtmlType(name: string, contentType: string): boolean {
   return baseType(contentType) === "text/html" || e === "html" || e === "htm";
 }
 
+/** An SVG image: base type `image/svg+xml`, or a name ending in `.svg` (any case). */
+export function isSvgType(name: string, contentType: string): boolean {
+  return baseType(contentType) === "image/svg+xml" || ext(name) === "svg";
+}
+
 /** A charset name as a MIME token (IANA names: letters, digits and `-_.:+`), at most 40 chars. */
 const CHARSET_RE = /^[a-z0-9][a-z0-9._:+-]{0,39}$/;
 

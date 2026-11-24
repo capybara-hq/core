@@ -428,7 +428,7 @@
       "share_pending": "Sharing this skill with the organization is already waiting for an admin's decision.",
       "proposal_pending_elsewhere": "A proposed version of this skill from another conversation is waiting for an admin's decision. Wait for it, or continue in that conversation.",
       "file_not_found": "This version has no such file.",
-      "file_changed": "The file no longer matches the skill's manifest and cannot be shown. Upload the skill again."
+      "file_changed": "The file no longer matches the skill's manifest and cannot be shown. Ask an admin to upload the skill again."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",
@@ -1402,8 +1402,6 @@
       "updated": "Updated",
       "versionsLabel": "Versions",
       "columns": {
-        "path": "Path",
-        "size": "Size",
         "version": "Version",
         "description": "Description",
         "files": "Files",
@@ -1436,7 +1434,7 @@
       "treeLabel": "File tree",
       "fileMissing": "This version has no such file.",
       "previewersLabel": "Preview with",
-      "download": "Download"
+      "versionMissing": "This skill has no version v{version}."
     },
     "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
     "filters": {

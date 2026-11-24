@@ -15,7 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type JSX, type ReactNode, useEffect, useState } from "react";
-import { ApiClientError } from "../../lib/api";
+import { ApiClientError, toError } from "../../lib/api";
 import { type FileSource, sourceFile, sourceUrls } from "../../lib/file-source";
 import { builtinPreview } from "../../lib/files";
 import { HTML_RENDER_MAX_BYTES, requestHtmlToken } from "../../lib/html";
@@ -349,7 +349,9 @@ export function FilePreviewBody({
         title: current.title,
         read: async () => {
           const res = await fetch(urls.content, { credentials: "same-origin" });
-          if (!res.ok) throw new ApiClientError(res.status, "http_error", "download failed");
+          // the kernel's error code (a skill file changed since it was listed: 409
+          // `skill.file_changed`) reaches the embed's failure copy
+          if (!res.ok) throw await toError(res);
           return {
             name: file.name,
             contentType: file.contentType,
