@@ -426,7 +426,9 @@
       "agent_cap": "This agent already has the maximum number of skills. Delete one, or upload a new version of an existing skill (same name).",
       "subagent_register": "A sub-agent cannot register skills; only the agent you talk with can.",
       "share_pending": "Sharing this skill with the organization is already waiting for an admin's decision.",
-      "proposal_pending_elsewhere": "A proposed version of this skill from another conversation is waiting for an admin's decision. Wait for it, or continue in that conversation."
+      "proposal_pending_elsewhere": "A proposed version of this skill from another conversation is waiting for an admin's decision. Wait for it, or continue in that conversation.",
+      "file_not_found": "This version has no such file.",
+      "file_changed": "The file no longer matches the skill's manifest and cannot be shown. Upload the skill again."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",
@@ -1398,7 +1400,6 @@
       "version": "Version",
       "files": "Files",
       "updated": "Updated",
-      "filesLabel": "Files of the current version",
       "versionsLabel": "Versions",
       "columns": {
         "path": "Path",
@@ -1406,7 +1407,8 @@
         "version": "Version",
         "description": "Description",
         "files": "Files",
-        "created": "Created"
+        "created": "Created",
+        "actions": "Actions"
       },
       "delete": "Delete skill",
       "deleteTitle": "Delete {name}?",
@@ -1424,7 +1426,17 @@
       "previewFailed": "What deleting it does could not be read; retry before confirming.",
       "previewRetry": "Retry",
       "agents": "Agents",
-      "agentsOff": "On for every agent by default{n, plural, =0 {} one {; # agent turned it off} other {; # agents turned it off}}"
+      "agentsOff": "On for every agent by default{n, plural, =0 {} one {; # agent turned it off} other {; # agents turned it off}}",
+      "viewFiles": "View files",
+      "fileList": "File list",
+      "filesOfCurrent": "Files of the current version, v{version}",
+      "filesOfVersion": "Files of v{version} (not the current version)",
+      "showCurrent": "Show current version",
+      "browserLabel": "Skill files",
+      "treeLabel": "File tree",
+      "fileMissing": "This version has no such file.",
+      "previewersLabel": "Preview with",
+      "download": "Download"
     },
     "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
     "filters": {

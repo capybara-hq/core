@@ -1465,7 +1465,7 @@ a.cb-attachment:hover {
   outline-offset: 2px;
 }
 
-/* FileTree (spec §6.48): rows of the row height, indent per depth, size muted at the end */
+/* FileTree (spec §6.68): rows of the row height, indent per depth, size muted at the end */
 .cb-filetree {
   display: flex;
   flex-direction: column;

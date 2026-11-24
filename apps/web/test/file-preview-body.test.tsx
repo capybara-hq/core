@@ -1,13 +1,16 @@
 import { cleanup, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SkillPreviewEmbed } from "../src/components/extension-ui/SkillPreviewEmbed";
 import {
   FilePreviewBody,
   type FilePreviewBodyFrame,
 } from "../src/components/file-preview/FilePreviewBody";
 import type { FileSource, ShareMeta } from "../src/lib/file-source";
 import type { FileOutput } from "../src/lib/files";
-import { json, stubApi } from "./support/api";
+import { bodyOf, json, stubApi } from "./support/api";
 import { pageElement, renderPage } from "./support/render";
+
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 const frame = (f: FilePreviewBodyFrame) => (
   <section aria-label="body" data-state={f.state}>
@@ -164,5 +167,68 @@ describe("the file body for a conversation file", () => {
     expect(drawn.filter((d) => d.file === "b" && d.src === "/api/v1/html/tok-a")).toEqual([]);
     releaseB(json(200, { path: "/api/v1/html/tok-b", expiresIn: 300 }));
     expect((await screen.findByTitle("b.html")).getAttribute("src")).toBe("/api/v1/html/tok-b");
+  });
+});
+
+describe("the file body for a skill file", () => {
+  const FILES = "/api/v1/orgs/o1/skills/s1/files";
+  const skillSource = (path: string, contentType: string): FileSource => ({
+    kind: "skill",
+    orgId: "o1",
+    skillId: "s1",
+    version: 2,
+    file: { path, name: path.split("/").pop() ?? path, contentType, size: 10, previewable: null },
+  });
+  const embedPreviewer = {
+    plugin: "office",
+    id: "docx",
+    title: { zh: "Word", en: "Word" },
+    kind: "embed",
+    maxBytes: 1e7,
+  };
+
+  it("lists the skill file's previewers and mints an embed token naming the file", async () => {
+    const calls = stubApi({
+      [`GET ${FILES}/previewers`]: () => json(200, { previewers: [embedPreviewer] }),
+      "POST /api/v1/orgs/o1/ui/embeds/office/docx/token": () =>
+        json(200, {
+          token: "tok-1",
+          src: "/plugin-ui/office/app",
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          expiresIn: 300,
+        }),
+    });
+    renderPage(
+      <FilePreviewBody
+        source={skillSource("docs/a.docx", "application/octet-stream")}
+        previewer={null}
+        onDownload={() => {}}
+        frame={frame}
+        embed={(h) => (
+          <SkillPreviewEmbed
+            orgId="o1"
+            skill={{ skillId: "s1", version: 2, path: "docs/a.docx" }}
+            host={h}
+          />
+        )}
+      />,
+    );
+    expect((await screen.findByTitle("Word")).tagName).toBe("IFRAME");
+    expect(calls[0]?.url).toBe(`${FILES}/previewers?version=2&path=docs%2Fa.docx`);
+    const token = calls.find((c) => c.method === "POST");
+    expect(bodyOf(token)).toEqual({ skillId: "s1", version: 2, path: "docs/a.docx" });
+  });
+
+  it("an HTML skill file offers only its source as text, whatever previewers exist", async () => {
+    const calls = stubApi({
+      [`GET ${FILES}/content`]: () => new Response("<b>src</b>", { status: 200 }),
+    });
+    renderPage(body(skillSource("index.html", "text/html")));
+    expect(await screen.findByText("<b>src</b>")).toBeTruthy();
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(document.querySelector("b")).toBeNull();
+    expect(calls.map((c) => c.url)).toEqual([
+      `${FILES}/content?version=2&path=index.html&limit=1048576`,
+    ]);
   });
 });

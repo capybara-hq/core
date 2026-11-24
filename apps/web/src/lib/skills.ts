@@ -2,6 +2,7 @@ import { apiFetch } from "./api";
 import type { CreatedAttachment } from "./attachments";
 import { uploadToStorage } from "./attachments";
 import type { Owner } from "./components";
+import { isHtmlFile, isSvgFile, readTextPreview, TEXT_PREVIEW_BYTES } from "./files";
 
 /**
  * 内核技能 API 的类型（`packages/kernel/src/skills/*`；只声明界面用到的字段）。Web 层不 import 内核代码。
@@ -186,6 +187,113 @@ export interface SkillDeletePreview {
 
 export const previewSkillDelete = (orgId: string, id: string) =>
   apiFetch<SkillDeletePreview>(`${org(orgId)}/skills/${enc(id)}/delete-preview`);
+
+/** One file of a skill version, as `GET /skills/:id/files` lists it. */
+export interface SkillFileEntry {
+  path: string;
+  size: number;
+  /** By the file's extension (unknown: `application/octet-stream`). */
+  contentType: string;
+  /** The built-in kind the content route serves (the conversation files list's rule). */
+  previewable: "image" | "text" | null;
+}
+
+/** `GET /skills/:id/files`: the files of one version (the current one unless `version` is given). */
+export interface SkillFileList {
+  version: number;
+  files: SkillFileEntry[];
+}
+
+export const listSkillFiles = (orgId: string, id: string, version: number | null) =>
+  apiFetch<SkillFileList>(
+    `${org(orgId)}/skills/${enc(id)}/files${version === null ? "" : `?version=${version}`}`,
+  );
+
+/**
+ * The URL of one file's bytes (`GET /skills/:id/files/content`): `inline` for a raster image shown
+ * in place (the kernel never serves HTML or SVG inline), `limit` for the first bytes only.
+ */
+export function skillFileContentUrl(
+  orgId: string,
+  id: string,
+  version: number,
+  path: string,
+  opts: { inline?: boolean; limit?: number } = {},
+): string {
+  const q = new URLSearchParams({ version: String(version), path });
+  if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+  if (opts.inline === true) q.set("inline", "1");
+  return `${org(orgId)}/skills/${enc(id)}/files/content?${q}`;
+}
+
+/** The file a skill's Files tab shows when none is chosen. */
+export const SKILL_MAIN_FILE = "SKILL.md";
+
+/** A path's last segment (the file's name). */
+export const skillFileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/**
+ * A skill file shown only as its source text: HTML and SVG are never rendered from a skill (no
+ * document frame, no extension previewer, never served inline).
+ */
+export const skillFileSourceOnly = (f: { path: string; contentType: string }): boolean => {
+  const named = { name: skillFileName(f.path), contentType: f.contentType };
+  return isHtmlFile(named) || isSvgFile(named);
+};
+
+/** The skill page's tabs (`?tab=`): the SKILL.md body, the Files browser, the versions. */
+export const SKILL_TABS = ["content", "files", "versions"] as const;
+export type SkillTab = (typeof SKILL_TABS)[number];
+
+/** The skill page's address: the tab, the selected file (`?file=`) and the version (`?version=`). */
+export interface SkillPageAddress {
+  tab: SkillTab;
+  /** A path of the version's manifest; null: none chosen (SKILL.md is shown). */
+  file: string | null;
+  /** null: the current version. */
+  version: number | null;
+}
+
+/** `?tab=` as a tab; anything else is the SKILL.md body. */
+export const parseSkillTab = (raw: string | null | undefined): SkillTab =>
+  (SKILL_TABS as readonly string[]).includes(raw ?? "") ? (raw as SkillTab) : "content";
+
+/** `?version=` as a version number (a positive integer the kernel takes), else null. */
+export function parseSkillVersion(raw: string | null | undefined): number | null {
+  if (raw === null || raw === undefined || !/^[1-9][0-9]{0,9}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n <= 2_147_483_647 ? n : null;
+}
+
+/**
+ * Reads the skill page's address: a `?file=` or `?version=` without `?tab=` opens the Files tab, so
+ * a link to a file needs no more than its path.
+ */
+export function parseSkillAddress(get: (name: string) => string | null | undefined) {
+  const file = get("file") || null;
+  const version = parseSkillVersion(get("version"));
+  const raw = get("tab");
+  const tab: SkillTab =
+    raw !== null && raw !== undefined && raw !== ""
+      ? parseSkillTab(raw)
+      : file !== null || version !== null
+        ? "files"
+        : "content";
+  return { tab, file, version } satisfies SkillPageAddress;
+}
+
+/** A skill file's text for the built-in previews (the first bytes; `truncated` past them). */
+export const skillFileText = (
+  orgId: string,
+  id: string,
+  version: number,
+  path: string,
+  signal?: AbortSignal,
+) =>
+  readTextPreview(
+    skillFileContentUrl(orgId, id, version, path, { limit: TEXT_PREVIEW_BYTES }),
+    signal,
+  );
 
 /**
  * 上传技能包：`POST /skills/uploads` 登记 → 浏览器直传预签名表单 → `POST /skills {uploadId}`

@@ -117,6 +117,10 @@ export const isHtmlFile = (f: { name: string; contentType: string }): boolean =>
   return baseType(f.contentType) === "text/html" || e === "html" || e === "htm";
 };
 
+/** An SVG file: base type `image/svg+xml`, or a name ending in `.svg` (any case). */
+export const isSvgFile = (f: { name: string; contentType: string }): boolean =>
+  baseType(f.contentType) === "image/svg+xml" || ext(f.name) === "svg";
+
 /**
  * Which built-in previewer takes a file (spec §5.8): HTML documents first (file sharing design
  * §5), then bitmaps, text and code, Markdown, CSV / TSV.

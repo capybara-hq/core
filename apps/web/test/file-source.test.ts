@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type FileSource, type ShareMeta, sourceUrls } from "../src/lib/file-source";
+import { type FileSource, type ShareMeta, sourceFile, sourceUrls } from "../src/lib/file-source";
 import { builtinPreview, type FileOutput, isHtmlFile } from "../src/lib/files";
 
 describe("isHtmlFile", () => {
@@ -52,5 +52,24 @@ describe("sourceUrls", () => {
     const up = { ...s, file: { id: "a1", origin: "uploaded" } as FileOutput };
     expect(sourceUrls(up).download).toBe("/api/v1/orgs/o1/attachments/a1/download");
     expect(sourceUrls(up).html).toBeUndefined();
+  });
+
+  it("a skill file reads the skill file content route by version and path, never an HTML route", () => {
+    const s: FileSource = {
+      kind: "skill",
+      orgId: "o1",
+      skillId: "s1",
+      version: 3,
+      file: {
+        path: "scripts/run 1.sh",
+        name: "run 1.sh",
+        contentType: "application/x-sh",
+        size: 7,
+        previewable: "text",
+      },
+    };
+    const base = "/api/v1/orgs/o1/skills/s1/files/content?version=3&path=scripts%2Frun+1.sh";
+    expect(sourceUrls(s)).toEqual({ download: base, inline: `${base}&inline=1`, content: base });
+    expect(sourceFile(s)).toEqual(s.file);
   });
 });

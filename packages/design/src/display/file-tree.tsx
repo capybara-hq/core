@@ -186,11 +186,15 @@ export type FileBrowserProps = {
   tree: ReactNode;
   /** The selected file's preview. */
   children: ReactNode;
-  /** A file is selected: the compact form shows the preview in place of the tree. */
-  open?: boolean;
-  /** The compact form's back control (returns to the tree). */
-  onBack?(): void;
-};
+} & (
+  | { open?: undefined; onBack?: undefined }
+  | {
+      /** A file is selected: the compact form shows the preview in place of the tree. */
+      open: boolean;
+      /** The compact form's back control (returns to the tree): required with `open`. */
+      onBack(): void;
+    }
+);
 
 /**
  * The two-pane layout of a file browser (spec §6.68): the tree column beside the preview when the

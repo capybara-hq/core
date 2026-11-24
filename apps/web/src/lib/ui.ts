@@ -264,12 +264,21 @@ export const postUiAction = (
     body: JSON.stringify(body),
   });
 
-/** 取嵌入令牌：对话嵌入带 `conversationId`，组织页面不带。 */
+/**
+ * Mints an embed token: a conversation's embed carries `conversationId` (and `fileId` for a file
+ * previewer), an org page none; a skill file's previewer carries `skill` (`{ skillId, version,
+ * path }`, never mixed with a conversation, an agent or a file id).
+ */
 export const requestEmbedToken = (
   orgId: string | null,
   plugin: string,
   id: string,
-  opts: { conversationId?: string; agentId?: string; fileId?: string } = {},
+  opts: {
+    conversationId?: string;
+    agentId?: string;
+    fileId?: string;
+    skill?: { skillId: string; version: number; path: string };
+  } = {},
 ) =>
   apiFetch<EmbedToken>(`${base(orgId)}/embeds/${target(plugin, id)}/token`, {
     method: "POST",
@@ -277,6 +286,11 @@ export const requestEmbedToken = (
       ...(opts.conversationId !== undefined && { conversationId: opts.conversationId }),
       ...(opts.agentId !== undefined && { agentId: opts.agentId }),
       ...(opts.fileId !== undefined && { fileId: opts.fileId }),
+      ...(opts.skill !== undefined && {
+        skillId: opts.skill.skillId,
+        version: opts.skill.version,
+        path: opts.skill.path,
+      }),
     }),
   });
 

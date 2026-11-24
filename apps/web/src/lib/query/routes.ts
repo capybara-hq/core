@@ -21,6 +21,12 @@ import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import { dayIn, rangeBounds, SCHEDULES_VIEW_COOKIE, schedulesUrlOf } from "../schedule-calendar";
 import type { Me } from "../session";
+import {
+  parseSkillAddress,
+  SKILL_MAIN_FILE,
+  type SkillFileList,
+  skillFileSourceOnly,
+} from "../skills";
 import { parseTimeZone, TIME_ZONE_COOKIE } from "../time";
 import type { UiContributionItem, UiLocale } from "../ui";
 import { identitiesQuery, preferencesQuery, toolGrantsQuery } from "./account";
@@ -129,7 +135,7 @@ import {
   maybeMeQuery,
   readinessQuery,
 } from "./shell";
-import { skillQuery, skillsQuery } from "./skills";
+import { skillFilePreviewersQuery, skillFilesQuery, skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
 import {
@@ -1298,10 +1304,33 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/skills/[id]",
-    queries: ({ orgId, me, params }) =>
-      orgId === null || params.id === undefined || !atLeast(me, "member")
-        ? []
-        : [q(skillQuery(orgId, params.id))],
+    // Members up: the skill; when the address opens the Files tab (`?tab=files`, `?file=`,
+    // `?version=`), that version's files, then the previewers of the file shown (SKILL.md unless
+    // `?file=` names another; none for an HTML or SVG file, shown as source only).
+    queries: ({ orgId, me, params, search }) => {
+      if (orgId === null || params.id === undefined || !atLeast(me, "member")) return [];
+      const at = parseSkillAddress((n) => search.get(n));
+      return [
+        q(skillQuery(orgId, params.id)),
+        ...(at.tab === "files" ? [q(skillFilesQuery(orgId, params.id, at.version))] : []),
+      ];
+    },
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params, search }, qc) => {
+      if (orgId === null || params.id === undefined || !atLeast(me, "member")) return;
+      const at = parseSkillAddress((n) => search.get(n));
+      if (at.tab !== "files") return;
+      const list = qc.getQueryData<SkillFileList>(
+        skillFilesQuery(orgId, params.id, at.version).queryKey,
+      );
+      const path = at.file ?? SKILL_MAIN_FILE;
+      const file = list?.files.find((f) => f.path === path);
+      if (list === undefined || file === undefined || skillFileSourceOnly(file)) return;
+      await qc.prefetchQuery({
+        ...skillFilePreviewersQuery(orgId, params.id, list.version, path),
+        retry: false,
+      });
+    },
   },
   {
     pattern: "/trajectories",
