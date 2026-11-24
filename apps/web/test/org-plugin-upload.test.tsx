@@ -265,7 +265,7 @@ describe("/plugins: 上传插件包", () => {
     expect(within(warning).getByText(tp.review.warningsHint)).toBeTruthy();
     expect(warning.querySelector('[data-part="code-block"]')).not.toBeNull();
     const templates = within(dialog).getByRole("list", { name: en.catalog.components.templates });
-    expect(within(templates).getByRole("group", { name: /^crm-api/ })).toBeTruthy();
+    expect(within(templates).getByRole("group", { name: /^CRM API/ })).toBeTruthy();
     expect(dialog.querySelector('[data-part="card"]')).toBeNull();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });

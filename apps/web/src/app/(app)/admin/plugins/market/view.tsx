@@ -1,6 +1,14 @@
 "use client";
 
-import { ListPage, type MenuItem, ObjectRow, Stack, Text, versionLabel } from "@capybara-hq/design";
+import {
+  LinkButton,
+  ListPage,
+  type MenuItem,
+  ObjectCard,
+  Stack,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
@@ -342,11 +350,12 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "market" }],
         search: { label: t("search"), value: q, onChange: setQ },
       }}
-      variant="objects"
+      variant="cards"
       listLabel={t("title")}
       loading={state.kind === "loading"}
       {...(callout ? { callout } : {})}
       {...(empty ? { empty } : {})}
+      filters={<LinkButton href="/admin/plugins/sources">{ta("actions.sources")}</LinkButton>}
       {...(sourceList.length > 1
         ? {
             scope: {
@@ -366,15 +375,11 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
         const action = actionOf(e);
         const name = displayNameOf(e, locale);
         return (
-          <ObjectRow
+          <ObjectCard
             key={plugin.key}
-            mark={{
-              text: name,
-              // the imported plugin's icon, else the marketplace's (the kernel picks it)
-              image: e.icon ?? null,
-              ...(!e.importable ? { tone: "warn" as const } : {}),
-            }}
-            name={name}
+            // the imported plugin's icon, else the marketplace's (the kernel picks it)
+            avatar={{ image: e.icon ?? null }}
+            title={name}
             mono={e.displayName === null}
             chips={[
               // 有新版本 is the state's 可更新到; the changed content is said only here
@@ -383,7 +388,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
             description={summaryOf(e)}
             meta={metaOf(e)}
             state={stateOf(e)}
-            {...(action ? { action } : {})}
+            {...(action ? { primary: action } : {})}
             menu={menuOf(plugin)}
           />
         );

@@ -80,15 +80,19 @@ const GROUP_TONE: Record<TranslationGroup, "ink" | "warn" | "muted"> = {
 
 /**
  * The translation report of a Claude Code plugin (spec §8.4), shared by the import review and the
- * catalog item: the five groups in order, each as a labelled region with its count (empty groups
- * say "None"), then "Other" for items whose group a newer kernel added (only when there are any);
- * an item reads "<component> <name>: <reason>" with its path and the detail values its localized
- * reason does not name as extra lines.
+ * catalog item: a one-line summary (imported, converted, needs input, ignored, warnings counts), the
+ * warnings expanded under it, and a details disclosure with the other non-empty groups (each a
+ * labelled region with its count, "Other" for a group a newer kernel added); an item reads
+ * "<component> <name>: <reason>" with its path and the detail values its localized reason does
+ * not name as extra lines.
  */
 export function TranslationReportView({ report }: { report: TranslationReport }) {
   const t = useTranslations("catalog.admin.review.translation");
+  const tr = useTranslations("catalog.admin.review");
   const known: readonly string[] = TRANSLATION_GROUPS;
   const other = report.items.filter((i) => !known.includes(i.group));
+  const inGroup = (g: string) => report.items.filter((i) => i.group === g);
+  const warnings = inGroup("warnings");
   const group = (title: string, items: TranslationItem[]) => (
     <ComponentSection key={title} title={title} count={items.length} empty={t("groupNone")}>
       {items.map((i, n) => (
@@ -97,24 +101,47 @@ export function TranslationReportView({ report }: { report: TranslationReport })
       ))}
     </ComponentSection>
   );
+  // The rest of the report, group by group (the empty groups are left out)
+  const rest = [
+    ...TRANSLATION_GROUPS.filter((g) => g !== "warnings").map(
+      (g) => [t(`groups.${g}`), inGroup(g)] as const,
+    ),
+    ...(other.length > 0 ? [[t("groups.other"), other] as const] : []),
+  ].filter(([, items]) => items.length > 0);
   return (
     <section aria-label={t("title")}>
       <Stack gap={8}>
         <Text>{t("title")}</Text>
         <Text variant="small" tone="muted">
-          {t("summary")}
+          {tr("translationSummary", {
+            imported: inGroup("imported").length,
+            converted: inGroup("converted").length,
+            needsInput: inGroup("needsInput").length,
+            ignored: inGroup("ignored").length,
+            warnings: warnings.length,
+          })}
         </Text>
-        {report.manifestPath === null && (
-          <Text variant="small" tone="muted">
-            {t("noManifest")}
-          </Text>
+        {warnings.map((i, n) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the report's order is fixed
+          <TranslationItemView key={n} item={i} />
+        ))}
+        {(rest.length > 0 || report.manifestPath === null) && (
+          <Disclosure summary={t("details")}>
+            <Stack gap={8}>
+              <Text variant="small" tone="muted">
+                {t("summary")}
+              </Text>
+              {report.manifestPath === null && (
+                <Text variant="small" tone="muted">
+                  {t("noManifest")}
+                </Text>
+              )}
+              {rest.map(([title, items]) =>
+                group(t("groupTitle", { group: title, n: items.length }), [...items]),
+              )}
+            </Stack>
+          </Disclosure>
         )}
-        {TRANSLATION_GROUPS.map((g) => {
-          const items = report.items.filter((i) => i.group === g);
-          return group(t("groupTitle", { group: t(`groups.${g}`), n: items.length }), items);
-        })}
-        {other.length > 0 &&
-          group(t("groupTitle", { group: t("groups.other"), n: other.length }), other)}
       </Stack>
     </section>
   );

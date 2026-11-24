@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -90,6 +91,17 @@ const scope: ListScope = {
   onChange: () => {},
 };
 
+/** A scope of `n` options: the all-sources option (value "all") then s1..s(n-1), "all" chosen. */
+function scopeWith(n: number): ListScope {
+  return {
+    ...scope,
+    options: [
+      { value: "all", label: "全部来源" },
+      ...Array.from({ length: n - 1 }, (_, i) => ({ value: `s${i + 1}`, label: `s${i + 1}` })),
+    ],
+  };
+}
+
 const NAMES = ["研究助手", "周报助手", "客服助手"];
 
 function agents(over: Partial<Parameters<typeof ListPage>[0]> = {}): ReactElement {
@@ -177,6 +189,15 @@ describe("ListPage at 390", () => {
     // the rows carry no buttons
     const list = screen.getByRole("list", { name: "智能体" });
     expect(within(list).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("more than 5 options without avatars: one select in the bar, no chip strip", () => {
+    const { container } = renderAtClass(390, agents({ scope: scopeWith(30) }));
+    const b = bar(container) as HTMLElement;
+    expect(within(b).getAllByRole("combobox")).toHaveLength(1);
+    expect(within(b).getByRole("combobox", { name: "范围" }).textContent).toContain("全部来源");
+    expect(within(b).queryByRole("radiogroup", { name: "范围" })).toBeNull();
+    expect(container.querySelector(".cb-scope-chips")).toBeNull();
   });
 
   it("the bar is a direct child of the scroller (only box-less wrappers between)", () => {
@@ -344,16 +365,26 @@ describe("ListPage at 768 and 1440", () => {
     expect(seg.closest(".cb-list-filters")).not.toBeNull();
   });
 
-  it("a scope of more than five options is a secondary Tabs row on wide", () => {
-    const many: ListScope = {
-      ...scope,
-      options: ["a", "b", "c", "d", "e", "f"].map((v) => ({ value: v, label: v })),
-      value: "a",
-    };
-    renderAtClass(1440, agents({ scope: many }));
-    const row = screen.getByRole("tablist", { name: "范围" });
-    expect(row.closest('[data-part="list-scope"]')).not.toBeNull();
-    expect(within(row).getAllByRole("tab")).toHaveLength(6);
+  it("more than 5 options without avatars render one select, not a tab row", () => {
+    renderAtClass(1440, agents({ scope: scopeWith(30) }));
+    expect(screen.queryByRole("tablist", { name: "范围" })).toBeNull();
+    const box = screen.getByRole("combobox", { name: "范围" });
+    expect(box.textContent).toContain("全部来源");
+    expect(box.closest('[data-part="list-scope"]')).not.toBeNull();
+  });
+
+  it("5 options stay a segmented control", () => {
+    renderAtClass(1440, agents({ scope: scopeWith(5) }));
+    expect(screen.getByRole("radiogroup", { name: "范围" })).toBeTruthy();
+  });
+
+  it("choosing in the select calls onChange with the option value", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderAtClass(1440, agents({ scope: { ...scopeWith(30), onChange } }));
+    await user.click(screen.getByRole("combobox", { name: "范围" }));
+    await user.click(await screen.findByRole("option", { name: "s7" }));
+    expect(onChange).toHaveBeenCalledWith("s7");
   });
 });
 

@@ -593,7 +593,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it.each([
     ["/admin/models?tab=purposes", "GET /api/v1/admin/models", 9],
-    ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces", 2],
+    ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces", 0],
   ])(
     "%s: the loading page announces once (its sections inside one busy region)",
     async (path, held, sections) => {
@@ -1091,13 +1091,10 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       "GET /api/v1/admin/marketplaces",
     );
     await expectLoading("ListPage", "CRM plugin");
-    // the two static sections stay, their fields placeholders
-    expect(
-      screen.getByRole("heading", { name: en.catalog.admin.marketplaces.official }),
-    ).toBeTruthy();
-    expect(screen.queryByDisplayValue(MARKETPLACE.url)).toBeNull();
+    const official = en.catalog.admin.marketplaces.official;
+    expect(screen.queryByText(official)).toBeNull();
     await release();
-    expect(await screen.findByDisplayValue(MARKETPLACE.url)).toBeTruthy();
+    expect(await screen.findByText(official)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
@@ -1112,7 +1109,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/admin/plugins/sources: turning a marketplace off writes the answer into the cache and invalidates the entries", async () => {
+  it("/admin/plugins/sources: turning a marketplace off reads the list again and invalidates the entries", async () => {
     const calls = stubApi({
       ...ROUTES,
       "PATCH /api/v1/admin/marketplaces/official": () =>
@@ -1123,20 +1120,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       queryKey: ["deployment", "marketplaceEntries", "", ""],
       queryFn: () => ({ items: [] }),
     });
-    await userEvent.setup().click(screen.getByRole("switch"));
+    const m = en.catalog.admin.marketplaces;
+    await userEvent
+      .setup()
+      .click(screen.getByRole("switch", { name: m.enabledLabel.replace("{name}", m.official) }));
+    // the card's change reads the list again and marks the entries stale
     await vi.waitFor(() =>
-      expect(
-        (client.getQueryData(["deployment", "marketplaces"]) as { items: { enabled: boolean }[] })
-          .items[0]?.enabled,
-      ).toBe(false),
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        "PATCH /api/v1/admin/marketplaces/official",
+        "GET /api/v1/admin/marketplaces",
+      ]),
     );
     expect(client.getQueryState(["deployment", "marketplaceEntries", "", ""])?.isInvalidated).toBe(
       true,
     );
-    // the list is not read again (the answer is the marketplace)
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      "PATCH /api/v1/admin/marketplaces/official",
-    ]);
   });
 
   it("a failing required read is the error state with a retry, not an empty page (not read again on mount)", async () => {

@@ -1691,6 +1691,22 @@ export const showValue = (v: unknown): string =>
 export const isOAuth = (auth: Record<string, unknown>): boolean =>
   auth.type === "oauth_code" || auth.type === "oauth_client";
 
+/**
+ * What a connector template needs before it can be used: `client` (an OAuth client: the client
+ * credentials flow always, the authorization-code flow only with a manually registered client) or
+ * `credential` (a static credential the org owns); nothing otherwise.
+ */
+export function templateNeed(t: {
+  auth: Record<string, unknown>;
+}): "client" | "credential" | undefined {
+  const a = t.auth;
+  if (a.type === "oauth_client" || (a.type === "oauth_code" && a.client === "manual")) {
+    return "client";
+  }
+  if (a.type !== "none" && !isOAuth(a) && a.ownership === "org") return "credential";
+  return undefined;
+}
+
 /** Whether a review has sensitive items (the plugin, its extension, or migration warnings). */
 export const pluginReviewSensitive = (r: PluginReview): boolean =>
   r.sensitive ||

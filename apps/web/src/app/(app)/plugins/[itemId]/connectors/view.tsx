@@ -8,7 +8,6 @@ import {
   failureLines,
   initialTemplateDraft,
   missingInput,
-  needsClient,
   type TemplateDraft,
   TemplateStep,
 } from "../../../../../components/CatalogInstallWizard";
@@ -23,6 +22,7 @@ import {
   createPluginConnectors,
   displayNameOf,
   type OrgCatalogDetail,
+  templateNeed,
 } from "../../../../../lib/catalog";
 import { orgCatalogItemQuery, pluginChangeKeys } from "../../../../../lib/query/catalog";
 import { useAppMutation } from "../../../../../lib/query/mutation";
@@ -170,7 +170,7 @@ function Wizard({
   const incomplete =
     template !== undefined &&
     draft !== undefined &&
-    (needsClient(template.auth) || template.ownership === "personal") &&
+    (templateNeed(template) === "client" || template.ownership === "personal") &&
     missingInput(template, draft) !== undefined;
 
   const submit = async () => {

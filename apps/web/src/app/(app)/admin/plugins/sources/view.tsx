@@ -3,16 +3,13 @@
 import {
   Button,
   DangerConfirm,
-  EmptyState,
+  Dialog,
   ErrorDetail,
-  Field,
-  FormSection,
   formatDateTime,
-  Input,
   ListPage,
-  RadioGroup,
+  type MenuItem,
+  ObjectCard,
   Stack,
-  SwitchField,
   Text,
   useTimeZone,
   useToast,
@@ -20,25 +17,23 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
-import { FormError } from "../../../../../components/form-error";
+import {
+  MarketplaceSourceDialog,
+  sourceChangeKeys,
+  useProblem,
+} from "../../../../../components/MarketplaceSourceDialog";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
-import { issueLines } from "../../../../../lib/api";
 import {
-  addMarketplace,
   type Marketplace,
-  type MarketplaceForm,
   marketplaceErrorKind,
   refreshMarketplace,
   removeMarketplace,
   shortCommit,
   updateMarketplace,
 } from "../../../../../lib/catalog";
-import { suggestGitUsernameForUrl } from "../../../../../lib/git-usernames";
 import { marketplacesQuery } from "../../../../../lib/query/admin";
-import { keys } from "../../../../../lib/query/keys";
 import { useAppMutation } from "../../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { useAdmin } from "../../../../../lib/query/workspace";
@@ -48,38 +43,14 @@ import NotFound from "../../../not-found";
 type SourceList = { items: Marketplace[]; offline: boolean };
 
 /**
- * What a change to a marketplace changes besides the marketplaces: the entries to browse, the
- * catalog's "newer in the marketplace" marks, the overview (its plugin updates) and the platform
- * audit log.
- */
-const sourceChangeKeys = (): (readonly unknown[])[] => [
-  keys.deployment().marketplaceEntriesAll(),
-  keys.deployment().catalog(),
-  keys.deployment().catalogItemsAll(),
-  keys.deployment().adminOverview(),
-  keys.deployment().platformAuditAll(),
-];
-
-type Problem = { message: string; extra: string[] };
-
-/** The error and its detail lines (the kernel's line naming the host or ref for git / network codes). */
-function useProblem(): (e: unknown) => Problem {
-  const errorMessage = useErrorMessage();
-  const catalogLines = useCatalogErrorLines();
-  return (e) => ({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
-}
-
-/**
- * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage; 添加市场源 on the
- * 插件 head leads here, its entries are the 插件 tab 市场). The official
- * marketplace: the enable switch (offline mode with a read-only switch when the deployment config
- * turns it off) and its read-only address; custom marketplaces: add, edit, remove (name,
- * address, enabled, token); each marketplace's status and "Refresh now". A custom marketplace
- * is a marketplace.json URL or a git repository (`owner/repo` or an https git URL, with an optional
- * branch / tag / commit; the repository holds `.capybara-plugin/marketplace.json`); a git
- * marketplace shows the ref it follows and the commit of its last refresh.
- * From the query cache (the layout prefetched it on a first load): a change's answer replaces that
- * marketplace in the cache; adding or removing one reads the list again; each change also
+ * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards; the plugins page
+ * market filter row leads here, its entries are the Marketplace tab). One card per source with its kind,
+ * address, state, the enable / disable switch and "Refresh now"; Details (the raw error, the skipped
+ * entries, the official source's mirrors and a managed source's token note), Edit and Delete are in
+ * the ⋯ menu. The official marketplace is read-only (its address is in the deployment config), as
+ * is a config-managed one: only the switch and refresh. Adding and editing a custom source is the
+ * {@link MarketplaceSourceDialog} (a marketplace.json URL or a git repository). From the query
+ * cache (the layout prefetched it on a first load): each change reads the list again and
  * invalidates the entries and the catalog's marks.
  */
 export default function SourcesView() {
@@ -96,8 +67,6 @@ function SourcesRead() {
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
-    // The two static sections: the official marketplace (its switch, its address, its status)
-    // and the custom ones (the add form; the editors above it come with the data).
     return (
       <ListPage
         header={{
@@ -106,23 +75,9 @@ function SourcesRead() {
           description: t("description"),
           search: { label: t("search"), value: "", onChange: () => {} },
         }}
-        loading={{ keep: true }}
-      >
-        <FormSection
-          id="official"
-          title={t("official")}
-          description={t("officialHint")}
-          loading={{ fields: [{ control: "switch" }, {}, { control: "text" }] }}
-        />
-        <FormSection
-          id="custom"
-          title={t("custom")}
-          description={t("customHint")}
-          loading={{
-            fields: [{ control: "text" }, { control: "segmented" }, {}, {}, {}],
-          }}
-        />
-      </ListPage>
+        variant="cards"
+        loading
+      />
     );
   }
   return <Sources data={read.data} />;
@@ -131,346 +86,258 @@ function SourcesRead() {
 function Sources({ data }: { data: SourceList }) {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.marketplaces");
-  const qc = useQueryClient();
-  const listKey = marketplacesQuery().queryKey;
-  // Added or removed: the list is read again.
-  const reload = () => void qc.invalidateQueries({ queryKey: listKey });
-  // The answer is the marketplace as it is now: it replaces that one in the cache.
-  const replace = (next: Marketplace) =>
-    qc.setQueryData<SourceList>(listKey, (d) =>
-      d === undefined ? d : { ...d, items: d.items.map((s) => (s.id === next.id ? next : s)) },
-    );
+  const ta = useTranslations("catalog.admin.actions");
+  // The dialog: `null` closed, `"add"`, or the custom source being edited
+  const [dialog, setDialog] = useState<null | "add" | Marketplace>(null);
   // The head's search narrows the marketplaces shown, by name or address
   const [q, setQ] = useState("");
   const needle = q.trim().toLowerCase();
-  const matches = (s: Marketplace) =>
-    needle === "" || s.name.toLowerCase().includes(needle) || s.url.toLowerCase().includes(needle);
-  const official = data.items.find((s) => s.builtin);
-  const custom = data.items.filter((s) => !s.builtin);
-  const shownCustom = custom.filter(matches);
-  const officialShown = official !== undefined && matches(official);
+  const shown = data.items.filter(
+    (s) =>
+      needle === "" ||
+      s.name.toLowerCase().includes(needle) ||
+      s.url.toLowerCase().includes(needle),
+  );
+  // The official one first
+  const ordered = [...shown.filter((s) => s.builtin), ...shown.filter((s) => !s.builtin)];
 
   return (
-    <ListPage
-      header={{
-        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "sources" }],
-        title: t("title"),
-        description: t("description"),
-        search: { label: t("search"), value: q, onChange: setQ },
-      }}
-      // A search matching no marketplace: the page empty state instead of the sections (§6.18)
-      {...(needle !== "" && !officialShown && shownCustom.length === 0
-        ? {
-            empty: {
-              text: t("noMatch"),
-              action: {
-                label: t("clearSearch"),
-                variant: "default" as const,
-                onSelect: () => setQ(""),
+    <>
+      <ListPage
+        header={{
+          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "sources" }],
+          title: t("title"),
+          description: t("description"),
+          search: { label: t("search"), value: q, onChange: setQ },
+          actions: [
+            { label: ta("addSource"), variant: "primary", onSelect: () => setDialog("add") },
+          ],
+        }}
+        variant="cards"
+        listLabel={t("title")}
+        // A search matching no marketplace: the page empty state instead of the cards (§6.18)
+        {...(needle !== "" && shown.length === 0
+          ? {
+              empty: {
+                text: t("noMatch"),
+                action: {
+                  label: t("clearSearch"),
+                  variant: "default" as const,
+                  onSelect: () => setQ(""),
+                },
               },
-            },
-          }
-        : {})}
-    >
-      <FormSection id="official" title={t("official")} description={t("officialHint")}>
-        {data.offline && <Text tone="warn">{t("offline")}</Text>}
-        {officialShown && (
-          <SourceEditor
-            key={official.id}
-            source={official}
-            onChanged={replace}
-            onRemoved={reload}
-          />
-        )}
-      </FormSection>
-      <FormSection id="custom" title={t("custom")} description={t("customHint")}>
-        <Stack gap={24}>
-          {custom.length === 0 && <EmptyState size="panel" text={t("customEmpty")} />}
-          {shownCustom.map((s) => (
-            <SourceEditor key={s.id} source={s} onChanged={replace} onRemoved={reload} />
-          ))}
-          <AddSource onAdded={reload} />
-        </Stack>
-      </FormSection>
-    </ListPage>
-  );
-}
-
-/** Most skipped entries listed under a marketplace (the rest are counted). */
-const SKIPPED_SHOWN = 20;
-
-/**
- * A marketplace's status line, then the entries its last refresh skipped (with the reason): the
- * first {@link SKIPPED_SHOWN} and how many more. Names may repeat (an invalid entry next to a
- * duplicate), so rows are keyed by position.
- */
-function SourceStatus({ source }: { source: Marketplace }) {
-  const t = useTranslations("catalog.admin.marketplaces");
-  const skipped = source.skipped ?? [];
-  if (skipped.length === 0) return <StatusLine source={source} />;
-  return (
-    <Stack gap={4}>
-      <StatusLine source={source} />
-      <Text variant="small" tone="warn">
-        {t("skipped.title", { n: skipped.length })}
-      </Text>
-      {skipped.slice(0, SKIPPED_SHOWN).map((x, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: names may repeat; the list is static
-        <Text key={i} variant="small" tone="muted">
-          {t("skipped.line", {
-            name: x.name,
-            reason: t.has(`skipped.reasons.${x.reason}`)
-              ? t(`skipped.reasons.${x.reason}`)
-              : x.reason,
-          })}
-        </Text>
-      ))}
-      {skipped.length > SKIPPED_SHOWN && (
-        <Text variant="small" tone="muted">
-          {t("skipped.more", { n: skipped.length - SKIPPED_SHOWN })}
-        </Text>
-      )}
-    </Stack>
-  );
-}
-
-/**
- * A marketplace's status: OK with the entry count and time, never fetched, or the last refresh
- * error as one sentence (by its kind) with the kernel's raw text behind the ErrorDetail toggle.
- */
-function StatusLine({ source }: { source: Marketplace }) {
-  const timeZone = useTimeZone();
-  const t = useTranslations("catalog.admin.marketplaces");
-  if (source.lastStatus === "error") {
-    const raw = source.lastError ?? "";
-    return (
-      <ErrorDetail
-        summary={t(`statusValue.errors.${marketplaceErrorKind(raw)}`)}
-        {...(raw !== "" ? { detail: raw } : {})}
+            }
+          : {})}
+      >
+        {ordered.map((s) => (
+          <SourceCard key={s.id} source={s} offline={data.offline} onEdit={() => setDialog(s)} />
+        ))}
+      </ListPage>
+      <MarketplaceSourceDialog
+        open={dialog !== null}
+        onClose={() => setDialog(null)}
+        {...(dialog !== null && dialog !== "add" ? { source: dialog } : {})}
       />
-    );
-  }
-  if (source.lastStatus === "never") return <Text tone="muted">{t("statusValue.never")}</Text>;
-  return (
-    <Text tone="muted">
-      {t("statusValue.ok", {
-        n: source.entryCount,
-        at: source.lastRefreshedAt ? formatDateTime(source.lastRefreshedAt, "full", timeZone) : "—",
-      })}
-    </Text>
+    </>
   );
 }
 
-/** 一个来源：官方清单只能开关与刷新（地址只读）；自定义清单可改名称、地址、令牌，可删除。 */
-function SourceEditor({
+/** `host/path` of an address (a git `owner/repo` shorthand stays as it is). */
+function hostPath(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname === "/" ? "" : u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * One marketplace source (spec §5.5.3). The official source and a config-managed one are
+ * read-only (no Edit / Delete). The card's switch is enable / disable; Refresh now is the primary.
+ */
+function SourceCard({
   source,
-  onChanged,
-  onRemoved,
+  offline,
+  onEdit,
 }: {
   source: Marketplace;
-  onChanged(next: Marketplace): void;
-  onRemoved(): void;
+  offline: boolean;
+  onEdit(): void;
 }) {
   const t = useTranslations("catalog.admin.marketplaces");
+  const timeZone = useTimeZone();
   const toast = useToast();
+  const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const problem = useProblem();
-  const [name, setName] = useState(source.name);
-  const [url, setUrl] = useState(source.url);
-  const [ref, setRef] = useState(source.ref ?? "");
-  const [token, setToken] = useState("");
-  const [username, setUsername] = useState(source.username ?? "");
-  const [busy, setBusy] = useState<"save" | "toggle" | "refresh" | "token">();
-  const [error, setError] = useState<Problem>();
   const [confirm, setConfirm] = useState(false);
+  const [details, setDetails] = useState(false);
   const builtin = source.builtin;
-  // Set by the deployment config: shown read-only, only the switch works
-  const managed = source.managed === "config";
-  const locked = builtin || managed;
+  // Set by the deployment config: only the switch and the refresh work
+  const locked = builtin || source.managed === "config";
+  const title = builtin ? t("official") : source.name;
   const git = source.form === "git";
-  const refChanged = git && ref.trim() !== (source.ref ?? "");
-  const usernameChanged = git && username.trim() !== (source.username ?? "");
-  const dirty =
-    !locked &&
-    (name !== source.name || url !== source.url || token !== "" || refChanged || usernameChanged);
+  const listKey = marketplacesQuery().queryKey;
+
   const update = useAppMutation({
     fn: (body: Parameters<typeof updateMarketplace>[1]) => updateMarketplace(source.id, body),
-    invalidates: sourceChangeKeys,
+    invalidates: () => [listKey, ...sourceChangeKeys()],
   });
   const refresh = useAppMutation({
     fn: () => refreshMarketplace(source.id),
-    invalidates: sourceChangeKeys,
+    invalidates: () => [listKey, ...sourceChangeKeys()],
   });
   const remove = useAppMutation({
     fn: () => removeMarketplace(source.id),
-    invalidates: () => [marketplacesQuery().queryKey, ...sourceChangeKeys()],
+    invalidates: () => [listKey, ...sourceChangeKeys()],
   });
 
-  const run = async (
-    kind: NonNullable<typeof busy>,
-    op: () => Promise<Marketplace>,
-    done: string,
-  ) => {
-    setBusy(kind);
-    setError(undefined);
+  const fail = (e: unknown) => {
+    const p = problem(e);
+    toast.error([p.message, ...p.extra].join(" "));
+    // A failed refresh also recorded its status: read the list again
+    void qc.invalidateQueries({ queryKey: listKey });
+  };
+  const toggle = async () => {
     try {
-      const next = await op();
-      onChanged(next);
-      if (kind === "save") setToken("");
-      toast.success(done);
+      await update.mutateAsync({ enabled: !source.enabled });
+      toast.success(t("saved", { name: title }));
     } catch (e) {
-      setError(problem(e));
-      // 刷新失败时状态也已记好：重读来源，显示最新状态
-      if (kind === "refresh") onRemoved();
-    } finally {
-      setBusy(undefined);
+      fail(e);
+    }
+  };
+  const doRefresh = async () => {
+    try {
+      await refresh.mutateAsync(undefined);
+      toast.success(t("refreshed", { name: title }));
+    } catch (e) {
+      fail(e);
     }
   };
 
+  const skipped = source.skipped ?? [];
+  const raw = source.lastStatus === "error" ? (source.lastError ?? "") : "";
+  const errorSentence =
+    source.lastStatus === "error" ? t(`statusValue.errors.${marketplaceErrorKind(raw)}`) : null;
+  const note = builtin ? (offline ? t("offline") : t("officialNote")) : null;
+  // The state label carries the error sentence; the raw text and the skipped lines are in the Details dialog
+  const description = [note, source.managed === "config" ? t("managed") : null]
+    .filter((x): x is string => x !== null)
+    .join(" ");
+
+  const state = !source.enabled
+    ? { label: t("disabled"), tone: "muted" as const }
+    : source.lastStatus === "error"
+      ? { label: errorSentence ?? "", tone: "fail" as const }
+      : source.lastStatus === "never"
+        ? { label: t("statusValue.never"), tone: "muted" as const }
+        : {
+            label: t("statusValue.ok", {
+              n: source.entryCount,
+              at: source.lastRefreshedAt
+                ? formatDateTime(source.lastRefreshedAt, "full", timeZone)
+                : "—",
+            }),
+            tone: "ok" as const,
+          };
+
+  const mirrors = source.mirrors;
+  const tokenNote =
+    source.managed === "config"
+      ? t(source.hasToken ? "managedTokenSet" : "managedTokenUnset")
+      : null;
+  const menu: MenuItem[] = [
+    ...(errorSentence !== null || skipped.length > 0 || mirrors.length > 0 || tokenNote !== null
+      ? [{ label: t("details"), onSelect: () => setDetails(true) }]
+      : []),
+    ...(locked
+      ? []
+      : [
+          { label: t("edit"), onSelect: onEdit },
+          { label: t("remove"), danger: true, onSelect: () => setConfirm(true) },
+        ]),
+  ];
+
   return (
-    <Stack gap={8}>
-      <SwitchField
-        checked={source.enabled}
-        disabled={source.disabledByConfig || busy !== undefined}
-        label={t("enabledLabel", { name: builtin ? t("official") : source.name })}
-        onChange={(enabled) =>
-          void run(
-            "toggle",
-            () => update.mutateAsync({ enabled }),
-            t("saved", { name: source.name }),
-          )
-        }
+    <>
+      <ObjectCard
+        avatar={{ icon: "store" }}
+        title={title}
+        {...(description !== "" ? { description } : {})}
+        meta={[
+          t(git ? "formGit" : "formHttp"),
+          hostPath(source.url),
+          ...(git ? [t("gitInfo", { ref: source.ref ?? t("defaultBranch") })] : []),
+          ...(git && source.lastCommit !== null
+            ? [t("lastCommit", { commit: shortCommit(source.lastCommit) })]
+            : []),
+          ...(skipped.length > 0
+            ? [{ label: t("skipped.title", { n: skipped.length }), tone: "warn" as const }]
+            : []),
+        ]}
+        state={state}
+        toggle={{
+          label: t("enabledLabel", { name: title }),
+          checked: source.enabled,
+          disabled: source.disabledByConfig,
+          loading: update.isPending,
+          onChange: () => void toggle(),
+        }}
+        {...(source.enabled
+          ? {
+              primary: {
+                label: t("refresh"),
+                onSelect: () => void doRefresh(),
+                loading: refresh.isPending,
+              },
+            }
+          : {})}
+        {...(menu.length > 0 ? { menu } : {})}
       />
-      {managed && (
-        <>
-          <Text variant="small" tone="muted">
-            {t("managed")}
-          </Text>
-          {/* The token is in the deployment config (marketplaces.tokens), never shown */}
-          <Text variant="small" tone="muted">
-            {source.hasToken ? t("managedTokenSet") : t("managedTokenUnset")}
-          </Text>
-        </>
-      )}
-      {!locked && (
-        <Field label={t("name")}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-      )}
-      <Field label={t("url")}>
-        {locked ? (
-          <Input value={source.url} readOnly aria-readonly="true" />
-        ) : (
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} />
-        )}
-      </Field>
-      {git && (
-        <>
-          <Stack direction="row" gap={8}>
+      <Dialog
+        open={details}
+        onOpenChange={setDetails}
+        title={t("detailsTitle", { name: title })}
+        size={640}
+        footer={
+          <Button variant="primary" onClick={() => setDetails(false)}>
+            {t("close")}
+          </Button>
+        }
+      >
+        <Stack gap={12}>
+          {mirrors.length > 0 && (
+            <Text variant="small" tone="muted">{`${t("mirrors")}: ${mirrors.join(", ")}`}</Text>
+          )}
+          {tokenNote !== null && (
             <Text variant="small" tone="muted">
-              {t("gitInfo", { ref: source.ref ?? t("defaultBranch") })}
+              {tokenNote}
             </Text>
-            {source.lastCommit !== null && (
-              <Text variant="small" tone="muted">
-                {t("lastCommit", { commit: shortCommit(source.lastCommit) })}
+          )}
+          {errorSentence !== null && (
+            <ErrorDetail summary={errorSentence} {...(raw !== "" ? { detail: raw } : {})} />
+          )}
+          {skipped.length > 0 && (
+            <Stack gap={4}>
+              <Text variant="small" tone="warn">
+                {t("skipped.title", { n: skipped.length })}
               </Text>
-            )}
-          </Stack>
-          <Field label={t("ref")} help={t("refHelp")} optional>
-            {managed ? (
-              <Input value={ref} readOnly aria-readonly="true" />
-            ) : (
-              <Input value={ref} onChange={(e) => setRef(e.target.value)} />
-            )}
-          </Field>
-          <Field label={t("username")} help={t("usernameHelp")} optional>
-            {managed ? (
-              <Input value={username} readOnly aria-readonly="true" />
-            ) : (
-              <Input value={username} onChange={(e) => setUsername(e.target.value)} />
-            )}
-          </Field>
-        </>
-      )}
-      {source.mirrors.length > 0 && (
-        <Text variant="small" tone="muted">{`${t("mirrors")}: ${source.mirrors.join(", ")}`}</Text>
-      )}
-      {!locked && (
-        <Field label={t("token")} help={source.hasToken ? t("tokenSet") : t("tokenHelp")} optional>
-          <Input
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        </Field>
-      )}
-      {/* The label above its value, like the fields: a long status never squeezes it */}
-      <Stack gap={4}>
-        <Text variant="small">{t("status")}</Text>
-        <SourceStatus source={source} />
-      </Stack>
-      {error !== undefined && <FormError message={error.message} extra={error.extra} />}
-      <Stack direction="row" gap={8}>
-        <Button
-          loading={busy === "refresh"}
-          disabled={busy !== undefined || !source.enabled}
-          onClick={() =>
-            void run(
-              "refresh",
-              () => refresh.mutateAsync(undefined),
-              t("refreshed", { name: source.name }),
-            )
-          }
-        >
-          {t("refresh")}
-        </Button>
-        {!locked && (
-          <>
-            <Button
-              variant="primary"
-              loading={busy === "save"}
-              disabled={busy !== undefined || !dirty || name.trim() === "" || url.trim() === ""}
-              onClick={() =>
-                void run(
-                  "save",
-                  () =>
-                    update.mutateAsync({
-                      ...(name !== source.name && { name: name.trim() }),
-                      ...(url !== source.url && { url: url.trim() }),
-                      ...(refChanged && { ref: ref.trim() === "" ? null : ref.trim() }),
-                      ...(usernameChanged && {
-                        username: username.trim() === "" ? null : username.trim(),
-                      }),
-                      ...(token !== "" && { token }),
-                    }),
-                  t("saved", { name: name.trim() }),
-                )
-              }
-            >
-              {t("save")}
-            </Button>
-            {source.hasToken && (
-              <Button
-                loading={busy === "token"}
-                disabled={busy !== undefined}
-                onClick={() =>
-                  void run(
-                    "token",
-                    () => update.mutateAsync({ token: null }),
-                    t("saved", { name: source.name }),
-                  )
-                }
-              >
-                {t("clearToken")}
-              </Button>
-            )}
-            <Button variant="danger" disabled={busy !== undefined} onClick={() => setConfirm(true)}>
-              {t("remove")}
-            </Button>
-          </>
-        )}
-      </Stack>
+              {skipped.map((x, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: names may repeat; the list is static
+                <Text key={i} variant="small" tone="muted">
+                  {t("skipped.line", {
+                    name: x.name,
+                    reason: t.has(`skipped.reasons.${x.reason}`)
+                      ? t(`skipped.reasons.${x.reason}`)
+                      : x.reason,
+                  })}
+                </Text>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      </Dialog>
       {!locked && (
         <DangerConfirm
           open={confirm}
@@ -485,137 +352,9 @@ function SourceEditor({
             });
             toast.success(t("removed", { name: source.name }));
             setConfirm(false);
-            onRemoved();
           }}
         />
       )}
-    </Stack>
-  );
-}
-
-/**
- * Adding a custom marketplace: a marketplace.json URL, or a git repository (`form: "git"`, with
- * an optional ref; the kernel also recognises `owner/repo` and `….git` URLs by themselves).
- */
-function AddSource({ onAdded }: { onAdded(): void }) {
-  const t = useTranslations("catalog.admin.marketplaces");
-  const toast = useToast();
-  const problem = useProblem();
-  const [form, setForm] = useState<MarketplaceForm>("http");
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [ref, setRef] = useState("");
-  const [token, setToken] = useState("");
-  const [username, setUsername] = useState("");
-  // Once the admin edits the username, a suggestion never overwrites it
-  const [usernameTouched, setUsernameTouched] = useState(false);
-  // The value the last suggestion filled in: the field follows the host while it still holds it
-  const [lastSuggested, setLastSuggested] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<Problem>();
-  const create = useAppMutation({
-    fn: addMarketplace,
-    invalidates: () => [marketplacesQuery().queryKey, ...sourceChangeKeys()],
-  });
-  const add = async () => {
-    setBusy(true);
-    setError(undefined);
-    try {
-      const s = await create.mutateAsync({
-        name: name.trim(),
-        url: url.trim(),
-        ...(form === "git" && {
-          form,
-          ...(ref.trim() !== "" && { ref: ref.trim() }),
-          ...(username.trim() !== "" && { username: username.trim() }),
-        }),
-        ...(token !== "" && { token }),
-      });
-      toast.success(t("added", { name: s.name }));
-      setName("");
-      setUrl("");
-      setRef("");
-      setToken("");
-      setUsername("");
-      setUsernameTouched(false);
-      setLastSuggested("");
-      onAdded();
-    } catch (e) {
-      setError(problem(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section aria-label={t("add")}>
-      <Stack gap={8}>
-        <Text>{t("add")}</Text>
-        <RadioGroup
-          label={t("form")}
-          value={form}
-          onChange={(v) => setForm(v as MarketplaceForm)}
-          options={[
-            { value: "http", label: t("formHttp") },
-            { value: "git", label: t("formGit") },
-          ]}
-        />
-        <Field label={t("name")} required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label={t("url")} required {...(form === "git" && { help: t("gitUrlHelp") })}>
-          <Input
-            value={url}
-            placeholder={form === "git" ? "owner/repo" : "https://"}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              // Follow the host: fill an empty username or replace the last suggestion (never a typed value)
-              if (
-                form === "git" &&
-                !usernameTouched &&
-                (username === "" || username === lastSuggested)
-              ) {
-                const next = suggestGitUsernameForUrl(e.target.value) ?? "";
-                setUsername(next);
-                setLastSuggested(next);
-              }
-            }}
-          />
-        </Field>
-        {form === "git" && (
-          <>
-            <Field label={t("ref")} help={t("refHelp")} optional>
-              <Input value={ref} onChange={(e) => setRef(e.target.value)} />
-            </Field>
-            <Field label={t("username")} help={t("usernameHelp")} optional>
-              <Input
-                value={username}
-                onChange={(e) => {
-                  setUsername(e.target.value);
-                  setUsernameTouched(true);
-                }}
-              />
-            </Field>
-          </>
-        )}
-        <Field label={t("token")} optional>
-          <Input
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        </Field>
-        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
-        <Stack direction="row">
-          <Button
-            loading={busy}
-            disabled={busy || name.trim() === "" || url.trim() === ""}
-            onClick={() => void add()}
-          >
-            {t("add")}
-          </Button>
-        </Stack>
-      </Stack>
-    </section>
+    </>
   );
 }

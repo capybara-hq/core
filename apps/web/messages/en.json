@@ -4986,6 +4986,7 @@
       },
       "actions": {
         "addSource": "Add marketplace source",
+        "sources": "Sources",
         "upload": "Upload plugin package"
       },
       "detail": {
@@ -5084,7 +5085,7 @@
         "steps": {
           "source": "Choose package",
           "review": "Review",
-          "confirm": "Confirm",
+          "reviewConfirm": "Review and confirm",
           "update": "Update preview"
         },
         "sourceLabel": "Source",
@@ -5110,7 +5111,7 @@
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
-        "confirm": "Confirm install",
+        "confirm": "Install",
         "done": "Installed plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the plugin is kept on the platform. Retry in the extension admin.",
@@ -5128,7 +5129,6 @@
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
         "gitPathHelp": "Optional; the plugin's directory in the repository (default the root).",
-        "provenance": "Attestation (not verified): built from {repository}@{commit} by {workflow}",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
         "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {
@@ -5146,6 +5146,7 @@
             "warnings": "Warnings",
             "other": "Other"
           },
+          "details": "Details",
           "groupNone": "None",
           "components": {
             "plugin": "Plugin",
@@ -5235,6 +5236,25 @@
           "provenance": "Provenance",
           "provenanceNotChecked": "Not checked ({reason})"
         },
+        "sensitiveCount": "{n} sensitive",
+        "fullDescription": "Full description",
+        "build": "Build",
+        "unverified": "(declared, not verified)",
+        "noneOf": "No {kinds}.",
+        "newMark": "New",
+        "configAfterInstall": "Fill these in on the Extensions page after installing.",
+        "needsOAuthClient": "Needs an OAuth client",
+        "needsOrgCredential": "Needs an organization credential",
+        "endpointUnchecked": "Address not checked",
+        "translationSummary": "Imported {imported} · Converted {converted} · Needs input {needsInput} · Ignored {ignored} · Warnings {warnings}",
+        "versionChange": "{from} → {to}",
+        "provides": "Provides",
+        "config": "Config",
+        "hiddenCharacters": "Hidden characters",
+        "secret": "Secret",
+        "tools": "Tools",
+        "endpointDetails": "Endpoint details",
+        "orgCanChange": "Org can change",
         "titleUpdate": "Update plugin \"{name}\"",
         "confirmUpdate": "Confirm update",
         "updateHint": "Confirming adds {version} to the platform and updates the plugin to it, for every organization at once. Cancelling before you confirm changes nothing.",
@@ -5242,7 +5262,7 @@
       },
       "entries": {
         "title": "Browse marketplaces",
-        "empty": "No marketplace entries. Add or refresh a marketplace with Add marketplace source.",
+        "empty": "No marketplace entries. Add or refresh a marketplace with Sources.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
@@ -5291,13 +5311,19 @@
         "search": "Search sources",
         "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
-        "official": "Capybara",
-        "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
-        "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
         "enabledLabel": "Enable {name}",
+        "details": "Details",
+        "detailsTitle": "{name}: details",
+        "close": "Close",
+        "addConfirm": "Add",
+        "cancel": "Cancel",
+        "edit": "Edit",
+        "editTitle": "Edit {name}",
+        "officialNote": "Its address is set in the deployment config (marketplaces.official.*) and is read-only here.",
+        "disabled": "Disabled",
+        "official": "Capybara",
+        "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
         "url": "URL",
-        "mirrors": "Mirrors",
-        "status": "Status",
         "statusValue": {
           "ok": "OK ({n} entries, {at})",
           "never": "Not fetched yet",
@@ -5312,9 +5338,7 @@
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
-        "custom": "Custom marketplaces",
         "customHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
-        "customEmpty": "No custom marketplaces yet.",
         "name": "Name",
         "token": "Token",
         "tokenHelp": "Optional; leave empty to keep it unchanged.",
@@ -5324,6 +5348,7 @@
         "managed": "Configured by the deployment",
         "managedTokenSet": "Token set by the deployment",
         "managedTokenUnset": "No token set by the deployment",
+        "mirrors": "Mirrors",
         "clearToken": "Clear token",
         "save": "Save",
         "saved": "Saved \"{name}\".",
@@ -5334,7 +5359,7 @@
           "confirm": "Remove"
         },
         "removed": "Removed \"{name}\".",
-        "add": "Add custom marketplace",
+        "add": "Add marketplace source",
         "added": "Added \"{name}\".",
         "form": "Type",
         "formHttp": "marketplace.json URL",
@@ -5348,7 +5373,6 @@
         "skipped": {
           "title": "{n, plural, one {# entry was} other {# entries were}} skipped by the last refresh",
           "line": "{name}: {reason}",
-          "more": "…and {n} more",
           "reasons": {
             "claude_npm_unpinned": "an npm source without integrity, not supported yet",
             "claude_source_unsupported": "this kind of source is not supported",
@@ -5936,7 +5960,6 @@
     },
     "action": {
       "enable": "Turn on",
-      "configure": "Organization config",
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
@@ -5977,6 +6000,8 @@
     },
     "market": {
       "title": "Marketplace",
+      "source": "Source",
+      "allSources": "All sources",
       "empty": "The marketplaces have no entries yet.",
       "adopted": "Installed",
       "unavailable": "Cannot be installed",

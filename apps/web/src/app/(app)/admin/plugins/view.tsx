@@ -1,6 +1,6 @@
 "use client";
 
-import { ListPage, ObjectRow, Stack, Text, versionLabel } from "@capybara-hq/design";
+import { ListPage, ObjectCard, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -38,17 +38,17 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/admin/plugins`: the deployment's plugins (super admins, ListPage, tab 已安装). A row: the
- * name with the 内置 chip for a built-in plugin, 归属：<org> for an org's upload (and 该组织未开放共享
+ * `/admin/plugins`: the deployment's plugins (super admins, ListPage, Installed tab). A card: the
+ * name with the Built-in chip for a built-in plugin, Owner: <org> for an org's upload (and "this org does not share it"
  * when its org does not share it), the description, a meta line (version, source,
- * scope with the named orgs, how many orgs use it) and the state: 已停用, 权限待确认 (with
- * 确认权限 leading to the 待确认 tab), 可更新 <version> when its marketplace has a newer
- * compatible version, else 运行中. A platform plugin whose marketplace has a newer version has one
- * action, 更新到 <version> (maintainer decision 2026-11-13): it stages that version and opens the
+ * scope with the named orgs, how many orgs use it) and the state: Disabled, Permissions pending (with
+ * Confirm permissions leading to the Pending tab), Update available <version> when its marketplace has a newer
+ * compatible version, else Running. A platform plugin whose marketplace has a newer version has one
+ * action, Update to <version> (maintainer decision 2026-11-13): it stages that version and opens the
  * one wizard (the import review, then the update preview, confirmed together); a refusal is the
- * list's fail callout. The head (shared by the three tabs) holds 添加市场源 and
- * 上传插件包; the search narrows by name. From the query cache (the layout prefetched the items and
- * the head's counts on a first load); the marketplaces (source labels) and the orgs (named scope)
+ * list's fail callout. The head (shared by the three tabs) holds Upload plugin package; the search narrows
+ * by name. From the query cache (the layout prefetched the items and the head's counts on a
+ * first load); the marketplaces (source labels) and the orgs (named scope)
  * are sections.
  */
 export default function AdminPluginsView() {
@@ -68,7 +68,7 @@ function AdminPluginsRead() {
     return (
       <ListPage
         header={{ ...head, path: [...scope, { label: "plugins" }] }}
-        variant="objects"
+        variant="cards"
         loading
       />
     );
@@ -163,7 +163,7 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
         // An empty list has nothing to search.
         ...(all.length > 0 ? { search: { label: t("search"), value: q, onChange: setQ } } : {}),
       }}
-      variant="objects"
+      variant="cards"
       listLabel={t("title")}
       {...(empty ? { empty } : {})}
       {...(notice !== undefined
@@ -189,14 +189,10 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
         const state = pluginState(i, t);
         const to = updatableTo(i);
         return (
-          <ObjectRow
+          <ObjectCard
             key={i.id}
-            mark={{
-              text: name,
-              image: i.icon ?? null,
-              ...(i.pending ? { tone: "warn" as const } : {}),
-            }}
-            name={name}
+            avatar={{ image: i.icon ?? null }}
+            title={name}
             href={`/admin/plugins/${encodeURIComponent(i.id)}`}
             chips={[
               ...(i.builtin ? [{ label: t("chips.builtin") }] : []),
@@ -214,10 +210,10 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
             ]}
             state={state}
             {...(i.pending
-              ? { action: { label: t("rowConfirm"), href: "/admin/plugins/pending" } }
+              ? { primary: { label: t("rowConfirm"), href: "/admin/plugins/pending" } }
               : to !== null
                 ? {
-                    action: {
+                    primary: {
                       label: t("detail.actions.update", { version: versionLabel(to.version) }),
                       onSelect: () => void update(i, to),
                     },

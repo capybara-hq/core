@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Button, IconButton, LinkButton } from "../controls/index";
+import { Button, IconButton, LinkButton, Switch } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { ActionSheet, actionSheetItems } from "../overlays/action-sheet";
@@ -49,6 +49,20 @@ export type ObjectCardLoaded = {
    */
   avatar?: AvatarValue | { icon: IconName } | { image: string | null };
   title: string;
+  /** The title in the mono face (package names and ids), as `ObjectRow.mono`. */
+  mono?: boolean;
+  /**
+   * Scope / kind chips and attention chips after the title, the same contract and look as
+   * `ObjectRow.chips`; they wrap in the title line. On a phone's grouped row only the `warn`
+   * chips stay (attention facts); the neutral ones are left out.
+   */
+  chips?: { label: string; tone?: "neutral" | "warn" }[];
+  /**
+   * The object is being changed (an install, an update, an enable), as `ObjectRow.busy`: the
+   * spinner sits on the primary action, else on the ⋯ menu (or its lone item); the card's buttons
+   * wait and the card is `aria-busy`.
+   */
+  busy?: boolean;
   /**
    * The detail page: the whole card opens it (the name is the card's one link). Left out for a
    * viewer who may not open the detail (a read-only list): the name is plain text, the card has
@@ -78,6 +92,17 @@ export type ObjectCardLoaded = {
    * second button. Without a primary it is still drawn as the card's one button.
    */
   oneButton?: boolean;
+  /**
+   * An on / off switch in the card's action area, before its buttons (a marketplace source's
+   * enable / disable). `label` names it for assistive technology; it waits while `loading` or `busy`.
+   */
+  toggle?: {
+    label: string;
+    checked: boolean;
+    onChange(next: boolean): void;
+    disabled?: boolean;
+    loading?: boolean;
+  };
   /** The `li`'s id: a page anchor (`#connector-<id>`) that scrolls to this card. */
   id?: string;
   loading?: false;
@@ -451,6 +476,9 @@ function useClamped(ref: RefObject<HTMLElement | null>, axis: "x" | "y", text: s
 function LoadedCard({
   avatar,
   title,
+  mono,
+  chips,
+  busy = false,
   href,
   description,
   meta,
@@ -458,6 +486,7 @@ function LoadedCard({
   primary,
   menu,
   oneButton = false,
+  toggle,
   id,
 }: ObjectCardLoaded) {
   const Link = useDesignLink();
@@ -492,12 +521,16 @@ function LoadedCard({
   const tabIndex = slot === null ? undefined : slot.holder ? 0 : -1;
   const actions = menuActions(menu ?? []);
   const lone = oneButton && primary !== undefined ? undefined : menuLone(menu ?? []);
-  const waiting = primary?.loading === true;
+  const primaryLoading = primary?.loading === true;
+  const waiting = primaryLoading || busy;
+  // The spinner goes where the running action is: the primary, else the menu (or its lone item).
+  const menuLoading = busy && !primaryLoading && primary === undefined;
   const buttons: ObjectCardAction[] = [];
   if (primary) buttons.push(primary);
   if (lone) {
     buttons.push({
       label: lone.label,
+      ...(menuLoading ? { loading: true } : {}),
       ...(lone.href !== undefined ? { href: lone.href } : {}),
       ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
     });
@@ -582,7 +615,7 @@ function LoadedCard({
   };
   /** A button of the card, keyed by its slot: 0 the primary (else the lone item), 1 the lone item. */
   const button = (a: ObjectCardAction, i: number) =>
-    a.href !== undefined ? (
+    a.href !== undefined && !busy ? (
       <LinkButton
         key={i}
         href={a.href}
@@ -598,7 +631,7 @@ function LoadedCard({
         key={i}
         variant="default"
         density="dense"
-        loading={a.loading === true}
+        loading={a.loading === true || (busy && i === 0 && primary !== undefined)}
         disabled={waiting}
         tabIndex={tabIndex}
         aria-describedby={nameId}
@@ -621,10 +654,19 @@ function LoadedCard({
           trigger={
             <IconButton
               label={t("shell.moreActions")}
-              icon={<Icon name="more-horizontal" />}
+              icon={
+                menuLoading ? (
+                  <span className="cb-btn-spin" aria-hidden="true">
+                    <Icon name="spinner" size={14} />
+                  </span>
+                ) : (
+                  <Icon name="more-horizontal" />
+                )
+              }
               density="dense"
               variant="default"
               disabled={waiting}
+              aria-busy={menuLoading ? true : undefined}
               tabIndex={tabIndex}
               aria-describedby={nameId}
             />
@@ -642,6 +684,7 @@ function LoadedCard({
         data-part="object-card"
         data-cap-part="card"
         data-card-key={cardKey ?? undefined}
+        aria-busy={busy ? true : undefined}
         onFocus={slot === null ? undefined : () => slot.onFocusCard()}
         {...press}
       >
@@ -654,6 +697,7 @@ function LoadedCard({
               className="cb-object-card-name"
               data-part="object-card-name"
               data-static="true"
+              data-mono={mono ? "true" : undefined}
               {...(nameClamped ? { title } : {})}
             >
               {title}
@@ -670,6 +714,7 @@ function LoadedCard({
                 id={nameId}
                 className="cb-object-card-name"
                 data-part="object-card-name"
+                data-mono={mono ? "true" : undefined}
                 {...(nameClamped ? { title } : {})}
               >
                 {title}
@@ -677,6 +722,15 @@ function LoadedCard({
               <LinkPendingMark />
             </Link>
           )}
+          {chips !== undefined && chips.length > 0 ? (
+            <span className="cb-object-card-chips" data-part="object-card-chips">
+              {chips.map((c) => (
+                <span key={c.label} className="cb-object-chip" data-tone={c.tone ?? "neutral"}>
+                  {c.label}
+                </span>
+              ))}
+            </span>
+          ) : null}
           {state ? (
             <span
               className="cb-object-card-state"
@@ -729,6 +783,16 @@ function LoadedCard({
                     </Fragment>
                   ))}
           </span>
+          {toggle ? (
+            <Switch
+              label={toggle.label}
+              checked={toggle.checked}
+              onChange={toggle.onChange}
+              disabled={toggle.disabled === true || toggle.loading === true || busy}
+              tabIndex={tabIndex}
+              aria-describedby={nameId}
+            />
+          ) : null}
           {/* Interaction differs per class (spec §6.64): buttons from 600, the action sheet below. */}
           <ClassForms
             compact={href === undefined && buttons[0] !== undefined ? button(buttons[0], 0) : null}

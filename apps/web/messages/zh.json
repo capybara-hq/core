@@ -4974,6 +4974,7 @@
       },
       "actions": {
         "addSource": "添加市场源",
+        "sources": "市场源",
         "upload": "上传插件包"
       },
       "detail": {
@@ -5072,7 +5073,7 @@
         "steps": {
           "source": "选择插件包",
           "review": "审阅",
-          "confirm": "确认",
+          "reviewConfirm": "审阅并确认",
           "update": "更新预览"
         },
         "sourceLabel": "来源",
@@ -5098,7 +5099,7 @@
         "keepExtension": "扩展 {name} {version} 已安装在部署上。",
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
-        "confirm": "确认安装",
+        "confirm": "安装",
         "done": "已安装插件「{name}」。",
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），插件已保留在平台上。可在扩展后台重试。",
@@ -5116,7 +5117,6 @@
         "gitRefHelp": "可选；留空用远端 HEAD。",
         "gitPath": "目录",
         "gitPathHelp": "可选；插件在仓库里的目录（默认根目录）。",
-        "provenance": "声明（未验证）：由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
         "buildVersion": "记为 {version}：{pluginVersion} 已在平台目录中，但内容不同。",
         "translation": {
@@ -5134,6 +5134,7 @@
             "warnings": "警告",
             "other": "其他"
           },
+          "details": "详情",
           "groupNone": "无",
           "components": {
             "plugin": "插件",
@@ -5223,6 +5224,25 @@
           "provenance": "来源证明",
           "provenanceNotChecked": "未核对（{reason}）"
         },
+        "sensitiveCount": "{n} 项敏感",
+        "fullDescription": "完整说明",
+        "build": "构建",
+        "unverified": "（声明，未验证）",
+        "noneOf": "没有{kinds}。",
+        "newMark": "新增",
+        "configAfterInstall": "安装后在「扩展」页填写",
+        "needsOAuthClient": "需要 OAuth 客户端",
+        "needsOrgCredential": "需要组织凭据",
+        "endpointUnchecked": "地址未检查",
+        "translationSummary": "导入 {imported} · 转换 {converted} · 需要填写 {needsInput} · 忽略 {ignored} · 警告 {warnings}",
+        "versionChange": "{from} → {to}",
+        "provides": "提供",
+        "config": "配置",
+        "hiddenCharacters": "含隐藏字符",
+        "secret": "密钥",
+        "tools": "工具",
+        "endpointDetails": "端点详情",
+        "orgCanChange": "组织可改",
         "titleUpdate": "更新插件「{name}」",
         "confirmUpdate": "确认更新",
         "updateHint": "确认后把 {version} 加入平台并把插件更新到它，所有组织一起更新。确认前取消不会改动任何东西。",
@@ -5230,7 +5250,7 @@
       },
       "entries": {
         "title": "浏览市场",
-        "empty": "没有市场条目。先用「添加市场源」添加或刷新市场。",
+        "empty": "没有市场条目。先用「市场源」添加或刷新市场。",
         "noResults": "没有符合条件的条目。",
         "truncated": "条目太多，只显示了前一部分；请按市场或关键词缩小范围。",
         "search": "搜索",
@@ -5279,13 +5299,19 @@
         "search": "搜索市场源",
         "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
-        "official": "Capybara",
-        "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
-        "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
         "enabledLabel": "启用「{name}」",
+        "details": "详情",
+        "detailsTitle": "「{name}」详情",
+        "close": "关闭",
+        "addConfirm": "添加",
+        "cancel": "取消",
+        "edit": "编辑",
+        "editTitle": "编辑「{name}」",
+        "officialNote": "地址在部署配置（marketplaces.official.*）里设置，这里只读。",
+        "disabled": "已停用",
+        "official": "Capybara",
+        "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
         "url": "地址",
-        "mirrors": "镜像",
-        "status": "状态",
         "statusValue": {
           "ok": "正常（{n} 个条目，{at}）",
           "never": "还没有拉取过",
@@ -5300,9 +5326,7 @@
         },
         "refresh": "立即刷新",
         "refreshed": "已刷新 {name}",
-        "custom": "自定义市场源",
         "customHint": "地址只认 https；令牌只发往市场地址的源。",
-        "customEmpty": "还没有自定义市场源。",
         "name": "名称",
         "token": "令牌",
         "tokenHelp": "可选；留空不改。",
@@ -5312,6 +5336,7 @@
         "managed": "由部署配置管理",
         "managedTokenSet": "部署已配置令牌",
         "managedTokenUnset": "部署未配置令牌",
+        "mirrors": "镜像",
         "clearToken": "清除令牌",
         "save": "保存",
         "saved": "已保存「{name}」。",
@@ -5322,7 +5347,7 @@
           "confirm": "删除"
         },
         "removed": "已删除「{name}」。",
-        "add": "添加自定义市场源",
+        "add": "添加市场源",
         "added": "已添加「{name}」。",
         "form": "类型",
         "formHttp": "marketplace.json 地址",
@@ -5336,7 +5361,6 @@
         "skipped": {
           "title": "上次刷新跳过了 {n} 个条目",
           "line": "{name}：{reason}",
-          "more": "……另有 {n} 个",
           "reasons": {
             "claude_npm_unpinned": "npm 来源没有完整性校验值，暂不支持",
             "claude_source_unsupported": "不支持这类来源",
@@ -5924,7 +5948,6 @@
     },
     "action": {
       "enable": "启用",
-      "configure": "组织配置",
       "disable": "停用",
       "request": "申请",
       "requestEnable": "申请启用",
@@ -5965,6 +5988,8 @@
     },
     "market": {
       "title": "市场",
+      "source": "来源",
+      "allSources": "全部来源",
       "empty": "市场里还没有条目。",
       "adopted": "已安装",
       "unavailable": "不能安装",

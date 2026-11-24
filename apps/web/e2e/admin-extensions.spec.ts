@@ -51,10 +51,9 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
   await expect(review).toBeVisible();
   await expect(review.getByText(zh.extensions.review.reason.tools)).toBeVisible();
   await expect(review.getByText("· greet")).toBeVisible();
-  await page.getByRole("button", { name: P.wizard.next }).click();
 
-  // 3. Confirm: not possible before the sensitive ack; confirming installs and enables the
-  // extension on the deployment
+  // 3. Confirm (the same step as the review): not possible before the sensitive ack; confirming
+  // installs and enables the extension on the deployment
   const confirm = page.getByRole("button", { name: zh.catalog.admin.review.confirm });
   await expect(confirm).toBeDisabled();
   await page.getByRole("checkbox", { name: zh.catalog.admin.review.ack }).check();

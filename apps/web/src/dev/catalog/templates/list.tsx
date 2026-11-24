@@ -90,7 +90,13 @@ export function Facets() {
   );
 }
 
+const SOURCES = [
+  { value: "all", label: "全部来源" },
+  ...Array.from({ length: 11 }, (_, i) => ({ value: `src-${i + 1}`, label: `来源 ${i + 1}` })),
+];
+
 function ListBody() {
+  const [source, setSource] = useState("all");
   useStatusBar("已筛选 18 / 24");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [page, setPage] = useState(1);
@@ -113,6 +119,7 @@ function ListBody() {
         ],
       }}
       rail={<Facets />}
+      scope={{ label: "来源", value: source, options: SOURCES, onChange: setSource }}
     >
       <DataTable<AgentRow>
         label="智能体"
