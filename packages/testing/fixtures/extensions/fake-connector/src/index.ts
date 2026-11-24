@@ -118,10 +118,7 @@ export function fakeEndpointSchema() {
        * A second URL the connector ignores: a destination field other than `url` (as an OpenAPI
        * base URL), for tests of endpoint edits that move where requests go.
        */
-      apiUrl: z
-        .url()
-        .refine(urlAllowed, { message: "URL must use http or https" })
-        .optional(),
+      apiUrl: z.url().refine(urlAllowed, { message: "URL must use http or https" }).optional(),
       headers: z
         .record(z.string(), z.string())
         .default({})

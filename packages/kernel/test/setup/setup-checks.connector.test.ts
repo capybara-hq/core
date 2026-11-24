@@ -334,6 +334,12 @@ describe("setup guides for connectors", () => {
   });
 
   it("a template on in the org without a connector is listed for admins, not members", async () => {
+    // with a connector from the template, setup.read without a target points at its 配置 (the
+    // credentials tab)
+    const configure = await callOp("setup.read", { itemId, guideId: "gh" }, env.bossId);
+    expect((configure.guide as { webPath: string }).webPath).toBe(
+      `/connectors/${connectorId}?tab=credentials`,
+    );
     await env.db
       .updateTable("connectors")
       .set({ deleted_at: sql`now()` })
@@ -348,15 +354,14 @@ describe("setup guides for connectors", () => {
           name: expect.any(String),
           drift: null,
           checks: null,
-          webPath: `/connectors/install?template=${itemId}`,
+          webPath: "/connectors",
         },
       ],
     ]);
     expect(await guideList(env.mem)).toEqual([]);
-    // without a target, setup.read points at the install page
+    // without a target or a connector, setup.read points at the connectors page (the template's
+    // card makes the connector)
     const out = await callOp("setup.read", { itemId, guideId: "gh" }, env.bossId);
-    expect((out.guide as { webPath: string }).webPath).toBe(
-      `/connectors/install?template=${itemId}`,
-    );
+    expect((out.guide as { webPath: string }).webPath).toBe("/connectors");
   });
 });
