@@ -400,27 +400,32 @@ function serviceSurface(
     });
     const pid = child.pid;
     if (pid === undefined) throw new Error(`device service ${spec.name} did not start`);
-    // ready once its socket accepts a connection
+    // ready once its socket accepts a connection; any failure (an early exit, the deadline, an
+    // abort) kills the detached process group, so no orphan outlives the call
     const deadline = Date.now() + 15_000;
-    for (;;) {
-      if (exited !== null) throw new Error(`device service ${spec.name} exited with ${exited}`);
-      const sock = await connectSocket(socket, signal).catch((err: unknown) => {
-        if (signal.aborted) throw err;
-        return null;
-      });
-      if (sock) {
-        sock.destroy();
-        break;
-      }
-      if (Date.now() > deadline) {
-        try {
-          process.kill(-pid, "SIGKILL");
-        } catch {
-          // already exited
+    try {
+      for (;;) {
+        if (exited !== null) throw new Error(`device service ${spec.name} exited with ${exited}`);
+        const sock = await connectSocket(socket, signal).catch((err: unknown) => {
+          if (signal.aborted) throw err;
+          return null;
+        });
+        if (sock) {
+          sock.destroy();
+          break;
         }
-        throw new Error(`device service ${spec.name} did not listen in time`);
+        if (Date.now() > deadline)
+          throw new Error(`device service ${spec.name} did not listen in time`);
+        await sleep(20, signal);
       }
-      await sleep(20, signal);
+    } catch (err) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // already exited
+      }
+      await rm(socket, { force: true });
+      throw err;
     }
     const startedAt = new Date().toISOString();
     await mkdir(join(instanceDir(root, h.id), "services"), { recursive: true });

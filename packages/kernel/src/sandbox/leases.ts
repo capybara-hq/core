@@ -34,6 +34,10 @@ import type { KernelLogger } from "../log.js";
  *   killed by the next acquirer.
  * - `capk:sandbox-path:<env>:<sha256hex(path)>`: a short per-path lease around the kernel's own
  *   read-modify-write of one file.
+ * - `capk:sandbox-streams:<env>`: sorted set of stream hold tokens scored by their expiry (an open
+ *   viewer, {@link SandboxLeases.streamHold}). A hold is not a lease: it takes no slot and never
+ *   blocks a lease. Idle suspension skips a device with a live hold; every exclusive acquisition
+ *   deletes the set, and a hold's renewal fails once its token is gone or an intent is pending.
  *
  * The first three keys are a {@link LockService} shared lease (`tryShared` / `tryExclusive`,
  * infra/lock/shared-lease.ts); the holder records and the path leases are this file's. Every key
@@ -50,6 +54,7 @@ const USERS_PREFIX = "capk:sandbox-users:";
 const INTENT_PREFIX = "capk:sandbox-intent:";
 const HOLDERS_PREFIX = "capk:sandbox-holders:";
 const PATH_PREFIX = "capk:sandbox-path:";
+const STREAMS_PREFIX = "capk:sandbox-streams:";
 /** TTL of a path lease (ms); renewed while held. */
 const PATH_LEASE_TTL_MS = 30_000;
 /** Shortest life of an exclusive waiter's intent (ms): outlasts event-loop lag between polls. */
@@ -108,6 +113,36 @@ const REGISTER = redisClockScript(`local ttl = tonumber(ARGV[2])
 redis.call('HSET', KEYS[1], ARGV[1], now + ttl)
 if redis.call('PTTL', KEYS[1]) < ttl then redis.call('PEXPIRE', KEYS[1], ttl) end
 return 1`);
+
+/**
+ * KEYS lock, users, intent, streams; ARGV token, ttl. Adds a stream hold unless an exclusive lease
+ * is held or an intent is pending (0). The set is kept for its longest member.
+ */
+const STREAM_HOLD = sharedLeaseReadScript(`if redis.call('EXISTS', KEYS[3]) == 1 then return 0 end
+if cur and cur ~= 'shared' then return 0 end
+redis.call('ZREMRANGEBYSCORE', KEYS[4], '-inf', now)
+redis.call('ZADD', KEYS[4], now + tonumber(ARGV[2]), ARGV[1])
+local last = redis.call('ZRANGE', KEYS[4], -1, -1, 'WITHSCORES')
+redis.call('PEXPIREAT', KEYS[4], tonumber(last[2]))
+return 1`);
+
+/**
+ * KEYS intent, streams; ARGV token, ttl. Renews a stream hold; 0 (lost) once an exclusive
+ * acquisition deleted it, it expired, or an intent is pending (the hold then yields).
+ */
+const STREAM_RENEW = redisClockScript(`if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  return 0
+end
+local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
+if not score or tonumber(score) <= now then return 0 end
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[1])
+local last = redis.call('ZRANGE', KEYS[2], -1, -1, 'WITHSCORES')
+redis.call('PEXPIREAT', KEYS[2], tonumber(last[2]))
+return 1`);
+
+/** KEYS streams. The number of live stream holds. */
+const STREAM_COUNT = redisClockScript(`return redis.call('ZCOUNT', KEYS[1], '(' .. now, '+inf')`);
 
 /**
  * KEYS lock, users, holders. Returns the holder fields without a live lease, leaving them in place
@@ -292,7 +327,14 @@ export class SandboxLeases {
       this.ttlMs,
       o.intent ? this.intentTtlMs : undefined,
     );
-    return h ? this.held(env, h) : null;
+    if (!h) return null;
+    // a lifecycle change: every stream hold of the device yields (its next renewal fails)
+    await this.redis
+      .eval("return redis.call('DEL', KEYS[1])", 1, `${STREAMS_PREFIX}${env}`)
+      .catch((err: unknown) =>
+        this.log.warn("cannot end the device's stream holds", { deviceId: env, err }),
+      );
+    return this.held(env, h);
   }
 
   /**
@@ -325,6 +367,46 @@ export class SandboxLeases {
    */
   async registerHolder(env: string, token: string, ttlMs: number): Promise<void> {
     await this.redis.eval(REGISTER, 1, `${HOLDERS_PREFIX}${env}`, token, ttlMs);
+  }
+
+  /**
+   * A stream hold on the device (an open viewer): null while an exclusive lease is held or an
+   * intent is pending. Renewed every TTL / 3 by LockService's watchdog; `lost` aborts once a
+   * renewal fails (an exclusive acquisition ended the device's holds, or an intent is pending).
+   */
+  async streamHold(env: string): Promise<LeaseHandle | null> {
+    const k = this.keys(env);
+    const streams = `${STREAMS_PREFIX}${env}`;
+    const token = randomUUID();
+    const sentAt = Date.now();
+    const ok = await this.redis.eval(
+      STREAM_HOLD,
+      4,
+      k.lock,
+      k.users,
+      k.intent,
+      streams,
+      token,
+      this.ttlMs,
+    );
+    if (ok !== 1) return null;
+    return this.locks.keepAlive(
+      streams,
+      this.ttlMs,
+      {
+        renew: async () =>
+          (await this.redis.eval(STREAM_RENEW, 2, k.intent, streams, token, this.ttlMs)) === 1,
+        release: async () => {
+          await this.redis.eval("return redis.call('ZREM', KEYS[1], ARGV[1])", 1, streams, token);
+        },
+      },
+      sentAt,
+    );
+  }
+
+  /** Live stream holds of the device ({@link streamHold}). */
+  async streamHolds(env: string): Promise<number> {
+    return Number(await this.redis.eval(STREAM_COUNT, 1, `${STREAMS_PREFIX}${env}`));
   }
 
   /** Deletes a holder record (after its provider calls). */
