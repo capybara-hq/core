@@ -3,12 +3,10 @@
 import {
   Button,
   Dialog,
-  Field,
   FilePicker,
   formatDateTime,
   ListPage,
-  ObjectRow,
-  Select,
+  ObjectCard,
   Stack,
   Text,
   useTimeZone,
@@ -21,7 +19,7 @@ import { useComponentState, useComponentSwitch } from "../../../components/Compo
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
-import { rowActions } from "../../../components/PluginSwitch";
+import { cardActions } from "../../../components/PluginSwitch";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { type OwnerSide, ownerSide } from "../../../lib/catalog";
@@ -36,7 +34,7 @@ import NotFound from "../not-found";
 import { type SkillUpload, useSkillUpload } from "./use-skill-upload";
 
 /**
- * `/skills` (spec §9): the skills the org can use and the platform skills offered to it (object
+ * `/skills` (spec §9): the skills the org can use and the platform skills offered to it (card
  * list). Org-own rows carry 本组织, platform rows 平台 with their state in the org (已启用 · 平台统一 for
  * `all`, 已启用, 未启用, 插件未启用); org admins switch platform skills (启用, 停用 with the preview of the agents
  * using it), upload a .zip (a name a platform skill offered here already has is refused, rule 10)
@@ -84,20 +82,19 @@ function Skills({ orgId }: { orgId: string }) {
     plugin === ""
       ? all
       : all.filter((r) => (plugin === NO_PLUGIN ? pluginOf(r) === null : pluginOf(r) === plugin));
-  const filters =
-    plugins.length === 0 ? undefined : (
-      <Field label={t("filters.plugin")}>
-        <Select
-          value={plugin}
-          onChange={(e) => setPlugin(e.target.value)}
-          options={[
-            { value: "", label: t("filters.allPlugins") },
+  const scopeFilter =
+    plugins.length === 0
+      ? undefined
+      : {
+          label: t("filters.plugin"),
+          value: plugin === "" ? "all" : plugin,
+          onChange: (v: string) => setPlugin(v === "all" ? "" : v),
+          options: [
+            { value: "all", label: t("filters.allPlugins") },
             ...plugins.map((p) => ({ value: p, label: p })),
             { value: NO_PLUGIN, label: t("filters.noPlugin") },
-          ]}
-        />
-      </Field>
-    );
+          ],
+        };
   const upload = {
     label: t("upload.open"),
     icon: "upload" as const,
@@ -141,9 +138,9 @@ function Skills({ orgId }: { orgId: string }) {
           description: t("description"),
           ...(admin ? { actions: [{ ...upload, variant: "primary" as const }] } : {}),
         }}
-        variant="objects"
+        variant="cards"
         listLabel={t("listLabel")}
-        {...(filters !== undefined ? { filters } : {})}
+        {...(scopeFilter !== undefined ? { scope: scopeFilter } : {})}
         {...(error !== undefined
           ? {
               callout: {
@@ -168,10 +165,10 @@ function Skills({ orgId }: { orgId: string }) {
           if (r.kind === "own") {
             const s = r.item;
             return (
-              <ObjectRow
+              <ObjectCard
                 key={s.id}
-                mark={{ text: s.name }}
-                name={s.name}
+                avatar={{ image: null }}
+                title={s.name}
                 href={`/skills/${encodeURIComponent(s.id)}`}
                 mono
                 chips={[{ label: tc("origin.org") }]}
@@ -193,10 +190,10 @@ function Skills({ orgId }: { orgId: string }) {
           const name = s?.name ?? c?.name ?? "";
           const on = c?.on ?? s !== undefined;
           return (
-            <ObjectRow
+            <ObjectCard
               key={id}
-              mark={{ text: name }}
-              name={name}
+              avatar={{ image: null }}
+              title={name}
               mono
               {...(on && s !== undefined ? { href: `/skills/${encodeURIComponent(id)}` } : {})}
               chips={[{ label: ownerLabel(owner) }]}
@@ -206,7 +203,7 @@ function Skills({ orgId }: { orgId: string }) {
                 t("version", { version: s?.currentVersion ?? c?.version ?? "" }),
               ]}
               state={c !== undefined ? stateOf(c) : { label: tc("state.on"), tone: "ok" }}
-              {...(c !== undefined ? rowActions(actionsOf(c)) : {})}
+              {...(c !== undefined ? cardActions(actionsOf(c)) : {})}
             />
           );
         })}
