@@ -336,29 +336,48 @@ export class DeviceAccessService {
    * False when any of that no longer holds; other failures (the database) are thrown.
    */
   async ticketStands(t: DeviceStreamTicket): Promise<boolean> {
+    return (await this.ticketCheck(t)) === "stands";
+  }
+
+  /**
+   * {@link ticketStands} with the reason when it does not: `provider_off` when the device's
+   * provider is no longer usable in the org (switched off, or no provider), `revoked` for
+   * everything else (the conversation, its owner or device, the extension or its declared
+   * services). An open viewer re-checks with it while it lives. Other failures are thrown.
+   */
+  async ticketCheck(t: DeviceStreamTicket): Promise<"stands" | "revoked" | "provider_off"> {
     const declared =
       this.registry.current(t.extension)?.permissions.permissions.deviceAccess?.services ?? [];
-    if (!declared.includes(t.service)) return false;
+    if (!declared.includes(t.service)) return "revoked";
     try {
       const d = await this.scopedDevice(
         { extension: t.extension, services: [t.service] },
         { orgId: t.orgId, accountId: t.accountId, conversationId: t.conversationId },
       );
-      return d.orgId === t.orgId && d.deviceId === t.deviceId && d.provider === t.providerName;
+      return d.orgId === t.orgId && d.deviceId === t.deviceId && d.provider === t.providerName
+        ? "stands"
+        : "revoked";
     } catch (e) {
-      if (e instanceof DeviceAccessError) return false;
+      if (e instanceof DeviceAccessError)
+        return e.code === "provider_unavailable" ? "provider_off" : "revoked";
       throw e;
     }
   }
 
   /**
    * Adds hosts to the conversation's device allowlist through the device page's own write
-   * (ceilings, validation, the `device.network_changed` audit), owner only.
+   * (ceilings, validation, the `device.network_changed` audit), owner only. Exact host names
+   * only, as an approved network ask grants: a wildcard is refused before anything is read.
    */
   async addNetworkHosts(
     caller: DeviceAccessCaller,
     scope: DeviceAccessScope & { hosts: string[] },
   ): Promise<void> {
+    const wildcard = scope.hosts.find((h) => typeof h !== "string" || h.includes("*"));
+    if (wildcard !== undefined)
+      throw new TypeError(
+        `${String(wildcard)} is not an exact host name: ctx.deviceAccess.addNetworkHosts takes exact host names only (no "*." wildcard), as an approved network ask grants.`,
+      );
     const d = await this.scopedDevice(caller, scope);
     await this.deviceWrites.addNetworkHostsIn(
       d.orgId,

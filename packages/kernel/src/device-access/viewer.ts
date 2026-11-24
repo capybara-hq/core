@@ -99,6 +99,14 @@ export const VIEWER_PING_INTERVAL_MS = 20_000;
  */
 export const VIEWER_PAUSED_LIMIT_MS = 30_000;
 
+/**
+ * How often an open viewer checks its ticket's record again ({@link DeviceAccessService.ticketCheck}):
+ * an access that lapsed mid-view (the extension switched off, the service no longer declared, the
+ * conversation deleted or its owner changed, the provider switched off) ends the view within this
+ * time. A timer of the viewer's own socket, cleared with it.
+ */
+export const VIEWER_RECHECK_MS = 60_000;
+
 /** A WebSocket close reason is at most 123 UTF-8 bytes. */
 const closeReason = (text: string): string => {
   let out = text;
@@ -417,8 +425,10 @@ interface OpenViewer {
  *   ticket, and opens locally.
  * - Every other device opens on the replica the viewer reached (the provider's `openStream`).
  *
- * A local open checks the record again ({@link DeviceAccessService.ticketStands}), holds the
- * device for the viewer's life ({@link SandboxService.holdForStream}: an open viewer counts as
+ * A local open checks the record again ({@link DeviceAccessService.ticketCheck}: 4401, or 4404
+ * when the device's provider is off in the org) and keeps checking it every
+ * {@link VIEWER_RECHECK_MS} while the viewer lives (a lapsed access closes it the same way), holds
+ * the device for the viewer's life ({@link SandboxService.holdForStream}: an open viewer counts as
  * device use) and audits `browser.view` / `browser.view_closed`; frames are never audited and
  * never pass through Redis or PG. Close codes: {@link VIEWER_CLOSE}. Everything settles when any
  * side closes: the browser socket, the hop, the provider stream, the hold (a lifecycle change)
@@ -444,10 +454,12 @@ export class DeviceStreamViewers {
   pingIntervalMs = VIEWER_PING_INTERVAL_MS;
   /** {@link VIEWER_PAUSED_LIMIT_MS} (a test seam). */
   pausedLimitMs = VIEWER_PAUSED_LIMIT_MS;
+  /** {@link VIEWER_RECHECK_MS} (a test seam). */
+  recheckMs = VIEWER_RECHECK_MS;
 
   constructor(
     @Inject(DeviceAccessService)
-    private readonly access: Pick<DeviceAccessService, "takeTicket" | "ticketStands">,
+    private readonly access: Pick<DeviceAccessService, "takeTicket" | "ticketCheck">,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "holdForStream">,
     @Inject(DialInGateway)
     private readonly gateway: Pick<DialInGateway, "holdsLocally" | "holderAddress">,
@@ -681,8 +693,10 @@ export class DeviceStreamViewers {
     record: DeviceStreamTicket,
     ticketId: string | null,
   ): Promise<void> {
-    if (!(await this.access.ticketStands(record))) {
-      end.close(VIEWER_CLOSE.badTicket, "invalid ticket");
+    const first = await this.access.ticketCheck(record);
+    if (first !== "stands") {
+      if (first === "provider_off") end.close(VIEWER_CLOSE.gone, "provider unavailable");
+      else end.close(VIEWER_CLOSE.badTicket, "invalid ticket");
       return;
     }
     const life = new AbortController();
@@ -723,6 +737,39 @@ export class DeviceStreamViewers {
     const started = Date.now();
     let viewed = false;
     let closeCode: number = VIEWER_CLOSE.normal;
+    // the record is checked again while the viewer lives: a lapsed access ends the view
+    const lapsed = new AbortController();
+    const lapse: { why: { code: number; reason: string } | null } = { why: null };
+    let checking = false;
+    const recheck = setInterval(() => {
+      if (checking || lapsed.signal.aborted) return;
+      checking = true;
+      void this.access
+        .ticketCheck(record)
+        .then(
+          (r) => {
+            if (r === "stands") return;
+            lapse.why =
+              r === "provider_off"
+                ? { code: VIEWER_CLOSE.gone, reason: "provider unavailable" }
+                : { code: VIEWER_CLOSE.badTicket, reason: "access revoked" };
+            lapsed.abort();
+          },
+          (err: unknown) => {
+            // fail closed: access that cannot be checked is not kept
+            this.log.warn("cannot check a device stream viewer's access again", {
+              deviceId: record.deviceId,
+              error: errMsg(err),
+            });
+            lapse.why = { code: VIEWER_CLOSE.internal, reason: "internal error" };
+            lapsed.abort();
+          },
+        )
+        .finally(() => {
+          checking = false;
+        });
+    }, this.recheckMs);
+    recheck.unref();
     try {
       if (!end.isOpen) {
         stream.close("viewer closed");
@@ -747,6 +794,7 @@ export class DeviceStreamViewers {
         end.closed.then(() => ({ side: "viewer" as const })),
         stream.closed.then((c) => ({ side: "stream" as const, reason: c.reason })),
         abortedOf(hold.signal).then(() => ({ side: "hold" as const })),
+        abortedOf(lapsed.signal).then(() => ({ side: "lapsed" as const })),
         // the browser's messages end only with the socket: a failed send is the one news here
         inbound.then((r) => ({ side: "send" as const, failed: r.failed })),
       ]);
@@ -766,6 +814,11 @@ export class DeviceStreamViewers {
       } else if (settled.side === "viewer" || settled.side === "send" || life.signal.aborted) {
         stream.close("viewer closed");
         closeCode = (await end.closed).code;
+      } else if (settled.side === "lapsed") {
+        const why = lapse.why ?? { code: VIEWER_CLOSE.badTicket, reason: "access revoked" };
+        stream.close("viewer access revoked");
+        closeCode = why.code;
+        end.close(closeCode, why.reason);
       } else if (settled.side === "stream") {
         closeCode = settled.reason === "device-offline" ? VIEWER_CLOSE.offline : VIEWER_CLOSE.gone;
         end.close(
@@ -781,6 +834,7 @@ export class DeviceStreamViewers {
         end.close(closeCode, "device lifecycle change");
       }
     } finally {
+      clearInterval(recheck);
       stream.close("viewer closed");
       await hold.release();
       if (viewed) {

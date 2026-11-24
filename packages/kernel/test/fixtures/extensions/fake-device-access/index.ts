@@ -19,7 +19,8 @@ import {
  *   ({@link fakeDeviceAccessCalls}).
  * - `echo` starts the echo service and answers its echo of `text`.
  * - `handoff` asks the person (`InputRequired`, one boolean field `done`) and answers what they
- *   said.
+ *   said; with `service: true` it first starts and asks the echo service (a launch reviewed in
+ *   the round that asks), and with `blocked` it also reports those hosts refused in that round.
  */
 export function fakeDeviceAccessCalls(): string[] {
   const g = globalThis as { __fakeDeviceAccessCalls?: string[] };
@@ -126,11 +127,24 @@ export default defineExtension({
         name: "handoff",
         description: "Test only: asks the user to finish something and waits for them.",
         defaultPolicy: "allow",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: {
+          type: "object",
+          properties: {
+            service: { type: "boolean" },
+            blocked: { type: "array", items: { type: "string" } },
+          },
+        },
       },
-      async (_input, call) => {
+      async (input, call) => {
         if (call.resume !== undefined)
           return text(`done: ${JSON.stringify(call.resume.answer?.done ?? null)}`);
+        const { service = false, blocked = [] } = input as {
+          service?: boolean;
+          blocked?: string[];
+        };
+        if (service) await echo(call, "before the handoff");
+        if (blocked.length > 0)
+          ctx.deviceAccess.reportBlockedHosts(call, blocked, { url: "https://example.org/" });
         return {
           kind: "input_required" as const,
           form: {

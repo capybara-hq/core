@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import Fastify from "fastify";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createKeyring } from "../../src/ctx/secrets.js";
@@ -21,6 +22,7 @@ import {
   hopHeaders,
   RECEIVE_HIGH_WATER_BYTES,
   VIEWER_MAX_MESSAGE_BYTES,
+  VIEWER_RECHECK_MS,
   verifyHopHeaders,
   WsEnd,
 } from "../../src/device-access/viewer.js";
@@ -550,6 +552,42 @@ describe("device stream viewer", () => {
     } finally {
       const keys = await redis.keys("throttler:*device-stream*");
       if (keys.length > 0) await redis.del(...keys);
+    }
+  });
+
+  it("an open viewer whose access lapses is closed: 4401 for the extension, 4404 for the provider", async () => {
+    const viewers = k.app.get(DeviceStreamViewers);
+    viewers.recheckMs = 50;
+    const setEnabled = (plugin: string, enabled: boolean) =>
+      sql`UPDATE capybara.extension_org_configs SET enabled = ${enabled}
+        WHERE plugin = ${plugin} AND org_id = ${orgId}`.execute(raw);
+    try {
+      // the extension is switched off in the org mid-view
+      const v = viewer(await mint());
+      expect(await roundTrip(v, "on")).toBe("on");
+      await setEnabled("fake-device-access", false);
+      try {
+        expect((await v.closed).code).toBe(4401);
+      } finally {
+        await setEnabled("fake-device-access", true);
+      }
+      // the device's provider is switched off in the org mid-view
+      const w = viewer(await mint());
+      expect(await roundTrip(w, "on")).toBe("on");
+      await setEnabled("device-fake", false);
+      try {
+        expect((await w.closed).code).toBe(4404);
+      } finally {
+        await setEnabled("device-fake", true);
+      }
+      // both closes are audited with their codes
+      const closes = await waitFor(async () => {
+        const r = await auditsOf("browser.view_closed", s.deviceId);
+        return r.length === 2 ? r : null;
+      });
+      expect(closes.map((r) => (r.detail as { code?: number }).code).sort()).toEqual([4401, 4404]);
+    } finally {
+      viewers.recheckMs = VIEWER_RECHECK_MS;
     }
   });
 

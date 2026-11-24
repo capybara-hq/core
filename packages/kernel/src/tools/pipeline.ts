@@ -144,7 +144,11 @@ import {
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy, type GrantKind } from "./policy.js";
-import { type QuestionRecord, QuestionsService } from "./questions.service.js";
+import {
+  type QuestionCarried,
+  type QuestionRecord,
+  QuestionsService,
+} from "./questions.service.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import {
   type AgentTools,
@@ -604,8 +608,17 @@ export interface ServiceBlocked {
 export type ExecOutcome =
   /** 工具返回了结果（可能是工具自己报告的错误，或畸形结果，由渲染阶段处理）。 */
   | { kind: "result"; result: unknown; blocked?: ServiceBlocked; review?: ReviewRecord }
-  /** 处理函数需要用户输入（表单尚未校验）。 */
-  | { kind: "input_required"; form: InputForm; state: unknown }
+  /**
+   * The handler needs the user's input (the form is not validated yet). `review` and `blocked`:
+   * what the round collected before it asked ({@link withBlocked}), kept for the call's result.
+   */
+  | {
+      kind: "input_required";
+      form: InputForm;
+      state: unknown;
+      blocked?: ServiceBlocked;
+      review?: ReviewRecord;
+    }
   /** 执行失败（超时、抛错、熔断、中止等），message 给模型看。 */
   | { kind: "error"; message: string; blocked?: ServiceBlocked; review?: ReviewRecord }
   /** 发起人未连接个人凭据：除错误结果外再写 `connection_required`。 */
@@ -910,13 +923,12 @@ const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
  * The outcome with what the call's scope collected: the hosts a device service reported refused
  * and the review record of a device service launch; unchanged when nothing was reported.
  */
-function withBlocked<O extends Extract<ExecOutcome, { kind: "result" | "error" }>>(
-  outcome: O,
-  scope: CallScope | undefined,
-): O;
+function withBlocked<
+  O extends Extract<ExecOutcome, { kind: "result" | "error" | "input_required" }>,
+>(outcome: O, scope: CallScope | undefined): O;
 function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOutcome;
 function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOutcome {
-  if (outcome.kind !== "result" && outcome.kind !== "error") return outcome;
+  if (outcome.kind === "connection_required") return outcome;
   const blocked = scope?.blocked;
   const review = scope?.review ?? null;
   return {
@@ -927,6 +939,55 @@ function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOu
       }),
     // a device service launch's review (ctx.deviceAccess), recorded with the call's result
     ...(review !== null && { review }),
+  };
+}
+
+/**
+ * What a call's earlier input rounds carried for its result ({@link QuestionCarried}): the latest
+ * launch review, and every refused host (the latest device and page) in one report.
+ */
+function carriedOf(rounds: readonly QuestionRecord[]): QuestionCarried {
+  let review: ReviewRecord | undefined;
+  let blocked: ServiceBlocked | undefined;
+  for (const r of rounds) {
+    if (r.carried?.review !== undefined) review = r.carried.review;
+    const b = r.carried?.blocked;
+    if (b !== undefined) blocked = mergeBlocked(blocked, b);
+  }
+  return {
+    ...(review !== undefined && { review }),
+    ...(blocked !== undefined && { blocked }),
+  };
+}
+
+/** Two refused-host reports of one call as one: the hosts of both, the later device and page. */
+function mergeBlocked(a: ServiceBlocked | undefined, b: ServiceBlocked): ServiceBlocked {
+  if (a === undefined) return { ...b, hosts: [...b.hosts] };
+  return {
+    deviceId: b.deviceId ?? a.deviceId,
+    hosts: [...new Set([...a.hosts, ...b.hosts])],
+    url: b.url ?? a.url,
+  };
+}
+
+/**
+ * The outcome with what earlier input rounds carried: their launch review when this round
+ * reviewed none, their refused hosts merged before this round's.
+ */
+function withCarried(outcome: ExecOutcome, carried: QuestionCarried): ExecOutcome {
+  if (outcome.kind === "connection_required") return outcome;
+  if (carried.review === undefined && carried.blocked === undefined) return outcome;
+  const blocked =
+    carried.blocked === undefined
+      ? outcome.blocked
+      : outcome.blocked === undefined
+        ? carried.blocked
+        : mergeBlocked(carried.blocked, outcome.blocked);
+  const review = outcome.review ?? carried.review;
+  return {
+    ...outcome,
+    ...(blocked !== undefined && { blocked }),
+    ...(review !== undefined && { review }),
   };
 }
 
@@ -1313,7 +1374,11 @@ export class ToolPipeline {
           idem.started(ctx.runId, call.id, attempt + 1),
         );
         if (rerun?.type !== "tool_call_started") {
-          return this.runCall(ctx, call, await resolve(), attempt + 1, resume);
+          // the asked hosts are settled: only an earlier round's launch review is carried
+          const { review: carriedReview } = carriedOf(rounds);
+          return this.runCall(ctx, call, await resolve(), attempt + 1, resume, {
+            ...(carriedReview !== undefined && { review: carriedReview }),
+          });
         }
         // the re-run started and its result was lost: the result is unknown, as below
         started = rerun;
@@ -1365,7 +1430,7 @@ export class ToolPipeline {
       });
       return undefined;
     }
-    return this.runCall(ctx, call, await resolve(), attempt, resume);
+    return this.runCall(ctx, call, await resolve(), attempt, resume, carriedOf(rounds));
   }
 
   private async runCall(
@@ -1374,6 +1439,8 @@ export class ToolPipeline {
     resolved: Resolved,
     attempt: number,
     resume: ToolResume | undefined,
+    /** What earlier input rounds of the call collected for its result ({@link carriedOf}). */
+    carried: QuestionCarried = {},
   ): Promise<WaitingFor | undefined> {
     // the command review's record for this call's result (absent: not reviewed, or no device)
     let review: ReviewRecord | undefined;
@@ -1810,9 +1877,11 @@ export class ToolPipeline {
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
+    // what earlier input rounds collected: a launch reviewed in a round that asked, the hosts a
+    // service reported refused there (this round, a resume, finds the service running)
+    outcome = withCarried(outcome, carried);
     // a device service launch's review during the call (ctx.deviceAccess, the call scope)
-    if (review === undefined && (outcome.kind === "result" || outcome.kind === "error"))
-      review = outcome.review;
+    if (review === undefined && outcome.kind !== "connection_required") review = outcome.review;
     // the record says a call ran outside the sandbox only when admission gave it that scope
     if (review !== undefined && isEscalatedCall(tool.key, input)) {
       const { sandbox: _asked, ...rest } = review;
@@ -1824,7 +1893,12 @@ export class ToolPipeline {
     // scheduled tasks spec §7, `fail` mode: no one answers an input request or connects an app
     if (unattendedFails(ctx.unattended) && ctx.unattended != null) {
       if (outcome.kind === "input_required") {
-        outcome = { kind: "error", message: UNATTENDED_QUESTION_ERROR };
+        outcome = {
+          kind: "error",
+          message: UNATTENDED_QUESTION_ERROR,
+          ...(outcome.blocked !== undefined && { blocked: outcome.blocked }),
+          ...(outcome.review !== undefined && { review: outcome.review }),
+        };
       } else if (outcome.kind === "connection_required") {
         await appendMissingGrant(
           this.deps.db,
@@ -1837,7 +1911,12 @@ export class ToolPipeline {
     if (outcome.kind === "input_required") {
       const asked = await this.askInput(ctx, call.id, tool.key, attempt, outcome);
       if (typeof asked !== "string") return asked;
-      outcome = { kind: "error", message: asked };
+      outcome = {
+        kind: "error",
+        message: asked,
+        ...(outcome.blocked !== undefined && { blocked: outcome.blocked }),
+        ...(outcome.review !== undefined && { review: outcome.review }),
+      };
     }
 
     const rendered =
@@ -3228,7 +3307,7 @@ export class ToolPipeline {
     callId: string,
     toolKey: string,
     attempt: number,
-    req: { form: InputForm; state: unknown },
+    req: { form: InputForm; state: unknown; blocked?: ServiceBlocked; review?: ReviewRecord },
   ): Promise<WaitingFor | string> {
     if (attempt > MAX_INPUT_ROUNDS) return TOO_MANY_INPUT_REQUESTS_TEXT;
     const problems = validateInputForm(req.form);
@@ -3253,6 +3332,13 @@ export class ToolPipeline {
       toolKey,
       form: req.form,
       state: JSON.parse(stateJson) as unknown,
+      // kept for the call's result, which a later round writes
+      ...((req.review !== undefined || req.blocked !== undefined) && {
+        carried: {
+          ...(req.review !== undefined && { review: req.review }),
+          ...(req.blocked !== undefined && { blocked: req.blocked }),
+        },
+      }),
     });
     return inputWait(q);
   }
@@ -3398,9 +3484,14 @@ export class ToolPipeline {
       if (r === "timeout") {
         return withBlocked({ kind: "error", message: timeoutText(tool.key, timeoutMs) }, scope);
       }
-      if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
+      // a launch reviewed before the call stopped or asked is kept with its result
+      if (r === "aborted")
+        return withBlocked({ kind: "error", message: RUN_STOPPED_DURING_TEXT }, scope);
       if (isInputRequired(r.value)) {
-        return { kind: "input_required", form: r.value.form, state: r.value.state ?? null };
+        return withBlocked(
+          { kind: "input_required", form: r.value.form, state: r.value.state ?? null },
+          scope,
+        );
       }
       return withBlocked({ kind: "result", result: r.value }, scope);
     } catch (e) {

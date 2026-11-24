@@ -640,6 +640,38 @@ describe("ctx.deviceAccess", () => {
     expect(audits[0]?.actor_account_id).toBe(s.accountId);
   });
 
+  it("addNetworkHosts takes exact host names only, as an approved ask grants", async () => {
+    // the org's ceiling would take the wildcard: the panel path still refuses it
+    const owner = await session(k, "owner");
+    const settings = (extraHosts: string[]) =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        payload: { deviceNetwork: { extraHosts } },
+      });
+    expect(
+      (await settings(["a.dev", "example.org", "cdn.example.org", "*.example.org"])).statusCode,
+    ).toBe(200);
+    try {
+      await expect(
+        access.addNetworkHosts(CALLER, {
+          orgId,
+          conversationId: s.conversationId,
+          accountId: s.accountId,
+          hosts: ["example.org", "*.example.org"],
+        }),
+      ).rejects.toThrow(/exact host names/);
+    } finally {
+      await settings(["a.dev", "example.org", "cdn.example.org"]);
+    }
+    const device = await db
+      .selectFrom("devices")
+      .select("network_hosts")
+      .where("id", "=", s.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(device.network_hosts).toEqual(["a.dev"]);
+  });
+
   it("addNetworkHosts re-applies the limits to a running service and starts nothing when it is stopped", async () => {
     allowReview();
     const ifRunning = async () =>
@@ -664,6 +696,60 @@ describe("ctx.deviceAccess", () => {
     expect(last.at(-1)?.[3]).toBe("stopped");
     expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
     expect((await status())?.state).toBe("stopped");
+  });
+
+  it("a launch reviewed in a round that asks for input keeps its review record and refused hosts", async () => {
+    allowReview();
+    await postMessage(
+      s.req,
+      orgId,
+      s.conversationId,
+      `tool:${HANDOFF_TOOL}:${JSON.stringify({ service: true, blocked: ["example.org"] })}`,
+    );
+    const q = await waitFor(
+      async () =>
+        db
+          .selectFrom("questions")
+          .select(["id", "call_id"])
+          .where("conversation_id", "=", s.conversationId)
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      15_000,
+      "a pending question",
+    );
+    expect(await fakeServiceStarts(sandboxRoot)).toBeGreaterThan(0);
+    await access.answerHandoff(CALLER, {
+      orgId,
+      conversationId: s.conversationId,
+      accountId: s.accountId,
+      callId: q.call_id,
+      done: true,
+    });
+    // the resumed round starts nothing (the service runs): the hosts refused before the question
+    // are asked about after it, and the result still carries the launch's review
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", s.conversationId)
+          .where("kind", "=", "network")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      15_000,
+      "the network ask",
+    );
+    expect(ask.detail).toMatchObject({ kind: "service", hosts: ["example.org"] });
+    const res = await s.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "deny" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = ofType(await eventsOf(db, s.conversationId), "tool_result").map((e) => e.payload);
+    expect(r?.content).toMatch(/done: true/);
+    expect(r?.review).toEqual({ decision: "allow", by: "rule", rule: null, reason: "test" });
   });
 
   it("answerHandoff answers the call's question with done=true", async () => {

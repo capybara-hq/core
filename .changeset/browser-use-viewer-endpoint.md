@@ -15,3 +15,6 @@ sockets are pinged and a socket paused for 30 s closes (1013); viewer upgrades a
 client address (`device-stream-ip`, 120 a minute).
 The web tier's upgrade proxy sends the client address as `X-Forwarded-For` on `/device/stream`
 only, so the per-address viewer limit counts each client; a valid ticket refunds its attempt.
+An open viewer checks its record again every minute and closes when the access lapsed: 4401 (the
+extension switched off, the service no longer declared, the conversation deleted or its owner
+changed), 4404 when the device's provider is off in the org.
