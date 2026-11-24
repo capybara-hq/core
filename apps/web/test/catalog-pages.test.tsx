@@ -58,7 +58,7 @@ const ADMIN_DEFAULTS: Routes = {
   "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
   // The org plugin detail's components in the org (their switches)
   "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
-  // The org plugin detail's 本组织的连接器 (the org's connectors)
+  // The org plugin detail's the org's connectors (the org's connectors)
   "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
   // The plugin `INSTALL` is an install of (its detail page shows the installs)
   "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
@@ -5133,7 +5133,7 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
         "crm",
       ),
     ).toBeTruthy();
-    // no connector from this plugin: no 本组织的连接器 section
+    // no connector from this plugin: no the org's connectors section
     expect(
       screen.queryByRole("region", { name: en.catalog.org.detail.connectors.title }),
     ).toBeNull();

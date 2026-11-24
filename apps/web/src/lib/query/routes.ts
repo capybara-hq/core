@@ -1117,7 +1117,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/plugins/[itemId]",
-    // Members up: the item, its components and the org's connectors (本组织的连接器); org admins
+    // Members up: the item, its components and the org's connectors (the org's connectors); org admins
     // also read the installs (the installed section) and the extensions.
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "member")
