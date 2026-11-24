@@ -86,12 +86,22 @@ export type ApprovalState =
 export type NetworkAsk = {
   /** The device-layer hosts asked for (model-controlled: drawn as code, never markup). */
   hosts: string[];
-  /** The refused command (model-controlled), clipped to {@link NETWORK_COMMAND_MAX} characters. */
+  /**
+   * The refused command (model-controlled), clipped to {@link NETWORK_COMMAND_MAX} characters;
+   * empty: no command block (a device service's ask with no known page).
+   */
   command: string;
   /** The command's description (model-controlled), when it had one. */
   description?: string;
   /** When an "always" (add to the device's list) takes effect; its hint under the button. */
   appliesAt?: "next-command" | "next-use" | "files-reset";
+  /**
+   * A title in place of the default question (plain text, already in the UI's language): a device
+   * service's ask names what asked ("The agent's browser wants to reach …").
+   */
+  title?: string;
+  /** A body line in place of the default "this command was blocked" line (plain text). */
+  body?: string;
 };
 
 /** How much of a network ask's command the card shows. */
@@ -927,22 +937,25 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
       data-pending="true"
       data-network="true"
       role="group"
-      aria-label={plainCopy(titleTpl, vars)}
+      aria-label={p.network.title ?? plainCopy(titleTpl, vars)}
     >
       <div className="cb-hcard-head">
         <span className="cb-hcard-dot" aria-hidden="true" />
         <strong className="cb-hcard-strong" data-part="network-title">
-          {richCopy(titleTpl, vars)}
+          {p.network.title ?? richCopy(titleTpl, vars)}
         </strong>
       </div>
       <div data-part="network-body">
-        {description
-          ? fillCopy(t("hitl.network.body"), { description })
-          : t("hitl.network.bodyPlain")}
+        {p.network.body ??
+          (description
+            ? fillCopy(t("hitl.network.body"), { description })
+            : t("hitl.network.bodyPlain"))}
       </div>
-      <pre className="cb-hcard-json" data-part="network-command">
-        {clipCommand(p.network.command)}
-      </pre>
+      {p.network.command !== "" ? (
+        <pre className="cb-hcard-json" data-part="network-command">
+          {clipCommand(p.network.command)}
+        </pre>
+      ) : null}
       {one ? (
         <div className="cb-net-hosts">
           <HostName host={hosts[0] ?? ""} />

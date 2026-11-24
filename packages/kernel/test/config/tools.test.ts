@@ -60,6 +60,26 @@ describe("tools 配置段", () => {
     }
   });
 
+  it("gateway.internalUrl takes an http or https origin only", () => {
+    expect(KernelConfigSchema.parse(base).gateway.internalUrl).toBeUndefined();
+    const ok = KernelConfigSchema.parse({
+      ...base,
+      gateway: { internalUrl: "http://10.0.0.5:8080" },
+    });
+    expect(ok.gateway.internalUrl).toBe("http://10.0.0.5:8080");
+    for (const internalUrl of [
+      "not a url",
+      "ftp://10.0.0.5",
+      "http://10.0.0.5:8080/hop",
+      "http://u:p@10.0.0.5",
+      "http://10.0.0.5/?a=1",
+    ]) {
+      expect(KernelConfigSchema.safeParse({ ...base, gateway: { internalUrl } }).success).toBe(
+        false,
+      );
+    }
+  });
+
   it("部分覆盖时其余字段保持默认", () => {
     const c = KernelConfigSchema.parse({ ...base, tools: { timeoutMs: 1000 } });
     expect(c.tools.timeoutMs).toBe(1000);

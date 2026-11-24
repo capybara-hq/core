@@ -375,7 +375,18 @@ export function ApprovalCard({
       : view && typeof view.input === "object" && view.input !== null
         ? (view.input as Record<string, unknown>)
         : {};
-  const network = networkAskOf(item, view);
+  const netAsk = networkAskOf(item, view);
+  // a device service's ask (the agent's browser) words its own title and body
+  const network: NetworkAsk | undefined =
+    netAsk?.service === true
+      ? {
+          hosts: netAsk.hosts,
+          command: netAsk.command,
+          ...(netAsk.appliesAt ? { appliesAt: netAsk.appliesAt } : {}),
+          title: t("network.serviceTitle", { host: netAsk.hosts.join(", ") }),
+          body: t("network.serviceNote"),
+        }
+      : netAsk;
   const asked = commandAskOf(item, view);
   const lead = asked === undefined ? undefined : commandLeadOf(item, view);
   // the card words the ask in the UI's language; the kernel's reason stays model-facing text
@@ -491,7 +502,9 @@ export function ApprovalCard({
       return (
         <div data-role="approval" data-approval-id={item.approvalId}>
           <Text variant="small" tone="muted">
-            {t("network.otherApprover", { hosts: network.hosts.join(", ") })}
+            {t(netAsk?.service ? "network.serviceOtherApprover" : "network.otherApprover", {
+              hosts: network.hosts.join(", "),
+            })}
           </Text>
         </div>
       );
@@ -633,12 +646,22 @@ export function commandLeadOf(
 /**
  * The network ask of an approval: from its detail once read, else from the log (the hosts of
  * `approval_requested.network`, the command of the call's input); undefined for a tool approval.
+ * `service`: a device service such as the agent's browser asked (browser use spec §7.1), not a
+ * command (before the detail is read: an ask recorded under another tool than `Bash`).
  */
 export function networkAskOf(
-  item: Pick<ApprovalItem, "network" | "input">,
+  item: Pick<ApprovalItem, "network" | "input" | "toolKey">,
   view: Approval | null | undefined,
-): NetworkAsk | undefined {
+): (NetworkAsk & { service?: true }) | undefined {
   const detail = view?.kind === "network" ? view.detail : undefined;
+  if (detail?.kind === "service") {
+    return {
+      hosts: [...detail.hosts],
+      command: detail.url ?? "",
+      ...(detail.appliesAt ? { appliesAt: detail.appliesAt } : {}),
+      service: true,
+    };
+  }
   if (detail) {
     return {
       hosts: detail.hosts.map((h) => h.host),
@@ -648,6 +671,7 @@ export function networkAskOf(
     };
   }
   if (item.network === undefined) return undefined;
+  if (item.toolKey !== "Bash") return { hosts: item.network.hosts, command: "", service: true };
   const description = stringField(item.input, "description");
   return {
     hosts: item.network.hosts,

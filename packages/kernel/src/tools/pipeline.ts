@@ -2,6 +2,7 @@ import {
   type AuthInjection,
   type ConnectorSession,
   type ConversationSource,
+  DeviceAccessError,
   type FormAnswer,
   type InputForm,
   type InputRequired,
@@ -122,6 +123,7 @@ import {
 import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
+import { attachCallScope, type CallScope } from "./call-scope.js";
 import { canonicalJson } from "./canonical-json.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
@@ -134,13 +136,19 @@ import {
   NETWORK_ASK_KEPT_MAX_BYTES,
   networkBlockedIdemKey,
   planNetworkAsk,
+  serviceAskedNote,
+  serviceAskTerms,
   settledNetworkNotes,
   withNetworkNotes,
 } from "./network-asks.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy, type GrantKind } from "./policy.js";
-import { type QuestionRecord, QuestionsService } from "./questions.service.js";
+import {
+  type QuestionCarried,
+  type QuestionRecord,
+  QuestionsService,
+} from "./questions.service.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import {
   type AgentTools,
@@ -589,13 +597,34 @@ export type ToolStepOutcome = { kind: "done" } | { kind: "suspended"; waitingFor
 export type ToolResume = { state: unknown; answer: FormAnswer | null };
 
 /** 执行阶段的结果。 */
+/**
+ * Hosts a device service reported refused during a handler's call (the call scope, browser use
+ * spec §7.1): the pipeline asks the device owner about them after the call.
+ */
+export interface ServiceBlocked {
+  /** The device the call's `ctx.deviceAccess` calls resolved; null: the conversation's device. */
+  deviceId: string | null;
+  hosts: string[];
+  /** The page the refusals came from, when the service said. */
+  url: string | null;
+}
+
 export type ExecOutcome =
   /** 工具返回了结果（可能是工具自己报告的错误，或畸形结果，由渲染阶段处理）。 */
-  | { kind: "result"; result: unknown }
-  /** 处理函数需要用户输入（表单尚未校验）。 */
-  | { kind: "input_required"; form: InputForm; state: unknown }
+  | { kind: "result"; result: unknown; blocked?: ServiceBlocked; review?: ReviewRecord }
+  /**
+   * The handler needs the user's input (the form is not validated yet). `review` and `blocked`:
+   * what the round collected before it asked ({@link withBlocked}), kept for the call's result.
+   */
+  | {
+      kind: "input_required";
+      form: InputForm;
+      state: unknown;
+      blocked?: ServiceBlocked;
+      review?: ReviewRecord;
+    }
   /** 执行失败（超时、抛错、熔断、中止等），message 给模型看。 */
-  | { kind: "error"; message: string }
+  | { kind: "error"; message: string; blocked?: ServiceBlocked; review?: ReviewRecord }
   /** 发起人未连接个人凭据：除错误结果外再写 `connection_required`。 */
   | {
       kind: "connection_required";
@@ -893,6 +922,92 @@ const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
   ...(kept?.display !== undefined && { display: kept.display }),
   ...(kept?.view !== undefined && { view: kept.view }),
 });
+
+/**
+ * The outcome with what the call's scope collected: the hosts a device service reported refused
+ * and the review record of a device service launch; unchanged when nothing was reported.
+ */
+function withBlocked<
+  O extends Extract<ExecOutcome, { kind: "result" | "error" | "input_required" }>,
+>(outcome: O, scope: CallScope | undefined): O;
+function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOutcome;
+function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOutcome {
+  if (outcome.kind === "connection_required") return outcome;
+  const blocked = scope?.blocked;
+  const review = scope?.review ?? null;
+  return {
+    ...outcome,
+    ...(blocked != null &&
+      blocked.hosts.size > 0 && {
+        blocked: { deviceId: blocked.deviceId, hosts: [...blocked.hosts], url: blocked.url },
+      }),
+    // a device service launch's review (ctx.deviceAccess), recorded with the call's result
+    ...(review !== null && { review }),
+  };
+}
+
+/**
+ * What a call's earlier input rounds carried for its result ({@link QuestionCarried}): the latest
+ * launch review, and every refused host (the latest device and page) in one report.
+ */
+function carriedOf(rounds: readonly QuestionRecord[]): QuestionCarried {
+  let review: ReviewRecord | undefined;
+  let blocked: ServiceBlocked | undefined;
+  for (const r of rounds) {
+    if (r.carried?.review !== undefined) review = r.carried.review;
+    const b = r.carried?.blocked;
+    if (b !== undefined) blocked = mergeBlocked(blocked, b);
+  }
+  return {
+    ...(review !== undefined && { review }),
+    ...(blocked !== undefined && { blocked }),
+  };
+}
+
+/** Two refused-host reports of one call as one: the hosts of both, the later device and page. */
+function mergeBlocked(a: ServiceBlocked | undefined, b: ServiceBlocked): ServiceBlocked {
+  if (a === undefined) return { ...b, hosts: [...b.hosts] };
+  return {
+    deviceId: b.deviceId ?? a.deviceId,
+    hosts: [...new Set([...a.hosts, ...b.hosts])],
+    url: b.url ?? a.url,
+  };
+}
+
+/**
+ * The outcome with what earlier input rounds carried: their launch review when this round
+ * reviewed none, their refused hosts merged before this round's.
+ */
+function withCarried(outcome: ExecOutcome, carried: QuestionCarried): ExecOutcome {
+  if (outcome.kind === "connection_required") return outcome;
+  if (carried.review === undefined && carried.blocked === undefined) return outcome;
+  const blocked =
+    carried.blocked === undefined
+      ? outcome.blocked
+      : outcome.blocked === undefined
+        ? carried.blocked
+        : mergeBlocked(carried.blocked, outcome.blocked);
+  const review = outcome.review ?? carried.review;
+  return {
+    ...outcome,
+    ...(blocked !== undefined && { blocked }),
+    ...(review !== undefined && { review }),
+  };
+}
+
+/**
+ * The attempt of a device service's call whose network ask was approved (the person added its
+ * hosts to the device's list, browser use spec §7.1) with hosts in force from the next command:
+ * the call runs again in the next attempt. Null for any other ask, or none.
+ */
+function serviceRerunAfter(ask: ApprovalRecord | null): number | null {
+  const d = ask?.detail;
+  if (ask?.status !== "approved" || ask.scope !== "always" || d?.kind !== "service") return null;
+  // hosts that apply only at the device's next use or after a files reset are not in force for
+  // a re-run now: the kept result is written with the outcome's note instead, as for a command
+  if (d.appliesAt !== "next-command") return null;
+  return d.attempt;
+}
 
 /** A builtin result's kernel-internal network report (see `BuiltinResult.networkReport`). */
 function networkReportOf(
@@ -1207,42 +1322,70 @@ export class ToolPipeline {
       await this.writeResult(ctx, call.id, last.toolKey, skippedResult(last.toolKey));
       return undefined;
     }
-    const attempt = rounds.length + 1;
-    const started = await this.deps.eventLog.findByIdem(
+    let attempt = rounds.length + 1;
+    // a device service's call that ran again after its network ask took one attempt more (browser
+    // use spec §7.1): input rounds the re-run asked come after it
+    if (rounds.length > 0) {
+      const asked = serviceRerunAfter(await this.deps.approvals.networkForCall(ctx.runId, call.id));
+      if (asked !== null && attempt > asked) attempt += 1;
+    }
+    const resume: ToolResume | undefined = last
+      ? { state: last.state, answer: last.status === "answered" ? last.answer : null }
+      : undefined;
+    let started = await this.deps.eventLog.findByIdem(
       ctx.conversationId,
       idem.started(ctx.runId, call.id, attempt),
     );
     if (started?.type === "tool_call_started") {
       // a command that ran and was refused a network host waits for the device owner (network
       // ask-to-allow spec §6.2, P-D2): pending → wait on; settled → its kept result and the
-      // outcome's note (the command is never run again; its tool.called was audited when it ran)
+      // outcome's note (the command is never run again; its tool.called was audited when it ran).
+      // A device service's ask (browser use spec §7.1) belongs to the attempt that asked; once
+      // the person added its hosts to the device's list the call runs again in the next attempt
       const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
-      if (ask !== null) {
+      const askedHere =
+        ask !== null && (ask.detail?.kind !== "service" || ask.detail.attempt === attempt);
+      if (ask !== null && askedHere) {
         const notes = settledNetworkNotes(ask, approvalHours(ask));
         if (notes === null) return approvalWait(ask);
-        const kept = ask.detail?.result;
-        // the device code the command printed is carried in the kept result: write its
-        // display-only event here too (a crash before the ask's first write, or an older kept
-        // result; the event's ids and the per-conversation code check keep it to one)
-        const keptCode = validLoginCode(kept?.loginCode);
-        const pre: AppendEvent[] =
-          keptCode !== undefined &&
-          !(await this.deps.eventLog.deviceCodeShown(ctx.conversationId, keptCode.code))
-            ? [deviceCodeEvent(ctx.runId, ctx.step, call.id, keptCode)]
-            : [];
-        await this.writeResult(
-          ctx,
-          call.id,
-          call.name,
-          {
-            ...keptExtras(kept),
-            content: withNetworkNotes(kept?.content ?? UNKNOWN_RESULT_TEXT, notes),
-            isError: kept?.isError ?? true,
-            ...(kept?.review !== undefined && { review: kept.review }),
-          },
-          pre,
+        if (serviceRerunAfter(ask) === null) {
+          const kept = ask.detail?.result;
+          // the device code the command printed is carried in the kept result: write its
+          // display-only event here too (a crash before the ask's first write, or an older kept
+          // result; the event's ids and the per-conversation code check keep it to one)
+          const keptCode = validLoginCode(kept?.loginCode);
+          const pre: AppendEvent[] =
+            keptCode !== undefined &&
+            !(await this.deps.eventLog.deviceCodeShown(ctx.conversationId, keptCode.code))
+              ? [deviceCodeEvent(ctx.runId, ctx.step, call.id, keptCode)]
+              : [];
+          await this.writeResult(
+            ctx,
+            call.id,
+            call.name,
+            {
+              ...keptExtras(kept),
+              content: withNetworkNotes(kept?.content ?? UNKNOWN_RESULT_TEXT, notes),
+              isError: kept?.isError ?? true,
+              ...(kept?.review !== undefined && { review: kept.review }),
+            },
+            pre,
+          );
+          return undefined;
+        }
+        const rerun = await this.deps.eventLog.findByIdem(
+          ctx.conversationId,
+          idem.started(ctx.runId, call.id, attempt + 1),
         );
-        return undefined;
+        if (rerun?.type !== "tool_call_started") {
+          // the asked hosts are settled: only an earlier round's launch review is carried
+          const { review: carriedReview } = carriedOf(rounds);
+          return this.runCall(ctx, call, await resolve(), attempt + 1, resume, {
+            ...(carriedReview !== undefined && { review: carriedReview }),
+          });
+        }
+        // the re-run started and its result was lost: the result is unknown, as below
+        started = rerun;
       }
       // 确实开始执行过：照样审计 tool.called（耗时未知）；放行依据只认批准了所执行定义的审批记录
       const key = started.payload.toolKey;
@@ -1291,10 +1434,7 @@ export class ToolPipeline {
       });
       return undefined;
     }
-    const resume: ToolResume | undefined = last
-      ? { state: last.state, answer: last.status === "answered" ? last.answer : null }
-      : undefined;
-    return this.runCall(ctx, call, await resolve(), attempt, resume);
+    return this.runCall(ctx, call, await resolve(), attempt, resume, carriedOf(rounds));
   }
 
   private async runCall(
@@ -1303,6 +1443,8 @@ export class ToolPipeline {
     resolved: Resolved,
     attempt: number,
     resume: ToolResume | undefined,
+    /** What earlier input rounds of the call collected for its result ({@link carriedOf}). */
+    carried: QuestionCarried = {},
   ): Promise<WaitingFor | undefined> {
     // the command review's record for this call's result (absent: not reviewed, or no device)
     let review: ReviewRecord | undefined;
@@ -1743,6 +1885,11 @@ export class ToolPipeline {
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
+    // what earlier input rounds collected: a launch reviewed in a round that asked, the hosts a
+    // service reported refused there (this round, a resume, finds the service running)
+    outcome = withCarried(outcome, carried);
+    // a device service launch's review during the call (ctx.deviceAccess, the call scope)
+    if (review === undefined && outcome.kind !== "connection_required") review = outcome.review;
     // the record says a call ran outside the sandbox only when admission gave it that scope
     if (review !== undefined && isEscalatedCall(tool.key, input)) {
       const { sandbox: _asked, ...rest } = review;
@@ -1754,7 +1901,12 @@ export class ToolPipeline {
     // scheduled tasks spec §7, `fail` mode: no one answers an input request or connects an app
     if (unattendedFails(ctx.unattended) && ctx.unattended != null) {
       if (outcome.kind === "input_required") {
-        outcome = { kind: "error", message: UNATTENDED_QUESTION_ERROR };
+        outcome = {
+          kind: "error",
+          message: UNATTENDED_QUESTION_ERROR,
+          ...(outcome.blocked !== undefined && { blocked: outcome.blocked }),
+          ...(outcome.review !== undefined && { review: outcome.review }),
+        };
       } else if (outcome.kind === "connection_required") {
         await appendMissingGrant(
           this.deps.db,
@@ -1767,7 +1919,12 @@ export class ToolPipeline {
     if (outcome.kind === "input_required") {
       const asked = await this.askInput(ctx, call.id, tool.key, attempt, outcome);
       if (typeof asked !== "string") return asked;
-      outcome = { kind: "error", message: asked };
+      outcome = {
+        kind: "error",
+        message: asked,
+        ...(outcome.blocked !== undefined && { blocked: outcome.blocked }),
+        ...(outcome.review !== undefined && { review: outcome.review }),
+      };
     }
 
     const rendered =
@@ -1857,10 +2014,27 @@ export class ToolPipeline {
     // a foreground command refused network hosts (network ask-to-allow spec §6.2): display-only
     // `network_blocked` before the result, then an ask to the device owner (the run waits; the
     // result is written when the ask settles) or notes after the output
-    const report =
+    const commandReport =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? networkReportOf(outcome.result)
         : undefined;
+    // a device service's refusals reported in the call scope (browser use spec §7.1), any source:
+    // asked as "always" only, the call runs again once approved
+    // a report about another device than the conversation's is ignored: only the device the call
+    // works in may be asked about, and only its owner
+    const scoped =
+      commandReport === undefined && (outcome.kind === "result" || outcome.kind === "error")
+        ? await this.ownDeviceReport(ctx, outKey, outcome.blocked)
+        : undefined;
+    const report =
+      commandReport ??
+      (scoped === undefined
+        ? undefined
+        : {
+            deviceId: scoped.deviceId,
+            // a service reports host names only: the event carries the HTTPS port
+            blocked: scoped.hosts.map((host) => ({ host, port: 443, layer: "device" as const })),
+          });
     let content = spilled.content;
     if (report !== undefined) {
       const handled = await this.networkBlocked(
@@ -1886,6 +2060,13 @@ export class ToolPipeline {
         },
         reviewedRoots.escalation,
         reviewedRoots.escalationRefusal,
+        scoped === undefined
+          ? undefined
+          : {
+              name: tool.source.kind === "plugin" ? tool.source.plugin : tool.key,
+              attempt,
+              url: scoped.url,
+            },
       );
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
@@ -2808,6 +2989,11 @@ export class ToolPipeline {
     escalation?: "available" | "escalated",
     /** Why this call could not run outside the sandbox here (absent when it could). */
     escalationRefusal?: string,
+    /**
+     * A device service's refusals (browser use spec §7.1): the extension whose service asked and
+     * the call's attempt. Only "always" is offered; once approved the call runs again.
+     */
+    service?: { name: string; attempt: number; url: string | null },
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -2836,13 +3022,16 @@ export class ToolPipeline {
     const plan = planNetworkAsk(hosts, run, {
       unattended: ctx.unattended,
       outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
-      ...(sandbox !== undefined && {
-        ...deviceAskTerms(sandbox),
-        // the hint follows admission's verdict for this call (never a recomputation), and only
-        // the open network makes a private address the one thing escalation adds
-        escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
-      }),
-      ...(escalationRefusal !== undefined && { escalationRefusal }),
+      ...(sandbox !== undefined &&
+        (service !== undefined
+          ? serviceAskTerms(sandbox)
+          : {
+              ...deviceAskTerms(sandbox),
+              // the hint follows admission's verdict for this call (never a recomputation), and
+              // only the open network makes a private address the one thing escalation adds
+              escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
+            })),
+      ...(service === undefined && escalationRefusal !== undefined && { escalationRefusal }),
     });
     if (ctx.unattended != null) {
       for (const key of plan.missingGrants) {
@@ -2852,6 +3041,18 @@ export class ToolPipeline {
     const offer = plan.offer;
     if (plan.ask.length === 0 || offer === undefined)
       return { kind: "write", event, notes: plan.notes };
+    // one ask per call: a service call that ran again after its ask is not asked again; only a
+    // would-be ask is replaced, the plan's other notes (a host on the list, not yet applied) stay
+    if (
+      service !== undefined &&
+      (await this.deps.approvals.networkForCall(ctx.runId, callId)) !== null
+    ) {
+      return {
+        kind: "write",
+        event,
+        notes: [...plan.notes, serviceAskedNote(plan.ask.map((h) => h.host))],
+      };
+    }
     // the device's owner is the only person who may decide (spec §5.2)
     const owner = await this.deps.db
       .selectFrom("devices")
@@ -2905,17 +3106,61 @@ export class ToolPipeline {
       step: ctx.step,
       callId,
       requestedFor: owner.owner_account_id,
-      detail: {
-        deviceId: report.deviceId,
-        hosts: plan.ask,
-        command: typeof given.command === "string" ? clipText(given.command, 2000) : "",
-        description: typeof given.description === "string" ? given.description : null,
-        appliesAt: offer.appliesAt,
-        result: kept,
-      },
+      toolKey,
+      detail:
+        service === undefined
+          ? {
+              kind: "command",
+              deviceId: report.deviceId,
+              hosts: plan.ask,
+              command: typeof given.command === "string" ? clipText(given.command, 2000) : "",
+              description: typeof given.description === "string" ? given.description : null,
+              appliesAt: offer.appliesAt,
+              result: kept,
+            }
+          : {
+              kind: "service",
+              deviceId: report.deviceId,
+              service: service.name,
+              url: service.url,
+              hosts: plan.ask.map((h) => h.host),
+              attempt: service.attempt,
+              appliesAt: offer.appliesAt,
+              result: kept,
+            },
       scopes: offer.scopes,
     });
     return { kind: "wait", wait: approvalWait(ask), content: kept.content };
+  }
+
+  /**
+   * A device service's report (the call scope, browser use spec §7.1) on the device the call's
+   * conversation works in (the root conversation's for a sub-agent, as the sandbox tools resolve
+   * it): a report that names no device is about that one; a report naming another device id (the
+   * conversation moved to another device during the call) is ignored with a warning, never asked
+   * about.
+   */
+  private async ownDeviceReport(
+    ctx: ToolStepContext,
+    toolKey: string,
+    blocked: ServiceBlocked | undefined,
+  ): Promise<(ServiceBlocked & { deviceId: string }) | undefined> {
+    if (blocked === undefined) return undefined;
+    const conv = await this.deps.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", ctx.parent?.rootConversationId ?? ctx.conversationId)
+      .where("org_id", "=", ctx.orgId)
+      .executeTakeFirst();
+    const deviceId = conv?.device_id ?? null;
+    if (deviceId !== null && (blocked.deviceId === null || blocked.deviceId === deviceId))
+      return { ...blocked, deviceId };
+    this.deps.log.warn("ignored refused hosts reported for another device than the call's", {
+      runId: ctx.runId,
+      toolKey,
+      deviceId: blocked.deviceId,
+    });
+    return undefined;
   }
 
   /** Appends a sub-agent's connect card to its root conversation ({@link rootSurfaceOf}). */
@@ -3070,7 +3315,7 @@ export class ToolPipeline {
     callId: string,
     toolKey: string,
     attempt: number,
-    req: { form: InputForm; state: unknown },
+    req: { form: InputForm; state: unknown; blocked?: ServiceBlocked; review?: ReviewRecord },
   ): Promise<WaitingFor | string> {
     if (attempt > MAX_INPUT_ROUNDS) return TOO_MANY_INPUT_REQUESTS_TEXT;
     const problems = validateInputForm(req.form);
@@ -3095,6 +3340,13 @@ export class ToolPipeline {
       toolKey,
       form: req.form,
       state: JSON.parse(stateJson) as unknown,
+      // kept for the call's result, which a later round writes
+      ...((req.review !== undefined || req.blocked !== undefined) && {
+        carried: {
+          ...(req.review !== undefined && { review: req.review }),
+          ...(req.blocked !== undefined && { blocked: req.blocked }),
+        },
+      }),
     });
     return inputWait(q);
   }
@@ -3189,6 +3441,7 @@ export class ToolPipeline {
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
     const timeoutMs = tool.timeoutMs?.(input) ?? this.config.get().tools.timeoutMs;
+    let scope: CallScope | undefined;
     try {
       // a plugin tool runs with the extension's effective config for the org, never without it
       // (layering spec A §6): one read per call, cached by EffectiveConfigs
@@ -3211,21 +3464,46 @@ export class ToolPipeline {
         async (signal) => {
           await this.txHost.run(async () => {});
           signal.throwIfAborted();
-          return handler(input, { ...base, ...config, signal });
+          // the call scope lives on this call's own context object (never a module map)
+          const call = { ...base, ...config, signal };
+          scope = attachCallScope(call, {
+            runId: ctx.runId,
+            step: ctx.step,
+            rootConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
+            unattended: ctx.unattended != null,
+            agentVersion: ctx.agentVersion,
+            ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+            ...(ctx.parent !== undefined && {
+              parent: {
+                conversationId: ctx.parent.conversationId,
+                runId: ctx.parent.runId,
+                callId: ctx.parent.callId,
+                ...(ctx.parent.budgetRunId !== undefined && {
+                  budgetRunId: ctx.parent.budgetRunId,
+                }),
+              },
+            }),
+          });
+          return handler(input, call);
         },
         undefined,
         timeoutMs,
       );
       if (r === "timeout") {
-        return { kind: "error", message: timeoutText(tool.key, timeoutMs) };
+        return withBlocked({ kind: "error", message: timeoutText(tool.key, timeoutMs) }, scope);
       }
-      if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
+      // a launch reviewed before the call stopped or asked is kept with its result
+      if (r === "aborted")
+        return withBlocked({ kind: "error", message: RUN_STOPPED_DURING_TEXT }, scope);
       if (isInputRequired(r.value)) {
-        return { kind: "input_required", form: r.value.form, state: r.value.state ?? null };
+        return withBlocked(
+          { kind: "input_required", form: r.value.form, state: r.value.state ?? null },
+          scope,
+        );
       }
-      return { kind: "result", result: r.value };
+      return withBlocked({ kind: "result", result: r.value }, scope);
     } catch (e) {
-      return this.thrown(tool.key, e);
+      return withBlocked(this.thrown(tool.key, e), scope);
     }
   }
 
@@ -3408,6 +3686,8 @@ export class ToolPipeline {
   /** 抛出的错误 → 给模型的结果：ToolError 的消息原样（插件约定为英文、可操作），其他只给错误类名。 */
   private thrown(key: string, e: unknown): ExecOutcome {
     if (e instanceof ToolError) return { kind: "error", message: e.message };
+    // a ctx.deviceAccess refusal the handler let through: its message is actionable English
+    if (e instanceof DeviceAccessError) return { kind: "error", message: e.message };
     // an extension tool's ctx.models.embed denied by a policy hook (spec B §5.4): the model sees the
     // deny text (sanitized reason), as for a denied tool call, not a generic failure
     if (e instanceof ApiError && e.code === "model.hook_denied") {

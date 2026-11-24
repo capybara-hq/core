@@ -20,6 +20,9 @@ import { credentialIdentity, type InstanceBinder } from "./exec/instance-binding
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DrainPendingError } from "./exec/operation-supervisor.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "./server-ops.js";
+import { isServiceOpBody, serveServiceOp } from "./services/ops.js";
+import { DialInStreamBridge, isKernelStreamFrame } from "./services/stream-bridge.js";
+import type { ServiceSupervisor } from "./services/supervisor.js";
 import type { Credential } from "./state.js";
 
 /**
@@ -331,6 +334,11 @@ export function serveStagedSession(
   owner?: StagedOwnerPolicy,
   /** Serves the machine lifecycle `create` and `stop`; without it they are unsupported. */
   machine?: StagedMachineControl,
+  /**
+   * The device's services (browser use spec §5, §6.1): the relay's `service.*` bodies and the
+   * dial-in streams to them; without it both are refused.
+   */
+  services?: ServiceSupervisor,
 ): StagedSession {
   if (!state || state.discarded)
     throw new Error("Serve the session with the current credential's session state");
@@ -400,6 +408,27 @@ export function serveStagedSession(
   };
   const refuse = (id: string, kind: "unsupported" | "error", message: string) =>
     deliverHere({ type: "res", id, ok: false, error: { kind, message } });
+  /** Services and streams run under the bound generation's sandbox: none while unbound. */
+  const bound = () =>
+    binder ? binder.current() !== undefined : report.body.instanceGeneration !== null;
+  // this socket's streams: frames go straight over it, each within its capacity
+  const streams = new DialInStreamBridge(
+    {
+      send(text) {
+        if (ready === undefined || socket.readyState !== socket.OPEN) return false;
+        if (Buffer.byteLength(text) > limit()) return false;
+        socket.send(text);
+        return true;
+      },
+      maxFrameBytes: limit,
+    },
+    async (body, signal) => {
+      if (!services) throw new Error("This device program serves no device streams");
+      if (!bound())
+        throw new Error("Instance is unbound; complete authenticated binding before streams");
+      return services.openStream(body, signal);
+    },
+  );
   const credentialChanged = () => socket.close(4401, "Credential changed; reconnect");
   state.sockets.add(credentialChanged);
   socket.on("message", (data, binary) => {
@@ -434,6 +463,51 @@ export function serveStagedSession(
       if (envelope.type === "cancel") {
         state.pending.delete(envelope.id);
         state.running.get(envelope.id)?.ctl.abort();
+        return;
+      }
+      if (isKernelStreamFrame(envelope)) {
+        streams.onFrame(envelope);
+        return;
+      }
+      if (envelope.type !== "req")
+        throw new Error(`Unexpected ${(envelope as { type: string }).type} frame`);
+      // a device service body (`service.*`, the device-local provider's): answered like an
+      // operation, with a typed error for a malformed one
+      if (isServiceOpBody(envelope.body)) {
+        const id = envelope.id;
+        if (!bound()) {
+          refuse(
+            id,
+            "unsupported",
+            "Instance is unbound; complete authenticated binding before services",
+          );
+          return;
+        }
+        if (state.running.has(id)) {
+          refuse(id, "error", "Duplicate request; use a fresh request id");
+          return;
+        }
+        if (state.draining && (envelope.body as { op: string }).op === "service.ensure") {
+          refuse(id, "unsupported", "The device is draining; retry after it reconnects");
+          return;
+        }
+        const ctl = new AbortController();
+        const timer = setTimeout(
+          () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
+          envelope.deadlineMs,
+        );
+        // always answered, an elapsed deadline as a typed error: a request's own wait ends
+        // before the deadline (clamped), so the kernel hears why instead of nothing
+        const done = serveServiceOp(services, envelope.body, ctl.signal, {
+          deadlineMs: envelope.deadlineMs,
+        })
+          .then((answer) => deliver({ type: "res", id, ...answer } as DeviceResponse))
+          .catch(fail)
+          .finally(() => {
+            clearTimeout(timer);
+            state.running.delete(id);
+          });
+        state.running.set(id, { op: (envelope.body as { op: string }).op, ctl, done });
         return;
       }
       // a body this protocol does not define (a removed or unknown operation, an unscoped read)
@@ -504,6 +578,7 @@ export function serveStagedSession(
     }
   });
   socket.on("close", () => {
+    streams.closeAll("connection closed");
     state.sockets.delete(credentialChanged);
     ready = undefined;
     if (state.current === deliverHere) state.current = undefined;

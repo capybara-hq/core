@@ -3,6 +3,7 @@ import { type FormAnswer, type InputForm, validateAnswer } from "@capybara-hq/pl
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
+import type { ReviewRecord } from "../conversations/events.js";
 import type { QuestionsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
@@ -24,6 +25,18 @@ interface QuestionSpec {
   state: unknown;
   toolKey: string;
   step: number;
+  carried?: QuestionCarried;
+}
+
+/**
+ * What the round that asked collected for the call's result and is not the tool's own state: a
+ * device service launch's review record and the hosts a device service reported refused
+ * (`ctx.deviceAccess`, the call scope). A later round (the resume, which starts nothing) writes
+ * the result with them, so they are not lost with the round that asked.
+ */
+export interface QuestionCarried {
+  review?: ReviewRecord;
+  blocked?: { deviceId: string | null; hosts: string[]; url: string | null };
 }
 
 /** 一条输入请求（`AskUserQuestion`、插件工具的 `input_required`、MCP elicitation 共用）。 */
@@ -39,6 +52,8 @@ export interface QuestionRecord {
   step: number;
   form: InputForm;
   state: unknown;
+  /** {@link QuestionCarried}, when the round that asked collected any. */
+  carried?: QuestionCarried;
   status: QuestionStatus;
   answer: FormAnswer | null;
   answeredBy: string | null;
@@ -58,14 +73,18 @@ export interface QuestionAskInput {
   toolKey: string;
   form: InputForm;
   state: unknown;
+  carried?: QuestionCarried;
 }
 
 const notFound = () => new ApiError("question.not_found", "Question not found");
 const notInitiator = () =>
   new ApiError("forbidden", "Only the user who started the run can answer this question");
 
-/** 网页读取输入请求的视图（不含插件 state：那是工具内部的续跑数据）。 */
-export type QuestionView = Omit<QuestionRecord, "state"> & {
+/**
+ * The web's view of an input request: without the plugin's state (the tool's own resume data)
+ * and without what the round carried for the call's result ({@link QuestionCarried}).
+ */
+export type QuestionView = Omit<QuestionRecord, "state" | "carried"> & {
   /** Who answered (next to `answeredBy`); null while open or when the account is gone. */
   answeredByPerson: PersonRef | null;
 };
@@ -84,6 +103,7 @@ function toRecord(r: Selectable<QuestionsTable>): QuestionRecord {
     step: spec.step,
     form: spec.form,
     state: spec.state ?? null,
+    ...(spec.carried !== undefined && { carried: spec.carried }),
     status: r.status,
     answer: (r.answer ?? null) as FormAnswer | null,
     answeredBy: r.answered_by,
@@ -137,6 +157,7 @@ export class QuestionsService {
       state: input.state ?? null,
       toolKey: input.toolKey,
       step: input.step,
+      ...(input.carried !== undefined && { carried: input.carried }),
     };
     const t = this.db.db;
     await t
@@ -200,7 +221,7 @@ export class QuestionsService {
   }
 
   /** The web's view of a question: no plugin state, plus the answerer as a person. */
-  async view({ state: _state, ...rest }: QuestionRecord): Promise<QuestionView> {
+  async view({ state: _state, carried: _carried, ...rest }: QuestionRecord): Promise<QuestionView> {
     const answeredByPerson =
       rest.answeredBy === null
         ? null

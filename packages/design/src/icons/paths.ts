@@ -89,6 +89,7 @@ export const ICON_NAMES = [
   "lock-open",
   "info",
   "volume",
+  "globe",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -608,5 +609,10 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
     ],
     ["path", { d: "M16 9a5 5 0 0 1 0 6" }],
     ["path", { d: "M19.364 18.364a9 9 0 0 0 0-12.728" }],
+  ],
+  globe: [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" }],
+    ["path", { d: "M2 12h20" }],
   ],
 };

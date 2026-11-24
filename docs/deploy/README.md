@@ -174,6 +174,12 @@ serving containers down ([upgrade.md](upgrade.md#docker-compose)).
   bound twice, so with webhooks and several gateways publish a port range instead
   (`"127.0.0.1:8081-8082:8080"`, one host port per replica) and let the HTTPS proxy balance across
   those ports, or put a load balancer service inside compose in front of the gateways.
+  A browser's live view of a device reaches whichever gateway the web tier picked and hops once to
+  the gateway holding the device's machine, at that replica's `gateway.internalUrl`
+  (`CAPYBARA_GATEWAY__INTERNAL_URL`, default `http://<hostname>:<http.port>`). The hop is
+  authenticated (an HMAC under the master key) but plain http by default, so its frames (the
+  device's screen and the viewer's input) cross the network unencrypted: keep the gateways on a
+  private network, as compose does, or give each an https origin.
 - **Image source:** `CAPYBARA_VERSION` picks the tag. Its default is the version the compose file
   belongs to: every release tags its commit `v<version>`, and the compose file at that tag defaults
   to that version's images. When `CAPYBARA_IMAGE_PREFIX` is
@@ -775,7 +781,16 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   role (a single process with every role); set it only when gateway replicas run apart, as compose does.
   Alternatively, your reverse proxy or load balancer may route `/device/connect` on the public
   origin (`CAPYBARA_PUBLIC_URL`) to the gateway replicas directly; then the upgrade never reaches
-  `web`. The gateway serves only a real WebSocket upgrade; a plain request gets 404.
+  `web`. Route `/device/stream` (the browser live view, authenticated by a `?ticket=` query) the same
+  way, and keep that query out of your access logs. The gateway serves only a real WebSocket upgrade;
+  a plain request gets 404.
+- **Per-client viewer limit.** The gateway limits `/device/stream` upgrades per client address
+  (120 a minute) only when its `http.trustProxy` trusts the hop in front of it; otherwise the limit
+  is off (each ticket is single-use and unguessable, so the limit is defence in depth). `web` sends
+  the client address as `X-Forwarded-For` on that path, so set `CAPYBARA_GATEWAY_TRUST_PROXY`
+  (compose) or the gateway's `CAPYBARA_HTTP__TRUST_PROXY` to the web tier's address or CIDR as the
+  gateway sees it; with your own proxy routing `/device/stream`, to that proxy's address. Never a hop
+  count when the gateway is reachable directly.
 - **WebSocket upgrade.** The proxy must pass `Upgrade` and `Connection: upgrade` and not buffer the
   stream (nginx: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`,
   `proxy_set_header Connection "upgrade"`).

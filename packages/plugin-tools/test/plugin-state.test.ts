@@ -339,3 +339,40 @@ describe("embed UI directories are browser code", () => {
     expect(await rel(d)).toEqual(["ui/app.js"]);
   });
 });
+
+describe("device service directory (daemon/) runs in the device, not in replicas", () => {
+  const CODE = "let x = 0;\nexport const t = () => setTimeout(() => {}, 1);\nexport { x };\n";
+  function plugin(files: string[], entry = "export default {};\n"): string {
+    const d = mkdtempSync(join(tmpdir(), "capybara-ps-"));
+    tmp.push(d);
+    writeFileSync(
+      join(d, "package.json"),
+      JSON.stringify({ name: "svc", version: "0.0.0", private: true, type: "module" }),
+    );
+    mkdirSync(join(d, "src"), { recursive: true });
+    writeFileSync(join(d, "src/index.ts"), entry);
+    for (const f of files) {
+      mkdirSync(join(d, f, ".."), { recursive: true });
+      writeFileSync(join(d, f), CODE);
+    }
+    return d;
+  }
+  const rel = async (d: string) =>
+    [...new Set((await checkPluginState([d])).map((x) => x.file.slice(d.length + 1)))].sort();
+
+  it("skips daemon/ at the plugin root", async () => {
+    expect(await rel(plugin(["daemon/state.ts"]))).toEqual([]);
+  });
+
+  it("still checks a deeper src/daemon", async () => {
+    expect(await rel(plugin(["daemon/state.ts", "src/daemon/x.ts"]))).toEqual(["src/daemon/x.ts"]);
+  });
+
+  it("checks a daemon/ file the server bundle reaches", async () => {
+    const d = plugin(
+      ["daemon/x.ts", "daemon/unreached.ts"],
+      'import "../daemon/x.js";\nexport default {};\n',
+    );
+    expect(await rel(d)).toEqual(["daemon/x.ts"]);
+  });
+});

@@ -540,6 +540,8 @@ export const ERROR_CODES = {
   "device_sign_in.unavailable": 503,
   /** The machine credential is unknown or revoked. */
   "device.credential_invalid": 401,
+  /** A device stream hop from another gateway replica without a valid MAC (or replayed). */
+  "device.stream_hop_refused": 401,
   /** The scheduled task is missing, deleted, in another org or not the caller's to see. */
   "schedule.not_found": 404,
   /** Not a 5-field cron expression (no seconds field). */

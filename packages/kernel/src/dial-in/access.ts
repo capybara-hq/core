@@ -1,7 +1,17 @@
+import {
+  DeviceOfflineError,
+  type DeviceStream,
+  DialInStreamElsewhereError,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { DialInRelay, type DialInRequestOptions } from "./relay.js";
+
+/** What opens streams on the machine sockets this process holds (`DialInGateway`). */
+export interface DialInStreamOpener {
+  openStream(deviceId: string, body: unknown, signal: AbortSignal): Promise<DeviceStream>;
+}
 
 /**
  * What `ctx.dialIn` is built from (`ctx/create-ctx.ts`): the relay, and the check that a device is
@@ -10,6 +20,12 @@ import { DialInRelay, type DialInRequestOptions } from "./relay.js";
  */
 @Injectable()
 export class DialInAccess {
+  /**
+   * The gateway of this process, when it runs the gateway role: it registers itself at
+   * construction (`DialInGateway` sits above this module, so it cannot be injected here).
+   */
+  private streams: DialInStreamOpener | undefined;
+
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(DialInRelay)
@@ -57,5 +73,22 @@ export class DialInAccess {
 
   stop(deviceId: string, reason: "drain" | "stop"): Promise<void> {
     return this.relay.stop(deviceId, reason);
+  }
+
+  /** @internal the gateway of this process serves the streams of the sockets it holds. */
+  serveStreams(opener: DialInStreamOpener): void {
+    this.streams = opener;
+  }
+
+  /**
+   * Opens a stream on the machine's socket, which only the gateway replica holding it can do
+   * (`DialInGateway.openStream`). A process without the gateway role throws
+   * `DialInStreamElsewhereError` when some replica holds the machine, `DeviceOfflineError` when
+   * none does.
+   */
+  async openStream(deviceId: string, body: unknown, signal: AbortSignal): Promise<DeviceStream> {
+    if (this.streams) return this.streams.openStream(deviceId, body, signal);
+    if (await this.relay.online(deviceId)) throw new DialInStreamElsewhereError(deviceId);
+    throw new DeviceOfflineError(deviceId);
   }
 }

@@ -470,6 +470,25 @@ treats a dial-in device like any other (its provider, report and permission supp
   connection's negotiated `maxFrameBytes` (the value of `ready`, read from the holder's
   `capk:device-transport:*` record under its lease, never config) to size its frames by; null
   with no holder.
+- **Streams.** `ctx.dialIn.openStream(deviceId, body, { signal })` (`DialInGateway.openStream`,
+  `dial-in/streams.ts`) opens a byte stream to the machine straight over its socket: `stream-open`
+  / `stream-opened`, then `stream-data` (one whole message in base64 per frame; a message that does
+  not fit the connection's `maxFrameBytes` is refused, never split), `stream-credit` and
+  `stream-close`. Each side starts with `DIAL_IN_STREAM_INITIAL_CREDIT` messages of credit and
+  grants one more per message it consumed, so a stream never starves the connection's requests.
+  Frames never touch Redis or PG, so only the gateway replica holding the socket opens a stream;
+  any other replica throws `DialInStreamElsewhereError` (no holder: `DeviceOfflineError`). The
+  holder writes `{ token, address }` (its lease token and internal origin, `gateway.internalUrl`,
+  default `http://<hostname>:<http.port>`) under `capk:device-holder-addr:<deviceId>` at the
+  claim and on ping, only while it holds the lease, and removes it on release unless a successor
+  holds it; `DialInGateway.holderAddress` reads it under the current lease token in one Lua step
+  (an expired lease or an unwritten takeover answers null, never a gone replica). An open the
+  machine does not answer within 15 s (`STREAM_OPEN_TIMEOUT_MS`) fails and is closed; the signal is
+  required. A consumer that breaks or throws out of `messages` closes the stream on both sides;
+  `messages` has one consumer (a concurrent `next()` rejects). The stream table is the
+  connection's own state: the socket's close ends every stream with `device-offline`; the
+  extension's end closes its streams. Tests: `FakeDialInMachine.onStream`
+  (honours credit; `autoCredit = false` withholds it) and the fixture's `POST /stream` seam.
 - **Reports.** A provider stores what its machine says (in `ctx.kv` / `ctx.db`) and calls
   `ctx.devices.reportChanged(deviceId)`; the kernel reads `report()` again and moves the device's
   authority epoch when the revision changed. Online state is `DialInRelay.online` (a replica holds
@@ -482,6 +501,55 @@ treats a dial-in device like any other (its provider, report and permission supp
   (`outsideSandbox`, `openPublic`, `background`, `perOperationHosts`) and the report's `home`.
   `FakeDialInMachine` (`@capybara-hq/testing`) or `EnvelopeMachine` (`test/helpers/dial-in-machine.ts`,
   for scripted hellos, raw frames and recorded requests) answers it.
+
+## Device services and stream holds (browser use spec §5, §6.2)
+
+- **Services.** Optional `ensureService` / `stopService` / `serviceRequest` (all three, else
+  `DeviceServices` refuses `capability_missing`), `openStream` for viewers and `serviceStatus`:
+  one named long-lived Node process per device in its own state directory, under the device's
+  sandbox and network, killed with the instance on suspend and destroy. The kernel reaches them
+  only through `DeviceServices` (`sandbox/device-services.ts`: `ensure`, `request`, `status`,
+  `refresh`, `stop`; `ensure` and `request` are uses like any tool call, so a suspended instance
+  resumes; `status`, `refresh` and `stop` never resume one). Every status carries `stateDir`, the
+  service's absolute state directory, also when stopped. `ensureService(h, spec, signal,
+  { ifRunning: true })` reads only `spec.name` (the kernel sends the name-only spec
+  `{ name, runtime: "node", entry: "", args: [], files: {} }`, `nameOnlySpec`; never refuse it),
+  never starts anything, re-applies the device's current limits to a running service (a restart
+  for that runs the spec the service was launched with and its stored code, never the request's)
+  and answers a stopped one's status (implement it: the kernel calls it before every launch
+  review, race-free, and after the device allowlist changes). The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
+  file keys relative with plain segments (no absolute path, `..`, `.`, empty segment, backslash,
+  NUL), entry one of the files, no `NODE_*` / `PATH` / `SSL_CERT_FILE` / `SSL_CERT_DIR` /
+  `OPENSSL_CONF` / `OPENSSL_ENGINES` / `LD_*` / `DYLD_*` / `CAPYBARA_*` / proxy variables in
+  `env`. The review sees
+  `env K=V … node <codeDir ?? stateDir>/<entry> …` in the state directory, so run exactly that.
+  A provider that can keep code apart from state should, and reports that directory as the
+  status's `codeDir`: `capybara-device` writes the files into a device-owned `svc-files/<name>`
+  directory the service can only read (R30), so a service cannot rewrite the code a later
+  digest-matched start runs; agent operations can neither read nor write `svc` (the profile)
+  nor `svc-files`, and an owner ceiling change stops the services (`ServiceSupervisor.reconcile`).
+- **Upgrades.** A plugin upgrade (new service files, a new digest) never restarts a running
+  service: the old process keeps running until it stops on its own terms (the instance's idle
+  suspension, a machine stop, `stopService`, a new instance) and the next start, reviewed again,
+  runs the new files. No forced restart without a review.
+- **Conformance.** A provider with services must pass `runDeviceServiceConformance`
+  (`@capybara-hq/testing`) against one running instance, every `ifRunning` ensure with the
+  name-only spec: an `ifRunning` ensure of a stopped service starts nothing and answers `stopped`
+  with an absolute `stateDir` (and `codeDir` when reported), both stable, a normal ensure starts
+  once, an `ifRunning` ensure keeps it running, the service's `process.argv[1]` is
+  `<codeDir ?? stateDir>/<entry>` (`DEVICE_SERVICE_ARGV_PROBE`), requests round-trip its echo
+  service, `stopService` stops it. A
+  provider that starts a service on `ifRunning` would let a launch run unreviewed. The kernel runs
+  it on device-fake (`sandbox/device-fake.test.ts`); every provider plugin runs it in its own
+  tests.
+- **Stream holds.** `SandboxService.holdForStream(deviceId, orgId, signal)` returns
+  `{ h, p, signal, release }` for an open viewer: a token in the sorted set
+  `capk:sandbox-streams:<device>` (scored by expiry, renewed while held) that exempts the device
+  from idle suspension only; it takes no `maxConcurrentCommands` slot and yields to every
+  exclusive step (limits change, rebuild, destroy, reset, forced suspension): its `signal` aborts
+  and the viewer closes. The idle sweep takes its lease with `tryExclusive(…, { unlessStreams })`,
+  refused while a hold is live (counted once the lock is held, when no new hold can be taken).
+  Always `release()`.
 
 ## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 

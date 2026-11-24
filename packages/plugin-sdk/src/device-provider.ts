@@ -378,6 +378,83 @@ export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedEr
   );
 }
 
+/** A device service name: 1 to 32 characters, a lower-case letter then letters, digits and `-`. */
+export const DEVICE_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * A long-lived service process in a device ({@link DeviceProvider.ensureService}), started on an
+ * extension's behalf. It runs under the device's own sandbox (not under any one conversation's
+ * operation scope), writes only in its own state directory (outside every project root; `files`
+ * are written before start into its code directory, read only for the service where the provider
+ * can separate code from state, else the state directory), reaches the network through the
+ * device's network setting, and is killed with the instance on suspend and destroy. It speaks the service socket protocol
+ * (`device-service.ts`).
+ */
+export interface DeviceServiceSpec {
+  /** One service per name per device; matches {@link DEVICE_SERVICE_NAME_RE}. */
+  name: string;
+  /** The provider supplies Node 22 or later. */
+  runtime: "node";
+  /**
+   * The script to run: one of the `files` keys. The process runs
+   * `node <codeDir ?? stateDir>/<entry>` (the code directory where the provider keeps code apart,
+   * else the state directory) with the state directory as its working directory; that exact command passes the command review.
+   */
+  entry: string;
+  args: string[];
+  /**
+   * Written into the service's code directory before start (read only for the service where the
+   * provider separates code from state, else the state directory), keyed by relative path: no
+   * absolute path, no `..` or `.` segment, no empty segment, no backslash, no NUL (the kernel
+   * refuses a spec that breaks this before any provider call).
+   */
+  files: Record<string, Uint8Array>;
+  /**
+   * Extra environment of the process (shown to the command review as `env K=V …`). The kernel
+   * refuses `NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `OPENSSL_CONF`, `OPENSSL_ENGINES`,
+   * `LD_*`, `DYLD_*`, `CAPYBARA_*` and the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`,
+   * `NO_PROXY`, `ALL_PROXY`, `FTP_PROXY`), any case: they change what runs or what it trusts, or
+   * the provider sets them itself.
+   */
+  env?: Record<string, string>;
+}
+
+/** A device service's state ({@link DeviceProvider.ensureService}). */
+export interface DeviceServiceStatus {
+  name: string;
+  state: "running" | "stopped";
+  /** ISO 8601 time the running process started; null when stopped. */
+  startedAt: string | null;
+  /**
+   * The service's state directory in the device (absolute), also when it is stopped: its working
+   * directory and write root (its `files` too, unless the provider keeps code apart). The kernel
+   * reviews the launch against it.
+   */
+  stateDir: string;
+  /**
+   * The directory the entry runs from (absolute), when the provider keeps the service's code
+   * apart from its state (read only for the service); absent: the state directory. Known before
+   * the first start like `stateDir`. The kernel's launch review shows
+   * `node <codeDir ?? stateDir>/<entry>`, so a provider runs exactly that.
+   */
+  codeDir?: string;
+}
+
+/**
+ * A message stream to a device service ({@link DeviceProvider.openStream},
+ * `DialInChannel.openStream`): whole messages both ways, flow-controlled by credit.
+ */
+export interface DeviceStream {
+  /** Sends one message; resolves when the peer has credit for it (backpressure). */
+  send(message: Uint8Array): Promise<void>;
+  /** The peer's messages, in order; ends when the stream closes. */
+  readonly messages: AsyncIterable<Uint8Array>;
+  /** Closes the stream (idempotent); `reason` reaches the peer. */
+  close(reason?: string): void;
+  /** Resolves once the stream is closed, by either side, with the reason. */
+  readonly closed: Promise<{ reason: string }>;
+}
+
 /**
  * The `device-provider@1` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
@@ -692,6 +769,56 @@ export interface DeviceProvider {
     base: string,
     opts: { signal: AbortSignal },
   ): Promise<{ path: string; suggestedName: string }[]>;
+  /**
+   * Starts the named service in the instance, or finds it running (optional, with
+   * {@link DeviceProvider.stopService} and {@link DeviceProvider.serviceRequest}): writes
+   * `spec.files` into the service's code directory, then runs `spec.entry` with Node, the
+   * service socket and state directory named in its environment (`DEVICE_SERVICE_SOCKET_ENV`,
+   * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
+   * kernel has passed the launch through the command review before it calls this.
+   *
+   * With `opts.ifRunning` it never starts anything and reads only `spec.name` (the kernel sends
+   * `{ name, runtime: "node", entry: "", args: [], files: {} }`, which must not be refused): a
+   * running service is kept and the device's current network limits are applied to it again,
+   * a restart for that runs the spec it was launched with and its stored code (the kernel calls
+   * this after the device's allowlist changed, and before reviewing a launch); a stopped one
+   * answers its `stopped` status (with `stateDir`, and `codeDir` where kept apart) and stays
+   * stopped.
+   */
+  ensureService?(
+    h: SandboxHandle,
+    spec: DeviceServiceSpec,
+    signal: AbortSignal,
+    opts?: { ifRunning?: boolean },
+  ): Promise<DeviceServiceStatus>;
+  /** Stops the named service; succeeds when it is not running. */
+  stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
+  /**
+   * The named service's state in the instance, without starting it (optional; the kernel's
+   * status reads). Whether a launch is reviewed is decided by `ensureService` with
+   * `ifRunning`, which is race-free.
+   */
+  serviceStatus?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<DeviceServiceStatus>;
+  /**
+   * One `request` connection to the named service's socket: sends `body`, resolves the service's
+   * one answer. Throws when the service is not running, on timeout and on abort.
+   */
+  serviceRequest?(
+    h: SandboxHandle,
+    name: string,
+    body: Uint8Array,
+    opts: { timeoutMs: number; signal: AbortSignal },
+  ): Promise<Uint8Array>;
+  /**
+   * Opens a `stream` connection to the named service's socket (optional; the browser's live view
+   * needs it). The target is always a service of the device, never a general port forward.
+   * `signal` bounds the opening only; the stream lives until either side closes it.
+   */
+  openStream?(
+    h: SandboxHandle,
+    target: { service: string },
+    signal: AbortSignal,
+  ): Promise<DeviceStream>;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be blocked

@@ -34,6 +34,8 @@ import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
 import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
+import { macServiceLauncher } from "./services/mac-launcher.js";
+import { ServiceSupervisor, serviceCodeRoot, serviceRoot } from "./services/supervisor.js";
 import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
@@ -144,6 +146,11 @@ export interface StagedDevice {
   readonly states: StagedSessionStates;
   readonly binder: InstanceBinder;
   readonly owner: StagedOwnerPolicy;
+  /**
+   * The device's named services (browser use spec §5): macOS host devices run them under the
+   * local sandbox; elsewhere `service.ensure` answers unsupported. Stopped with the instance.
+   */
+  readonly services: ServiceSupervisor;
   /** The local policy summary a hello and an owner change event carry, read now. */
   policySummary(): DeviceLocalPolicySummary;
   /** The bound generation's backend, or the refusing placeholder while unbound. */
@@ -256,6 +263,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     binding: StoredBinding,
   ): Promise<MacOperationBackend> => {
     const runtimeHash = binding.runtimeIdentity.runtimeHash;
+    // a new generation's backend: no service keeps the old generation's runtime or grant
+    await services.stopAll(AbortSignal.timeout(30_000));
     const options: MacOperationBackendOptions = {
       deviceId: cred.deviceId,
       instanceGeneration: binding.instanceGeneration,
@@ -271,13 +280,21 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       onOperationEnded: (operationId) => running.endOperation(operationId),
       // the project directories this connection used, for the ones it shares with another
       onProjectAdmitted: (projectRoot) => recordProjectRoot(stateDir, projectRoot),
+      // the services' profiles (cookies) and code: never read or written by an agent operation
+      serviceRoots: [serviceRoot(resolve(cred.dir)), serviceCodeRoot(resolve(cred.dir))],
     };
     const deps = o.backendDependencies ?? {};
     if (mode === "docker") {
       const { createDockerOperationBackend } = await import("./exec/docker-operations.js");
       // a command in the container keeps HOME at its working directory (the image's paths); its
       // project roots are the container's paths, never a directory another connection could use
-      const { roots: _host, sandboxHome: _home, onProjectAdmitted: _projects, ...rest } = options;
+      const {
+        roots: _host,
+        sandboxHome: _home,
+        onProjectAdmitted: _projects,
+        serviceRoots: _services,
+        ...rest
+      } = options;
       return createDockerOperationBackend(
         {
           ...rest,
@@ -329,6 +346,25 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     });
   };
 
+  // a service is a restricted exec of the operation worker (macOS host devices only for now)
+  const serviceLauncher = macServiceLauncher({
+    deviceId: cred.deviceId,
+    stateDir,
+    pythonPath,
+    runtimeHash: () => binder.current()?.binding.runtimeIdentity.runtimeHash,
+    readOwnerCeiling,
+    startWorker: async (request, signal) =>
+      (o.startWorker ?? (await import("./exec/operation-worker.js")).startMacOperationWorker)(
+        request,
+        signal,
+      ),
+  });
+  const services = new ServiceSupervisor({
+    deviceDir: resolve(cred.dir),
+    workspace: hostRoots.workspace,
+    launcher: () => (mode === "os" && platform === "darwin" ? serviceLauncher : undefined),
+  });
+
   const binder = new InstanceBinder({
     deviceId: cred.deviceId,
     credentialIdentity: credentialIdentity(cred.credential),
@@ -346,6 +382,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       issueOwnerReport({ stateDir, stateRoot, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);
+      // services hold a grant fixed at launch too: one whose ceiling changed is stopped
+      await services.reconcile(signal);
     },
   };
   const backend = () => binder.current()?.backend ?? UNBOUND_BACKEND;
@@ -370,6 +408,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     states: new StagedSessionStates(),
     binder,
     owner,
+    services,
     backend,
     policySummary: summary,
     drainTarget: () => binder.current()?.backend ?? { lifecycle: IDLE_LIFECYCLE },
@@ -413,11 +452,13 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
         throw new FileSystemGoneError(
           "The device directory on this machine existed and is gone. It is not recreated automatically.",
         );
-      // a new instance replaces the bound generation: its background tasks are dropped
+      // a new instance replaces the bound generation: its background tasks and services end
       await binder.dropOlderGenerations(signal);
+      await services.stopAll(signal);
       return { roots };
     },
     async cancelOwners(signal) {
+      await services.stopAll(signal);
       const bound = binder.current();
       if (!bound) return [];
       bound.backend.lifecycle.beginDrain();
@@ -428,6 +469,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       });
     },
     async dispose() {
+      await services.stopAll(AbortSignal.timeout(10_000));
       await o.dispose?.();
     },
   };

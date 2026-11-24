@@ -125,6 +125,13 @@ interface Common {
    * production.
    */
   allowPrivateProxyTargets?: boolean;
+  /**
+   * A device service's launch (trusted construction, `services/mac-launcher.ts`; browser use spec
+   * §5): instead of a private temporary directory per operation, TMPDIR is `tmpDir` (inside the
+   * service's state directory, one of its write roots), and the service may bind and reach unix
+   * sockets under `unixSockets` (its state directory) and nowhere else.
+   */
+  service?: { tmpDir: string; unixSockets: readonly string[] };
 }
 export type MacWorkerRequest = Common &
   (
@@ -853,7 +860,7 @@ export async function startMacOperationWorker(
       // behind: the next launch of this device removes it). The runtime's default
       // (`/tmp/claude`) is shared by every command, so it is denied (implicitWritePaths); every
       // other connection's parent is a denied read root (the owner ceiling).
-      if (request.kind === "exec" && !request.grant.full) {
+      if (request.kind === "exec" && !request.grant.full && !request.service) {
         const base = macUserTempDir() ?? (await realpath(tmpdir()));
         const parent = await privateTempParent(
           base,
@@ -987,7 +994,11 @@ export async function startMacOperationWorker(
               ...protectedWriteRules(protectedDenies),
             ],
           },
-          network: network.network,
+          network: {
+            ...network.network,
+            // a service listens on its own socket, inside its state directory
+            ...(request.service && { allowUnixSockets: [...request.service.unixSockets] }),
+          },
           ...(javaAgent ? { javaAgentJarPath: javaAgent } : {}),
         };
         const initialized = message(runtime, "ready");
@@ -1080,11 +1091,12 @@ export async function startMacOperationWorker(
         PATH: process.env.PATH,
         LANG: process.env.LANG,
         ...(sandboxHome ? sandboxHomeEnv(sandboxHome) : { HOME: args.cwd ?? "/" }),
-        TMPDIR: privateTmp ?? request.grant.writeRoots[0] ?? "/tmp",
+        TMPDIR: privateTmp ?? request.service?.tmpDir ?? request.grant.writeRoots[0] ?? "/tmp",
       };
       // the runtime's wrapper sets its own TMPDIR after this environment: set ours inside it
-      const temp = privateTmp
-        ? `export TMPDIR=${shellQuote(privateTmp)} TMP=${shellQuote(privateTmp)} TEMP=${shellQuote(privateTmp)}; `
+      const tmp = privateTmp ?? request.service?.tmpDir;
+      const temp = tmp
+        ? `export TMPDIR=${shellQuote(tmp)} TMP=${shellQuote(tmp)} TEMP=${shellQuote(tmp)}; `
         : "";
       const exports = Object.entries(args.env ?? {})
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)

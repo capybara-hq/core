@@ -159,6 +159,10 @@ Each line is the rule you must not miss; the skill has the rest.
   (`ctx.setup.check`, declared in `permissions.setupChecks`) never writes and never returns a secret; it never gets an OAuth
   client secret or a member's token.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
+- **Device access (`ctx.deviceAccess`):** only the conversation's owner on their own personal
+  device; a device service launch passes the command review as it runs and fails closed; viewer
+  tickets are single use; stream frames never pass through Redis or PG.
+  [browser use spec](docs/superpowers/specs/2026-11-23-browser-use-design.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
   `packages/kernel/src/net` (and a URL a person supplies to a plugin, an overridable config URL included, through `ctx.net`). A

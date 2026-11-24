@@ -13,10 +13,10 @@
 // (/<bucket>/**) so browsers upload and download attachments on the web origin; that path never
 // reaches Next. Details: src/lib/object-store-proxy.ts.
 //
-// WebSocket upgrades on exactly /device/connect (connected machines, `capybara-device`) are piped to
-// the gateway (CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL); any other upgrade
-// path is refused
-// (dev: handed to Next's HMR). Details: src/lib/device-connect-proxy.ts.
+// WebSocket upgrades on exactly /device/connect (connected machines, `capybara-device`) and
+// /device/stream (browser live view, `?ticket=` never logged) are piped to the gateway
+// (CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL); any other upgrade path is
+// refused (dev: handed to Next's HMR). Details: src/lib/device-connect-proxy.ts.
 //
 // Idle keep-alive connections stay open for CAPYBARA_WEB_KEEP_ALIVE_TIMEOUT_MS (default 65 s), longer
 // than a load balancer in front keeps them, so the proxy closes first instead of reusing a
@@ -36,6 +36,7 @@ import {
   proxyObjectStore,
 } from "./src/lib/object-store-proxy.ts";
 import {
+  clientAddress,
   PEER_TOKEN_ENV,
   parseTrustProxy,
   sanitizeIncoming,
@@ -94,15 +95,23 @@ const server = createServer((req, res) => {
 server.on(
   "upgrade",
   handleUpgrade(
-    gateway,
+    // /device/stream carries the client address the same way /api does (the kernel's viewer limit)
+    {
+      ...gateway,
+      clientOf: (req) =>
+        clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], trust),
+    },
     dev ? (req, socket, head) => nextUpgrades.emit("upgrade", req, socket, head) : undefined,
   ),
 );
 applyKeepAlive(server, keepAliveMs);
 server.listen(port, hostname, () => {
-  console.log(
-    `> web listening on http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})${objectStore ? `; object storage /${objectStore.bucket}/ -> ${objectStore.upstream.origin}` : ""}${gateway ? `; /device/connect -> ${gateway.upstream.origin}` : ""}`,
-  );
+  const listening = `http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})`;
+  const store = objectStore
+    ? `; object storage /${objectStore.bucket}/ -> ${objectStore.upstream.origin}`
+    : "";
+  const upgrades = gateway ? `; /device/connect, /device/stream -> ${gateway.upstream.origin}` : "";
+  console.log(`> web listening on ${listening}${store}${upgrades}`);
 });
 
 // In production (e.g. as PID 1 in a container, where node has no default signal handling) stop on

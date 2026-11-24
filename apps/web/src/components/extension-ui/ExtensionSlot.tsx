@@ -84,6 +84,8 @@ export type SlotHost = {
     switcher?: RightPanelSwitcher;
     onClose(): void;
     onFullscreen(): void;
+    /** The panel's embed asked to maximise (`true`) or restore (`false`) it. */
+    onPanelMode(full: boolean): void;
     onOpenTarget: OnOpenTarget;
   };
   "conversation.properties.section": { onOpenTarget: OnOpenTarget };
@@ -374,6 +376,7 @@ function PanelSlot({
         {...(host.switcher ? { switcher: host.switcher } : {})}
         onClose={host.onClose}
         onFullscreen={host.onFullscreen}
+        onPanelMode={host.onPanelMode}
       />
     </CompactGate>
   );

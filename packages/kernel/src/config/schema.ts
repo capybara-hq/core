@@ -331,6 +331,17 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
   return undefined;
 }
 
+/** An http or https origin: no path, query, fragment or credentials. */
+function httpOrigin() {
+  return z.url({ protocol: /^https?$/ }).refine(
+    (u) => {
+      const x = URL.canParse(u) ? new URL(u) : null;
+      return x !== null && x.pathname === "/" && !x.search && !x.hash && !x.username && !x.password;
+    },
+    { message: "must be an origin: no path, query, fragment or credentials" },
+  );
+}
+
 export const KernelConfigSchema = z.strictObject({
   platform: z
     .strictObject({
@@ -775,7 +786,7 @@ export const KernelConfigSchema = z.strictObject({
         .meta(
           meta({
             description:
-              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended; a JSON array or a comma-separated string; a /0 prefix is refused). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
+              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended; a JSON array or a comma-separated string; a /0 prefix is refused). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies. On a gateway replica it also decides the per-client limit of browser live views (`/device/stream`): set it to the web tier's address or CIDR as the gateway sees it (compose: CAPYBARA_GATEWAY_TRUST_PROXY) to enable that limit; while it is false the limit is off",
           }),
         ),
       // 环境变量按 JSON 解析，CAPYBARA_HTTP__REPLICA_ID=0 会得到数字，所以也接受非负整数（输出头时转字符串）
@@ -1193,22 +1204,7 @@ export const KernelConfigSchema = z.strictObject({
                   "Serve the git gateway that lets sandboxes clone and push over HTTPS with run tickets; when off the gateway refuses every request",
               }),
             ),
-          gatewayUrl: z
-            .url({ protocol: /^https?$/ })
-            .refine(
-              (u) => {
-                const x = URL.canParse(u) ? new URL(u) : null;
-                return (
-                  x !== null &&
-                  x.pathname === "/" &&
-                  !x.search &&
-                  !x.hash &&
-                  !x.username &&
-                  !x.password
-                );
-              },
-              { message: "must be an origin: no path, query, fragment or credentials" },
-            )
+          gatewayUrl: httpOrigin()
             .optional()
             .meta(
               meta({
@@ -1415,6 +1411,18 @@ export const KernelConfigSchema = z.strictObject({
       fileMaxBytes: 20_971_520,
       fileConcurrency: 4,
     }),
+  gateway: z
+    .strictObject({
+      internalUrl: httpOrigin()
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Origin (http or https, no path, query or credentials) other gateway replicas use to reach this replica for device stream hops, e.g. http://10.0.0.5:8080; default http://<hostname>:<http.port>. The hop is plain http unless this is https: keep the gateways on a private network or give them an https origin",
+          }),
+        ),
+    })
+    .prefault({} as never),
   storage: z
     .strictObject({
       purgeDeletedOrgsAfterDays: z

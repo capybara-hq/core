@@ -91,6 +91,16 @@ export const CHANNEL_PHRASES = {
     zh: "智能体想访问 {n} 个域名，允许吗？",
     en: "The agent wants to reach {n} domains. Allow?",
   },
+  /** A device service's network ask, one host (`{host}`; browser use spec §7.1). */
+  networkServiceTitle: {
+    zh: "智能体的浏览器想访问 {host}",
+    en: "The agent's browser wants to reach {host}",
+  },
+  /** Under a device service's network ask: open network mode stops the asks. */
+  networkServiceNote: {
+    zh: "开放网络模式下不会再询问",
+    en: "Open network mode stops these asks",
+  },
   /** Under a network ask's host list: an IM card has no per-host choice (spec §6.4). */
   networkAllHosts: {
     zh: "这个决定对以上所有域名生效",

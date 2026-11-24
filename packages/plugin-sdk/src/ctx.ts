@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import type { DeviceServiceSpec, DeviceServiceStatus } from "./device-provider.js";
 import type { DevicesCtx, DialInChannel } from "./dial-in.js";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
@@ -14,7 +15,7 @@ import type {
 import type { ExtensionNet } from "./net.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
-import type { ToolHandler, ToolSpec } from "./tool.js";
+import type { ToolCallContext, ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
 /** Logger interface. */
@@ -168,6 +169,74 @@ export interface ExtensionModels {
 }
 
 /**
+ * The org, conversation and account a {@link DeviceAccessCtx} call from outside a tool call is for
+ * (`orgId` must be the conversation's org).
+ */
+export type DeviceAccessScope = { orgId: string; conversationId: string; accountId: string };
+
+/**
+ * `ctx.deviceAccess` (requires `permissions.deviceAccess`): the extension's services in the
+ * conversation's device. Every call works on the device of the conversation it names (a tool
+ * call's, or `scope.conversationId`), only for a service listed in
+ * `permissions.deviceAccess.services`, and only when the account (the tool call's trigger account,
+ * or `scope.accountId`) is the conversation's owner. A refusal throws {@link DeviceAccessError}.
+ */
+export interface DeviceAccessCtx {
+  /**
+   * Starts the service in the call's device, or finds it running: the kernel writes the spec's
+   * files into the service's state directory, passes the launch through the command review (fail
+   * closed) and starts it through the device's provider.
+   */
+  ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
+  /** One request to the service's socket; resolves its answer. */
+  request(
+    call: ToolCallContext,
+    req: { service: string; body: Uint8Array; timeoutMs: number },
+  ): Promise<Uint8Array>;
+  /**
+   * The service saw requests to `hosts` refused by the device's network allowlist during this
+   * call: the kernel raises the network ask in the call's conversation once the handler returns
+   * (and runs the call again once the person approves). Only an ask. `opts.url` is the page the
+   * refusals came from, shown with the ask.
+   */
+  reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: { url?: string }): void;
+  /**
+   * A short-lived, single-use ticket for one viewer stream to the service (the person's panel
+   * opens `url` as a WebSocket). The account must be the conversation's owner.
+   */
+  streamTicket(
+    scope: DeviceAccessScope & { service: string },
+  ): Promise<{ url: string; expiresAt: string }>;
+  /**
+   * Adds hosts to the device's network allowlist (owner only, platform and org ceilings apply);
+   * the extension's running services get the device's new limits applied. Exact host names
+   * only, as an approved network ask grants: a `*.` wildcard is refused.
+   */
+  addNetworkHosts(scope: DeviceAccessScope & { hosts: string[] }): Promise<void>;
+  /** Answers the handoff question of this extension's tool call `callId` from the panel. */
+  answerHandoff(scope: DeviceAccessScope & { callId: string; done: boolean }): Promise<void>;
+}
+
+/** Why a {@link DeviceAccessCtx} call was refused. */
+export type DeviceAccessErrorCode =
+  | "no_device"
+  | "provider_unavailable"
+  | "capability_missing"
+  | "not_owner"
+  | "service_not_declared";
+
+/** A {@link DeviceAccessCtx} call was refused; the message is actionable English for the model. */
+export class DeviceAccessError extends Error {
+  readonly code: DeviceAccessErrorCode;
+
+  constructor(code: DeviceAccessErrorCode, message: string, opts?: { cause?: unknown }) {
+    super(message, opts && "cause" in opts ? { cause: opts.cause } : undefined);
+    this.name = "DeviceAccessError";
+    this.code = code;
+  }
+}
+
+/**
  * The context passed to a plugin's `setup`. It provides no timers or in-process shared state; kv
  * writes must carry a TTL.
  */
@@ -313,6 +382,11 @@ export interface ExtensionContext {
    * `device-provider@1`, see {@link DevicesCtx}).
    */
   devices: DevicesCtx;
+  /**
+   * The extension's services in the conversation's device (requires `permissions.deviceAccess`,
+   * see {@link DeviceAccessCtx}).
+   */
+  deviceAccess: DeviceAccessCtx;
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,

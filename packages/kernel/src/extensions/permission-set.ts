@@ -63,6 +63,12 @@ export interface PermissionSet {
      * when not declared (and in older snapshots).
      */
     dialIn?: { protocol: string };
+    /**
+     * The device services the extension runs in conversations' devices
+     * (`permissions.deviceAccess`, browser use spec §7): one blocking key per service. Absent when
+     * not declared (and in older snapshots).
+     */
+    deviceAccess?: { services: string[] };
   };
   /**
    * 安装记录包迁移警告的摘要（`warningsDigest`，Ruling P4）；没有警告或不是安装记录时省略。
@@ -208,6 +214,10 @@ export function buildPermissionSet(input: {
         : {}),
       // only when declared: sets (and snapshots) of plugins without a dial-in channel stay as they were
       ...(p.dialIn ? { dialIn: { protocol: p.dialIn.protocol } } : {}),
+      // only when declared, likewise
+      ...(p.deviceAccess
+        ? { deviceAccess: { services: sortedUnique(p.deviceAccess.services) } }
+        : {}),
     },
     ...(input.warningsDigest ? { warningsDigest: input.warningsDigest } : {}),
   };
@@ -218,7 +228,7 @@ export function buildPermissionSet(input: {
  * `config.deployment.secret:apiKey`, `table:todos`, `permissions.tools:write`,
  * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
  * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`,
- * `permissions.dialin:capybara-device/6`.
+ * `permissions.dialin:capybara-device/6`, `permissions.deviceaccess:browser`.
  * Tolerates old snapshots missing fields (read as empty), so format changes never throw.
  */
 export function permissionKeys(set: PermissionSet): string[] {
@@ -250,6 +260,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const c of p.ui?.components ?? []) keys.push(`${UI_COMPONENT_KEY_PREFIX}${c}`);
   for (const c of p.setupChecks ?? []) keys.push(`${SETUP_CHECK_KEY_PREFIX}${c}`);
   if (p.dialIn?.protocol) keys.push(`${DIAL_IN_KEY_PREFIX}${p.dialIn.protocol}`);
+  for (const svc of p.deviceAccess?.services ?? []) keys.push(`${DEVICE_ACCESS_KEY_PREFIX}${svc}`);
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
@@ -271,6 +282,13 @@ export const CLIENT_KEY = "permissions.client";
  * before the colon, as catalog permission keys require (`PERMISSION_KEY_RE`).
  */
 export const DIAL_IN_KEY_PREFIX = "permissions.dialin:";
+
+/**
+ * Key prefix of a device service (`permissions.deviceAccess.services`): sensitive and blocking, so
+ * an upgrade adding a service waits for approval. Lower-case letters and dots before the colon, as
+ * catalog permission keys require (`PERMISSION_KEY_RE`).
+ */
+export const DEVICE_ACCESS_KEY_PREFIX = "permissions.deviceaccess:";
 
 /** Key prefix of a client component (`ui.component:<id>`): sensitive and blocking. */
 export const UI_COMPONENT_KEY_PREFIX = "ui.component:";

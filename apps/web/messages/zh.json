@@ -369,6 +369,7 @@
       "offline": "这台电脑当前未连接，请在电脑上启动 capybara-device 后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
+      "stream_hop_refused": "实时画面在服务器之间转发失败。请关闭面板后重新打开。",
       "project_name_invalid": "该项目名称不可用：请使用 1-64 个字符，不能是 . 或 ..，不含 / 或控制字符，首尾不留空格。",
       "project_name_taken": "这台设备上已有同名项目，请换一个名称。",
       "project_limit_reached": "这台设备的项目已达 100 个上限，请先移除一个再添加。",
@@ -2041,7 +2042,10 @@
       "fixed": "该工具总是需要审批"
     },
     "network": {
-      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。"
+      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。",
+      "serviceTitle": "智能体的浏览器想访问 {host}",
+      "serviceNote": "开放网络模式下不会再询问",
+      "serviceOtherApprover": "智能体的浏览器想访问 {hosts}，等待设备所有者处理。"
     },
     "permissionScope": {
       "intro": "批准后仅本次操作获得以下访问范围，每个目录包含其中的全部内容。",
@@ -3037,7 +3041,8 @@
       "ui": "界面（视图 / 嵌入页面）",
       "client": "客户端代码",
       "components": "界面组件",
-      "dialIn": "机器接入（协议）"
+      "dialIn": "机器接入（协议）",
+      "deviceAccess": "设备服务"
     },
     "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",
@@ -3066,7 +3071,8 @@
         "object_store": "保管全部附件与扩展包",
         "context": "在启用它的组织的对话中，向模型上下文加入文本",
         "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准",
-        "push_provider": "用平台的凭据发送推送通知"
+        "push_provider": "用平台的凭据发送推送通知",
+        "device_access": "在会话的设备里运行自己的常驻服务"
       },
       "warnings": "迁移警告",
       "warningsHint": "扩展迁移只能做增量变更：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
@@ -4283,6 +4289,9 @@
         "deviceModeChanged": "修改了设备模式",
         "deviceNetworkAllowed": "允许了网络访问",
         "deviceNetworkChanged": "更改了云端设备的沙箱网络",
+        "deviceServiceStarted": "启动了设备服务",
+        "browserView": "打开了设备的实时画面",
+        "browserViewClosed": "关闭了设备的实时画面",
         "deviceNetworkDenied": "拒绝了网络访问",
         "devicePolicyChanged": "修改了设备策略",
         "devicePolicyFailed": "设备策略修改失败",

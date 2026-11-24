@@ -1,4 +1,4 @@
-import { DEVICE_PROVIDER_EXTENSION_POINT } from "./device-provider.js";
+import { DEVICE_PROVIDER_EXTENSION_POINT, DEVICE_SERVICE_NAME_RE } from "./device-provider.js";
 import { DIAL_IN_PROTOCOL_RE } from "./dial-in.js";
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
@@ -64,7 +64,17 @@ export interface ExtensionPermissions {
    * then implements `dialIn` (`DialInHandler`).
    */
   dialIn?: { protocol: string };
+  /**
+   * `ctx.deviceAccess`: services this extension runs in the conversation's device and reaches
+   * through requests and viewer streams. `services` lists 1 to
+   * {@link DEVICE_ACCESS_MAX_SERVICES} service names ({@link DEVICE_SERVICE_NAME_RE}); a service
+   * not listed is refused. Any extension may declare it (no `provides` needed).
+   */
+  deviceAccess?: { services: string[] };
 }
+
+/** The most services `permissions.deviceAccess.services` may list. */
+export const DEVICE_ACCESS_MAX_SERVICES = 4;
 
 /** Hook mount points (a closed list, see the overall design 2.4). */
 export const HOOK_MOUNT_POINTS = [
@@ -115,6 +125,7 @@ const KEYS = new Set([
   "client",
   "setupChecks",
   "dialIn",
+  "deviceAccess",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -299,6 +310,26 @@ export function validatePermissions(
     }
     if (!provides.includes(DEVICE_PROVIDER_EXTENSION_POINT)) {
       errs.push(`permissions.dialIn needs "${DEVICE_PROVIDER_EXTENSION_POINT}" in provides`);
+    }
+  }
+  if (p.deviceAccess !== undefined) {
+    if (!isObj(p.deviceAccess) || Object.keys(p.deviceAccess).some((k) => k !== "services")) {
+      errs.push("permissions.deviceAccess must be { services: string[] }");
+    } else {
+      const names = strList("permissions.deviceAccess.services", p.deviceAccess.services, errs);
+      if (Array.isArray(p.deviceAccess.services)) {
+        const n = p.deviceAccess.services.length;
+        if (n < 1 || n > DEVICE_ACCESS_MAX_SERVICES)
+          errs.push(
+            `permissions.deviceAccess.services must list 1 to ${DEVICE_ACCESS_MAX_SERVICES} services`,
+          );
+      }
+      for (const name of names) {
+        if (!DEVICE_SERVICE_NAME_RE.test(name))
+          errs.push(
+            `permissions.deviceAccess.services entry "${name}" must match ${DEVICE_SERVICE_NAME_RE}`,
+          );
+      }
     }
   }
   return errs;

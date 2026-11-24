@@ -369,6 +369,7 @@
       "offline": "This computer is not connected. Start capybara-device on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
+      "stream_hop_refused": "The live view could not be relayed between servers. Close the panel and open it again.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
       "project_name_taken": "This device already has a project with this name. Choose another name.",
       "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
@@ -2053,7 +2054,10 @@
       "fixed": "This tool always asks for approval"
     },
     "network": {
-      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner."
+      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
+      "serviceTitle": "The agent's browser wants to reach {host}",
+      "serviceNote": "Open network mode stops these asks",
+      "serviceOtherApprover": "The agent's browser wants to reach {hosts}; waiting for the device owner."
     },
     "permissionScope": {
       "intro": "Approving grants this access for this operation only. Each directory includes everything inside it.",
@@ -3049,7 +3053,8 @@
       "ui": "Interface (views / embeds)",
       "client": "Client code",
       "components": "Interface components",
-      "dialIn": "Machine connections (protocol)"
+      "dialIn": "Machine connections (protocol)",
+      "deviceAccess": "Device services"
     },
     "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",
@@ -3078,7 +3083,8 @@
         "object_store": "holds every attachment and extension package",
         "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",
-        "push_provider": "delivers push notifications with the platform's credentials"
+        "push_provider": "delivers push notifications with the platform's credentials",
+        "device_access": "runs its own long-lived services in conversations' devices"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
@@ -4295,6 +4301,9 @@
         "deviceModeChanged": "Changed a device's mode",
         "deviceNetworkAllowed": "Allowed network access",
         "deviceNetworkChanged": "Changed a cloud device's sandbox network",
+        "deviceServiceStarted": "Started a device service",
+        "browserView": "Opened a live view of a device",
+        "browserViewClosed": "Closed a live view of a device",
         "deviceNetworkDenied": "Denied network access",
         "devicePolicyChanged": "Changed a device's policy",
         "devicePolicyFailed": "A device policy change failed",

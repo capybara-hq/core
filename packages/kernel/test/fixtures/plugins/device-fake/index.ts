@@ -21,12 +21,21 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createConnection, type Socket } from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
+  DEVICE_SERVICE_NAME_RE,
+  DEVICE_SERVICE_SOCKET_ENV,
+  DEVICE_SERVICE_STATE_ENV,
   type DeviceProvider,
+  type DeviceServiceSpec,
+  type DeviceServiceStatus,
+  type DeviceStream,
   defineExtension,
   type ExecResult,
+  encodeServiceMessage,
   FileSystemGoneError,
   type FileSystemHandle,
   ProjectPathRefusedError,
@@ -50,6 +59,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   type SandboxStopResult,
+  ServiceMessageDecoder,
   StaleFenceError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
@@ -89,8 +99,19 @@ import { z } from "zod";
  * - `root/bin`: a node shim for `timeout`, first on every exec's PATH, so the background start
  *   (and the tests) also run on macOS, which has no `timeout`. It is written by
  *   {@link createFakeSandbox}, not shipped as a file: the plugin package carries only the entry.
- * - `suspend` and `destroy` kill every process the instance started (exec and background commands),
- *   as stopping a container does.
+ * - `suspend` and `destroy` kill every process the instance started (exec and background commands,
+ *   device services), as stopping a container does.
+ * - device services (`ensureService`, `stopService`, `serviceStatus`, `serviceRequest`,
+ *   `openStream`; left out with `services: false` in {@link FakeSandboxOptions}): a service
+ *   runs `node <stateDir>/<entry>` on the host, its state directory
+ *   `root/filesystems/<fsId>/.svc/<name>` (in the device's files, outside `/workspace` and every
+ *   write root, kept across instances;
+ *   {@link fakeServiceStateDir}), its socket a short hashed path under the OS temp directory
+ *   (a unix socket path must stay within 104 bytes on macOS, and test roots are long), its
+ *   running record `root/instances/<id>/services/<name>.json` (`{ pid, startedAt }`). Each start
+ *   logs `service-start <id> <name> <pid>` ({@link fakeServiceStarts}), each `ifRunning` ensure
+ *   `service-if-running <id> <name> <running|stopped>`, each stop
+ *   `service-stop <id> <name>`; {@link fakeServiceRunning} tells whether the process lives.
  * - limits (sandbox dev tiers spec §7.1): `updateMode` (deployment config or
  *   {@link FakeSandboxOptions}) gives the provider an `update` that answers `updated` (and records
  *   the new limits in the instance's `meta.json`), `recreate`, or fails (`throw`); `none` (the default) has no
@@ -181,6 +202,8 @@ export interface FakeSandboxOptions {
   list?: boolean;
   /** `list` refuses these device paths and everything below them (`ProjectPathRefusedError`, "Refused by the test provider"). */
   refusePaths?: string[];
+  /** Gives the provider the device service methods (default true; see the file header). */
+  services?: boolean;
   /** `enforce` (default): lifecycle calls honor their fence; `ignore`: every call applies. */
   fencing?: "enforce" | "ignore";
   /** Gives the provider an `appliedNetwork` read from the instance's `meta.json` (see the file header). */
@@ -247,6 +270,354 @@ export function fakeWorkspaceDir(root: string, instanceId: string): string {
     readFileSync(join(instanceDir(root, instanceId), "meta.json"), "utf8"),
   ) as FakeSandboxMeta;
   return join(fileSystemDir(root, meta.fileSystem), "workspace");
+}
+
+/**
+ * The host directory of a device service's state (its files, its only write root): in the
+ * instance's file system, outside `workspace`. Throws when the instance is missing.
+ */
+export function fakeServiceStateDir(root: string, instanceId: string, name: string): string {
+  const meta = JSON.parse(
+    readFileSync(join(instanceDir(root, instanceId), "meta.json"), "utf8"),
+  ) as FakeSandboxMeta;
+  return join(fileSystemDir(root, meta.fileSystem), ".svc", name);
+}
+
+/** How many device service processes the fake has started under `root` (all instances). */
+export async function fakeServiceStarts(root: string): Promise<number> {
+  return (await readFakeSandboxOps(root)).filter((l) => l[0] === "service-start").length;
+}
+
+/** Whether the named service of the instance has a running record and its process lives. */
+export async function fakeServiceRunning(
+  root: string,
+  instanceId: string,
+  name: string,
+): Promise<boolean> {
+  const rec = await readServiceRecord(root, instanceId, name);
+  return rec !== null && alive(rec.pid);
+}
+
+interface ServiceRecord {
+  pid: number;
+  startedAt: string;
+}
+
+const serviceRecordPath = (root: string, id: string, name: string) =>
+  join(instanceDir(root, id), "services", `${name}.json`);
+
+async function readServiceRecord(
+  root: string,
+  id: string,
+  name: string,
+): Promise<ServiceRecord | null> {
+  const text = await readFile(serviceRecordPath(root, id, name), "utf8").catch(() => null);
+  return text === null ? null : (JSON.parse(text) as ServiceRecord);
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The service's socket: a short hashed path, so it fits the 104-byte limit of macOS. */
+function serviceSocket(root: string, id: string, name: string): string {
+  const hash = createHash("sha256").update(`${root}\0${id}\0${name}`).digest("hex").slice(0, 16);
+  return join(tmpdir(), `cap-svc-${hash}.sock`);
+}
+
+/** Kills a service's process group and drops its record and socket. */
+async function killService(root: string, id: string, name: string): Promise<void> {
+  const rec = await readServiceRecord(root, id, name);
+  if (rec !== null) {
+    try {
+      process.kill(-rec.pid, "SIGKILL");
+    } catch {
+      // already exited
+    }
+  }
+  await rm(serviceRecordPath(root, id, name), { force: true });
+  await rm(serviceSocket(root, id, name), { force: true });
+}
+
+/** Kills every device service of the instance (suspend, destroy). */
+async function killServices(root: string, id: string): Promise<void> {
+  const names = await readdir(join(instanceDir(root, id), "services")).catch(() => [] as string[]);
+  for (const n of names) if (n.endsWith(".json")) await killService(root, id, n.slice(0, -5));
+}
+
+/** Connects to a unix socket; rejects on error or abort. */
+function connectSocket(path: string, signal: AbortSignal): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortError(signal));
+      return;
+    }
+    const sock = createConnection(path);
+    const onAbort = () => {
+      sock.destroy();
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    sock.once("connect", () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(sock);
+    });
+    sock.once("error", (err) => {
+      signal.removeEventListener("abort", onAbort);
+      reject(err);
+    });
+  });
+}
+
+/** The device service methods of the fake (see the file header). */
+function serviceSurface(
+  root: string,
+  binDir: string,
+  requireRunning: (h: SandboxHandle) => Promise<void>,
+  log: (line: string) => Promise<void>,
+): Required<
+  Pick<
+    DeviceProvider,
+    "ensureService" | "stopService" | "serviceStatus" | "serviceRequest" | "openStream"
+  >
+> {
+  /** Starts in flight on this process, so concurrent `ensureService` calls start one process. */
+  const starting = new Map<string, Promise<DeviceServiceStatus>>();
+  const running = async (h: SandboxHandle, name: string): Promise<ServiceRecord> => {
+    const rec = await readServiceRecord(root, h.id, name);
+    if (rec === null || !alive(rec.pid)) throw new Error(`device service ${name} is not running`);
+    return rec;
+  };
+  const start = async (
+    h: SandboxHandle,
+    spec: DeviceServiceSpec,
+    signal: AbortSignal,
+  ): Promise<DeviceServiceStatus> => {
+    const rec = await readServiceRecord(root, h.id, spec.name);
+    if (rec !== null && alive(rec.pid))
+      return {
+        name: spec.name,
+        state: "running",
+        startedAt: rec.startedAt,
+        stateDir: fakeServiceStateDir(root, h.id, spec.name),
+      };
+    const state = fakeServiceStateDir(root, h.id, spec.name);
+    const inside = (rel: string) => {
+      const n = posix.normalize(rel);
+      if (n.startsWith("/") || n === ".." || n.startsWith("../") || n === ".")
+        throw new Error(`device service file ${rel} must be a relative path inside its state`);
+      return join(state, n);
+    };
+    if (!(spec.entry in spec.files)) throw new Error(`entry ${spec.entry} is not in the files`);
+    for (const [rel, data] of Object.entries(spec.files)) {
+      const p = inside(rel);
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, data);
+    }
+    const socket = serviceSocket(root, h.id, spec.name);
+    await rm(socket, { force: true });
+    const child = spawn(process.execPath, [inside(spec.entry), ...spec.args], {
+      cwd: state,
+      env: {
+        ...spec.env,
+        HOME: state,
+        PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        [DEVICE_SERVICE_SOCKET_ENV]: socket,
+        [DEVICE_SERVICE_STATE_ENV]: state,
+      },
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    let exited: number | null = null;
+    child.once("exit", (code) => {
+      exited = code ?? -1;
+    });
+    const pid = child.pid;
+    if (pid === undefined) throw new Error(`device service ${spec.name} did not start`);
+    // ready once its socket accepts a connection; any failure (an early exit, the deadline, an
+    // abort) kills the detached process group, so no orphan outlives the call
+    const deadline = Date.now() + 15_000;
+    try {
+      for (;;) {
+        if (exited !== null) throw new Error(`device service ${spec.name} exited with ${exited}`);
+        const sock = await connectSocket(socket, signal).catch((err: unknown) => {
+          if (signal.aborted) throw err;
+          return null;
+        });
+        if (sock) {
+          sock.destroy();
+          break;
+        }
+        if (Date.now() > deadline)
+          throw new Error(`device service ${spec.name} did not listen in time`);
+        await sleep(20, signal);
+      }
+    } catch (err) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // already exited
+      }
+      await rm(socket, { force: true });
+      throw err;
+    }
+    const startedAt = new Date().toISOString();
+    await mkdir(join(instanceDir(root, h.id), "services"), { recursive: true });
+    await writeFile(
+      serviceRecordPath(root, h.id, spec.name),
+      JSON.stringify({ pid, startedAt } satisfies ServiceRecord),
+    );
+    await log(`service-start ${h.id} ${spec.name} ${pid}`);
+    return { name: spec.name, state: "running", startedAt, stateDir: state };
+  };
+  /** The service's status now, without starting it. */
+  const statusOf = async (h: SandboxHandle, name: string): Promise<DeviceServiceStatus> => {
+    const rec = await readServiceRecord(root, h.id, name);
+    const stateDir = fakeServiceStateDir(root, h.id, name);
+    return rec !== null && alive(rec.pid)
+      ? { name, state: "running", startedAt: rec.startedAt, stateDir }
+      : { name, state: "stopped", startedAt: null, stateDir };
+  };
+  return {
+    async ensureService(h, spec, signal, opts) {
+      signal.throwIfAborted();
+      if (!DEVICE_SERVICE_NAME_RE.test(spec.name))
+        throw new Error(`invalid device service name ${spec.name}`);
+      await requireRunning(h);
+      if (opts?.ifRunning === true) {
+        // never starts one; a running one would get the device's current limits again
+        const status = await statusOf(h, spec.name);
+        await log(`service-if-running ${h.id} ${spec.name} ${status.state}`);
+        return status;
+      }
+      const key = `${h.id}/${spec.name}`;
+      const inFlight = starting.get(key);
+      if (inFlight) return inFlight;
+      const p = start(h, spec, signal).finally(() => starting.delete(key));
+      starting.set(key, p);
+      return p;
+    },
+
+    async stopService(h, name, signal) {
+      signal.throwIfAborted();
+      await killService(root, h.id, name);
+      await log(`service-stop ${h.id} ${name}`);
+    },
+
+    async serviceStatus(h, name, signal) {
+      signal.throwIfAborted();
+      return statusOf(h, name);
+    },
+
+    async serviceRequest(h, name, body, opts) {
+      opts.signal.throwIfAborted();
+      await running(h, name);
+      const sock = await connectSocket(serviceSocket(root, h.id, name), opts.signal);
+      return new Promise<Uint8Array>((resolve, reject) => {
+        const decoder = new ServiceMessageDecoder();
+        let done = false;
+        const finish = (err: unknown, value?: Uint8Array) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          opts.signal.removeEventListener("abort", onAbort);
+          sock.destroy();
+          if (err) reject(err);
+          else resolve(value as Uint8Array);
+        };
+        const timer = setTimeout(
+          () => finish(new Error(`device service ${name} did not answer in time`)),
+          opts.timeoutMs,
+        );
+        const onAbort = () => finish(abortError(opts.signal));
+        opts.signal.addEventListener("abort", onAbort, { once: true });
+        sock.on("data", (chunk: Buffer) => {
+          try {
+            const [first] = decoder.push(chunk);
+            if (first) finish(null, first);
+          } catch (err) {
+            finish(err);
+          }
+        });
+        sock.on("error", (err) => finish(err));
+        sock.on("close", () => finish(new Error(`device service ${name} closed without answer`)));
+        sock.write(encodeServiceMessage(new TextEncoder().encode('{"kind":"request"}')));
+        sock.write(encodeServiceMessage(body));
+      });
+    },
+
+    async openStream(h, target, signal) {
+      signal.throwIfAborted();
+      await running(h, target.service);
+      const sock = await connectSocket(serviceSocket(root, h.id, target.service), signal);
+      sock.write(encodeServiceMessage(new TextEncoder().encode('{"kind":"stream"}')));
+      const decoder = new ServiceMessageDecoder();
+      const queue: Uint8Array[] = [];
+      const waiting: ((r: IteratorResult<Uint8Array>) => void)[] = [];
+      let ended = false;
+      let closeReason: string | null = null;
+      let resolveClosed!: (v: { reason: string }) => void;
+      const closed = new Promise<{ reason: string }>((r) => {
+        resolveClosed = r;
+      });
+      const end = (reason: string) => {
+        if (ended) return;
+        ended = true;
+        closeReason ??= reason;
+        for (const w of waiting.splice(0)) w({ value: undefined, done: true });
+        resolveClosed({ reason: closeReason });
+      };
+      sock.on("data", (chunk: Buffer) => {
+        let msgs: Uint8Array[];
+        try {
+          msgs = decoder.push(chunk);
+        } catch {
+          sock.destroy();
+          return;
+        }
+        for (const m of msgs) {
+          const w = waiting.shift();
+          if (w) w({ value: m, done: false });
+          else queue.push(m);
+        }
+      });
+      sock.on("error", () => {});
+      sock.on("close", () => end("closed by the service"));
+      const stream: DeviceStream = {
+        send: (message) =>
+          new Promise<void>((resolve, reject) => {
+            if (ended) {
+              reject(new Error("device stream is closed"));
+              return;
+            }
+            sock.write(encodeServiceMessage(message), (err) => (err ? reject(err) : resolve()));
+          }),
+        messages: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => {
+              const m = queue.shift();
+              if (m) return Promise.resolve({ value: m, done: false });
+              if (ended) return Promise.resolve({ value: undefined, done: true });
+              return new Promise((r) => waiting.push(r));
+            },
+          }),
+        },
+        close: (reason) => {
+          closeReason ??= reason ?? "closed";
+          sock.destroy();
+          end(closeReason);
+        },
+        closed,
+      };
+      return stream;
+    },
+  };
 }
 
 /** Simulates the provider losing a file system (a later `create` throws `FileSystemGoneError`). */
@@ -635,6 +1006,7 @@ export function createFakeSandbox(
       }
     }
     await killExecutions(instanceDir(root, h.id));
+    await killServices(root, h.id);
   };
   /**
    * The host path of a device path. `/workspace`, `/skills` and `/tmp` map to the instance's
@@ -979,6 +1351,8 @@ export function createFakeSandbox(
       return mode;
     };
   }
+  if (options.services !== false)
+    Object.assign(provider, serviceSurface(root, binDir, requireRunning, log));
   if (options.reportsNetwork === true) {
     provider.appliedNetwork = async (h, signal) => {
       signal.throwIfAborted();
@@ -1007,7 +1381,11 @@ export function createFakeSandbox(
  * The extension manifest and setup of a fake device provider named `name` (deployment config
  * `{ root }`; `device-fake` and `device-fake-b` differ only in name and description).
  */
-export function defineFakeDevice(name: string, description?: string) {
+export function defineFakeDevice(
+  name: string,
+  description?: string,
+  options: Pick<FakeSandboxOptions, "services"> = {},
+) {
   return defineExtension({
     name,
     version: "0.1.0",
@@ -1029,6 +1407,7 @@ export function defineFakeDevice(name: string, description?: string) {
           ...(refusePaths !== undefined && { refusePaths }),
           ...(fencing !== undefined && { fencing }),
           ...(reportsNetwork !== undefined && { reportsNetwork }),
+          ...options,
         }),
       );
     },

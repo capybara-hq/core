@@ -1,5 +1,11 @@
 import websocket, { type WebSocket } from "@fastify/websocket";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import {
+  DEVICE_STREAM_HOP_ROUTE,
+  DEVICE_STREAM_ROUTE,
+  type DeviceStreamRoutesOptions,
+  registerDeviceStreamRoutes,
+} from "../device-access/viewer-routes.js";
 import { errorBody } from "../errors.js";
 import type { DialInAdmission } from "./gateway.js";
 
@@ -13,14 +19,31 @@ export interface DeviceRoutesGateway {
   /** Who the credential stands for and the provider serving its device; null when unknown. */
   admit(credential: string): Promise<DialInAdmission>;
   /** Serves the upgraded socket (re-checks the credential with the socket paused). */
-  accept(socket: WebSocket, credential: string, protocol: string): Promise<void>;
+  accept(
+    socket: WebSocket,
+    credential: string,
+    protocol: string,
+    localPort?: number,
+  ): Promise<void>;
 }
 
 export interface DeviceRoutesOptions {
   gateway: DeviceRoutesGateway;
   /** `devices.dialIn.maxFrameBytes`: a larger incoming frame closes the socket (1009). */
   maxFrameBytes: number;
+  /**
+   * The device stream viewer routes (`GET /device/stream`, the hop route), registered in the same
+   * WebSocket scope when given (`@fastify/websocket` serves one upgrade listener per server).
+   */
+  streams?: DeviceStreamRoutesOptions;
 }
+
+/** The routes of the gateway role that accept a WebSocket upgrade. */
+const UPGRADE_ROUTES: ReadonlySet<string> = new Set([
+  DEVICE_CONNECT_ROUTE,
+  DEVICE_STREAM_ROUTE,
+  DEVICE_STREAM_HOP_ROUTE,
+]);
 
 /** The comma-separated tokens of a header, lowercased. */
 function tokens(v: string | string[] | undefined): string[] {
@@ -79,7 +102,8 @@ export function protocolMismatchMessage(plugin: string, expected: string, spoken
 }
 
 /**
- * Registers `GET /device/connect` (the gateway role only) in its own encapsulated scope with
+ * Registers `GET /device/connect` (the gateway role only), and with `opts.streams` the device
+ * stream viewer routes (`device-access/viewer-routes.ts`), in its own encapsulated scope with
  * `@fastify/websocket`: a raw Fastify route outside Nest, so neither the API's `AuthGuard` nor its
  * CSRF check applies. Before the upgrade the route checks the machine credential (401
  * `device.credential_invalid`), then the device's provider: off in the org, not loaded or not a
@@ -89,7 +113,8 @@ export function protocolMismatchMessage(plugin: string, expected: string, spoken
  * Must be called before Nest `app.init()`, on the root instance.
  *
  * `@fastify/websocket` sends every upgrade request of the server through the Fastify router; the
- * root hooks below keep that from reaching any other route: a WebSocket upgrade to another path
+ * root hooks below keep that from reaching any other route: a WebSocket upgrade to a path not in
+ * {@link UPGRADE_ROUTES}
  * is answered 404 and its socket closed once answered (Node would have dropped it without a
  * listener). Other upgrades (`h2c`) reach their route as ordinary requests; their socket, which
  * no HTTP connection owns any more, is closed once answered as well (the upgrade is declined).
@@ -99,7 +124,7 @@ export async function registerDeviceConnectRoute(
   opts: DeviceRoutesOptions,
 ): Promise<void> {
   fastify.addHook("onRequest", async (req, reply) => {
-    if (!isWebSocketUpgrade(req) || req.routeOptions.url === DEVICE_CONNECT_ROUTE) return;
+    if (!isWebSocketUpgrade(req) || UPGRADE_ROUTES.has(req.routeOptions.url ?? "")) return;
     return reply
       .code(404)
       .send(errorBody("not_found", "This path does not accept a protocol upgrade"));
@@ -160,8 +185,9 @@ export async function registerDeviceConnectRoute(
           socket.close(4400, "not authenticated");
           return;
         }
-        void opts.gateway.accept(socket, a.credential, a.protocol);
+        void opts.gateway.accept(socket, a.credential, a.protocol, req.socket.localPort);
       },
     );
+    if (opts.streams) await registerDeviceStreamRoutes(scope, opts.streams);
   });
 }

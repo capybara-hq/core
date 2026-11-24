@@ -10,6 +10,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { CloudPermissionSnapshotsModule } from "./cloud-permission-snapshot.module.js";
 import { DeviceReportsModule } from "./device-reports.module.js";
+import { DeviceServices } from "./device-services.js";
 import { SandboxJobs } from "./jobs.js";
 import { LegacyRetirementModule } from "./legacy-retirement.module.js";
 import { OperationAuthorityModule } from "./operation-authority.module.js";
@@ -23,7 +24,8 @@ import { SandboxService } from "./sandbox.service.js";
 /**
  * Sandboxes: the one {@link SandboxService} (a device's file system and instance over the
  * `device-provider@1` provider, with the shared / exclusive leases of {@link SandboxLeases}), the review
- * every command passes in auto mode ({@link CommandReviewService}), and the producer of the
+ * every command passes in auto mode ({@link CommandReviewService}), device services
+ * ({@link DeviceServices}), and the producer of the
  * one-off `sandbox-destroy-for` jobs (`MaintenanceProcessor` consumes them). The sweeps
  * (`SandboxSweepJobs`) are the worker role's (`WorkerModule`).
  */
@@ -49,12 +51,13 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [SandboxService, SandboxJobs, CommandReviewService],
+  providers: [SandboxService, SandboxJobs, CommandReviewService, DeviceServices],
   exports: [
     SandboxProviderRegistryModule,
     LegacyRetirementModule,
     PermissionAuthorityModule,
     SandboxService,
+    DeviceServices,
     OperationIntentsModule,
     OperationAuthorityModule,
     SandboxJobs,

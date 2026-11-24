@@ -402,6 +402,19 @@ describe("ctx 按权限清单构造", () => {
           stop: async (deviceId: string) => {
             calls.push({ method: "stop", deviceId });
           },
+          openStream: async (deviceId: string, _body: unknown, signal: AbortSignal) => {
+            calls.push({ method: "openStream", deviceId, opts: { signal } });
+            let resolveClosed!: (v: { reason: string }) => void;
+            const closed = new Promise<{ reason: string }>((r) => {
+              resolveClosed = r;
+            });
+            return {
+              send: async () => {},
+              messages: (async function* () {})(),
+              close: (reason?: string) => resolveClosed({ reason: reason ?? "closed" }),
+              closed,
+            };
+          },
         },
       };
     };
@@ -484,6 +497,7 @@ describe("ctx 按权限清单构造", () => {
         () => ctx.dialIn.online("d-other"),
         () => ctx.dialIn.capacity("d-other"),
         () => ctx.dialIn.stop("d-other", "stop"),
+        () => ctx.dialIn.openStream("d-other", {}, { signal: new AbortController().signal }),
       ]) {
         const e = await call().then(
           () => null,
@@ -512,13 +526,24 @@ describe("ctx 按权限清单构造", () => {
       expect(await ctx.dialIn.online("d-1")).toBe(true);
       expect(await ctx.dialIn.capacity("d-1")).toEqual({ maxFrameBytes: 4096 });
       await ctx.dialIn.stop("d-1", "drain");
-      expect(a.calls.map((c) => c.method)).toEqual(["request", "online", "capacity", "stop"]);
+      // the signal is required: an open nobody can abort is refused before the access is asked
+      await expect(ctx.dialIn.openStream("d-1", { t: 1 }, {} as never)).rejects.toThrow(TypeError);
+      const stream = await ctx.dialIn.openStream("d-1", { t: 1 }, { signal: own.signal });
+      expect(a.calls.map((c) => c.method)).toEqual([
+        "request",
+        "online",
+        "capacity",
+        "stop",
+        "openStream",
+      ]);
       const opts = a.calls[0]?.opts as { timeoutMs: number; signal: AbortSignal };
       expect(Object.keys(opts).sort()).toEqual(["signal", "timeoutMs"]);
       // the instance's signal joins the extension's: an unload aborts the wait
       expect(opts.signal.aborted).toBe(false);
       await ctx.close();
       expect(opts.signal.aborted).toBe(true);
+      // the extension's end closes its open streams
+      expect(await stream.closed).toEqual({ reason: "extension stopped" });
       expect(await denials()).toEqual([]);
     });
   });

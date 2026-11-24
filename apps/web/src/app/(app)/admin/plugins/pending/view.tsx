@@ -376,13 +376,20 @@ function ConfirmPermissionsDialog({
               keyWidth="16ch"
               rows={declaredPermissions(ext, latest?.manifest.extension?.client).map((g) => ({
                 k: label(g.category),
-                // components and client code run the plugin's own code in members' browsers
+                // components and client code run the plugin's own code in members' browsers,
+                // device services run it in conversations' devices
                 v: g.sensitive ? (
                   <Stack gap={4}>
                     <Badge tone="warn">{tp("sensitive")}</Badge>
                     <Text variant="small" tone="muted">
                       {tp(
-                        `review.reason.${g.category === "client" ? "client_code" : "ui_component"}`,
+                        `review.reason.${
+                          g.category === "client"
+                            ? "client_code"
+                            : g.category === "deviceAccess"
+                              ? "device_access"
+                              : "ui_component"
+                        }`,
                       )}
                     </Text>
                     {g.category === "client" && latest?.client != null ? (

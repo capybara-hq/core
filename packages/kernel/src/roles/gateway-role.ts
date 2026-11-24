@@ -3,17 +3,21 @@ import { Inject, Injectable } from "@nestjs/common";
 import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
 import { ChannelSupervisor } from "../channels/supervisor.js";
 import { ChannelWebhooks } from "../channels/webhook.js";
+import { DeviceStreamViewers } from "../device-access/viewer.js";
+import { viewerThrottleOn } from "../device-access/viewer-routes.js";
 import { DialInGateway } from "../dial-in/gateway.js";
 import { ExtensionHost } from "../extensions/host.js";
 import type { GatewayRoutes } from "../http/gateway-routes.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { KERNEL_BUS } from "../infra/tokens.js";
 
 /**
  * The gateway role's parts, driven by `KernelLifecycle` at fixed points of its start order and
  * stop phases: the channel long-connection supervisor (leader election and share) and the webhook
  * inbound (its raw Fastify route, {@link routes}, and its runtime cache's invalidation), and the
- * device connections ({@link DialInGateway}, `GET /device/connect`). Provided
+ * device connections ({@link DialInGateway}, `GET /device/connect`) and the device stream viewers
+ * ({@link DeviceStreamViewers}, `GET /device/stream`). Provided
  * only by `GatewayModule`, so a process without the gateway role has none of them.
  */
 @Injectable()
@@ -33,11 +37,13 @@ export class GatewayRole {
     @Inject(ChannelSupervisor) private readonly supervisor: ChannelSupervisor,
     @Inject(ChannelWebhooks) private readonly webhooks: ChannelWebhooks,
     @Inject(DialInGateway) private readonly devices: DialInGateway,
+    @Inject(DeviceStreamViewers) private readonly viewers: DeviceStreamViewers,
+    @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
   ) {}
 
   /**
-   * The gateway role's HTTP routes (the channel webhook, the device connection), registered when
-   * the app is built.
+   * The gateway role's HTTP routes (the channel webhook, the device connection, the device stream
+   * viewer), registered when the app is built.
    */
   routes(): GatewayRoutes {
     const config = this.config.get();
@@ -47,6 +53,11 @@ export class GatewayRole {
       devices: {
         gateway: this.devices,
         maxFrameBytes: config.devices.dialIn.maxFrameBytes,
+        streams: {
+          viewers: this.viewers,
+          // per-client limit only when the client address is known (ruling R23)
+          ...(viewerThrottleOn(config.http.trustProxy) && { throttler: this.throttler }),
+        },
       },
     };
   }
@@ -96,11 +107,14 @@ export class GatewayRole {
   }
 
   /**
-   * Closes the device connections (1001) and hands their leases back, before the HTTP server
-   * closes (the machines reconnect to another gateway replica).
+   * Closes the device stream viewers (1001: the panels reconnect with a new ticket), then the
+   * device connections (1001) and hands their leases back, before the HTTP server closes (the
+   * machines reconnect to another gateway replica). Viewers first, so a viewer of a local device
+   * learns of the shutdown rather than of its machine going offline.
    */
-  stopDevices(): Promise<void> {
-    return this.devices.stop();
+  async stopDevices(): Promise<void> {
+    await this.viewers.stop();
+    await this.devices.stop();
   }
 
   /**

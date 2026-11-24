@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import type { DeviceStream } from "./device-provider.js";
 
 /**
  * A dial-in protocol: `<name>/<major>`, a lower-case name of 1 to 41 characters and a major
@@ -15,6 +16,24 @@ import { z } from "zod";
  * the protocol of the provider serving its device.
  */
 export const DIAL_IN_PROTOCOL_RE = /^[a-z][a-z0-9-]{0,40}\/[1-9][0-9]{0,3}$/;
+
+/**
+ * The credit, in messages, each side of a dial-in stream starts with for the other: a side sends a
+ * `stream-data` only while it holds credit, and grants more with `stream-credit` as it consumes
+ * messages, so one stream cannot fill the connection and starve the machine's other frames.
+ */
+export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
+
+/**
+ * The stream frames both sides send ({@link DialInChannel.openStream}). `data` is one whole message
+ * in standard base64; the frame, like every frame, fits the connection's `maxFrameBytes`.
+ */
+export type DialInStreamFrame =
+  | { type: "stream-data"; streamId: string; data: string }
+  /** Grants the peer `messages` more `stream-data` frames on the stream. */
+  | { type: "stream-credit"; streamId: string; messages: number }
+  /** Either side ends the stream; no frame of it follows. */
+  | { type: "stream-close"; streamId: string; reason: string };
 
 /** A frame from the machine. The kernel checks the envelope; `body` is the provider's. */
 export type DialInMachineFrame =
@@ -33,7 +52,10 @@ export type DialInMachineFrame =
   /** The answer to the kernel's `req` with the same `id`. */
   | { type: "res"; id: string; body: unknown }
   /** An unsolicited frame, handed to {@link DialInHandler.onFrame}. */
-  | { type: "event"; body: unknown };
+  | { type: "event"; body: unknown }
+  /** The answer to the kernel's `stream-open`: the machine opened the stream, or why not. */
+  | { type: "stream-opened"; streamId: string; ok: boolean; error?: string }
+  | DialInStreamFrame;
 
 /** A frame from the kernel to the machine. */
 export type DialInKernelFrame =
@@ -48,7 +70,10 @@ export type DialInKernelFrame =
   /** The kernel no longer waits for request `id` (aborted or timed out). */
   | { type: "cancel"; id: string }
   /** The machine should finish its work and disconnect (`drain`) or stop at once (`stop`). */
-  | { type: "stop"; reason: "drain" | "stop" };
+  | { type: "stop"; reason: "drain" | "stop" }
+  /** Opens a stream on the machine; `body` names the target in the provider's protocol. */
+  | { type: "stream-open"; streamId: string; body: unknown }
+  | DialInStreamFrame;
 
 /** A machine frame that is not a valid dial-in envelope. The kernel closes the socket on it. */
 export class DialInProtocolError extends Error {
@@ -64,6 +89,20 @@ const id = z.string().regex(ID_RE);
 const label = z.string().min(1).max(64);
 // a frame without a body is malformed (JSON has no undefined, so this is a missing key)
 const body = z.unknown().refine((v) => v !== undefined, "body is required");
+// standard base64, padded; empty is an empty message
+const base64 = z
+  .string()
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/, "data must be base64");
+const reason = z.string().max(500);
+const streamFrames = [
+  z.strictObject({ type: z.literal("stream-data"), streamId: id, data: base64 }),
+  z.strictObject({
+    type: z.literal("stream-credit"),
+    streamId: id,
+    messages: z.number().int().min(1).max(1_000_000),
+  }),
+  z.strictObject({ type: z.literal("stream-close"), streamId: id, reason }),
+] as const;
 
 const machineFrame = z.discriminatedUnion("type", [
   z.strictObject({
@@ -83,6 +122,13 @@ const machineFrame = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("res"), id, body }),
   z.strictObject({ type: z.literal("event"), body }),
+  z.strictObject({
+    type: z.literal("stream-opened"),
+    streamId: id,
+    ok: z.boolean(),
+    error: reason.optional(),
+  }),
+  ...streamFrames,
 ]);
 
 /**
@@ -130,6 +176,8 @@ const kernelFrame = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("cancel"), id }),
   z.strictObject({ type: z.literal("stop"), reason: z.enum(["drain", "stop"]) }),
+  z.strictObject({ type: z.literal("stream-open"), streamId: id, body }),
+  ...streamFrames,
 ]);
 
 /**
@@ -206,6 +254,32 @@ export interface DialInChannel {
    */
   capacity(deviceId: string): Promise<{ maxFrameBytes: number } | null>;
   stop(deviceId: string, reason: "drain" | "stop"): Promise<void>;
+  /**
+   * Opens a stream to the machine serving the device: sends `stream-open` with `body` (the
+   * target, in the provider's protocol) and resolves once the machine answers `stream-opened` ok.
+   * Stream frames go straight over the machine's socket, never through shared state, so this
+   * works only on the gateway replica holding that socket: elsewhere it throws
+   * {@link DialInStreamElsewhereError}. Throws {@link DeviceOfflineError} when no machine holds the
+   * device. Each message must fit the connection's frame capacity once base64-encoded in a
+   * `stream-data` frame. `signal` bounds the opening only.
+   */
+  openStream(deviceId: string, body: unknown, opts: { signal: AbortSignal }): Promise<DeviceStream>;
+}
+
+/**
+ * {@link DialInChannel.openStream} was called on a replica that does not hold the machine's
+ * socket: the caller must reach the holding gateway replica instead.
+ */
+export class DialInStreamElsewhereError extends Error {
+  readonly code = "device.stream_elsewhere";
+
+  constructor(deviceId: string, opts?: { cause?: unknown }) {
+    super(
+      `Device ${deviceId}'s machine is connected to another gateway replica; open the stream there.`,
+      opts && "cause" in opts ? { cause: opts.cause } : undefined,
+    );
+    this.name = "DialInStreamElsewhereError";
+  }
 }
 
 /**

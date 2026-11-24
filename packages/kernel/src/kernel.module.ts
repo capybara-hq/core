@@ -9,6 +9,7 @@ import { ClientModule } from "./client/client.module.js";
 import type { KernelConfig } from "./config/schema.js";
 import { PromptSuggestionsModule } from "./conversations/prompt-suggestions.js";
 import { TitlesModule } from "./conversations/titles.js";
+import { ExtensionDeviceAccessModule } from "./device-access/device-access.module.js";
 import { BootstrapDefaultsService } from "./extensions/bootstrap-defaults.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
@@ -127,6 +128,8 @@ export class KernelModule {
         PluginRouteAccessModule,
         // client extensions: the client builds stored with extension packages
         ClientModule,
+        // ctx.deviceAccess: extensions' device services (the host finds it at the time of use)
+        ExtensionDeviceAccessModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role

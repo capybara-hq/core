@@ -921,6 +921,9 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
+export const DEVICE_ACCESS_MAX_SERVICES = 4;
+
+// @public
 export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
 
 // @public
@@ -945,6 +948,65 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 
 // @public
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
+
+// @public
+export const DEVICE_SERVICE_MAX_MESSAGE: number;
+
+// @public
+export const DEVICE_SERVICE_NAME_RE: RegExp;
+
+// @public
+export const DEVICE_SERVICE_SOCKET_ENV = "CAPYBARA_SERVICE_SOCKET";
+
+// @public
+export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
+
+// @public
+export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
+
+// @public
+export interface DeviceAccessCtx {
+    addNetworkHosts(scope: DeviceAccessScope & {
+        hosts: string[];
+    }): Promise<void>;
+    answerHandoff(scope: DeviceAccessScope & {
+        callId: string;
+        done: boolean;
+    }): Promise<void>;
+    ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
+    reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: {
+        url?: string;
+    }): void;
+    request(call: ToolCallContext, req: {
+        service: string;
+        body: Uint8Array;
+        timeoutMs: number;
+    }): Promise<Uint8Array>;
+    streamTicket(scope: DeviceAccessScope & {
+        service: string;
+    }): Promise<{
+        url: string;
+        expiresAt: string;
+    }>;
+}
+
+// @public
+export class DeviceAccessError extends Error {
+    constructor(code: DeviceAccessErrorCode, message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code: DeviceAccessErrorCode;
+}
+
+// @public
+export type DeviceAccessErrorCode = "no_device" | "provider_unavailable" | "capability_missing" | "not_owner" | "service_not_declared";
+
+// @public
+export type DeviceAccessScope = {
+    orgId: string;
+    conversationId: string;
+    accountId: string;
+};
 
 // @public
 export interface DeviceFence {
@@ -983,6 +1045,9 @@ export interface DeviceProvider {
     destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
     destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
     readonly dialIn?: DialInHandler;
+    ensureService?(h: SandboxHandle, spec: DeviceServiceSpec, signal: AbortSignal, opts?: {
+        ifRunning?: boolean;
+    }): Promise<DeviceServiceStatus>;
     exec(h: SandboxHandle, args: {
         command: string;
         cwd?: string;
@@ -1007,6 +1072,9 @@ export interface DeviceProvider {
         truncated: boolean;
     } | null>;
     readonly networkAllowlist: true;
+    openStream?(h: SandboxHandle, target: {
+        service: string;
+    }, signal: AbortSignal): Promise<DeviceStream>;
     operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
     permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
     prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
@@ -1026,11 +1094,17 @@ export interface DeviceProvider {
         path: string;
         suggestedName: string;
     }[]>;
+    serviceRequest?(h: SandboxHandle, name: string, body: Uint8Array, opts: {
+        timeoutMs: number;
+        signal: AbortSignal;
+    }): Promise<Uint8Array>;
+    serviceStatus?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<DeviceServiceStatus>;
     readonly sessionIsolation?: boolean;
     stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
         size: number;
         isDir: boolean;
     } | null>;
+    stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
     suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal, fence: DeviceFence): Promise<"updated" | "recreate">;
     writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
@@ -1070,6 +1144,35 @@ export interface DevicesCtx {
 }
 
 // @public
+export interface DeviceServiceSpec {
+    args: string[];
+    entry: string;
+    env?: Record<string, string>;
+    files: Record<string, Uint8Array>;
+    name: string;
+    runtime: "node";
+}
+
+// @public
+export interface DeviceServiceStatus {
+    codeDir?: string;
+    name: string;
+    startedAt: string | null;
+    state: "running" | "stopped";
+    stateDir: string;
+}
+
+// @public
+export interface DeviceStream {
+    close(reason?: string): void;
+    readonly closed: Promise<{
+        reason: string;
+    }>;
+    readonly messages: AsyncIterable<Uint8Array>;
+    send(message: Uint8Array): Promise<void>;
+}
+
+// @public
 export interface DeviceText {
     en: string;
     zh?: string;
@@ -1079,11 +1182,17 @@ export interface DeviceText {
 export const DIAL_IN_PROTOCOL_RE: RegExp;
 
 // @public
+export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
+
+// @public
 export interface DialInChannel {
     capacity(deviceId: string): Promise<{
         maxFrameBytes: number;
     } | null>;
     online(deviceId: string): Promise<boolean>;
+    openStream(deviceId: string, body: unknown, opts: {
+        signal: AbortSignal;
+    }): Promise<DeviceStream>;
     request(deviceId: string, frame: unknown, opts: {
         timeoutMs: number;
         signal?: AbortSignal;
@@ -1138,7 +1247,13 @@ export type DialInKernelFrame =
 | {
     type: "stop";
     reason: "drain" | "stop";
-};
+}
+/** Opens a stream on the machine; `body` names the target in the provider's protocol. */
+| {
+    type: "stream-open";
+    streamId: string;
+    body: unknown;
+} | DialInStreamFrame;
 
 // @public
 export type DialInMachineFrame = {
@@ -1166,12 +1281,46 @@ export type DialInMachineFrame = {
 | {
     type: "event";
     body: unknown;
-};
+}
+/** The answer to the kernel's `stream-open`: the machine opened the stream, or why not. */
+| {
+    type: "stream-opened";
+    streamId: string;
+    ok: boolean;
+    error?: string;
+} | DialInStreamFrame;
 
 // @public
 export class DialInProtocolError extends Error {
     constructor(message: string);
 }
+
+// @public
+export class DialInStreamElsewhereError extends Error {
+    constructor(deviceId: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code = "device.stream_elsewhere";
+}
+
+// @public
+export type DialInStreamFrame = {
+    type: "stream-data";
+    streamId: string;
+    data: string;
+}
+/** Grants the peer `messages` more `stream-data` frames on the stream. */
+| {
+    type: "stream-credit";
+    streamId: string;
+    messages: number;
+}
+/** Either side ends the stream; no frame of it follows. */
+| {
+    type: "stream-close";
+    streamId: string;
+    reason: string;
+};
 
 // @public
 export interface Directory {
@@ -1267,6 +1416,15 @@ export type EmbedChildMessage =
     protocol: typeof EMBED_PROTOCOL;
     type: "toast";
     text: string;
+}
+/**
+* Asks the host to maximise (`true`) or restore (`false`) the conversation's right panel; only an
+* embed in the `conversation.panel` slot is honoured.
+*/
+| {
+    protocol: typeof EMBED_PROTOCOL;
+    type: "panel-mode";
+    full: boolean;
 };
 
 // @public
@@ -1362,6 +1520,9 @@ export interface EmbedResult {
 }
 
 // @public
+export function encodeServiceMessage(body: Uint8Array): Uint8Array;
+
+// @public
 export interface EntryImport {
     dynamic: boolean;
     literal: boolean;
@@ -1403,6 +1564,7 @@ export interface ExtensionContext {
     };
     readonly config: unknown;
     db: Kysely<any>;
+    deviceAccess: DeviceAccessCtx;
     devices: DevicesCtx;
     dialIn: DialInChannel;
     extensionPoints: {
@@ -1585,6 +1747,9 @@ export class ExtensionPermissionError extends Error {
 // @public
 export interface ExtensionPermissions {
     client?: boolean;
+    deviceAccess?: {
+        services: string[];
+    };
     dialIn?: {
         protocol: string;
     };
@@ -3751,6 +3916,17 @@ export function secret<T extends z.ZodTypeAny>(schema: T): T;
 export const SEMVER_VERSION_RE: RegExp;
 
 // @public
+export const SERVICE_CONNECTION_KINDS: readonly ["request", "stream"];
+
+// @public
+export type ServiceConnectionKind = (typeof SERVICE_CONNECTION_KINDS)[number];
+
+// @public
+export class ServiceMessageDecoder {
+    push(chunk: Uint8Array): Uint8Array[];
+}
+
+// @public
 export const SETUP_CHECK_ID_RE: RegExp;
 
 // @public
@@ -4622,7 +4798,7 @@ export const UI_COMPONENT_SLOTS: readonly UiSlotId[];
 export const UI_CONTRIBUTION_KEY_RE: RegExp;
 
 // @public
-export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
+export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "globe", "puzzle"];
 
 // @public
 export const UI_LIMITS: {

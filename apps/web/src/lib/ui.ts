@@ -21,6 +21,7 @@ export type UiIcon =
   | "bot"
   | "book"
   | "message-square"
+  | "globe"
   | "puzzle";
 
 /** An open target: a panel of the same extension, scrolled to the item with this `id`. */

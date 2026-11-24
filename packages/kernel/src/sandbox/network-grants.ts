@@ -52,12 +52,15 @@ function grantedOf(detail: unknown): string[] {
   return Array.isArray(g) ? g.filter(exactHost) : [];
 }
 
-/** `detail.hosts[].host` of a network ask: what it asked about. */
+/**
+ * `detail.hosts` of a network ask: what it asked about (a command's `{ host, port }` entries, a
+ * device service's host names).
+ */
 function askedOf(detail: unknown): string[] {
   const hs = (detail as { hosts?: unknown } | null)?.hosts;
   if (!Array.isArray(hs)) return [];
   return hs.flatMap((h) => {
-    const host = (h as { host?: unknown } | null)?.host;
+    const host = typeof h === "string" ? h : (h as { host?: unknown } | null)?.host;
     return typeof host === "string" ? [host] : [];
   });
 }

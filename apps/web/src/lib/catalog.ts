@@ -133,6 +133,8 @@ export interface StaticExtensionManifest {
     /** Client code: a browser bundle that runs in members' browsers. */
     client?: boolean;
     ui?: { views?: string[]; embeds?: string[]; components?: string[] };
+    /** Long-lived services the extension runs in conversations' devices (SDK `deviceAccess`). */
+    deviceAccess?: { services: string[] };
   };
   /** The config fields the extension declares (SDK `StaticConfigField`). */
   config?: { deployment: StaticConfigField[] };
@@ -1755,6 +1757,7 @@ export function declaredPermissions(
             : clientFilesOf(client),
       sensitive: true,
     },
+    { category: "deviceAccess", items: p.deviceAccess?.services ?? [], sensitive: true },
   ];
   return groups
     .filter((g) => g.items.length > 0)

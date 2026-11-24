@@ -175,6 +175,7 @@ function ask(over: Partial<NetworkAskInput> = {}): Promise<ApprovalRecord> {
     conversationId: s.conversationId,
     runId: s.runId,
     step: 1,
+    toolKey: "Bash",
     callId: `c-${randomUUID().slice(0, 8)}`,
     requestedFor: s.accountId,
     detail: {

@@ -364,3 +364,42 @@ describe("readDesignTokens", () => {
     root.removeAttribute("style");
   });
 });
+
+describe("panel-mode (an embed asks for the panel's full mode)", () => {
+  it("full=true from a conversation.panel embed (the caller wired onPanelMode) maximises", async () => {
+    const onPanelMode = vi.fn();
+    const { bridge, frame } = setup({ onPanelMode });
+    await bridge.start();
+    bridge.receive({ source: frame, data: child({ type: "panel-mode", full: true }) });
+    expect(onPanelMode).toHaveBeenCalledWith(true);
+  });
+
+  it("full=false restores", async () => {
+    const onPanelMode = vi.fn();
+    const { bridge, frame } = setup({ onPanelMode });
+    await bridge.start();
+    bridge.receive({ source: frame, data: child({ type: "panel-mode", full: true }) });
+    bridge.receive({ source: frame, data: child({ type: "panel-mode", full: false }) });
+    expect(onPanelMode.mock.calls.map((c) => c[0])).toEqual([true, false]);
+  });
+
+  it("panel-mode from an embed of another slot (no onPanelMode) is ignored, not a toast", async () => {
+    const { bridge, frame, opts } = setup();
+    await bridge.start();
+    bridge.receive({ source: frame, data: child({ type: "panel-mode", full: true }) });
+    expect(opts.onToast).not.toHaveBeenCalled();
+    expect(opts.onResize).not.toHaveBeenCalled();
+  });
+
+  it("a non-boolean full, or another window's message, is dropped", async () => {
+    const onPanelMode = vi.fn();
+    const { bridge, frame } = setup({ onPanelMode });
+    await bridge.start();
+    for (const full of ["true", 1, null, undefined]) {
+      expect(parseEmbedChildMessage(child({ type: "panel-mode", full }))).toBeNull();
+      bridge.receive({ source: frame, data: child({ type: "panel-mode", full }) });
+    }
+    bridge.receive({ source: { other: true }, data: child({ type: "panel-mode", full: true }) });
+    expect(onPanelMode).not.toHaveBeenCalled();
+  });
+});

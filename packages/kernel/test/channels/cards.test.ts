@@ -318,6 +318,34 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(networkCardText(one, "en").inputPreview).toBe("files.slack.com\n\ncurl x");
   });
 
+  // browser use spec §7.1: a device service's ask names the agent's browser, the page when known
+  // and that open network mode stops the asks
+  it("a device service's card: the browser title, the page and the open-network note", () => {
+    const svc = {
+      kind: "service" as const,
+      hosts: ["example.org"],
+      url: "https://example.org/s3cr3t",
+      appliesAt: "next-use" as const,
+    };
+    expect(networkCardText(svc, "zh").title).toBe("智能体的浏览器想访问 example.org");
+    const en = networkCardText(svc, "en", redact, ["always"]);
+    expect(en.title).toBe("The agent's browser wants to reach example.org");
+    expect(en.inputPreview).toBe(
+      [
+        "example.org",
+        "",
+        "https://example.org/***",
+        "",
+        "Add to this device's list: Applies the next time the device is used",
+        "",
+        "Open network mode stops these asks",
+      ].join("\n"),
+    );
+    expect(networkCardText({ ...svc, url: null }, "zh").inputPreview).toBe(
+      "example.org\n\n开放网络模式下不会再询问",
+    );
+  });
+
   it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line, both scopes and when the list applies", async () => {
     const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
     expect(zh).toMatchObject({

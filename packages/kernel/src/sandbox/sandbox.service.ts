@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import {
+  DeviceAccessError,
   isDeviceOfflineError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
@@ -275,7 +276,8 @@ export type SandboxUseEntry = <T>(
 ) => Promise<T>;
 /**
  * How a use reaches the provider: an operation invocation (every call admitted and claimed), a
- * trusted preparation (staging only) or a kernel read. There is no raw route.
+ * trusted preparation (staging only), a kernel read or the device service methods (browser use
+ * spec §5). There is no raw route.
  */
 type UseRoute<T> =
   | { kind: "operations"; invocation: OperationSessionInvocation; fn: SandboxUseCallback<T> }
@@ -288,7 +290,11 @@ type UseRoute<T> =
         signal: AbortSignal,
       ) => Promise<T>;
     }
-  | { kind: "kernelRead"; read: KernelReadInvocation; fn: SandboxUseCallback<T> };
+  | { kind: "kernelRead"; read: KernelReadInvocation; fn: SandboxUseCallback<T> }
+  | {
+      kind: "services";
+      fn: (h: SandboxHandle, p: DeviceServiceMethods, signal: AbortSignal) => Promise<T>;
+    };
 
 type Row = Selectable<DeviceInstancesTable>;
 type Patch = UpdateObject<KernelDatabase, "device_instances">;
@@ -322,6 +328,39 @@ interface Instance {
 export type TaggedProvider = Omit<DeviceProvider, "exec"> & {
   exec(h: SandboxHandle, args: Omit<ExecArgs, "tag">): Promise<ExecResult>;
 };
+
+/** The device service methods of a provider ({@link SandboxService.withDeviceServices}), bound. */
+export type DeviceServiceMethods = Pick<
+  DeviceProvider,
+  "ensureService" | "stopService" | "serviceRequest" | "openStream"
+>;
+
+function serviceMethodsOf(impl: DeviceProvider): DeviceServiceMethods {
+  return {
+    ...(impl.ensureService && { ensureService: impl.ensureService.bind(impl) }),
+    ...(impl.stopService && { stopService: impl.stopService.bind(impl) }),
+    ...(impl.serviceRequest && { serviceRequest: impl.serviceRequest.bind(impl) }),
+    ...(impl.openStream && { openStream: impl.openStream.bind(impl) }),
+  };
+}
+
+/** A device held for a stream ({@link SandboxService.holdForStream}). */
+export interface StreamHold {
+  h: SandboxHandle;
+  /** The provider's `openStream`, bound. */
+  p: Required<Pick<DeviceProvider, "openStream">>;
+  /**
+   * Aborts when the caller's signal aborts or the hold ends (a lifecycle change of the device);
+   * the hold is then released.
+   */
+  signal: AbortSignal;
+  /** Ends the hold (idempotent): holder record cleared, lease released, `last_used_at` moved. */
+  release(): Promise<void>;
+}
+
+const streamUnavailable = (
+  message = "The device is not running; use a device tool first to start it, then open the stream again.",
+): DeviceAccessError => new DeviceAccessError("provider_unavailable", message);
 
 /** What {@link SandboxService.ifRunning} did. */
 export type IfRunningResult<T> =
@@ -1219,6 +1258,123 @@ export class SandboxService {
   }
 
   /**
+   * Holds the device's running instance for a stream to one of its services (browser use spec
+   * §6.2: an open viewer counts as device use). It never creates, resumes or rebuilds an
+   * instance: a device without a running instance, whose provider is off in `orgId`, or that is
+   * in a lifecycle change (an exclusive lease or a pending intent) is refused with
+   * `DeviceAccessError("provider_unavailable")`; a provider without `openStream` with
+   * `capability_missing`.
+   *
+   * A hold is not a lease ({@link SandboxLeases.streamHold}): it takes no
+   * `sandbox.maxConcurrentCommands` slot and never blocks a lifecycle change. Idle suspension and
+   * the inactivity destruction (on any replica) skip a device with a live hold; the forced
+   * suspension after `maxRunningMinutes` does not. A hold yields to every lifecycle change:
+   * an exclusive acquisition ends the device's holds, and a pending intent makes their next
+   * renewal fail, so the returned `signal` aborts (also when the caller's `signal` aborts or a
+   * renewal deadline passes) and the hold is released. `release()` is idempotent and moves
+   * `last_used_at` forward, so the idle clock starts when the viewer goes.
+   */
+  async holdForStream(deviceId: string, orgId: string, signal: AbortSignal): Promise<StreamHold> {
+    signal.throwIfAborted();
+    let p: DeviceProviderEntry;
+    try {
+      p = await this.require(deviceId, orgId);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "device.unavailable")
+        throw streamUnavailable(err.message);
+      if (err instanceof ApiError && err.code === "device.not_found")
+        throw new DeviceAccessError("no_device", err.message);
+      throw err;
+    }
+    const impl = p.impl;
+    if (!impl.openStream)
+      throw new DeviceAccessError(
+        "capability_missing",
+        "This device's provider cannot open streams to device services; choose a device on a provider that supports them.",
+      );
+    const row = () =>
+      this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", deviceId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+    const before = await row();
+    if (!before || !this.usable(before, p, null)) throw streamUnavailable();
+    const lease = await this.leases.streamHold(deviceId);
+    if (!lease) throw streamUnavailable();
+    // read again after the hold is recorded: a lifecycle change that finished before it was
+    // recorded shows in the row; one that starts later ends the hold
+    let after: Row | undefined;
+    try {
+      after = await row();
+    } catch (err) {
+      await lease.release();
+      throw err;
+    }
+    if (
+      !after ||
+      !this.usable(after, p, null) ||
+      after.created_at.getTime() !== before.created_at.getTime()
+    ) {
+      await lease.release();
+      throw streamUnavailable();
+    }
+    // an open viewer is device use: its last use moves when the hold is taken and when it ends
+    const touch = () =>
+      this.db
+        .updateTable("device_instances")
+        .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
+        .where("device_id", "=", deviceId)
+        .where("org_id", "=", orgId)
+        .where("status", "=", "running")
+        .execute()
+        .then(
+          () => undefined,
+          (err: unknown) => this.log.warn("cannot update sandbox last_used_at", { deviceId, err }),
+        );
+    await touch();
+    const sig = AbortSignal.any([signal, lease.lost]);
+    let released: Promise<void> | undefined;
+    const onAbort = () => void release();
+    const release = (): Promise<void> => {
+      released ??= (async () => {
+        sig.removeEventListener("abort", onAbort);
+        await lease.release();
+        await touch();
+      })();
+      return released;
+    };
+    sig.addEventListener("abort", onAbort, { once: true });
+    if (sig.aborted) {
+      await release();
+      throw abortReason(sig);
+    }
+    return {
+      h: after.handle as SandboxHandle,
+      p: { openStream: impl.openStream.bind(impl) },
+      signal: sig,
+      release,
+    };
+  }
+
+  /**
+   * Runs `fn` with the device service methods of the device's provider (browser use spec §5),
+   * as any use of the device does ({@link withSandbox}: the instance is created or resumed,
+   * `last_used_at` moves forward). `admit` sees the provider's methods first, before any lease
+   * or instance work, so a provider without services is refused without touching the device.
+   */
+  async withDeviceServices<T>(
+    ctx: SandboxUseContext,
+    admit: (p: DeviceServiceMethods) => void,
+    fn: (h: SandboxHandle, p: DeviceServiceMethods, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    admit(serviceMethodsOf((await this.require(ctx.deviceId, ctx.orgId)).impl));
+    return this.withSandboxUse(ctx, { kind: "services", fn }, signal);
+  }
+
+  /**
    * A short lease on one path of the device around the kernel's own read-modify-write of
    * that file (spec §10.4); waits up to 30 s, then throws `SandboxPathBusyError`. Its `signal`
    * aborts when a renewal finds it lost.
@@ -1701,6 +1857,7 @@ export class SandboxService {
     const sig = AbortSignal.any([signal, e.lease.signal]);
     if (route.kind === "preparation")
       return route.run(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
+    if (route.kind === "services") return route.fn(e.handle, serviceMethodsOf(p.impl), sig);
     const env = ctx.deviceId;
     if (route.kind === "kernelRead")
       return route.fn(
@@ -2580,7 +2737,8 @@ export class SandboxService {
 
   /**
    * Suspends running instances idle longer than `suspendAfterIdleMinutes` or running continuously
-   * longer than `maxRunningMinutes`. Skips a device with any holder; one past
+   * longer than `maxRunningMinutes`. Skips a device with any holder, and one with an open stream
+   * hold ({@link holdForStream}) unless it is past `maxRunningMinutes`; one past
    * `maxRunningMinutes` gets the intent for one poll window (about a second) first. Returns how
    * many it suspended. Called every minute by the `sandbox-suspend-idle` cron.
    */
@@ -2590,6 +2748,16 @@ export class SandboxService {
     // they are
     for (const p of this.providers.all()) n += await this.suspendIdleOf(p, now);
     return n;
+  }
+
+  /** Whether the device has a live stream hold; a Redis error counts as none (the sweep goes on). */
+  private async streamHeld(deviceId: string): Promise<boolean> {
+    try {
+      return (await this.leases.streamHolds(deviceId)) > 0;
+    } catch (err) {
+      this.log.warn("cannot read the device's stream holds", { deviceId, err });
+      return false;
+    }
   }
 
   /** {@link suspendIdle} for the rows of one provider. */
@@ -2602,6 +2770,8 @@ export class SandboxService {
     let n = 0;
     await inPool(rows, SWEEP_CONCURRENCY, async (c) => {
       const overdue = c.running_since !== null && c.running_since < runningBefore;
+      // an open viewer exempts the device from idle suspension only, never from the forced one
+      if (!overdue && (await this.streamHeld(c.device_id))) return;
       const done = await this.tryLocked(
         c.device_id,
         async (lease) => {
@@ -2630,6 +2800,9 @@ export class SandboxService {
           });
         },
         overdue,
+        // a hold taken since the first look (a viewer that opened meanwhile) refuses the lease:
+        // an open viewer exempts the device from idle suspension, never from the forced one
+        !overdue,
       );
       if (done) n++;
     });
@@ -2670,6 +2843,8 @@ export class SandboxService {
       eb.and([eb("provider", "=", p.plugin), due(eb)]);
     let n = 0;
     await inPool(await this.candidates(mine), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
+      // an open viewer is device use: the inactivity destruction waits (a deleted device does not)
+      if (mode === "instance" && (await this.streamHeld(id))) return;
       const done = await this.tryLocked(id, async (lease) => {
         return asPlatform("deployment-wide destruction sweep", async () => {
           // org-filter: deployment-wide destruction sweep (worker) over every org's due instances,
@@ -3577,10 +3752,12 @@ export class SandboxService {
     deviceId: string,
     fn: (lease: SandboxLease) => Promise<boolean>,
     overdue = false,
+    /** Refused (false) while the device has a live stream hold ({@link holdForStream}). */
+    unlessStreams = false,
   ): Promise<boolean> {
     let lease: SandboxLease | null;
     try {
-      lease = await this.leases.tryExclusive(deviceId);
+      lease = await this.leases.tryExclusive(deviceId, unlessStreams ? { unlessStreams } : {});
       if (!lease && overdue) {
         lease = await this.leases
           .acquireExclusive(

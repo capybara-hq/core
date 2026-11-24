@@ -31,7 +31,7 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 const signal = new AbortController().signal;
-async function fixture() {
+async function fixture(o: { serviceRoots?: (dir: string) => string[] } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "cap-backend-"));
   dirs.push(dir);
   const roots = {
@@ -80,6 +80,7 @@ async function fixture() {
         ceilingReads++;
         return ceiling;
       },
+      ...(o.serviceRoots && { serviceRoots: o.serviceRoots(dir) }),
     },
     {
       restrictedSupported: true,
@@ -141,6 +142,7 @@ async function fixture() {
     network: { kind: "none" as const },
   };
   return {
+    dir,
     backend,
     roots,
     scope,
@@ -1252,3 +1254,29 @@ it.runIf(process.platform === "darwin")(
     await expect(read(join(linked, "AGENTS.md"))).rejects.toThrow();
   },
 );
+
+it("an agent operation can neither read nor write the device services' profile and code", async () => {
+  const f = await fixture({ serviceRoots: (dir) => [join(dir, "svc"), join(dir, "svc-files")] });
+  const svc = join(f.dir, "svc");
+  const code = join(f.dir, "svc-files");
+  // machine reach: everything off the deny list is readable, and both directories are write
+  // roots here (the owner ceiling allows them), so only the grant's denies keep them out
+  const scope = {
+    ...f.scope,
+    operationId: "svc-op",
+    filesystem: { kind: "scoped" as const, projectRoot: f.dir, writeRoots: [svc, code] },
+  };
+  const op = await f.backend
+    .forExecution({ operationId: "svc-op", orgNetwork: { kind: "open-public", hosts: [] } })
+    .operation({ id: DEVICE_ID }, scope, signal);
+  await expect(
+    op.readFile(join(svc, "browser", "profile", "Cookies"), { maxBytes: 10, signal }),
+  ).rejects.toThrow(/outside this operation scope/);
+  await expect(
+    op.writeFile(join(code, "browser", "main.js"), Buffer.from("evil"), signal),
+  ).rejects.toThrow(/outside this operation scope/);
+  // a sandboxed exec's grant denies both (the worker turns each into read and write denies)
+  await op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal });
+  const request = f.launched.at(-1) as import("../src/exec/operation-worker.js").MacWorkerRequest;
+  expect(request.grant.deniedReadRoots).toEqual(expect.arrayContaining([svc, code]));
+});

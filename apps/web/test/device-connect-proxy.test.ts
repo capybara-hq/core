@@ -3,8 +3,9 @@ import { createServer, type IncomingMessage, request, type Server } from "node:h
 import type { AddressInfo, Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEVICE_STREAM_PATH,
   handleUpgrade,
-  isDeviceConnectPath,
+  isGatewayUpgradePath,
   parseGatewayProxy,
 } from "../src/lib/device-connect-proxy";
 
@@ -120,17 +121,76 @@ describe("parseGatewayProxy", () => {
   });
 });
 
-describe("isDeviceConnectPath", () => {
+describe("isGatewayUpgradePath", () => {
   it("matches exactly /device/connect", () => {
-    expect(isDeviceConnectPath("/device/connect")).toBe(true);
-    expect(isDeviceConnectPath("/device/connect?x=1")).toBe(true);
-    expect(isDeviceConnectPath("/device/connect/")).toBe(false);
-    expect(isDeviceConnectPath("/device")).toBe(false);
-    expect(isDeviceConnectPath("/api/device/connect")).toBe(false);
+    expect(isGatewayUpgradePath("/device/connect")).toBe(true);
+    expect(isGatewayUpgradePath("/device/connect?x=1")).toBe(true);
+    expect(isGatewayUpgradePath("/device/connect/")).toBe(false);
+    expect(isGatewayUpgradePath("/device")).toBe(false);
+    expect(isGatewayUpgradePath("/api/device/connect")).toBe(false);
+  });
+});
+
+describe("DEVICE_STREAM_PATH", () => {
+  it("is /device/stream and matches with a query string", () => {
+    expect(DEVICE_STREAM_PATH).toBe("/device/stream");
+    expect(isGatewayUpgradePath("/device/stream")).toBe(true);
+    expect(isGatewayUpgradePath("/device/stream?ticket=x")).toBe(true);
+    expect(isGatewayUpgradePath("/device/stream/")).toBe(false);
   });
 });
 
 describe("handleUpgrade", () => {
+  it("forwards /device/stream?ticket=x upgrades to the gateway with the query intact", async () => {
+    const seen: Seen[] = [];
+    const gw = await startGateway(seen);
+    const web = await startWeb(`http://127.0.0.1:${gw}`);
+    const res = await upgrade(web, "/device/stream?ticket=x", {});
+    expect(res.kind).toBe("upgraded");
+    if (res.kind !== "upgraded") return;
+    expect(res.status).toBe(101);
+    expect(seen[0]?.url).toBe("/device/stream?ticket=x");
+    const reply = nextData(res.socket);
+    res.socket.write("frame-1");
+    expect(await reply).toBe("echo:frame-1");
+    res.socket.destroy();
+  });
+
+  it("drops cookies on /device/stream", async () => {
+    const seen: Seen[] = [];
+    const gw = await startGateway(seen);
+    const web = await startWeb(`http://127.0.0.1:${gw}`);
+    const res = await upgrade(web, "/device/stream?ticket=x", {
+      cookie: "session=browser",
+      "x-forwarded-for": "6.6.6.6",
+    });
+    expect(res.kind).toBe("upgraded");
+    if (res.kind === "upgraded") res.socket.destroy();
+    expect(seen[0]?.headers.cookie).toBeUndefined();
+    // the client-sent value is replaced by the socket peer's address
+    expect(seen[0]?.headers["x-forwarded-for"]).toBe("127.0.0.1");
+  });
+
+  it("sets X-Forwarded-For on /device/stream from the derived client address only", async () => {
+    const seen: Seen[] = [];
+    const gw = await startGateway(seen);
+    const server = createServer((_req, res) => res.end());
+    const cfg = {
+      ...parseGatewayProxy({ CAPYBARA_WEB_GATEWAY_URL: `http://127.0.0.1:${gw}` }),
+      clientOf: () => "203.0.113.7",
+    };
+    server.on("upgrade", handleUpgrade(cfg));
+    const web = await listen(server);
+    const res = await upgrade(web, "/device/stream?ticket=x", {
+      "x-forwarded-for": "6.6.6.6, 7.7.7.7",
+      forwarded: "for=6.6.6.6",
+    });
+    expect(res.kind).toBe("upgraded");
+    if (res.kind === "upgraded") res.socket.destroy();
+    expect(seen[0]?.headers["x-forwarded-for"]).toBe("203.0.113.7");
+    expect(seen[0]?.headers.forwarded).toBeUndefined();
+  });
+
   it("forwards /device/connect with its headers and streams frames both ways", async () => {
     const seen: Seen[] = [];
     const gw = await startGateway(seen);
@@ -163,7 +223,13 @@ describe("handleUpgrade", () => {
     const seen: Seen[] = [];
     const gw = await startGateway(seen);
     const web = await startWeb(`http://127.0.0.1:${gw}`);
-    for (const path of ["/_next/hmr", "/device", "/device/connect/x", "/api/v1/stream"]) {
+    for (const path of [
+      "/_next/hmr",
+      "/device",
+      "/device/connect/x",
+      "/device/stream/x",
+      "/api/v1/stream",
+    ]) {
       expect(await upgrade(web, path, {})).toEqual({ kind: "response", status: 404 });
     }
     expect(seen).toHaveLength(0);

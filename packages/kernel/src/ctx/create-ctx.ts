@@ -1,6 +1,8 @@
 import {
   type AvailableHook,
   DEVICE_PROVIDER_EXTENSION_POINT,
+  type DeviceAccessCtx,
+  DeviceAccessError,
   type DevicesCtx,
   type DialInChannel,
   type EmbedClaims,
@@ -44,6 +46,7 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import type { DeviceAccessService } from "../device-access/device-access.service.js";
 import type { DialInAccess } from "../dial-in/access.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
@@ -123,17 +126,34 @@ export interface KernelDeps {
    * served by the calling extension. Absent (a ctx built alone in a test): `ctx.dialIn` calls
    * reject.
    */
-  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "capacity" | "stop">;
+  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "capacity" | "stop" | "openStream">;
   /**
    * What `ctx.devices` is built from (`DeviceReports`): `changed` reads a device's report again
    * from the calling provider and refuses (`not-served`) a device bound to another one. Absent
    * (a ctx built alone in a test): `ctx.devices` calls reject.
    */
   devices?: Pick<DeviceReports, "changed">;
+  /**
+   * What `ctx.deviceAccess` calls through (`DeviceAccessService`), found at the time of use (the
+   * service's module sits above the host). Absent, or resolving to undefined (a ctx built alone in
+   * a test, the CLI): `ctx.deviceAccess` calls are refused.
+   */
+  deviceAccess?: () => DeviceAccessBackend | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
 }
+
+/** What `ctx.deviceAccess` calls through (`DeviceAccessService`). */
+export type DeviceAccessBackend = Pick<
+  DeviceAccessService,
+  | "ensureService"
+  | "request"
+  | "reportBlockedHosts"
+  | "streamTicket"
+  | "addNetworkHosts"
+  | "answerHandoff"
+>;
 
 /**
  * What `ctx.ui.verifyEmbedToken` returns for a valid token: the signed claims, with an org
@@ -408,7 +428,7 @@ export class LiveConfig {
 }
 
 /** The ctx members that are a plain property when allowed and a denying getter otherwise. */
-type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices";
+type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices" | "deviceAccess";
 
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
@@ -577,6 +597,27 @@ export function createExtensionContext(
               throw new TypeError(`plugin ${name}: ctx.dialIn.stop reason must be drain or stop`);
             await (access as NonNullable<typeof access>).stop(await served(deviceId), reason);
           },
+          // only on the gateway replica holding the machine's socket (DialInGateway); elsewhere
+          // DialInStreamElsewhereError. The extension's end closes its streams.
+          openStream: async (deviceId, body, opts) => {
+            const id = await served(deviceId);
+            // the SDK requires the signal: an open nobody can abort is refused up front
+            if (!(opts?.signal instanceof AbortSignal))
+              throw new TypeError(`plugin ${name}: ctx.dialIn.openStream needs opts.signal`);
+            const signal = AbortSignal.any([lifecycle.signal, opts.signal]);
+            const stream = await (access as NonNullable<typeof access>).openStream(
+              id,
+              body,
+              signal,
+            );
+            const onEnd = () => stream.close("extension stopped");
+            if (lifecycle.signal.aborted) onEnd();
+            else {
+              lifecycle.signal.addEventListener("abort", onEnd, { once: true });
+              void stream.closed.then(() => lifecycle.signal.removeEventListener("abort", onEnd));
+            }
+            return stream;
+          },
         } satisfies DialInChannel;
       })()
     : undefined;
@@ -607,6 +648,31 @@ export function createExtensionContext(
           }
         },
       }
+    : undefined;
+  // ctx.deviceAccess: only with permissions.deviceAccess, and each call only for a service the
+  // approved manifest declares and only for the conversation's owner (DeviceAccessService checks)
+  const deviceAccessApi: DeviceAccessCtx | undefined = perms.deviceAccess
+    ? (() => {
+        const caller = { extension: name, services: [...(perms.deviceAccess?.services ?? [])] };
+        const backend = (): DeviceAccessBackend => {
+          const b = deps.deviceAccess?.();
+          if (!b)
+            throw new DeviceAccessError(
+              "capability_missing",
+              "Device services are not available in this process.",
+            );
+          return b;
+        };
+        return {
+          ensureService: async (call, spec) => backend().ensureService(caller, call, spec),
+          request: async (call, req) => backend().request(caller, call, req),
+          reportBlockedHosts: (call, hosts, opts) =>
+            backend().reportBlockedHosts(call, hosts, opts),
+          streamTicket: async (scope) => backend().streamTicket(caller, scope),
+          addNetworkHosts: async (scope) => backend().addNetworkHosts(caller, scope),
+          answerHandoff: async (scope) => backend().answerHandoff(caller, scope),
+        } satisfies DeviceAccessCtx;
+      })()
     : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
   const declaredRoutes = new Map<string, HttpAccess>(
@@ -1072,7 +1138,7 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models / dialIn / devices: a plain property when declared; otherwise a
+  // secrets / storage / models / dialIn / devices / deviceAccess: a plain property when declared; otherwise a
   // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
   const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
@@ -1090,6 +1156,7 @@ export function createExtensionContext(
   gated("models", modelsApi);
   gated("dialIn", dialInApi);
   gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
+  gated("deviceAccess", deviceAccessApi);
   return ctx as KernelExtensionContext;
 }
 

@@ -67,6 +67,7 @@ export function EmbedTab({
   file,
   fill = false,
   failed,
+  onPanelMode,
 }: EmbedWhere & {
   plugin: string;
   id: string;
@@ -80,6 +81,11 @@ export function EmbedTab({
   fill?: boolean;
   /** Renders a failure in place of the built-in one (the conversation page's frames). */
   failed?(o: { message: string; onRetry(): void }): ReactNode;
+  /**
+   * Only the `conversation.panel` slot passes it: the embed may ask to maximise or restore the
+   * right panel (bridge `panel-mode`); elsewhere the message is ignored.
+   */
+  onPanelMode?(full: boolean): void;
 }) {
   const t = useTranslations();
   const orgId = givenOrgId ?? null;
@@ -98,6 +104,9 @@ export function EmbedTab({
   const bridge = useRef<EmbedBridge | null>(null);
   // 回调用最新的 router / toast，但不因它们变化而重建消息桥（重建会换令牌、重载 iframe）
   const latest = useRef({ router, toast });
+  const panelMode = useRef(onPanelMode);
+  panelMode.current = onPanelMode;
+  const hasPanelMode = onPanelMode !== undefined;
   // The file is read through a ref: a new `read` function each render must not rebuild the bridge.
   const fileRef = useRef(file);
   fileRef.current = file;
@@ -169,6 +178,7 @@ export function EmbedTab({
         if (shareCode === undefined) latest.current.router.push(path);
       },
       onToast: (text) => latest.current.toast.success(text),
+      ...(hasPanelMode && { onPanelMode: (full: boolean) => panelMode.current?.(full) }),
       onTokenError: () => setRefreshFailed(true),
       ...(fileRef.current !== undefined && {
         file: fileRef.current.read,
@@ -205,7 +215,18 @@ export function EmbedTab({
       b.dispose();
       if (bridge.current === b) bridge.current = null;
     };
-  }, [orgId, shareCode, plugin, id, conversationId, agentId, locale, attempt, fileId]);
+  }, [
+    orgId,
+    shareCode,
+    plugin,
+    id,
+    conversationId,
+    agentId,
+    locale,
+    attempt,
+    fileId,
+    hasPanelMode,
+  ]);
 
   // 每个 iframe 元素只在第一次 load 收到 init；再次 load（导航走了）由消息桥通知重新挂载。
   // 换上新元素时让消息桥回到「等第一次 load」；旧元素的 load 不再理会。

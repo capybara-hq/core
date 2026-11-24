@@ -123,6 +123,7 @@ const ICONS = {
   // A section's hint behind a tooltip (§6.16.17), and a client component's sound control.
   info: "info",
   volume: "volume-2",
+  globe: "globe",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

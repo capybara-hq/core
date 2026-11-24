@@ -47,6 +47,8 @@ export function redactPath(url: string): string {
       // a share link's code (file sharing spec §3) opens the share while it is live
       .replace(/^\/api\/v1\/s\/[^/]+/, "/api/v1/s/:code")
       .replace(/^\/s\/[^/]+/, "/s/:code")
+      // a device stream hop names the viewer ticket (browser use spec §6.2)
+      .replace(/^\/internal\/device-stream\/[^/]+/, "/internal/device-stream/:ticket")
       .replace(/\/cap_[^/]*/g, "/:redacted")
   );
 }

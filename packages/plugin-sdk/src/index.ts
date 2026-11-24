@@ -16,6 +16,7 @@ export * from "./define-extension.js";
 export { DEVICE_DEFAULT_STATE_PATH, DEVICE_DENIED_SECRET_PATHS } from "./device-denied-paths.js";
 export * from "./device-operation.js";
 export * from "./device-provider.js";
+export * from "./device-service.js";
 export * from "./dial-in.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
