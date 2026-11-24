@@ -322,6 +322,26 @@ export class DeviceAccessService {
   }
 
   /**
+   * Whether a taken viewer ticket's record still stands when its viewer opens (the checks of
+   * {@link mintTicket} again, binding nothing): the conversation live and owned by the record's
+   * account, its device still the record's device on the record's provider and the account's
+   * own, the record's extension still enabled in the org. False when any of that no longer
+   * holds; other failures (the database) are thrown.
+   */
+  async ticketStands(t: DeviceStreamTicket): Promise<boolean> {
+    try {
+      const d = await this.scopedDevice(
+        { extension: t.extension, services: [t.service] },
+        { orgId: t.orgId, accountId: t.accountId, conversationId: t.conversationId },
+      );
+      return d.orgId === t.orgId && d.deviceId === t.deviceId && d.provider === t.providerName;
+    } catch (e) {
+      if (e instanceof DeviceAccessError) return false;
+      throw e;
+    }
+  }
+
+  /**
    * Adds hosts to the conversation's device allowlist through the device page's own write
    * (ceilings, validation, the `device.network_changed` audit), owner only.
    */

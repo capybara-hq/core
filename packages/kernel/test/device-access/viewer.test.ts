@@ -1,0 +1,354 @@
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import WebSocket from "ws";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { createDb } from "../../src/db/pool.js";
+import {
+  DEVICE_STREAM_TICKET_PREFIX,
+  type DeviceAccessCaller,
+  DeviceAccessService,
+} from "../../src/device-access/device-access.service.js";
+import { DeviceStreamViewers } from "../../src/device-access/viewer.js";
+import { redactPath } from "../../src/http/error.filter.js";
+import { createLogger } from "../../src/log.js";
+import { DeviceServices } from "../../src/sandbox/device-services.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
+import { echoServiceSpec } from "../fixtures/extensions/fake-device-access/index.js";
+import { FAKE_PERMISSION_SUPPORT } from "../fixtures/plugins/device-fake/index.js";
+import { legacyDbFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
+import { testMembers } from "../helpers/members.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import {
+  createAgent,
+  createConv,
+  createOrgWithProviders,
+  enableExtensions,
+  PW,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
+
+/**
+ * The viewer endpoint (browser use spec §6.2): `GET /device/stream?ticket=` on the gateway role
+ * takes a single-use viewer ticket, checks its record again, holds the device for the viewer's
+ * life and pipes the device service's stream to the browser unchanged. On a `device-fake` device
+ * with the framed echo service.
+ */
+
+const FAKE_DEVICE_ACCESS = fileURLToPath(
+  new URL("../fixtures/extensions/fake-device-access/index.ts", import.meta.url),
+);
+const CALLER: DeviceAccessCaller = { extension: "fake-device-access", services: ["echo"] };
+const MIN = 60_000;
+
+let pgc: TestContainer;
+let rd: TestContainer;
+let raw: ReturnType<typeof createDb>;
+let db: KernelSchemaDb;
+let redis: Redis;
+let k: TestKernel;
+let ownerId: string;
+let orgId: string;
+let sandboxRoot: string;
+let access: DeviceAccessService;
+/** Every log line the kernel wrote. */
+const lines: string[] = [];
+
+beforeAll(async () => {
+  sandboxRoot = await mkdtemp(join(tmpdir(), "cap-viewer-"));
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  raw = createDb(pgc.url, 3);
+  db = legacyDbFor(raw);
+  redis = new Redis(rd.url);
+  k = await startKernel(
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      {
+        roles: ["api", "worker", "gateway"],
+        extensions: [
+          MODEL_FAKE,
+          fileURLToPath(new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url)),
+          FAKE_DEVICE_ACCESS,
+        ],
+        extensionConfig: { "device-fake": { root: sandboxRoot } },
+        http: { port: 0, publicUrl: "https://capybara.example.com" },
+      },
+    ),
+    { logger: createLogger("debug", { write: (line) => void lines.push(line) }) },
+  );
+  access = k.app.get(DeviceAccessService);
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
+  orgId = await createOrgWithProviders(k, await session(k, "owner"));
+  await enableExtensions(raw, orgId, "fake-device-access");
+});
+
+afterAll(async () => {
+  await k?.close();
+  redis?.disconnect();
+  await raw?.destroy();
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+});
+
+interface Setup {
+  accountId: string;
+  deviceId: string;
+  conversationId: string;
+}
+
+/** A member with a running `device-fake` device of their own, its echo service started. */
+async function memberWithDevice(): Promise<Setup> {
+  const login = `m-${randomUUID().slice(0, 8)}`;
+  const accountId = (
+    await accountsFor(db).createLocal({ login, password: PW, displayName: `Dev ${login}` })
+  ).id;
+  await testMembers(db).add(orgId, accountId, "member", ownerId);
+  const req = await session(k, login);
+  const deviceId = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id: deviceId,
+      org_id: orgId,
+      owner_kind: "personal",
+      owner_account_id: accountId,
+      name: "Box",
+      provider: "device-fake",
+      network_mode: "allowlist",
+      network_hosts: JSON.stringify([]),
+      report: JSON.stringify({ support: FAKE_PERMISSION_SUPPORT }),
+    })
+    .execute();
+  const agentId = await createAgent(req, orgId);
+  const conversationId = await createConv(req, orgId, agentId);
+  await db
+    .updateTable("conversations")
+    .set({ device_id: deviceId })
+    .where("id", "=", conversationId)
+    .execute();
+  const use: SandboxUseContext = {
+    orgId,
+    deviceId,
+    holderConversationId: conversationId,
+    actor: { accountId, conversationId },
+  };
+  await k.app.get(DeviceServices).ensure(use, echoServiceSpec(), AbortSignal.timeout(30_000));
+  return { accountId, deviceId, conversationId };
+}
+
+let s: Setup;
+
+beforeEach(async () => {
+  s = await memberWithDevice();
+});
+
+const mint = async (who: Setup = s): Promise<string> =>
+  (
+    await access.mintTicket(
+      { orgId, accountId: who.accountId, conversationId: who.conversationId },
+      "echo",
+      CALLER,
+    )
+  ).id;
+
+interface Viewer {
+  ws: WebSocket;
+  /** The messages received, as text. */
+  received: string[];
+  /** Resolves with the close code and reason. */
+  closed: Promise<{ code: number; reason: string }>;
+  /** Resolves with the next message received from now on. */
+  next(): Promise<string>;
+}
+
+/** A browser's viewer socket on `/device/stream?ticket=`. */
+function viewer(ticket: string): Viewer {
+  const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=${ticket}`);
+  const received: string[] = [];
+  const waiting: ((m: string) => void)[] = [];
+  ws.on("message", (data: Buffer) => {
+    const m = data.toString("utf8");
+    received.push(m);
+    for (const w of waiting.splice(0)) w(m);
+  });
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+    ws.on("close", (code, reason) => resolve({ code, reason: reason.toString("utf8") }));
+    ws.on("error", () => {});
+  });
+  return {
+    ws,
+    received,
+    closed,
+    next: () => new Promise<string>((resolve) => waiting.push(resolve)),
+  };
+}
+
+/** Sends `text` and resolves with the echo. */
+async function roundTrip(v: Viewer, text: string): Promise<string> {
+  const answer = v.next();
+  if (v.ws.readyState !== WebSocket.OPEN)
+    await new Promise<void>((resolve) => v.ws.once("open", () => resolve()));
+  v.ws.send(Buffer.from(text, "utf8"));
+  return answer;
+}
+
+const auditsOf = (action: string, deviceId: string) =>
+  db
+    .selectFrom("audit_events")
+    .selectAll()
+    .where("action", "=", action)
+    .where("target", "=", deviceId)
+    .execute();
+
+describe("device stream viewer", () => {
+  it("viewer pipes messages both ways to the echo service", async () => {
+    const v = viewer(await mint());
+    expect(await roundTrip(v, "one")).toBe("one");
+    expect(await roundTrip(v, "two")).toBe("two");
+    // several in flight keep their order
+    const many = Array.from({ length: 20 }, (_, i) => `m${i}`);
+    for (const m of many) v.ws.send(Buffer.from(m, "utf8"));
+    await waitFor(async () => v.received.length >= 22, 10_000, "all echoes");
+    expect(v.received.slice(2)).toEqual(many);
+    v.ws.close(1000);
+    expect((await v.closed).code).toBe(1000);
+    // the open and the close are audited (frames are not)
+    const opened = await waitFor(async () => {
+      const r = await auditsOf("browser.view", s.deviceId);
+      return r.length === 1 ? r : null;
+    });
+    expect(opened[0]?.detail).toMatchObject({ deviceId: s.deviceId, service: "echo" });
+    expect(opened[0]?.actor_account_id).toBe(s.accountId);
+    const closedRows = await waitFor(async () => {
+      const r = await auditsOf("browser.view_closed", s.deviceId);
+      return r.length === 1 ? r : null;
+    });
+    expect(closedRows[0]?.detail).toMatchObject({ deviceId: s.deviceId, service: "echo" });
+    const detail = closedRows[0]?.detail as { durationMs?: unknown } | undefined;
+    expect(typeof detail?.durationMs).toBe("number");
+  });
+
+  it("ticket is single use", async () => {
+    const ticket = await mint();
+    const first = viewer(ticket);
+    expect(await roundTrip(first, "hi")).toBe("hi");
+    first.ws.close(1000);
+    await first.closed;
+    const second = viewer(ticket);
+    expect((await second.closed).code).toBe(4401);
+    // an unknown ticket and none at all likewise
+    expect((await viewer("nope").closed).code).toBe(4401);
+    expect((await viewer("").closed).code).toBe(4401);
+  });
+
+  it("ticket bound to device and account", async () => {
+    const b = await memberWithDevice();
+    // a record edited to another member's account: the conversation's owner differs
+    const t1 = await mint();
+    const key1 = `${DEVICE_STREAM_TICKET_PREFIX}${t1}`;
+    const rec1 = JSON.parse((await redis.get(key1)) as string) as Record<string, unknown>;
+    await redis.set(key1, JSON.stringify({ ...rec1, accountId: b.accountId }), "EX", 60);
+    expect((await viewer(t1).closed).code).toBe(4401);
+    // a record edited to device B: the conversation's device is A, never B's service
+    const t2 = await mint();
+    const key2 = `${DEVICE_STREAM_TICKET_PREFIX}${t2}`;
+    const rec2 = JSON.parse((await redis.get(key2)) as string) as Record<string, unknown>;
+    await redis.set(key2, JSON.stringify({ ...rec2, deviceId: b.deviceId }), "EX", 60);
+    expect((await viewer(t2).closed).code).toBe(4401);
+    expect(await auditsOf("browser.view", b.deviceId)).toHaveLength(0);
+    // B's own ticket reaches B's service
+    const vb = viewer(await mint(b));
+    expect(await roundTrip(vb, "b")).toBe("b");
+    vb.ws.close(1000);
+    await vb.closed;
+  });
+
+  it("open viewer holds the device", async () => {
+    const sandbox = k.app.get(SandboxService);
+    const idle = () => new Date(Date.now() + 30 * MIN);
+    const v = viewer(await mint());
+    expect(await roundTrip(v, "hold")).toBe("hold");
+    await sandbox.suspendIdle(idle());
+    const row = () =>
+      db
+        .selectFrom("device_instances")
+        .select("status")
+        .where("device_id", "=", s.deviceId)
+        .executeTakeFirstOrThrow();
+    expect((await row()).status).toBe("running");
+    // still streaming after the sweep
+    expect(await roundTrip(v, "still")).toBe("still");
+    v.ws.close(1000);
+    await v.closed;
+    // the hold ends with the viewer: the next sweep suspends the device
+    await waitFor(async () => {
+      await sandbox.suspendIdle(idle());
+      return (await row()).status === "suspended";
+    });
+  });
+
+  it("a hop without a valid HMAC is refused before anything is read", async () => {
+    const ticket = await mint();
+    const ws = new WebSocket(`ws://127.0.0.1:${k.port}/internal/device-stream/${ticket}`, {
+      headers: { "x-capybara-hop": "00".repeat(32), "x-capybara-hop-at": String(Date.now()) },
+    });
+    const status = await new Promise<number>((resolve) => {
+      ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on("open", () => resolve(101));
+      ws.on("error", () => {});
+    });
+    expect(status).toBe(401);
+    // the ticket was not consumed by the refused hop
+    expect(await redis.exists(`${DEVICE_STREAM_TICKET_PREFIX}${ticket}`)).toBe(1);
+  });
+
+  it("ticket value never appears in the request log", async () => {
+    const ticket = await mint();
+    const v = viewer(ticket);
+    expect(await roundTrip(v, "log")).toBe("log");
+    v.ws.close(1000);
+    await v.closed;
+    expect((await viewer(ticket).closed).code).toBe(4401);
+    const hop = new WebSocket(`ws://127.0.0.1:${k.port}/internal/device-stream/${ticket}`);
+    await new Promise<void>((resolve) => {
+      hop.on("unexpected-response", () => resolve());
+      hop.on("open", () => resolve());
+      hop.on("error", () => resolve());
+    });
+    hop.terminate();
+    await waitFor(async () => lines.some((l) => l.includes("/device/stream")));
+    await waitFor(async () => lines.some((l) => l.includes("/internal/device-stream/:ticket")));
+    expect(lines.filter((l) => l.includes(ticket))).toEqual([]);
+    expect(redactPath(`/internal/device-stream/${ticket}`)).toBe("/internal/device-stream/:ticket");
+  });
+
+  // last: the viewers stop as on a replica shutdown
+  it("replica shutdown closes open viewers with 1001", async () => {
+    const v = viewer(await mint());
+    expect(await roundTrip(v, "bye")).toBe("bye");
+    await k.app.get(DeviceStreamViewers).stop();
+    expect((await v.closed).code).toBe(1001);
+    // the hold was released with it
+    await waitFor(async () => {
+      await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 30 * MIN));
+      const r = await db
+        .selectFrom("device_instances")
+        .select("status")
+        .where("device_id", "=", s.deviceId)
+        .executeTakeFirstOrThrow();
+      return r.status === "suspended";
+    });
+  });
+});

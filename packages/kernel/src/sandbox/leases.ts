@@ -38,6 +38,10 @@ import type { KernelLogger } from "../log.js";
  *   viewer, {@link SandboxLeases.streamHold}). A hold is not a lease: it takes no slot and never
  *   blocks a lease. Idle suspension skips a device with a live hold; every exclusive acquisition
  *   deletes the set, and a hold's renewal fails once its token is gone or an intent is pending.
+ *   That DEL is best effort: when it fails (logged), the device's holds stay until their next
+ *   renewal fails (a later exclusive acquisition deleting the set, or an intent pending at a
+ *   renewal), so a viewer may outlive that one lifecycle change. A renewal refused this way is a
+ *   routine yield, logged at debug (`quietYield`), not a lost lock.
  *
  * The first three keys are a {@link LockService} shared lease (`tryShared` / `tryExclusive`,
  * infra/lock/shared-lease.ts); the holder records and the path leases are this file's. Every key
@@ -399,6 +403,8 @@ export class SandboxLeases {
         release: async () => {
           await this.redis.eval("return redis.call('ZREM', KEYS[1], ARGV[1])", 1, streams, token);
         },
+        // a hold ending for a lifecycle change is routine, not a lost lock
+        quietYield: true,
       },
       sentAt,
     );

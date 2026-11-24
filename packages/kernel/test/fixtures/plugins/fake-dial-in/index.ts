@@ -63,7 +63,8 @@ import {
  * with `ctx.dialIn.openStream`, sends the UTF-8 `message` when given, waits for one message back,
  * closes it and answers `{ ok: true, echo }` (the answer as UTF-8, null without a message), or
  * `{ ok: false, error: { name, message, code? } }`. The dual-replica tests drive the relay with
- * them.
+ * them. The provider's `openStream(h, { service })` opens a dial-in stream with the open body
+ * `{ service }` (the viewer endpoint's path to a local device's service).
  *
  * Handles are the device id: the device's file system and its instance are both named
  * `cap-device-<deviceId>`, so every operation can address its machine.
@@ -432,6 +433,11 @@ export default defineExtension({
           path: string;
           suggestedName: string;
         }[];
+      },
+      // a stream to a device service rides the dial-in channel: the machine gets the open body
+      // `{ service }` (only the gateway replica holding the machine's socket opens it)
+      async openStream(h, target, signal) {
+        return ctx.dialIn.openStream(h.id, { service: target.service }, { signal });
       },
     };
     ctx.provide(DEVICE_PROVIDER_EXTENSION_POINT, provider);

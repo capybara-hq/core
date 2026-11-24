@@ -392,12 +392,15 @@ export class LockService {
    * TTL/3; any successful renewal through the handle (the watchdog's or an explicit `renew()`)
    * moves it; when it passes without one, `lost` aborts, even with a renewal still in flight. So a
    * holder gives up one renewal period before the key can expire elsewhere. `release` stops
-   * renewing and calls `ops.release` once.
+   * renewing and calls `ops.release` once. With `ops.quietYield`, a renewal answered `false` is a
+   * routine yield (the lease was taken back on purpose, e.g. a stream hold ending for a lifecycle
+   * change): it is logged at debug as `lease yielded`, not as a lost lock; a missed deadline is
+   * still a WARN.
    */
   keepAlive(
     label: string,
     ttlMs: number,
-    ops: { renew(): Promise<boolean>; release(): Promise<void> },
+    ops: { renew(): Promise<boolean>; release(): Promise<void>; quietYield?: boolean },
     acquiredAt: number = Date.now(),
   ): LeaseHandle {
     return this.watchdog(label, ttlMs, ops, acquiredAt);
@@ -407,7 +410,7 @@ export class LockService {
   private watchdog(
     label: string,
     ttlMs: number,
-    ops: { renew(): Promise<boolean>; release(): Promise<void> },
+    ops: { renew(): Promise<boolean>; release(): Promise<void>; quietYield?: boolean },
     acquiredAt: number,
   ): Watched {
     const lockKey = label;
@@ -423,10 +426,11 @@ export class LockService {
       clearInterval(timer);
       clearTimeout(deadline);
     };
-    const lose = (reason: string) => {
+    const lose = (reason: string, refused = false) => {
       // released or abandoned: the holder gave the lease up, so a late answer loses nothing
       if (released || stopped || lost.signal.aborted) return;
-      this.log.warn(reason, { lockKey });
+      if (refused && ops.quietYield) this.log.debug("lease yielded", { lockKey });
+      else this.log.warn(reason, { lockKey });
       lost.abort(new Error(`lock lost: ${lockKey}`));
       stop();
     };
@@ -444,7 +448,7 @@ export class LockService {
       const ok = await op();
       if (released || lost.signal.aborted) return false;
       if (!ok) {
-        lose("lock lost: the key is gone or taken");
+        lose("lock lost: the key is gone or taken", true);
         return false;
       }
       if (sentAt > lastOkSentAt) {

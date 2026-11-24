@@ -1194,7 +1194,13 @@ export class SandboxService {
     if (!lease) throw streamUnavailable();
     // read again after the hold is recorded: a lifecycle change that finished before it was
     // recorded shows in the row; one that starts later ends the hold
-    const after = await row();
+    let after: Row | undefined;
+    try {
+      after = await row();
+    } catch (err) {
+      await lease.release();
+      throw err;
+    }
     if (
       !after ||
       !this.usable(after, p, null) ||
@@ -1203,6 +1209,19 @@ export class SandboxService {
       await lease.release();
       throw streamUnavailable();
     }
+    // an open viewer is device use: its last use moves when the hold is taken and when it ends
+    const touch = () =>
+      this.db
+        .updateTable("device_instances")
+        .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
+        .where("device_id", "=", deviceId)
+        .where("status", "=", "running")
+        .execute()
+        .then(
+          () => undefined,
+          (err: unknown) => this.log.warn("cannot update sandbox last_used_at", { deviceId, err }),
+        );
+    await touch();
     const sig = AbortSignal.any([signal, lease.lost]);
     let released: Promise<void> | undefined;
     const onAbort = () => void release();
@@ -1210,15 +1229,7 @@ export class SandboxService {
       released ??= (async () => {
         sig.removeEventListener("abort", onAbort);
         await lease.release();
-        await this.db
-          .updateTable("device_instances")
-          .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
-          .where("device_id", "=", deviceId)
-          .where("status", "=", "running")
-          .execute()
-          .catch((err: unknown) =>
-            this.log.warn("cannot update sandbox last_used_at", { deviceId, err }),
-          );
+        await touch();
       })();
       return released;
     };
