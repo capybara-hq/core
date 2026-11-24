@@ -4973,6 +4973,7 @@
         "allSources": "全部来源"
       },
       "actions": {
+        "addSource": "添加市场源",
         "sources": "市场源",
         "upload": "上传插件包"
       },

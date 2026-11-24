@@ -4985,6 +4985,7 @@
         "allSources": "All sources"
       },
       "actions": {
+        "addSource": "Add source",
         "sources": "Sources",
         "upload": "Upload plugin package"
       },
