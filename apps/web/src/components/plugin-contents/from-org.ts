@@ -106,6 +106,7 @@ export function fromOrgDetail(
         name,
         description: describe("agent_template", name),
         needs: [],
+        toolsUnknown: true,
       };
     }),
     themes: [],

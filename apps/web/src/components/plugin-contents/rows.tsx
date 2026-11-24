@@ -356,42 +356,48 @@ export function AgentRows({ rows }: { rows: AgentRow[] }) {
             }
           >
             <Stack gap={8}>
-              <KeyValue
-                keyWidth="6ch"
-                rows={[
-                  ...(a.needs.length > 0
-                    ? [
-                        {
-                          k: t("agentNeeds"),
-                          v: (
-                            <Chips
-                              items={a.needs.map((n) =>
-                                n.host === undefined
-                                  ? n.label
-                                  : t("agentNeedsDescribed", { label: n.label, host: n.host }),
-                              )}
-                            />
-                          ),
-                        },
-                      ]
-                    : []),
-                  {
-                    k: t("tools"),
-                    v: inherit ? (
-                      tc("agentToolsInherit")
-                    ) : (
-                      <Chips
-                        items={[
-                          ...(a.tools ?? []),
-                          ...(a.disallowedTools ?? []).map((x) =>
-                            tc("agentToolsRemoved", { tools: x }),
-                          ),
-                        ]}
-                      />
-                    ),
-                  },
-                ]}
-              />
+              {(a.needs.length > 0 || a.toolsUnknown !== true) && (
+                <KeyValue
+                  keyWidth="6ch"
+                  rows={[
+                    ...(a.needs.length > 0
+                      ? [
+                          {
+                            k: t("agentNeeds"),
+                            v: (
+                              <Chips
+                                items={a.needs.map((n) =>
+                                  n.host === undefined
+                                    ? n.label
+                                    : t("agentNeedsDescribed", { label: n.label, host: n.host }),
+                                )}
+                              />
+                            ),
+                          },
+                        ]
+                      : []),
+                    ...(a.toolsUnknown === true
+                      ? []
+                      : [
+                          {
+                            k: t("tools"),
+                            v: inherit ? (
+                              tc("agentToolsInherit")
+                            ) : (
+                              <Chips
+                                items={[
+                                  ...(a.tools ?? []),
+                                  ...(a.disallowedTools ?? []).map((x) =>
+                                    tc("agentToolsRemoved", { tools: x }),
+                                  ),
+                                ]}
+                              />
+                            ),
+                          },
+                        ]),
+                  ]}
+                />
+              )}
               {a.instructions !== undefined && (
                 <DisclosureLinks
                   items={[

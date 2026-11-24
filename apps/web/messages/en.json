@@ -5515,6 +5515,12 @@
           "version": "Version",
           "status": "Status",
           "owner": "Owner"
+        },
+        "connectors": {
+          "title": "This organization's connectors",
+          "available": "Available",
+          "noConnector": "No connector yet.",
+          "create": "Create"
         }
       },
       "install": {

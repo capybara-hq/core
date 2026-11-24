@@ -58,6 +58,8 @@ const ADMIN_DEFAULTS: Routes = {
   "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
   // The org plugin detail's components in the org (their switches)
   "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
+  // The org plugin detail's 本组织的连接器 (the org's connectors)
+  "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
   // The plugin `INSTALL` is an install of (its detail page shows the installs)
   "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
     json(200, {
@@ -2168,6 +2170,8 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         .map((li) => li.textContent);
     expect(named(c.skills)).toEqual(["triageTriage the queue."]);
     expect(named(c.agentTemplates)[0]).toContain("reviewerReviews pull requests.");
+    // the org has no tool data: the agent template claims nothing about its tools
+    expect(screen.queryByText(c.agentToolsInherit)).toBeNull();
     // the extension: what it provides and, since it needs config, the note
     expect(screen.getByText("tools@1")).toBeTruthy();
     expect(screen.getByText(r.configAfterEnable)).toBeTruthy();
@@ -2485,6 +2489,9 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
             `GET ${ORG}/readiness`,
             // the plugin's components in the org
             `GET ${ORG}/components?itemId=${ID}`,
+            // the contents' extension and the org's connectors from the plugin
+            `GET ${ORG}/extensions`,
+            `GET ${ORG}/connectors`,
           ]),
         ),
       );
@@ -4425,6 +4432,9 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
         .getAllByRole("listitem")
         .map((li) => li.textContent),
     ).toEqual(["reviewer", "tester"]);
+    // the org has no tool data: no claim about the tools of the agent that dispatches it
+    expect(screen.queryByText(en.catalog.components.agentToolsInherit)).toBeNull();
+    expect(screen.queryByText(en.catalog.admin.review.tools)).toBeNull();
   });
 
   it.each(LOCALES)(
@@ -5067,6 +5077,7 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
     // org admins also read the extensions, the marketplace entries and the installs
     [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
     [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
     // the plugin's components in the org
@@ -5118,8 +5129,14 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     await renderRouteWithCache(`/plugins/${ID}`, routes, { readiness: NOT_READY });
     expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     expect(
-      within(screen.getByRole("list", { name: en.catalog.components.extension })).getByText("crm"),
+      within(screen.getByRole("region", { name: en.catalog.components.extension })).getByText(
+        "crm",
+      ),
     ).toBeTruthy();
+    // no connector from this plugin: no 本组织的连接器 section
+    expect(
+      screen.queryByRole("region", { name: en.catalog.org.detail.connectors.title }),
+    ).toBeNull();
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();

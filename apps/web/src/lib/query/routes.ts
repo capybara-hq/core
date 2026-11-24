@@ -1117,16 +1117,17 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/plugins/[itemId]",
-    // Members up; org admins also read the installs (the installed section) and the extensions.
+    // Members up: the item, its components and the org's connectors (本组织的连接器); org admins
+    // also read the installs (the installed section) and the extensions.
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "member")
         ? []
         : [
             q(orgCatalogItemQuery(orgId, params.itemId)),
             q(orgComponentsQuery(orgId, { itemId: params.itemId })),
-            ...(atLeast(me, "admin")
-              ? [q(pluginInstallsQuery(orgId)), q(orgExtensionsQuery(orgId))]
-              : []),
+            q(connectorsQuery(orgId)),
+            q(orgExtensionsQuery(orgId)),
+            ...(atLeast(me, "admin") ? [q(pluginInstallsQuery(orgId))] : []),
           ],
   },
   {

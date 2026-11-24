@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -747,6 +747,7 @@ describe("/plugins/[itemId]: components and 补充配置", () => {
     [`GET ${ORG}/catalog`]: () => json(200, { items: [item(over)] }),
     [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
     [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
     [`GET ${ORG}/components?itemId=${ITEM}`]: () =>
       json(200, {
@@ -796,5 +797,78 @@ describe("/plugins/[itemId]: components and 补充配置", () => {
         .queryAllByRole("link")
         .some((l) => l.getAttribute("href") === `/plugins/${ITEM}/connectors`),
     ).toBe(false);
+  });
+
+  describe("本组织的连接器", () => {
+    const D = en.catalog.org.detail.connectors;
+    const connector = (id: string, over: Record<string, unknown> = {}) => ({
+      id,
+      slug: id,
+      name: `Conn ${id}`,
+      connector: "connector-mcp",
+      endpoint: { url: "https://gh.example.test/mcp" },
+      auth: { type: "bearer", ownership: "org" },
+      status: "active",
+      setup: "ready",
+      platformTemplateId: "t-gh",
+      icon: null,
+      ...over,
+    });
+    const tplComponent = (id: string, over: Record<string, unknown> = {}) =>
+      component(id, id, { kind: "connector_template", on: true, ...over });
+    const withConnectors = (connectors: unknown[], components: unknown[]): Routes => ({
+      ...routes(),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors }),
+      [`GET ${ORG}/components?itemId=${ITEM}`]: () => json(200, { components }),
+    });
+    const region = () => screen.findByRole("region", { name: D.title });
+
+    it("lists the org's connectors from the plugin's templates with their state, linking to them; the template cards are gone", async () => {
+      const r = withConnectors(
+        [
+          connector("c1"),
+          connector("c2", { platformTemplateId: "t-jira", setup: "needs_config" }),
+          connector("c3", { platformTemplateId: "t-off", status: "disabled" }),
+          connector("c4", { platformTemplateId: "other" }),
+        ],
+        [tplComponent("t-gh"), tplComponent("t-jira"), tplComponent("t-off")],
+      );
+      stubApi(r);
+      await renderRouteWithCache(`/plugins/${ITEM}`, r);
+      const s = await region();
+      expect(within(s).getByText(D.available)).toBeTruthy();
+      expect(within(s).getByText(en.connectors.setup.needsConfig)).toBeTruthy();
+      expect(within(s).getByText(en.connectors.status.disabled)).toBeTruthy();
+      expect(within(s).getByRole("link", { name: "Conn c1" }).getAttribute("href")).toBe(
+        "/connectors/c1",
+      );
+      expect(within(s).queryByText("Conn c4")).toBeNull();
+      expect(within(s).queryByRole("button")).toBeNull();
+      expect(
+        screen.queryByText(en.catalog.admin.review.auth.replace("{type}", "bearer")),
+      ).toBeNull();
+    });
+
+    it("an org admin creates the connector of a default-off template that has none; members see no action", async () => {
+      const off = tplComponent("t-gh", { on: false });
+      const r = {
+        ...withConnectors([], [off]),
+        [`PUT ${ORG}/components/connector_template/t-gh/switch`]: () =>
+          json(200, { preview: { agents: [], connectorsKept: 0 }, confirm: "b".repeat(64) }),
+      };
+      const calls = stubApi(r);
+      await renderRouteWithCache(`/plugins/${ITEM}`, r);
+      const s = await region();
+      expect(within(s).getByText(D.noConnector)).toBeTruthy();
+      await userEvent.setup().click(within(s).getByRole("button", { name: D.create }));
+      await waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
+      );
+      cleanup();
+      stubApi(r);
+      await renderRouteWithCache(`/plugins/${ITEM}`, r, { me: MEMBER });
+      await screen.findByRole("region", { name: C.inOrg });
+      expect(screen.queryByRole("region", { name: D.title })).toBeNull();
+    });
   });
 });

@@ -5503,6 +5503,12 @@
           "version": "版本",
           "status": "状态",
           "owner": "归属"
+        },
+        "connectors": {
+          "title": "本组织的连接器",
+          "available": "可用",
+          "noConnector": "尚未创建连接器。",
+          "create": "创建"
         }
       },
       "install": {

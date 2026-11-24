@@ -40,6 +40,7 @@ const DEFAULTS: Routes = {
   [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
   [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
   [`GET ${ORG}/components`]: () => json(200, { components: [] }),
+  [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
 };
 const stubApi = (routes: Routes) => stubApiOnly({ ...DEFAULTS, ...routes });
 

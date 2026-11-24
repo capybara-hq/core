@@ -2,10 +2,13 @@
 
 import {
   Badge,
+  Button,
   Callout,
   Card,
+  ContentSection,
   DetailPage,
   ItemList,
+  type ItemListRow,
   KeyValue,
   ObjectMark,
   Stack,
@@ -18,33 +21,34 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ComponentSection, useOwnerLabel } from "../../../../components/CatalogParts";
-import { ComponentSwitchList } from "../../../../components/ComponentSwitch";
+import { ComponentSwitchList, useComponentSwitch } from "../../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { OwnedItemDeleteDialog } from "../../../../components/OwnedItemDeleteDialog";
 import { PluginInstallsSection } from "../../../../components/PluginInstallCards";
 import { usePluginActions, usePluginState } from "../../../../components/PluginSwitch";
+import { fromOrgDetail } from "../../../../components/plugin-contents/from-org";
+import { PluginContents } from "../../../../components/plugin-contents/PluginContents";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
-  agentTemplateNameOf,
   descriptionOf,
   displayNameOf,
-  endpointLeaves,
   type OrgCatalogDetail,
   type OrgCatalogItem,
   orgIconUrl,
   ownedBy,
   setOwnedShareable,
-  showValue,
-  skillNameOf,
 } from "../../../../lib/catalog";
+import { componentLabel } from "../../../../lib/components";
 import { lockWhileRunning } from "../../../../lib/header-actions";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
+import { orgExtensionsQuery } from "../../../../lib/query/channels";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { orgComponentsQuery } from "../../../../lib/query/components";
+import { connectorsQuery } from "../../../../lib/query/conversation";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -111,8 +115,6 @@ function CatalogItemDetail({
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("catalog.org");
-  const tr = useTranslations("catalog.admin.review");
-  const tc = useTranslations("catalog.components");
   const locale = useLocale();
   const stateOf = usePluginState();
   const item = detail.item;
@@ -212,81 +214,9 @@ function CatalogItemDetail({
         {dialog}
         {owned && <OwnedSection orgId={orgId} item={item} admin={admin} />}
         {admin && <PluginInstallsSection orgId={orgId} itemId={item.id} />}
+        <OrgConnectorsSection orgId={orgId} itemId={item.id} admin={admin} />
         <OrgComponentsSection orgId={orgId} itemId={item.id} admin={admin} />
-        <ComponentSection
-          title={tc("extension")}
-          count={detail.extension === null ? 0 : 1}
-          empty={tc("extensionNone")}
-        >
-          <ItemList
-            label={tc("extension")}
-            rows={detail.extension === null ? [] : [{ id: "ext", title: detail.extension }]}
-          />
-        </ComponentSection>
-        <ComponentSection
-          title={tc("skills")}
-          count={detail.skills.length}
-          empty={tc("skillsNone")}
-        >
-          <ItemList
-            label={tc("skills")}
-            rows={detail.skills.map((s) => ({ id: s, title: skillNameOf(s) }))}
-          />
-        </ComponentSection>
-        <ComponentSection
-          title={tc("agentTemplates")}
-          count={detail.agents.length}
-          empty={tc("agentTemplatesNone")}
-        >
-          <ItemList
-            label={tc("agentTemplates")}
-            rows={detail.agents.map((a) => ({ id: a, title: agentTemplateNameOf(a) }))}
-          />
-        </ComponentSection>
-        <ComponentSection
-          title={tc("templates")}
-          count={detail.templates.length}
-          empty={tc("templatesNone")}
-        >
-          {detail.templates.map((c) => (
-            <Card
-              key={c.id}
-              title={
-                c.displayName
-                  ? displayNameOf({ name: c.id, displayName: c.displayName }, locale)
-                  : c.connector
-              }
-            >
-              <Stack gap={8}>
-                {descriptionOf(c, locale) !== "" && (
-                  <Text variant="prose" tone="muted">
-                    {descriptionOf(c, locale)}
-                  </Text>
-                )}
-                <KeyValue
-                  keyWidth="14ch"
-                  rows={endpointLeaves(c.endpoint).map(([k, v]) => ({ k, v: showValue(v) }))}
-                />
-                {c.editableEndpoint.length > 0 && (
-                  <Text variant="small" tone="muted">
-                    {tr("editable", { paths: c.editableEndpoint.join(", ") })}
-                  </Text>
-                )}
-                <Text variant="small">{tr("auth", { type: String(c.auth.type ?? "none") })}</Text>
-              </Stack>
-            </Card>
-          ))}
-        </ComponentSection>
-        <ComponentSection
-          title={tc("dependencies")}
-          count={detail.dependencies.length}
-          empty={tc("dependenciesNone")}
-        >
-          <ItemList
-            label={tc("dependencies")}
-            rows={detail.dependencies.map((d) => ({ id: d.name, title: d.name, meta: d.range }))}
-          />
-        </ComponentSection>
+        <OrgContents orgId={orgId} detail={detail} />
       </Stack>
       {deleting && (
         <OwnedItemDeleteDialog
@@ -325,6 +255,101 @@ function OrgComponentsSection({
     <ComponentSection title={t("inOrg")} count={read.data.components.length} empty={t("noneInOrg")}>
       <ComponentSwitchList orgId={orgId} admin={admin} components={read.data.components} />
     </ComponentSection>
+  );
+}
+
+/**
+ * The latest version's contents (the shared contents view, detail stage, org audience): the
+ * extension, skills, agent templates, connector templates and dependencies. The descriptions of
+ * the skills and agent templates come from the org's components, the extension's state from the
+ * org's extensions (org admins read them; for members it is left out).
+ */
+function OrgContents({ orgId, detail }: { orgId: string; detail: OrgCatalogDetail }) {
+  const locale = useLocale();
+  const cq = orgComponentsQuery(orgId, { itemId: detail.item.id });
+  const components = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
+  const eq = orgExtensionsQuery(orgId);
+  const extensions = useQuery({ ...eq, retryOnMount: retryOnMountOf(eq.queryKey) });
+  const own = extensions.data?.extensions.find((e) => e.plugin === detail.extension);
+  // The page's facts already show the full description
+  const model = {
+    ...fromOrgDetail(detail, components.data?.components ?? [], own, locale),
+    description: "",
+  };
+  return <PluginContents model={model} audience="org" stage="detail" />;
+}
+
+/**
+ * 本组织的连接器: the org's connectors made from this plugin's connector templates (matched by
+ * `platformTemplateId` to the template's platform component), each with its state and a link to
+ * its page. Org admins also get 创建 on a template with no connector (the connectors page's
+ * create-from-template action: the switch-on, which makes it as an install would). Nothing to
+ * show: the section is left out.
+ */
+function OrgConnectorsSection({
+  orgId,
+  itemId,
+  admin,
+}: {
+  orgId: string;
+  itemId: string;
+  admin: boolean;
+}) {
+  const t = useTranslations("catalog.org.detail.connectors");
+  const tco = useTranslations("connectors");
+  const locale = useLocale();
+  const cq = orgComponentsQuery(orgId, { itemId });
+  const components = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
+  const lq = connectorsQuery(orgId);
+  const connectors = useQuery({ ...lq, retryOnMount: retryOnMountOf(lq.queryKey) });
+  const { actionsOf, createConnectorOf, dialog, error } = useComponentSwitch({ orgId, admin });
+  const templates = (components.data?.components ?? []).filter(
+    (c) => c.kind === "connector_template" && c.itemId === itemId,
+  );
+  const made = connectors.data?.connectors ?? [];
+  const rows = templates.flatMap((c): ItemListRow[] => {
+    const own = made.filter((m) => m.platformTemplateId === c.id);
+    if (own.length > 0) {
+      return own.map((m) => ({
+        id: m.id,
+        mark: { text: m.name, image: m.icon ?? null },
+        title: m.name,
+        href: `/connectors/${encodeURIComponent(m.id)}`,
+        status: {
+          label:
+            m.status === "disabled"
+              ? tco("status.disabled")
+              : m.setup === "needs_config"
+                ? tco("setup.needsConfig")
+                : t("available"),
+        },
+      }));
+    }
+    // No connector yet: an org admin creates it (on: the create action; off: the switch-on)
+    const create = createConnectorOf(c) ?? actionsOf(c).find((a) => a.id === "enable");
+    if (create?.onSelect === undefined) return [];
+    const name = componentLabel(c, locale);
+    return [
+      {
+        id: `template:${c.id}`,
+        mark: { text: name, image: c.icon ?? null },
+        title: name,
+        meta: t("noConnector"),
+        actions: (
+          <Button loading={create.loading === true} onClick={create.onSelect}>
+            {t("create")}
+          </Button>
+        ),
+      },
+    ];
+  });
+  if (rows.length === 0 && error === undefined) return null;
+  return (
+    <ContentSection title={t("title")}>
+      {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+      <ItemList label={t("title")} rows={rows} />
+      {dialog}
+    </ContentSection>
   );
 }
 

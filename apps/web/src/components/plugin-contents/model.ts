@@ -71,6 +71,8 @@ export interface AgentRow extends RowBase {
   model?: AgentTier;
   /** undefined: the tools of the agent that dispatches it. */
   tools?: string[];
+  /** The surface has no tool data (an org's view): the tools row is left out. */
+  toolsUnknown?: boolean;
   disallowedTools?: string[];
   needs: AgentNeed[];
   instructions?: string;
