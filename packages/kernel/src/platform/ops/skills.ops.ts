@@ -8,8 +8,10 @@ import {
 } from "../../conversations/attachments.service.js";
 import { assertCustomAllowed } from "../../identity/settings.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { SkillFiles } from "../../skills/skill-files.js";
 import {
   SkillCreateBody,
+  SkillFilesQuery,
   SkillIdParams,
   SkillPathParams,
   SkillShareableSchema,
@@ -34,6 +36,7 @@ export class SkillsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(SkillsService) private readonly skills: SkillsService,
+    @Inject(SkillFiles) private readonly files: SkillFiles,
     @Inject(OwnedItems) private readonly owned: OwnedItems,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
     @Inject(KernelDb) private readonly db: KernelDb,
@@ -68,6 +71,28 @@ export class SkillsOperations implements OnModuleInit {
         renames: { skillId: "id" },
         confirm: "read",
         run: async (input, ctx) => this.skills.get(ctx.orgId, input.skillId),
+      }),
+      defineOperation({
+        id: "skills.list-files",
+        description:
+          "List the files of one version of a skill: path, size, content type and the built-in preview kind (image, text or null). Takes the skill id from skills.list and an optional version (default: the current one; skills.get lists the versions). The model reads a skill's files through the Skill tool; this listing is for telling the person what a version holds.",
+        input: OwnedSkillId.extend({ version: SkillFilesQuery.shape.version }).strict(),
+        example: { skillId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" },
+        authz: { orgAction: "skills.read" },
+        mirrors: ["GET /api/v1/orgs/:orgId/skills/:id/files"],
+        renames: { skillId: "id" },
+        errors: [
+          {
+            code: "skill.not_found",
+            next: "Check the skill id with skills.list: only the org's skills and platform skills switched on in it can be read.",
+          },
+          {
+            code: "skill.file_not_found",
+            next: "The skill has no such version; read its versions with skills.get, or leave version out for the current one.",
+          },
+        ],
+        confirm: "read",
+        run: async (input, ctx) => this.files.list(ctx.orgId, input.skillId, input.version),
       }),
       defineOperation({
         id: "skills.create-from-file",

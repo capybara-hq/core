@@ -11,6 +11,7 @@ import { AgentSkillsService } from "./agent-skills.service.js";
 import { SkillsCatalogService } from "./catalog.js";
 import { SkillChangesService } from "./changes.service.js";
 import { SkillInvoker } from "./invoke.js";
+import { SkillFiles } from "./skill-files.js";
 import { SkillsService } from "./skills.service.js";
 
 /**
@@ -33,6 +34,7 @@ import { SkillsService } from "./skills.service.js";
   providers: [
     AgentSkillsService,
     SkillsService,
+    SkillFiles,
     SkillChangesService,
     SkillsCatalogService,
     SkillInvoker,
@@ -40,6 +42,8 @@ import { SkillsService } from "./skills.service.js";
   exports: [
     AgentSkillsService,
     SkillsService,
+    SkillFiles,
+    SkillFiles,
     SkillChangesService,
     SkillsCatalogService,
     SkillInvoker,

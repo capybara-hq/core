@@ -258,6 +258,22 @@ export interface SkillDetail extends SkillSummary {
   body: string | null;
 }
 
+/** A stored version of a skill as {@link SkillsService.resolve} returns it. */
+export interface ResolvedSkillVersion {
+  version: number;
+  manifest: SkillManifest;
+  created_by: string | null;
+  created_at: Date;
+  /** The version's snapshot `source`: `platform:<prefix>` for a platform version (`skillFileStore`). */
+  object_prefix: string;
+}
+
+/** A skill as the org sees it under an id (the rule of `GET /skills/:id`); versions newest first. */
+export interface ResolvedSkill {
+  summary: SkillSummary;
+  versions: ResolvedSkillVersion[];
+}
+
 /** 详情里读取 SKILL.md 正文的上限。 */
 export const SKILL_BODY_MAX_BYTES = 1024 * 1024;
 
@@ -1203,6 +1219,32 @@ export class SkillsService {
 
   /** The skill's detail without `agentsOff` (no agents scan; for names and checks). */
   async detail(orgId: string, skillId: string): Promise<SkillDetail> {
+    const { summary: s, versions } = await this.resolve(orgId, skillId);
+    const current = versions.find((v) => v.version === s.currentVersion);
+    return {
+      ...s,
+      body: current ? await this.readBody(orgId, current) : null,
+      versions: versions.map((v) => ({
+        version: v.version,
+        description: v.manifest.description,
+        files: v.manifest.files,
+        createdBy: v.created_by,
+        createdAt: v.created_at,
+      })),
+    };
+  }
+
+  /**
+   * The skill the org sees under `skillId`, the visibility rule of `GET /skills/:id` (and of the
+   * skill's file routes): the org's own skill with its versions; an org copy linked to a platform
+   * skill without a pin (ruling B2) is the platform skill (its id, versions; `skill.not_found`
+   * while that skill is off in the org), except the org's own skill it promoted (ruling P3-3),
+   * which keeps its id and summary over the platform row's versions while it serves its stored
+   * version, and the platform's newer version under its id otherwise (ruling P3-4); any other id
+   * is a platform skill on in the org, else `skill.not_found`. Versions newest first, each with
+   * its snapshot `source` (`platform:<prefix>` for a platform version; see `skillFileStore`).
+   */
+  async resolve(orgId: string, skillId: string): Promise<ResolvedSkill> {
     const link = await this.db
       .selectFrom("skills")
       .select("platform_skill_id")
@@ -1217,10 +1259,13 @@ export class SkillsService {
       // the org's own skill it promoted is its own (ruling P3-3): its stored version while that is
       // the platform's current one, else the platform's newer version under its id (ruling P3-4)
       const served = (await skillVersionsById(this.db.db, orgId, [skillId])).get(skillId);
-      if (served?.origin !== "org") return this.getPlatform(orgId, link.platform_skill_id);
+      if (served?.origin !== "org") return this.resolvePlatform(orgId, link.platform_skill_id);
       if (served.source.startsWith(PLATFORM_SOURCE)) {
-        const detail = await this.getPlatform(orgId, link.platform_skill_id);
-        return { ...detail, ...(await this.promotedSummary(skillId, link.platform_skill_id)) };
+        const platform = await this.resolvePlatform(orgId, link.platform_skill_id);
+        return {
+          ...platform,
+          summary: await this.promotedSummary(skillId, link.platform_skill_id),
+        };
       }
     }
     const row = await summaryQuery(this.db.db)
@@ -1229,32 +1274,21 @@ export class SkillsService {
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
-    if (!row) return this.getPlatform(orgId, skillId);
+    if (!row) return this.resolvePlatform(orgId, skillId);
     const versions = await this.db
       .selectFrom("skill_versions")
       .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
       .where("skill_id", "=", skillId)
       .orderBy("version", "desc")
       .execute();
-    const current = versions.find((v) => v.version === row.current_version);
-    return {
-      ...summary(row),
-      body: current ? await this.readBody(orgId, current) : null,
-      versions: versions.map((v) => ({
-        version: v.version,
-        description: v.manifest.description,
-        files: v.manifest.files,
-        createdBy: v.created_by,
-        createdAt: v.created_at,
-      })),
-    };
+    return { summary: summary(row), versions };
   }
 
   /**
-   * A platform skill's detail (phase 2): only while it is on in the org, else `skill.not_found`.
-   * Its versions are the platform skill's.
+   * A platform skill as {@link resolve} sees it (phase 2): only while it is on in the org, else
+   * `skill.not_found`. Its versions are the platform skill's, sources in the `platform:` form.
    */
-  private async getPlatform(orgId: string, skillId: string): Promise<SkillDetail> {
+  private async resolvePlatform(orgId: string, skillId: string): Promise<ResolvedSkill> {
     const usable = (await skillVersionsById(this.db.db, orgId, [skillId])).get(skillId);
     if (usable?.origin !== "platform" || usable.platformSkillId !== skillId) throw notFound();
     const row = await platformSummaryQuery(this.db.db)
@@ -1267,22 +1301,9 @@ export class SkillsService {
       .where("skill_id", "=", skillId)
       .orderBy("version", "desc")
       .execute();
-    const current = versions.find((v) => v.version === row.current_version);
     return {
-      ...platformSummary(row),
-      body: current
-        ? await this.readBody(orgId, {
-            manifest: current.manifest,
-            object_prefix: platformSource(current.object_prefix),
-          })
-        : null,
-      versions: versions.map((v) => ({
-        version: v.version,
-        description: v.manifest.description,
-        files: v.manifest.files,
-        createdBy: v.created_by,
-        createdAt: v.created_at,
-      })),
+      summary: platformSummary(row),
+      versions: versions.map((v) => ({ ...v, object_prefix: platformSource(v.object_prefix) })),
     };
   }
 

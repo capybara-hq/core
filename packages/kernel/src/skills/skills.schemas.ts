@@ -1,4 +1,4 @@
-import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
+import { hasControlChars, MEDIA_NAME_MAX_CHARS, SKILL_LIMITS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { SKILL_PACKAGE_UPLOAD_MAX_BYTES } from "../conversations/attachments.service.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
@@ -22,6 +22,20 @@ export const SkillCreateBody = z
 export const SkillIdParams = z.object({ id: z.string().min(1).max(100) });
 /** `:id` where the route takes it as is (`@Param`). */
 export const SkillPathParams = z.object({ id: z.string().min(1) });
+
+/** `?version=` of `GET /skills/:id/files`: a version of the skill (default: the current one). */
+export const SkillFilesQuery = z
+  .object({ version: z.coerce.number().int().min(1).max(2_147_483_647).optional() })
+  .strict();
+/**
+ * `GET /skills/:id/files/content`: `path` a path of that version's manifest, `limit` at most that
+ * many bytes, `inline=1` inline for a raster image (never for HTML or SVG).
+ */
+export const SkillFileContentQuery = SkillFilesQuery.extend({
+  path: z.string().min(1).max(SKILL_LIMITS.pathMaxChars),
+  limit: z.coerce.number().int().min(1).max(SKILL_LIMITS.fileBytes).optional(),
+  inline: z.enum(["0", "1"]).optional(),
+}).strict();
 
 export const SkillShareableSchema = z.object({ shareable: z.boolean() }).strict();
 
@@ -78,6 +92,16 @@ export const SKILL_ROUTES: readonly RouteSchemas[] = [
   },
   { route: "GET /api/v1/orgs/:orgId/skills" },
   { route: "GET /api/v1/orgs/:orgId/skills/:id", params: SkillPathParams },
+  {
+    route: "GET /api/v1/orgs/:orgId/skills/:id/files",
+    params: SkillIdParams,
+    query: SkillFilesQuery,
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/skills/:id/files/content",
+    params: SkillIdParams,
+    query: SkillFileContentQuery,
+  },
   { route: "POST /api/v1/orgs/:orgId/skills/uploads", body: SkillUploadBody },
   { route: "POST /api/v1/orgs/:orgId/skills", body: SkillCreateBody },
   {

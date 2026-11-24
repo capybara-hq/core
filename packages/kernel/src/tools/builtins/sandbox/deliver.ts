@@ -75,6 +75,12 @@ const CONTENT_TYPES: Record<string, string> = {
   css: "text/css",
   js: "text/javascript",
   ts: "text/plain",
+  tsx: "text/plain",
+  jsx: "text/plain",
+  mjs: "text/javascript",
+  cjs: "text/javascript",
+  sh: "text/x-shellscript",
+  bash: "text/x-shellscript",
   py: "text/x-python",
   sql: "application/sql",
   pdf: "application/pdf",
@@ -95,6 +101,7 @@ const CONTENT_TYPES: Record<string, string> = {
   wav: "audio/wav",
 };
 
+/** The content type of a file name by its extension (Deliver, skill files); unknown: octet-stream. */
 export function contentTypeFor(name: string): string {
   const dot = name.lastIndexOf(".");
   const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
