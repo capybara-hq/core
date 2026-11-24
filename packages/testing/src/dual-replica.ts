@@ -62,6 +62,12 @@ export interface DualReplicaOptions {
    * with the `api` role; use `requestTo(index, …)` to reach a specific replica.
    */
   roles?: [string[], string[]];
+  /**
+   * Runs against the harness's fresh database before the replicas start (it is not migrated yet:
+   * run the kernel migrations first when seeding tables), for state the replicas must find at
+   * their start.
+   */
+  beforeStart?: (dbUrl: string) => Promise<void>;
 }
 
 /** 一个副本（独立子进程）的句柄。 */
@@ -373,6 +379,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
     }
     const db = await createFreshDatabase(pgUrl);
     dropDb = db.drop;
+    await opts.beforeStart?.(db.url);
     const config = {
       dbUrl: db.url,
       redisUrl,

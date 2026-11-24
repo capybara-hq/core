@@ -2394,12 +2394,13 @@ export class PluginInstaller {
    * connector from the template yet (one a switch-off kept is reused, left as it is). Created like
    * an install's ({@link planConnector}, `createDeferredIn`: no outbound call, `needs_config` when
    * it needs an org credential or OAuth client) and recorded on the install. Returns its id, or
-   * undefined when none was created.
+   * undefined when none was created. `actor` null: the kernel itself (the startup reconciliation,
+   * `TemplateConnectorReconciler`), which checks the template is on and holds the org lock.
    */
   @Transactional({ propagation: "mandatory" })
   async createSwitchedOnTemplateConnectorIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     platformTemplateId: string,
     opts: { actorTokenId?: string; auditDetail?: AuditDetail } = {},
   ): Promise<string | undefined> {

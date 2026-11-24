@@ -20,6 +20,7 @@ import { PluginInstaller } from "./plugin-install.js";
 import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 import { CatalogRequestsService } from "./requests.service.js";
 import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
+import { TemplateConnectorReconciler } from "./template-connector-reconcile.js";
 
 export { CatalogImportModule };
 
@@ -33,7 +34,8 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
  * with their dependencies, the platform plugin update (`PlatformPluginUpdater`) and the update to a
  * staged version (`PlatformImportUpdate`), the admin's scope
  * and disable
- * (`CatalogScopeService`), org admins' plugin uploads (`OrgPluginUploads`) and their own plugins (`OwnedItems`), and the producer of the plugin scope sync
+ * (`CatalogScopeService`), org admins' plugin uploads (`OrgPluginUploads`) and their own plugins (`OwnedItems`), the startup
+ * reconciliation of template connectors (`TemplateConnectorReconciler`), and the producer of the plugin scope sync
  * (`PluginScopeSync`; its consumer is the worker role's `PluginScopeWorkersModule`). The catalog's periodic jobs (`CatalogJobs`) are
  * the worker role's (`WorkerModule`).
  */
@@ -67,6 +69,7 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     OrgPluginUploads,
     OwnedItems,
     PlatformImportUpdate,
+    TemplateConnectorReconciler,
   ],
   exports: [
     PLUGIN_SCOPE_QUEUE_MODULE,
@@ -83,6 +86,7 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     OrgPluginUploads,
     OwnedItems,
     PlatformImportUpdate,
+    TemplateConnectorReconciler,
   ],
 })
 export class CatalogModule {}
