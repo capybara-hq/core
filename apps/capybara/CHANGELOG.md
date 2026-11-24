@@ -1,5 +1,78 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.109
+
+### Patch Changes
+
+- caf9873: Connectors can be created without listing their tools (`ConnectorsService.createDeferredIn`, for
+  installs, scope syncs and upgrades): the row is written with no outbound call and the tool list
+  follows through the outbox (`connector-tools-list` on the new `cap-connector-tools` queue, shown on
+  the health overview). A `needs_config` connector gets the job when an org admin saves its missing
+  input (its first OAuth client can now be saved on the connector), a personal one on a member's first
+  credential; whoever writes the first snapshot (the job, a refresh, the drift scan) applies the
+  template's default policies. A dcr connector created without a client registers it on the first
+  connect, once across replicas. A connector the kernel creates has no creator (`created_by` nullable,
+  shown as System on the admin pages). Agents get no tools from a `needs_config` connector, and the git gateway tells a member
+  that an org admin must configure the connector instead of asking them to reconnect.
+- 02f1b38: A platform plugin update creates the connectors of the templates it turns on (added ones, and ones
+  no longer shipped off) in every org where the plugin is on and no connector from the template
+  exists, inside the update's transaction and without an outbound call (builtin plugins excepted).
+  A template whose connector plugin is not on in an org is deferred there: the update owes the org's
+  template connector ensure, which creates it once the plugin is on. Its preview lists them per org
+  (`connectorOrgs[].created` with display name and starting setup state, `connectorOrgs[].deferred`;
+  `needsConfig` is gone) and names the orgs where the scope sync will try to install the plugin
+  (`scopeInstalls`, `failing` with the last failure); all are part of `diffHash`. A template update that clears credentials and leaves a connector ready lists its tools
+  again through the outbox.
+- cd792a5: Installing, enabling and the scope sync of a plugin ask for no connector input: every connector
+  template on in the org becomes a connector without an outbound call (its tool list follows through
+  the outbox), one that needs an org credential or OAuth client waits as `needs_config` until an org
+  admin configures it, a personal static one is ready for members to connect. The install and switch
+  bodies no longer take `connectors`, `POST …/catalog/:itemId/connectors` and the Platform operation
+  `plugins.configure-connectors` are gone, `plugins.install` asks for no secrets, and
+  `plugins.set-enabled` switches on plugins with templates. The scope sync installs plugins with
+  templates in every org; a plugin's own `needs_config` state comes only from an invalid effective
+  extension config. An install's connectors take the first free name and slug, so an org connector
+  of the same slug no longer blocks it. The import review gains each connector template's icon and
+  the connectors each agent template needs.
+- fd68429: Plugin pages are cards, and the marketplace sources page is cards with an add and edit dialog.
+  Installing a plugin is two steps (choose the package, then review and confirm), and the review
+  page shows less text: one sensitive total, config fields as chips, and what an update adds marked.
+- 33d0490: The connector templates on in an org that the org never had a connector from (none live or
+  deleted, none recorded on an install) now get their connector without input. This happens after an
+  install commits and after an org switches an extension on (a `template-connectors-ensure` job on
+  the new queue `cap-template-connectors`, retried while the connector extension is not loaded on
+  the replica yet), when the scope sync adds a plugin's dependencies, and once at the first start
+  after this release (under `lock:bootstrap`, skipped by a replica that does not get it, marked done
+  in `deployment_settings`); a five-minute sweep (`template-connectors-sweep`, once per tick across
+  replicas) catches what none of these re-trigger, such as a kind loaded after the queued ensure gave
+  up or an always-on connector extension. A connector an admin deleted is never made again. During a rolling
+  upgrade, replicas of the previous version neither owe nor consume these jobs: the startup pass of
+  the first upgraded replica covers what was waiting, and jobs owed meanwhile wait in the outbox until
+  an upgraded worker takes them. The first start after this release runs that reconciliation pass inside
+  the start sequence, before the replica reports ready: on a large deployment (many orgs with
+  installed plugins that have connector templates) that first start takes longer. The health overview lists the new queue ("Template connectors" /
+  连接器模板补建). The dual-replica harness takes `beforeStart` to seed the fresh database before the
+  replicas start.
+- eab2d81: The web enables a plugin from one review page with 启用 and no input (the per-template steps and the
+  补充配置 page are gone). A connector that lacks its org input shows 待配置 with 配置 for org admins
+  (its 凭据 tab: the template's setup guide, the endpoint fields the template lets the org edit, the
+  credential or OAuth client; saving records the guide) and 待管理员配置 for members; extensions whose
+  config is invalid read the same way, and the agent page marks such connectors 待配置. The plugin
+  review shows template icons and the connectors an agent template needs.
+  The enable page lists what the package brings (its extension, skills, connector templates, agent
+  templates and dependencies), and a plugin with an extension is reviewed there before it comes on.
+  An installed plugin whose extension config is invalid reads 已启用 (the extensions page shows
+  待配置). A connector template that is on without a connector says so, with 创建连接器 for org
+  admins.
+- Updated dependencies [d5aa819]
+- Updated dependencies [caf9873]
+- Updated dependencies [aa5b99c]
+- Updated dependencies [02f1b38]
+- Updated dependencies [cd792a5]
+- Updated dependencies [ff6aeb8]
+- Updated dependencies [33d0490]
+  - @capybara-hq/kernel@0.1.0-rc.85
+
 ## 0.1.0-rc.108
 
 ### Patch Changes
