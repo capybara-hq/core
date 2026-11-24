@@ -58,6 +58,32 @@ export class DeviceServices {
   }
 
   /**
+   * The service's state without starting or resuming anything: `stopped` when the device has no
+   * running instance; null when the provider cannot tell (it lacks `serviceStatus`), so the
+   * caller treats the service as possibly stopped.
+   */
+  async status(
+    use: SandboxUseContext,
+    name: string,
+    signal: AbortSignal,
+  ): Promise<DeviceServiceStatus | null> {
+    assertServiceName(name);
+    const stopped: DeviceServiceStatus = { name, state: "stopped", startedAt: null };
+    const current = await this.sandbox.currentInstance(use.deviceId);
+    if (!current) return stopped;
+    const r = await this.sandbox.ifRunning(
+      use.deviceId,
+      { createdAt: current.createdAt },
+      async (p, h, sig) => {
+        requireServices(p);
+        return p.serviceStatus ? p.serviceStatus(h, name, sig) : null;
+      },
+      signal,
+    );
+    return r.kind === "ran" ? r.value : stopped;
+  }
+
+  /**
    * Stops the service when the device's instance runs; nothing to do otherwise (a suspended or
    * destroyed instance has no running service, and stopping never resumes it).
    */

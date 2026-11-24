@@ -4,12 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceServices } from "../../src/sandbox/device-services.js";
+import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { addedToDeviceNote, onListNote, serviceAskedNote } from "../../src/tools/network-asks.js";
-import { fakeDeviceAccessCalls } from "../fixtures/extensions/fake-device-access/index.js";
+import {
+  fakeDeviceAccessCalls,
+  setFakeDeviceAccessBeforeReport,
+} from "../fixtures/extensions/fake-device-access/index.js";
 import {
   FAKE_INSTANCE_PERMISSION_SUPPORT,
   FAKE_PERMISSION_SUPPORT,
@@ -41,7 +46,7 @@ import {
  * asks the device owner in the call's conversation, offering only "always" (the device's own
  * list: a run grant cannot reach a long-lived service). Approving adds the hosts to the device's
  * list and runs the call again; a host outside the org's hosts is refused without an ask. The
- * `fake-device-access` fixture writes the call scope directly until `reportBlockedHosts` does.
+ * `fake-device-access` fixture reports through `ctx.deviceAccess.reportBlockedHosts`.
  */
 
 const FAKE_DEVICE_ACCESS = fileURLToPath(
@@ -155,17 +160,20 @@ const listOnly = () =>
     .where("id", "=", s.deviceId)
     .execute();
 
-/** The model calls `navigate` once, its service refused `blocked` (and `blockedAgain` on a re-run). */
-const navigate = (blocked: string[], blockedAgain?: string[], deviceId = s.deviceId) =>
+/**
+ * The model calls `navigate` once, its service refused `blocked` (and `blockedAgain` on a re-run);
+ * with `service` it first starts and asks the echo service.
+ */
+const navigate = (blocked: string[], blockedAgain?: string[], service = false) =>
   postMessage(
     s.req,
     orgId,
     s.conversationId,
     `tool:${NAVIGATE}:${JSON.stringify({
       url: "https://example.org/",
-      deviceId,
       blocked,
       ...(blockedAgain !== undefined && { blockedAgain }),
+      ...(service && { service }),
     })}`,
   );
 
@@ -227,7 +235,7 @@ describe("network asks for extension service calls", () => {
       kind: "service",
       deviceId: s.deviceId,
       hosts: ["example.org"],
-      url: null,
+      url: "https://example.org/",
       appliesAt: "next-command",
     });
     await waitFor(async () => (await runStatus()) === "waiting", 10_000, "run waiting");
@@ -339,8 +347,52 @@ describe("network asks for extension service calls", () => {
     expect(r?.content).toContain(addedToDeviceNote(["example.org"], "next-use"));
   });
 
-  it("a report naming another device than the conversation's is ignored: no ask, no note", async () => {
-    await navigate(["example.org"], undefined, randomUUID());
+  it("a report about a device the conversation no longer works in is ignored: no ask, no note", async () => {
+    // the launch passes the review (its classification is the review's own tests' concern)
+    const review = vi
+      .spyOn(k.app.get(CommandReviewService), "review")
+      .mockResolvedValue({ decision: "allow", by: "rule", reason: "test", rule: null });
+    // the conversation moves to another device of its owner after the service calls resolved it
+    const other = randomUUID();
+    await db
+      .insertInto("devices")
+      .values({
+        id: other,
+        org_id: orgId,
+        owner_kind: "personal",
+        owner_account_id: s.accountId,
+        name: "Other",
+        provider: "device-fake",
+        network_mode: "allowlist",
+        network_hosts: JSON.stringify(["a.dev"]),
+        report: JSON.stringify({ support: FAKE_PERMISSION_SUPPORT }),
+      })
+      .execute();
+    setFakeDeviceAccessBeforeReport(async () => {
+      await db
+        .updateTable("conversations")
+        .set({ device_id: other })
+        .where("id", "=", s.conversationId)
+        .execute();
+    });
+    try {
+      await navigate(["example.org"], undefined, true);
+      await waitForTerminal(db, s.conversationId, 1, 20_000);
+    } finally {
+      setFakeDeviceAccessBeforeReport(undefined);
+      review.mockRestore();
+      // no service process outlives the test
+      await k.app.get(DeviceServices).stop(
+        {
+          orgId,
+          deviceId: s.deviceId,
+          holderConversationId: s.conversationId,
+          actor: { accountId: s.accountId, conversationId: s.conversationId },
+        },
+        "echo",
+        AbortSignal.timeout(30_000),
+      );
+    }
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     expect(await networkAsks()).toEqual([]);
     expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toEqual([]);

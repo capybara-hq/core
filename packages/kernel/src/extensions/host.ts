@@ -17,12 +17,14 @@ import {
   type UiSlotSpec,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
 import { changedPaths, configFields, secretValues, unreachableSecrets } from "../config/fields.js";
 import type { BusSubscriber } from "../ctx/bus.js";
 import {
+  type DeviceAccessBackend,
   type ExtensionPointAccess,
   type KernelDeps,
   type KernelExtensionContext,
@@ -35,6 +37,7 @@ import type { Keyring } from "../ctx/secrets.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
+import { DEVICE_ACCESS_BACKEND } from "../device-access/token.js";
 import { DialInAccess } from "../dial-in/access.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
 import { waitWithin } from "../infra/close-within.js";
@@ -697,6 +700,17 @@ export class ExtensionHost {
     @Inject(DialInAccess) dialIn: DialInAccess,
     /** `ctx.devices`: the stored device reports, read again when a provider says they changed. */
     @Inject(DeviceReports) devices: DeviceReports,
+    /**
+     * Finds `DeviceAccessService` (`ctx.deviceAccess`, {@link DEVICE_ACCESS_BACKEND}) at the time
+     * of use: its module imports the sandbox, devices and tools modules, which import this one (a
+     * module cycle otherwise).
+     * Absent (a hand-built host) or not found (the CLI): `ctx.deviceAccess` calls are refused.
+     */
+    @Optional()
+    @Inject(ModuleRef)
+    modules?: {
+      get(token: typeof DEVICE_ACCESS_BACKEND, opts: { strict: false }): DeviceAccessBackend;
+    },
     /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
     @Optional() @Inject(EXTENSION_NET_SEAMS) netSeams?: ExtensionNetSeams,
   ) {
@@ -727,6 +741,13 @@ export class ExtensionHost {
       net: { config, allowances, ...(netSeams !== undefined && { seams: netSeams }) },
       dialIn,
       devices,
+      deviceAccess: () => {
+        try {
+          return modules?.get(DEVICE_ACCESS_BACKEND, { strict: false });
+        } catch {
+          return undefined;
+        }
+      },
       locks,
       runWorkers: c.roles.includes("worker"),
       log,

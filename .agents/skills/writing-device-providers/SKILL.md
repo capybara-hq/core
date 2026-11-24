@@ -493,6 +493,24 @@ treats a dial-in device like any other (its provider, report and permission supp
   `FakeDialInMachine` (`@capybara-hq/testing`) or `EnvelopeMachine` (`test/helpers/dial-in-machine.ts`,
   for scripted hellos, raw frames and recorded requests) answers it.
 
+## Device services and stream holds (browser use spec §5, §6.2)
+
+- **Services.** Optional `ensureService` / `stopService` / `serviceRequest` (all three, else
+  `DeviceServices` refuses `capability_missing`), `openStream` for viewers and `serviceStatus`:
+  one named long-lived Node process per device in its own state directory, under the device's
+  sandbox and network, killed with the instance on suspend and destroy. The kernel reaches them
+  only through `DeviceServices` (`sandbox/device-services.ts`: `ensure`, `request`, `status`,
+  `stop`; a use like any tool call, so a suspended instance resumes; `status` and `stop` never
+  resume one). `serviceStatus(h, name, signal)` answers without starting anything: `ctx.deviceAccess`
+  runs the command review of a launch only when it says `stopped`, and on every ensure when the
+  provider lacks it, so implement it.
+- **Stream holds.** `SandboxService.holdForStream(deviceId, orgId, signal)` returns
+  `{ h, p, signal, release }` for an open viewer: a token in the sorted set
+  `capk:sandbox-streams:<device>` (scored by expiry, renewed while held) that exempts the device
+  from idle suspension only; it takes no `maxConcurrentCommands` slot and yields to every
+  exclusive step (limits change, rebuild, destroy, reset, forced suspension): its `signal` aborts
+  and the viewer closes. Always `release()`.
+
 ## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 
 The kernel owns it; the extension implements only primitives. **Do not do scheduling, timing or state tables in the extension**:

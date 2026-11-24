@@ -2,6 +2,7 @@ import {
   type AuthInjection,
   type ConnectorSession,
   type ConversationSource,
+  DeviceAccessError,
   type FormAnswer,
   type InputForm,
   type InputRequired,
@@ -597,8 +598,11 @@ export type ToolResume = { state: unknown; answer: FormAnswer | null };
  * spec §7.1): the pipeline asks the device owner about them after the call.
  */
 export interface ServiceBlocked {
-  deviceId: string;
+  /** The device the call's `ctx.deviceAccess` calls resolved; null: the conversation's device. */
+  deviceId: string | null;
   hosts: string[];
+  /** The page the refusals came from, when the service said. */
+  url: string | null;
 }
 
 export type ExecOutcome =
@@ -919,7 +923,10 @@ function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOu
   const blocked = scope?.blocked;
   if (blocked == null || blocked.hosts.size === 0) return outcome;
   if (outcome.kind !== "result" && outcome.kind !== "error") return outcome;
-  return { ...outcome, blocked: { deviceId: blocked.deviceId, hosts: [...blocked.hosts] } };
+  return {
+    ...outcome,
+    blocked: { deviceId: blocked.deviceId, hosts: [...blocked.hosts], url: blocked.url },
+  };
 }
 
 /**
@@ -1971,6 +1978,7 @@ export class ToolPipeline {
           : {
               name: tool.source.kind === "plugin" ? tool.source.plugin : tool.key,
               attempt,
+              url: scoped.url,
             },
       );
       if (handled.kind === "wait") {
@@ -2897,7 +2905,7 @@ export class ToolPipeline {
      * A device service's refusals (browser use spec §7.1): the extension whose service asked and
      * the call's attempt. Only "always" is offered; once approved the call runs again.
      */
-    service?: { name: string; attempt: number },
+    service?: { name: string; attempt: number; url: string | null },
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -3026,7 +3034,7 @@ export class ToolPipeline {
               kind: "service",
               deviceId: report.deviceId,
               service: service.name,
-              url: null,
+              url: service.url,
               hosts: plan.ask.map((h) => h.host),
               attempt: service.attempt,
               appliesAt: offer.appliesAt,
@@ -3038,15 +3046,17 @@ export class ToolPipeline {
   }
 
   /**
-   * A device service's report (the call scope, browser use spec §7.1) when it names the device the
-   * call's conversation works in (the root conversation's for a sub-agent, as the sandbox tools
-   * resolve it); any other device id is ignored with a warning, never asked about.
+   * A device service's report (the call scope, browser use spec §7.1) on the device the call's
+   * conversation works in (the root conversation's for a sub-agent, as the sandbox tools resolve
+   * it): a report that names no device is about that one; a report naming another device id (the
+   * conversation moved to another device during the call) is ignored with a warning, never asked
+   * about.
    */
   private async ownDeviceReport(
     ctx: ToolStepContext,
     toolKey: string,
     blocked: ServiceBlocked | undefined,
-  ): Promise<ServiceBlocked | undefined> {
+  ): Promise<(ServiceBlocked & { deviceId: string }) | undefined> {
     if (blocked === undefined) return undefined;
     const conv = await this.deps.db
       .selectFrom("conversations")
@@ -3054,7 +3064,9 @@ export class ToolPipeline {
       .where("id", "=", ctx.parent?.rootConversationId ?? ctx.conversationId)
       .where("org_id", "=", ctx.orgId)
       .executeTakeFirst();
-    if (conv?.device_id === blocked.deviceId) return blocked;
+    const deviceId = conv?.device_id ?? null;
+    if (deviceId !== null && (blocked.deviceId === null || blocked.deviceId === deviceId))
+      return { ...blocked, deviceId };
     this.deps.log.warn("ignored refused hosts reported for another device than the call's", {
       runId: ctx.runId,
       toolKey,
@@ -3358,7 +3370,24 @@ export class ToolPipeline {
           signal.throwIfAborted();
           // the call scope lives on this call's own context object (never a module map)
           const call = { ...base, ...config, signal };
-          scope = attachCallScope(call);
+          scope = attachCallScope(call, {
+            runId: ctx.runId,
+            step: ctx.step,
+            rootConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
+            unattended: ctx.unattended != null,
+            agentVersion: ctx.agentVersion,
+            ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+            ...(ctx.parent !== undefined && {
+              parent: {
+                conversationId: ctx.parent.conversationId,
+                runId: ctx.parent.runId,
+                callId: ctx.parent.callId,
+                ...(ctx.parent.budgetRunId !== undefined && {
+                  budgetRunId: ctx.parent.budgetRunId,
+                }),
+              },
+            }),
+          });
           return handler(input, call);
         },
         undefined,
@@ -3554,6 +3583,8 @@ export class ToolPipeline {
   /** 抛出的错误 → 给模型的结果：ToolError 的消息原样（插件约定为英文、可操作），其他只给错误类名。 */
   private thrown(key: string, e: unknown): ExecOutcome {
     if (e instanceof ToolError) return { kind: "error", message: e.message };
+    // a ctx.deviceAccess refusal the handler let through: its message is actionable English
+    if (e instanceof DeviceAccessError) return { kind: "error", message: e.message };
     // an extension tool's ctx.models.embed denied by a policy hook (spec B §5.4): the model sees the
     // deny text (sanitized reason), as for a denied tool call, not a generic failure
     if (e instanceof ApiError && e.code === "model.hook_denied") {

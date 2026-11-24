@@ -99,10 +99,11 @@ import { z } from "zod";
  *   {@link createFakeSandbox}, not shipped as a file: the plugin package carries only the entry.
  * - `suspend` and `destroy` kill every process the instance started (exec and background commands,
  *   device services), as stopping a container does.
- * - device services (`ensureService`, `stopService`, `serviceRequest`, `openStream`; left out with
- *   `services: false` in {@link FakeSandboxOptions}): a service runs `node <stateDir>/<entry>` on
- *   the host, its state directory `root/filesystems/<fsId>/.svc/<name>` (in the device's files,
- *   outside `/workspace` and every write root, kept across instances;
+ * - device services (`ensureService`, `stopService`, `serviceStatus`, `serviceRequest`,
+ *   `openStream`; left out with `services: false` in {@link FakeSandboxOptions}): a service
+ *   runs `node <stateDir>/<entry>` on the host, its state directory
+ *   `root/filesystems/<fsId>/.svc/<name>` (in the device's files, outside `/workspace` and every
+ *   write root, kept across instances;
  *   {@link fakeServiceStateDir}), its socket a short hashed path under the OS temp directory
  *   (a unix socket path must stay within 104 bytes on macOS, and test roots are long), its
  *   running record `root/instances/<id>/services/<name>.json` (`{ pid, startedAt }`). Each start
@@ -349,7 +350,10 @@ function serviceSurface(
   requireRunning: (h: SandboxHandle) => Promise<void>,
   log: (line: string) => Promise<void>,
 ): Required<
-  Pick<DeviceProvider, "ensureService" | "stopService" | "serviceRequest" | "openStream">
+  Pick<
+    DeviceProvider,
+    "ensureService" | "stopService" | "serviceStatus" | "serviceRequest" | "openStream"
+  >
 > {
   /** Starts in flight on this process, so concurrent `ensureService` calls start one process. */
   const starting = new Map<string, Promise<DeviceServiceStatus>>();
@@ -454,6 +458,14 @@ function serviceSurface(
       signal.throwIfAborted();
       await killService(root, h.id, name);
       await log(`service-stop ${h.id} ${name}`);
+    },
+
+    async serviceStatus(h, name, signal) {
+      signal.throwIfAborted();
+      const rec = await readServiceRecord(root, h.id, name);
+      return rec !== null && alive(rec.pid)
+        ? { name, state: "running", startedAt: rec.startedAt }
+        : { name, state: "stopped", startedAt: null };
     },
 
     async serviceRequest(h, name, body, opts) {

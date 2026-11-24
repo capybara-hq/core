@@ -46,6 +46,7 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import type { DeviceAccessService } from "../device-access/device-access.service.js";
 import type { DialInAccess } from "../dial-in/access.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
@@ -132,10 +133,27 @@ export interface KernelDeps {
    * (a ctx built alone in a test): `ctx.devices` calls reject.
    */
   devices?: Pick<DeviceReports, "changed">;
+  /**
+   * What `ctx.deviceAccess` calls through (`DeviceAccessService`), found at the time of use (the
+   * service's module sits above the host). Absent, or resolving to undefined (a ctx built alone in
+   * a test, the CLI): `ctx.deviceAccess` calls are refused.
+   */
+  deviceAccess?: () => DeviceAccessBackend | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
 }
+
+/** What `ctx.deviceAccess` calls through (`DeviceAccessService`). */
+export type DeviceAccessBackend = Pick<
+  DeviceAccessService,
+  | "ensureService"
+  | "request"
+  | "reportBlockedHosts"
+  | "streamTicket"
+  | "addNetworkHosts"
+  | "answerHandoff"
+>;
 
 /**
  * What `ctx.ui.verifyEmbedToken` returns for a valid token: the signed claims, with an org
@@ -631,23 +649,28 @@ export function createExtensionContext(
         },
       }
     : undefined;
-  // ctx.deviceAccess: only with permissions.deviceAccess. A placeholder until the kernel side of
-  // device services lands: every call is refused as if no provider had the capability.
+  // ctx.deviceAccess: only with permissions.deviceAccess, and each call only for a service the
+  // approved manifest declares and only for the conversation's owner (DeviceAccessService checks)
   const deviceAccessApi: DeviceAccessCtx | undefined = perms.deviceAccess
     ? (() => {
-        const missing = (): never => {
-          throw new DeviceAccessError(
-            "capability_missing",
-            "Device services are not available on this deployment yet.",
-          );
+        const caller = { extension: name, services: [...(perms.deviceAccess?.services ?? [])] };
+        const backend = (): DeviceAccessBackend => {
+          const b = deps.deviceAccess?.();
+          if (!b)
+            throw new DeviceAccessError(
+              "capability_missing",
+              "Device services are not available in this process.",
+            );
+          return b;
         };
         return {
-          ensureService: async () => missing(),
-          request: async () => missing(),
-          reportBlockedHosts: () => missing(),
-          streamTicket: async () => missing(),
-          addNetworkHosts: async () => missing(),
-          answerHandoff: async () => missing(),
+          ensureService: async (call, spec) => backend().ensureService(caller, call, spec),
+          request: async (call, req) => backend().request(caller, call, req),
+          reportBlockedHosts: (call, hosts, opts) =>
+            backend().reportBlockedHosts(call, hosts, opts),
+          streamTicket: async (scope) => backend().streamTicket(caller, scope),
+          addNetworkHosts: async (scope) => backend().addNetworkHosts(caller, scope),
+          answerHandoff: async (scope) => backend().answerHandoff(caller, scope),
         } satisfies DeviceAccessCtx;
       })()
     : undefined;
