@@ -146,6 +146,7 @@
   "tools/current-time.test.ts",
   "tools/delivery-scope.unit.test.ts",
   "tools/device-owner.unit.test.ts",
+  "tools/editable-endpoint.test.ts",
   "tools/display-title.test.ts",
   "tools/elicitation.test.ts",
   "tools/endpoint.test.ts",

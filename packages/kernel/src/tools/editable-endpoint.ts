@@ -82,18 +82,26 @@ export function mergeEditableEndpoint(
  */
 const SAME_DESTINATION_FIELDS: ReadonlySet<string> = new Set(["headers"]);
 
+/** JSON with object keys sorted at every level: equal values give equal text. */
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (isObj(v)) {
+    const keys = Object.keys(v).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
 /**
- * Whether going from endpoint `before` to `after` may send requests somewhere else: any leaf that
- * differs outside {@link SAME_DESTINATION_FIELDS} (a URL, a base URL, a region, a tenant host, …).
+ * Whether going from endpoint `before` to `after` may send requests somewhere else: any
+ * difference outside {@link SAME_DESTINATION_FIELDS} (a URL, a base URL, a region, a tenant host,
+ * a record whose keys hold dots, …), compared as whole values with those top-level keys left out.
  * Credentials held for `before` are then never sent to `after`.
  */
 export function destinationChanged(before: unknown, after: unknown): boolean {
-  const a = isObj(before) ? before : {};
-  const b = isObj(after) ? after : {};
-  const paths = new Set([...leafPaths(a), ...leafPaths(b)]);
-  for (const p of paths) {
-    if (SAME_DESTINATION_FIELDS.has(p.split(".")[0] as string)) continue;
-    if (JSON.stringify(getPath(a, p)) !== JSON.stringify(getPath(b, p))) return true;
-  }
-  return false;
+  const rest = (e: unknown) =>
+    Object.fromEntries(
+      Object.entries(isObj(e) ? e : {}).filter(([k]) => !SAME_DESTINATION_FIELDS.has(k)),
+    );
+  return stableJson(rest(before)) !== stableJson(rest(after));
 }
