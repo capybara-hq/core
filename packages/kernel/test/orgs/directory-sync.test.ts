@@ -11,9 +11,13 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
+import { Agent, buildConnector } from "undici";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EXTENSION_NET_SEAMS } from "../../src/ctx/net.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
+import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
@@ -27,6 +31,7 @@ import {
   hourBucket,
   minuteBucket,
 } from "../../src/orgs/directory-sync.js";
+import { OrgNetworkAllowances } from "../../src/orgs/network-allowances.service.js";
 import type { OffboardResult } from "../../src/orgs/offboarding.js";
 import { Offboarding } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
@@ -53,6 +58,12 @@ import {
 const DIR_MINI = fileURLToPath(new URL("../fixtures/plugins/dir-mini/index.ts", import.meta.url));
 const DIR_OPT = fileURLToPath(new URL("../fixtures/plugins/dir-opt/index.ts", import.meta.url));
 const SOURCE = "dir-mini:t1";
+/**
+ * A name the fake DNS of ctx.net (the `EXTENSION_NET_SEAMS` seam) resolves to a private address;
+ * connections the kernel pins to that address go to the loopback fake channel server.
+ */
+const INTERNAL = "directory.internal";
+const INTERNAL_IP = "10.0.0.7";
 const DIR_SOURCE = "directory:dir-mini";
 
 let pgc: TestContainer;
@@ -76,11 +87,30 @@ let queueConn: Redis | undefined;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   fd = await startFakeChannelServer();
+  const connect = buildConnector({});
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       { extensions: [MODEL_FAKE, DIR_MINI, DIR_OPT], auth: { cookieSecure: false } },
     ),
+    {
+      overrides: [
+        {
+          provide: EXTENSION_NET_SEAMS,
+          useValue: {
+            lookup: async (host: string) => {
+              if (host !== INTERNAL) throw new Error(`no such host ${host}`);
+              return [{ address: INTERNAL_IP, family: 4 }];
+            },
+            dispatcherFor: (ips: string[]) =>
+              new Agent({
+                connect: (opts, cb) =>
+                  connect(ips[0] === INTERNAL_IP ? { ...opts, hostname: "127.0.0.1" } : opts, cb),
+              }),
+          },
+        },
+      ],
+    },
   );
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
@@ -1121,16 +1151,18 @@ describe("effective config per org", () => {
     expect(await memberOf(a.orgId, "tb-1")).toBeUndefined();
     expect(await memberOf(b.orgId, "ta-1")).toBeUndefined();
     // the listMembers calls themselves: each gets its org's effective config
-    const seen: { orgId: string; config: unknown }[] = [];
+    const seen: { orgId: string; config: unknown; argOrgId: unknown }[] = [];
     const entry = k.app
       .get(ExtensionRegistry)
       .list("directory")
       .find((e) => e.plugin === "dir-mini");
-    const impl = entry?.impl as { listMembers: (args: { config: unknown }) => Promise<unknown> };
+    const impl = entry?.impl as {
+      listMembers: (args: { config: unknown; orgId?: string }) => Promise<unknown>;
+    };
     const original = impl.listMembers;
     for (const o of [a, b]) {
       impl.listMembers = async (args) => {
-        seen.push({ orgId: o.orgId, config: args.config });
+        seen.push({ orgId: o.orgId, config: args.config, argOrgId: args.orgId });
         expect(args).not.toHaveProperty("orgConfig");
         return original.call(impl, args);
       };
@@ -1140,9 +1172,10 @@ describe("effective config per org", () => {
         impl.listMembers = original;
       }
     }
+    // each call also names its org (`orgId`), for configUrlFetch / ctx.net
     expect(seen).toEqual([
-      { orgId: a.orgId, config: { directoryUrl: a.book.url } },
-      { orgId: b.orgId, config: { directoryUrl: b.book.url } },
+      { orgId: a.orgId, config: { directoryUrl: a.book.url }, argOrgId: a.orgId },
+      { orgId: b.orgId, config: { directoryUrl: b.book.url }, argOrgId: b.orgId },
     ]);
   });
 
@@ -1160,5 +1193,77 @@ describe("effective config per org", () => {
       url: `/api/v1/orgs/${orgId}/extensions/dir-mini/directory/sync`,
     });
     expect((res.json() as { error: { code: string } }).error.code).toBe("extension.needs_config");
+  });
+
+  it("an org's own directory URL goes out under that org's network allowances, never another org's", async () => {
+    const port = new URL(fd.url).port;
+    const allowed = await setupOrg();
+    const other = await setupOrg();
+    allowed.book.members = [person("net-a")];
+    other.book.members = [person("net-b")];
+    // both copies point at an internal name; only the first org may reach it
+    const internal = (url: string) => url.replace(`127.0.0.1:${port}`, `${INTERNAL}:${port}`);
+    await setDirectoryUrl(allowed.orgId, "dir-mini", internal(allowed.book.url));
+    await setDirectoryUrl(other.orgId, "dir-mini", internal(other.book.url));
+    await k.app
+      .get(OrgNetworkAllowances)
+      .add(allowed.orgId, `http://${INTERNAL}:${port}`, { accountId: owner.id });
+
+    expect(await sync(allowed.orgId)).toMatchObject({ status: "synced", added: 1, partial: false });
+    expect(allowed.book.starts()).toBe(1);
+    expect(await memberOf(allowed.orgId, "net-a")).toBeDefined();
+
+    // the other org's request is refused before it connects: nothing listed, nobody added
+    expect(await sync(other.orgId)).toMatchObject({ status: "synced", added: 0, partial: true });
+    expect(other.book.starts()).toBe(0);
+    expect(await memberOf(other.orgId, "net-b")).toBeUndefined();
+  });
+});
+
+describe("the extension's state cannot be read (a transient failure)", () => {
+  const syncUrl = (orgId: string) => `/api/v1/orgs/${orgId}/extensions/dir-mini/directory/sync`;
+
+  it("a sync skips with state_unreadable; a manual sync answers 503 directory.unavailable", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("su-1")];
+    const failing = directorySyncFor(k, {
+      redis,
+      orgExtensionConfigs: {
+        get: async () => {
+          throw new Error("connection terminated unexpectedly");
+        },
+      },
+    });
+    expect(await failing.sync(orgId, "dir-mini")).toEqual({
+      status: "skipped",
+      reason: "state_unreadable",
+    });
+    const err = await failing.request(orgId, "dir-mini", owner.id).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect([(err as ApiError).status, (err as ApiError).code]).toEqual([
+      503,
+      "directory.unavailable",
+    ]);
+    expect(await memberOf(orgId, "su-1")).toBeUndefined();
+  });
+
+  it("reading the effective config fails: the HTTP manual sync answers 503, not a 4xx", async () => {
+    const { orgId } = await setupOrg();
+    const effective = k.app.get(EffectiveConfigs);
+    const original = effective.get.bind(effective);
+    effective.get = async (o, p) => {
+      if (o === orgId) throw new Error("connection terminated unexpectedly");
+      return original(o, p);
+    };
+    try {
+      const res = await ownerReq({ method: "POST", url: syncUrl(orgId) });
+      expect(res.statusCode, res.body).toBe(503);
+      expect((res.json() as { error: { code: string } }).error.code).toBe("directory.unavailable");
+    } finally {
+      effective.get = original;
+    }
+    // once the state reads again, the same request is accepted
+    const ok = await ownerReq({ method: "POST", url: syncUrl(orgId) });
+    expect(ok.statusCode, ok.body).toBe(202);
   });
 });

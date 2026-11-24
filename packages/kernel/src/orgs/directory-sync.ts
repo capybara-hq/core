@@ -65,16 +65,20 @@ const KEEP_COMPLETED_SECONDS: Record<DirectorySyncTrigger, number> = {
 const KEEP_FAILED = { age: 86_400 };
 
 /**
- * 不同步的原因（陈旧任务、插件已停用 / 配置不再有效、组织已删除、另一同步在跑；`not_configured`：插件的
- * `Directory.configured` 说这份组织配置没配好通讯录，Ruling A28，静默跳过）。`needs_config`: the
- * extension's effective deployment config for the org is not valid (layering spec A §6): skipped
- * silently like `not_configured`; the org admin sees the extension as needing configuration.
+ * Why a sync does not run: a stale job (the extension is unloaded or no longer enabled), the org was
+ * deleted, another sync holds the lock. `state_unreadable`: whether the extension is enabled in the
+ * org, or its effective config, could not be read (a transient failure such as a database error;
+ * a manual sync answers 503 `directory.unavailable`). `not_configured`: the extension's
+ * `Directory.configured` says the org's config does not set up the directory (Ruling A28, skipped
+ * silently). `needs_config`: the extension's effective deployment config for the org is not valid
+ * (layering spec A §6): skipped silently like `not_configured`; the org admin sees the extension as
+ * needing configuration.
  */
 export type DirectorySkipReason =
   | "plugin_unavailable"
   | "org_not_found"
   | "not_enabled"
-  | "config_invalid"
+  | "state_unreadable"
   | "not_configured"
   | "needs_config"
   | "locked";
@@ -261,7 +265,7 @@ export class DirectorySync {
         plugin,
         err,
       });
-      return { ok: false, reason: "config_invalid" };
+      return { ok: false, reason: "state_unreadable" };
     }
     if (!cfg?.enabled) return { ok: false, reason: "not_enabled" };
     let effective: Awaited<ReturnType<EffectiveConfigs["get"]>>;
@@ -269,7 +273,7 @@ export class DirectorySync {
       effective = await this.effective.get(orgId, plugin);
     } catch (err) {
       this.log.warn("directory sync: cannot read the effective config", { orgId, plugin, err });
-      return { ok: false, reason: "config_invalid" };
+      return { ok: false, reason: "state_unreadable" };
     }
     if (!effective.ok) return { ok: false, reason: "needs_config" };
     // Ruling A28：插件说通讯录没配好（组织只用它的别的能力）→ 不同步；插件实现出错按未配置处理
@@ -328,7 +332,7 @@ export class DirectorySync {
   /**
    * Manual trigger by an admin: re-checks `org.members.manage` live under the org row lock, then that
    * the extension can sync (does not provide a directory -> `extension.not_found`, not enabled ->
-   * `extension.not_enabled`, its state cannot be read -> `extension.config_invalid`, the extension says
+   * `extension.not_enabled`, its state cannot be read (transient) -> 503 `directory.unavailable`, the extension says
    * the directory is not configured -> `directory.not_configured`, Ruling A28; the effective config
    * is not valid in the org -> `extension.needs_config`, layering spec A §6), and enqueues a sync
    * job with a unique id.
@@ -355,10 +359,10 @@ export class DirectorySync {
             "extension.not_enabled",
             `Extension ${plugin} is not enabled for this organization`,
           );
-        case "config_invalid":
+        case "state_unreadable":
           throw new ApiError(
-            "extension.config_invalid",
-            `Invalid organization config for extension ${plugin}`,
+            "directory.unavailable",
+            `Cannot read the state of extension ${plugin} for this organization right now; try again`,
           );
         case "not_configured":
           throw new ApiError(

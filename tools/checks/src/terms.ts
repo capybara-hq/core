@@ -96,7 +96,10 @@ const IDENTIFIER = /[A-Za-z0-9_$]+/g;
 const OLD_ERROR_PREFIX = /^\s*"((?:directory|app)\.[^"]*)"\s*:/;
 
 /** `directory.*` codes of directory sync (`directory@1`), which keeps its name. */
-export const ERROR_CODE_ALLOWLIST: ReadonlySet<string> = new Set(["directory.not_configured"]);
+export const ERROR_CODE_ALLOWLIST: ReadonlySet<string> = new Set([
+  "directory.not_configured",
+  "directory.unavailable",
+]);
 
 export const OLD_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "plugins",
