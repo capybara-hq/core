@@ -2476,18 +2476,24 @@ export class ConnectorsService {
     );
   }
 
-  /** The org-locked write of {@link clientForConnect}: the first stored client wins. */
+  /**
+   * The org-locked write of {@link clientForConnect}: the first stored client wins. Re-checked
+   * under the row lock: a connector whose auth stopped being `oauth_code` with `client: "dcr"`
+   * meanwhile (a template update) stores nothing and gets null.
+   */
   @Transactional()
   private async storeRegisteredClientIn(
     orgId: string,
     connectorId: string,
     accountId: string,
     client: OAuthClientRecord,
-  ): Promise<OAuthClientRecord> {
+  ): Promise<OAuthClientRecord | null> {
     await this.orgLock.lock(orgId);
-    await this.row(this.db, orgId, connectorId, true);
+    const locked = await this.row(this.db, orgId, connectorId, true);
     const stored = await this.credentials.oauthClient(orgId, connectorId);
     if (stored) return stored;
+    const auth = locked.auth as unknown as ConnectorAuth;
+    if (auth.type !== "oauth_code" || auth.client !== "dcr") return null;
     await this.credentials.setOAuthClient(orgId, connectorId, client);
     await audit(this.db, {
       actorAccountId: accountId,

@@ -8,7 +8,7 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
-import { createOrg, waitFor } from "../helpers/runs.js";
+import { createOrg, enableConnectorExtensions, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   type OrgEnv,
@@ -17,6 +17,7 @@ import {
   seedPlugin,
   setScope,
   startOrgEnv,
+  templateConnectors,
 } from "./org-env.js";
 
 /**
@@ -218,15 +219,38 @@ describe("plugin scope sync", () => {
     expect(await sync().syncPair(itemId, c)).toBe("unchanged");
   });
 
-  it("a plugin with connector templates set to all is needs_config: no install, no failure", async () => {
+  it("scope sync installs an all-scoped plugin with templates into every org: each gets the template connector needs_config, created by no one", async () => {
+    const other = await createOrg(env.root, "Templates B");
+    await enableConnectorExtensions(env.k, other);
     const itemId = await seedPlugin(env, { name: "tpl", skills: ["tpl-skill"] });
+    const before = env.mcp.requests.length;
     await setScope(env, itemId, "all");
     await enqueueItem(itemId);
     await idle();
-    expect(await liveOrgs(itemId)).toEqual([]);
-    expect(await sync().syncPair(itemId, env.orgId)).toBe("needs_config");
-    expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
-    expect(await auditRows("plugin.org_install_failed")).toEqual([]);
+    // (orgs of earlier tests have the connector extension off: their installs fail apart)
+    const failed = await auditRows("plugin.scope_sync_failed");
+    expect(failed.filter((f) => f.org_id === env.orgId || f.org_id === other)).toEqual([]);
+    const orgs = await liveOrgs(itemId);
+    expect(orgs).toEqual(expect.arrayContaining([env.orgId, other].sort()));
+    for (const orgId of [env.orgId, other]) {
+      const made = await templateConnectors(env, { orgId, itemId });
+      expect(made.map((c) => c.templateId)).toEqual(["gh"]);
+      const row = await env.db
+        .selectFrom("connectors")
+        .select("created_by")
+        .where("id", "=", made[0]?.id as string)
+        .executeTakeFirstOrThrow();
+      expect(row.created_by).toBeNull();
+      const list = await env.root({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors` });
+      expect(
+        (list.json().connectors as { id: string; setup: string }[]).find(
+          (c) => c.id === made[0]?.id,
+        )?.setup,
+      ).toBe("needs_config");
+    }
+    // nothing listed a tool or registered anything inside the installs
+    expect(env.mcp.requests.length).toBe(before);
+    expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
   });
 
   it("all -> optional without switch rows removes the installs", async () => {

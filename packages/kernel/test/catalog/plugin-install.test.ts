@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { connectorToolKey } from "@capybara-hq/plugin-sdk";
+import { type ConnectorTemplateSpec, connectorToolKey } from "@capybara-hq/plugin-sdk";
+import { startFakeMcpServer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrgCatalogService } from "../../src/catalog/org-catalog.service.js";
@@ -8,13 +9,17 @@ import { ApiError } from "../../src/errors.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
+import { ConnectorsService } from "../../src/tools/connectors.service.js";
+import { Credentials } from "../../src/tools/credentials.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
+  configureConnector,
   install,
+  installConfigured,
   legacyCopies,
   MCP_TOKEN,
   type OrgEnv,
@@ -22,6 +27,7 @@ import {
   seedPlugin,
   setPolicy,
   startOrgEnv,
+  templateConnectors,
 } from "./org-env.js";
 
 let env: OrgEnv;
@@ -44,9 +50,24 @@ beforeEach(async () => {
   await env.db.deleteFrom("agents").execute();
 });
 
-const pluginBody = (token = MCP_TOKEN) => ({
-  connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token } } },
-});
+/** A connector as an org admin reads it (`GET …/connectors/:id`). */
+async function connectorView(
+  id: string,
+): Promise<{ setup: string; tools: { name: string }[]; credential: unknown }> {
+  const r = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors/${id}` });
+  expect(r.statusCode, r.body).toBe(200);
+  return r.json().connector;
+}
+
+/**
+ * Makes the next template connector create fail as a failing connector step would (installs make
+ * no outbound call, so a bad endpoint no longer fails them).
+ */
+function failNextConnectorCreate(): void {
+  vi.spyOn(env.k.app.get(ConnectorsService), "createDeferredIn").mockRejectedValueOnce(
+    new ApiError("connector.connect_failed", "Could not create the connector"),
+  );
+}
 
 /**
  * The org's enabled extensions, `fake-connector` aside unless asked and `model-fake` always aside
@@ -102,7 +123,7 @@ async function installConnectorPlugin(): Promise<{ itemId: string; connectorId: 
     .where("org_id", "=", env.orgId)
     .where("plugin", "=", "fake-connector")
     .execute();
-  const r = await install(env.boss, env, itemId, pluginBody());
+  const r = await installConfigured(env.boss, env, itemId);
   expect(r.statusCode, r.body).toBe(201);
   const [conn] = await liveConnectors();
   return { itemId, connectorId: conn?.id as string };
@@ -156,7 +177,7 @@ async function uninstallOf(
 describe("org plugin install", () => {
   it("enables the plugin's extension, creates the template's connector (credential in secrets, default policies), records each component; its skill is the platform's (no org row)", async () => {
     const appId = await seedPlugin(env, { name: "fake-tools-ui", extension: true });
-    const r = await install(env.boss, env, appId, pluginBody());
+    const r = await installConfigured(env.boss, env, appId);
     expect(r.statusCode, r.body).toBe(201);
     const installId = r.json().installed.pluginInstallId as string;
     expect(await enabledPlugins()).toEqual(["fake-tools-ui"]);
@@ -193,7 +214,7 @@ describe("org plugin install", () => {
     expect(view?.components).toHaveLength(2);
     expect(await auditActions(env)).toContain("plugin.org_installed");
     // 同一应用不能再装
-    const again = await install(env.boss, env, appId, pluginBody());
+    const again = await installConfigured(env.boss, env, appId);
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe("plugin.already_installed");
   });
@@ -201,7 +222,8 @@ describe("org plugin install", () => {
   it("the connector step fails: the extension it enabled is undone, the install is failed (step and code only), it can be installed again", async () => {
     await enable("fake-tools-ui");
     const appId = await seedPlugin(env, { name: "fake-dep-provider", extension: true });
-    const r = await install(env.boss, env, appId, pluginBody("wrong-token"));
+    failNextConnectorCreate();
+    const r = await install(env.boss, env, appId);
     expect(r.statusCode, r.body).toBe(502);
     expect(r.json().error.code).toBe("plugin.install_failed");
     expect(r.json().error.details[0]).toMatchObject({
@@ -222,7 +244,7 @@ describe("org plugin install", () => {
       error: { step: "connectors", code: "connector.connect_failed" },
     });
     expect(await auditActions(env)).toContain("plugin.org_install_failed");
-    const ok = await install(env.boss, env, appId, pluginBody());
+    const ok = await installConfigured(env.boss, env, appId);
     expect(ok.statusCode, ok.body).toBe(201);
   });
 
@@ -259,7 +281,7 @@ describe("org plugin install", () => {
 
   it("members cannot install a plugin; uninstalling a missing install is 404", async () => {
     const appId = await seedPlugin(env);
-    expect((await install(env.mem, env, appId, pluginBody())).statusCode).toBe(403);
+    expect((await installConfigured(env.mem, env, appId)).statusCode).toBe(403);
     const del = await env.boss({
       method: "DELETE",
       url: `/api/v1/orgs/${env.orgId}/plugin-installs/00000000-0000-4000-8000-000000000000`,
@@ -279,7 +301,7 @@ describe("org plugin uninstall", () => {
       .where("org_id", "=", env.orgId)
       .where("plugin", "=", "fake-connector")
       .execute();
-    const ra = await install(env.boss, env, a, pluginBody());
+    const ra = await installConfigured(env.boss, env, a);
     expect(ra.statusCode, ra.body).toBe(201);
     const rb = await install(env.boss, env, b);
     expect(rb.statusCode, rb.body).toBe(201);
@@ -348,7 +370,7 @@ describe("org plugin uninstall", () => {
       .where("org_id", "=", env.orgId)
       .where("plugin", "=", "fake-connector")
       .execute();
-    const ra = await install(env.boss, env, a, pluginBody());
+    const ra = await installConfigured(env.boss, env, a);
     expect(ra.statusCode, ra.body).toBe(201);
     const [conn] = await liveConnectors();
     // an agent that leaves the connector on keeps it through the switch-off
@@ -390,7 +412,7 @@ describe("org plugin uninstall", () => {
     const on = await env.boss({
       method: "PUT",
       url: `/api/v1/orgs/${env.orgId}/catalog/${a}/switch`,
-      payload: { enabled: true, inputs: pluginBody() },
+      payload: { enabled: true },
     });
     expect(on.statusCode, on.body).toBe(200);
     expect((await liveConnectors()).map((c) => c.id)).toEqual([conn?.id]);
@@ -430,7 +452,7 @@ describe("org plugin uninstall", () => {
     const on = await env.boss({
       method: "PUT",
       url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
-      payload: { enabled: true, inputs: pluginBody() },
+      payload: { enabled: true },
     });
     expect(on.statusCode, on.body).toBe(200);
     expect((await liveConnectors()).map((c) => c.id)).toEqual([connectorId]);
@@ -573,7 +595,7 @@ describe("org plugin uninstall", () => {
       url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
     });
     expect(del.statusCode, del.body).toBe(204);
-    // Nothing is left to reuse: the template asks for input again
+    // Nothing is left to reuse: the next install creates a connector again
     expect(await templateConnections(itemId)).toEqual([["gh", false]]);
   });
 
@@ -581,16 +603,8 @@ describe("org plugin uninstall", () => {
     const { itemId, connectorId } = await installConnectorPlugin();
     await switchOffKeepingConnector(itemId);
     const installer = env.k.app.get(PluginInstaller);
-    const plan = await installer.plan(
-      env.orgId,
-      env.bossId,
-      itemId,
-      "1.0.0",
-      pluginBody(),
-      "",
-      undefined,
-    );
-    // The kept connector is reused, so the plan carries no input for the template
+    const plan = await installer.plan(env.orgId, env.bossId, itemId, "1.0.0", {}, "", undefined);
+    // The kept connector is reused, so the plan creates no connector for the template
     expect(plan.connectors.size).toBe(0);
     const del = await env.boss({
       method: "DELETE",
@@ -673,7 +687,8 @@ describe("org plugin uninstall", () => {
 
   it("cleaning up a failed install does not roll back twice: an extension re-enabled by hand stays", async () => {
     const appId = await seedPlugin(env, { name: "fake-tools-ui", extension: true, skills: [] });
-    const failed = await install(env.boss, env, appId, pluginBody("wrong-token"));
+    failNextConnectorCreate();
+    const failed = await install(env.boss, env, appId);
     expect(failed.statusCode, failed.body).toBe(502);
     // 回滚成功的组件行已删掉
     const row = await env.db
@@ -744,7 +759,7 @@ describe("org plugin install: the template's connector extension is an implied d
       templates: false,
     });
     const p = await seedPlugin(env, { name: "bridge", skills: [] });
-    const r = await install(env.boss, env, p, pluginBody());
+    const r = await installConfigured(env.boss, env, p);
     expect(r.statusCode, r.body).toBe(201);
     expect(await enabledPlugins(true)).toEqual(["fake-connector"]);
     expect(await liveConnectors()).toHaveLength(1);
@@ -765,7 +780,7 @@ describe("org plugin install: the template's connector extension is an implied d
   it("a provider hidden from the org (disabled) or missing from the catalog: a clear 4xx, nothing written", async () => {
     await offConnector();
     const p = await seedPlugin(env, { name: "bridge", skills: [] });
-    const missing = await install(env.boss, env, p, pluginBody());
+    const missing = await installConfigured(env.boss, env, p);
     expect(missing.statusCode, missing.body).toBe(409);
     expect(missing.json().error.code).toBe("connector.kind_unavailable");
     expect(missing.body).toContain("fake-connector");
@@ -776,7 +791,7 @@ describe("org plugin install: the template's connector extension is an implied d
       templates: false,
       policy: "disabled",
     });
-    const banned = await install(env.boss, env, p, pluginBody());
+    const banned = await installConfigured(env.boss, env, p);
     expect(banned.statusCode, banned.body).toBe(409);
     expect(banned.json().error.code).toBe("connector.kind_unavailable");
     expect(await liveInstalls()).toEqual([]);
@@ -807,7 +822,7 @@ describe("org plugin install: implied providers, scope and state", () => {
       .where("id", "=", prov)
       .execute();
     const p = await seedPlugin(env, { name: "bridge", skills: [] });
-    const r = await install(env.boss, env, p, pluginBody());
+    const r = await installConfigured(env.boss, env, p);
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json().error.code).toBe("connector.kind_unavailable");
     expect(await liveInstalls()).toEqual([]);
@@ -827,7 +842,7 @@ describe("org plugin install: implied providers, scope and state", () => {
     expect(first.statusCode, first.body).toBe(201);
     await offConnector();
     const p = await seedPlugin(env, { name: "bridge", skills: [] });
-    const r = await install(env.boss, env, p, pluginBody());
+    const r = await installConfigured(env.boss, env, p);
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json().error.code).toBe("connector.kind_unavailable");
     expect(r.body).toContain("switched off");
@@ -932,7 +947,7 @@ describe("org plugin install: skill name conflicts (spec §9.2)", () => {
       skills: ["pdf-tools", "fresh", "notes"],
     });
     const before = await snapshot();
-    const r = await install(env.boss, env, appId, pluginBody());
+    const r = await installConfigured(env.boss, env, appId);
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json().error).toEqual({
       code: "plugin.skill_conflict",
@@ -1016,53 +1031,194 @@ describe("org plugin install: one kind per component", () => {
     });
   });
 
-  it("a templates-only plugin needs the connector input: 400 before any install row, then 201 with it", async () => {
+  it("a templates-only plugin installs without input: its connector waits needs_config with no tools and no outbound call, configuring it lists the tools", async () => {
     const id = await seedPlugin(env, { name: "github", skills: [] });
-    const bare = await install(env.boss, env, id);
-    expect(bare.statusCode, bare.body).toBe(400);
-    expect(bare.json().error.details).toEqual([
-      expect.objectContaining({ path: "connectors.gh.credential" }),
-    ]);
-    // Bad template input is a 400 too (not a failed install)
-    const bad = await install(env.boss, env, id, {
-      connectors: { gh: { endpoint: { url: "not a url" }, credential: { token: MCP_TOKEN } } },
+    const before = env.mcp.requests.length;
+    const r = await install(env.boss, env, id);
+    expect(r.statusCode, r.body).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: id });
+    expect(await connectorView(c?.id as string)).toMatchObject({
+      setup: "needs_config",
+      tools: [],
     });
-    expect(bad.statusCode, bad.body).toBe(400);
-    expect(JSON.stringify(bad.json().error.details)).toContain("connectors.gh.endpoint.url");
-    const unknown = await install(env.boss, env, id, { connectors: { nope: {} } });
-    expect(unknown.statusCode).toBe(400);
-    // the install body takes no extension config (an org's config is its copy)
-    const cfg = await install(env.boss, env, id, { ...pluginBody(), extensionConfig: {} });
-    expect(cfg.statusCode).toBe(400);
-    expect(cfg.json().error.code).toBe("validation_failed");
-    expect(await liveInstalls()).toEqual([]);
-    const ok = await install(env.boss, env, id, pluginBody());
-    expect(ok.statusCode, ok.body).toBe(201);
-    expect(await liveConnectors()).toHaveLength(1);
+    expect(env.mcp.requests.length).toBe(before);
+    expect(r.json().install.components).toEqual([
+      expect.objectContaining({ kind: "connector", ref: c?.id, created: true }),
+    ]);
+    await configureConnector(env, c?.id as string);
+    const ready = await connectorView(c?.id as string);
+    expect(ready.setup).toBe("ready");
+    expect(ready.tools.map((t) => t.name).sort()).toEqual(["delete_all", "search"]);
     expect(await enabledPlugins()).toEqual([]);
   });
 
-  it("a personal static-auth template asks the installer for their own credential: 400 before any write, then 201 with it (final review I2)", async () => {
+  it("the install body rejects a connectors field and an extension config", async () => {
+    const id = await seedPlugin(env, { name: "github", skills: [] });
+    for (const body of [{ connectors: {} }, { extensionConfig: {} }]) {
+      const r = await install(env.boss, env, id, body);
+      expect(r.statusCode, r.body).toBe(400);
+      expect(r.json().error.code).toBe("validation_failed");
+    }
+    const sw = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${id}/switch`,
+      payload: { enabled: true, inputs: { connectors: {} } },
+    });
+    expect(sw.statusCode, sw.body).toBe(400);
+    expect(await liveInstalls()).toEqual([]);
+  });
+
+  it("enabling a plugin creates every template connector; those needing an org credential or OAuth client are needs_config", async () => {
+    const oauthClient = {
+      type: "oauth_client",
+      ownership: "org",
+      tokenUrl: "https://auth.example.com/token",
+    };
+    const manualCode = {
+      type: "oauth_code",
+      ownership: "personal",
+      discovery: "manual",
+      authorizationUrl: "https://auth.example.com/authorize",
+      tokenUrl: "https://auth.example.com/token",
+      client: "manual",
+    };
+    const auths = {
+      gmail: manualCode,
+      drive: manualCode,
+      calendar: manualCode,
+      docs: manualCode,
+      sheets: oauthClient,
+      chat: oauthClient,
+      admin: { type: "bearer", ownership: "org" },
+    } as const;
+    const id = await seedPlugin(env, {
+      name: "google",
+      skills: [],
+      templates: Object.fromEntries(
+        Object.entries(auths).map(([k, auth]) => [k, { auth }]),
+      ) as Record<string, Partial<ConnectorTemplateSpec>>,
+    });
+    const before = env.mcp.requests.length;
+    // enabled by the switch with no inputs at all
+    const r = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${id}/switch`,
+      payload: { enabled: true },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().item.state).toBe("on");
+    const made = await templateConnectors(env, { itemId: id });
+    expect(made.map((c) => c.templateId).sort()).toEqual(Object.keys(auths).sort());
+    const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    const setups = (list.json().connectors as { id: string; setup: string }[]).filter((c) =>
+      made.some((m) => m.id === c.id),
+    );
+    expect(setups).toHaveLength(7);
+    expect(setups.every((c) => c.setup === "needs_config")).toBe(true);
+    expect(env.mcp.requests.length).toBe(before);
+  });
+
+  it("personal static and none-auth template connectors are ready; a none-auth one gets its tools after the commit", async () => {
+    const open = await startFakeMcpServer({
+      tools: [{ name: "lookup", description: "Look up", inputSchema: { type: "object" } }],
+    });
+    try {
+      const id = await seedPlugin(env, {
+        name: "github",
+        skills: [],
+        templates: {
+          gh: { auth: { type: "bearer", ownership: "personal" } },
+          open: { auth: { type: "none" }, endpoint: { url: open.url } },
+        },
+      });
+      const r = await install(env.boss, env, id);
+      expect(r.statusCode, r.body).toBe(201);
+      const made = await templateConnectors(env, { itemId: id });
+      const byTemplate = new Map(made.map((c) => [c.templateId, c.id]));
+      // the installer's own credential is not asked for: members connect their own
+      const personal = await connectorView(byTemplate.get("gh") as string);
+      expect(personal).toMatchObject({ setup: "ready", tools: [] });
+      const keys = await env.db.selectFrom("secrets").select("key").execute();
+      expect(keys.filter((k) => k.key.includes(byTemplate.get("gh") as string))).toEqual([]);
+      const none = await waitFor(async () => {
+        const v = await connectorView(byTemplate.get("open") as string);
+        return v.tools.length > 0 ? v : null;
+      });
+      expect(none.setup).toBe("ready");
+      expect(none.tools.map((t) => t.name)).toEqual(["lookup"]);
+    } finally {
+      await open.stop();
+    }
+  });
+
+  it("a dcr template connector is ready and connectable; its tools arrive after the first member connection", async () => {
+    const id = await seedPlugin(env, {
+      name: "jira",
+      skills: [],
+      templates: {
+        jira: {
+          auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
+        },
+      },
+    });
+    const before = env.mcp.requests.length;
+    const r = await install(env.boss, env, id);
+    expect(r.statusCode, r.body).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: id });
+    expect(await connectorView(c?.id as string)).toMatchObject({ setup: "ready", tools: [] });
+    // no registration and no listing at install: the client registers on the first connect
+    expect(env.mcp.requests.length).toBe(before);
+    expect(await env.k.app.get(Credentials).oauthClient(env.orgId, c?.id as string)).toBeNull();
+    // a member sees a personal connector to connect (the connect registers the client, R16)
+    const member = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${c?.id}`,
+    });
+    expect(member.statusCode, member.body).toBe(200);
+    expect(member.json().connector).toMatchObject({
+      setup: "ready",
+      credential: { ownership: "personal", status: "missing" },
+    });
+  });
+
+  it("a default-off template creates no connector; switching it on later is the connectors page's", async () => {
     const id = await seedPlugin(env, {
       name: "github",
       skills: [],
-      templates: { gh: { auth: { type: "bearer", ownership: "personal" } } },
+      templates: { gh: {}, extra: {} },
+      defaultOff: ["extra"],
     });
-    const bare = await install(env.boss, env, id, {
-      connectors: { gh: { endpoint: { url: env.mcp.url } } },
-    });
-    expect(bare.statusCode, bare.body).toBe(400);
-    expect(bare.json().error.details).toEqual([
-      expect.objectContaining({
-        path: "connectors.gh.credential",
-        message: expect.stringContaining("each member's own credential"),
-      }),
+    const r = await install(env.boss, env, id);
+    expect(r.statusCode, r.body).toBe(201);
+    expect((await templateConnectors(env, { itemId: id })).map((c) => c.templateId)).toEqual([
+      "gh",
     ]);
-    expect(await liveInstalls()).toEqual([]);
-    expect(await liveConnectors()).toEqual([]);
-    const ok = await install(env.boss, env, id, pluginBody());
-    expect(ok.statusCode, ok.body).toBe(201);
-    expect(await liveConnectors()).toHaveLength(1);
+  });
+
+  it("an org connector holding the template's slug does not block the install: the connector takes the next free slug", async () => {
+    const id = await seedPlugin(env, { name: "github", skills: [] });
+    const own = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connectors`,
+      payload: {
+        name: "GitHub",
+        slug: "github",
+        connector: "fake",
+        endpoint: { url: env.mcp.url },
+        auth: { type: "bearer", ownership: "org" },
+        credential: { token: MCP_TOKEN },
+      },
+    });
+    expect(own.statusCode, own.body).toBe(201);
+    const r = await install(env.boss, env, id);
+    expect(r.statusCode, r.body).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: id });
+    const row = await env.db
+      .selectFrom("connectors")
+      .select("slug")
+      .where("id", "=", c?.id as string)
+      .executeTakeFirstOrThrow();
+    expect(row.slug).toBe("github_2");
   });
 
   it("a template whose connector extension is not deployed: the org list says not_deployed, install refuses it", async () => {
@@ -1072,7 +1228,7 @@ describe("org plugin install: one kind per component", () => {
       (list.json().items as { id: string; notDeployed: boolean }[]).find((i) => i.id === id)
         ?.notDeployed,
     ).toBe(true);
-    const r = await install(env.boss, env, id, pluginBody());
+    const r = await installConfigured(env.boss, env, id);
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json().error.code).toBe("catalog.not_deployed");
     expect(await liveInstalls()).toEqual([]);
@@ -1337,7 +1493,8 @@ describe("org plugin install: dependencies", () => {
       skills: [],
       dependencies: [{ name: "dep", version: "*" }],
     });
-    const r = await install(env.boss, env, p, pluginBody("wrong-token"));
+    failNextConnectorCreate();
+    const r = await install(env.boss, env, p);
     expect(r.statusCode, r.body).toBe(502);
     expect(r.json().error.details[0]).toMatchObject({
       step: "connectors",
@@ -1380,13 +1537,13 @@ describe("org plugin install: dependencies", () => {
     expect(await liveSkills()).toEqual([]);
   });
 
-  it("a dependency's template needing a credential: 400 naming the dependency before anything is written", async () => {
-    await seedPlugin(env, { name: "github", skills: [] });
+  it("a dependency's template needing a credential: the dependency installs with its connector needs_config", async () => {
+    const dep = await seedPlugin(env, { name: "github", skills: [] });
     const p = await skillsPlugin("app", [{ name: "github", version: "*" }]);
     const r = await install(env.boss, env, p);
-    expect(r.statusCode, r.body).toBe(400);
-    expect(r.json().error.details[0].path).toBe("dependencies.github.connectors.gh.credential");
-    expect(await liveInstalls()).toEqual([]);
+    expect(r.statusCode, r.body).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: dep });
+    expect(await connectorView(c?.id as string)).toMatchObject({ setup: "needs_config" });
   });
 
   it("dependencies: a disabled dependency refuses the install, enabling it lets the plugin and its dependencies install", async () => {

@@ -84,7 +84,7 @@ export interface OperationError {
  *
  * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
- * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`,
+ * `agent.visibility_web_only`,
  * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org),
  * `extension.switch_via_plugin` (`extensions.set-enabled` leaves a catalog plugin's extension to
  * `plugins.set-enabled`),
@@ -197,9 +197,8 @@ export interface PlatformOperation<I = unknown> {
   fileRef?(input: I): { ref: FileRef; limits: FileLimits } | null;
   /**
    * Why the operation takes none of its mirrored route's secret fields (`secret()` meta, left in
-   * `omits`) and asks the person for none, e.g. a preview without the credential, or a switch that
-   * refuses a plugin needing input (`plugins.install` takes it). Rule `platform-op-secret-param`
-   * otherwise requires {@link personFields}.
+   * `omits`) and asks the person for none, e.g. a preview without the credential. Rule
+   * `platform-op-secret-param` otherwise requires {@link personFields}.
    */
   withoutSecrets?: string;
   /**

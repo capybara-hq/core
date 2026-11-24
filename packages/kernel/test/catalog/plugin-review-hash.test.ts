@@ -79,11 +79,14 @@ describe("pluginReviewHash", () => {
       description: "Reviews.",
       instructions: "Review.",
       model: "inherit" as const,
+      connectors: [] as string[],
     };
     const one = hash({ agentTemplates: [reviewer] });
     expect(one).not.toBe(base);
     expect(hash({ agentTemplates: [{ ...reviewer, model: "fast" }] })).not.toBe(one);
     expect(hash({ agentTemplates: [{ ...reviewer, tools: ["Read"] }] })).not.toBe(one);
+    // the connectors it needs are part of what the super admin confirms
+    expect(hash({ agentTemplates: [{ ...reviewer, connectors: ["gh"] }] })).not.toBe(one);
   });
 
   it("covers themes and leaves the digest of a plugin without any unchanged", () => {
@@ -109,6 +112,7 @@ describe("pluginReviewHash", () => {
       description: "Reviews.",
       instructions: "Review.",
       model: "inherit" as const,
+      connectors: [] as string[],
     };
     expect(hash({ agentTemplates: [reviewer], themes: [night] })).not.toBe(
       hash({ agentTemplates: [reviewer] }),

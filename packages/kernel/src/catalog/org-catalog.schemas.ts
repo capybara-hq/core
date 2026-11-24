@@ -58,8 +58,8 @@ export const CatalogMarketplaceRequestBody = z
   .strict();
 
 /**
- * One connector template's input at install (C30): name, slug, endpoint, credential or OAuth
- * client. The credential and the client secret are secrets (`secret()` meta, ruling R2): a Platform
+ * One connector template's input for one more connector from it (C30): name, slug, endpoint,
+ * credential or OAuth client. The credential and the client secret are secrets (`secret()` meta, ruling R2): a Platform
  * operation never takes them as params; the person enters them in a secure input request.
  */
 export const CatalogConnectorInput = z
@@ -79,26 +79,16 @@ export const CatalogConnectorInput = z
   .strict();
 
 /**
- * The org install body: template input, and the connector templates the org chose to switch on
- * (`templatesOn`: exactly these are on after the install and make connectors, the plugin's other
- * templates are switched off in the org and stay available on the connectors page; absent: the
- * templates on in the org now). No version: an org installs the platform version (one per
- * deployment, ruling P2-17).
+ * The org install body: the connector templates the org chose to switch on (`templatesOn`: exactly
+ * these are on after the install and make connectors, the plugin's other templates are switched off
+ * in the org and stay available on the connectors page; absent: the templates on in the org now).
+ * No connector input (plugin pages spec §5.2.2): a template that needs an org credential or OAuth
+ * client becomes a `needs_config` connector. No version: an org installs the platform version
+ * (one per deployment, ruling P2-17).
  */
 export const OrgPluginInstallBody = z
   .object({
-    connectors: z.record(z.string(), CatalogConnectorInput).optional(),
     templatesOn: z.array(z.string().min(1).max(100)).max(50).optional(),
-  })
-  .strict();
-
-/**
- * `POST …/catalog/:itemId/connectors` (ruling P2-10): the input of missing connectors, by template
- * id, as at install.
- */
-export const OrgPluginConnectorsSchema = z
-  .object({
-    inputs: z.object({ connectors: z.record(z.string(), CatalogConnectorInput) }).strict(),
   })
   .strict();
 
@@ -116,7 +106,7 @@ export const OrgTemplateConnectorSchema = z
 /** `:templateId` of the template connector route (`@Param`). */
 export const ConnectorTemplatePathParams = z.object({ templateId: z.string().min(1) });
 
-/** The switch body: on (with the install inputs), or off (with the preview's hash to confirm). */
+/** The switch body: on (with the install choice), or off (with the preview's hash to confirm). */
 export const OrgPluginSwitchBody = z
   .object({
     enabled: z.boolean(),
@@ -181,11 +171,6 @@ export const ORG_CATALOG_ROUTES: readonly RouteSchemas[] = [
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
     params: CatalogItemPathParams,
     body: OrgPluginInstallBody,
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/connectors",
-    params: CatalogItemPathParams,
-    body: OrgPluginConnectorsSchema,
   },
   {
     route: "POST /api/v1/orgs/:orgId/connector-templates/:templateId/connectors",

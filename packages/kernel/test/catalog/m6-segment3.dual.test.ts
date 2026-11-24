@@ -92,10 +92,10 @@ interface PluginView {
 
 /**
  * Packs the fake fake-tools-ui with its own skill and template replaced by a connector template
- * `docs` (and its icon), a skill `crm-notes` and a dependency on fake-dep-provider (the plugin with
- * every component).
+ * `docs` (and its icon; endpoint `mcpUrl`), a skill `crm-notes` and a dependency on
+ * fake-dep-provider (the plugin with every component).
  */
-const packCrmPlugin = () =>
+const packCrmPlugin = (mcpUrl: string) =>
   packFake("fake-tools-ui", async (dir) => {
     await rm(join(dir, "connectors", "fake-notes.json"));
     await rm(join(dir, "skills", "fake-notes"), { recursive: true });
@@ -108,7 +108,7 @@ const packCrmPlugin = () =>
       JSON.stringify({
         displayName: { zh: "文档", en: "Docs" },
         icon: "./icons/docs.svg",
-        template: mcpTemplate(),
+        template: mcpTemplate({ endpoint: { url: mcpUrl } }),
       }),
     );
     await writeFile(
@@ -196,6 +196,36 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     expect(r.status, `${method} ${path}: ${JSON.stringify(r.json)}`).toBeLessThan(300);
     return r.json;
   };
+  /**
+   * Saves the org credential of the connector an install made from item `itemId`'s template (as
+   * the admin does with 配置: installs take no input) on replica `i`, and waits for its tool list,
+   * which the outbox fetches after the save.
+   */
+  const configureOn = async (i: 0 | 1, itemId: string) => {
+    const c = await db
+      .selectFrom("connectors")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("catalog_item_id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    await ok("boss", i, "PUT", `${base}/connectors/${c.id}/credentials/org`, {
+      token: MCP_TOKEN,
+    });
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("connectors")
+            .select("tools_synced_at")
+            .where("id", "=", c.id)
+            .executeTakeFirstOrThrow()
+        ).tools_synced_at !== null,
+      30_000,
+      `tools of connector ${c.id}`,
+      100,
+    );
+  };
   const errCode = (r: { json: Json }) => (r.json.error as { code?: string } | undefined)?.code;
   const view = async (name: string, i: 0 | 1 = 0) =>
     (await ok("root", i, "GET", `/api/v1/admin/extensions/${name}`)) as unknown as PluginView;
@@ -224,14 +254,6 @@ describe("M6 第三段双副本验收（平台目录）", () => {
 
   beforeAll(async () => {
     pluginsDir = await mkdtemp(join(tmpdir(), "cap-m6s3-plugins-"));
-    [pgc, rdc, s3, crmTgz, counterTgz] = await Promise.all([
-      startTestPostgres(),
-      startTestRedis(),
-      startTestS3(),
-      packCrmPlugin(),
-      packFake("fake-dep-provider"),
-    ]);
-    tamperedTgz = await skillPlugin("tampered", { packageName: "@acme/plugin-tampered" });
     mcp = await startFakeMcpServer({
       requireBearer: MCP_TOKEN,
       tools: [
@@ -251,6 +273,14 @@ describe("M6 第三段双副本验收（平台目录）", () => {
         },
       ],
     });
+    [pgc, rdc, s3, crmTgz, counterTgz] = await Promise.all([
+      startTestPostgres(),
+      startTestRedis(),
+      startTestS3(),
+      packCrmPlugin(mcp.url),
+      packFake("fake-dep-provider"),
+    ]);
+    tamperedTgz = await skillPlugin("tampered", { packageName: "@acme/plugin-tampered" });
     reg = await startFakeNpmRegistry({
       packages: [
         { name: "@capybara-hq/test-plugin-fake-tools-ui", version: "0.1.0", tgz: crmTgz },
@@ -258,7 +288,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
         {
           name: "@acme/github-mcp",
           version: "1.0.0",
-          tgz: await templatePlugin("github-mcp", mcpTemplate(), {
+          tgz: await templatePlugin("github-mcp", mcpTemplate({ endpoint: { url: mcp.url } }), {
             packageName: "@acme/github-mcp",
           }),
         },
@@ -602,10 +632,10 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     );
 
     // 组织管理员在 B 上安装应用
-    const inst = await at("boss", 1, "POST", `${base}/catalog/${appItem}/install`, {
-      connectors: { docs: { endpoint: { url: mcp.url }, credential: { token: MCP_TOKEN } } },
-    });
+    // (no input: its connector waits needs_config until the admin saves the credential)
+    const inst = await at("boss", 1, "POST", `${base}/catalog/${appItem}/install`, {});
     expect(inst.status, JSON.stringify(inst.json)).toBe(201);
+    await configureOn(1, appItem);
     pluginInstallId = (inst.json.installed as { pluginInstallId: string }).pluginInstallId;
     // The dependency fake-dep-provider got its own install, recorded as a component of the plugin's
     // (its extension was already enabled in the org: created=false there)
@@ -756,15 +786,6 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       .set({ disabled: true })
       .where("id", "=", templateItem)
       .execute();
-    const connectorBody = {
-      connectors: {
-        "github-mcp": {
-          name: "GitHub",
-          endpoint: { url: mcp.url },
-          credential: { token: MCP_TOKEN },
-        },
-      },
-    };
     const liveConnectors = () =>
       db
         .selectFrom("connectors")
@@ -775,7 +796,6 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     for (const i of [0, 1] as const) {
       const off = await at("boss", i, "PUT", `${base}/catalog/${templateItem}/switch`, {
         enabled: true,
-        inputs: connectorBody,
       });
       expect(off.status, JSON.stringify(off.json)).toBe(409);
       expect(errCode(off)).toBe("plugin.disabled");
@@ -788,10 +808,10 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       .execute();
     const installed = await at("boss", 0, "PUT", `${base}/catalog/${templateItem}/switch`, {
       enabled: true,
-      inputs: connectorBody,
     });
     expect(installed.status, JSON.stringify(installed.json)).toBe(200);
     expect(await liveConnectors()).toHaveLength(2);
+    await configureOn(1, templateItem);
 
     const skInst = await at("boss", 1, "PUT", `${base}/catalog/${skillItem}/switch`, {
       enabled: true,
@@ -876,7 +896,9 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       bundlePlugin({
         name: "kit",
         version,
-        templates: { "kit-docs": mcpTemplate({ defaultToolPolicies: { search } }) },
+        templates: {
+          "kit-docs": mcpTemplate({ endpoint: { url: mcp.url }, defaultToolPolicies: { search } }),
+        },
         files: { "skills/kit-notes/SKILL.md": kitMd(version) },
       });
     // Both versions imported on A (the second adds a version to the same item)
@@ -886,16 +908,9 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     );
     const kitItem = (v1.item as { id: string }).id;
     // B: installed at 1.0.0, an agent selects the skill
-    const inst = await at("boss", 1, "POST", `${base}/catalog/${kitItem}/install`, {
-      connectors: {
-        "kit-docs": {
-          name: "Kit Docs",
-          endpoint: { url: mcp.url },
-          credential: { token: MCP_TOKEN },
-        },
-      },
-    });
+    const inst = await at("boss", 1, "POST", `${base}/catalog/${kitItem}/install`, {});
     expect(inst.status, JSON.stringify(inst.json)).toBe(201);
+    await configureOn(1, kitItem);
     const installId = (inst.json.installed as { pluginInstallId: string }).pluginInstallId;
     const v2 = await confirmImport(
       0,

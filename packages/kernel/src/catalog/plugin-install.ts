@@ -3,7 +3,6 @@ import {
   type AgentTemplate,
   type Connector,
   type ConnectorTemplateFile,
-  type ConnectorTemplateSpec,
   EXTENSION_POINTS,
   type ExtensionManifest,
   type MarketplaceEntry,
@@ -56,7 +55,7 @@ import type {
   ToolIssue,
 } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
-import { type ConnectorAuth, isOAuth } from "../tools/credentials.js";
+import { isOAuth } from "../tools/credentials.js";
 import {
   type CatalogVersionFiles,
   findConnectorIn,
@@ -97,7 +96,11 @@ import { visibleTo } from "./scope.js";
 import { ScopeNoLongerWanted, ScopeStillWanted, wantedByScope } from "./scope-state.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
-/** What an org fills in for one connector template at install (C30). */
+/**
+ * What an org fills in for one more connector from a connector template (C30; `POST …/
+ * connector-templates/:templateId/connectors`). Installs and enables take none (plugin pages spec
+ * §5.2.2).
+ */
 export interface ConnectorInstallInput {
   name?: string;
   slug?: string;
@@ -108,12 +111,12 @@ export interface ConnectorInstallInput {
 }
 
 /**
- * What an org fills in when installing a plugin (the body of `POST …/catalog/:itemId/install`
- * without `version`). Dependencies get no input: one whose templates need credentials is installed
- * on its own first.
+ * What an org chooses when installing a plugin (the body of `POST …/catalog/:itemId/install`
+ * without `version`). No connector input (plugin pages spec §5.2.2): every connector template on
+ * becomes a connector, one that lacks an org credential or OAuth client waits as `needs_config`.
+ * Dependencies get no choice.
  */
 export interface PluginInstallInput {
-  connectors?: Record<string /* templateId */, ConnectorInstallInput>;
   /**
    * The connector templates the org chose to switch on with the install (the install wizard's choose step):
    * exactly these are on afterwards, the others switched off in the org. Absent: the templates on
@@ -215,17 +218,6 @@ export async function upsertOrgSwitch(
     )
     .execute();
 }
-
-/** The kernel (actor null, the scope sync) never installs what needs the org's input. */
-export class NeedsOrgInput extends ApiError {
-  constructor(readonly plugin: string) {
-    super(
-      "internal",
-      `Plugin ${plugin} needs the organization's input (connector templates); only a person can install it`,
-    );
-  }
-}
-const systemNeedsInput = (name: string) => new NeedsOrgInput(name);
 
 /** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
 export interface PluginInstallView {
@@ -534,31 +526,12 @@ export async function resolveDependencies(
   return direct;
 }
 
-/**
- * The input a template needs that the org did not give: a static credential (the org's for an
- * org-owned template; for a personal one the installer's own, stored as their personal credential,
- * since creating the connector lists its tools with it), or the OAuth client of a
- * client-credentials / manual-client template. Undefined when nothing is missing.
- * `personalCredential: false` keeps a personal static template optional (an existing connector
- * whose template's auth changed: its members keep giving their own).
- */
-export function missingTemplateInput(
-  template: ConnectorTemplateSpec,
-  given: ConnectorInstallInput | undefined,
-  o: { personalCredential?: boolean } = {},
-): "credential" | "client" | undefined {
-  const auth = template.auth as unknown as ConnectorAuth;
-  const need = setupNeed(auth);
-  if (need === "client") return given?.client === undefined ? "client" : undefined;
-  // a personal static template: the installer's own credential lists its tools (until install
-  // without input, spec §5.2.2)
-  const personal =
-    need === undefined && auth.type !== "none" && !isOAuth(auth) && o.personalCredential !== false;
-  if (need === "credential" || personal) {
-    return given?.credential === undefined ? "credential" : undefined;
-  }
-  return undefined;
-}
+/** A static connector with per-member credentials, created without the creator's own. */
+const personalWithoutCredential = (ci: CreateConnectorInput): boolean =>
+  ci.auth.type !== "none" &&
+  !isOAuth(ci.auth) &&
+  ci.auth.ownership !== "org" &&
+  ci.credential === undefined;
 
 /** `e` with its validation paths under `at` (input errors of a template's connector). */
 export function under(e: unknown, at: string): unknown {
@@ -766,9 +739,10 @@ export class PluginInstaller {
 
   /**
    * Plans the install of one plugin version and, depth first, of its dependencies not yet
-   * installed in the org. `input` null skips the input checks (preflight); dependencies always get
-   * an empty input. `at` prefixes validation paths (`dependencies.<name>.` for a dependency);
-   * `approvedBy` is the root item for a dependency.
+   * installed in the org. `input` null plans no connectors (preflight, the scope preview: only the
+   * templates' connector extensions are checked); dependencies always get an empty input. `at`
+   * prefixes validation paths (`dependencies.<name>.` for a dependency); `approvedBy` is the root
+   * item for a dependency.
    */
   async plan(
     orgId: string,
@@ -825,31 +799,16 @@ export class PluginInstaller {
     const skillNames = await catalogSkillNames(this.storage, v, manifest);
     const agentTemplates = await readCatalogAgentTemplates(this.storage, v);
     const connectors = new Map<string, CreateConnectorInput>();
-    if (input === null) {
-      for (const ct of templates) {
+    for (const ct of templates) {
+      if (input === null) {
         const problem = templatePluginProblem(this.templateDeps(), ct.file.template);
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
+        continue;
       }
-    } else {
-      this.checkInput(allTemplates, input, at);
-      for (const ct of templates) {
-        // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
-        if (actor === null) throw systemNeedsInput(manifest.name);
-        // An earlier switch-off kept this template's connector: the install takes it back, so its
-        // input is not asked for here (the connector keeps its endpoint and credentials)
-        if ((await this.liveTemplateConnector(orgId, itemId, ct.id)) !== undefined) continue;
-        connectors.set(
-          ct.id,
-          this.planConnector(
-            actor,
-            { itemId, version, name: manifest.name },
-            ct,
-            input,
-            at,
-            approvedBy,
-          ),
-        );
-      }
+      // An earlier switch-off kept this template's connector: the install takes it back (the
+      // connector keeps its endpoint and credentials)
+      if ((await this.liveTemplateConnector(orgId, itemId, ct.id)) !== undefined) continue;
+      connectors.set(ct.id, this.planConnector(actor, { itemId, version }, ct, at, approvedBy));
     }
     const dependencies: InstallPlan["dependencies"] = [];
     for (const dep of deps) {
@@ -980,20 +939,22 @@ export class PluginInstaller {
   }
 
   /**
-   * The connector input of one template from the org's input (C30), checked without a connection:
-   * the template's connector extension deployed, the input valid, the credential / OAuth client it
-   * needs given (else 400; a dependency's says to install it on its own first).
+   * The connector of one template as an install creates it (plugin pages spec §5.2.2), checked
+   * without a connection: the template's connector extension deployed and its preset valid. No
+   * input is asked for: a template that needs an org credential or OAuth client becomes a
+   * `needs_config` connector ({@link setupNeed}), one that needs none `ready`. The name and slug
+   * are the first free defaults, chosen under the org lock (`slugDefault`), so an org connector of
+   * the same slug never blocks an install nobody can give input to.
    */
   planConnector(
-    actor: string,
-    plugin: { itemId: string; version: string; name: string },
+    actor: string | null,
+    plugin: { itemId: string; version: string },
     ct: { id: string; file: ConnectorTemplateFile },
-    input: PluginInstallInput,
     at: string,
     approvedBy: string | undefined,
   ): CreateConnectorInput {
     const path = `${at}connectors.${ct.id}`;
-    const given = input.connectors?.[ct.id];
+    const display = ct.file.displayName.en;
     const ci = templateConnectorInput(
       this.templateDeps(),
       ct.file.template,
@@ -1003,36 +964,16 @@ export class PluginInstaller {
         templateId: ct.id,
         ...(approvedBy !== undefined && { approvedBy }),
       },
-      given,
-      ct.file.displayName.en,
+      undefined,
+      display,
       path,
     );
-    const missing = missingTemplateInput(ct.file.template, given);
-    if (missing !== undefined) {
-      const personal =
-        missing === "credential" &&
-        (ct.file.template.auth as unknown as { ownership?: string }).ownership !== "org";
-      const needs =
-        missing === "client"
-          ? "an OAuth client"
-          : personal
-            ? "the installer's own credential"
-            : "an org credential";
-      throw fail(
-        `${path}.${missing}`,
-        approvedBy !== undefined
-          ? `Dependency ${plugin.name} has a connector template that needs ${needs}; install ${plugin.name} on its own first`
-          : personal
-            ? "This connector template uses each member's own credential; give yours (it lists the tools and is stored as your personal credential)"
-            : `This connector template needs ${needs}`,
-      );
-    }
     try {
-      this.connectors.checkCreateInput(actor, ci);
+      this.connectors.checkCreateInput(actor, ci, { deferred: true });
     } catch (e) {
       throw under(e, path);
     }
-    return ci;
+    return { ...ci, slugDefault: { display } };
   }
 
   /**
@@ -1144,7 +1085,7 @@ export class PluginInstaller {
       via?: "scope";
     },
   ): Promise<string> {
-    const { itemId, manifest } = plan;
+    const { itemId } = plan;
     // The install row (role and item policy re-checked under the lock; one live install per org
     // and item)
     const installId = randomUUID();
@@ -1240,25 +1181,23 @@ export class PluginInstaller {
         }
         const ci = plan.connectors.get(ct.id);
         if (!ci) {
-          // The plan skipped this template's input because a live connector existed, and it went
-          // away since (deleted between planning and this step): fail honestly, so the person
-          // retries and the new plan asks for the input
+          // The plan skipped this template because a live connector existed, and it went away
+          // since (deleted between planning and this step): fail honestly, so the install is
+          // retried and the new plan creates the connector
           throw new ApiError(
             "catalog.connector_removed",
             `The connector this install would reuse for connector template ${ct.id} was removed meanwhile; start the install again`,
           );
         }
-        if (actor === null) throw systemNeedsInput(manifest.name);
-        const r = await this.connectors.create(
-          orgId,
-          actor,
-          ci,
-          opts.actorTokenId,
-          opts.auditDetail,
-        );
+        // No outbound call: the row is written with an empty tool list, which the outbox lists
+        // after the commit when the connector is ready (plugin pages spec §5.2.1)
+        const connectorId = await this.connectors.createDeferredIn(orgId, actor, ci, {
+          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+          ...(opts.auditDetail !== undefined && { auditDetail: opts.auditDetail }),
+        });
         await record({
           kind: "connector",
-          ref: r.connector.id,
+          ref: connectorId,
           created: true,
           skillVersion: null,
           templateId: ct.id,
@@ -1542,15 +1481,6 @@ export class PluginInstaller {
       throw pluginItemDisabled([name]);
     }
     return name;
-  }
-
-  /** The input only names the plugin's template ids. */
-  private checkInput(templates: { id: string }[], input: PluginInstallInput, at: string): void {
-    const ids = new Set(templates.map((c) => c.id));
-    for (const k of Object.keys(input.connectors ?? {})) {
-      if (!ids.has(k))
-        throw fail(`${at}connectors.${k}`, "No such connector template in this plugin");
-    }
   }
 
   /**
@@ -2164,11 +2094,11 @@ export class PluginInstaller {
   /**
    * Installs the dependencies an installed plugin's version declares and the org lacks (rule 9),
    * as the kernel (actor null): a platform update can add one. Each is recorded on the install
-   * as a `plugin` component (created when this installed it, so an uninstall takes it along). One
-   * that needs the org's input (connector templates) is left out and its name returned. A
-   * dependency already installed in the org is recorded as it is (created false).
+   * as a `plugin` component (created when this installed it, so an uninstall takes it along); its
+   * connector templates become connectors as at any install. A dependency already installed in
+   * the org is recorded as it is (created false).
    */
-  async addMissingDependencies(orgId: string, installId: string): Promise<string[]> {
+  async addMissingDependencies(orgId: string, installId: string): Promise<void> {
     const row = await this.db
       .selectFrom("plugin_installs as a")
       .innerJoin("catalog_item_versions as v", (j) =>
@@ -2178,7 +2108,7 @@ export class PluginInstaller {
       .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
       .executeTakeFirst();
-    if (row?.status !== "installed") return [];
+    if (row?.status !== "installed") return;
     const record = async (c: Component) => {
       await this.db
         .insertInto("plugin_install_components")
@@ -2192,19 +2122,9 @@ export class PluginInstaller {
         .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
         .execute();
     };
-    const needsInput: string[] = [];
     for (const dep of await resolveDependencies(this.db, row.manifest as PluginManifest)) {
       if ((await this.recordDependency(orgId, dep, record)) !== undefined) continue;
-      let plan: InstallPlan;
-      try {
-        plan = await this.plan(orgId, null, dep.itemId, dep.version, {}, "", row.item_id);
-      } catch (e) {
-        if (e instanceof NeedsOrgInput) {
-          needsInput.push(dep.name);
-          continue;
-        }
-        throw e;
-      }
+      const plan = await this.plan(orgId, null, dep.itemId, dep.version, {}, "", row.item_id);
       const child = await this.execute(
         orgId,
         null,
@@ -2219,14 +2139,14 @@ export class PluginInstaller {
       );
       await this.recordDependency(orgId, dep, record, child);
     }
-    return needsInput;
   }
 
   /**
    * The connector templates of an installed plugin that are on in the org (ruling P2-6) and have
    * no live connector there: made from the platform template (`platform_template_id`) or recorded
-   * on the install (`template_id`). The org's plugin is `needs_config` while any is missing (ruling
-   * P2-10). Empty for a plugin not installed.
+   * on the install (`template_id`). Installs create every such connector (plugin pages spec
+   * §5.2.2), so only installs made before that, or a connector deleted since, leave one missing.
+   * Undefined for a plugin not installed.
    */
   async missingConnectors(
     orgId: string,
@@ -2322,8 +2242,8 @@ export class PluginInstaller {
 
   /**
    * The org's connector templates it already has a live connector for, by template id: the install
-   * takes that connector back instead of creating one, so the org item detail tells the wizard not
-   * to ask for their input (the same join as {@link liveTemplateConnector}).
+   * takes that connector back instead of creating one (the same join as
+   * {@link liveTemplateConnector}).
    */
   async connectedTemplates(orgId: string, itemId: string): Promise<Set<string>> {
     const rows = await this.liveTemplateConnectors(orgId, itemId);
@@ -2331,96 +2251,17 @@ export class PluginInstaller {
   }
 
   /**
-   * Creates the connectors an installed plugin is missing (ruling P2-10, `POST …/catalog/:itemId/
-   * connectors`): `input.connectors` names some of {@link missingConnectors}' templates with the
-   * same input as an install (endpoint, credential or OAuth client); each is created as at install
-   * and recorded on the install. Returns the created connectors by template.
-   */
-  async configureConnectors(
-    orgId: string,
-    actor: string,
-    itemId: string,
-    input: PluginInstallInput,
-    opts: { actorTokenId?: string; auditDetail?: AuditDetail } = {},
-  ): Promise<{ templateId: string; connectorId: string }[]> {
-    if (!UUID_RE.test(itemId)) throw installNotFound();
-    const missing = await this.missingConnectors(orgId, itemId);
-    if (!missing) throw installNotFound();
-    const keys = Object.keys(input.connectors ?? {});
-    if (keys.length === 0) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "connectors", message: "Give the input of at least one missing connector" },
-      ]);
-    }
-    for (const k of keys) {
-      if (!missing.templates.some((t) => t.id === k)) {
-        throw new ApiError("validation_failed", "Request validation failed", [
-          {
-            path: `connectors.${k}`,
-            message: "No connector of this template is missing in this organization",
-          },
-        ]);
-      }
-    }
-    const item = await this.db
-      .selectFrom("catalog_items")
-      .select("name")
-      .where("id", "=", itemId)
-      .executeTakeFirstOrThrow();
-    const plans = missing.templates
-      .filter((t) => keys.includes(t.id))
-      .map((t) => ({
-        id: t.id,
-        ci: this.planConnector(
-          actor,
-          { itemId, version: missing.version, name: item.name },
-          t,
-          input,
-          "",
-          undefined,
-        ),
-      }));
-    const out: { templateId: string; connectorId: string }[] = [];
-    for (const p of plans) {
-      const r = await this.connectors.create(
-        orgId,
-        actor,
-        p.ci,
-        opts.actorTokenId,
-        opts.auditDetail,
-      );
-      await this.recordConnector(missing.installId, r.connector.id, p.id);
-      out.push({ templateId: p.id, connectorId: r.connector.id });
-    }
-    return out;
-  }
-
-  /** A configured connector's ledger row (its own transaction). */
-  @Transactional({ propagation: "requires_new" })
-  private async recordConnector(installId: string, ref: string, templateId: string): Promise<void> {
-    await this.db
-      .insertInto("plugin_install_components")
-      .values({
-        install_id: installId,
-        kind: "connector",
-        ref,
-        created: true,
-        skill_version: null,
-        template_id: templateId,
-      })
-      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
-      .execute();
-  }
-
-  /**
    * One more connector from a platform connector template on in the org (rulings P4-7, P4-T6-8;
    * `POST …/connector-templates/:templateId/connectors`): `templateId` is the platform connector
-   * template's id; `config` is an install's connector input (endpoint, credential or OAuth client,
-   * slug) and `name` its name. Without a slug the name and slug default to the first free ones,
-   * chosen by the create under the org lock after its outbound calls
-   * (`CreateConnectorInput.slugDefault`); only a given slug answers 409 `connector.slug_taken`. Created as at install ({@link planConnector}, then
-   * `ConnectorsService.create`, which checks the slug before any outbound call and re-checks it,
-   * `connectors.manage`, the item and the template being on under the org lock), linked to the
+   * template's id; `config` is the connector's input (endpoint, credential or OAuth client, slug)
+   * and `name` its name. Without a slug the name and slug default to the first free ones, chosen
+   * by the create under the org lock after its outbound calls (`CreateConnectorInput.slugDefault`);
+   * only a given slug answers 409 `connector.slug_taken`. As on the connectors page's own create,
+   * the org credential or OAuth client the template needs is required; a personal static template
+   * given no credential is created ready without one (`createDeferredIn`, its members connect
+   * their own). Otherwise created by `ConnectorsService.create`, which lists the tools, checks the
+   * slug before any outbound call and re-checks it, `connectors.manage`, the item and the
+   * template being on under the org lock. Linked to the
    * template, and recorded on the plugin's live install in the org when there is one. A template
    * that is missing, deleted or not offered to the org -> 404 `component.not_found`; offered but
    * off there (its plugin not installed, or switched off) -> 409 `component.off`; input errors ->
@@ -2492,18 +2333,28 @@ export class PluginInstaller {
     const defaulted = input.config.slug === undefined;
     let ci: CreateConnectorInput;
     try {
-      ci = this.planConnector(
-        actor,
-        { itemId: row.catalog_item_id, version: row.version ?? row.latest_version, name: row.name },
-        ct,
+      ci = templateConnectorInput(
+        this.templateDeps(),
+        ct.file.template,
         {
-          connectors: {
-            [ct.id]: { ...input.config, ...(input.name !== undefined && { name: input.name }) },
-          },
+          itemId: row.catalog_item_id,
+          version: row.version ?? row.latest_version,
+          templateId: ct.id,
         },
-        "",
-        undefined,
+        { ...input.config, ...(input.name !== undefined && { name: input.name }) },
+        display,
+        at,
       );
+      // as on the connectors page's own create, the org-level input is required here
+      const need = setupNeed(ci.auth);
+      if (need !== undefined && ci.credential === undefined) {
+        throw fail(
+          `${at}.${need}`,
+          need === "client"
+            ? "This connector template needs an OAuth client"
+            : "This connector template needs an org credential",
+        );
+      }
     } catch (e) {
       throw rebase(e);
     }
@@ -2515,6 +2366,13 @@ export class PluginInstaller {
       }),
     };
     try {
+      // a personal static template without the creator's own credential: created ready with no
+      // credential and no tool list, its members connect their own (plugin pages spec §5.2.1)
+      if (personalWithoutCredential(ci)) {
+        const id = await this.connectors.createDeferredIn(orgId, actor, ci, opts);
+        await this.recordOnLiveInstall(orgId, row.catalog_item_id, id, ct.id);
+        return { connector: await this.connectors.get(orgId, id, actor), issues: [] };
+      }
       const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId, opts.auditDetail);
       await this.recordOnLiveInstall(orgId, row.catalog_item_id, r.connector.id, ct.id);
       return r;

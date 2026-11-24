@@ -68,9 +68,9 @@ export interface OrgCatalogItem
   /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */
   builtin: boolean;
   /**
-   * The effective state in this org: `on`, `off`, `needs_config` (installed with an on connector
-   * template that has no connector here, ruling P2-10; or wanted but not installed, and the
-   * install needs inputs), `unavailable` (disabled by the super admin, members don't see it; or
+   * The effective state in this org: `on`, `off`, `needs_config` (the plugin's extension has no
+   * valid effective config for the org, installed or wanted; connector setup shows on the
+   * connectors, plugin pages spec §5.2.3), `unavailable` (disabled by the super admin, members don't see it; or
    * not installed here and its extension cannot run on the deployment, see `reason`) or
    * `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
    */
@@ -127,8 +127,7 @@ export interface OrgCatalogTemplate {
   on: boolean;
   /**
    * The org already has a live connector made from this template (a switch-off kept it because an
-   * agent uses it): the install takes that connector back instead of creating one, so it does not
-   * ask for the template's input.
+   * agent uses it): the install takes that connector back instead of creating one.
    */
   connected: boolean;
   /**
@@ -160,12 +159,6 @@ export interface OrgCatalogDetail {
   skills: string[];
   /** The agent template files (`agents/<name>.md`, sub-agents spec §16). */
   agents: string[];
-  /**
-   * An installed plugin whose connector templates on in the org miss a connector there
-   * (`needs_config`, ruling P2-10): those templates, for `POST …/catalog/:itemId/connectors`;
-   * empty otherwise (Task 10).
-   */
-  missingTemplates: OrgCatalogTemplate[];
 }
 
 /**

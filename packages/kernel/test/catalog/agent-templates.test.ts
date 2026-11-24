@@ -147,6 +147,23 @@ async function lead(templateIds: string[]): Promise<{ id: string; definition: Ag
 // Each case imports plugins through the object store and the kernel end to end: about 1 s alone,
 // several times that in a full parallel run, the integration project's 30 s bound carries them.
 describe("agent templates in plugins", () => {
+  it("the review names the connectors each agent template needs: template ids and need labels", async () => {
+    const front = [
+      "connectors:",
+      "  - template: other:gh",
+      "  - needs:",
+      "      protocol: mcp",
+      "      endpoint: https://wiki.example.com/mcp",
+      "      tools: [search]",
+      "      label: Team wiki",
+      "",
+    ].join("\n");
+    const r = await prepare(await agentPlugin("1.0.0", { helper: md("helper", "Help.", front) }));
+    expect(r.review.agentTemplates).toEqual([
+      expect.objectContaining({ name: "helper", connectors: ["other:gh", "Team wiki"] }),
+    ]);
+  });
+
   it("a plugin with agents/reviewer.md imports with the template in the review and reviewHash", async () => {
     const one = await prepare(
       await agentPlugin("1.0.0", {
@@ -161,6 +178,7 @@ describe("agent templates in plugins", () => {
         model: "fast",
         tools: ["Read"],
         instructions: "Review v1.\n",
+        connectors: [],
       }),
     ]);
     // another template body: another hash (same name, version, everything else)

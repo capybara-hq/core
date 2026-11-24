@@ -33,7 +33,7 @@ import {
   templatePluginProblem,
 } from "./catalog-content.js";
 import { itemView, ownerOnlyFacts, versionUsable } from "./catalog-items.js";
-import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
+import { connectorTemplatesOn } from "./component-state.js";
 import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { itemPendingError, ownerOf, ownersOf } from "./ownership.js";
 import {
@@ -232,6 +232,12 @@ export class OrgCatalogService {
       let reason: PluginUnavailableReason | undefined;
       const extName = extensionOf(i);
       const why = extName === undefined ? undefined : unloaded.get(extName);
+      // The plugin's own `needs_config` (plugin pages spec §5.2.3): its extension, loaded here, has
+      // no valid effective config for the org; connector setup shows on the connector cards
+      const configInvalid = async () =>
+        extName !== undefined &&
+        loaded.has(extName) &&
+        !(await this.effective.get(orgId, extName)).ok;
       if (i.awaiting_confirmation) state = "awaiting_confirmation";
       else if (i.disabled) {
         state = "unavailable";
@@ -243,24 +249,14 @@ export class OrgCatalogService {
         state = "unavailable";
         reason = why.reason;
       } else if (a) {
-        // An on connector template without a connector here (ruling P2-10)
-        const missing = await this.pluginInstaller.missingConnectors(orgId, i.id);
-        state = (missing?.templates.length ?? 0) > 0 ? "needs_config" : "on";
+        state = (await configInvalid()) ? "needs_config" : "on";
       } else if (i.builtin) state = "on";
       else if (!wanted) state = "off";
       else {
-        const m = latest?.manifest as PluginManifest | undefined;
-        const ext = m?.extension ? loaded.get(m.name) : undefined;
-        // only the connector templates on in the org need input (ruling P2-6)
-        const templateIds = (m?.connectorTemplates ?? []).map((t) => templateIdOfPath(t.path));
-        const needsInputs =
-          (await connectorTemplatesOn(this.db, orgId, i.id, templateIds)).size > 0 ||
-          (m?.extension !== undefined &&
-            ext !== undefined &&
-            !(await this.effective.get(orgId, m.name)).ok);
-        // Wanted but not installed and needing nothing: the sync has not installed it (yet, or its
-        // install failed); `off`, so an org admin can switch it on (the worker start retries it)
-        state = needsInputs ? "needs_config" : "off";
+        // Wanted but not installed: the sync has not installed it (yet, or its install failed);
+        // `off`, so an org admin can switch it on (the worker start retries it), unless its
+        // extension's effective config is not valid here
+        state = (await configInvalid()) ? "needs_config" : "off";
       }
       out.push({
         ...view,
@@ -316,7 +312,7 @@ export class OrgCatalogService {
     if (!v) throw itemNotFound();
     const m = v.manifest as PluginManifest;
     const templates = await readCatalogTemplates(this.storage, v);
-    // Which templates are on in this org now: the install asks for the input of those, a
+    // Which templates are on in this org now: the install makes connectors of those, a
     // default-off one an admin switched on included
     const on = await connectorTemplatesOn(
       this.db,
@@ -329,8 +325,7 @@ export class OrgCatalogService {
       const g = templateGuideOf(m, templateId);
       return g ? { itemId, guideId: g.id } : null;
     };
-    // A template whose connector an earlier switch-off kept: the install reuses it, so the wizard
-    // does not ask for its input
+    // A template whose connector an earlier switch-off kept: the install reuses it
     const connected = await this.pluginInstaller.connectedTemplates(orgId, itemId);
     // Providers the install would switch on first (a refusal is the install's to report)
     const implied = await this.pluginInstaller
@@ -339,14 +334,10 @@ export class OrgCatalogService {
         if (e instanceof ApiError) return [];
         throw e;
       });
-    const missing =
-      item.installed !== null && item.state === "needs_config"
-        ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? [])
-        : [];
     // Each template's icon on the org's routes (its own, else the plugin's)
     const icons = await this.icons.ofItemTemplates(
       itemId,
-      [...templates, ...missing].map((t) => t.id),
+      templates.map((t) => t.id),
       { kind: "org", orgId, isAdmin: await this.isOrgAdmin(orgId, accountId) },
     );
     const iconOf = (templateId: string) => icons.get(templateId) ?? null;
@@ -368,9 +359,6 @@ export class OrgCatalogService {
       ],
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
       agents: (m.agents ?? []).map((a) => packagePath(a.path)),
-      missingTemplates: missing.map((t) =>
-        orgTemplateView(t.id, t.file, { guide: guideOf(t.id), on: true, icon: iconOf(t.id) }),
-      ),
     };
   }
 

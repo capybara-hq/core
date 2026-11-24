@@ -392,8 +392,8 @@ export const TEMPLATE_ID = "github-mcp";
 
 /**
  * Imports a templates-only plugin as the super admin (template {@link TEMPLATE_ID}:
- * fake-connector, endpoint url editable, bearer; plugin `name`, default `github-mcp`); returns the
- * item id.
+ * fake-connector, endpoint the env's fake MCP (editable), bearer org; plugin `name`, default
+ * `github-mcp`); returns the item id.
  */
 export async function importTemplate(
   env: OrgEnv,
@@ -403,7 +403,8 @@ export async function importTemplate(
     env,
     await templatePlugin(
       TEMPLATE_ID,
-      (o.template as ReturnType<typeof mcpTemplate> | undefined) ?? mcpTemplate(),
+      (o.template as ReturnType<typeof mcpTemplate> | undefined) ??
+        mcpTemplate({ endpoint: { url: env.mcp.url } }),
       { ...(o.name !== undefined && { name: o.name }) },
     ),
   );
@@ -520,7 +521,7 @@ export async function seedPlugin(
           displayName: t === "gh" ? { zh: "GitHub", en: "GitHub" } : { zh: t, en: t },
           ...(o.defaultOff?.includes(t) && { defaultEnabled: false }),
           template: {
-            ...mcpTemplate(),
+            ...mcpTemplate({ endpoint: { url: env.mcp.url } }),
             ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),
             ...over,
           },
@@ -657,6 +658,74 @@ export async function legacyCopies(
     );
     await record({ kind: "skill", ref: r.skill.id, created: r.created, version: r.version });
   }
+}
+
+/**
+ * The org's live connectors made from a plugin's connector templates (any plugin, or the item's),
+ * by template id, oldest first.
+ */
+export async function templateConnectors(
+  env: OrgEnv,
+  o: { orgId?: string; itemId?: string } = {},
+): Promise<{ id: string; templateId: string }[]> {
+  const rows = await env.db
+    .selectFrom("connectors as c")
+    .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
+    .select(["c.id", "p.template_id"])
+    .where("c.org_id", "=", o.orgId ?? env.orgId)
+    .where("c.deleted_at", "is", null)
+    .$if(o.itemId !== undefined, (q) => q.where("p.catalog_item_id", "=", o.itemId as string))
+    .orderBy("c.created_at")
+    .orderBy("c.id")
+    .execute();
+  return rows.map((r) => ({ id: r.id, templateId: r.template_id }));
+}
+
+/**
+ * Saves the org credential of a connector an install left `needs_config` (what an org admin does
+ * with 配置 on the connectors page; installs take no input, plugin pages spec §5.2.2) and, unless
+ * `tools` is false, waits for the tool list the outbox fetches after the save.
+ */
+export async function configureConnector(
+  env: OrgEnv,
+  connectorId: string,
+  o: { orgId?: string; req?: Req; credential?: Record<string, string>; tools?: boolean } = {},
+): Promise<void> {
+  const r = await (o.req ?? env.boss)({
+    method: "PUT",
+    url: `/api/v1/orgs/${o.orgId ?? env.orgId}/connectors/${connectorId}/credentials/org`,
+    payload: o.credential ?? { token: MCP_TOKEN },
+  });
+  expect(r.statusCode, r.body).toBe(204);
+  if (o.tools === false) return;
+  await waitFor(
+    async () => {
+      const c = await env.db
+        .selectFrom("connectors")
+        .select("tools_synced_at")
+        .where("id", "=", connectorId)
+        .executeTakeFirstOrThrow();
+      return c.tools_synced_at !== null;
+    },
+    10_000,
+    `tools of connector ${connectorId}`,
+  );
+}
+
+/** Installs a plugin and configures each template connector it created (see {@link configureConnector}). */
+export async function installConfigured(
+  req: Req,
+  env: OrgEnv,
+  itemId: string,
+  body: Record<string, unknown> = {},
+): Promise<Awaited<ReturnType<Req>>> {
+  const r = await install(req, env, itemId, body);
+  if (r.statusCode === 201) {
+    for (const c of await templateConnectors(env, { itemId })) {
+      await configureConnector(env, c.id);
+    }
+  }
+  return r;
 }
 
 export const install = (

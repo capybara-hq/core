@@ -105,6 +105,7 @@ const template = (id: string, name: string) => ({
   auth: { type: "oauth_client", tokenUrl: "https://auth.atlassian.com/token", scopes: [] },
   editableEndpoint: [],
   endpointChecked: true,
+  icon: null,
 });
 
 /** Three connector templates that each need an OAuth client. */
@@ -270,6 +271,7 @@ describe("PluginReviewBody contents", () => {
           ...template("gh", "GitHub"),
           auth: { type: "bearer", ownership: "org" },
           endpointChecked: false,
+          icon: null,
         },
       ],
     };
@@ -300,6 +302,7 @@ describe("PluginReviewBody rows", () => {
           model: "fast",
           tools: ["Read", "Grep"],
           disallowedTools: ["Bash"],
+          connectors: [],
         },
         {
           name: "planner",
@@ -307,6 +310,7 @@ describe("PluginReviewBody rows", () => {
           description: "Plans.",
           instructions: "Plan.",
           model: "inherit",
+          connectors: [],
         },
       ],
     };

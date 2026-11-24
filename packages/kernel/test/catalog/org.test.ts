@@ -15,6 +15,7 @@ import { createOrg, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
+  configureConnector,
   importDeployedPlugin,
   importPlugin,
   importSkill,
@@ -32,6 +33,7 @@ import {
   setScope,
   startOrgEnv,
   TEMPLATE_ID,
+  templateConnectors,
 } from "./org-env.js";
 import { mcpTemplate, SVG_ICON, skillPlugin, templateFiles, templatePlugin } from "./packages.js";
 
@@ -65,17 +67,27 @@ async function orgList(req: OrgEnv["root"]): Promise<Item[]> {
   return (r.json() as { items: Item[] }).items;
 }
 
-/** The install body for {@link importTemplate}'s plugin: its one template's connector input. */
-const connectorBody = (over: Record<string, unknown> = {}) =>
-  templateBody({
-    name: "GitHub",
-    endpoint: { url: env.mcp.url },
-    credential: { token: MCP_TOKEN },
-    ...over,
+/** A display name the same in both languages. */
+const named = (name: string) => ({ zh: name, en: name });
+
+/** The platform connector template's id of {@link importTemplate}'s plugin. */
+async function platformTemplateId(itemId: string): Promise<string> {
+  const t = await env.db
+    .selectFrom("platform_connector_templates")
+    .select("id")
+    .where("catalog_item_id", "=", itemId)
+    .where("template_id", "=", TEMPLATE_ID)
+    .executeTakeFirstOrThrow();
+  return t.id;
+}
+
+/** One more connector from a platform connector template (`POST …/connector-templates/:id/connectors`). */
+const addFromTemplate = (templateId: string, config: Record<string, unknown>) =>
+  env.boss({
+    method: "POST",
+    url: `/api/v1/orgs/${env.orgId}/connector-templates/${templateId}/connectors`,
+    payload: { config },
   });
-const templateBody = (input: Record<string, unknown>) => ({
-  connectors: { [TEMPLATE_ID]: input },
-});
 
 /** The plugin install of an item in the org (from the org list). */
 async function installOf(itemId: string): Promise<string> {
@@ -139,10 +151,12 @@ describe("组织从目录安装：三档策略", () => {
     expect(again.statusCode, again.body).toBe(201);
   });
 
-  it("连接器模板：按模板建连接器，凭据进 secrets、默认策略 template；disabled 409", async () => {
+  it("connector templates: the install makes the connector without input; its configured credential goes to secrets and the first listing applies the template policies; disabled 409", async () => {
     const itemId = await importTemplate(env);
-    const ok = await install(env.boss, env, itemId, connectorBody());
+    const ok = await install(env.boss, env, itemId);
     expect(ok.statusCode, ok.body).toBe(201);
+    const [made] = await templateConnectors(env, { itemId });
+    await configureConnector(env, made?.id as string);
     const c = await env.db
       .selectFrom("connectors")
       .select(["id", "catalog_item_id", "catalog_version", "endpoint", "auth"])
@@ -173,48 +187,45 @@ describe("组织从目录安装：三档策略", () => {
     expect(secrets.some((s) => s.key.includes(connectorId))).toBe(true);
 
     await setPolicy(env, itemId, "disabled");
-    const off = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
+    const off = await install(env.boss, env, itemId);
     expect(off.statusCode).toBe(409);
     expect(off.json().error.code).toBe("plugin.disabled");
     await setPolicy(env, itemId, "allow");
     await uninstall(itemId);
-    const again = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
+    const again = await install(env.boss, env, itemId);
     expect(again.statusCode, again.body).toBe(201);
   });
 
-  it("篡改模板里不可编辑的端点、夹带认证方式都无效：400，什么都没建", async () => {
+  it("one more connector from a template: a non-editable endpoint field or a smuggled auth method is refused 400, nothing created", async () => {
     const itemId = await importTemplate(env);
-    const bad = await install(
-      env.boss,
-      env,
-      itemId,
-      connectorBody({ endpoint: { url: env.mcp.url, headers: { "X-Tenant": "evil" } } }),
-    );
-    expect(JSON.stringify(bad.json().error)).toContain(
-      `connectors.${TEMPLATE_ID}.endpoint.headers`,
-    );
-    const withAuth = await install(
-      env.boss,
-      env,
-      itemId,
-      templateBody({ endpoint: { url: env.mcp.url }, auth: { type: "none" } }),
-    );
+    expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
+    const tpl = await platformTemplateId(itemId);
+    const bad = await addFromTemplate(tpl, {
+      endpoint: { url: env.mcp.url, headers: { "X-Tenant": "evil" } },
+      credential: { token: MCP_TOKEN },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(JSON.stringify(bad.json().error)).toContain("config.endpoint.headers");
+    const withAuth = await addFromTemplate(tpl, {
+      endpoint: { url: env.mcp.url },
+      auth: { type: "none" },
+    });
     expect(withAuth.statusCode).toBe(400);
     // Credential-like URL user info is refused on the merged endpoint too (the template only allows url)
-    const leak = await install(
-      env.boss,
-      env,
-      itemId,
-      templateBody({
-        endpoint: { url: `https://user:pw@127.0.0.1/mcp` },
-        credential: { token: "x" },
-      }),
-    );
+    const leak = await addFromTemplate(tpl, {
+      endpoint: { url: `https://user:pw@127.0.0.1/mcp` },
+      credential: { token: "x" },
+    });
     expect(leak.statusCode).not.toBe(201);
-    expect(await env.db.selectFrom("connectors").select("id").execute()).toHaveLength(0);
+    // the org credential the template needs is required here, as on the connectors page
+    const bare = await addFromTemplate(tpl, {});
+    expect(bare.statusCode).toBe(400);
+    expect(JSON.stringify(bare.json().error)).toContain("config.credential");
+    // only the install's connector exists
+    expect(await env.db.selectFrom("connectors").select("id").execute()).toHaveLength(1);
   });
 
-  it("OAuth 模板：组织安装时按部署的 OAuth 地址策略复核 tokenUrl（导入时只做了静态校验）", async () => {
+  it("OAuth templates: the org install re-checks tokenUrl against the deployment's OAuth URL policy (the import only checked it statically)", async () => {
     const itemId = await importTemplate(env, {
       name: "oauth-mcp",
       template: mcpTemplate({
@@ -222,34 +233,18 @@ describe("组织从目录安装：三档策略", () => {
         defaultToolPolicies: {},
       }),
     });
-    const r = await install(
-      env.boss,
-      env,
-      itemId,
-      templateBody({
-        endpoint: { url: env.mcp.url },
-        client: { clientId: "c", clientSecret: "s" },
-      }),
-    );
-    expect(r.statusCode, r.body).not.toBe(201);
-    expect(JSON.stringify(r.json().error)).toContain("auth.tokenUrl");
-    // An OAuth template takes a client, never a static credential
-    const wrong = await install(
-      env.boss,
-      env,
-      itemId,
-      templateBody({ endpoint: { url: env.mcp.url }, credential: { token: "x" } }),
-    );
-    // The plugin installer reports a failed step as plugin.install_failed with the cause
-    expect(wrong.statusCode).not.toBe(201);
-    expect(JSON.stringify(wrong.json().error)).toContain("validation_failed");
+    const r = await install(env.boss, env, itemId);
+    expect(r.statusCode, r.body).toBe(400);
+    expect(JSON.stringify(r.json().error)).toContain(`connectors.${TEMPLATE_ID}.auth.tokenUrl`);
     expect(await env.db.selectFrom("connectors").select("id").execute()).toHaveLength(0);
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
   });
 
   it("授权码模板：安装时没有快照，首个快照时按模板 defaultToolPolicies 设默认策略（policy_source template）", async () => {
     const itemId = await importTemplate(env, {
       name: "code-mcp",
       template: mcpTemplate({
+        endpoint: { url: env.mcp.url },
         auth: {
           type: "oauth_code",
           ownership: "personal",
@@ -260,12 +255,7 @@ describe("组织从目录安装：三档策略", () => {
         },
       }),
     });
-    const r = await install(
-      env.boss,
-      env,
-      itemId,
-      templateBody({ endpoint: { url: env.mcp.url }, client: { clientId: "c" } }),
-    );
+    const r = await install(env.boss, env, itemId);
     expect(r.statusCode, r.body).toBe(201);
     const connectorId = (
       await env.db
@@ -274,6 +264,8 @@ describe("组织从目录安装：三档策略", () => {
         .where("catalog_item_id", "=", itemId)
         .executeTakeFirstOrThrow()
     ).id;
+    // needs_config until an org admin saves the OAuth client
+    await configureConnector(env, connectorId, { credential: { clientId: "c" }, tools: false });
     expect(
       await env.db
         .selectFrom("connector_tools")
@@ -357,9 +349,7 @@ describe("组织从目录安装：三档策略", () => {
     await setPolicy(env, appId, "disabled");
     expect((await install(env.boss, env, appId)).json().error.code).toBe("plugin.disabled");
     await setPolicy(env, appId, "allow");
-    const ok = await install(env.boss, env, appId, {
-      connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
-    });
+    const ok = await install(env.boss, env, appId);
     expect(ok.statusCode, ok.body).toBe(201);
     expect(ok.json().installed.pluginInstallId).toEqual(expect.any(String));
     expect((await orgList(env.boss)).find((i) => i.id === appId)?.installed).toMatchObject({
@@ -458,7 +448,7 @@ describe("组织从目录安装：三档策略", () => {
       })
       .where("item_id", "=", tpl)
       .execute();
-    const r = await install(env.boss, env, tpl, connectorBody());
+    const r = await install(env.boss, env, tpl);
     expect(r.json().error.details?.[0]?.code ?? r.json().error.code).toBe("catalog.not_deployed");
     const bad = await env.root({
       method: "POST",
@@ -719,15 +709,13 @@ describe("自建开关与权限", () => {
     expect(preview.json().error.code).toBe("catalog.custom_disabled");
 
     const tpl = await importTemplate(env);
-    // 目录安装的凭据同样限大小（与自建连接器的 CredentialValue 一致）
-    const huge = await install(
-      env.boss,
-      env,
-      tpl,
-      connectorBody({ credential: { token: "x".repeat(20_000) } }),
-    );
+    expect((await install(env.boss, env, tpl)).statusCode).toBe(201);
+    // a credential for one more connector from the template is size-limited too (the same
+    // CredentialValue as a custom connector's)
+    const huge = await addFromTemplate(await platformTemplateId(tpl), {
+      credential: { token: "x".repeat(20_000) },
+    });
     expect(huge.statusCode).toBe(400);
-    expect((await install(env.boss, env, tpl, connectorBody())).statusCode).toBe(201);
     const skill = await importSkill(env);
     expect((await install(env.boss, env, skill)).statusCode).toBe(201);
 
@@ -753,7 +741,7 @@ describe("自建开关与权限", () => {
     expect(r.json().error.code).toBe("forbidden");
     // 成员拿 disabled 条目 / 不存在的版本：先判角色，一律 forbidden（不能借错误码探测条目）
     const off = await importSkill(env, { name: "off", policy: "disabled" });
-    for (const body of [{}, { connectors: {} }]) {
+    for (const body of [{}, { templatesOn: [] }]) {
       const x = await install(env.mem, env, off, body);
       expect(x.json().error.code).toBe("forbidden");
     }
@@ -960,9 +948,9 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
         },
         files: {
           "icon.svg": SVG_ICON,
-          ...templateFiles("mail", mcpTemplate(), { icon: mailSvg }),
-          ...templateFiles("drive", mcpTemplate(), { icon: driveSvg }),
-          ...templateFiles("plain", mcpTemplate(), { icon: null }),
+          ...templateFiles("mail", mcpTemplate(), { icon: mailSvg, displayName: named("mail") }),
+          ...templateFiles("drive", mcpTemplate(), { icon: driveSvg, displayName: named("drive") }),
+          ...templateFiles("plain", mcpTemplate(), { icon: null, displayName: named("plain") }),
         },
       }),
     );
@@ -1041,14 +1029,7 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       expect(r.json().error.code).toBe("component.not_found");
     }
     // the connectors made from the templates show their template's icon, else the plugin's
-    const made = await install(env.boss, env, itemId, {
-      connectors: Object.fromEntries(
-        ["mail", "drive", "plain"].map((t) => [
-          t,
-          { name: t, endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } },
-        ]),
-      ),
-    });
+    const made = await install(env.boss, env, itemId);
     expect(made.statusCode, made.body).toBe(201);
     const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
     const conns = (list.json() as { connectors: { id: string; name: string; icon: string }[] })
@@ -1145,9 +1126,21 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
           })),
         },
         files: {
-          ...templateFiles("mail", mcpTemplate(), { icon: null, description: both }),
-          ...templateFiles("drive", mcpTemplate(), { icon: null, description: "Files over MCP" }),
-          ...templateFiles("bare", mcpTemplate(), { icon: null, description: null }),
+          ...templateFiles("mail", mcpTemplate(), {
+            icon: null,
+            description: both,
+            displayName: named("d-mail"),
+          }),
+          ...templateFiles("drive", mcpTemplate(), {
+            icon: null,
+            description: "Files over MCP",
+            displayName: named("d-drive"),
+          }),
+          ...templateFiles("bare", mcpTemplate(), {
+            icon: null,
+            description: null,
+            displayName: named("d-bare"),
+          }),
         },
       }),
     );
@@ -1187,14 +1180,7 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       ),
     ).toEqual({ ...expected, bare: { description: "", descriptionZh: null } });
     // connectors made from the templates carry their template's description; a custom one none
-    const made = await install(env.boss, env, itemId, {
-      connectors: Object.fromEntries(
-        ["mail", "drive", "bare"].map((t) => [
-          t,
-          { name: `d-${t}`, endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } },
-        ]),
-      ),
-    });
+    const made = await install(env.boss, env, itemId);
     expect(made.statusCode, made.body).toBe(201);
     const custom = await env.boss({
       method: "POST",
@@ -1716,21 +1702,19 @@ describe("the org switch (plugin scope)", () => {
     ).toHaveLength(1);
   });
 
-  it("a template plugin with scope all needs config until switched on with inputs", async () => {
+  it("a template plugin with scope all is never needs_config for its templates: off until installed, on once switched on, its connector needs_config", async () => {
     const itemId = await importTemplate(env);
     await setScope(env, itemId, "all");
-    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.state).toBe("needs_config");
-    const r = await put(env.boss, itemId, {
-      enabled: true,
-      inputs: templateBody({
-        name: "GitHub",
-        endpoint: { url: env.mcp.url },
-        credential: { token: MCP_TOKEN },
-      }),
-    });
+    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.state).toBe("off");
+    const r = await put(env.boss, itemId, { enabled: true });
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().item).toMatchObject({ state: "on" });
-    expect(await env.db.selectFrom("connectors").select("id").execute()).toHaveLength(1);
+    const [c] = await templateConnectors(env, { itemId });
+    const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    expect(
+      (list.json().connectors as { id: string; setup: string }[]).find((x) => x.id === c?.id)
+        ?.setup,
+    ).toBe("needs_config");
   });
 
   it("members read the list but cannot switch; disabled items are refused", async () => {

@@ -5,6 +5,7 @@ import { ExtensionHost } from "../../src/extensions/host.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type KernelCheckArgs, SetupCheckRegistry } from "../../src/setup/setup-check-registry.js";
 import {
+  configureConnector,
   importPlugin,
   install,
   MCP_TOKEN,
@@ -95,15 +96,7 @@ beforeAll(async () => {
     PLUGIN,
   );
   await enableExtensions(env.db, env.orgId, PLUGIN);
-  const r = await install(env.boss, env, itemId, {
-    connectors: {
-      [TEMPLATE]: {
-        name: "Team GitHub",
-        endpoint: { url: env.mcp.url },
-        credential: { token: MCP_TOKEN },
-      },
-    },
-  });
+  const r = await install(env.boss, env, itemId);
   expect(r.statusCode, r.body).toBe(201);
   connectorId = (
     await env.db
@@ -114,6 +107,14 @@ beforeAll(async () => {
       .where("deleted_at", "is", null)
       .executeTakeFirstOrThrow()
   ).id;
+  // installs take no input (plugin pages spec §5.2.2): the admin names and configures it
+  const renamed = await env.boss({
+    method: "PATCH",
+    url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
+    payload: { name: "Team GitHub" },
+  });
+  expect(renamed.statusCode, renamed.body).toBe(200);
+  await configureConnector(env, connectorId, { tools: false });
   mem2Id = (
     await accountsFor(env.db).createLocal({ login: "mem2", password: PW, displayName: "M2" })
   ).id;

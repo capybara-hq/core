@@ -154,9 +154,7 @@ describe("template install", () => {
       skills: [],
       templates: { gh: { git: GIT } },
     });
-    const r = await install(env.boss, env, item, {
-      connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
-    });
+    const r = await install(env.boss, env, item);
     expect(r.statusCode, r.body).toBe(201);
     const made = await env.db
       .selectFrom("connectors")
@@ -168,11 +166,7 @@ describe("template install", () => {
     expect(made[0]?.use_for_git).toBe(false);
 
     const plain = await seedPlugin(env, { name: "plain", skills: [] });
-    const r2 = await install(env.boss, env, plain, {
-      connectors: {
-        gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN }, slug: "plain_gh" },
-      },
-    });
+    const r2 = await install(env.boss, env, plain);
     expect(r2.statusCode, r2.body).toBe(201);
     const [p] = await env.db
       .selectFrom("connectors")

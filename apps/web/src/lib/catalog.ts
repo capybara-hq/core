@@ -435,6 +435,8 @@ export interface PluginReviewTemplate {
   auth: Record<string, unknown>;
   editableEndpoint: string[];
   endpointChecked: boolean;
+  /** The template's own icon from the package as a `data:` URL; null without one. */
+  icon: string | null;
 }
 
 /**
@@ -1739,6 +1741,8 @@ export interface PluginReviewAgentTemplate {
   effort?: string;
   maxSteps?: number;
   skills?: string[];
+  /** The connectors it needs: connector template ids (`<id>` / `<plugin>:<id>`) or need labels. */
+  connectors: string[];
 }
 
 /** Routes of the `http` group: member and admin (the kernel authenticates a person). */

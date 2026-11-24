@@ -832,7 +832,7 @@ describe("one more connector from a connector template (P4-7)", () => {
       "component.not_found",
     );
 
-    const installed = await install(env.boss, env, item, { connectors: { gh: tokenInput() } });
+    const installed = await install(env.boss, env, item);
     expect(installed.statusCode, installed.body).toBe(201);
     const installId = installed.json().installed.pluginInstallId as string;
     expect((await create(env.mem, platformGh, { config: tokenInput() })).statusCode).toBe(403);
@@ -940,14 +940,16 @@ describe("one more connector from a connector template (P4-7)", () => {
         templates: {
           gh: {
             auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
+            endpoint: { url: mcp.url },
           },
         },
       });
       const platformGh = await platformIdOf(item);
       const endpoint = { url: mcp.url };
-      const installed = await install(env.boss, env, item, { connectors: { gh: { endpoint } } });
+      const installed = await install(env.boss, env, item);
       expect(installed.statusCode, installed.body).toBe(201);
-      expect(as.registrations).toHaveLength(1);
+      // the install's connector registers its client on its first connect (ruling R16)
+      expect(as.registrations).toHaveLength(0);
       const [a, b] = await Promise.all([
         create(env.boss, platformGh, { config: { endpoint } }),
         create(env.boss, platformGh, { config: { endpoint } }),
@@ -955,7 +957,7 @@ describe("one more connector from a connector template (P4-7)", () => {
       expect(a.statusCode, a.body).toBe(201);
       expect(b.statusCode, b.body).toBe(201);
       // the slug is chosen under the org lock after the registration: no retry registers again
-      expect(as.registrations).toHaveLength(3);
+      expect(as.registrations).toHaveLength(2);
       expect([a.json().connector.slug, b.json().connector.slug].sort()).toEqual([
         "github_2",
         "github_3",
@@ -994,7 +996,7 @@ describe("one more connector from a connector template (P4-7)", () => {
     expect(errCode(custom)).toBe("catalog.custom_disabled");
     // the admin installs the plugin with its connector; one more from the template is allowed too
     // (it is not a custom connector), and either binds
-    const installed = await install(env.boss, env, item, { connectors: { gh: tokenInput() } });
+    const installed = await install(env.boss, env, item);
     expect(installed.statusCode, installed.body).toBe(201);
     const gh = (
       await env.db

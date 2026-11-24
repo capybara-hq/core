@@ -18,8 +18,8 @@ import { createOrgWithProviders, enableExtensions, waitFor } from "../helpers/ru
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
+  configureConnector,
   importPlugin,
-  install,
   legacyCopies,
   MCP_TOKEN,
   type OrgEnv,
@@ -27,6 +27,7 @@ import {
   seedPlugin,
   setPolicy,
   startOrgEnv,
+  templateConnectors,
 } from "./org-env.js";
 
 /**
@@ -88,21 +89,30 @@ async function updateTo(itemId: string, version: string): Promise<PlatformUpdate
   return p;
 }
 
-/** Installs the item in `orgId` (org1 through its admin, org2 through root). */
+/**
+ * Installs the item in `orgId` (org1 through its admin, org2 through root). Installs take no
+ * connector input (plugin pages spec §5.2.2): a credential given under `connectors.<templateId>`
+ * is saved on that template's connector afterwards, as an org admin configures it.
+ */
 async function installIn(
   orgId: string,
   itemId: string,
-  body: Record<string, unknown> = {},
+  body: { connectors?: Record<string, { credential?: Record<string, string> }> } = {},
 ): Promise<string> {
-  const r =
-    orgId === env.orgId
-      ? await install(env.boss, env, itemId, body)
-      : await env.root({
-          method: "POST",
-          url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
-          payload: body,
-        });
+  const { connectors, ...rest } = body;
+  const req = orgId === env.orgId ? env.boss : env.root;
+  const r = await req({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
+    payload: rest,
+  });
   expect(r.statusCode, r.body).toBe(201);
+  const made = await templateConnectors(env, { orgId, itemId });
+  for (const [templateId, input] of Object.entries(connectors ?? {})) {
+    const c = made.find((m) => m.templateId === templateId);
+    if (c === undefined || input.credential === undefined) continue;
+    await configureConnector(env, c.id, { orgId, req, credential: input.credential });
+  }
   return r.json().installed.pluginInstallId as string;
 }
 
@@ -1066,7 +1076,7 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
     expect((await usableSkills(env.db, env.orgId)).map((s) => s.name)).toContain("dep-skill");
   });
 
-  it("an added connector template makes the installed plugin needs_config; the org admin creates the connector (P2-10)", async () => {
+  it("an added connector template leaves the plugin on; the org admin creates its connector from the template", async () => {
     const item = await seedCrm();
     await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
     const state = async () =>
@@ -1076,41 +1086,30 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
       ).find((i) => i.id === item)?.state;
     expect(await state()).toBe("on");
     await updateTo(item, "2.0.0");
-    expect(await state()).toBe("needs_config");
-    // the detail names the templates that miss a connector, for the 补充配置 wizard (Task 10)
-    const missing = async () =>
-      (await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${item}` })).json()
-        .missingTemplates as { id: string }[];
-    expect((await missing()).map((t) => t.id)).toEqual(["docs"]);
-    const url = `/api/v1/orgs/${env.orgId}/catalog/${item}/connectors`;
-    const member = await env.mem({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { docs: tokenInput() } } },
-    });
+    // the plugin's own state comes only from its extension's config (plugin pages spec §5.2.3)
+    expect(await state()).toBe("on");
+    const docsTemplate = (
+      await env.db
+        .selectFrom("platform_connector_templates")
+        .select("id")
+        .where("catalog_item_id", "=", item)
+        .where("template_id", "=", "docs")
+        .where("deleted_at", "is", null)
+        .executeTakeFirstOrThrow()
+    ).id;
+    const url = `/api/v1/orgs/${env.orgId}/connector-templates/${docsTemplate}/connectors`;
+    const member = await env.mem({ method: "POST", url, payload: { config: tokenInput() } });
     expect(member.statusCode).toBe(403);
-    const notMissing = await env.boss({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { gh: tokenInput() } } },
-    });
-    expect(notMissing.statusCode).toBe(400);
-    expect(notMissing.json().error.details[0].path).toBe("connectors.gh");
     const noCredential = await env.boss({
       method: "POST",
       url,
-      payload: { inputs: { connectors: { docs: { endpoint: { url: env.mcp.url } } } } },
+      payload: { config: { endpoint: { url: env.mcp.url } } },
     });
     expect(noCredential.statusCode).toBe(400);
-    const r = await env.boss({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { docs: tokenInput() } } },
-    });
+    const r = await env.boss({ method: "POST", url, payload: { config: tokenInput() } });
     expect(r.statusCode, r.body).toBe(201);
-    expect(r.json().connectors).toEqual([{ templateId: "docs", connectorId: expect.any(String) }]);
     const docs = await connectorFrom(env.orgId, "docs");
-    expect(docs.id).toBe(r.json().connectors[0].connectorId);
+    expect(docs.id).toBe(r.json().connector.id);
     const recorded = await env.db
       .selectFrom("plugin_install_components")
       .select(["ref", "template_id", "created"])
@@ -1119,7 +1118,6 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
       .execute();
     expect(recorded).toEqual([{ ref: docs.id, template_id: "docs", created: true }]);
     expect(await state()).toBe("on");
-    expect(await missing()).toEqual([]);
   });
 });
 
