@@ -1,5 +1,15 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.114
+
+### Patch Changes
+
+- 04fb7d0: Pin the device-local bootstrap plugin to 0.1.0-rc.10 (a widened network applies in place, so the browser
+  panel's allow restarts a running browser on the new network) and the plugins marketplace commit (with the
+  compose sandbox image build context) to d03e463.
+- Updated dependencies [04fb7d0]
+  - @capybara-hq/kernel@0.1.0-rc.89
+
 ## 0.1.0-rc.113
 
 ### Patch Changes
