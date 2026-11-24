@@ -395,6 +395,25 @@ it("ifRunning starts nothing for a stopped service", async () => {
   expect(echo.calls).toHaveLength(1);
 });
 
+it("ifRunning accepts the name-only spec device-local sends", async () => {
+  const { supervisor, echo } = await fixture();
+  const nameOnly = { op: "service.ensure", spec: { name: "browser" }, ifRunning: true };
+  expect(await serveServiceOp(supervisor, nameOnly, signal())).toMatchObject({
+    ok: true,
+    result: { name: "browser", state: "stopped" },
+  });
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  expect(await serveServiceOp(supervisor, nameOnly, signal())).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(echo.calls).toHaveLength(1);
+  // without ifRunning the spec stays complete
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: { name: "browser" } }, signal()),
+  ).toMatchObject({ ok: false, error: { kind: "invalid" } });
+});
+
 it("a cancelled ensure never fails a concurrent one", async () => {
   const { supervisor, echo } = await fixture();
   const first = new AbortController();
