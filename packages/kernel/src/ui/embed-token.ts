@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type {
-  EmbedClaims,
-  OrgEmbedClaims,
-  PlatformEmbedClaims,
-  ShareEmbedClaims,
+import {
+  type EmbedClaims,
+  type OrgEmbedClaims,
+  type PlatformEmbedClaims,
+  type ShareEmbedClaims,
+  SKILL_LIMITS,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Keyring } from "../ctx/secrets.js";
@@ -17,8 +18,11 @@ export const EMBED_TOKEN_SKEW_SECONDS = 30;
 /** HKDF 用途（keyring 派生时 info 为 `capybara:capybara-embed/1`），也是签名输入的域前缀。 */
 export const EMBED_KEY_INFO = "capybara-embed/1";
 
-/** 令牌总长上限：声明有界（id ≤ 100 字符），远小于此。 */
-const TOKEN_MAX = 2048;
+/**
+ * The longest token accepted. Claims are bounded (ids ≤ 100 characters, a skill file path ≤
+ * {@link SKILL_LIMITS.pathMaxChars} code points, at most about 3 KiB as JSON): well below this.
+ */
+const TOKEN_MAX = 8192;
 const MAC_LEN = 32;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 const PLUGIN_RE = /^[a-z][a-z0-9-]{1,40}$/;
@@ -31,6 +35,7 @@ const CLAIM_KEYS = new Set([
   "conversationId",
   "agentId",
   "fileId",
+  "skillFile",
   "shareId",
   "generation",
   "contribution",
@@ -40,6 +45,23 @@ const CLAIM_KEYS = new Set([
 const ROLES: ReadonlySet<unknown> = new Set(ORG_ROLES);
 
 const isId = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= 100;
+
+/** A skill file reference: exactly `skillId`, a positive `version` and a non-empty `path`. */
+function parseSkillFile(v: unknown): OrgEmbedClaims["skillFile"] | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const f = v as Record<string, unknown>;
+  const keys = Object.keys(f);
+  if (keys.length !== 3 || !keys.every((k) => k === "skillId" || k === "version" || k === "path")) {
+    return null;
+  }
+  if (!isId(f.skillId)) return null;
+  if (typeof f.version !== "number" || !Number.isSafeInteger(f.version) || f.version < 1) {
+    return null;
+  }
+  if (typeof f.path !== "string" || f.path === "") return null;
+  if ([...f.path].length > SKILL_LIMITS.pathMaxChars) return null;
+  return { skillId: f.skillId, version: f.version, path: f.path };
+}
 
 /**
  * 严格解码 base64url：只允许字母表内字符、不带填充，且必须是规范编码（解码后再编码与原文相同），
@@ -56,7 +78,8 @@ function decodeStrict(s: string): Buffer | null {
  * `"platform"` exactly when `orgId` is absent and `role` is `"superAdmin"`, with no
  * `conversationId` / `agentId` / `fileId`; `"org"` needs an `orgId` and one of the org roles;
  * `"share"` (file sharing spec §7) see {@link parseShareClaims}. `shareId` / `generation` only in
- * the share scope.
+ * the share scope. `skillFile` (a skill file's previewer, skill file browser spec) only in the org
+ * scope and never with `conversationId`, `agentId` or `fileId`.
  */
 function parseClaims(v: unknown): EmbedClaims | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
@@ -71,7 +94,12 @@ function parseClaims(v: unknown): EmbedClaims | null {
   if (!isId(c.accountId)) return null;
   if (c.scope === "platform") {
     if (c.orgId !== undefined || c.role !== "superAdmin") return null;
-    if (c.conversationId !== undefined || c.agentId !== undefined || c.fileId !== undefined) {
+    if (
+      c.conversationId !== undefined ||
+      c.agentId !== undefined ||
+      c.fileId !== undefined ||
+      c.skillFile !== undefined
+    ) {
       return null;
     }
     return {
@@ -87,6 +115,12 @@ function parseClaims(v: unknown): EmbedClaims | null {
   if (c.conversationId !== undefined && !isId(c.conversationId)) return null;
   if (c.agentId !== undefined && (!isId(c.agentId) || c.conversationId !== undefined)) return null;
   if (c.fileId !== undefined && (!isId(c.fileId) || c.conversationId === undefined)) return null;
+  let skillFile: OrgEmbedClaims["skillFile"];
+  if (c.skillFile !== undefined) {
+    if (c.conversationId !== undefined || c.agentId !== undefined) return null;
+    skillFile = parseSkillFile(c.skillFile) ?? undefined;
+    if (skillFile === undefined) return null;
+  }
   return {
     plugin: c.plugin,
     scope: "org",
@@ -96,6 +130,7 @@ function parseClaims(v: unknown): EmbedClaims | null {
     ...(c.conversationId !== undefined && { conversationId: c.conversationId }),
     ...(c.agentId !== undefined && { agentId: c.agentId }),
     ...(c.fileId !== undefined && { fileId: c.fileId }),
+    ...(skillFile !== undefined && { skillFile }),
     contribution: c.contribution,
     exp: c.exp,
   };
@@ -114,7 +149,7 @@ function parseShareClaims(
   if (!isId(c.orgId) || !isId(c.shareId)) return null;
   if (typeof c.generation !== "number" || !Number.isSafeInteger(c.generation)) return null;
   if (c.generation < 1) return null;
-  for (const k of ["accountId", "role", "conversationId", "agentId", "fileId"]) {
+  for (const k of ["accountId", "role", "conversationId", "agentId", "fileId", "skillFile"]) {
     if (c[k] !== undefined) return null;
   }
   return {

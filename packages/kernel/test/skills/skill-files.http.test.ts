@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -11,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import type { PreviewProbeState } from "../fixtures/plugins/preview-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -29,10 +31,22 @@ import {
  * Skill file browser spec, "Kernel": `GET /skills/:id/files` lists a version's files and
  * `GET /skills/:id/files/content` serves one file's bytes, with the visibility of `GET /skills/:id`
  * (the org's own skill, or a platform skill on in the org), only manifest paths, the sha256
- * checked, and headers that never let a skill file run on the app origin.
+ * checked, and headers that never let a skill file run on the app origin. And `file-preview@1` for
+ * skill files: the previewers that take one (the fake provider `preview-fake` previews `.docx` as a
+ * view and as an embed page), a view render through a read grant for that one object, and embed
+ * tokens naming the file.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
+const PREVIEW_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/preview-fake/index.ts", import.meta.url),
+);
+
+const probe = (): PreviewProbeState => {
+  const g = globalThis as { __previewProbe?: PreviewProbeState };
+  g.__previewProbe ??= { aborted: 0 };
+  return g.__previewProbe;
+};
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -51,7 +65,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [OBJECT_STORE, MODEL_FAKE],
+        extensions: [OBJECT_STORE, MODEL_FAKE, PREVIEW_FAKE],
         extensionConfig: {
           "fake-object-store": {
             endpoint: s3.endpoint,
@@ -76,17 +90,17 @@ let owner: Req;
 let member: Req;
 let guest: Req;
 let ownerId: string;
+let memberId: string;
 let orgId: string;
 
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.catalog_item_org_switches, capybara.component_org_switches, capybara.component_scope_orgs, capybara.platform_skill_versions, capybara.platform_skills, capybara.plugin_installs, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.file_previewers, capybara.extension_org_configs, capybara.catalog_item_org_switches, capybara.component_org_switches, capybara.component_scope_orgs, capybara.platform_skill_versions, capybara.platform_skills, capybara.plugin_installs, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
-  const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
-    .id;
+  memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" })).id;
   const guestId = (await accounts.createLocal({ login: "gst", password: PW, displayName: "G" })).id;
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
@@ -94,6 +108,8 @@ beforeEach(async () => {
   await testMembers(db).add(orgId, guestId, "guest", ownerId);
   member = await session(k, "mem");
   guest = await session(k, "gst");
+  delete probe().last;
+  delete probe().read;
 });
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -472,5 +488,267 @@ describe("skill file content", () => {
     const gone = await member({ method: "GET", url: contentUrl(s.id, "notes.txt") });
     expect(gone.statusCode).toBe(409);
     expect(gone.json().error.code).toBe("skill.file_changed");
+  });
+});
+
+const DOCX_BYTES = "PK docx bytes";
+const previewersUrl = (id: string, path: string, q = "") =>
+  `/api/v1/orgs/${orgId}/skills/${id}/files/previewers?path=${encodeURIComponent(path)}${q}`;
+const previewUrl = (id: string, previewer: string, path: string, q = "") =>
+  `/api/v1/orgs/${orgId}/skills/${id}/files/previews/preview-fake/${previewer}?path=${encodeURIComponent(path)}&locale=zh${q}`;
+const tokenUrl = () => `/api/v1/orgs/${orgId}/ui/embeds/preview-fake/docx-embed/token`;
+const claimsOf = (token: string) =>
+  JSON.parse(Buffer.from(token.split(".")[0] as string, "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+
+async function enablePreviewFake(): Promise<void> {
+  const r = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/extensions/preview-fake`,
+    payload: { enabled: true },
+  });
+  expect(r.statusCode, r.body).toBe(200);
+}
+
+describe("file-preview@1 for skill files", () => {
+  it("lists the previewers that take the file: by extension, within maxBytes, once enabled", async () => {
+    const s = await seedOrgSkill("docs", [
+      {
+        "SKILL.md": skillMd("docs", "x"),
+        "doc/Report.docx": DOCX_BYTES,
+        "big.docx": new Uint8Array(1024 * 1024 + 1),
+      },
+    ]);
+    const before = await member({ method: "GET", url: previewersUrl(s.id, "doc/Report.docx") });
+    expect(before.statusCode, before.body).toBe(200);
+    expect(before.headers["cache-control"]).toBe("private, no-store");
+    expect(before.json()).toEqual({ previewers: [] });
+    await enablePreviewFake();
+    const listed = await member({ method: "GET", url: previewersUrl(s.id, "doc/Report.docx") });
+    expect(
+      (
+        listed.json() as { previewers: { plugin: string; id: string; kind: string }[] }
+      ).previewers.map((p) => [p.plugin, p.id, p.kind]),
+    ).toEqual([
+      ["preview-fake", "docx", "view"],
+      ["preview-fake", "docx-page", "embed"],
+    ]);
+    for (const path of ["SKILL.md", "big.docx"]) {
+      const r = await member({ method: "GET", url: previewersUrl(s.id, path) });
+      expect(r.json(), path).toEqual({ previewers: [] });
+    }
+    for (const path of ["missing.docx", "../doc/Report.docx", "/doc/Report.docx"]) {
+      const r = await member({ method: "GET", url: previewersUrl(s.id, path) });
+      expect(r.statusCode, path).toBe(404);
+      expect(r.json().error.code, path).toBe("skill.file_not_found");
+    }
+  });
+
+  it("renders through a read grant for that one object of that version, valid only during the call", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [
+      { "SKILL.md": skillMd("docs", "v1"), "doc/Report.docx": "PK version one" },
+      { "SKILL.md": skillMd("docs", "v2"), "doc/Report.docx": DOCX_BYTES },
+    ]);
+    const r = await member({ method: "GET", url: previewUrl(s.id, "docx", "doc/Report.docx") });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.headers["cache-control"]).toBe("private, no-store");
+    expect(r.json()).toEqual({
+      view: { blocks: [{ type: "text", markdown: `13 ${DOCX_BYTES}` }] },
+    });
+    expect(probe().last).toEqual({
+      source: "skill",
+      orgId,
+      accountId: memberId,
+      skillId: s.id,
+      version: 2,
+      path: "doc/Report.docx",
+      locale: "zh",
+      config: expect.anything(),
+      file: {
+        id: `${s.id}@2/doc/Report.docx`,
+        name: "Report.docx",
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        size: 13,
+      },
+    });
+    await expect(probe().read?.()).rejects.toThrow(/expired/);
+
+    const old = await member({
+      method: "GET",
+      url: previewUrl(s.id, "docx", "doc/Report.docx", "&version=1"),
+    });
+    expect(old.statusCode, old.body).toBe(200);
+    expect(old.json().view.blocks[0].markdown).toBe("14 PK version one");
+    expect(probe().last).toMatchObject({ version: 1, file: { id: `${s.id}@1/doc/Report.docx` } });
+
+    // an embed previewer has no render; a file it does not take is not found
+    const embed = await member({
+      method: "GET",
+      url: previewUrl(s.id, "docx-page", "doc/Report.docx"),
+    });
+    expect(embed.statusCode).toBe(404);
+    expect(embed.json().error.code).toBe("ui.not_found");
+    const md = await member({ method: "GET", url: previewUrl(s.id, "docx", "SKILL.md") });
+    expect(md.statusCode).toBe(404);
+    expect(md.json().error.code).toBe("ui.not_found");
+  });
+
+  it("a changed object is 409 skill.file_changed and the previewer is not called", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [
+      { "SKILL.md": skillMd("docs", "x"), "a.docx": DOCX_BYTES },
+    ]);
+    const swapped = Buffer.from("PK docx BYTES");
+    await k.app.get(StorageService).kernel(orgId).put(`${s.prefixes[0]}a.docx`, swapped, {
+      contentType: "application/octet-stream",
+      size: swapped.byteLength,
+    });
+    const r = await member({ method: "GET", url: previewUrl(s.id, "docx", "a.docx") });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe("skill.file_changed");
+    expect(probe().last).toBeUndefined();
+  });
+
+  it("a disabled previewer is neither listed nor rendered nor given an embed token", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [
+      { "SKILL.md": skillMd("docs", "x"), "a.docx": DOCX_BYTES },
+    ]);
+    const put = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/file-previewers`,
+      payload: {
+        items: [
+          { plugin: "preview-fake", id: "docx", disabled: true },
+          { plugin: "preview-fake", id: "docx-page", disabled: true },
+        ],
+      },
+    });
+    expect(put.statusCode, put.body).toBe(200);
+    expect((await member({ method: "GET", url: previewersUrl(s.id, "a.docx") })).json()).toEqual({
+      previewers: [],
+    });
+    const r = await member({ method: "GET", url: previewUrl(s.id, "docx", "a.docx") });
+    expect(r.statusCode).toBe(404);
+    const token = await member({
+      method: "POST",
+      url: tokenUrl(),
+      payload: { skillId: s.id, path: "a.docx" },
+    });
+    expect(token.statusCode).toBe(404);
+  });
+
+  it("an embed previewer's token names the skill file it takes, with its resolved version", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [
+      { "SKILL.md": skillMd("docs", "v1"), "a.docx": "PK one" },
+      { "SKILL.md": skillMd("docs", "v2"), "a.docx": DOCX_BYTES, "notes.txt": "n" },
+    ]);
+    const ok = await member({
+      method: "POST",
+      url: tokenUrl(),
+      payload: { skillId: s.id, path: "a.docx" },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const { token, src } = ok.json() as { token: string; src: string };
+    expect(src).toBe("/plugin-ui/preview-fake/docx");
+    const claims = claimsOf(token);
+    expect(claims).toMatchObject({
+      scope: "org",
+      orgId,
+      accountId: memberId,
+      contribution: "docx-embed",
+      skillFile: { skillId: s.id, version: 2, path: "a.docx" },
+    });
+    expect(claims.conversationId).toBeUndefined();
+    expect(claims.fileId).toBeUndefined();
+    // the extension verifies it as an org token of a file.preview contribution
+    const verified = await member({
+      method: "GET",
+      url: "/plugins/preview-fake/ui/verify",
+      headers: { "x-token": token },
+    });
+    expect(verified.json()).toMatchObject({
+      claims: { skillFile: { skillId: s.id, version: 2, path: "a.docx" } },
+    });
+    const v1 = await member({
+      method: "POST",
+      url: tokenUrl(),
+      payload: { skillId: s.id, version: 1, path: "a.docx" },
+    });
+    expect(v1.statusCode, v1.body).toBe(200);
+    expect(claimsOf((v1.json() as { token: string }).token).skillFile).toEqual({
+      skillId: s.id,
+      version: 1,
+      path: "a.docx",
+    });
+
+    // a file no previewer of this embed takes, an unknown path or version: not found
+    for (const payload of [
+      { skillId: s.id, path: "notes.txt" },
+      { skillId: s.id, path: "../a.docx" },
+      { skillId: s.id, version: 9, path: "a.docx" },
+    ]) {
+      const r = await member({ method: "POST", url: tokenUrl(), payload });
+      expect(r.statusCode, JSON.stringify(payload)).toBe(404);
+    }
+    // never with a conversation or a file id; skillId and path go together
+    const conv = randomUUID();
+    for (const payload of [
+      { skillId: s.id, path: "a.docx", conversationId: conv },
+      { skillId: s.id, path: "a.docx", conversationId: conv, fileId: conv },
+      { skillId: s.id, path: "a.docx", fileId: conv },
+      { skillId: s.id },
+      { path: "a.docx" },
+      { version: 2 },
+    ]) {
+      const r = await member({ method: "POST", url: tokenUrl(), payload });
+      expect(r.statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    // a guest cannot read skills: no token either
+    const g = await guest({
+      method: "POST",
+      url: tokenUrl(),
+      payload: { skillId: s.id, path: "a.docx" },
+    });
+    expect(g.statusCode).toBe(404);
+  });
+
+  it("a platform skill switched off after it was read, and another org's skill: every route 404", async () => {
+    await enablePreviewFake();
+    const p = await seedPlatformSkill("kit-skill", "kit", [
+      { "SKILL.md": skillMd("kit-skill", "one"), "a.docx": DOCX_BYTES },
+    ]);
+    await installPlugin("kit");
+    const routes = (id: string) => [
+      () => member({ method: "GET", url: previewersUrl(id, "a.docx") }),
+      () => member({ method: "GET", url: previewUrl(id, "docx", "a.docx") }),
+      () => member({ method: "POST", url: tokenUrl(), payload: { skillId: id, path: "a.docx" } }),
+    ];
+    for (const call of routes(p.id)) {
+      const r = await call();
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    await switchOff(p.id);
+    for (const call of routes(p.id)) {
+      const r = await call();
+      expect(r.statusCode, r.body).toBe(404);
+      expect(r.json().error.code).toBe("skill.not_found");
+    }
+
+    const otherOrg = await createOrgWithProviders(k, owner, "Other");
+    const theirs = await seedOrgSkill(
+      "theirs",
+      [{ "SKILL.md": skillMd("theirs", "x"), "a.docx": DOCX_BYTES }],
+      otherOrg,
+    );
+    for (const call of routes(theirs.id)) {
+      const r = await call();
+      expect(r.statusCode, r.body).toBe(404);
+      expect(r.json().error.code).toBe("skill.not_found");
+    }
   });
 });

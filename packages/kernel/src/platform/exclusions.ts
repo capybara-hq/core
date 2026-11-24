@@ -620,6 +620,16 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Serves a skill file's bytes for the web's preview; the Skill tool reads skill files for the model and skills.list-files lists them",
   },
   {
+    route: "GET /api/v1/orgs/:orgId/skills/:id/files/previewers",
+    category: "transport",
+    reason: "Previewer lookup feeding the skill page's file viewer",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/skills/:id/files/previews/:plugin/:previewerId",
+    category: "transport",
+    reason: "Serves a rendered preview of a skill file",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/skill-changes/:id/decide",
     category: "human-only",
     reason: "Decides a proposed skill change",

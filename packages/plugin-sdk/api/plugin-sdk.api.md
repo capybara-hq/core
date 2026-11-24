@@ -1850,7 +1850,7 @@ export const FILE_PREVIEW_EXTENSION_POINT = "file-preview@1";
 export const FILE_PREVIEW_MAX_BYTES: number;
 
 // @public
-export type FilePreviewArgs = FilePreviewConversationArgs | FilePreviewShareArgs;
+export type FilePreviewArgs = FilePreviewConversationArgs | FilePreviewShareArgs | FilePreviewSkillArgs;
 
 // @public
 export interface FilePreviewArgsBase {
@@ -1900,6 +1900,16 @@ export interface FilePreviewShareArgs extends FilePreviewArgsBase {
     orgId: string;
     shareId: string;
     source: "share";
+}
+
+// @public
+export interface FilePreviewSkillArgs extends FilePreviewArgsBase {
+    accountId: string;
+    orgId: string;
+    path: string;
+    skillId: string;
+    source: "skill";
+    version: number;
 }
 
 // @public
@@ -2932,6 +2942,11 @@ export interface OrgEmbedClaims extends EmbedClaimsBase {
     orgId: string;
     role: UiRole;
     scope: "org";
+    skillFile?: {
+        skillId: string;
+        version: number;
+        path: string;
+    };
 }
 
 // @public
@@ -3138,6 +3153,7 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
     orgId?: undefined;
     role: "superAdmin";
     scope: "platform";
+    skillFile?: undefined;
 }
 
 // @public
@@ -4115,6 +4131,7 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
     role?: undefined;
     scope: "share";
     shareId: string;
+    skillFile?: undefined;
 }
 
 // @public

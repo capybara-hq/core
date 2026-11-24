@@ -569,6 +569,11 @@ export interface OrgEmbedClaims extends EmbedClaimsBase {
   agentId?: string;
   /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
   fileId?: string;
+  /**
+   * Only a `file-preview` embed's token for a skill file (no `conversationId`, `agentId` or
+   * `fileId`): the skill, the version and the file's path in it.
+   */
+  skillFile?: { skillId: string; version: number; path: string };
 }
 
 /** A `platform.page` embed token's claims: a super admin's, with no org, conversation, agent or file. */
@@ -580,6 +585,7 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
   conversationId?: undefined;
   agentId?: undefined;
   fileId?: undefined;
+  skillFile?: undefined;
 }
 
 /**
@@ -596,6 +602,7 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
   conversationId?: undefined;
   agentId?: undefined;
   fileId?: undefined;
+  skillFile?: undefined;
 }
 
 /**

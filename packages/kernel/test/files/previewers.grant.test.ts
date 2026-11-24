@@ -75,6 +75,7 @@ function setup(
       enabledPlugins: async () => new Set(["late"]),
     },
     { file: async () => FILE } as never,
+    {} as never,
     ignoringStore as never,
     { get: effective },
     { warn: () => {} },

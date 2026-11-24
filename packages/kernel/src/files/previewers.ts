@@ -4,6 +4,7 @@ import {
   type FilePreviewer,
   type FilePreviewProvider,
   type FilePreviewShareArgs,
+  type FilePreviewSkillArgs,
   type Logger,
   previewerAccepts,
   type UiView,
@@ -23,6 +24,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { type ResolvedSkillFile, SkillFiles } from "../skills/skill-files.js";
 import { StorageService } from "../storage/storage.service.js";
 import { callExtension } from "../ui/call-extension.js";
 
@@ -54,6 +56,8 @@ interface PreviewerRegistryDeps {
   /** Extensions enabled in the org (queried every time). */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   files: Pick<ConversationFiles, "file">;
+  /** Skill files: visibility as `GET /skills/:id`, manifest paths only, verified reads. */
+  skillFiles: Pick<SkillFiles, "resolve" | "bytes">;
   storage: Pick<StorageService, "kernel">;
   /** The effective deployment config of an extension for an org (layering spec A §6). */
   effective: Pick<EffectiveConfigs, "get">;
@@ -71,10 +75,33 @@ const notFound = () => new ApiError("ui.not_found", "Previewer not found");
 /** The file a previewer reads: the share's snapshot or a conversation file (no storage key). */
 type PreviewFile = { name: string; contentType: string; size: number };
 
-/** Who and what a render is for: a conversation file, or a share's snapshot (`file.id` = share id). */
+/**
+ * Who and what a render is for: a conversation file, a share's snapshot (`file.id` = share id), or
+ * a skill version's file (`file.id` = `<skillId>@<version>/<path>`).
+ */
 type PreviewIdentity =
   | Pick<FilePreviewConversationArgs, "source" | "orgId" | "accountId" | "conversationId" | "file">
-  | Pick<FilePreviewShareArgs, "source" | "orgId" | "shareId" | "file">;
+  | Pick<FilePreviewShareArgs, "source" | "orgId" | "shareId" | "file">
+  | Pick<
+      FilePreviewSkillArgs,
+      "source" | "orgId" | "accountId" | "skillId" | "version" | "path" | "file"
+    >;
+
+/** A skill file as a previewer sees it: its name is the last segment of its path. */
+const skillPreviewFile = (f: ResolvedSkillFile): PreviewFile => ({
+  name: f.path.slice(f.path.lastIndexOf("/") + 1),
+  contentType: f.contentType,
+  size: f.size,
+});
+
+/** One chunk of bytes as a stream (what {@link PreviewerRegistry.renderWith}'s `open` returns). */
+const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
+  new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(bytes);
+      c.close();
+    },
+  });
 
 /** A share's snapshot as the share routes pass it (`ShareLiveness`'s `LiveShare`). */
 export interface ShareSnapshot extends PreviewFile {
@@ -125,7 +152,8 @@ export const FILE_PREVIEW_TIMEOUT = Symbol("FILE_PREVIEW_TIMEOUT");
  * (`capybara.file_previewers` rows first by position, then the rest in provider order; disabled ones
  * dropped; only extensions enabled in the org), and rendering a view previewer through a read grant
  * for that one file (valid only during the call, capped at the previewer's `maxBytes`; the extension
- * never gets a storage key or URL). Providers are validated when they are provided (`ctx.provide`).
+ * never gets a storage key or URL). The file is a conversation file, a share's snapshot or a skill
+ * version's file (`SkillFiles`: visibility as `GET /skills/:id`, manifest paths only). Providers are validated when they are provided (`ctx.provide`).
  * No state across requests.
  */
 @Injectable()
@@ -136,6 +164,7 @@ export class PreviewerRegistry {
     @Inject(KernelDb) kdb: Pick<KernelDb, "db">,
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "list" | "enabledPlugins">,
     @Inject(ConversationFiles) files: Pick<ConversationFiles, "file">,
+    @Inject(SkillFiles) skillFiles: Pick<SkillFiles, "resolve" | "bytes">,
     @Inject(StorageService) storage: Pick<StorageService, "kernel">,
     @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
@@ -151,6 +180,7 @@ export class PreviewerRegistry {
       host,
       enabledPlugins: (orgId) => host.enabledPlugins(orgId),
       files,
+      skillFiles,
       storage,
       effective,
       log,
@@ -414,6 +444,82 @@ export class PreviewerRegistry {
     );
     const contribution = l?.previewer.embed;
     return contribution === undefined ? null : { contribution };
+  }
+
+  /**
+   * The previewers that take file `path` of version `version` (default: current) of a skill, in
+   * the org's order (skill file browser spec). Visibility as `GET /skills/:id` (`skill.not_found`);
+   * a version or path not in the skill → `skill.file_not_found`; nothing is read.
+   */
+  async forSkillFile(
+    orgId: string,
+    skillId: string,
+    version: number | undefined,
+    path: string,
+  ): Promise<PreviewerItem[]> {
+    const file = await this.d.skillFiles.resolve(orgId, skillId, version, path);
+    return (await this.accepting(orgId, skillPreviewFile(file))).map(item);
+  }
+
+  /**
+   * Renders a view previewer for a skill file: args `source: "skill"` with the viewer, the skill,
+   * the resolved version and the path (`file.id` is `<skillId>@<version>/<path>`). The file is read
+   * and checked against its manifest before the extension is called (a changed object is 409
+   * `skill.file_changed`, the extension is not called); the read grant hands those bytes, that one
+   * object only, during the call. Not found and render errors as {@link render}.
+   */
+  async renderSkill(t: {
+    orgId: string;
+    accountId: string;
+    skillId: string;
+    version: number | undefined;
+    path: string;
+    plugin: string;
+    id: string;
+    locale: "zh" | "en";
+  }): Promise<UiView> {
+    const file = await this.d.skillFiles.resolve(t.orgId, t.skillId, t.version, t.path);
+    const shown = skillPreviewFile(file);
+    const l = await this.viewPreviewer(t.orgId, shown, t.plugin, t.id);
+    // the previewer takes the file only within its maxBytes, so this keeps the whole file
+    const bytes = await this.d.skillFiles.bytes(file, {
+      keepBytes: l.previewer.maxBytes,
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    return this.renderWith(
+      l,
+      t,
+      {
+        source: "skill",
+        orgId: t.orgId,
+        accountId: t.accountId,
+        skillId: t.skillId,
+        version: file.version,
+        path: file.path,
+        file: { id: `${t.skillId}@${file.version}/${file.path}`, ...shown },
+      },
+      async () => streamOf(bytes),
+    );
+  }
+
+  /**
+   * The skill file an embed token for a `file.preview` contribution may name: the file resolved as
+   * {@link forSkillFile} (its errors), and an enabled previewer of that extension with
+   * `embed: contribution` takes it; else null.
+   */
+  async skillEmbed(t: {
+    orgId: string;
+    skillId: string;
+    version: number | undefined;
+    path: string;
+    plugin: string;
+    contribution: string;
+  }): Promise<{ skillId: string; version: number; path: string } | null> {
+    const file = await this.d.skillFiles.resolve(t.orgId, t.skillId, t.version, t.path);
+    const takes = (await this.accepting(t.orgId, skillPreviewFile(file))).some(
+      (l) => l.plugin === t.plugin && l.previewer.embed === t.contribution,
+    );
+    return takes ? { skillId: t.skillId, version: file.version, path: file.path } : null;
   }
 
   /** The enabled view previewer that takes the file, else 404 `ui.not_found`. */

@@ -2,6 +2,7 @@ import type { UiActionResult, UiView } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
+import { ApiError } from "../errors.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
@@ -49,9 +50,11 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
  *   （`{ actionId, payload?, answer?, conversationId?, agentId?, locale? }`）→ `{ toast }` | `{ view }`；
  * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`），
  *   member and above；
- * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId?, agentId?, fileId? }`）
+ * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId?, agentId?, fileId? }`,
+ *   or for a skill file's previewer `{ skillId, version?, path }`）
  *   → `{ token, src: "/plugin-ui/<plugin>/<path 去掉 /ui/>", expiresAt, expiresIn }`：嵌入令牌
- *   （300 秒，`expiresIn` 为秒数，见 `embed-token.ts`；`agentId` goes into the claims）。
+ *   （300 秒，`expiresIn` 为秒数，见 `embed-token.ts`；`agentId` goes into the claims, a skill
+ *   file as `skillFile` with its resolved version）。
  *   令牌只给插件路由用，内核鉴权守卫不认它（它不是 API 令牌）。
  * 对话视图的刷新走现有的会话流 `/conversations/:id/stream`。
  * Access (UI slots spec §7): every route checks the slot of the contribution it names, its
@@ -157,6 +160,20 @@ export class UiController {
     @ZBody(UiEmbedTokenBodyDto) body: z.infer<typeof EmbedTokenBody>,
   ): Promise<{ token: string; src: string; expiresAt: string; expiresIn: number }> {
     const p = requireUser(principal);
+    if ((body.skillId === undefined) !== (body.path === undefined)) {
+      throw new ApiError("validation_failed", "skillId and path go together");
+    }
+    if (body.version !== undefined && body.skillId === undefined) {
+      throw new ApiError("validation_failed", "version is only allowed with skillId and path");
+    }
+    const skillFile =
+      body.skillId !== undefined && body.path !== undefined
+        ? {
+            skillId: body.skillId,
+            path: body.path,
+            ...(body.version !== undefined && { version: body.version }),
+          }
+        : undefined;
     const target = await this.views.embed({
       orgId: org.orgId,
       accountId: p.account.id,
@@ -166,6 +183,7 @@ export class UiController {
       ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
       ...(body.agentId !== undefined && { agentId: body.agentId }),
       ...(body.fileId !== undefined && { fileId: body.fileId }),
+      ...(skillFile !== undefined && { skillFile }),
     });
     const { token, expiresAt } = this.embeds.issue({
       plugin: target.plugin,
@@ -176,6 +194,7 @@ export class UiController {
       ...(target.conversationId !== undefined && { conversationId: target.conversationId }),
       ...(target.agentId !== undefined && { agentId: target.agentId }),
       ...(target.fileId !== undefined && { fileId: target.fileId }),
+      ...(target.skillFile !== undefined && { skillFile: target.skillFile }),
       contribution: target.contribution,
     });
     return {

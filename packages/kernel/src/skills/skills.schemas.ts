@@ -37,6 +37,19 @@ export const SkillFileContentQuery = SkillFilesQuery.extend({
   inline: z.enum(["0", "1"]).optional(),
 }).strict();
 
+/** `?version=&path=` of `GET /skills/:id/files/previewers`: one file of a version. */
+export const SkillFilePreviewersQuery = SkillFilesQuery.extend({
+  path: z.string().min(1).max(SKILL_LIMITS.pathMaxChars),
+}).strict();
+/** `GET /skills/:id/files/previews/:plugin/:previewerId?version=&path=&locale=`. */
+export const SkillFilePreviewQuery = SkillFilePreviewersQuery.extend({
+  locale: z.enum(["zh", "en"]).default("en"),
+}).strict();
+export const SkillFilePreviewParams = SkillIdParams.extend({
+  plugin: z.string().min(1).max(100),
+  previewerId: z.string().min(1).max(100),
+});
+
 export const SkillShareableSchema = z.object({ shareable: z.boolean() }).strict();
 
 /** `:id` of `GET /skill-changes/:id` (taken as is). */
@@ -101,6 +114,16 @@ export const SKILL_ROUTES: readonly RouteSchemas[] = [
     route: "GET /api/v1/orgs/:orgId/skills/:id/files/content",
     params: SkillIdParams,
     query: SkillFileContentQuery,
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/skills/:id/files/previewers",
+    params: SkillIdParams,
+    query: SkillFilePreviewersQuery,
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/skills/:id/files/previews/:plugin/:previewerId",
+    params: SkillFilePreviewParams,
+    query: SkillFilePreviewQuery,
   },
   { route: "POST /api/v1/orgs/:orgId/skills/uploads", body: SkillUploadBody },
   { route: "POST /api/v1/orgs/:orgId/skills", body: SkillCreateBody },
