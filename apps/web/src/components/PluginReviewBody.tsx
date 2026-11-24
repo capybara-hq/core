@@ -80,8 +80,14 @@ export function PluginReviewBody({
   review,
   mismatch = null,
   audience = "platform",
+  installedVersion = null,
 }: {
   review: PluginReview;
+  /**
+   * The version the platform has installed when this import updates it: the chip then reads
+   * from → to whether or not the package has an extension.
+   */
+  installedVersion?: string | null;
   /** A marketplace import's permission summary that differs from the package. */
   mismatch?: PermissionsMismatch;
   /**
@@ -106,14 +112,19 @@ export function PluginReviewBody({
   const fromGit = review.source.kind === "git" || (detail !== undefined && "repo" in detail);
   const ext = review.extension;
   const versionChip =
-    ext?.action === "upgrade" && ext.currentVersion != null
+    installedVersion !== null && installedVersion !== review.version
       ? t("versionChange", {
-          from: versionLabel(ext.currentVersion),
-          to: versionLabel(ext.version),
+          from: versionLabel(installedVersion),
+          to: versionLabel(review.version),
         })
-      : ext?.action === "keep"
-        ? t("action.keep", { version: versionLabel(review.version) })
-        : t("action.install", { version: versionLabel(review.version) });
+      : ext?.action === "upgrade" && ext.currentVersion != null
+        ? t("versionChange", {
+            from: versionLabel(ext.currentVersion),
+            to: versionLabel(ext.version),
+          })
+        : ext?.action === "keep"
+          ? t("action.keep", { version: versionLabel(review.version) })
+          : t("action.install", { version: versionLabel(review.version) });
   const sensitive = sensitiveTotal(review);
   const facts: { k: string; v: ReactNode }[] = [
     ...(review.publisher !== "" ? [{ k: t("facts.publisher"), v: review.publisher }] : []),

@@ -1467,6 +1467,10 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       expect(
         await screen.findByRole("region", { name: msgs[locale].catalog.components.skills }),
       ).toBeTruthy();
+      // the review's version chip reads installed → staged
+      expect(
+        screen.getByText(fill(r.versionChange, { from: "v1.0.0", to: "v2.0.0" })),
+      ).toBeTruthy();
       await userEvent.setup().click(screen.getByRole("button", { name: w.next }));
       // the update preview: versions, per-component changes, the extension and the orgs' config
       // (the plugin's versions line, the extension's and the skill's row)
