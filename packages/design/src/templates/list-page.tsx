@@ -66,9 +66,9 @@ export type ListLoading =
 
 /**
  * The list's view choice (responsive system spec §2.2 level 2, §4): a subset of the set the head's
- * tabs choose. Compact draws it as scope chips in the quick-return bar; medium and expanded as a
- * Segmented above the list while it has {@link SEGMENTED_MAX} options or fewer, one Select
- * for more, and chips whenever an option carries an avatar.
+ * tabs choose. Compact draws it as scope chips in the quick-return bar, medium and expanded as a
+ * Segmented above the list; both draw one Select for more than {@link SEGMENTED_MAX} options, and
+ * chips whenever an option carries an avatar.
  */
 export type ListScope = {
   label: string;
@@ -231,6 +231,21 @@ export function ListPage({
   });
   const head = callout ? { ...onePrimary, notice: <Callout {...callout} /> } : onePrimary;
 
+  // One Select for a scope of more than SEGMENTED_MAX options, wide and compact alike (its filter
+  // input from ten options); a scope whose options carry avatars stays chips (§6.63).
+  const scopeAvatars = scope?.options.some((o) => o.avatar !== undefined) === true;
+  const scopeSelect = scope ? (
+    <Select
+      aria-label={scope.label}
+      value={scope.value}
+      onChange={(e) => scope.onChange(e.target.value)}
+      options={scope.options.map((o) => ({
+        value: o.value,
+        label: o.count !== undefined ? `${o.label} ${o.count}` : o.label,
+      }))}
+    />
+  ) : null;
+
   // The compact bar: the search, the head's tabs and the scope chips (spec §2.6).
   const tabItems = head.tabs ?? [];
   const tabSlots = tabItems.length === 0 ? (head.loading?.tabs ?? 0) : 0;
@@ -261,12 +276,16 @@ export function ListPage({
         </div>
       ) : null}
       {scope ? (
-        <ScopeChips
-          label={scope.label}
-          value={scope.value}
-          options={scope.options}
-          onChange={scope.onChange}
-        />
+        !scopeAvatars && scope.options.length > SEGMENTED_MAX ? (
+          scopeSelect
+        ) : (
+          <ScopeChips
+            label={scope.label}
+            value={scope.value}
+            options={scope.options}
+            onChange={scope.onChange}
+          />
+        )
       ) : null}
     </div>
   ) : null;
@@ -289,7 +308,7 @@ export function ListPage({
   // Wide (spec §2.2 level 2): a Segmented for five options or fewer, one Select for more
   // (its filter input from ten options); a scope whose chips carry avatars (the conversations'
   // agents) stays chips, since neither draws an avatar (§6.63).
-  const wideScope = !scope ? null : scope.options.some((o) => o.avatar !== undefined) ? (
+  const wideScope = !scope ? null : scopeAvatars ? (
     <ScopeChips
       label={scope.label}
       value={scope.value}
@@ -307,15 +326,7 @@ export function ListPage({
       }))}
     />
   ) : (
-    <Select
-      aria-label={scope.label}
-      value={scope.value}
-      onChange={(e) => scope.onChange(e.target.value)}
-      options={scope.options.map((o) => ({
-        value: o.value,
-        label: o.count !== undefined ? `${o.label} ${o.count}` : o.label,
-      }))}
-    />
+    scopeSelect
   );
 
   const loadingList =

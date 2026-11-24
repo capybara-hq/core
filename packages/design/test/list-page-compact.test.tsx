@@ -191,6 +191,15 @@ describe("ListPage at 390", () => {
     expect(within(list).queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("more than 5 options without avatars: one select in the bar, no chip strip", () => {
+    const { container } = renderAtClass(390, agents({ scope: scopeWith(30) }));
+    const b = bar(container) as HTMLElement;
+    expect(within(b).getAllByRole("combobox")).toHaveLength(1);
+    expect(within(b).getByRole("combobox", { name: "范围" }).textContent).toContain("全部来源");
+    expect(within(b).queryByRole("radiogroup", { name: "范围" })).toBeNull();
+    expect(container.querySelector(".cb-scope-chips")).toBeNull();
+  });
+
   it("the bar is a direct child of the scroller (only box-less wrappers between)", () => {
     const { container } = renderAtClass(390, agents());
     const r = root(container) as HTMLElement;
