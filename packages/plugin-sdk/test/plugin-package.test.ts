@@ -237,7 +237,7 @@ describe("staticManifestOf", () => {
     expect(st.config).not.toHaveProperty("org");
   });
 
-  it("a manifest JSON packed before core#720 with config.org is read without org", () => {
+  it("a manifest JSON packed before core#720 with config.org is refused", () => {
     const json = {
       schemaVersion: 1,
       name: "demo-plugin",
@@ -249,9 +249,7 @@ describe("staticManifestOf", () => {
         manifest: { ...demo(), config: { deployment: [], org: [] } },
       },
     };
-    const parsed = parsePluginManifest(json);
-    expect(parsed).not.toHaveProperty("errors");
-    expect((parsed as PluginManifest).extension?.manifest.config).toEqual({ deployment: [] });
+    expect(parsePluginManifest(json)).toHaveProperty("errors");
   });
 
   it("权限与界面贡献原样带上（去掉 undefined），函数不进静态清单", () => {

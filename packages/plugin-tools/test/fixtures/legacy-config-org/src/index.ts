@@ -1,5 +1,4 @@
-// Violation: config.org was removed by core#720; the packer refuses it although defineExtension
-// drops it at runtime for modules packed before core#720.
+// Violation: config.org was removed by core#720; the packer refuses it with a migration hint.
 import { z } from "zod";
 
 export default {

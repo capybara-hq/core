@@ -243,26 +243,6 @@ const configSchemaJson = z
     },
   );
 
-/**
- * Transition only: packages packed before core#720 carry the old org-only config in plugin.json:
- * `extension.manifest.config.org` (the org config field list, often `[]`) and
- * `extension.configSchemas.org` (its form schema). Published tarballs are immutable, so the reader
- * accepts both and drops them: they never reach the parsed manifest, the permission set, the
- * config levels or the views. Nothing else reads them, `defineExtension` drops a module's
- * `config.org` the same way, and the packer refuses it and never writes either. Removed once the official plugins are
- * republished and re-pinned (core#720 plan Task 17).
- */
-const legacyPackedBeforeCore720 = {
-  configOrg: configFields.optional().meta({
-    deprecated: true,
-    description: "Ignored: written only by packers before core#720.",
-  }),
-  configSchemasOrg: configSchemaJson.optional().meta({
-    deprecated: true,
-    description: "Ignored: written only by packers before core#720.",
-  }),
-};
-
 const staticExtensionManifest = z.strictObject({
   name: z.string(),
   version: z.string(),
@@ -272,9 +252,7 @@ const staticExtensionManifest = z.strictObject({
   optional: z.array(z.string()),
   permissions: z.record(z.string(), z.unknown()),
   ui: z.array(z.record(z.string(), z.unknown())).optional(),
-  config: z
-    .strictObject({ deployment: configFields, org: legacyPackedBeforeCore720.configOrg })
-    .transform(({ org: _legacyOrg, ...config }) => config),
+  config: z.strictObject({ deployment: configFields }),
 });
 
 const setupGuide = z.strictObject({
@@ -321,13 +299,7 @@ const extensionSection = z.strictObject({
   manifest: staticExtensionManifest,
   migrations: dotPath("migrations").optional(),
   ui: dotPath("ui").optional(),
-  configSchemas: z
-    .strictObject({
-      deployment: configSchemaJson.optional(),
-      org: legacyPackedBeforeCore720.configSchemasOrg,
-    })
-    .transform(({ org: _legacyOrg, ...schemas }) => schemas)
-    .optional(),
+  configSchemas: z.strictObject({ deployment: configSchemaJson.optional() }).optional(),
   client: clientSection.optional(),
 });
 

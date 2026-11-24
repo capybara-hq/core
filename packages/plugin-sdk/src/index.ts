@@ -24,7 +24,6 @@ export * from "./git-hosts.js";
 export * from "./hooks.js";
 export * from "./http-access.js";
 export * from "./identity.js";
-export * from "./legacy-org-access.js";
 export * from "./marketplace.js";
 export * from "./model.js";
 export * from "./model-params.js";

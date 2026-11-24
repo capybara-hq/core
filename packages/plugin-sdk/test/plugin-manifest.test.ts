@@ -106,38 +106,28 @@ describe("parsePluginManifest", () => {
     expect((r as PluginManifest).extension?.manifest.name).toBe("todo");
   });
 
-  it("reads a legacy config.org list from packages packed before core#720 and drops it", () => {
-    for (const org of [[], [{ path: "apiKey", secret: true, hot: false }]]) {
-      const json = withExtension(
-        {},
-        {
-          config: {
-            deployment: [{ path: "readerUrl", secret: false, hot: false }],
-            org,
-          } as StaticExtensionManifest["config"],
-        },
-      );
-      expect(errorsOf(json)).toEqual([]);
-      const config = (parsePluginManifest(json) as PluginManifest).extension?.manifest.config;
-      expect(config).toEqual({ deployment: [{ path: "readerUrl", secret: false, hot: false }] });
-      expect(config).not.toHaveProperty("org");
-    }
+  it("refuses a config.org list (the org-only config level is gone)", () => {
+    const json = withExtension(
+      {},
+      {
+        config: {
+          deployment: [{ path: "readerUrl", secret: false, hot: false }],
+          org: [],
+        } as StaticExtensionManifest["config"],
+      },
+    );
+    expect(errorsOf(json).join("\n")).toMatch(/org/);
   });
 
-  it("reads a legacy configSchemas.org from packages packed before core#720 and drops it", () => {
-    const deployment = { type: "object", properties: { readerUrl: { type: "string" } } };
-    const org = { type: "object", properties: { apiKey: { type: "string", "x-secret": true } } };
+  it("refuses a configSchemas.org schema", () => {
     const json = withExtension({
       extension: {
         entry: "./dist/index.mjs",
         manifest: staticManifest(),
-        configSchemas: { deployment, org },
+        configSchemas: { deployment: { type: "object" }, org: { type: "object" } },
       },
     });
-    expect(errorsOf(json)).toEqual([]);
-    const schemas = (parsePluginManifest(json) as PluginManifest).extension?.configSchemas;
-    expect(schemas).toEqual({ deployment });
-    expect(schemas).not.toHaveProperty("org");
+    expect(errorsOf(json).join("\n")).toMatch(/org/);
   });
 
   it("still refuses other unknown configSchemas keys", () => {

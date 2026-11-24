@@ -623,8 +623,7 @@ async function buildAndImport(
   if (typeof mod.default !== "object" || mod.default === null) {
     throw new Error(`${label}: the bundle has no default export object`);
   }
-  // defineExtension drops a legacy config.org so modules packed before core#720 still load; a new
-  // pack must not carry one (removed with that tolerance in core#720 plan Task 17)
+  // defineExtension refuses config.org too; this check comes first to name the migration
   const config = (mod.default as { config?: unknown }).config;
   if (typeof config === "object" && config !== null && Object.hasOwn(config, "org")) {
     throw new Error(

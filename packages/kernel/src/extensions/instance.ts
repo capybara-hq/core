@@ -54,30 +54,13 @@ const canonical = (v: unknown): string => {
   return JSON.stringify(v) ?? "null";
 };
 
-/**
- * A reviewed static manifest without the `config.org` list that packages packed before core#720
- * carry (stored install records and catalog sections keep it as reviewed). The list is dropped, not
- * compared: the SDK no longer has org-only config, and `defineExtension` drops the module's own
- * `config.org` the same way. Removed with the other pre-core#720 readers once the official plugins are
- * republished and re-pinned (core#720 plan Task 17).
- */
-function withoutLegacyOrgConfig(section: StaticExtensionManifest): StaticExtensionManifest {
-  const config = (section as { config?: Record<string, unknown> }).config;
-  if (config === undefined || !("org" in config)) return section;
-  const { org: _legacyOrg, ...rest } = config;
-  return { ...section, config: rest as StaticExtensionManifest["config"] };
-}
-
 /** Whether a module's manifest matches the reviewed static manifest (same name and {@link staticManifestOf}). */
 export function matchesSection(
   manifest: ExtensionManifest,
   name: string,
   section: StaticExtensionManifest,
 ): boolean {
-  return (
-    manifest.name === name &&
-    canonical(staticManifestOf(manifest)) === canonical(withoutLegacyOrgConfig(section))
-  );
+  return manifest.name === name && canonical(staticManifestOf(manifest)) === canonical(section);
 }
 
 /** 导入一个插件模块（default 导出）并按 defineExtension 校验清单。 */
