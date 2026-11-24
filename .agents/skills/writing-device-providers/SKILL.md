@@ -519,7 +519,10 @@ treats a dial-in device like any other (its provider, report and permission supp
   file keys relative with plain segments (no absolute path, `..`, `.`, empty segment, backslash,
   NUL), entry one of the files, no `NODE_*` / `PATH` / `SSL_CERT_FILE` / `SSL_CERT_DIR` /
   `LD_*` / `DYLD_*` / `CAPYBARA_*` / proxy variables in `env`. The review sees
-  `env K=V … node <stateDir>/<entry> …` in the state directory, so run exactly that.
+  `env K=V … node <stateDir>/<entry> …` in the state directory, so run exactly that. A provider
+  that can keep code apart from state should: `capybara-device` writes the files into a
+  device-owned `svc-files/<name>` directory the service can only read (R30), so a service cannot
+  rewrite the code a later digest-matched start runs.
 - **Conformance.** A provider with services must pass `runDeviceServiceConformance`
   (`@capybara-hq/testing`) against one running instance: an `ifRunning` ensure of a stopped
   service starts nothing and answers `stopped` with an absolute `stateDir`, `stateDir` is stable,

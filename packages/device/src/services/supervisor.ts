@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { lstat, mkdir, open, readlink, realpath, stat, symlink, unlink } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  unlink,
+} from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
@@ -26,7 +37,7 @@ export const MAX_SERVICE_SOCKET_PATH_BYTES = 103;
 const SOCKET_NAME = "s";
 /** The service's temporary directory inside the state directory. */
 const TMP_NAME = "tmp";
-/** The file in the state directory holding the digest the spec files were written under. */
+/** The file in the code directory holding the digest the spec files were written under. */
 const DIGEST_NAME = ".files-digest";
 /** A provider's opaque digest of a service's files (`service.ensure` `filesDigest`). */
 export const FILES_DIGEST_RE = /^[A-Za-z0-9:_-]{1,128}$/;
@@ -39,6 +50,14 @@ export const SERVICE_STOP_GRACE_MS = 2_000;
 
 /** The device's service state root: `<device dir>/svc`, outside every workspace and project. */
 export const serviceRoot = (deviceDir: string) => join(deviceDir, "svc");
+
+/**
+ * The device's service code root: `<device dir>/svc-files`, one directory per service holding
+ * exactly the spec's files and their digest (controller ruling R30). Only this program writes
+ * there; a service reads its code from it and can never change it, so a start on stored files
+ * runs the files the deployment sent, whatever the service did to its own state directory.
+ */
+export const serviceCodeRoot = (deviceDir: string) => join(deviceDir, "svc-files");
 
 /**
  * The paths of one service (browser use spec §5): its state directory `<device dir>/svc/<name>`
@@ -83,8 +102,9 @@ export interface LocalServiceSpec {
   entry: string;
   args: string[];
   /**
-   * Written into the state directory before start, keyed by relative path. Absent: the files
-   * already there are used when they were written under the ensure's `filesDigest`.
+   * Written into the service's code directory (`<device dir>/svc-files/<name>`, read only for the
+   * service) before start, keyed by relative path. Absent: the files already there are used when
+   * they were written under the ensure's `filesDigest`.
    */
   files?: Record<string, Uint8Array>;
   env?: Record<string, string>;
@@ -538,23 +558,27 @@ export class ServiceSupervisor {
     const stateDir = await realDirectory(this.o.deviceDir, ["svc", spec.name]);
     const downloads = await realDirectory(this.o.workspace, ["downloads"]);
     const tmpDir = await realDirectory(stateDir, [TMP_NAME]);
-    // files are (re)written on start only; everything else in the state directory is kept (the
-    // service's own state, a browser profile)
+    // the code lives apart from the state: `<device dir>/svc-files/<name>`, written only here
+    const codeDir = await realDirectory(this.o.deviceDir, ["svc-files", spec.name]);
+    // files are (re)written on start only; the state directory is the service's own and kept (a
+    // browser profile)
     if (spec.files === undefined) {
-      // checked again here: the state directory is the service's own, never trusted between
-      const stored = await readStoredDigest(stateDir);
+      // checked again at the start itself (after a stop, or a concurrent writer)
+      const stored = await readStoredDigest(codeDir);
       if (stored === undefined || stored !== filesDigest)
         throw new ServiceFilesNeededError(spec.name, "the stored files changed");
     } else {
-      // a digest names exactly the files written under it: the old one goes first
-      await removeEntry(join(stateDir, DIGEST_NAME));
+      // the code directory holds exactly the spec's files and the digest they were sent under:
+      // everything else goes first (never through a link: rm removes a link itself)
+      for (const entry of await readdir(codeDir))
+        await rm(join(codeDir, entry), { recursive: true, force: true });
       for (const [rel, content] of Object.entries(spec.files)) {
         const parts = rel.split("/");
-        const dir = await realDirectory(stateDir, parts.slice(0, -1));
+        const dir = await realDirectory(codeDir, parts.slice(0, -1));
         await writeNewFile(join(dir, parts[parts.length - 1] as string), content);
       }
       if (filesDigest !== undefined)
-        await writeNewFile(join(stateDir, DIGEST_NAME), Buffer.from(filesDigest));
+        await writeNewFile(join(codeDir, DIGEST_NAME), Buffer.from(filesDigest));
     }
     // a socket left by an earlier run would make the bind fail
     await removeEntry(join(stateDir, SOCKET_NAME));
@@ -563,7 +587,8 @@ export class ServiceSupervisor {
       ...spec.env,
       [DEVICE_SERVICE_SOCKET_ENV]: paths.socket,
       [DEVICE_SERVICE_STATE_ENV]: stateDir,
-      [DEVICE_SERVICE_WORKSPACE_ENV]: this.o.workspace,
+      // resolved, as the service's grant names it
+      [DEVICE_SERVICE_WORKSPACE_ENV]: await realpath(this.o.workspace),
     };
     await this.o.beforeLaunch?.();
     // the workspace is writable by concurrent sandboxed operations: downloads may have been
@@ -571,15 +596,22 @@ export class ServiceSupervisor {
     // strictly inside its parent (the workspace, the device's service root)
     const realState = await resolvedInside(stateDir, serviceRoot(this.o.deviceDir));
     const realDownloads = await resolvedInside(downloads, this.o.workspace);
+    const realCode = await resolvedInside(codeDir, serviceCodeRoot(this.o.deviceDir));
     const proc = await launcher.launch(
       {
         name: spec.name,
-        argv: [process.execPath, join(stateDir, spec.entry), ...spec.args],
+        argv: [process.execPath, join(realCode, spec.entry), ...spec.args],
         cwd: stateDir,
         env,
         stateDir,
         writeRoots: [realState, realDownloads],
-        readRoots: [nodeDirectory(), this.o.workspace, ...(paths.alias ? [paths.alias] : [])],
+        // the code directory is read only: it is never a write root
+        readRoots: [
+          nodeDirectory(),
+          realCode,
+          this.o.workspace,
+          ...(paths.alias ? [paths.alias] : []),
+        ],
         unixSockets: [realState, ...(paths.alias ? [paths.alias] : [])],
         tmpDir,
         ...(network && { network }),
@@ -625,8 +657,8 @@ export class ServiceSupervisor {
   /** Refuses a start without files unless the stored files were written under `digest`. */
   private async checkStoredDigest(name: string, digest: string | undefined): Promise<void> {
     if (digest === undefined) throw new ServiceFilesNeededError(name, "no files and no digest");
-    const stateDir = await realDirectory(this.o.deviceDir, ["svc", name]);
-    const stored = await readStoredDigest(stateDir);
+    const codeDir = await realDirectory(this.o.deviceDir, ["svc-files", name]);
+    const stored = await readStoredDigest(codeDir);
     if (stored === undefined) throw new ServiceFilesNeededError(name, "no files are stored");
     if (stored !== digest)
       throw new ServiceFilesNeededError(name, "the stored files have another digest");
@@ -670,20 +702,26 @@ function nodeDirectory(): string {
 }
 
 /**
- * The digest the state directory's files were written under: read without following a link and
- * only from a small regular file; anything else counts as none.
+ * The digest the code directory's files were written under: opened without following a link and
+ * without blocking (a FIFO), read only from a regular file and at most 257 bytes (a longer or
+ * growing file counts as none); anything else counts as none.
  */
-async function readStoredDigest(stateDir: string): Promise<string | undefined> {
+async function readStoredDigest(codeDir: string): Promise<string | undefined> {
   let fh: Awaited<ReturnType<typeof open>>;
   try {
-    fh = await open(join(stateDir, DIGEST_NAME), constants.O_RDONLY | constants.O_NOFOLLOW);
+    fh = await open(
+      join(codeDir, DIGEST_NAME),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch {
     return undefined;
   }
   try {
-    const st = await fh.stat();
-    if (!st.isFile() || st.size > 256) return undefined;
-    const text = (await fh.readFile("utf8")).trim();
+    if (!(await fh.stat()).isFile()) return undefined;
+    const buf = Buffer.alloc(257);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    if (bytesRead > 256) return undefined;
+    const text = buf.subarray(0, bytesRead).toString("utf8").trim();
     return FILES_DIGEST_RE.test(text) ? text : undefined;
   } finally {
     await fh.close();
@@ -702,9 +740,10 @@ function checkSpec(spec: LocalServiceSpec): void {
     throw new ServiceSpecError(`The service entry ${spec.entry} is not one of its files`);
   for (const rel of Object.keys(files)) {
     const first = rel.split("/")[0];
-    if (first === SOCKET_NAME || first === TMP_NAME || first === DIGEST_NAME)
+    // the code directory holds the digest beside the files
+    if (first === DIGEST_NAME)
       throw new ServiceSpecError(
-        `The service file ${rel} uses a name the device reserves in the state directory (${SOCKET_NAME}, ${TMP_NAME}/, ${DIGEST_NAME})`,
+        `The service file ${rel} uses a name the device reserves in the code directory (${DIGEST_NAME})`,
       );
   }
   for (const key of Object.keys(spec.env ?? {}))

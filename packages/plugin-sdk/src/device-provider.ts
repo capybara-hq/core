@@ -384,8 +384,9 @@ export const DEVICE_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
 /**
  * A long-lived service process in a device ({@link DeviceProvider.ensureService}), started on an
  * extension's behalf. It runs under the device's own sandbox (not under any one conversation's
- * operation scope), writes only in its own state directory (where `files` are written before
- * start, outside every project root), reaches the network through the device's network setting,
+ * operation scope), writes only in its own state directory (outside every project root; `files`
+ * are written before start into its code directory, read only for the service where the provider
+ * can separate code from state, else the state directory), reaches the network through the device's network setting,
  * and is killed with the instance on suspend and destroy. It speaks the service socket protocol
  * (`device-service.ts`).
  */
@@ -401,9 +402,10 @@ export interface DeviceServiceSpec {
   entry: string;
   args: string[];
   /**
-   * Written into the service's state directory before start, keyed by relative path: no absolute
-   * path, no `..` or `.` segment, no empty segment, no backslash, no NUL (the kernel refuses a
-   * spec that breaks this before any provider call).
+   * Written into the service's code directory before start (read only for the service where the
+   * provider separates code from state, else the state directory), keyed by relative path: no
+   * absolute path, no `..` or `.` segment, no empty segment, no backslash, no NUL (the kernel
+   * refuses a spec that breaks this before any provider call).
    */
   files: Record<string, Uint8Array>;
   /**
@@ -422,8 +424,9 @@ export interface DeviceServiceStatus {
   /** ISO 8601 time the running process started; null when stopped. */
   startedAt: string | null;
   /**
-   * The service's state directory in the device (absolute), also when it is stopped: where its
-   * `files` are written and its working directory. The kernel reviews the launch against it.
+   * The service's state directory in the device (absolute), also when it is stopped: its working
+   * directory and write root (its `files` too, unless the provider keeps code apart). The kernel
+   * reviews the launch against it.
    */
   stateDir: string;
 }
@@ -760,7 +763,7 @@ export interface DeviceProvider {
   /**
    * Starts the named service in the instance, or finds it running (optional, with
    * {@link DeviceProvider.stopService} and {@link DeviceProvider.serviceRequest}): writes
-   * `spec.files` into the service's state directory, then runs `spec.entry` with Node, the
+   * `spec.files` into the service's code directory, then runs `spec.entry` with Node, the
    * service socket and state directory named in its environment (`DEVICE_SERVICE_SOCKET_ENV`,
    * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
    * kernel has passed the launch through the command review before it calls this.

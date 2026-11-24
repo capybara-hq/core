@@ -71,13 +71,16 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
     signal(),
   );
   const stateDir = join(deviceDir, "svc", "browser");
+  // the code lives apart from the state, in a directory the service only reads (R30)
+  const codeDir = join(deviceDir, "svc-files", "browser");
   expect(res).toMatchObject({ ok: true, result: { name: "browser", state: "running", stateDir } });
-  expect(await readFile(join(stateDir, "main.js"), "utf8")).toBe("// main");
-  expect(await readFile(join(stateDir, "lib", "x.js"), "utf8")).toBe("// x");
+  expect(await readFile(join(codeDir, "main.js"), "utf8")).toBe("// main");
+  expect(await readFile(join(codeDir, "lib", "x.js"), "utf8")).toBe("// x");
   expect(echo.calls).toHaveLength(1);
   const call = echo.calls[0];
   expect(call?.writeRoots).toEqual([stateDir, join(workspace, "downloads")]);
-  expect(call?.argv).toEqual([process.execPath, join(stateDir, "main.js"), "--flag"]);
+  expect(call?.argv).toEqual([process.execPath, join(codeDir, "main.js"), "--flag"]);
+  expect(call?.readRoots).toContain(codeDir);
   expect(call?.cwd).toBe(stateDir);
   expect(call?.env).toMatchObject({
     FOO: "bar",
@@ -92,7 +95,7 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
 it("second ensure is a no-op while running", async () => {
   const { deviceDir, supervisor, echo } = await fixture();
   const first = await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
-  const entry = join(deviceDir, "svc", "browser", "main.js");
+  const entry = join(deviceDir, "svc-files", "browser", "main.js");
   await writeFile(entry, "// changed locally");
   const second = await serveServiceOp(
     supervisor,
@@ -275,15 +278,15 @@ async function plantedFixture() {
   const outside = join(f.root, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "secret"), "keep");
-  const stateDir = join(f.deviceDir, "svc", "browser");
-  await mkdir(stateDir, { recursive: true });
-  return { ...f, outside, stateDir };
+  const codeDir = join(f.deviceDir, "svc-files", "browser");
+  await mkdir(codeDir, { recursive: true });
+  return { ...f, outside, codeDir };
 }
 
-it("a link a service planted as a file is replaced, never followed", async () => {
+it("a link planted as a code file is replaced, never followed", async () => {
   const f = await plantedFixture();
-  await symlink(join(f.outside, "secret"), join(f.stateDir, "main.js"));
-  await link(join(f.outside, "secret"), join(f.stateDir, "other.js"));
+  await symlink(join(f.outside, "secret"), join(f.codeDir, "main.js"));
+  await link(join(f.outside, "secret"), join(f.codeDir, "other.js"));
   const res = await serveServiceOp(
     f.supervisor,
     { op: "service.ensure", spec: spec({ "main.js": "// main", "other.js": "// other" }) },
@@ -291,14 +294,15 @@ it("a link a service planted as a file is replaced, never followed", async () =>
   );
   expect(res).toMatchObject({ ok: true });
   expect(await readFile(join(f.outside, "secret"), "utf8")).toBe("keep");
-  expect((await lstat(join(f.stateDir, "main.js"))).isFile()).toBe(true);
-  expect(await readFile(join(f.stateDir, "main.js"), "utf8")).toBe("// main");
-  expect((await lstat(join(f.stateDir, "other.js"))).nlink).toBe(1);
+  expect((await lstat(join(f.codeDir, "main.js"))).isFile()).toBe(true);
+  expect(await readFile(join(f.codeDir, "main.js"), "utf8")).toBe("// main");
+  expect((await lstat(join(f.codeDir, "other.js"))).nlink).toBe(1);
 });
 
-it("a link a service planted as a directory component is refused", async () => {
+it("a code directory that is a link is refused", async () => {
   const f = await plantedFixture();
-  await symlink(f.outside, join(f.stateDir, "lib"));
+  await rm(f.codeDir, { recursive: true });
+  await symlink(f.outside, f.codeDir);
   const res = await serveServiceOp(
     f.supervisor,
     { op: "service.ensure", spec: spec({ "main.js": "//", "lib/x.js": "// x" }) },
@@ -336,15 +340,24 @@ it("a state directory or downloads that is a link is refused", async () => {
   expect(f.echo.calls).toHaveLength(0);
 });
 
-it("spec files cannot use the socket or temporary names", async () => {
+it("spec files may use any name but the digest's", async () => {
   const { supervisor } = await fixture();
-  for (const files of [
-    { "main.js": "//", s: "x" },
-    { "main.js": "//", "tmp/x": "x" },
-  ])
-    expect(
-      await serveServiceOp(supervisor, { op: "service.ensure", spec: spec(files) }, signal()),
-    ).toMatchObject({ ok: false, error: { kind: "invalid" } });
+  // the code directory is apart from the state: the socket and temporary names are free there
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: spec({ "main.js": "//", s: "x", "tmp/x": "x" }) },
+      signal(),
+    ),
+  ).toMatchObject({ ok: true });
+  await supervisor.stop("browser", signal());
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: spec({ "main.js": "//", ".files-digest": "x" }) },
+      signal(),
+    ),
+  ).toMatchObject({ ok: false, error: { kind: "invalid" } });
 });
 
 it("ifRunning starts nothing for a stopped service", async () => {
@@ -577,10 +590,20 @@ it("an owner ceiling narrowed while the service runs restarts it at the next ens
   expect(f.requests).toHaveLength(2);
 });
 
-it("every service gets the device's workspace root, which a spec cannot set", async () => {
-  const { supervisor, workspace, echo } = await fixture();
+it("every service gets the device's resolved workspace root, which a spec cannot set", async () => {
+  const f = await fixture();
+  // the supervisor is given the workspace through a link: the service gets the resolved path
+  const linked = join(f.root, "ws-link");
+  await symlink(f.workspace, linked);
+  const supervisor = new ServiceSupervisor({
+    deviceDir: f.deviceDir,
+    workspace: linked,
+    launcher: () => f.echo.launcher,
+    socketAliasRoot: join(f.root, "a"),
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
-  expect(echo.calls[0]?.env[DEVICE_SERVICE_WORKSPACE_ENV]).toBe(workspace);
+  expect(f.echo.calls[0]?.env[DEVICE_SERVICE_WORKSPACE_ENV]).toBe(f.workspace);
   const refused = await serveServiceOp(
     supervisor,
     { op: "service.ensure", spec: { ...spec(), env: { [DEVICE_SERVICE_WORKSPACE_ENV]: "/" } } },
@@ -601,7 +624,7 @@ it("digest-first files: a start reuses stored files only under the same digest",
     ok: true,
     result: { state: "running" },
   });
-  expect(await readFile(join(deviceDir, "svc", "browser", ".files-digest"), "utf8")).toBe(
+  expect(await readFile(join(deviceDir, "svc-files", "browser", ".files-digest"), "utf8")).toBe(
     "sha256:v1",
   );
   // a running service ignores files and digest
@@ -617,7 +640,7 @@ it("digest-first files: a start reuses stored files only under the same digest",
     result: { state: "running" },
   });
   expect(echo.calls).toHaveLength(2);
-  expect(await readFile(join(deviceDir, "svc", "browser", "main.js"), "utf8")).toBe("// v1");
+  expect(await readFile(join(deviceDir, "svc-files", "browser", "main.js"), "utf8")).toBe("// v1");
   await supervisor.stop("browser", signal());
   // another digest without files: files_needed, nothing started
   expect(await ensure({ spec: noFiles, filesDigest: "sha256:v2" })).toMatchObject({
@@ -656,7 +679,7 @@ it("a stored digest that is a link counts as none", async () => {
     signal(),
   );
   await supervisor.stop("browser", signal());
-  const digestFile = join(deviceDir, "svc", "browser", ".files-digest");
+  const digestFile = join(deviceDir, "svc-files", "browser", ".files-digest");
   await writeFile(join(root, "planted"), "d1");
   await rm(digestFile);
   await symlink(join(root, "planted"), digestFile);
@@ -668,4 +691,53 @@ it("a stored digest that is a link counts as none", async () => {
       signal(),
     ),
   ).toMatchObject({ ok: false, error: { kind: "files_needed" } });
+});
+
+it("a service rewriting its state directory cannot change the code a digest start runs", async () => {
+  const { deviceDir, workspace, supervisor, echo } = await fixture();
+  const stateDir = join(deviceDir, "svc", "browser");
+  const codeDir = join(deviceDir, "svc-files", "browser");
+  await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: spec({ "main.js": "// reviewed" }), filesDigest: "d1" },
+    signal(),
+  );
+  // the grant: the code directory is read, never written
+  const grant = echo.calls[0];
+  expect(grant?.readRoots).toContain(codeDir);
+  for (const root of grant?.writeRoots ?? [])
+    expect(codeDir === root || codeDir.startsWith(`${root}/`)).toBe(false);
+  expect(grant?.writeRoots).toEqual([stateDir, join(workspace, "downloads")]);
+  // what a compromised service can do: rewrite anything in its state directory
+  await writeFile(join(stateDir, "main.js"), "// evil");
+  await writeFile(join(stateDir, ".files-digest"), "d1");
+  await supervisor.stop("browser", signal());
+  const { files: _f, ...noFiles } = spec();
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: noFiles, filesDigest: "d1" },
+      signal(),
+    ),
+  ).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(echo.calls[1]?.argv[1]).toBe(join(codeDir, "main.js"));
+  expect(await readFile(join(codeDir, "main.js"), "utf8")).toBe("// reviewed");
+});
+
+it("new files replace the whole code directory", async () => {
+  const { deviceDir, supervisor } = await fixture();
+  await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: spec({ "main.js": "//", "old.js": "//" }), filesDigest: "d1" },
+    signal(),
+  );
+  await supervisor.stop("browser", signal());
+  await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: spec({ "main.js": "//" }) },
+    signal(),
+  );
+  const codeDir = join(deviceDir, "svc-files", "browser");
+  await expect(stat(join(codeDir, "old.js"))).rejects.toThrow(/ENOENT/);
+  await expect(stat(join(codeDir, ".files-digest"))).rejects.toThrow(/ENOENT/);
 });

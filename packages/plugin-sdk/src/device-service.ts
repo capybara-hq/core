@@ -5,7 +5,9 @@
  *
  * The provider starts the service with {@link DEVICE_SERVICE_SOCKET_ENV} naming the unix socket
  * the service listens on and {@link DEVICE_SERVICE_STATE_ENV} naming its state directory (the
- * only place it may write, where the spec's files were written before start). On a connection,
+ * only place it may write besides the workspace downloads). The spec's files are written before
+ * start into the service's code directory: a directory the service can only read where the
+ * provider can separate code from state, else the state directory. On a connection,
  * both sides exchange length-prefixed messages ({@link encodeServiceMessage}). The first message
  * from the provider is JSON whose `kind` is one of {@link SERVICE_CONNECTION_KINDS}:
  *
@@ -16,7 +18,7 @@
 
 /** Names the unix socket path the service listens on. */
 export const DEVICE_SERVICE_SOCKET_ENV = "CAPYBARA_SERVICE_SOCKET";
-/** Names the service's state directory (its files, its only write root). */
+/** Names the service's state directory (its own data, its write root; not where its code is). */
 export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
 /**
  * Names the device's workspace root. Every provider sets it for every service (a spec cannot set
