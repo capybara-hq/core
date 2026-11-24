@@ -30,6 +30,7 @@ const nextConfig = {
   onDemandEntries: { maxInactiveAge: 24 * 60 * 60 * 1000, pagesBufferLength: 1000 },
   ...(devOrigins.length > 0 && { allowedDevOrigins: devOrigins }),
   transpilePackages: ["@capybara-hq/design"],
+  // Dev with CAPYBARA_WEB_WEBPACK=1 only (server.mjs); dev otherwise and `next build` use Turbopack.
   webpack(config, { dev }) {
     if (dev) {
       config.resolve.conditionNames = [

@@ -95,6 +95,10 @@ Open <http://localhost:3000> in a browser: the setup wizard creates the admin an
   start, no effect on production builds). Without it the forms still work safely: every form posts
   (`web-ui-form-method`), and sign-in and setup are completed server side by the proxy
   (`apps/web/src/lib/form-post.ts`).
+- **The dev web bundles with Turbopack**: each route compiles on its first visit, in well under a
+  second for most pages. `CAPYBARA_WEB_WEBPACK=1 pnpm dev:web` falls back to webpack (slower first
+  visits, several seconds per route) if Turbopack's HMR misbehaves again, such as the login page
+  reloading on hash mismatches that once moved dev to webpack (#318).
 - When the kernel is also exposed directly, don't use a hop count; use a list of trusted proxy addresses instead (such as `CAPYBARA_HTTP__TRUST_PROXY='["10.0.0.0/8"]'`), see [docs/config.md](config.md).
 
 Next you can invite members (`POST /api/v1/orgs/:orgId/invitations`) and manage members by role (`/api/v1/orgs/:orgId/members`); for how to write kernel APIs, see [.agents/skills/writing-kernel-api](../.agents/skills/writing-kernel-api/SKILL.md).
