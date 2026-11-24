@@ -48,6 +48,8 @@ describe("secret and platformOnly marks through wrappers", () => {
         expect(f?.["x-secret"]).toBe(true);
         expect(f?.["x-platform-only"]).toBe(true);
         expect(f?.default).toBeUndefined();
+        expect(JSON.stringify(js)).not.toMatch(/"(default|examples|const|enum)"/);
+        expect(JSON.stringify(js)).not.toContain('"v"');
       });
 
       it("the static manifest lists the field as a secret", () => {
@@ -66,6 +68,31 @@ describe("secret and platformOnly marks through wrappers", () => {
       });
     });
   }
+
+  it("a wrapper's meta never clears an inner platformOnly", () => {
+    const f = platformOnly(z.string()).optional().meta({ platformOnly: false });
+    expect(isPlatformOnly(f)).toBe(true);
+    const js = configJsonSchema(z.object({ f })) as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(js.properties.f?.["x-platform-only"]).toBe(true);
+  });
+
+  it("an inner hot survives a wrapper's meta in the static manifest", () => {
+    const m = defineExtension({
+      name: "wrap-test",
+      version: "1.0.0",
+      sdk: "^0.1.0-rc.0",
+      provides: [],
+      config: {
+        deployment: z.object({ f: z.string().meta({ hot: true }).optional().meta({ ui: hints }) }),
+      },
+      setup() {},
+    });
+    expect(staticManifestOf(m).config.deployment).toEqual([
+      { path: "f", secret: false, hot: true },
+    ]);
+  });
 
   it("the helpers keep each other's keys when the outer one sits on a wrapper", () => {
     const f = platformOnly(ui(secret(z.string()), hints).optional());

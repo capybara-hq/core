@@ -25,13 +25,13 @@ export function platformOnly<T extends z.ZodTypeAny>(schema: T): T {
 
 /**
  * Whether a schema carries the {@link platformOnly} mark. It sees through `.optional()`,
- * `.default()`, `.nullable()`, `.prefault()`, `.catch()` and `.readonly()` (the outermost meta
- * wins), so it agrees with the `"x-platform-only"` that `configJsonSchema` publishes.
+ * `.default()`, `.nullable()`, `.prefault()`, `.catch()` and `.readonly()` (true when any node of
+ * the chain carries the mark, like `secret`: an outer `false` never clears an inner `true`), so it
+ * agrees with the `"x-platform-only"` that `configJsonSchema` publishes.
  */
 export function isPlatformOnly(schema: z.ZodTypeAny): boolean {
   for (const node of wrapperChain(schema)) {
-    const v = (node.meta() as { platformOnly?: unknown } | undefined)?.platformOnly;
-    if (v !== undefined) return v === true;
+    if ((node.meta() as { platformOnly?: unknown } | undefined)?.platformOnly === true) return true;
   }
   return false;
 }
