@@ -253,12 +253,13 @@ page shows it as not yet connected.
 |---|---|---|
 | Connectors page card | 待配置 + 配置 (opens the connector's edit form) | 待管理员配置, no button |
 | Extensions page row (the page is a table; extension whose effective config is invalid) | 待配置 + 配置 (the existing config sheet) | 待管理员配置, no button |
-| Agent page connector list | 待配置 | 待配置 |
+| Agent page connector list | 待配置 | 待管理员配置 (As built, R32) |
 | Tool call in a conversation | error text to the model naming that an org admin must configure the connector (existing text, `pipeline.ts`, reworded to say 待配置 in the UI string it maps to) | same |
 
 The existing agent pending entries (P4-6/P4-7) stay for connectors an agent template needs that the
 org does not have at all, for example from a plugin that is not enabled. A template connector that
-exists as `needs_config` is not missing, so the agent refers to it and shows 待配置.
+exists as `needs_config` is not missing, so the agent refers to it and shows 待配置 (待管理员配置
+to members).
 
 ### 5.3 Install, update and enable flows
 
