@@ -5946,7 +5946,6 @@
     },
     "action": {
       "enable": "启用",
-      "configure": "组织配置",
       "disable": "停用",
       "request": "申请",
       "requestEnable": "申请启用",

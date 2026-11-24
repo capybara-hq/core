@@ -5500,6 +5500,12 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
   });
 });
 
+/** The card whose name is exactly `name`, or null. */
+const cardName = (name: string) =>
+  [...document.querySelectorAll('[data-part="object-card-name"]')].find(
+    (e) => e.textContent === name,
+  ) ?? null;
+
 describe("/plugins: cards without a configure action, market source filter", () => {
   it("an on plugin with overridable config shows no 配置 and no 组织配置, a needs-config one keeps 完成设置", async () => {
     const p = en.plugins;
@@ -5552,7 +5558,7 @@ describe("/plugins: cards without a configure action, market source filter", () 
     const list = await screen.findByRole("list", { name: p.title });
     const on = rowOf(list, "cfg-on");
     expect(actionsOf(on, "cfg-on")).toEqual([]);
-    expect(within(on).queryByRole("link", { name: p.action.configure })).toBeNull();
+    expect(within(on).queryByRole("link", { name: /config/i })).toBeNull();
     expect(actionsOf(rowOf(list, "needs"), "needs")).toEqual([p.action.connectors]);
   });
 
@@ -5578,9 +5584,18 @@ describe("/plugins: cards without a configure action, market source filter", () 
       entry("src-off", "Official", "jina"),
       entry("src-obra", "Superpowers (obra)", "brainstorm"),
     ];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
     const calls = stubApi({
       [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
-      [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: all }),
+      [`GET ${ORG}/marketplaces/entries`]: async (req: { url: string }) => {
+        const id = new URL(req.url, "http://x").searchParams.get("sourceId");
+        if (id === null) return json(200, { items: all });
+        await gate;
+        return json(200, { items: all.filter((e) => e.sourceId === id) });
+      },
     });
     await renderPlugins({ locale: "en" });
     const user = userEvent.setup();
@@ -5591,5 +5606,47 @@ describe("/plugins: cards without a configure action, market source filter", () 
     expect(radios).toEqual([p.market.allSources, "Official", "Superpowers (obra)"]);
     await user.click(screen.getByRole("radio", { name: "Superpowers (obra)" }));
     await waitFor(() => expect(calls.some((c) => c.url.includes("sourceId=src-obra"))).toBe(true));
+    // Before the filtered response nothing of the unfiltered list shows
+    expect(cardName("jina")).toBeNull();
+    expect(cardName("brainstorm")).toBeNull();
+    release();
+    await waitFor(() => expect(cardName("brainstorm")).not.toBeNull());
+    expect(cardName("jina")).toBeNull();
+  });
+
+  it("a failed source read shows the error, never the unfiltered list", async () => {
+    const p = en.plugins;
+    const entry = (sourceId: string, sourceName: string, name: string) => ({
+      sourceId,
+      sourceName,
+      name,
+      version: "1.0.0",
+      summary: { en: name },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: `@x/${name}`, version: "1.0.0", integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    });
+    const all = [entry("src-off", "Official", "jina"), entry("src-obra", "Obra", "brainstorm")];
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: (req: { url: string }) =>
+        req.url.includes("sourceId=")
+          ? json(500, { error: { code: "internal", message: "boom" } })
+          : json(200, { items: all }),
+    });
+    await renderPlugins({ locale: "en" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    await screen.findByRole("list", { name: p.market.title });
+    await user.click(screen.getByRole("radio", { name: "Obra" }));
+    await waitFor(() => expect(cardName("jina")).toBeNull());
+    expect(cardName("brainstorm")).toBeNull();
+    expect(await screen.findByText(/boom|went wrong|error/i)).toBeTruthy();
   });
 });

@@ -8,7 +8,7 @@ import {
   Text,
   versionLabel,
 } from "@capybara-hq/design";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useCatalogErrorLines, useOwnerLabel } from "../../../components/CatalogParts";
@@ -82,12 +82,15 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
     retry: false,
     retryOnMount: retryOnMountOf(mq.queryKey),
   });
-  const fq = orgMarketplaceEntriesQuery(orgId, source, "");
+  // The sources the entries come from, by name; the filter shows with two or more. A chosen
+  // source that is no longer among them reads as all.
+  const sources = market.data === undefined ? [] : sourcesOf(market.data.items);
+  const chosen = sources.length > 1 && sources.some((o) => o.id === source) ? source : "";
+  const fq = orgMarketplaceEntriesQuery(orgId, chosen, "");
   const filtered = useQuery({
     ...fq,
-    enabled: admin && source !== "",
+    enabled: admin && chosen !== "",
     retry: false,
-    placeholderData: keepPreviousData,
   });
   const { actionsOf, dialog, error } = usePluginActions({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
@@ -96,10 +99,17 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
   // One row per plugin of a marketplace, at its latest version
   const entries =
     market.data === undefined ? undefined : groupMarketplaceEntries(market.data.items);
-  // The sources the entries come from, by name; the filter shows with two or more
-  const sources = market.data === undefined ? [] : sourcesOf(market.data.items);
+  // The grid of a chosen source is that source's read: loading or failed, never the unfiltered list
+  const marketStatus: "ready" | "loading" | "error" =
+    chosen === ""
+      ? "ready"
+      : filtered.isError
+        ? "error"
+        : filtered.data === undefined
+          ? "loading"
+          : "ready";
   const shown =
-    source !== "" && filtered.data !== undefined
+    chosen !== "" && filtered.data !== undefined
       ? groupMarketplaceEntries(filtered.data.items)
       : entries;
   const showMarket = admin && entries !== undefined;
@@ -158,7 +168,9 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
           header={header}
           entries={shown ?? []}
           sources={sources}
-          source={source}
+          source={chosen}
+          status={marketStatus}
+          loadError={filtered.error}
           onSource={setSource}
         />
         {upload}
@@ -261,6 +273,8 @@ function Market({
   entries,
   sources,
   source,
+  status,
+  loadError,
   onSource,
 }: {
   orgId: string;
@@ -268,6 +282,9 @@ function Market({
   entries: MarketplacePlugin[];
   sources: { id: string; name: string }[];
   source: string;
+  /** The chosen source's read (`ready` without one). */
+  status: "ready" | "loading" | "error";
+  loadError: unknown;
   onSource(id: string): void;
 }) {
   const t = useTranslations("plugins");
@@ -360,11 +377,17 @@ function Market({
     });
     return items.length > 0 ? [{ label: t("market.otherVersions"), submenu: items }] : [];
   };
+  const shownError =
+    error ??
+    (status === "error"
+      ? { message: errorMessage(loadError), extra: catalogLines(loadError) }
+      : undefined);
   return (
     <ListPage
       header={header}
       variant="cards"
       listLabel={t("market.title")}
+      {...(status === "loading" ? { loading: true as const } : {})}
       {...(sources.length > 1
         ? {
             scope: {
@@ -378,14 +401,14 @@ function Market({
             },
           }
         : {})}
-      {...(error !== undefined
+      {...(shownError !== undefined
         ? {
             callout: {
               tone: "fail" as const,
               children: (
                 <Stack gap={4}>
-                  <Text tone="fail">{error.message}</Text>
-                  {error.extra.map((m) => (
+                  <Text tone="fail">{shownError.message}</Text>
+                  {shownError.extra.map((m) => (
                     <Text key={m} variant="small" tone="fail">
                       {m}
                     </Text>
@@ -395,9 +418,11 @@ function Market({
             },
           }
         : {})}
-      {...(entries.length === 0 ? { empty: { text: t("market.empty") } } : {})}
+      {...(status === "ready" && entries.length === 0
+        ? { empty: { text: t("market.empty") } }
+        : {})}
     >
-      {entries.map((plugin) => {
+      {(status === "error" ? [] : entries).map((plugin) => {
         const e = plugin.latest;
         const state = stateOf(plugin);
         const name = displayNameOf(e, locale);

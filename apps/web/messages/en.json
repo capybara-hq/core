@@ -5958,7 +5958,6 @@
     },
     "action": {
       "enable": "Turn on",
-      "configure": "Organization config",
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
