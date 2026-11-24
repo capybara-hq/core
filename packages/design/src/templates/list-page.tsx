@@ -1,4 +1,5 @@
 import { Children, isValidElement, type ReactNode, useState } from "react";
+import { Select } from "../controls/index";
 import {
   Callout,
   type CalloutProps,
@@ -66,8 +67,8 @@ export type ListLoading =
 /**
  * The list's view choice (responsive system spec §2.2 level 2, §4): a subset of the set the head's
  * tabs choose. Compact draws it as scope chips in the quick-return bar; medium and expanded as a
- * Segmented above the list while it has {@link SEGMENTED_MAX} options or fewer, a secondary Tabs
- * row for more, and chips whenever an option carries an avatar.
+ * Segmented above the list while it has {@link SEGMENTED_MAX} options or fewer, one Select
+ * for more, and chips whenever an option carries an avatar.
  */
 export type ListScope = {
   label: string;
@@ -285,9 +286,9 @@ export function ListPage({
   };
   const shownHead = form === "compact" && hasBar ? compactHead() : head;
 
-  // Wide (spec §2.2 level 2): a Segmented for five options or fewer, a secondary Tabs row for
-  // more; a scope whose chips carry avatars (the conversations' agents) stays chips, since
-  // neither draws an avatar (§6.63).
+  // Wide (spec §2.2 level 2): a Segmented for five options or fewer, one Select for more
+  // (its filter input from ten options); a scope whose chips carry avatars (the conversations'
+  // agents) stays chips, since neither draws an avatar (§6.63).
   const wideScope = !scope ? null : scope.options.some((o) => o.avatar !== undefined) ? (
     <ScopeChips
       label={scope.label}
@@ -306,14 +307,13 @@ export function ListPage({
       }))}
     />
   ) : (
-    <Tabs
-      label={scope.label}
+    <Select
+      aria-label={scope.label}
       value={scope.value}
-      onChange={scope.onChange}
-      items={scope.options.map((o) => ({
-        id: o.value,
-        label: o.label,
-        ...(o.count !== undefined ? { count: o.count } : {}),
+      onChange={(e) => scope.onChange(e.target.value)}
+      options={scope.options.map((o) => ({
+        value: o.value,
+        label: o.count !== undefined ? `${o.label} ${o.count}` : o.label,
       }))}
     />
   );

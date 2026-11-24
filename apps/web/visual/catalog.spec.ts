@@ -94,6 +94,14 @@ for (const theme of THEMES) {
     }
 
     // 悬停 / 焦点 / 按下等交互态无法静态渲染，裁剪到元素截图。
+    // 12 个选项的范围：宽屏是一个带筛选框的 Select，裁剪到范围条。
+    test("列表：范围选择器", async ({ page }) => {
+      await open(page, "templates/list", theme);
+      const scope = page.locator('[data-part="list-scope"]');
+      await expect(scope.getByRole("combobox", { name: "来源" })).toBeVisible();
+      await expect(scope).toHaveScreenshot(shotName("templates/list-scope-select", theme));
+    });
+
     test("交互：悬停主按钮", async ({ page }) => {
       await open(page, "components", theme);
       const button = page.getByRole("button", { name: "新建智能体" }).first();
