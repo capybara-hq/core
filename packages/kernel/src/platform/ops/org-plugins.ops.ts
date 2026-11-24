@@ -3,7 +3,6 @@ import { z } from "zod";
 import { AppearanceService } from "../../catalog/appearance.service.js";
 import { CatalogScopeService } from "../../catalog/catalog-scope.service.js";
 import {
-  CatalogConnectorInput,
   CatalogItemPathParams,
   OrgPluginInstallBody,
   PluginInstallPathParams,
@@ -23,28 +22,12 @@ import { ApiError } from "../../errors.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { ThemesService } from "../../themes/themes.service.js";
-import type { ConnectorAuth } from "../../tools/credentials.js";
-import {
-  clientProblem,
-  headersWebOnly,
-  type TemplateParams,
-  type TemplateTarget,
-  templateConnectorInput,
-  templatePersonFields,
-} from "../connector-person-fields.js";
 import { FileRefSchema } from "../file-ref.js";
-import {
-  defineOperation,
-  type HandoffView,
-  type OperationContext,
-  type PrecheckResult,
-} from "../operation.js";
-import { type PersonFieldTarget, personFieldParams } from "../person-fields.js";
+import { defineOperation, type HandoffView, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { appearanceSummary, reviewBrief } from "./catalog-admin.ops.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-import { afterTaken, takePersonInputs } from "./person-inputs.js";
 import { localized, named, orElse } from "./summary.js";
 
 const InstallId = PluginInstallPathParams.shape.installId.max(100);
@@ -54,106 +37,14 @@ const EXAMPLE_ID = "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c";
 
 const ItemId = CatalogItemPathParams.shape.itemId.max(100);
 
-/**
- * The model's input for one connector template (the install's and configure's `connectors` entry
- * without its secrets): name, slug, the endpoint fields the template lets the org edit, and an
- * OAuth client's id. The credential and the client secret are person fields.
- */
-const TemplateInput = CatalogConnectorInput.pick({ name: true, slug: true, endpoint: true })
-  .extend({
-    client: z
-      .object({ clientId: z.string().min(1).max(500) })
-      .strict()
-      .optional(),
-  })
-  .strict();
-const Templates = z
-  .record(z.string().min(1).max(100), TemplateInput)
-  .refine((v) => Object.keys(v).length <= 50, { message: "Too many connector templates" });
-
 const InstallInput = z
   .object({
     itemId: ItemId,
-    templates: Templates.optional().describe(
-      "Per connector template id (plugins.get lists them), the connector's name, slug, endpoint fields and OAuth client id; never a credential.",
-    ),
     templatesOn: OrgPluginInstallBody.shape.templatesOn.describe(
-      "The connector template ids to switch on with the install (the web wizard's choose step): exactly these make connectors, the plugin's other templates are switched off in the org and stay available on the connectors page. Omit to take the templates on in the org now (default-on ones, and default-off ones an admin switched on).",
+      "The connector template ids to switch on with the install: exactly these make connectors, the plugin's other templates are switched off in the org and stay available on the connectors page. Omit to take the templates on in the org now (default-on ones, and default-off ones an admin switched on).",
     ),
-    askPerson: personFieldParams.askPerson,
   })
   .strict();
-
-const ConfigureInput = z
-  .object({
-    itemId: ItemId,
-    templates: Templates.describe(
-      "Per missing connector template id (plugins.get shows the plugin needs_config), the connector's name, slug, endpoint fields and OAuth client id; never a credential. Name every template to create, even with {}.",
-    ),
-    askPerson: personFieldParams.askPerson,
-  })
-  .strict();
-
-/** The card's person-field paths, from the plan (`personAsk`). */
-const entersText = (ctx: Pick<OperationContext, "personAsk">) => {
-  const ask = ctx.personAsk ?? [];
-  return ask.length === 0
-    ? { zh: "", en: "" }
-    : { zh: `；由本人填写 ${ask.join("、")}`, en: `; the person enters ${ask.join(", ")}` };
-};
-
-/** A template as the person-field helpers take it. */
-const targetOf = (t: {
-  id: string;
-  displayName: { en: string; zh?: string } | null | undefined;
-  auth: unknown;
-}): TemplateTarget => ({
-  id: t.id,
-  name: {
-    zh: named(t.displayName?.zh ?? t.displayName?.en ?? t.id),
-    en: named(t.displayName?.en ?? t.id),
-  },
-  auth: t.auth as ConnectorAuth,
-});
-
-/**
- * The refusal of a template input the card cannot complete, or ok: a credential the card cannot
- * ask for (custom headers), an OAuth client without its id, or a client for a template that takes
- * none.
- */
-function templatesRefusal(
-  templates: readonly TemplateTarget[],
-  params: Readonly<Record<string, TemplateParams>> | undefined,
-): PrecheckResult {
-  for (const t of templates) {
-    const where = `Connector template ${t.name.en} (${t.id})`;
-    const why = headersWebOnly(t.auth, where);
-    if (why !== null) return { ok: false, code: "platform.secret_record_web_only", message: why };
-    const client = clientProblem(t.auth, params?.[t.id]?.client, where);
-    if (client !== null) return { ok: false, code: "validation_failed", message: client };
-  }
-  return { ok: true };
-}
-
-/** The `connectors` body of the install and configure routes: params plus entered values. */
-function connectorInputs(
-  templates: readonly TemplateTarget[],
-  params: Readonly<Record<string, TemplateParams>> | undefined,
-  entered: Readonly<Record<string, string>>,
-): Record<string, Record<string, unknown>> | undefined {
-  const out: Record<string, Record<string, unknown>> = {};
-  for (const t of templates) {
-    const given = params?.[t.id];
-    const hasEntered = Object.keys(entered).some((p) => p.startsWith(`connectors.${t.id}.`));
-    if (given === undefined && !hasEntered) continue;
-    out[t.id] = templateConnectorInput(t, given, entered);
-  }
-  // a template the plan does not know (not on here) goes to the service as given: it refuses it
-  for (const [id, given] of Object.entries(params ?? {})) {
-    if (!(id in out) && !templates.some((t) => t.id === id)) out[id] = { ...given };
-  }
-  return Object.keys(out).length === 0 ? undefined : out;
-}
 
 /** One of the org's plugin installs as `plugins.installs` shows it: a compact row. */
 const installRow = (i: PluginInstallView) => ({
@@ -206,45 +97,6 @@ export class OrgPluginsOperations implements OnModuleInit {
     @Inject(ThemesService) private readonly themes: ThemesService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
-
-  /**
-   * What installing a plugin asks the person for (platform web parity spec §7.2): the connector
-   * templates whose connector the install creates (on in the org, none kept from an earlier
-   * switch-off, as the install wizard asks). The extension's config for the org is its copy of the
-   * overridable fields, saved apart (`extensions.save-org-config`).
-   */
-  private async installTargets(ctx: OperationContext, itemId: string, templatesOn?: string[]) {
-    const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, itemId);
-    const templates = d.templates
-      .filter((t) => (templatesOn === undefined ? t.on : templatesOn.includes(t.id)))
-      .filter((t) => !t.connected)
-      .map(targetOf);
-    return {
-      item: d.item,
-      templates,
-      target: {
-        target: {
-          zh: `插件「${localized(d.item.displayName, d.item.name).zh}」的安装`,
-          en: `${localized(d.item.displayName, d.item.name).en}: install`,
-        },
-        fields: templatePersonFields(templates),
-        recordOnly: [],
-      } satisfies PersonFieldTarget,
-    };
-  }
-
-  /** The missing connectors of an installed plugin that a configure call names. */
-  private async configureTargets(ctx: OperationContext, itemId: string, named: string[]) {
-    const missing = await this.installer.missingConnectors(ctx.orgId, itemId);
-    if (missing === undefined) {
-      throw new ApiError("plugin.install_not_found", "The plugin is not installed in this org");
-    }
-    return missing.templates
-      .filter((t) => named.includes(t.id))
-      .map((t) =>
-        targetOf({ id: t.id, displayName: t.file.displayName, auth: t.file.template.auth }),
-      );
-  }
 
   /** The display name of the live plugin of `extension`, or the name when it cannot be read. */
   private pluginNames(extension: string): Promise<{ zh: string; en: string }> {
@@ -671,20 +523,13 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof InstallInput>>({
         id: "plugins.install",
         description:
-          "Install a plugin in this org with its inputs (org admins; the web's install wizard): per connector template the connector's name, slug, endpoint fields and OAuth client id (templates). Secrets are never params: the person enters them in a secure input request, at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret). The extension's config for the org is its copy of the overridable fields (extensions.save-org-config). Required ones are asked even when not listed in askPerson. A plugin that needs no input is switched on with plugins.set-enabled instead.",
+          "Install a plugin in this org (org admins), optionally choosing which of its connector templates to switch on (templatesOn). It asks for no input: each connector template on becomes a connector, and one that needs an org credential or OAuth client waits as needs_config until an org admin configures it on the connectors page (connectors.list shows setup). The extension's config for the org is its copy of the overridable fields (extensions.save-org-config). plugins.set-enabled switches a plugin on with the templates on in the org now.",
         input: InstallInput,
-        example: {
-          itemId: EXAMPLE_ID,
-          templates: { github: { endpoint: { url: "https://api.githubcopilot.com/mcp/" } } },
-          askPerson: ["connectors.github.credential.token"],
-        },
+        example: { itemId: EXAMPLE_ID },
         // the route needs catalog.read; the service re-checks the plugin's component actions
         authz: { orgAction: "org.extensions.manage" },
         authzNote: "service-enforced",
         mirrors: ["POST /api/v1/orgs/:orgId/catalog/:itemId/install"],
-        // the route's connectors carry credentials: templates holds the rest, secrets are person fields
-        omits: ["connectors"],
-        extras: ["templates", "askPerson"],
         confirm: "org",
         errors: [
           { code: "catalog.item_not_found", next: "Check the plugin id with plugins.list." },
@@ -694,7 +539,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.install_failed",
-            next: "The install failed at the step its details name and was rolled back; fix that (often the connector's endpoint or credential) and call again: the person enters the credentials again on a new card.",
+            next: "The install failed at the step its details name and was rolled back; tell the person what failed.",
           },
           {
             code: "catalog.not_deployed",
@@ -702,148 +547,40 @@ export class OrgPluginsOperations implements OnModuleInit {
           },
           {
             code: "validation_failed",
-            next: "The error's details name the fields (connectors.<templateId>.…); correct the params and call again.",
-          },
-          {
-            code: "platform.secret_record_web_only",
-            next: "Tell the person to finish this on the Plugins page on the web.",
+            next: "The error's details name the field (templatesOn); correct the params and call again.",
           },
         ],
-        precheck: async (i, ctx) => {
-          let r: Awaited<ReturnType<OrgPluginsOperations["installTargets"]>> | undefined;
-          const read = await precheckBy(async () => {
-            r = await this.installTargets(ctx, i.itemId, i.templatesOn);
-          });
-          if (!read.ok || r === undefined) return read;
-          if (r.item.installed !== null) {
-            return {
-              ok: false,
-              code: "plugin.already_installed",
-              message: `Plugin ${r.item.name} is installed in this org already`,
-            };
-          }
-          return templatesRefusal(r.templates, i.templates);
-        },
-        personFields: async (i, ctx) =>
-          (await this.installTargets(ctx, i.itemId, i.templatesOn)).target,
+        precheck: async (i, ctx) =>
+          precheckBy(async () => {
+            const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, i.itemId);
+            if (d.item.installed !== null) {
+              throw new ApiError(
+                "plugin.already_installed",
+                `Plugin ${d.item.name} is installed in this org already`,
+              );
+            }
+          }),
         summary: async (i, ctx) => {
-          const { item, templates } = await this.installTargets(ctx, i.itemId, i.templatesOn);
-          const n = localized(item.displayName, item.name);
-          const e = entersText(ctx);
+          const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, i.itemId);
+          const n = localized(d.item.displayName, d.item.name);
+          const templates = d.templates.filter((t) =>
+            i.templatesOn === undefined ? t.on : i.templatesOn.includes(t.id),
+          ).length;
           return {
-            zh: `在本组织安装插件「${n.zh}」${item.latestVersion}（${templates.length} 个连接器）${e.zh}`,
-            en: `Install plugin "${n.en}" ${item.latestVersion} in the org (${templates.length} connectors)${e.en}`,
+            zh: `在本组织安装插件「${n.zh}」${d.item.latestVersion}（${templates} 个连接器）`,
+            en: `Install plugin "${n.en}" ${d.item.latestVersion} in the org (${templates} connectors)`,
           };
         },
         run: async (input, ctx) => {
-          const { templates } = await this.installTargets(ctx, input.itemId, input.templatesOn);
-          // the install runs steps in transactions of their own under the org row lock, so the
-          // values are taken first (takePersonInputs)
-          const { entered, auditDetail } = await takePersonInputs("plugins.install", ctx);
-          const connectors = connectorInputs(templates, input.templates, entered);
-          const r = await this.orgCatalog
-            .install(
-              ctx.orgId,
-              ctx.actorAccountId,
-              input.itemId,
-              {
-                ...(connectors !== undefined && { connectors }),
-                ...(input.templatesOn !== undefined && { templatesOn: input.templatesOn }),
-              } as Parameters<OrgCatalogService["install"]>[3],
-              undefined,
-              auditDetail,
-            )
-            .catch((e: unknown) => {
-              throw afterTaken(e, entered);
-            });
-          return { installed: r.installed, install: installRow(r.install) };
-        },
-      }),
-      defineOperation<z.infer<typeof ConfigureInput>>({
-        id: "plugins.configure-connectors",
-        description:
-          "Create the connectors an installed plugin is missing (org admins; the plugin shows needs_config, e.g. after a platform update added a connector template): per missing template its name, slug, endpoint fields and OAuth client id (templates). Credentials are never params: the person enters them in a secure input request at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret). Required ones are asked even when not listed in askPerson.",
-        input: ConfigureInput,
-        example: {
-          itemId: EXAMPLE_ID,
-          templates: { github: {} },
-          askPerson: ["connectors.github.credential.token"],
-        },
-        authz: { orgAction: "connectors.manage" },
-        mirrors: ["POST /api/v1/orgs/:orgId/catalog/:itemId/connectors"],
-        // the route's inputs.connectors carry credentials: templates holds the rest
-        omits: ["inputs"],
-        extras: ["templates", "askPerson"],
-        confirm: "org",
-        errors: [
-          {
-            code: "plugin.install_not_found",
-            next: "The plugin is not installed in this org; install it with plugins.install.",
-          },
-          {
-            code: "validation_failed",
-            next: "The error's details name the fields (connectors.<templateId>.…); correct the params and call again.",
-          },
-          {
-            code: "platform.secret_record_web_only",
-            next: "Tell the person to finish this on the Plugins page on the web.",
-          },
-        ],
-        precheck: async (i, ctx) => {
-          let templates: TemplateTarget[] = [];
-          const read = await precheckBy(async () => {
-            templates = await this.configureTargets(ctx, i.itemId, Object.keys(i.templates));
-          });
-          return read.ok ? templatesRefusal(templates, i.templates) : read;
-        },
-        personFields: async (i, ctx) => {
-          const templates = await this.configureTargets(ctx, i.itemId, Object.keys(i.templates));
-          return {
-            target: { zh: "插件缺少的连接器", en: "Plugin: missing connectors" },
-            fields: templatePersonFields(templates),
-          };
-        },
-        summary: async (i, ctx) => {
-          const n = await orElse(
-            async () => {
-              const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, i.itemId);
-              return localized(d.item.displayName, d.item.name);
-            },
-            { zh: named(i.itemId), en: named(i.itemId) },
-          );
-          const ids = Object.keys(i.templates).map(named).join(", ");
-          const e = entersText(ctx);
-          return {
-            zh: `为插件「${n.zh}」创建缺少的连接器 ${ids}${e.zh}`,
-            en: `Create the missing connectors ${ids} of plugin "${n.en}"${e.en}`,
-          };
-        },
-        run: async (input, ctx) => {
-          const templates = await this.configureTargets(
-            ctx,
+          const r = await this.orgCatalog.install(
+            ctx.orgId,
+            ctx.actorAccountId,
             input.itemId,
-            Object.keys(input.templates),
+            input.templatesOn !== undefined ? { templatesOn: input.templatesOn } : {},
+            undefined,
+            viaAgent("plugins.install", ctx),
           );
-          // each connector is created and recorded in transactions of its own (as the route)
-          const { entered, auditDetail } = await takePersonInputs(
-            "plugins.configure-connectors",
-            ctx,
-          );
-          return {
-            connectors: await this.installer
-              .configureConnectors(
-                ctx.orgId,
-                ctx.actorAccountId,
-                input.itemId,
-                {
-                  connectors: connectorInputs(templates, input.templates, entered) ?? {},
-                } as Parameters<PluginInstaller["configureConnectors"]>[3],
-                { auditDetail },
-              )
-              .catch((e: unknown) => {
-                throw afterTaken(e, entered);
-              }),
-          };
+          return { installed: r.installed, install: installRow(r.install) };
         },
       }),
     ]);

@@ -40,12 +40,19 @@ export type PluginStateLabel = { label: string; tone: "ok" | "warn" | "muted" };
 /**
  * The state copy of a plugin from the org's view: a pending request first (已申请，等待处理),
  * then the state; `on` for an `all` or builtin plugin reads 已启用 · 平台统一. An extension the
- * deployment lacks is said instead of 未启用 / 需要配置 (it cannot be switched on); one that cannot
- * run reads 不可用 with the kernel's reason (不可用 · 缺少部署配置).
+ * deployment lacks is said instead of off (it cannot be switched on); one that cannot run reads
+ * unavailable with the kernel's reason (unavailable · missing deployment config). A plugin never
+ * reads needs configuration: an invalid extension config shows on the extensions page.
  */
 export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
   const t = useTranslations("plugins.state");
   const tx = useTranslations("extensions");
+  const onLabel = (i: OrgCatalogItem): PluginStateLabel => {
+    if (i.builtin) return { label: t("platform"), tone: "ok" };
+    return i.scope === "all"
+      ? { label: t("platformDefault"), tone: "ok" }
+      : { label: t("on"), tone: "ok" };
+  };
   return (i) => {
     // The org's own upload waiting for the super admin (P3-9): nothing of it is usable yet
     if (i.awaitingConfirmation === true) return { label: t("awaiting"), tone: "warn" };
@@ -62,31 +69,36 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
         return { label: t("unavailable"), tone: "muted" };
       case "not_offered":
         return { label: t("not_offered"), tone: "muted" };
+      case "needs_config":
+        // its extension's config is invalid: configured on the extensions page, which shows
+        // needs setup; the plugin itself reads on when installed, else off (spec §5.2.3, §5.6)
+        if (i.installed === null) {
+          return i.notDeployed
+            ? { label: t("notDeployed"), tone: "warn" }
+            : { label: t("off"), tone: "muted" };
+        }
+        return onLabel(i);
       case "on":
-        if (i.builtin) return { label: t("platform"), tone: "ok" };
-        return i.scope === "all"
-          ? { label: t("platformDefault"), tone: "ok" }
-          : { label: t("on"), tone: "ok" };
+        return onLabel(i);
       default:
         if (i.notDeployed) return { label: t("notDeployed"), tone: "warn" };
-        return i.state === "needs_config"
-          ? { label: t("needs_config"), tone: "warn" }
-          : { label: t("off"), tone: "muted" };
+        return { label: t("off"), tone: "muted" };
     }
   };
 }
 
 /**
- * Whether switching a plugin on asks for input first (the wizard at `/plugins/<id>/enable`): its
- * connector templates (the only input the wizard collects).
+ * Whether switching a plugin on goes through its review page first (`/plugins/<id>/enable`, spec
+ * §5.6): it brings an extension (code that runs in the org) or connector templates (which become
+ * connectors, some needing configuration); else it is a direct switch.
  */
-export function needsInput(item: OrgCatalogItem): boolean {
-  return item.componentCounts.connectorTemplates > 0;
+export function reviewsFirst(item: OrgCatalogItem): boolean {
+  return item.componentCounts.extension > 0 || item.componentCounts.connectorTemplates > 0;
 }
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
 export interface PluginAction {
-  id: "enable" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
+  id: "enable" | "disable" | "request" | "requestEnable" | "withdraw";
   label: string;
   href?: string;
   onSelect?(): void;
@@ -329,30 +341,11 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
       ];
     }
-    // Installed but a connector template on here misses its connector (P2-10): Complete setup
-    if (i.state === "needs_config" && i.installed !== null) {
-      return [
-        {
-          id: "connectors",
-          label: t("action.connectors"),
-          href: `/plugins/${encodeURIComponent(i.id)}/connectors`,
-        },
-        ...(i.switchable
-          ? [
-              {
-                id: "disable" as const,
-                label: t("action.disable"),
-                danger: true,
-                onSelect: () => void disable(i),
-              },
-            ]
-          : []),
-      ];
-    }
-    if (i.state === "off" || i.state === "needs_config") {
+    // Installed and on, its extension's config waiting (it is configured on extensions): as on
+    if (i.state === "off" || (i.state === "needs_config" && i.installed === null)) {
       if (i.notDeployed) return [];
       return [
-        needsInput(i)
+        reviewsFirst(i)
           ? {
               id: "enable",
               label: t("action.enable"),

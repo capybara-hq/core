@@ -163,8 +163,14 @@ Builder's call (the maintainer did not decide this). A derived state stays true 
 removes input: an admin deletes the credential or the client, or a refused client-credentials refresh
 deletes the credentials (`credentials.ts`). A write-once column would need each of those paths to
 write it back. The state is independent of `status` (`active | disabled`), so "switched off" and
-"lacks input" stay two facts. No migration.
+"lacks input" stay two facts. No migration for the state itself.
 
+(As built, ruling R17.) `connectors.created_by` became nullable by an expand-only migration
+(`DROP NOT NULL`, after 0076): a create with no acting admin (install by scope sync, upgrade, the
+ensure job, the reconciler) stores null, the admin list shows a system creator, and paths that need
+an account fall back to the org owner. (As built, ruling R16.) A DCR connector
+(`oauth_code`, `client: "dcr"`) registers its client on the first connect, under `LockService`, not
+at create; its tools come after the first member connection, as for every `oauth_code` connector.
 The derived state applies to every connector, template or custom. The connectors page's own create
 flow is unchanged and still requires input, so in practice only template connectors (§5.2.2) and
 connectors whose input was later removed reach `needs_config`.
@@ -220,7 +226,15 @@ page shows it as not yet connected.
   `needs_config` instead of only having credentials cleared. The update preview lists them per org
   ("3 个组织需重新配置"), as `credentialsReset` does today.
 - Added templates (P2-9 changes): each becomes a connector in every org where the plugin is on, under
-  the §5.2.2 rule.
+  the §5.2.2 rule. (As built, rulings R27, R30, R31.) The upgrade diff splits each org's creates into
+  created and deferred (both part of `diffHash`): a template whose connector plugin is off in that org
+  is deferred. One routine, `ensureTemplateConnectorsIn`, creates a missing template connector for a
+  template with no live or deleted connector from it (never-had rule), each in its own transaction
+  under the org lock. It runs from scope sync, from an outbox job (queue `cap-template-connectors`,
+  id `ensure-<orgId>-<seq>`, retried while the kind is not loaded) after install and when the
+  connector plugin's org config is enabled, and from a `@LockedInterval` sweep that is the backstop
+  once the job gives up. A plugin reinstalled while its connector kind is off does not recreate a
+  soft-deleted template connector.
 - Templates newly shipped on: the same, in orgs with no connector from them.
 - Removed templates and templates newly shipped off: unchanged (their connectors stay as the org's own;
   `turnedOff` lists them).
@@ -239,12 +253,13 @@ page shows it as not yet connected.
 |---|---|---|
 | Connectors page card | 待配置 + 配置 (opens the connector's edit form) | 待管理员配置, no button |
 | Extensions page row (the page is a table; extension whose effective config is invalid) | 待配置 + 配置 (the existing config sheet) | 待管理员配置, no button |
-| Agent page connector list | 待配置 | 待配置 |
+| Agent page connector list | 待配置 | 待管理员配置 (As built, R32) |
 | Tool call in a conversation | error text to the model naming that an org admin must configure the connector (existing text, `pipeline.ts`, reworded to say 待配置 in the UI string it maps to) | same |
 
 The existing agent pending entries (P4-6/P4-7) stay for connectors an agent template needs that the
 org does not have at all, for example from a plugin that is not enabled. A template connector that
-exists as `needs_config` is not missing, so the agent refers to it and shows 待配置.
+exists as `needs_config` is not missing, so the agent refers to it and shows 待配置 (待管理员配置
+to members).
 
 ### 5.3 Install, update and enable flows
 
@@ -378,6 +393,11 @@ The builder adds a one-line pointer to this document at each amended section.
   Installed plugins with `missingConnectors` get their connectors from a one-off reconciliation job,
   enqueued at startup with a deterministic id so that it runs once across replicas. It creates the
   missing template connectors under the §5.2.2 rule. Nothing is left waiting for an upgrade.
+  (As built, rulings R22, R23, R26, R30.) The reconciler runs after extensions load, under
+  `lock:bootstrap` taken by itself outside a transaction (replicas that lose it skip the pass), and
+  writes the `templateConnectorsReconciled` mark in `deployment_settings` so it runs once; a template
+  that cannot be planned is logged and skipped. The `@LockedInterval` sweep of §5.2.3 is the
+  backstop for templates whose connector kind was not loaded at that start.
 - **Silent change for scope-synced orgs.** Plugins with templates now install by scope sync. The orgs
   get 待配置 connectors they did not ask for. This is the intended behavior (decision 2). The
   platform update preview names the orgs affected.

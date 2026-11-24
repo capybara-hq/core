@@ -64,7 +64,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { ProvenanceResult } from "../packages/provenance.js";
-import { packPackageTgz } from "../packages/tgz.js";
+import { packagePath, packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -246,6 +246,12 @@ export interface PluginReviewTemplate {
   editableEndpoint: string[];
   /** The connector is loaded on this replica and the endpoint was checked against its schema. */
   endpointChecked: boolean;
+  /**
+   * The template's own icon from the package as a `data:` URL (svg or png, at most
+   * 64 KiB), null without one. Nothing serves a staged package's files, so
+   * the review carries it; display only, not part of {@link pluginReviewHash}.
+   */
+  icon: string | null;
 }
 
 /** One agent template in a review (sub-agents spec §16.2: its tool narrowing and model tier). */
@@ -264,7 +270,17 @@ export interface PluginReviewAgentTemplate {
   effort?: AgentTemplate["effort"];
   maxSteps?: number;
   skills?: string[];
+  /**
+   * The connectors the agent needs, from its definition: a connector template id (`<id>` or
+   * `<plugin>:<id>`), or a described need with its label, endpoint and protocol; [] without any.
+   */
+  connectors: PluginReviewAgentConnector[];
 }
+
+/** One connector an agent template needs, as its review shows it. */
+export type PluginReviewAgentConnector =
+  | { template: string }
+  | { needs: { label: string; endpoint: string; protocol: "mcp" | "openapi" } };
 
 /** One theme in a review (themes spec §6): what the super admin sees before confirming. */
 export interface PluginReviewTheme {
@@ -2277,12 +2293,32 @@ export class PluginImport {
         auth: t.auth as unknown as Record<string, unknown>,
         editableEndpoint: t.editableEndpoint ?? [],
         endpointChecked: loaded !== undefined,
+        icon: reviewIcon(c.file.icon, pkg.files),
       };
     });
     const agentTemplates: PluginReviewAgentTemplate[] = pkg.agentTemplates.map((a) => {
       keepObject(a.path);
-      const { name, description, instructions, model, ...rest } = a.template;
-      return { name, path: a.path, description, instructions, model: model ?? "inherit", ...rest };
+      const { name, description, instructions, model, connectors, ...rest } = a.template;
+      return {
+        name,
+        path: a.path,
+        description,
+        instructions,
+        model: model ?? "inherit",
+        ...rest,
+        connectors: (connectors ?? []).map(
+          (c): PluginReviewAgentConnector =>
+            "template" in c
+              ? { template: c.template }
+              : {
+                  needs: {
+                    label: c.needs.label,
+                    endpoint: c.needs.endpoint,
+                    protocol: c.needs.protocol,
+                  },
+                },
+        ),
+      };
     });
     // Themes: the file as written, the assets as sanitized by the reader (never the uploaded
     // originals: a shared path, e.g. the plugin icon, is stored sanitized too)
@@ -2587,6 +2623,21 @@ export function pluginReviewHash(
       : []),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+}
+
+/**
+ * A connector template's icon (package path `icon`) as a `data:` URL for its review, null without
+ * one. The package reader checked it is an svg or png within the size limit.
+ */
+function reviewIcon(
+  icon: string | undefined,
+  files: ReadonlyMap<string, Uint8Array>,
+): string | null {
+  if (icon === undefined) return null;
+  const data = files.get(packagePath(icon));
+  if (data === undefined) return null;
+  const type = /\.png$/i.test(icon) ? "image/png" : "image/svg+xml";
+  return `data:${type};base64,${Buffer.from(data).toString("base64")}`;
 }
 
 /** The client code of a read extension package for its review (sizes from the package's files). */

@@ -165,7 +165,6 @@ describe("registration", () => {
     "PUT /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
     "DELETE /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
     "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
-    "POST /api/v1/orgs/:orgId/catalog/:itemId/connectors",
     "POST /api/v1/orgs/:orgId/connector-templates/:templateId/connectors",
   ];
 
@@ -184,8 +183,6 @@ describe("registration", () => {
       "connectors.set-org-credential",
       "connectors.set-my-credential",
       "connectors.add-from-template",
-      "plugins.install",
-      "plugins.configure-connectors",
     ]) {
       expect(op(id).personFields, id).toBeTypeOf("function");
     }
@@ -436,46 +433,25 @@ describe("credentials", () => {
 describe("a plugin with a template connector", () => {
   let itemId = "";
 
-  it("plugins.install with templatesOn asks only for the chosen templates", async () => {
+  it("plugins.install takes no connector input: no person fields, no template params", async () => {
     itemId = await importPlugin(env, await guidePlugin());
-    // a template left out is not asked for
-    expect((await personFieldsOf("plugins.install", { itemId, templatesOn: [] })).fields).toEqual(
-      [],
-    );
-    const chosen = await personFieldsOf("plugins.install", { itemId, templatesOn: [TEMPLATE_ID] });
-    expect(chosen.fields.map((f) => f.path)).toEqual([
-      `connectors.${TEMPLATE_ID}.credential.token`,
-    ]);
+    const o = op("plugins.install");
+    expect(o.personFields).toBeUndefined();
+    expect(
+      o.input.safeParse({ itemId, templates: { [TEMPLATE_ID]: { name: "GitHub" } } }).success,
+    ).toBe(false);
+    expect(o.input.safeParse({ itemId, askPerson: [] }).success).toBe(false);
     // the route's own limits: an id is a non-empty string
-    expect(op("plugins.install").input.safeParse({ itemId, templatesOn: [""] }).success).toBe(
-      false,
-    );
+    expect(o.input.safeParse({ itemId, templatesOn: [""] }).success).toBe(false);
+    expect(o.input.safeParse({ itemId, templatesOn: [TEMPLATE_ID] }).success).toBe(true);
   });
 
-  it("plugins.install asks the template's credential under connectors.<templateId>. and installs with it", async () => {
+  it("plugins.install installs without a card field; the template connector waits needs_config until connectors.set-org-credential", async () => {
     // the plugin the test above imported
-    const t = await personFieldsOf("plugins.install", {
-      itemId,
-      templates: { [TEMPLATE_ID]: { endpoint: { url: env.mcp.url } } },
-    });
-    expect(t.fields.map((f) => [f.path, f.required])).toEqual([
-      [`connectors.${TEMPLATE_ID}.credential.token`, true],
-    ]);
-    expect(t.fields[0]?.label).toEqual({ zh: "GitHub 连接器：令牌", en: "GitHub MCP: Token" });
-
     const agentId = await platformAgent("Installer");
-    const { paths, result } = await callWithCard(
-      agentId,
-      "plugins.install",
-      { itemId, templates: { [TEMPLATE_ID]: { endpoint: { url: env.mcp.url } } } },
-      { [`connectors.${TEMPLATE_ID}.credential.token`]: MCP_TOKEN },
-    );
-    // a required credential is asked though the call named none
-    expect(paths).toEqual([`connectors.${TEMPLATE_ID}.credential.token`]);
+    const { paths, result } = await callWithCard(agentId, "plugins.install", { itemId }, {});
+    expect(paths).toEqual([]);
     expect(result?.isError, result?.content).toBe(false);
-    expect(result?.content).toContain(
-      `\`connectors.${TEMPLATE_ID}.credential.token\`: entered by the person`,
-    );
     const install = await env.db
       .selectFrom("plugin_installs")
       .select(["id", "status"])
@@ -490,10 +466,27 @@ describe("a plugin with a template connector", () => {
       .where("catalog_item_id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirstOrThrow();
-    const read = (await op("connectors.get").run({ connectorId: connector.id }, ctxOf())) as {
-      connector: { credential: unknown };
+    const before = (await op("connectors.get").run({ connectorId: connector.id }, ctxOf())) as {
+      connector: { credential: unknown; setup: string };
     };
-    expect(read.connector.credential).toMatchObject({ ownership: "org", status: "connected" });
+    expect(before.connector).toMatchObject({
+      setup: "needs_config",
+      credential: { ownership: "org", status: "missing" },
+    });
+    const set = await callWithCard(
+      await platformAgent("Configurer"),
+      "connectors.set-org-credential",
+      { connectorId: connector.id },
+      { "credential.token": MCP_TOKEN },
+    );
+    expect(set.result?.isError, set.result?.content).toBe(false);
+    const read = (await op("connectors.get").run({ connectorId: connector.id }, ctxOf())) as {
+      connector: { credential: unknown; setup: string };
+    };
+    expect(read.connector).toMatchObject({
+      setup: "ready",
+      credential: { ownership: "org", status: "connected" },
+    });
     await foundNowhere(MCP_TOKEN);
 
     // installed now: a second install is refused before the card
@@ -583,27 +576,5 @@ describe("a plugin with a template connector", () => {
       name: "Ops GitHub",
       credential: { ownership: "org", status: "connected" },
     });
-  });
-
-  it("plugins.configure-connectors creates the missing connector with the token typed on the card", async () => {
-    for (const c of await templateConnectors()) {
-      await op("connectors.delete").run({ connectorId: c.id }, ctxOf());
-    }
-    const agentId = await platformAgent("Configurer");
-    const { paths, result } = await callWithCard(
-      agentId,
-      "plugins.configure-connectors",
-      { itemId, templates: { [TEMPLATE_ID]: { endpoint: { url: env.mcp.url } } } },
-      { [`connectors.${TEMPLATE_ID}.credential.token`]: MCP_TOKEN },
-    );
-    expect(paths).toEqual([`connectors.${TEMPLATE_ID}.credential.token`]);
-    expect(result?.isError, result?.content).toBe(false);
-    const [c] = await templateConnectors();
-    if (c === undefined) throw new Error("no connector created");
-    const read = (await op("connectors.get").run({ connectorId: c.id }, ctxOf())) as {
-      connector: { credential: unknown };
-    };
-    expect(read.connector.credential).toMatchObject({ ownership: "org", status: "connected" });
-    await foundNowhere(MCP_TOKEN);
   });
 });

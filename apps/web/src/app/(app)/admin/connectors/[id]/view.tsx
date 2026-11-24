@@ -157,13 +157,16 @@ function ConnectorFacts({ connector }: { connector: AdminConnectorDetail }) {
           : []),
         {
           k: td("facts.createdBy"),
-          v: (
-            <PersonName
-              name={connector.createdByName}
-              avatarUrl={connector.createdByAvatarUrl}
-              size={16}
-            />
-          ),
+          v:
+            connector.createdByName === null ? (
+              t("system")
+            ) : (
+              <PersonName
+                name={connector.createdByName}
+                avatarUrl={connector.createdByAvatarUrl}
+                size={16}
+              />
+            ),
         },
         {
           k: td("facts.synced"),

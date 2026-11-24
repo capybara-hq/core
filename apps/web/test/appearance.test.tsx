@@ -604,6 +604,7 @@ describe("an owner's update preview: the theme group follows the owner naming ru
           components: [],
           extension: null,
           connectorOrgs: [],
+          scopeInstalls: [],
           orgNames: { o3: "Named" },
           themes: [
             {

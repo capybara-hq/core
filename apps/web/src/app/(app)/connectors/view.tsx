@@ -12,7 +12,6 @@ import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
-import { useRouter } from "../../../i18n/navigation";
 import { componentDescription, componentLabel, type OrgComponent } from "../../../lib/components";
 import {
   type ConnectorDetail,
@@ -33,8 +32,11 @@ import NotFound from "../not-found";
  * `/connectors` (maintainer decision 2026-11-09): one card per connector of the org and per
  * connector template of a plugin on in the org that has no connector here yet, switched off or
  * not, each with its plugin's icon. Template cards: 未启用 with 启用 for org admins (the component
- * switch, then straight to 补充配置 for the template's input), 需要配置 with 配置 once on without its
- * connector. Connector cards (one button each, the rest in ⋯, maintainer decision 2026-11-09): a
+ * switch, which creates its connector: that connector's card follows); one on without a connector
+ * (its connector deleted, ruling R31) says so, with create connector for org admins (the
+ * switch-on again). Connector cards (one button each, the rest in ⋯, maintainer decision 2026-11-09): one that lacks the org input its auth needs (`setup: needs_config`, plugin pages
+ * spec §5.2.4) is needs-configuration with configure (its credentials tab: the template's guide, the editable endpoint, the
+ * credential or client) for org admins, waiting for an admin without a button for everyone else; a
  * personal one shows the viewer's own state, 连接 (OAuth: the connect route, back here; a
  * credential: its sheet) and, once connected, 权限 (the viewer's own tool policies for their
  * connection), with 如何连接 / 重新连接 / 断开连接 in ⋯ (`usePersonalConnections`); org admins have
@@ -50,9 +52,9 @@ export default function ConnectorsView() {
   return <Connectors orgId={ws.orgId} me={ws.me} />;
 }
 
-/** The setup of a template on in the org without its connector (ruling P2-10, 补充配置). */
-export const setupHref = (itemId: string) =>
-  `/plugins/${encodeURIComponent(itemId)}/connectors?from=connectors`;
+/** configure on a needs-configuration connector: its credentials tab, the form that takes the missing input. */
+export const configureHref = (connectorId: string) =>
+  `/connectors/${encodeURIComponent(connectorId)}?tab=credentials`;
 
 const roleOf = (me: Me) => me.memberships.find((m) => m.orgId === me.currentOrgId)?.role;
 
@@ -62,7 +64,6 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const tc = useTranslations("orgComponents");
   const tn = useTranslations("connections");
   const locale = useLocale();
-  const router = useRouter();
   const manage = canManageConnectors(me);
   // the offered templates are a catalog read: members up (guests see the connectors only)
   const member = roleOf(me) !== undefined && roleOf(me) !== "guest";
@@ -88,13 +89,9 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     guides: memberGuides,
   });
   const ownerLabel = useOwnerLabel(orgId);
-  const { actionsOf, dialog, error } = useComponentSwitch({
+  const { actionsOf, createConnectorOf, dialog, error } = useComponentSwitch({
     orgId,
     admin: manage,
-    // A template on now has no connector yet: enter its input at once
-    onEnabled: (c) => {
-      if (c.kind === "connector_template" && c.itemId !== null) router.push(setupHref(c.itemId));
-    },
   });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
@@ -193,6 +190,19 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
         <ObjectCard key={c.id} {...base} state={{ label: t("status.disabled"), tone: "muted" }} />
       );
     }
+    // Lacks the org input its auth needs: never called, so no member's connect either
+    if (c.setup === "needs_config") {
+      return manage ? (
+        <ObjectCard
+          key={c.id}
+          {...base}
+          state={{ label: t("setup.needsConfig"), tone: "warn" }}
+          primary={{ label: t("setup.configure"), href: configureHref(c.id) }}
+        />
+      ) : (
+        <ObjectCard key={c.id} {...base} state={{ label: t("setup.needsAdmin"), tone: "warn" }} />
+      );
+    }
     const parts = own && d !== undefined ? connection.parts(d) : null;
     if (parts === null) {
       return <ObjectCard key={c.id} {...base} state={{ label: t("status.active"), tone: "ok" }} />;
@@ -200,7 +210,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     return <ObjectCard key={c.id} {...base} {...parts} />;
   };
 
-  /** A template's card: off (启用 for admins) or on without its connector (配置 for admins). */
+  /** A template's card: off (enable for admins), or on without a connector (create for admins). */
   const templateCard = (c: OrgComponent) => {
     const name = componentLabel(c, locale);
     const description = componentDescription(c, locale);
@@ -222,13 +232,26 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
         ? [{ label: off.label, danger: true, onSelect: off.onSelect }]
         : [];
     if (c.on) {
+      // On without a connector here (one an admin deleted is not made again, ruling R31): org
+      // admins create it, everyone else waits for them
+      const create = createConnectorOf(c);
       return (
         <ObjectCard
           key={`template:${c.id}`}
           {...base}
-          state={{ label: t("templates.needsConfig"), tone: "warn" }}
-          {...(manage && c.itemId !== null
-            ? { primary: { label: t("templates.configure"), href: setupHref(c.itemId) } }
+          description={t("setup.noConnectorHint")}
+          state={{
+            label: manage ? t("setup.noConnector") : t("setup.needsAdmin"),
+            tone: "warn",
+          }}
+          {...(create?.onSelect !== undefined
+            ? {
+                primary: {
+                  label: create.label,
+                  onSelect: create.onSelect,
+                  ...(create.loading === true ? { loading: true } : {}),
+                },
+              }
             : {})}
           {...(menu.length > 0 ? { menu } : {})}
         />

@@ -34,6 +34,7 @@ import { ScheduleToolsPort, ScheduleUpdates } from "./builtins/schedules.js";
 import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
+import { ConnectorToolsQueueModule } from "./connector-tools-jobs.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { CredentialsModule } from "./credentials.module.js";
 import { ToolDrift } from "./drift.js";
@@ -93,6 +94,9 @@ import { ToolAskReview } from "./tool-review.js";
     // the `Platform` tool's operations, actor facts and agent docs (imports no domain module)
     PlatformModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+    // the connector tool listings owed after a create or a setup (consumer: the worker role's
+    // ConnectorToolsProcessor)
+    ConnectorToolsQueueModule,
     // a trial run's approvals become its scheduled task's grants (scheduled tasks spec §7)
     ScheduledTaskStoreModule,
     // connector credentials (also the git gateway's, without importing this module)

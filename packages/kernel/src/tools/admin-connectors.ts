@@ -24,8 +24,9 @@ export interface AdminConnectorRow {
   /** Counts every tool row of the connector, pending and missing ones included. */
   toolCount: number;
   toolsSyncedAt: Date | null;
-  createdBy: string;
-  createdByName: string;
+  /** Null: the kernel created it as no person (a plugin scope sync). */
+  createdBy: string | null;
+  createdByName: string | null;
   createdByAvatarUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -73,33 +74,36 @@ export class AdminConnectors {
   }
 
   private base() {
-    return this.db
-      .selectFrom("connectors as c")
-      .innerJoin("orgs as o", "o.id", "c.org_id")
-      .innerJoin("accounts as a", "a.id", "c.created_by")
-      .leftJoin("platform_connector_templates as pt", "pt.id", "c.platform_template_id")
-      .select((eb) => [
-        "c.id",
-        "c.org_id",
-        "o.name as org_name",
-        "c.name",
-        "c.slug",
-        "c.connector",
-        "c.status",
-        "c.platform_template_id",
-        "pt.template_id as template_name",
-        "c.catalog_item_id",
-        "c.tools_synced_at",
-        "c.created_by",
-        "a.display_name as created_by_name",
-        ...avatarColumns(eb, "a", "creator"),
-        "c.created_at",
-        "c.updated_at",
-        sql<number>`(SELECT count(*)::int FROM capybara.connector_tools t
+    return (
+      this.db
+        .selectFrom("connectors as c")
+        .innerJoin("orgs as o", "o.id", "c.org_id")
+        // a connector the kernel created as no person has no creator (ruling R17)
+        .leftJoin("accounts as a", "a.id", "c.created_by")
+        .leftJoin("platform_connector_templates as pt", "pt.id", "c.platform_template_id")
+        .select((eb) => [
+          "c.id",
+          "c.org_id",
+          "o.name as org_name",
+          "c.name",
+          "c.slug",
+          "c.connector",
+          "c.status",
+          "c.platform_template_id",
+          "pt.template_id as template_name",
+          "c.catalog_item_id",
+          "c.tools_synced_at",
+          "c.created_by",
+          "a.display_name as created_by_name",
+          ...avatarColumns(eb, "a", "creator"),
+          "c.created_at",
+          "c.updated_at",
+          sql<number>`(SELECT count(*)::int FROM capybara.connector_tools t
           WHERE t.connector_id = c.id)`.as("tool_count"),
-      ])
-      .where("c.deleted_at", "is", null)
-      .where("o.deleted_at", "is", null);
+        ])
+        .where("c.deleted_at", "is", null)
+        .where("o.deleted_at", "is", null)
+    );
   }
 
   /** Live connectors of every live org by id, filtered; `next` is the last id when more follow. */
@@ -169,8 +173,8 @@ function toRow(r: {
   template_name: string | null;
   catalog_item_id: string | null;
   tools_synced_at: Date | null;
-  created_by: string;
-  created_by_name: string;
+  created_by: string | null;
+  created_by_name: string | null;
   creator_avatar: AccountAvatar | null;
   creator_sso_avatar_url: string | null;
   created_at: Date;
@@ -192,7 +196,7 @@ function toRow(r: {
     toolsSyncedAt: r.tools_synced_at,
     createdBy: r.created_by,
     createdByName: r.created_by_name,
-    createdByAvatarUrl: personAvatarUrl(r, "creator", r.created_by),
+    createdByAvatarUrl: r.created_by === null ? null : personAvatarUrl(r, "creator", r.created_by),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

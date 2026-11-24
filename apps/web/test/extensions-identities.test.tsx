@@ -569,6 +569,33 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
     },
   );
 
+  it.each([
+    ["admin", true],
+    ["member", false],
+  ] as const)(
+    "a needs-config row for an org %s: 待配置 + 配置, or 待管理员配置 alone",
+    async (_role, admin) => {
+      const m = zh.extensions;
+      api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM, CORE] }) });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), {
+        locale: "zh",
+        ...(admin ? {} : { me: MEMBER }),
+      });
+      const row = await screen.findByRole("row", { name: /fake-im/ });
+      const core = screen.getByRole("row", { name: /core-dir/ });
+      expect(within(core).queryByRole("button", { name: m.configure })).toBeNull();
+      if (admin) {
+        expect(within(row).getByText(m.needsConfig)).toBeTruthy();
+        await userEvent.setup().click(within(row).getByRole("button", { name: m.configure }));
+        expect(await screen.findByRole("dialog", { name: "fake-im" })).toBeTruthy();
+      } else {
+        expect(within(row).getByText(m.needsAdmin)).toBeTruthy();
+        expect(within(row).queryByText(m.needsConfig)).toBeNull();
+        expect(within(row).queryByRole("button")).toBeNull();
+      }
+    },
+  );
+
   it("on with the effective config invalid and a copy to fill in: the Sheet says so", async () => {
     api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),

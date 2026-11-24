@@ -13,6 +13,7 @@ import type { KernelAppOptions } from "../app.js";
 import { MarketplacesService } from "../catalog/marketplaces.service.js";
 import { PluginImport } from "../catalog/plugin-import.js";
 import { PlatformPluginUpdater } from "../catalog/plugin-upgrade.js";
+import { TemplateConnectorReconciler } from "../catalog/template-connector-reconcile.js";
 import { ChannelJobs } from "../channels/jobs.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -152,6 +153,8 @@ export class KernelLifecycle
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(PlatformPluginUpdater) private readonly pluginUpdater: PlatformPluginUpdater,
+    @Inject(TemplateConnectorReconciler)
+    private readonly templateConnectors: TemplateConnectorReconciler,
     @Inject(KERNEL_BUS)
     private readonly bus: Pick<ExtensionContext["bus"], "publish" | "subscribe">,
     // the producers closed on every role (their consumers are the worker role's)
@@ -357,6 +360,12 @@ export class KernelLifecycle
       await this.runBootstrap(opts.bootstrap.dir, true);
       this.checkpoint();
     }
+    // The one-off reconciliation of template connectors (plugin pages spec §7): once the
+    // extensions loaded (it plans connectors against their connector extensions) and the bootstrap
+    // step's plugins are in, under `lock:bootstrap` (a replica that does not get it skips the
+    // pass). Never fails the start: what it could not create waits for a later ensure
+    await this.reconcileTemplateConnectors();
+    this.checkpoint();
     // The extra manifest's defaults (the platform default theme), at every start whether or not
     // the step ran in it (compose's `init` usually ran it): its themes exist only once the second
     // pass imported them. A no-op once applied or once a super admin chose; never fails the start
@@ -481,6 +490,21 @@ export class KernelLifecycle
         return true;
       }
       throw e;
+    }
+  }
+
+  /**
+   * Runs {@link TemplateConnectorReconciler}; an error is logged, except the stop's abort (the
+   * checkpoint after it ends the start).
+   */
+  private async reconcileTemplateConnectors(): Promise<void> {
+    try {
+      await this.templateConnectors.run(this.shutdown.signal);
+    } catch (e) {
+      if (this.shutdown.isShuttingDown()) return;
+      this.log.error("template connector reconciliation failed; retried on the next start", {
+        error: errMsg(e),
+      });
     }
   }
 

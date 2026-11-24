@@ -12,6 +12,7 @@ import { type KernelCheckArgs, SetupCheckRegistry } from "../../src/setup/setup-
 import { Credentials } from "../../src/tools/credentials.js";
 import { basicClientAuth, type OAuthClientRecord } from "../../src/tools/oauth/tokens.js";
 import {
+  configureConnector,
   importPlugin,
   install,
   type OrgEnv,
@@ -103,15 +104,7 @@ beforeAll(async () => {
       },
     }),
   );
-  const r = await install(env.boss, env, itemId, {
-    connectors: {
-      [TEMPLATE]: {
-        name: "Team Slack",
-        endpoint: { url: env.mcp.url },
-        client: { clientId: CLIENT_ID, clientSecret: SECRET },
-      },
-    },
-  });
+  const r = await install(env.boss, env, itemId);
   expect(r.statusCode, r.body).toBe(201);
   connectorId = (
     await env.db
@@ -122,6 +115,17 @@ beforeAll(async () => {
       .where("deleted_at", "is", null)
       .executeTakeFirstOrThrow()
   ).id;
+  // installs take no input (plugin pages spec §5.2.2): the admin names it and saves its client
+  const renamed = await env.boss({
+    method: "PATCH",
+    url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
+    payload: { name: "Team Slack" },
+  });
+  expect(renamed.statusCode, renamed.body).toBe(200);
+  await configureConnector(env, connectorId, {
+    credential: { clientId: CLIENT_ID, clientSecret: SECRET },
+    tools: false,
+  });
   const m2 = await accountsFor(env.db).createLocal({
     login: "mem2",
     password: PW,

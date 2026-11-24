@@ -168,6 +168,23 @@ describe("/admin/connectors", () => {
     expect(zh.adminItems.connectors.status).toEqual({ active: "启用", disabled: "停用" });
   });
 
+  it("a connector the kernel created shows the system as its creator, in the list and the detail", async () => {
+    const system = row({ createdBy: null, createdByName: null, createdByAvatarUrl: null });
+    await open("/admin/connectors", {
+      [`GET ${LIST}`]: () => json(200, { connectors: [system], next: null }),
+    });
+    const table = await screen.findByRole("table", { name: C.listLabel });
+    const tr = within(table).getByText("Jira").closest("tr") as HTMLElement;
+    expect(within(tr).getByText(C.system)).toBeTruthy();
+    expect(personAvatarSrc(tr)).toBeNull();
+    cleanup();
+    await open("/admin/connectors/c1", {
+      [`GET ${LIST}/c1`]: () => json(200, { connector: { ...DETAIL, ...system } }),
+    });
+    expect(await screen.findByText(C.system)).toBeTruthy();
+    expect(zh.adminItems.connectors.system).toBe("系统");
+  });
+
   it("a row opens the connector's detail", async () => {
     await open("/admin/connectors");
     const user = userEvent.setup();

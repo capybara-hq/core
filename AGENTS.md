@@ -168,7 +168,10 @@ Each line is the rule you must not miss; the skill has the rest.
   `packages/kernel/src/net` (and a URL a person supplies to a plugin, an overridable config URL included, through `ctx.net`). A
   platform item's scope (`all` / `optional` / `named`; an org admin may switch `all` off too,
   only built-in items are fixed) decides where it
-  is on; its skills, agent templates and connector templates are platform components, one version per
+  is on. Install, upgrade and enable collect no input: every connector template that is on becomes a
+  connector in the org, one that needs an org credential or OAuth client waits as `needs_config`
+  (待配置) until an admin configures it on the connectors page; a `needs_config` connector is never
+  called. A platform item's skills, agent templates and connector templates are platform components, one version per
   deployment, never copied into orgs; an org-owned item reaches another org only through the share
   gate (`owner_org_id IS NULL OR shareable`). An agent template describes a whole agent: any member
   creates a private copy from it (a missing connector becomes a pending entry, a setup request goes

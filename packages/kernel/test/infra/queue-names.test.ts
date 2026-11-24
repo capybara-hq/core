@@ -24,6 +24,8 @@ const ALL: Record<KernelQueueName, true> = {
   "cap-kernel-evals": true,
   "cap-kernel-lifecycle": true,
   "cap-push-deliver": true,
+  "cap-connector-tools": true,
+  "cap-template-connectors": true,
 };
 
 describe("KernelQueueName", () => {

@@ -141,6 +141,11 @@ export type ItemListItemProps = {
   marks?: ReactNode;
   /** A short kind label before the title. */
   tag?: { label: string; tone?: "default" | "accent" };
+  /**
+   * A mark tile before the title for a thing a plugin brings (spec §6.17): its icon (`image`),
+   * else the initial of `text`.
+   */
+  mark?: { text: string; image?: string | null };
   /** The title links here. */
   href?: string;
   /** Buttons at the end of the title line (dense). */
@@ -164,6 +169,7 @@ export function ItemListItem({
   code,
   marks,
   tag,
+  mark,
   href,
   actions,
   meta,
@@ -192,6 +198,7 @@ export function ItemListItem({
               {tag.label}
             </span>
           ) : null}
+          {mark ? <ObjectMark text={mark.text} image={mark.image ?? null} size={24} /> : null}
           <span className="cb-item-list-titles">
             {href ? (
               <Link href={href} className="cb-item-list-title" data-part="item-list-title">

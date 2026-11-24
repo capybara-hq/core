@@ -142,7 +142,6 @@ describe("连接器列表（ListPage，卡片）", () => {
 describe("/connectors: a card per connector and per template of a plugin on in the org", () => {
   const ITEM = "11111111-1111-4111-8111-111111111111";
   const ICON = `/api/v1/orgs/o1/catalog/${ITEM}/icon?v=0.1.0`;
-  const SETUP = `/plugins/${ITEM}/connectors?from=connectors`;
   /** An offered connector template (Slack, shipped off: defaultEnabled false). */
   const template = (over: Record<string, unknown> = {}) => ({
     kind: "connector_template",
@@ -240,10 +239,23 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(at("Google 表格")).toBeLessThan(at("Google 云端硬盘"));
   });
 
-  it("启用 switches the template on, then goes straight to entering its input (补充配置, back to /connectors)", async () => {
+  it("启用 switches the template on and stays here: its connector card arrives with the list", async () => {
     let on = false;
     const calls = stubApi({
-      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, {
+          connectors: on
+            ? [
+                summary({
+                  id: "c-slack",
+                  name: "Slack workspace",
+                  platformTemplateId: "t-slack",
+                  auth: { type: "bearer", ownership: "org" },
+                  setup: "needs_config",
+                }),
+              ]
+            : [],
+        }),
       [COMPONENTS]: () => json(200, { components: [template({ on, switch: on || null })] }),
       "PUT /api/v1/orgs/o1/components/connector_template/t-slack/switch": () => {
         on = true;
@@ -255,19 +267,94 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     await userEvent
       .setup()
       .click(within(card).getByRole("button", { name: en.orgComponents.action.enable }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith(SETUP));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true });
-    expect(
-      await screen.findByText(en.orgComponents.toast.enabled.replace("{name}", "Slack workspace")),
-    ).toBeTruthy();
+    // the connector made from it, needs-configuration with configure; no page to enter input on
+    const made = await screen.findByText(en.connectors.setup.needsConfig);
+    expect(made).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
-  it("on without a connector: 需要配置 with 配置; a template with a connector is that connector's card", async () => {
+  it.each([
+    ["admin", true],
+    ["member", false],
+  ] as const)("a needs_config connector card for an org %s", async (role, admin) => {
     stubApi({
       "GET /api/v1/orgs/o1/connectors": () =>
         json(200, {
           connectors: [
+            summary({
+              id: "c-drive",
+              name: "Google 云端硬盘",
+              platformTemplateId: "t-drive",
+              // a personal OAuth connector whose org client is missing
+              auth: OAUTH,
+              setup: "needs_config",
+            }),
+          ],
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+      "GET /api/v1/orgs/o1/connectors/c-drive": () =>
+        json(200, {
+          connector: {
+            ...detail({ id: "c-drive", name: "Google 云端硬盘", auth: OAUTH }),
+            setup: "needs_config",
+            credential: { ownership: "personal", status: "missing" },
+          },
+        }),
+    });
+    await renderList(admin ? {} : { me: MEMBER });
+    const card = await cardOf("Google 云端硬盘");
+    if (admin) {
+      expect(within(card).getByText(en.connectors.setup.needsConfig)).toBeTruthy();
+      expect(
+        within(card)
+          .getByRole("link", { name: en.connectors.setup.configure })
+          .getAttribute("href"),
+      ).toBe("/connectors/c-drive?tab=credentials");
+      // never a member's connect on a connector nobody can call yet
+      expect(within(card).queryByRole("button", { name: en.connections.oauthConnect })).toBeNull();
+    } else {
+      expect(within(card).getByText(en.connectors.setup.needsAdmin)).toBeTruthy();
+      expect(within(card).queryByRole("button")).toBeNull();
+      expect(within(card).queryByRole("link", { name: en.connectors.setup.configure })).toBeNull();
+    }
+  });
+
+  it.each(LOCALES)("a needs_config card speaks the page's language (%s)", async (locale) => {
+    const m = msgs[locale];
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, {
+          connectors: [
+            summary({ auth: { type: "bearer", ownership: "org" }, setup: "needs_config" }),
+          ],
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+    });
+    await renderList({ locale });
+    const card = await cardOf("Fixture", m.connectors.title);
+    expect(within(card).getByText(m.connectors.setup.needsConfig)).toBeTruthy();
+    expect(within(card).getByRole("link", { name: m.connectors.setup.configure })).toBeTruthy();
+  });
+
+  it("a template on without a connector says so, with 创建连接器 for org admins; a template with a connector is that connector's card", async () => {
+    let made = false;
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, {
+          connectors: [
             summary({ id: "c-gh", name: "GitHub", platformTemplateId: "t-gh", icon: ICON }),
+            ...(made
+              ? [
+                  summary({
+                    id: "c-slack",
+                    name: "Slack connector",
+                    platformTemplateId: "t-slack",
+                    setup: "needs_config",
+                    auth: { type: "bearer", ownership: "org" },
+                  }),
+                ]
+              : []),
           ],
         }),
       [COMPONENTS]: () =>
@@ -284,15 +371,27 @@ describe("/connectors: a card per connector and per template of a plugin on in t
             }),
           ],
         }),
+      "PUT /api/v1/orgs/o1/components/connector_template/t-slack/switch": () => {
+        made = true;
+        return json(200, { component: { ...template(), on: true, switch: true } });
+      },
     });
     await renderList();
     const slack = await cardOf("Slack workspace");
-    expect(within(slack).getByText(en.connectors.templates.needsConfig)).toBeTruthy();
+    // not a dead "on": what is missing, and the way to make it
+    expect(within(slack).queryByText(en.orgComponents.state.on)).toBeNull();
+    expect(within(slack).getByText(en.connectors.setup.noConnector)).toBeTruthy();
+    expect(within(slack).getByText(en.connectors.setup.noConnectorHint)).toBeTruthy();
+    expect(within(slack).queryByRole("link", { name: en.connectors.setup.configure })).toBeNull();
     expect(
-      within(slack)
-        .getByRole("link", { name: en.connectors.templates.configure })
-        .getAttribute("href"),
-    ).toBe(SETUP);
+      within(slack).queryByRole("button", { name: en.orgComponents.action.enable }),
+    ).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(slack).getByRole("button", { name: en.orgComponents.action.createConnector }));
+    // the switch-on again, which makes the connector; its card replaces the template's
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true });
+    expect(await cardOf("Slack connector")).toBeTruthy();
     const list = screen.getByRole("list", { name: en.connectors.title });
     expect(within(list).getAllByText("GitHub")).toHaveLength(1);
     expect(within(list).queryByText("CRM")).toBeNull();
@@ -324,8 +423,9 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(within(slack).getByText(en.orgComponents.state.off)).toBeTruthy();
     expect(within(slack).queryByRole("button")).toBeNull();
     const gh = await cardOf("GitHub");
-    expect(within(gh).getByText(en.connectors.templates.needsConfig)).toBeTruthy();
-    expect(within(gh).queryByRole("link", { name: en.connectors.templates.configure })).toBeNull();
+    // on without a connector: waiting for an admin, nothing to press
+    expect(within(gh).getByText(en.connectors.setup.needsAdmin)).toBeTruthy();
+    expect(within(gh).queryByRole("button")).toBeNull();
   });
 
   it.each(LOCALES)(

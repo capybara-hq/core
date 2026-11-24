@@ -437,6 +437,8 @@ export interface PluginReviewTemplate {
   auth: Record<string, unknown>;
   editableEndpoint: string[];
   endpointChecked: boolean;
+  /** The template's own icon from the package as a `data:` URL; null without one. */
+  icon: string | null;
 }
 
 /**
@@ -897,21 +899,21 @@ export interface OrgCatalogTemplate {
   editableEndpoint: string[];
   auth: Record<string, unknown>;
   ownership: "org" | "personal" | null;
-  /** The template starts switched off in every org: the install wizard does not ask for it. */
+  /** The template starts switched off in every org: enabling the plugin creates no connector. */
   defaultOff: boolean;
   /**
-   * The template is on in this org now (a default-off one an admin switched on): the install asks
-   * for its input too, since the install is what creates its connector.
+   * The template is on in this org now (a default-off one an admin switched on): enabling the
+   * plugin creates its connector too.
    */
   on?: boolean;
   /**
    * The org already has a live connector made from this template (a switch-off kept it because an
-   * agent uses it): the install takes it back, so the wizard does not ask for its input.
+   * agent uses it): enabling the plugin takes it back.
    */
   connected: boolean;
   /**
-   * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
-   * wizard shows it above the template's input. Null without one (absent for other kinds).
+   * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): shown
+   * above a template's input. Null without one (absent for other kinds).
    */
   guide?: { itemId: string; guideId: string } | null;
   /**
@@ -922,31 +924,10 @@ export interface OrgCatalogTemplate {
 }
 
 /**
- * The templates the install asks for: the default-on ones, and a default-off one an admin turned on
- * in this org (the install is what creates its connector, so its input is needed too), except one
- * whose connector the org already has (`connected`): the install reuses that connector.
- */
-export function installTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => chosenByDefault(c) && c.connected !== true);
-}
-
-/** The templates whose existing connector the install keeps instead of asking for input. */
-export function keptTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => chosenByDefault(c) && c.connected === true);
-}
-
-/**
- * Whether the install wizard starts with the template chosen: on by default, or a default-off one
- * an admin already switched on in this org.
+ * Whether enabling the plugin switches the template on (and creates or keeps its connector): on by
+ * default, or a default-off one an admin already switched on in this org.
  */
 export const chosenByDefault = (c: OrgCatalogTemplate): boolean => !c.defaultOff || c.on === true;
-
-/**
- * Whether the install wizard opens on its "choose connectors" step: the plugin has more than one connector
- * template, or a default-off one (otherwise there is nothing to choose beyond the default).
- */
-export const hasChooseStep = (templates: OrgCatalogTemplate[]): boolean =>
-  templates.length > 1 || templates.some((c) => c.defaultOff);
 
 /** `GET /orgs/:orgId/catalog/:itemId` (kernel `OrgCatalogDetail`, latest version). */
 export interface OrgCatalogDetail {
@@ -960,30 +941,6 @@ export interface OrgCatalogDetail {
   skills: string[];
   /** The agent template files (`agents/<name>.md`). */
   agents: string[];
-  /**
-   * An installed `needs_config` plugin: the connector templates on in the org that miss a
-   * connector there (Complete setup creates them); empty otherwise.
-   */
-  missingTemplates: OrgCatalogTemplate[];
-}
-
-/** What an org fills in for one connector template at install. */
-export interface ConnectorInstallInput {
-  name?: string;
-  slug?: string;
-  endpoint?: Record<string, unknown>;
-  credential?: Record<string, unknown>;
-  client?: { clientId: string; clientSecret?: string };
-}
-
-/** The org install body: template input by template id (kernel `OrgPluginInstallBody`). */
-export interface OrgInstallBody {
-  connectors?: Record<string, ConnectorInstallInput>;
-  /**
-   * The template ids to switch on with the install (the wizard's choose step): exactly these make
-   * connectors, the others are switched off in the org. Absent: the templates on there now.
-   */
-  templatesOn?: string[];
 }
 
 /** What switching a plugin off in an org takes away (kernel `UninstallPreview`). */
@@ -1014,10 +971,11 @@ export interface SwitchPreview {
   confirm: string;
 }
 
-/** `PUT /orgs/:orgId/catalog/:itemId/switch` body: on (with the install inputs), or off (with the hash). */
-export type OrgSwitchBody =
-  | { enabled: true; inputs?: OrgInstallBody }
-  | { enabled: false; confirm?: string };
+/**
+ * `PUT /orgs/:orgId/catalog/:itemId/switch` body: on (the templates on in the org make their
+ * connectors, input is entered on the connectors page after), or off (with the hash).
+ */
+export type OrgSwitchBody = { enabled: true } | { enabled: false; confirm?: string };
 
 /** What a scope change or a disable would take away (kernel `ScopePreview`). */
 export interface ScopePreview {
@@ -1112,8 +1070,16 @@ export interface PlatformUpdateComponent {
 export interface PlatformUpdateConnectorOrg {
   orgId: string;
   connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
-  /** Templates the update turns on (added, or no longer shipped off): their connectors need the org's input. */
-  needsConfig: string[];
+  /**
+   * Connectors the update creates from the templates it turns on (added, or no longer shipped
+   * off); `needs_config` ones wait for an org admin's configuration.
+   */
+  created: { templateId: string; displayName: LocalizedName; setup: "ready" | "needs_config" }[];
+  /**
+   * Templates turned on whose connector waits until the connector plugin of `kind` is on in the
+   * org (then created for it).
+   */
+  deferred: { templateId: string; displayName: LocalizedName; kind: string }[];
   /** Templates now shipped off that turn off in the org; their connectors stay. Absent when none. */
   turnedOff?: {
     templateId: string;
@@ -1140,6 +1106,11 @@ export interface PlatformUpdatePreview {
     needsApproval: boolean;
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * Orgs where the scope sync will try to install the plugin after the update (it wants it on
+   * there); `failing`: its last attempt there failed, with `lastFailure`.
+   */
+  scopeInstalls: { orgId: string; orgName: string; failing?: true; lastFailure?: string }[];
   /**
    * The names of the orgs the preview mentions, by id (an owner's update preview, Task 9: an org
    * admin cannot read other orgs' names); absent from kernels that do not send it.
@@ -1548,27 +1519,13 @@ export const listOrgMarketplaceEntries = (
 };
 
 /**
- * Switches a plugin on (with the install inputs), or off: the first off call answers
+ * Switches a plugin on, or off: the first off call answers
  * `{ preview, confirm }`, the second one carries `confirm` and answers `{ item }`.
  */
 export const setOrgPluginSwitch = (orgId: string, itemId: string, body: OrgSwitchBody) =>
   apiFetch<{ item: OrgCatalogItem } | SwitchPreview>(
     `${org(orgId)}/catalog/${enc(itemId)}/switch`,
     put(body),
-  );
-
-/**
- * Creates the connectors an installed plugin misses (`needs_config`): one input per missing
- * template, checked like an install -> 201 `{ connectors }`.
- */
-export const createPluginConnectors = (
-  orgId: string,
-  itemId: string,
-  connectors: Record<string, ConnectorInstallInput>,
-) =>
-  apiFetch<{ connectors: { templateId: string; connectorId: string }[] }>(
-    `${org(orgId)}/catalog/${enc(itemId)}/connectors`,
-    post({ inputs: { connectors } }),
   );
 
 /** The requester dismisses a decided request from the inbox (204). */
@@ -1741,7 +1698,14 @@ export interface PluginReviewAgentTemplate {
   effort?: string;
   maxSteps?: number;
   skills?: string[];
+  /** The connectors it needs: a connector template id (`<id>` / `<plugin>:<id>`) or a described need. */
+  connectors: PluginReviewAgentConnector[];
 }
+
+/** One connector an agent template needs (kernel `PluginReviewAgentConnector`). */
+export type PluginReviewAgentConnector =
+  | { template: string }
+  | { needs: { label: string; endpoint: string; protocol: "mcp" | "openapi" } };
 
 /** Routes of the `http` group: member and admin (the kernel authenticates a person). */
 const signedIn = (access: string): boolean => access === "member" || access === "admin";

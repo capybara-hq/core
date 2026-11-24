@@ -29,7 +29,6 @@ import {
   CatalogRequestBody,
   CatalogRequestsListQuery,
   NetworkRequestBody,
-  OrgPluginConnectorsSchema,
   OrgPluginInstallBody,
   OrgPluginSwitchBody,
   OrgTemplateConnectorSchema,
@@ -43,7 +42,6 @@ import {
 } from "./plugin-install.js";
 import { CatalogRequestsService, type CatalogRequestView } from "./requests.service.js";
 
-const ConnectorsBody = OrgPluginConnectorsSchema;
 const TemplateConnectorBody = OrgTemplateConnectorSchema;
 
 /**
@@ -67,7 +65,6 @@ class CatalogGuideQueryDto extends createZodDto(CatalogGuideQuery, "CatalogGuide
 class CatalogRequestsQuery extends createZodDto(CatalogRequestsListQuery, "CatalogRequestsQuery") {}
 class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBodyDto extends createZodDto(OrgPluginInstallBody, "OrgPluginInstallBody") {}
-class OrgPluginConnectorsBody extends createZodDto(ConnectorsBody, "OrgPluginConnectorsBody") {}
 class OrgPluginSwitchBodyDto extends createZodDto(OrgPluginSwitchBody, "OrgPluginSwitchBody") {}
 class OrgTemplateConnectorBody extends createZodDto(
   TemplateConnectorBody,
@@ -296,38 +293,9 @@ export class OrgCatalogController {
   }
 
   /**
-   * Creates the connectors an installed plugin is missing (ruling P2-10: a connector template on
-   * in the org without a connector there, e.g. added by a platform update; the plugin shows
-   * `needs_config`): `{ inputs: { connectors: { <templateId>: input } } }` with the same input
-   * checks as an install; recorded on the install -> 201 `{ connectors: [{ templateId,
-   * connectorId }] }`. Not installed -> 404 `plugin.install_not_found`; a template not missing ->
-   * 400 `validation_failed`.
-   */
-  @Post("catalog/:itemId/connectors")
-  @OrgAction("connectors.manage")
-  async configureConnectors(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("itemId") itemId: string,
-    @ZBody(OrgPluginConnectorsBody) body: z.infer<typeof ConnectorsBody>,
-  ): Promise<{ connectors: { templateId: string; connectorId: string }[] }> {
-    const p = requireUser(principal);
-    const tokenId = patTokenId(p);
-    return {
-      connectors: await this.pluginInstaller.configureConnectors(
-        org.orgId,
-        p.account.id,
-        itemId,
-        body.inputs as Parameters<PluginInstaller["configureConnectors"]>[3],
-        tokenId !== undefined ? { actorTokenId: tokenId } : {},
-      ),
-    };
-  }
-
-  /**
    * One more connector from a platform connector template on in the org (rulings P4-7, P4-T6-8):
-   * `{ name?, config: { slug?, endpoint?, credential?, client? } }` with the checks of an install
-   * -> 201 `{ connector, issues }` (as `POST connectors`). A template not usable in the org -> 404
+   * `{ name?, config: { slug?, endpoint?, credential?, client? } }` (the org credential or OAuth
+   * client the template needs is required) -> 201 `{ connector, issues }` (as `POST connectors`). A template not usable in the org -> 404
    * `component.not_found`; off there -> 409 `component.off`; input errors -> 400 at `config.*`.
    */
   @Post("connector-templates/:templateId/connectors")

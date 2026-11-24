@@ -32,7 +32,7 @@ async function importEntry(page: Page, pkg: string): Promise<void> {
   await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
 }
 
-test("catalog: refresh the official marketplace -> import a dependency plugin with its extension and a plugin that depends on it, each in one review -> the org 插件 page turns it on through the input wizard, installing the dependency too -> turning it off previews the kept components", async ({
+test("catalog: refresh the official marketplace -> import a dependency plugin with its extension and a plugin that depends on it, each in one review -> the org 插件 page turns it on through its review page, installing the dependency too -> turning it off previews the kept components", async ({
   page,
 }) => {
   await signIn(page);
@@ -113,7 +113,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
     )
     .toBe(200);
 
-  // 6. The org's 插件 page: crm is off and asks for input -> the enable wizard
+  // 6. The org's plugins page: crm is off and brings a connector template -> its review page
   await page.goto("/plugins");
   const appRow = page.getByRole("listitem").filter({ hasText: "CRM 套件" });
   await expect(appRow.getByRole("link", { name: P.action.enable })).toBeVisible({
@@ -121,11 +121,11 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   });
   await appRow.getByRole("link", { name: P.action.enable }).click();
   await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}\/enable$/);
-  // The connector step: url is editable (the template's only field), no auth
-  await expect(page.getByLabel("url", { exact: true })).toBeEditable();
-  await expect(page.getByText(D.org.install.noneHint)).toBeVisible();
-  await page.getByRole("button", { name: D.org.install.next }).click();
-  // Confirm: crm-core is installed with it
+  // One review page, nothing to fill in: the template it creates, crm-core installed with it
+  await expect(
+    page.getByRole("list", { name: D.components.templates }).getByText("GitHub", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveCount(0);
   await expect(page.getByText(D.org.install.summaryDependencies)).toBeVisible();
   await page.getByRole("button", { name: D.org.install.submit }).click();
 

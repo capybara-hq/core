@@ -63,6 +63,7 @@ import {
   ownerOf,
   ownersOf,
 } from "./ownership.js";
+import { PluginInstaller } from "./plugin-install.js";
 import type { PluginScope } from "./scope.js";
 
 /**
@@ -409,6 +410,8 @@ export class ComponentScopeService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The connector templates' setup guides (the org list's `guide`). */
     @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "templateGuides">,
+    /** A connector template switched on where its plugin is installed gets its connector. */
+    @Inject(PluginInstaller) private readonly installer: PluginInstaller,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -953,6 +956,14 @@ export class ComponentScopeService {
           to: body.enabled,
           ...auditDetail,
         },
+      });
+    }
+    // A connector template switched on where its plugin is installed: its connector now, as an
+    // install would make it (plugin pages spec §5.2.2), in this transaction
+    if (kind === "connector_template" && body.enabled && componentOn(c, p, listed, true)) {
+      await this.installer.createSwitchedOnTemplateConnectorIn(orgId, actor, c.id, {
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        ...(auditDetail !== undefined && { auditDetail }),
       });
     }
     return {

@@ -48,6 +48,8 @@ import {
 import { agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { canonicalJson } from "./canonical-json.js";
+import { connectorSetups } from "./connector-setup.js";
+import { type ConnectorAuth, Credentials } from "./credentials.js";
 import { toolKeyIssue } from "./naming.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 
@@ -430,8 +432,9 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  *   the org (`extension_org_configs.enabled`; required bootstrap plugins and builtin plugins'
  *   extensions are enabled in every org, `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
  *   org did not switch off (§7: the org's switch wins);
- * - connector tools: every enabled tool of every live, active connector of the org whose
- *   connector extension is installed, with a valid key.
+ * - connector tools: every enabled tool of every live, active, `ready` connector of the org
+ *   (a `needs_config` one offers none, plugin pages spec §5.2.1) whose connector extension is
+ *   installed, with a valid key.
  * What cannot be offered goes to `hidden` with the reason; nothing is reported to the model as
  * unavailable except two sources with one key (the first wins).
  */
@@ -451,6 +454,11 @@ export class ToolRegistry {
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     /** The org's switches of single extension tools (layering spec A §7). */
     @Inject(OrgToolSwitches) private readonly switches: Pick<OrgToolSwitches, "offKeys">,
+    /**
+     * The org inputs connectors need (plugin pages spec §5.2.1): a `needs_config` connector
+     * offers no tools.
+     */
+    @Inject(Credentials) private readonly credentials: Pick<Credentials, "orgInputs">,
     /**
      * `tools.searchThreshold*` and the sub-agent limits. Absent (some tests): `ToolSearch` is never
      * offered and the sub-agent limits are the schema defaults.
@@ -819,8 +827,10 @@ export class ToolRegistry {
       }
     }
 
-    // connector tools: the org's live connectors
-    for (const app of await this.loadOrgConnectors(orgId, { includeDeleted: false })) {
+    // connector tools: the org's live connectors, none from one that needs an org admin's input
+    const apps = await this.loadOrgConnectors(orgId, { includeDeleted: false });
+    const setups = await connectorSetups(this.credentials, orgId, apps);
+    for (const app of apps) {
       if (
         disabled.some(
           (r) => r.kind === "connector" && r.connectorId === app.id && r.tools === "all",
@@ -831,6 +841,13 @@ export class ToolRegistry {
       const all = connectorToolKey(app.slug, "*");
       if (app.status !== "active") {
         hidden.push({ ref: all, reason: `App ${app.slug} is disabled` });
+        continue;
+      }
+      if (setups.get(app.id) !== "ready") {
+        hidden.push({
+          ref: all,
+          reason: `Connector ${app.slug} needs to be configured by an organization admin`,
+        });
         continue;
       }
       if (!this.findConnector(app.connector)) {
@@ -909,6 +926,7 @@ export class ToolRegistry {
       id: string;
       slug: string;
       connector: string;
+      auth: ConnectorAuth;
       status: "active" | "disabled";
       tools: {
         name: string;
@@ -924,7 +942,7 @@ export class ToolRegistry {
   > {
     const apps = await this.db
       .selectFrom("connectors")
-      .select(["id", "slug", "connector", "status"])
+      .select(["id", "slug", "connector", "auth", "status"])
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .orderBy("slug")
@@ -954,6 +972,7 @@ export class ToolRegistry {
       id: a.id,
       slug: a.slug,
       connector: a.connector,
+      auth: a.auth as unknown as ConnectorAuth,
       status: a.status,
       tools: toolRows
         .filter((t) => t.connector_id === a.id)

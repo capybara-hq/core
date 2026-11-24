@@ -245,6 +245,20 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
   );
 
   it.each(LOCALES)(
+    "a 待配置 row offers 配置, which opens its Sheet; other rows none (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      listRoutes([plugin(), S3]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const s3 = tableRow("object-store-s3");
+      expect(within(s3).getByText(p.status.pending_config)).toBeTruthy();
+      expect(within(tableRow("demo")).queryByRole("button", { name: p.configure })).toBeNull();
+      await userEvent.setup().click(within(s3).getByRole("button", { name: p.configure }));
+      expect(await screen.findByRole("dialog", { name: "object-store-s3" })).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
     "a row opens a Sheet: config, state, the actions and replicas, permissions folded (%s)",
     async (locale) => {
       const p = msgs[locale].admin.extensions;

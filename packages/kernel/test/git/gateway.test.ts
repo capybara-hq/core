@@ -1043,6 +1043,50 @@ describe("the next gateway request fails once access is revoked", () => {
     expect((await get(ticket)).statusCode).toBe(403);
   });
 
+  it("a connector that needs an org admin's configuration says so, not reconnect", async () => {
+    // a member's own authorization-code connection whose manually registered OAuth client is not
+    // stored (needs_config): the member holds a token, but only an org admin can fix it
+    const id = randomUUID();
+    const auth: ConnectorAuth = {
+      type: "oauth_code",
+      ownership: "personal",
+      discovery: "manual",
+      authorizationUrl: "https://auth.example.com/authorize",
+      tokenUrl: "https://auth.example.com/token",
+      client: "manual",
+    };
+    await db
+      .insertInto("connectors")
+      .values({
+        id,
+        org_id: orgId,
+        slug: `own-${id.slice(0, 6)}`,
+        name: "Own",
+        connector: "fake",
+        endpoint: JSON.stringify({}),
+        auth: JSON.stringify(auth),
+        created_by: ownerId,
+        git_hosts: JSON.stringify([{ host: BOT_HOST, username: "x-access-token" }]),
+      })
+      .execute();
+    made.push(id);
+    await k.app
+      .get(Credentials)
+      .setOAuthTokens(
+        orgId,
+        id,
+        { kind: "user", accountId: bob },
+        { access_token: TOKEN, expires_at: Date.now() + 3_600_000, token_type: "Bearer" },
+      );
+    const { ticket } = await ticketFor({ accountId: bob, hosts: [BOT_HOST] });
+    const res = await get(ticket);
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toContain(
+      `the connector that serves ${BOT_HOST} needs to be configured by an organization admin`,
+    );
+    expect(res.body).not.toContain("Reconnect it");
+  });
+
   it("use_for_git turned off", async () => {
     const { ticket, connector } = await working();
     await db

@@ -213,6 +213,21 @@ describe("AdminConnectors", () => {
     expect(byId[fx.open]?.createdByAvatarUrl).toBeNull();
   });
 
+  it("a connector the kernel created as no person is listed with no creator", async () => {
+    await db
+      .updateTable("connectors")
+      .set({ created_by: null })
+      .where("id", "=", fx.open)
+      .execute();
+    const { connectors } = await admin().list({ limit: 50 });
+    expect(connectors.find((c) => c.id === fx.open)).toMatchObject({
+      createdBy: null,
+      createdByName: null,
+      createdByAvatarUrl: null,
+    });
+    expect((await admin().get(fx.open)).createdBy).toBeNull();
+  });
+
   it("lists live connectors of every org with tool counts", async () => {
     const { connectors, next } = await admin().list({ limit: 50 });
     expect(next).toBeNull();

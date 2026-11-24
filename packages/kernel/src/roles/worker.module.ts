@@ -5,6 +5,7 @@ import { RetireLegacyTasksJob } from "../background/retire-legacy-tasks.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
+import { TemplateConnectorsWorkersModule } from "../catalog/template-connectors.processor.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
 import { ClientModule } from "../client/client.module.js";
@@ -42,6 +43,7 @@ import { ShareObjectsModule } from "../shares/share-objects.js";
 import { ShareSweepJob } from "../shares/sweep.job.js";
 import { StoragePurgeJob } from "../storage/purge.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { ConnectorToolsWorkersModule } from "../tools/connector-tools.processor.js";
 import { ToolJobs } from "../tools/jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { WorkerRole } from "./worker-role.js";
@@ -51,7 +53,7 @@ import { WorkerRole } from "./worker-role.js";
  * `worker`: the cron scheduler and the `@LockedInterval` scheduler (`KernelScheduleModule`, the one
  * place `ScheduleModule.forRoot` is imported), every fixed-period job (`@LockedCron` /
  * `@LockedInterval`, each once per tick across replicas), every queue consumer (`@Processor`: runs,
- * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync, push deliveries) and
+ * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync, push deliveries, connector tool listings) and
  * {@link WorkerRole}, which `KernelLifecycle` drives. A process without the worker role runs no cron
  * and no BullMQ worker (the queues' producers exist on every role).
  */
@@ -75,6 +77,11 @@ export class WorkerModule {
         LifecycleHookWorkersModule,
         // push deliveries (`cap-push-deliver`) and the daily stale registration prune
         PushWorkersModule,
+        // connector tool listings owed after a create or a setup (`cap-connector-tools`)
+        ConnectorToolsWorkersModule,
+        // template connectors an org never had, owed by installs and extension switch-ons
+        // (`cap-template-connectors`)
+        TemplateConnectorsWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         RunJobsModule,

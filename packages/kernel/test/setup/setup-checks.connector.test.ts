@@ -5,6 +5,7 @@ import { ExtensionHost } from "../../src/extensions/host.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type KernelCheckArgs, SetupCheckRegistry } from "../../src/setup/setup-check-registry.js";
 import {
+  configureConnector,
   importPlugin,
   install,
   MCP_TOKEN,
@@ -95,15 +96,7 @@ beforeAll(async () => {
     PLUGIN,
   );
   await enableExtensions(env.db, env.orgId, PLUGIN);
-  const r = await install(env.boss, env, itemId, {
-    connectors: {
-      [TEMPLATE]: {
-        name: "Team GitHub",
-        endpoint: { url: env.mcp.url },
-        credential: { token: MCP_TOKEN },
-      },
-    },
-  });
+  const r = await install(env.boss, env, itemId);
   expect(r.statusCode, r.body).toBe(201);
   connectorId = (
     await env.db
@@ -114,6 +107,14 @@ beforeAll(async () => {
       .where("deleted_at", "is", null)
       .executeTakeFirstOrThrow()
   ).id;
+  // installs take no input (plugin pages spec §5.2.2): the admin names and configures it
+  const renamed = await env.boss({
+    method: "PATCH",
+    url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
+    payload: { name: "Team GitHub" },
+  });
+  expect(renamed.statusCode, renamed.body).toBe(200);
+  await configureConnector(env, connectorId, { tools: false });
   mem2Id = (
     await accountsFor(env.db).createLocal({ login: "mem2", password: PW, displayName: "M2" })
   ).id;
@@ -333,6 +334,12 @@ describe("setup guides for connectors", () => {
   });
 
   it("a template on in the org without a connector is listed for admins, not members", async () => {
+    // with a connector from the template, setup.read without a target points at its configure page (the
+    // credentials tab)
+    const configure = await callOp("setup.read", { itemId, guideId: "gh" }, env.bossId);
+    expect((configure.guide as { webPath: string }).webPath).toBe(
+      `/connectors/${connectorId}?tab=credentials`,
+    );
     await env.db
       .updateTable("connectors")
       .set({ deleted_at: sql`now()` })
@@ -347,15 +354,14 @@ describe("setup guides for connectors", () => {
           name: expect.any(String),
           drift: null,
           checks: null,
-          webPath: `/connectors/install?template=${itemId}`,
+          webPath: "/connectors",
         },
       ],
     ]);
     expect(await guideList(env.mem)).toEqual([]);
-    // without a target, setup.read points at the install page
+    // without a target or a connector, setup.read points at the connectors page (the template's
+    // card makes the connector)
     const out = await callOp("setup.read", { itemId, guideId: "gh" }, env.bossId);
-    expect((out.guide as { webPath: string }).webPath).toBe(
-      `/connectors/install?template=${itemId}`,
-    );
+    expect((out.guide as { webPath: string }).webPath).toBe("/connectors");
   });
 });

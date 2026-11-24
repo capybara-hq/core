@@ -331,8 +331,12 @@ const stateTooLargeText = (key: string) =>
   `Tool ${key} returned input state larger than ${MAX_INPUT_STATE_BYTES / 1024} KB.`;
 const personalMissingText = (connectorName: string) =>
   `The user has not connected ${connectorName}. A connect card was shown; ask the user to connect, then retry.`;
-const orgMissingText = (connectorName: string) =>
-  `${connectorName} has no organization credential configured; ask an organization admin to set it up.`;
+/**
+ * A connector lacking its org input (`needs_config`, plugin pages spec §5.2.1): `Credentials`
+ * throws an org `CredentialMissing` before any credential is presented, so the call never opens.
+ */
+const ORG_MISSING_TEXT =
+  "This connector needs to be configured by an organization admin before it can be used.";
 
 // ---- 策略（判定见 policy.ts） ----
 
@@ -1456,9 +1460,13 @@ export class ToolPipeline {
 
     const tool = resolved.tools.find((t) => t.key === call.name);
     if (!tool) {
+      // a hidden `<prefix>__*` ref covers every tool of that source (a disabled or needs_config
+      // connector), so a call of one of them gets the reason, not "unknown tool"
+      const covers = (ref: string) =>
+        ref === call.name || (ref.endsWith("__*") && call.name.startsWith(ref.slice(0, -1)));
       const why =
         resolved.unavailable.find((u) => u.ref === call.name) ??
-        resolved.hidden?.find((u) => u.ref === call.name);
+        resolved.hidden?.find((u) => covers(u.ref));
       if (why) return fail(unavailableText(call.name, why.reason));
       let keys = resolved.tools.map((t) => t.key);
       // ToolSearch 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具
@@ -3593,13 +3601,15 @@ export class ToolPipeline {
             connectorSlug: app.slug,
             message: personalMissingText(app.name),
           }
-        : { kind: "error", message: orgMissingText(app.name) };
-    // 先取一次凭据：缺凭据在打开会话之前就确定，不依赖连接器把 CredentialMissing 原样抛出。
+        : { kind: "error", message: ORG_MISSING_TEXT };
+    // Read the credential once first: a missing one (or a needs_config connector) is settled before
+    // any session opens, without relying on the connector to rethrow CredentialMissing.
     try {
       await getAuth();
     } catch (e) {
       if (e instanceof CredentialMissing) return missing(e);
-      // 取 token 时授权服务器暂时不可用（OAuth）：给模型可执行的说明，不让整轮失败
+      // the authorization server is briefly unavailable for the token (OAuth): an actionable
+      // message for the model instead of failing the whole turn
       if (e instanceof ToolError) return { kind: "error", message: e.message };
       throw e;
     }

@@ -29,6 +29,7 @@ import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../sk
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorTemplateRef, CreateConnectorInput } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
+import { mergeEditableEndpoint } from "../tools/editable-endpoint.js";
 import type { CatalogItemView } from "./catalog.service.js";
 import { readDisplayFiles } from "./catalog-files.js";
 import type {
@@ -68,9 +69,9 @@ export interface OrgCatalogItem
   /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */
   builtin: boolean;
   /**
-   * The effective state in this org: `on`, `off`, `needs_config` (installed with an on connector
-   * template that has no connector here, ruling P2-10; or wanted but not installed, and the
-   * install needs inputs), `unavailable` (disabled by the super admin, members don't see it; or
+   * The effective state in this org: `on`, `off`, `needs_config` (the plugin's extension has no
+   * valid effective config for the org, installed or wanted; connector setup shows on the
+   * connectors, plugin pages spec §5.2.3), `unavailable` (disabled by the super admin, members don't see it; or
    * not installed here and its extension cannot run on the deployment, see `reason`) or
    * `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
    */
@@ -127,8 +128,7 @@ export interface OrgCatalogTemplate {
   on: boolean;
   /**
    * The org already has a live connector made from this template (a switch-off kept it because an
-   * agent uses it): the install takes that connector back instead of creating one, so it does not
-   * ask for the template's input.
+   * agent uses it): the install takes that connector back instead of creating one.
    */
   connected: boolean;
   /**
@@ -160,12 +160,6 @@ export interface OrgCatalogDetail {
   skills: string[];
   /** The agent template files (`agents/<name>.md`, sub-agents spec §16). */
   agents: string[];
-  /**
-   * An installed plugin whose connector templates on in the org miss a connector there
-   * (`needs_config`, ruling P2-10): those templates, for `POST …/catalog/:itemId/connectors`;
-   * empty otherwise (Task 10).
-   */
-  missingTemplates: OrgCatalogTemplate[];
 }
 
 /**
@@ -368,41 +362,7 @@ export async function lockOrgForActions(
   }
 }
 
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
-const UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
-
-/** 对象的全部叶子点路径（数组与非对象值算叶子）。 */
-function leafPaths(v: Record<string, unknown>, base = ""): string[] {
-  const out: string[] = [];
-  for (const [k, x] of Object.entries(v)) {
-    const p = base ? `${base}.${k}` : k;
-    if (isObj(x) && Object.keys(x).length > 0) out.push(...leafPaths(x, p));
-    else out.push(p);
-  }
-  return out;
-}
-
-/** The value at a dot path of `v` (own keys only), undefined when absent. */
-export function getPath(v: unknown, path: string): unknown {
-  let node: unknown = v;
-  for (const seg of path.split(".")) {
-    if (!isObj(node) || !Object.hasOwn(node, seg)) return undefined;
-    node = node[seg];
-  }
-  return node;
-}
-
-/** Sets the value at a dot path of `obj`, creating the objects on the way. */
-export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const segs = path.split(".");
-  let node = obj;
-  for (const seg of segs.slice(0, -1)) {
-    if (!isObj(node[seg])) node[seg] = {};
-    node = node[seg] as Record<string, unknown>;
-  }
-  node[segs[segs.length - 1] as string] = value;
-}
+export { getPath, setPath } from "../tools/editable-endpoint.js";
 
 /** The connector `kind` provided by extension `plugin` loaded on this replica (from the registry). */
 export function findConnectorIn(
@@ -465,28 +425,15 @@ export function templateConnectorInput(
   const problem = templatePluginProblem(deps, template);
   if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
   const given = input ?? {};
-  const editable = template.editableEndpoint ?? [];
-  const endpoint = structuredClone(template.endpoint);
-  if (given.endpoint !== undefined) {
-    if (!isObj(given.endpoint)) throw fail(`${at}.endpoint`, "Expected an object");
-    for (const p of leafPaths(given.endpoint)) {
-      const segs = p.split(".");
-      if (segs.some((s) => UNSAFE_KEYS.has(s))) {
-        throw fail(`${at}.endpoint.${p}`, "Invalid key");
-      }
-      const allowed = editable.some((e) => p === e || p.startsWith(`${e}.`));
-      if (!allowed) {
-        throw fail(
-          `${at}.endpoint.${p}`,
-          "This endpoint field is set by the template and cannot be changed",
-        );
-      }
-    }
-    for (const e of editable) {
-      const v = getPath(given.endpoint, e);
-      if (v !== undefined) setPath(endpoint, e, v);
-    }
-  }
+  const endpoint =
+    given.endpoint === undefined
+      ? structuredClone(template.endpoint)
+      : mergeEditableEndpoint(
+          template.endpoint,
+          template.editableEndpoint ?? [],
+          given.endpoint,
+          at,
+        ).endpoint;
   const auth = template.auth as unknown as ConnectorAuth;
   const oauth = auth.type === "oauth_code" || auth.type === "oauth_client";
   if (oauth && given.credential !== undefined) {

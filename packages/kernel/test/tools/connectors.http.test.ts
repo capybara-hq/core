@@ -26,6 +26,8 @@ import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { OrgNetworkAllowances } from "../../src/orgs/network-allowances.service.js";
+import { Credentials } from "../../src/tools/credentials.js";
+import { ToolDrift } from "../../src/tools/drift.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -1073,6 +1075,204 @@ describe("a member's own tool policies (the card's 权限, decision 2026-11-09)"
       url: `/api/v1/orgs/${other}/connectors/${app.id}/tool-policies/me`,
     });
     expect(cross.statusCode).toBe(404);
+  });
+});
+
+describe("the derived setup state (plugin pages spec §5.2.1): needs_config is never called", () => {
+  // a needs_config connector offers no tools; a call of one of them gets the hidden reason (the
+  // pipeline's configure text covers a call resolved before the input went away: pipeline.test.ts)
+  const NOT_OFFERED =
+    'Tool "mcp__docs__search" is unavailable: Connector docs needs to be configured by an organization admin.';
+  let req: Req;
+  let orgId: string;
+
+  beforeEach(async () => {
+    req = await session("owner");
+    orgId = await createOrgWithProviders(k, req);
+    await enableConnectorExtensions(k, orgId);
+  });
+
+  /** A `fake` connector on the fake MCP server, created (and its tools listed) with an org credential. */
+  async function createDocs(): Promise<string> {
+    const { connector } = await createConnector(req, orgId, {
+      slug: "docs",
+      connector: "fake",
+      endpoint: { url: mcp.url },
+    });
+    return connector.id;
+  }
+
+  const setupOf = async (connectorId: string) => {
+    const one = await req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
+    });
+    const all = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors` });
+    const listed = (all.json() as { connectors: { id: string; setup: string }[] }).connectors.find(
+      (c) => c.id === connectorId,
+    );
+    const detail = (one.json() as { connector: { setup: string } }).connector.setup;
+    // the list and the detail derive it the same way
+    expect(listed?.setup).toBe(detail);
+    return detail;
+  };
+
+  /** Asks the agent to call `mcp__docs__search` and returns the call's tool result. */
+  async function callSearch() {
+    const conv = await createConv(req, orgId, await createAgent(req, orgId));
+    await postMessage(req, orgId, conv, 'tool:mcp__docs__search:{"q":"x"}');
+    await waitForTerminal(db, conv, 1, 20_000);
+    const result = (await eventsOf(db, conv)).find((e) => e.type === "tool_result");
+    return result?.payload as { toolKey: string; content: string; isError: boolean };
+  }
+
+  it("removing the org credential turns setup back to needs_config; saving it again makes it ready", async () => {
+    const id = await createDocs();
+    expect(await setupOf(id)).toBe("ready");
+    await k.app.get(Credentials).clear(orgId, id, { kind: "org" });
+    expect(await setupOf(id)).toBe("needs_config");
+    const put = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/connectors/${id}/credentials/org`,
+      payload: { token: TOKEN },
+    });
+    expect(put.statusCode).toBe(204);
+    expect(await setupOf(id)).toBe("ready");
+  });
+
+  it("a needs_config static org connector (no org credential) is never called", async () => {
+    const id = await createDocs();
+    await k.app.get(Credentials).clear(orgId, id, { kind: "org" });
+    expect(await setupOf(id)).toBe("needs_config");
+    const before = mcp.requests.length;
+    const r = await callSearch();
+    expect(r).toMatchObject({ toolKey: "mcp__docs__search", isError: true });
+    expect(r.content).toBe(NOT_OFFERED);
+    expect(mcp.requests.length).toBe(before);
+  });
+
+  it("a needs_config connector (no OAuth client) is never called; the model gets the configure text", async () => {
+    const id = await createDocs();
+    // the connector's auth becomes client credentials, with no OAuth client stored
+    await sql`UPDATE capybara.connectors SET auth = ${JSON.stringify({
+      type: "oauth_client",
+      ownership: "org",
+      tokenUrl: "https://auth.example.com/token",
+    })}::jsonb WHERE id = ${id}`.execute(raw);
+    expect(await setupOf(id)).toBe("needs_config");
+    const before = mcp.requests.length;
+    const r = await callSearch();
+    expect(r).toMatchObject({ toolKey: "mcp__docs__search", isError: true });
+    expect(r.content).toBe(NOT_OFFERED);
+    expect(mcp.requests.length).toBe(before);
+    // storing the client is the input it lacked
+    await k.app.get(Credentials).setOAuthClient(orgId, id, {
+      clientId: "client-1",
+      clientSecret: "client-secret-1",
+      authMethod: "client_secret_basic",
+      tokenEndpoint: "https://auth.example.com/token",
+    });
+    expect(await setupOf(id)).toBe("ready");
+  });
+});
+
+describe("a needs_config manual-client OAuth connector whose member still holds a token is never called", () => {
+  const MEMBER_TOKEN = "member-oauth-token-5e1f0c";
+  let req: Req;
+  let orgId: string;
+  let id: string;
+
+  beforeEach(async () => {
+    req = await session("owner");
+    orgId = await createOrgWithProviders(k, req);
+    await enableConnectorExtensions(k, orgId);
+    const { connector } = await createConnector(req, orgId, {
+      slug: "docs",
+      connector: "fake",
+      endpoint: { url: mcp.url },
+    });
+    id = connector.id;
+    // the auth becomes an authorization-code flow with a manual client that is not stored, while
+    // the owner keeps a valid token of their own
+    await sql`UPDATE capybara.connectors SET auth = ${JSON.stringify({
+      type: "oauth_code",
+      ownership: "personal",
+      discovery: "manual",
+      authorizationUrl: "https://auth.example.com/authorize",
+      tokenUrl: "https://auth.example.com/token",
+      client: "manual",
+    })}::jsonb WHERE id = ${id}`.execute(raw);
+    const creds = k.app.get(Credentials);
+    await creds.clear(orgId, id, { kind: "org" });
+    await creds.setOAuthTokens(
+      orgId,
+      id,
+      { kind: "user", accountId: owner.id },
+      { access_token: MEMBER_TOKEN, expires_at: Date.now() + 3_600_000, token_type: "Bearer" },
+    );
+    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/${id}` });
+    expect((got.json() as { connector: { setup: string } }).connector.setup).toBe("needs_config");
+  });
+
+  /** Runs `work` and asserts the fake MCP server got no request and never saw the token. */
+  async function noRequest(work: () => Promise<void>): Promise<void> {
+    const before = mcp.requests.length;
+    await work();
+    expect(mcp.requests.length).toBe(before);
+    expect(JSON.stringify(mcp.requests)).not.toContain(MEMBER_TOKEN);
+  }
+
+  it("tool call: not offered, the configure reason, no connect card", async () => {
+    await noRequest(async () => {
+      const conv = await createConv(req, orgId, await createAgent(req, orgId));
+      await postMessage(req, orgId, conv, 'tool:mcp__docs__search:{"q":"x"}');
+      await waitForTerminal(db, conv, 1, 20_000);
+      const evs = await eventsOf(db, conv);
+      expect(evs.some((e) => e.type === "connection_required")).toBe(false);
+      const result = evs.find((e) => e.type === "tool_result")?.payload as {
+        content: string;
+        isError: boolean;
+      };
+      expect(result.isError).toBe(true);
+      // a needs_config connector offers no tools (the pipeline's configure text: pipeline.test.ts)
+      expect(result.content).toBe(
+        'Tool "mcp__docs__search" is unavailable: Connector docs needs to be configured by an organization admin.',
+      );
+    });
+  });
+
+  it("/ prompts (the content session every prompt and resource read opens): unavailable, credential.missing", async () => {
+    await noRequest(async () => {
+      const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/prompts` });
+      expect(list.statusCode, list.body).toBe(200);
+      const body = list.json() as { unavailable: { connectorId: string }[] };
+      expect(body.unavailable.map((u) => u.connectorId)).toContain(id);
+      const render = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/connectors/${id}/prompts/summarize`,
+        payload: { arguments: {} },
+      });
+      expect(errCode(render), render.body).toBe("credential.missing");
+    });
+  });
+
+  it("drift check: skipped for want of a credential", async () => {
+    await noRequest(async () => {
+      expect(await k.app.get(ToolDrift).check(orgId, id, "schedule")).toEqual({
+        status: "skipped",
+        reason: "no_credential",
+      });
+    });
+  });
+
+  it("refresh: credential.missing", async () => {
+    await noRequest(async () => {
+      const res = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/connectors/${id}/refresh`,
+      });
+      expect(errCode(res), res.body).toBe("credential.missing");
+    });
   });
 });
 

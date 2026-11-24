@@ -20,6 +20,7 @@ import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { firstOrgOwner } from "../orgs/org-owner.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { HIDDEN_FORMAT_RE } from "../text.js";
 import { type ConnectorAuth, CredentialMissing, Credentials, isOAuth } from "./credentials.js";
@@ -241,8 +242,10 @@ interface ConnectorRow {
   endpoint: unknown;
   auth: unknown;
   status: "active" | "disabled";
-  created_by: string;
+  /** Null: created by the kernel as no person (ruling R17). */
+  created_by: string | null;
   tools_synced_at: Date | null;
+  template_tool_policies: Record<string, "allow" | "ask" | "deny"> | null;
 }
 
 /** 任务保留时长：完成的 jobId 留一段时间，同一桶内的重复投递被 BullMQ 按 jobId 去重。 */
@@ -337,12 +340,20 @@ export class ToolDrift {
   /**
    * 把新快照与当前工具行比对并写入（调用方已在事务内锁住连接器行：`mandatory`）；返回按名排序的变化。
    * 规则见文件头。待复核的新定义也写进 `tool_specs`（内容寻址，只增不改）。
+   * The first snapshot (`tools_synced_at` null: an authorization-code connector's first member
+   * connection, a deferred create's first listing, whichever of the tools job, a refresh or the
+   * drift scan writes it) also sets the template's default policies (`policy_source 'template'`)
+   * on the tools whose policy is still derived.
    */
   // org-filter: app is the connector row the caller read with its org filter and holds locked
   // FOR UPDATE (applyChecked, ConnectorsService's refresh); connector_tools has no org column
   @Transactional({ propagation: "mandatory" })
   async apply(
-    app: { id: string; tools_synced_at: Date | null },
+    app: {
+      id: string;
+      tools_synced_at: Date | null;
+      template_tool_policies?: Record<string, "allow" | "ask" | "deny"> | null;
+    },
     rows: SnapshotRow[],
   ): Promise<DriftChanges> {
     const t = this.db.db;
@@ -484,6 +495,19 @@ export class ToolDrift {
         .execute();
     }
 
+    const templatePolicies = app.template_tool_policies;
+    if (app.tools_synced_at === null && templatePolicies) {
+      for (const [name, policy] of Object.entries(templatePolicies)) {
+        await t
+          .updateTable("connector_tools")
+          .set({ default_policy: policy, policy_source: "template" })
+          .where("connector_id", "=", app.id)
+          .where("name", "=", name)
+          .where("policy_source", "=", "derived")
+          .execute();
+      }
+    }
+
     const any = added.length + changed.length + removed.length > 0;
     await t
       .updateTable("connectors")
@@ -537,10 +561,12 @@ export class ToolDrift {
     const auth = app.auth as ConnectorAuth;
     const personal = auth.type !== "none" && !isOAuth(auth) && auth.ownership === "personal";
     const personalOAuth = auth.type === "oauth_code";
+    // an org credential needs an account id only nominally: the creator, else the org's owner
+    const orgActor = async () => app.created_by ?? (await firstOrgOwner(this.db.db, orgId));
     const accounts =
       personal || personalOAuth
         ? await this.credentials.personalHolders(orgId, connectorId, PERSONAL_CANDIDATES)
-        : [app.created_by];
+        : [await orgActor()].filter((a): a is string => a !== undefined);
     if (accounts.length === 0) {
       log.info("tool drift check skipped: no member credential", { orgId, connectorId });
       return { status: "skipped", reason: "no_credential" };
@@ -590,7 +616,7 @@ export class ToolDrift {
     const t = this.db.db;
     const locked = await t
       .selectFrom("connectors")
-      .select(["id", "tools_synced_at"])
+      .select(["id", "tools_synced_at", "template_tool_policies"])
       .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)

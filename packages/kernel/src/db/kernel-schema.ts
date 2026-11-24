@@ -708,7 +708,8 @@ export interface ConnectorsTable {
   /** `{type, ownership: "org" | "personal", ...非密钥字段}`；凭据在 secrets。 */
   auth: Json<unknown>;
   status: Generated<"active" | "disabled">;
-  created_by: string;
+  /** 0183: null for a connector the kernel created as no person (a scope sync, ruling R17). */
+  created_by: string | null;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;

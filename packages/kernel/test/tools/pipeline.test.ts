@@ -207,6 +207,9 @@ let effective: PipelineTestDeps["effective"];
 /** The org tool switches the pipeline reads (layering spec A §7); undefined = none off. */
 let switches: PipelineTestDeps["switches"];
 
+const NEEDS_CONFIG_TEXT =
+  "This connector needs to be configured by an organization admin before it can be used.";
+
 function pipeline(): ToolPipeline {
   const deps: PipelineTestDeps = {
     db,
@@ -1374,7 +1377,7 @@ describe("ToolPipeline.runStep", () => {
     expect((await eventsOf(db, midConv)).filter((e) => e.type === "subagent_waiting")).toEqual([]);
   });
 
-  it("组织凭据缺失：不写 connection_required，提示找组织管理员", async () => {
+  it("needs_config (no org credential): never opened, no connection_required, the configure text", async () => {
     const orgApp = await seedConnector(raw, seed.orgId, seed.accountId, {
       slug: "orgc",
       name: "Org Docs",
@@ -1384,9 +1387,8 @@ describe("ToolPipeline.runStep", () => {
     resolved = [appTool("orgc", orgApp, "read")];
     const evs = await runCalls([{ id: "c1", name: "mcp__orgc__read", input: {} }]);
     expect(evs.some((e) => e.type === "connection_required")).toBe(false);
-    expect(resultsOf(evs)[0]?.content).toBe(
-      "Org Docs has no organization credential configured; ask an organization admin to set it up.",
-    );
+    expect(resultsOf(evs)[0]?.content).toBe(NEEDS_CONFIG_TEXT);
+    expect(conn.opened).toBe(0);
   });
 
   it("超大结果转存：tool_result 只含预览与存档 id", async () => {
@@ -1421,7 +1423,7 @@ describe("ToolPipeline.runStep", () => {
       { id: "c2", name: "plugin__probe__echo", input: { text: "2" } },
       { id: "c3", name: "plugin__probe__echo", input: { text: "3" } },
     ]);
-    // c1 已完成、c2 已开始（进程在执行中崩溃）
+    // c1 has finished, c2 has started (the process crashed while running it)
     await eventLog.append(seed.conversationId, [
       {
         type: "tool_call_started",

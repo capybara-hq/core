@@ -22,6 +22,7 @@ import {
   hasHiddenCharacters,
   type PermissionsMismatch,
   type PluginReview,
+  type PluginReviewAgentConnector,
   type PluginReviewExtension,
   shortCommit,
   showValue,
@@ -161,6 +162,24 @@ export function PluginReviewBody({
   ];
   const templates = review.connectorTemplates;
   const agents = review.agentTemplates ?? [];
+  /**
+   * One connector an agent template needs: a template of this plugin by its display name (`<id>`
+   * or `<this plugin>:<id>`), another plugin's by its reference, a described need by its label and
+   * the endpoint's host.
+   */
+  const needLabel = (c: PluginReviewAgentConnector): string => {
+    if ("needs" in c) {
+      const host = hostOf({ url: c.needs.endpoint });
+      return host === "" ? c.needs.label : t("agentNeedsDescribed", { label: c.needs.label, host });
+    }
+    const [plugin, id] = c.template.includes(":")
+      ? (c.template.split(":", 2) as [string, string])
+      : [review.name, c.template];
+    const own = plugin === review.name ? templates.find((x) => x.id === id) : undefined;
+    return own === undefined
+      ? c.template
+      : (own.displayName[locale === "zh" ? "zh" : "en"] ?? own.id);
+  };
   // The sections that hold nothing are not drawn: one closing line names them
   const emptyKinds = [
     ...(ext === undefined ? [tc("extension")] : []),
@@ -302,6 +321,7 @@ export function PluginReviewBody({
                 <ItemListItem
                   key={c.id}
                   title={name}
+                  mark={{ text: name, image: c.icon }}
                   marks={
                     <>
                       {need !== undefined && (
@@ -378,6 +398,9 @@ export function PluginReviewBody({
                   <KeyValue
                     keyWidth="6ch"
                     rows={[
+                      ...(a.connectors.length > 0
+                        ? [{ k: t("agentNeeds"), v: <Chips items={a.connectors.map(needLabel)} /> }]
+                        : []),
                       {
                         k: t("tools"),
                         v:
