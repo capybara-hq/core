@@ -1,4 +1,4 @@
-import { CardGrid, ObjectCard, type ObjectCardProps } from "@capybara-hq/design";
+import { Badge, CardGrid, ObjectCard, type ObjectCardProps } from "@capybara-hq/design";
 import type { ReactNode } from "react";
 import { RefBlock } from "./ref-block";
 
@@ -126,6 +126,31 @@ const PERSON_CARDS: ObjectCardProps[] = [
   },
 ];
 
+/** Row facts (chips, a mono title, busy): a plugin card mid-install beside a plain one. */
+const FACT_CARDS: ObjectCardProps[] = [
+  {
+    avatar: { icon: "extension" },
+    title: "plugin-github",
+    mono: true,
+    chips: [<Badge key="scope">内置</Badge>, <Badge key="kind">连接器</Badge>],
+    href: "#github",
+    description: "读取仓库、议题和合并请求。",
+    meta: ["v1.2.0"],
+    primary: { label: "启用", onSelect: noop },
+    busy: true,
+  },
+  {
+    avatar: { icon: "extension" },
+    title: "plugin-memory",
+    mono: true,
+    chips: [<Badge key="kind">扩展</Badge>],
+    href: "#memory",
+    description: "让智能体记住跨会话的事实。",
+    meta: ["v0.4.1"],
+    primary: { label: "启用", onSelect: noop },
+  },
+];
+
 function grid(label: string, cards: ObjectCardProps[]) {
   return (
     <CardGrid label={label}>
@@ -153,6 +178,9 @@ function cardGridBlocks(): ReactNode {
       {/* The owner as a person in the meta line (spec §6.34): a 16 circle before the name. */}
       <RefBlock id="card-grid-person" width={W} pad>
         {grid("智能体", PERSON_CARDS)}
+      </RefBlock>
+      <RefBlock id="card-grid-row-facts" width={W} pad>
+        {grid("插件", FACT_CARDS)}
       </RefBlock>
       <RefBlock id="card-grid-loading" width={W} pad>
         <CardGrid label="智能体" loading />

@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { type ReactElement, type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  Badge,
   Card,
   CardGrid,
   DesignProvider,
@@ -73,6 +74,36 @@ function grid(cards: ObjectCardProps[] = NAMES.map((n, i) => card({ title: n, hr
 }
 
 describe("ObjectCard", () => {
+  it("renders chips after the title in the title line", () => {
+    withNav(grid([card({ chips: [<Badge key="b">内置</Badge>, <Badge key="c">连接器</Badge>] })]));
+    const item = screen.getAllByRole("listitem")[0] as HTMLElement;
+    const head = item.querySelector(".cb-object-card-head") as HTMLElement;
+    expect(within(head).getByText("内置")).toBeTruthy();
+    expect(within(head).getByText("连接器")).toBeTruthy();
+    const name = head.querySelector(".cb-object-card-name") as HTMLElement;
+    const chips = head.querySelector(".cb-object-card-chips") as HTMLElement;
+    expect(name.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("draws no chip box without chips", () => {
+    withNav(grid([card({ chips: [] })]));
+    expect(document.querySelector(".cb-object-card-chips")).toBeNull();
+  });
+
+  it("sets the title in the mono face when mono", () => {
+    withNav(grid([card({ title: "plugin-github", mono: true, href: "/p/1" })]));
+    expect(screen.getByText("plugin-github").getAttribute("data-mono")).toBe("true");
+  });
+
+  it("busy marks the card and shows the primary action loading", () => {
+    withNav(grid([card({ primary: { label: "启用", onSelect: () => {} }, busy: true })]));
+    expect(screen.getAllByRole("listitem")[0]?.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByRole("button", { name: "启用" }).getAttribute("aria-busy")).toBe("true");
+    expect((screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
   it("draws a meta part in warn or fail by its tone", () => {
     withNav(
       grid([

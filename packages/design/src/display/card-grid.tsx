@@ -49,6 +49,18 @@ export type ObjectCardLoaded = {
    */
   avatar?: AvatarValue | { icon: IconName } | { image: string | null };
   title: string;
+  /** The title in the mono face (package names and ids), as `ObjectRow.mono`. */
+  mono?: boolean;
+  /**
+   * Badges after the title (scope, kind, attention), the same contract as `ObjectRow.chips`; they
+   * wrap in the title line. The grouped card of a phone leaves them out.
+   */
+  chips?: readonly ReactNode[];
+  /**
+   * The object is being changed (an install, an update, an enable): the primary action shows its
+   * loading state, the card's other buttons wait and the card is `aria-busy`.
+   */
+  busy?: boolean;
   /**
    * The detail page: the whole card opens it (the name is the card's one link). Left out for a
    * viewer who may not open the detail (a read-only list): the name is plain text, the card has
@@ -451,6 +463,9 @@ function useClamped(ref: RefObject<HTMLElement | null>, axis: "x" | "y", text: s
 function LoadedCard({
   avatar,
   title,
+  mono,
+  chips,
+  busy = false,
   href,
   description,
   meta,
@@ -492,7 +507,7 @@ function LoadedCard({
   const tabIndex = slot === null ? undefined : slot.holder ? 0 : -1;
   const actions = menuActions(menu ?? []);
   const lone = oneButton && primary !== undefined ? undefined : menuLone(menu ?? []);
-  const waiting = primary?.loading === true;
+  const waiting = primary?.loading === true || busy;
   const buttons: ObjectCardAction[] = [];
   if (primary) buttons.push(primary);
   if (lone) {
@@ -598,7 +613,7 @@ function LoadedCard({
         key={i}
         variant="default"
         density="dense"
-        loading={a.loading === true}
+        loading={a.loading === true || (busy && i === 0)}
         disabled={waiting}
         tabIndex={tabIndex}
         aria-describedby={nameId}
@@ -642,6 +657,7 @@ function LoadedCard({
         data-part="object-card"
         data-cap-part="card"
         data-card-key={cardKey ?? undefined}
+        aria-busy={busy ? true : undefined}
         onFocus={slot === null ? undefined : () => slot.onFocusCard()}
         {...press}
       >
@@ -654,6 +670,7 @@ function LoadedCard({
               className="cb-object-card-name"
               data-part="object-card-name"
               data-static="true"
+              data-mono={mono ? "true" : undefined}
               {...(nameClamped ? { title } : {})}
             >
               {title}
@@ -670,6 +687,7 @@ function LoadedCard({
                 id={nameId}
                 className="cb-object-card-name"
                 data-part="object-card-name"
+                data-mono={mono ? "true" : undefined}
                 {...(nameClamped ? { title } : {})}
               >
                 {title}
@@ -677,6 +695,14 @@ function LoadedCard({
               <LinkPendingMark />
             </Link>
           )}
+          {chips !== undefined && chips.length > 0 ? (
+            <span className="cb-object-card-chips" data-part="object-card-chips">
+              {chips.map((chip, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: the chips are positional
+                <Fragment key={i}>{chip}</Fragment>
+              ))}
+            </span>
+          ) : null}
           {state ? (
             <span
               className="cb-object-card-state"

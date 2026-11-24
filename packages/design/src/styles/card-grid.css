@@ -97,6 +97,19 @@
   font-size: var(--cb-type-body-size);
   line-height: var(--cb-type-body-line);
 }
+.cb-object-card-name[data-mono="true"] {
+  font-family: var(--cb-font-code);
+}
+/* Badges after the title: they wrap among themselves and leave the title its room. */
+.cb-object-card-chips {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--cb-space-1);
+  max-width: 50%;
+}
 .cb-object-card-head > .cb-object-card-name {
   flex: 1;
   min-width: 0;
@@ -255,6 +268,10 @@
   }
   /* The trailing parts, in DOM order after the text column: the state, a card without a link's
      one button, the chevron. */
+  /* The grouped row has no room for badges beside the name. */
+  .cb-object-card-chips {
+    display: none;
+  }
   .cb-object-card-state,
   .cb-object-card-foot .cb-btn,
   .cb-object-card-chevron {
