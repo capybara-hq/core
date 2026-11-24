@@ -1,6 +1,7 @@
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createTranslator } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import enCatalog from "../messages/en.json";
 import zhCatalog from "../messages/zh.json";
@@ -1382,9 +1383,10 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       {
         orgId: "o1",
         connectors: [],
-        needsConfig: ["linear"],
+        created: [{ templateId: "linear", setup: "needs_config" }],
       },
     ],
+    scopeInstalls: [],
     diffHash,
   });
   /** The routes of an installed plugin's staged 2.0.0 (`st7`). */
@@ -1443,7 +1445,8 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       ).toBeGreaterThan(1);
       expect(screen.getByText("csv-tools")).toBeTruthy();
       expect(screen.getByText(u.change.added)).toBeTruthy();
-      expect(screen.getByText(fill(u.needsConfigNote, { ids: "linear" }))).toBeTruthy();
+      const tu = createTranslator({ locale, messages: msgs[locale], namespace: "catalog.update" });
+      expect(screen.getByText(tu("createdNote", { ids: "linear", pending: 1 }))).toBeTruthy();
       expect(screen.getByText(fill(r.updateHint, { version: "v2.0.0" }))).toBeTruthy();
       // the confirm approves the reviewed permissions: no "waits for approval" notice
       expect(screen.queryByText(u.needsApproval)).toBeNull();

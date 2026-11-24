@@ -17,10 +17,16 @@ export const CONNECTOR_TOOLS_JOB = "connector-tools-list";
 /**
  * What owed the listing: the connector was `created` ready, it turned ready when an org admin
  * saved its missing input (`configured`), a member saved the first credential of a personal
- * connector with no tool list yet (`connected`), or an org admin changed an editable endpoint
- * field of a ready template connector (`endpoint_changed`).
+ * connector with no tool list yet (`connected`), an org admin changed an editable endpoint
+ * field of a ready template connector (`endpoint_changed`), or a platform update cleared the
+ * credentials of a template connector whose new auth leaves it ready (`template_updated`).
  */
-export type ConnectorToolsTrigger = "created" | "configured" | "connected" | "endpoint_changed";
+export type ConnectorToolsTrigger =
+  | "created"
+  | "configured"
+  | "connected"
+  | "endpoint_changed"
+  | "template_updated";
 
 /** Data of a {@link CONNECTOR_TOOLS_JOB}; `accountId` is the member whose credential lists. */
 export interface ConnectorToolsJobData {

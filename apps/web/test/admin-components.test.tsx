@@ -6,6 +6,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createTranslator } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
@@ -853,10 +854,14 @@ describe("admin plugin detail: components and the platform update", () => {
       {
         orgId: "o2",
         connectors: [{ id: "k1", name: "GitHub", templateId: "gh", credentialsReset: true }],
-        needsConfig: ["linear"],
+        created: [
+          { templateId: "linear", setup: "needs_config" },
+          { templateId: "status", setup: "ready" },
+        ],
         turnedOff: [{ templateId: "slack-user", agents: [], connectorsKept: 1 }],
       },
     ],
+    scopeInstalls: [{ orgId: "o9", orgName: "Gamma" }],
     diffHash: "d".repeat(64),
   };
   const routes = (over: Routes = {}): Routes => ({
@@ -1007,7 +1012,13 @@ describe("admin plugin detail: components and the platform update", () => {
     // the org's warnings are rows under that org
     const beta = within(group(U.groups.orgs)).getByText("Beta").closest("li") as HTMLElement;
     expect(within(beta).getByText(fill(U.credentialsResetNote, { names: "GitHub" }))).toBeTruthy();
-    expect(within(beta).getByText(fill(U.needsConfigNote, { ids: "linear" }))).toBeTruthy();
+    const tu = createTranslator({ locale: "en", messages: en, namespace: "catalog.update" });
+    expect(
+      within(beta).getByText(tu("createdNote", { ids: "linear, status", pending: 1 })),
+    ).toBeTruthy();
+    expect(within(group(U.groups.orgs)).getByText("Gamma").closest("li")?.textContent).toContain(
+      U.scopeInstallNote,
+    );
     expect(within(beta).getByText(fill(U.turnedOffNote, { ids: "slack-user" }))).toBeTruthy();
     expect(dialog.textContent).not.toMatch(/[·−] /);
     await user.click(within(dialog).getByRole("button", { name: U.confirm }));

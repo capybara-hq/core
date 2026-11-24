@@ -360,6 +360,7 @@ describe("PlatformUpdatePreviewBody header and chips", () => {
       ],
       extension: null,
       connectorOrgs: [],
+      scopeInstalls: [],
       diffHash: "h",
     } as unknown as PlatformUpdatePreview;
     renderPage(<PlatformUpdatePreviewBody preview={preview} orgName={() => undefined} />, zh);

@@ -5696,7 +5696,8 @@
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
-      "needsConfigNote": "Connector templates turning on need an address and credentials: {ids}",
+      "createdNote": "Connectors to be created: {ids}{pending, plural, =0 {} one { (# waits for an org admin to configure it)} other { (# wait for an org admin to configure them)}}",
+      "scopeInstallNote": "The platform scope turns it on in this org; it is installed after the update",
       "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
     },
     "errorDetail": {

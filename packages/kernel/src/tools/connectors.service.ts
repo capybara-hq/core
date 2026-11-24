@@ -1080,7 +1080,7 @@ export class ConnectorsService {
    * template's default policies (`template_tool_policies`) and the policies the org did not set
    * (`policy_source` `template` or `derived`): a tool the new template names takes its policy
    * (`template`), an unnamed `template` tool returns to the policy derived from its annotations,
-   * unnamed `derived` tools and the org's own (`admin`) stay (spec §10). Tool definitions are untouched (the next refresh takes the new endpoint through drift review). With `resetCredentials` the credentials are replaced.
+   * unnamed `derived` tools and the org's own (`admin`) stay (spec §10). Tool definitions are untouched (the next refresh takes the new endpoint through drift review). With `resetCredentials` the credentials are replaced, and a connector that ends `ready` owes its tool list through the outbox (`template_updated`, ruling R19).
    * Audits `connector.template_applied`. Deleted / missing -> `connector.not_found`.
    */
   @Transactional({ propagation: "mandatory" })
@@ -1185,6 +1185,18 @@ export class ConnectorsService {
         ...(before.use_for_git && !botCapable && { useForGit: { from: true, to: false } }),
       },
     });
+    // Cleared credentials under a new credential shape (ruling R19): a connector that ends ready
+    // (its new auth needs no org input, or the update brought it) lists its tools again through
+    // the outbox; one that ends needs_config owes nothing until an org admin configures it, and a
+    // personal one is listed on its first member credential
+    const personal = input.auth.type !== "none" && input.auth.ownership === "personal";
+    if (
+      input.resetCredentials &&
+      !personal &&
+      (await connectorSetup(this.credentials, orgId, connectorId, input.auth)) === "ready"
+    ) {
+      await this.oweToolList(orgId, connectorId, "template_updated");
+    }
   }
 
   /** Refuses a loaded kind whose extension is not enabled in the org (the same notion as {@link kinds}). */
