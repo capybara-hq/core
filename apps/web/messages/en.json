@@ -5975,6 +5975,13 @@
     },
     "toast": {
       "enabled": "\"{name}\" turned on.",
+      "enabledWith": "\"{name}\" turned on, adding {what}.",
+      "part": {
+        "skills": "{n, plural, one {# skill} other {# skills}}",
+        "agentTemplates": "{n, plural, one {# agent template} other {# agent templates}}",
+        "themes": "{n, plural, one {# theme} other {# themes}}"
+      },
+      "undo": "Undo",
       "disabled": "\"{name}\" turned off.",
       "requested": "Request submitted.",
       "withdrawn": "Upload of \"{name}\" withdrawn.",
@@ -5983,13 +5990,13 @@
     },
     "switchOff": {
       "title": "Turn off {name}",
-      "hint": "Turning it off removes the components this plugin created for this organization that nothing else uses; pre-existing and still-used ones are kept. Connectors it created or took over are disabled with it, keeping their settings and credentials.",
+      "plain": "Turn off \"{name}\"? Nothing in this organization is removed by it.",
       "skills": "{n, plural, one {Its skill goes} other {Its # skills go}} away from every agent.",
       "agents": "Agents affected",
       "removed": "Removed",
       "disabled": "Disabled with the plugin",
+      "disabledNote": "Settings and credentials are kept.",
       "kept": "Kept",
-      "none": "No component is removed",
       "confirm": "Turn off",
       "cancel": "Cancel",
       "stale": "What this removes changed; review it again before confirming.",
