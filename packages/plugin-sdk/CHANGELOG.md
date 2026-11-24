@@ -1,5 +1,11 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.68
+
+### Patch Changes
+
+- 20e9817: `isPlatformOnly` is true when any node along the wrapper chain carries `platformOnly: true`, like `secret`; an outer `false` never clears an inner `true`.
+
 ## 0.1.0-rc.67
 
 ### Patch Changes

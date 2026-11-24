@@ -1,5 +1,19 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.106
+
+### Patch Changes
+
+- 2a87cde: Bootstrap plugins are pinned to the plugins release built on the unified plugin config (core#720):
+  every pinned extension is repacked without the removed `config.org` list, model providers and
+  web tools read org-overridable fields per call, and `marketplace.commit` plus the compose sandbox
+  build contexts move to plugins `1abf9e6`.
+- f0e1138: Pin the device-docker bootstrap plugin to 0.1.0-rc.28 and the plugins marketplace commit (with the compose
+  sandbox image build context) to 727f62b, the release that carries device-e2b's read-only `appliedNetwork`.
+- Updated dependencies [2a87cde]
+- Updated dependencies [f0e1138]
+  - @capybara-hq/kernel@0.1.0-rc.82
+
 ## 0.1.0-rc.105
 
 ### Patch Changes
