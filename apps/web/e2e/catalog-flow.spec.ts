@@ -53,11 +53,12 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   // 3. Import crm-core: its extension is reviewed and installed on the deployment
   await importEntry(page, "@test/plugin-crm-core");
   const ext = page.getByRole("region", { name: D.components.extension });
+  // The header's version chip says what is installed
   await expect(
-    ext.getByText(fill(D.admin.review.action.install, { version: "v1.0.0" })),
+    page.getByText(fill(D.admin.review.action.install, { version: "v1.0.0" })),
   ).toBeVisible();
-  await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
-  // Confirming installs the extension; the scope defaults to 组织自选
+  await expect(ext).toBeVisible();
+  // The scope sits under the review; confirming installs the extension; it defaults to 组织自选
   await expect(page.getByText(D.admin.review.deployOn)).toBeVisible();
   await expect(page.getByRole("radio", { name: new RegExp(D.scope.optional) })).toBeChecked();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
@@ -74,11 +75,13 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
       }),
     ),
   ).toBeVisible();
-  await expect(page.getByText("docs · fake-connector / mcp")).toBeVisible();
+  // The template row shows the connector's display name and the endpoint host
   await expect(
-    page.getByRole("region", { name: D.components.skills }).getByText(/^crm-notes · /),
+    page.getByRole("region", { name: D.components.templates }).getByText("GitHub", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
+  await expect(
+    page.getByRole("region", { name: D.components.skills }).getByText("crm-notes", { exact: true }),
+  ).toBeVisible();
   // No extension: nothing to install on the deployment
   await expect(page.getByText(D.admin.review.noExtension)).toBeVisible();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
@@ -175,7 +178,6 @@ async function importNotes(page: Page, version: string, { latest }: { latest: bo
   await expect(page).toHaveURL(/\/admin\/plugins\/import\?staging=/, { timeout: 60_000 });
   // The review names where it was read from (the marketplace repository at its commit)
   await expect(page.getByText(/127\.0\.0\.1/).first()).toBeVisible();
-  await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
   await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 }
@@ -189,11 +191,13 @@ test("git marketplace: add a repository in the admin console -> refresh -> insta
 
   // 1. Add the git repository as a marketplace, then refresh it (two entries)
   await page.goto("/admin/plugins/sources");
-  const add = page.getByRole("region", { name: m.add });
+  // The header action opens the dialog; its primary button adds and closes it
+  await page.getByRole("button", { name: m.add }).click();
+  const add = page.getByRole("dialog", { name: m.add });
   await add.getByRole("radio", { name: m.formGit }).check();
   await add.getByRole("textbox", { name: m.name }).fill("Team git");
   await add.getByRole("textbox", { name: m.url }).fill(gitUrl);
-  await add.getByRole("button", { name: m.add }).click();
+  await add.getByRole("button", { name: m.addConfirm }).click();
   await expect(page.getByText(fill(m.added, { name: "Team git" }))).toBeVisible();
   await expect(page.getByText(fill(m.gitInfo, { ref: m.defaultBranch }))).toBeVisible();
   await page.getByRole("button", { name: m.refresh }).last().click();
