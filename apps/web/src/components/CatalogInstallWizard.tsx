@@ -34,6 +34,7 @@ import {
   setOrgPluginSwitch,
   setPath,
   showValue,
+  templateNeed,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import type { OrgExtension } from "../lib/extensions";
@@ -83,10 +84,6 @@ export function endpointFields(
   }
   return out;
 }
-
-/** OAuth 模板是否要组织填客户端：客户端凭据流总要；授权码流只在手填客户端时要（自动注册时不要）。 */
-export const needsClient = (auth: Record<string, unknown>) =>
-  auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual");
 
 /**
  * 由模板 id 推导默认 slug（与内核规则一致：小写字母开头，小写字母、数字与单个下划线，最长 24 位）；推导不出为空。
@@ -174,7 +171,8 @@ export function missingInput(
   o: { personalCredential?: boolean } = {},
 ): "client" | "credential" | undefined {
   const auth = t.auth;
-  if (needsClient(auth)) return d.client.clientId.trim() === "" ? "client" : undefined;
+  if (templateNeed({ auth }) === "client")
+    return d.client.clientId.trim() === "" ? "client" : undefined;
   if (auth.type === "none" || isOAuth(auth)) return undefined;
   if (t.ownership !== "org" && o.personalCredential === false) return undefined;
   const credential = buildCredential(
@@ -203,7 +201,7 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
           Array.isArray(auth.names) ? (auth.names as string[]) : [],
         )
       : undefined;
-  const client = needsClient(auth) ? buildOAuthClient(d.client) : undefined;
+  const client = templateNeed({ auth }) === "client" ? buildOAuthClient(d.client) : undefined;
   return {
     ...(d.name.trim() !== "" && { name: d.name.trim() }),
     ...(d.slug.trim() !== "" && { slug: d.slug.trim() }),
@@ -389,7 +387,7 @@ function Wizard({
   const templateIncomplete =
     template !== undefined &&
     draft !== undefined &&
-    (needsClient(template.auth) || template.ownership === "personal") &&
+    (templateNeed(template) === "client" || template.ownership === "personal") &&
     missingInput(template, draft) !== undefined;
 
   const submit = async () => {
@@ -587,14 +585,15 @@ export type TemplateNeed = "kept" | "client" | "endpoint" | "personal" | "creden
  * credential, which may be left for later; else nothing (no auth, or a client registered
  * automatically, and every endpoint field preset).
  */
-export function templateNeed(t: OrgCatalogTemplate): TemplateNeed {
+export function chooseMark(t: OrgCatalogTemplate): TemplateNeed {
   if (t.connected === true) return "kept";
-  if (needsClient(t.auth)) return "client";
+  const need = templateNeed(t);
+  if (need === "client") return "client";
   if (endpointFields(t).some((f) => f.editable && showValue(f.preset).trim() === "")) {
     return "endpoint";
   }
-  if (t.auth.type === "none" || isOAuth(t.auth)) return "none";
-  return t.ownership === "personal" ? "personal" : "credential";
+  if (need === "credential") return "credential";
+  return t.auth.type === "none" || isOAuth(t.auth) ? "none" : "personal";
 }
 
 /**
@@ -630,7 +629,7 @@ function ChooseTemplates({
             id: c.id,
             title: templateName(c),
             mark: { text: templateName(c), image: c.icon ?? null },
-            marks: <Badge>{t(`need.${templateNeed(c)}`)}</Badge>,
+            marks: <Badge>{t(`need.${chooseMark(c)}`)}</Badge>,
             ...(description !== "" && { description }),
             checked: locked.has(c.id) || chosen.has(c.id),
             ...(locked.has(c.id) && { locked: true }),
@@ -716,7 +715,7 @@ export function TemplateStep({
             {t("noneHint")}
           </Text>
         ) : oauth ? (
-          needsClient(auth) ? (
+          templateNeed({ auth }) === "client" ? (
             <OAuthClientFields
               values={draft.client}
               onChange={(client) => onChange({ ...draft, client })}

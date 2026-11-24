@@ -1023,6 +1023,12 @@ const extension = (over: Record<string, unknown> = {}) => ({
       items: ["device-provider@1"],
       entries: [{ value: "device-provider@1", sensitive: true, reason: "device_provider" }],
     },
+    {
+      category: "tables",
+      sensitive: false,
+      items: ["crm_contacts"],
+      entries: [{ value: "crm_contacts", sensitive: false }],
+    },
   ],
   added: [],
   addedItems: [],
@@ -1113,10 +1119,13 @@ describe("/admin/plugins/import (WizardPage)", () => {
     await user.click(screen.getByRole("button", { name: r.fetch }));
     const agents = await screen.findByRole("region", { name: c.agentTemplates });
     const tier = msgs[locale].agents.form.subagents.tier;
-    expect(within(agents).getByText(`reviewer · ${tier.fast}`)).toBeTruthy();
-    expect(within(agents).getByText(fill(c.agentTools, { tools: "Read, Bash" }))).toBeTruthy();
-    expect(within(agents).getByText(`planner · ${tier.inherit}`)).toBeTruthy();
-    expect(within(agents).getByText(c.agentToolsInherit)).toBeTruthy();
+    const reviewer = within(agents).getByRole("group", { name: "reviewer" });
+    expect(within(reviewer).getByText(tier.fast)).toBeTruthy();
+    expect(within(reviewer).getByText("Read")).toBeTruthy();
+    expect(within(reviewer).getByText("Bash")).toBeTruthy();
+    const planner = within(agents).getByRole("group", { name: "planner" });
+    expect(within(planner).getByText(tier.inherit)).toBeTruthy();
+    expect(within(planner).getByText(c.agentToolsInherit)).toBeTruthy();
   });
 
   it.each(LOCALES)(
@@ -1138,11 +1147,16 @@ describe("/admin/plugins/import (WizardPage)", () => {
       await user.type(screen.getByRole("textbox", { name: w.npmPackage }), "@acme/plugin-crm");
       await user.click(screen.getByRole("button", { name: r.fetch }));
       const ext = await screen.findByRole("region", { name: c.extension });
-      expect(within(ext).getByText(fill(r.action.install, { version: "v1.0.0" }))).toBeTruthy();
+      // the head: the version chip and one sensitive total; the sensitive group's row in the section
+      expect(screen.getByText(fill(r.action.install, { version: "v1.0.0" }))).toBeTruthy();
+      expect(screen.getByText(fill(r.sensitiveCount, { n: 1 }))).toBeTruthy();
       expect(within(ext).getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(0);
       const skills = screen.getByRole("region", { name: c.skills });
-      expect(within(skills).getByText(`pdf-tools · ${fill(c.skillFiles, { n: 2 })}`)).toBeTruthy();
+      const skill = within(skills).getByRole("group", { name: "pdf-tools" });
+      expect(within(skill).getByText(fill(c.skillFiles, { n: 2 }))).toBeTruthy();
       const templates = screen.getByRole("region", { name: c.templates });
+      expect(within(templates).getByText(r.needsOrgCredential)).toBeTruthy();
+      await user.click(within(templates).getByRole("button", { name: r.endpointDetails }));
       expect(within(templates).getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
       const deps = screen.getByRole("region", { name: c.dependencies });
       expect(
@@ -1209,15 +1223,10 @@ describe("/admin/plugins/import (WizardPage)", () => {
         json(201, { item: { id: ID, name: "crm" }, deploy: null }),
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    const ext = await screen.findByRole("region", { name: en.catalog.components.extension });
-    expect(within(ext).getByText(en.catalog.components.extensionNone)).toBeTruthy();
-    // The section's title is a heading; the empty line under it is the muted secondary text
-    expect(
-      within(ext).getByRole("heading", { name: en.catalog.components.extension }).tagName,
-    ).toBe("H2");
-    expect(
-      within(ext).getByText(en.catalog.components.extensionNone).getAttribute("data-part"),
-    ).toBe("content-section-empty");
+    // An empty section is not drawn: the closing line names it, the muted secondary text
+    const none = await screen.findByText(/^No extension, /);
+    expect(screen.queryByRole("region", { name: en.catalog.components.extension })).toBeNull();
+    expect(none.getAttribute("data-variant")).toBe("small");
     // The marketplace's permission mismatch comes with the staged review
     expect(screen.getByText(fill(r.mismatchMissing, { keys: "tools, secrets" }))).toBeTruthy();
     expect(screen.getByText(fill(r.mismatchExtra, { keys: "storage" }))).toBeTruthy();
@@ -3865,13 +3874,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       });
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
       expect(
-        await screen.findByText(
-          fill(r.provenance, {
-            repository: "https://github.com/acme/crm",
-            commit: "fedcba9",
-            workflow: ".github/workflows/release.yml",
-          }),
-        ),
+        await screen.findByText(`https://github.com/acme/crm@fedcba9 ${r.unverified}`),
       ).toBeTruthy();
       expect(screen.getByText(r.provenanceMismatch)).toBeTruthy();
       const origin = `${fill(o.git, { location: "git.acme.com/acme/marketplace (plugins/crm)", commit: "fedcba9" })} · ${fill(o.followsBranch, { ref: "main" })}`;
@@ -4305,6 +4308,7 @@ describe("phase B: Claude Code plugins on the import review", () => {
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
       const report = await screen.findByRole("region", { name: tr.title });
       expect(screen.getByText(tr.formatClaude)).toBeTruthy();
+      await userEvent.setup().click(within(report).getByRole("button", { name: tr.details }));
       const rv = msgs[locale].catalog.admin.review;
       expect(
         screen.getByText(
@@ -4313,11 +4317,29 @@ describe("phase B: Claude Code plugins on the import review", () => {
       ).toBeTruthy();
       const count = (g: string) =>
         CLAUDE_REVIEW.translation.items.filter((i) => i.group === g).length;
+      expect(
+        within(report).getByText(
+          fill(msgs[locale].catalog.admin.review.translationSummary, {
+            imported: count("imported"),
+            converted: count("converted"),
+            needsInput: count("needsInput"),
+            ignored: count("ignored"),
+            warnings: count("warnings"),
+          }),
+        ),
+      ).toBeTruthy();
+      // the warnings stand open in the report, the other groups are in the details
       for (const g of TRANSLATION_GROUPS) {
+        const items = CLAUDE_REVIEW.translation.items.filter((x) => x.group === g);
+        if (g === "warnings") {
+          for (const i of items) expect(within(report).getByText(itemLine(locale, i))).toBeTruthy();
+          continue;
+        }
+        if (items.length === 0) continue;
         const region = within(report).getByRole("region", {
-          name: fill(tr.groupTitle, { group: tr.groups[g], n: count(g) }),
+          name: fill(tr.groupTitle, { group: tr.groups[g], n: items.length }),
         });
-        for (const i of CLAUDE_REVIEW.translation.items.filter((x) => x.group === g)) {
+        for (const i of items) {
           expect(within(region).getByText(itemLine(locale, i))).toBeTruthy();
         }
       }
@@ -4342,6 +4364,11 @@ describe("phase B: Claude Code plugins on the import review", () => {
       },
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
+    await userEvent
+      .setup()
+      .click(
+        await screen.findByRole("button", { name: en.catalog.admin.review.translation.details }),
+      );
     const other = await screen.findByRole("region", {
       name: fill(tr.groupTitle, { group: tr.groups.other, n: 1 }),
     });
@@ -4365,16 +4392,19 @@ describe("phase B: Claude Code plugins on the import review", () => {
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     await screen.findByRole("button", { name: tr.license });
-    expect(screen.getAllByText(tr.bidiWarning)).toHaveLength(3);
+    // the license warns in a line, each skill in a tag (its line is inside the SKILL.md disclosure)
+    expect(screen.getAllByText(tr.bidiWarning)).toHaveLength(1);
+    expect(screen.getAllByText(en.catalog.admin.review.hiddenCharacters)).toHaveLength(2);
     cleanup();
     vi.unstubAllGlobals();
     stage(CLAUDE_REVIEW);
     await renderRouteWithCache(importPath(), lastStubRoutes());
     await screen.findByRole("button", { name: tr.license });
     expect(screen.queryByText(tr.bidiWarning)).toBeNull();
+    expect(screen.queryByText(en.catalog.admin.review.hiddenCharacters)).toBeNull();
   });
 
-  it("an empty group says so", async () => {
+  it("empty groups are counted in the summary and not drawn", async () => {
     const tr = en.catalog.admin.review.translation;
     stage({
       ...CLAUDE_REVIEW,
@@ -4384,10 +4414,21 @@ describe("phase B: Claude Code plugins on the import review", () => {
       },
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    const warnings = await screen.findByRole("region", {
-      name: fill(tr.groupTitle, { group: tr.groups.warnings, n: 0 }),
-    });
-    expect(within(warnings).getByText(tr.groupNone)).toBeTruthy();
+    const report = await screen.findByRole("region", { name: tr.title });
+    expect(
+      within(report).getByText(
+        fill(en.catalog.admin.review.translationSummary, {
+          imported: 1,
+          converted: 0,
+          needsInput: 0,
+          ignored: 0,
+          warnings: 0,
+        }),
+      ),
+    ).toBeTruthy();
+    await userEvent.setup().click(within(report).getByRole("button", { name: tr.details }));
+    expect(within(report).queryByRole("region", { name: /Warnings/ })).toBeNull();
+    expect(within(report).queryByText(tr.groupNone)).toBeNull();
   });
 
   it("no pinned suggestions: the review offers none and the confirm never sends pinnedSuggestions", async () => {
@@ -4577,6 +4618,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
     const report = await screen.findByRole("region", { name: tr.title });
+    await userEvent.setup().click(within(report).getByRole("button", { name: tr.details }));
     expect(
       within(report).getByText(itemLine("en", CLAUDE_REVIEW.translation.items[0] as never)),
     ).toBeTruthy();
