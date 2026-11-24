@@ -1383,7 +1383,14 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       {
         orgId: "o1",
         connectors: [],
-        created: [{ templateId: "linear", setup: "needs_config" }],
+        created: [
+          {
+            templateId: "linear",
+            displayName: { zh: "Linear", en: "Linear" },
+            setup: "needs_config",
+          },
+        ],
+        deferred: [],
       },
     ],
     scopeInstalls: [],
@@ -1446,7 +1453,7 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       expect(screen.getByText("csv-tools")).toBeTruthy();
       expect(screen.getByText(u.change.added)).toBeTruthy();
       const tu = createTranslator({ locale, messages: msgs[locale], namespace: "catalog.update" });
-      expect(screen.getByText(tu("createdNote", { ids: "linear", pending: 1 }))).toBeTruthy();
+      expect(screen.getByText(tu("createdNote", { names: "Linear", pending: 1 }))).toBeTruthy();
       expect(screen.getByText(fill(r.updateHint, { version: "v2.0.0" }))).toBeTruthy();
       // the confirm approves the reviewed permissions: no "waits for approval" notice
       expect(screen.queryByText(u.needsApproval)).toBeNull();

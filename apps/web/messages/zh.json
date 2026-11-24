@@ -5685,8 +5685,10 @@
       "extensionOrgs": "在用的组织一起更新：{orgs}",
       "connectorsNote": "按新模板更新：{names}",
       "credentialsResetNote": "认证方式变了，凭据会清空，需要重新填写：{names}",
-      "createdNote": "将新建连接器：{ids}{pending, plural, =0 {} other {（其中 # 个待配置，由组织管理员配置）}}",
-      "scopeInstallNote": "按平台设定的范围应在此组织开启，更新后将自动安装",
+      "createdNote": "将新建连接器：{names}{pending, plural, =0 {} other {（其中 # 个待配置，由组织管理员配置）}}",
+      "scopeInstallNote": "按平台设定的范围，更新后会尝试在此组织安装",
+      "deferredNote": "连接器插件在此组织开启后再新建：{names}",
+      "scopeInstallFailingNote": "按平台设定的范围，更新后会再次尝试在此组织安装；上次失败：{failure}",
       "turnedOffNote": "新版本里默认关闭，在此组织关闭（已建的连接器保留）：{ids}"
     },
     "errorDetail": {

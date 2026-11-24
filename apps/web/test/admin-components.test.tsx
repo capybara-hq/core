@@ -855,13 +855,23 @@ describe("admin plugin detail: components and the platform update", () => {
         orgId: "o2",
         connectors: [{ id: "k1", name: "GitHub", templateId: "gh", credentialsReset: true }],
         created: [
-          { templateId: "linear", setup: "needs_config" },
-          { templateId: "status", setup: "ready" },
+          {
+            templateId: "linear",
+            displayName: { zh: "Linear 中文", en: "Linear" },
+            setup: "needs_config",
+          },
+          { templateId: "status", displayName: { zh: "状态", en: "Status" }, setup: "ready" },
+        ],
+        deferred: [
+          { templateId: "jira", displayName: { zh: "Jira", en: "Jira" }, kind: "openapi" },
         ],
         turnedOff: [{ templateId: "slack-user", agents: [], connectorsKept: 1 }],
       },
     ],
-    scopeInstalls: [{ orgId: "o9", orgName: "Gamma" }],
+    scopeInstalls: [
+      { orgId: "o9", orgName: "Gamma" },
+      { orgId: "o8", orgName: "Delta", failing: true, lastFailure: "kind unavailable" },
+    ],
     diffHash: "d".repeat(64),
   };
   const routes = (over: Routes = {}): Routes => ({
@@ -1014,11 +1024,17 @@ describe("admin plugin detail: components and the platform update", () => {
     expect(within(beta).getByText(fill(U.credentialsResetNote, { names: "GitHub" }))).toBeTruthy();
     const tu = createTranslator({ locale: "en", messages: en, namespace: "catalog.update" });
     expect(
-      within(beta).getByText(tu("createdNote", { ids: "linear, status", pending: 1 })),
+      within(beta).getByText(tu("createdNote", { names: "Linear, Status", pending: 1 })),
     ).toBeTruthy();
+    expect(within(beta).getByText(fill(U.deferredNote, { names: "Jira" }))).toBeTruthy();
     expect(within(group(U.groups.orgs)).getByText("Gamma").closest("li")?.textContent).toContain(
       U.scopeInstallNote,
     );
+    const delta = within(group(U.groups.orgs)).getByText("Delta").closest("li") as HTMLElement;
+    const failing = within(delta).getByText(
+      fill(U.scopeInstallFailingNote, { failure: "kind unavailable" }),
+    );
+    expect(failing.closest("[data-tone]")?.getAttribute("data-tone")).toBe("warn");
     expect(within(beta).getByText(fill(U.turnedOffNote, { ids: "slack-user" }))).toBeTruthy();
     expect(dialog.textContent).not.toMatch(/[·−] /);
     await user.click(within(dialog).getByRole("button", { name: U.confirm }));

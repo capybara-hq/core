@@ -11,6 +11,7 @@ import type { KernelSchemaDb, SkillManifest } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
+import { isExtensionEnabled } from "../extensions/enabled.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../extensions/package.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
@@ -25,6 +26,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
@@ -77,6 +79,7 @@ import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-com
 import { catalogSkillNames, PluginInstaller } from "./plugin-install.js";
 import { type PluginScope, wantedOn } from "./scope.js";
 import { PluginScopeSync } from "./scope-sync.js";
+import { oweTemplateConnectors } from "./template-connector-jobs.js";
 import { compareVersions, satisfiesRange } from "./versions.js";
 
 /** How a component differs between the platform's current and the target version (spec §7.1). */
@@ -122,11 +125,25 @@ export interface PlatformUpdateConnectorOrg {
   /**
    * The connectors the update creates in the org where the plugin is on (plugin pages spec
    * §5.2.3): one per template it turns on there (added ones, and ones the target no longer ships
-   * off without an org switch) that has no live connector in the org yet. `setup`: the state the
-   * connector starts in, `needs_config` when its template needs an org credential or OAuth client
-   * ({@link setupNeed}).
+   * off without an org switch) that has no live connector in the org yet, and whose connector
+   * extension is on in the org. `setup`: the state the connector starts in, `needs_config` when
+   * its template needs an org credential or OAuth client ({@link setupNeed}).
    */
-  created: { templateId: string; setup: ConnectorSetup }[];
+  created: {
+    templateId: string;
+    displayName: ConnectorTemplateFile["displayName"];
+    setup: ConnectorSetup;
+  }[];
+  /**
+   * Templates turned on in the org whose connector the update does not create (ruling R27): the
+   * connector extension of their `kind` is not on in the org (or not loaded yet). The update owes
+   * the org's template connector ensure, which creates each once its connector plugin is on there.
+   */
+  deferred: {
+    templateId: string;
+    displayName: ConnectorTemplateFile["displayName"];
+    kind: string;
+  }[];
   /**
    * Templates the target ships off (`defaultEnabled: false`) that were on in the org only by
    * default (no org switch): they turn off there, with the agents using them; the connectors made
@@ -164,9 +181,11 @@ export interface PlatformUpdatePreview {
   /**
    * The orgs where the scope sync owed with the update will install the plugin (plugin pages spec
    * §5.2.3): its scope wants it on there and the org has no live install (one that waited for
-   * connector input before installs took none). Sorted by org id.
+   * connector input before installs took none). `failing`: the scope sync's last attempt there
+   * failed (an open `plugin_scope_sync_failures` row), `lastFailure` its message. Sorted by org
+   * id. Hashed by org id and `failing` only.
    */
-  scopeInstalls: { orgId: string; orgName: string }[];
+  scopeInstalls: { orgId: string; orgName: string; failing?: true; lastFailure?: string }[];
   /**
    * Connector templates whose setup guide the update changes (code blocks or checks of the admin
    * text): "the setup guide of template X changed; org admins of N orgs will be asked to update
@@ -282,6 +301,8 @@ interface UpdateDiff {
   extension: ExtensionStep | null;
   connectors: ConnectorChange[];
   creates: ConnectorCreate[];
+  /** The orgs with a deferred template connector (ruling R27), sorted. */
+  deferredOrgs: string[];
   connectorOrgs: PlatformUpdateConnectorOrg[];
   scopeInstalls: PlatformUpdatePreview["scopeInstalls"];
   /** See {@link PlatformUpdatePreview.themes}. */
@@ -359,6 +380,12 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   transaction (orgs get new dependencies by rule 9). A failure rolls the transaction back and
  *   puts the extension back where it was (audit `plugin.platform_update_failed`, 502
  *   `plugin.upgrade_failed`); files copied to `deployment/platform/` stay unreferenced.
+ * Transaction size: the whole fan-out (every changed template's connectors and every created
+ * connector, in every org where the plugin is on) is one transaction holding every touched org's
+ * row lock, with no batching; it grows with orgs x templates, so a deployment with very many orgs
+ * sees one long transaction (and other writes to those orgs waiting) per update. Deferred
+ * connectors (ruling R27) add one outbox row per org and no connector rows. Builtin plugins get no
+ * created connectors (ruling R28).
  * Storage is never read or written inside the transaction: the target's contents (and the
  * extension package, for `needsApproval`) are read and the platform files copied
  * (`PlatformComponents.prepareSync`) after the Redis lock is taken and before the transaction,
@@ -395,6 +422,8 @@ export class PlatformPluginUpdater {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     /** The connector template guides an update changes (the preview's `guideChanges`). */
     @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "templateGuideChanges">,
+    /** Owes the template connector ensure of the orgs with a deferred connector (ruling R27). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -953,20 +982,15 @@ export class PlatformPluginUpdater {
     // pages spec §5.2.3): rows only, no outbound call; a ready one's tool list is owed through the
     // outbox. Created by the kernel itself (no actor: the super admin need not be an org member)
     for (const c of diff.creates) {
-      if (!liveOrgs.has(c.orgId)) {
-        // Locked before the item (P3-50) from the diff before the transaction, which the diffHash
-        // check matched: an org not locked then is deleted
-        const live = await t
-          .selectFrom("orgs")
-          .select("id")
-          .where("id", "=", c.orgId)
-          .where("deleted_at", "is", null)
-          .executeTakeFirst();
-        if (live === undefined) continue;
-        throw stale();
-      }
+      // Locked before the item (P3-50) from the diff before the transaction, which the diffHash
+      // check matched: the recomputed diff names only live, locked orgs (an org deleted since
+      // drops out of it and fails the hash check as stale), so this guards the invariant only
+      if (!liveOrgs.has(c.orgId)) throw stale();
       await this.createTemplateConnectorIn(itemId, diff.to.version, c);
     }
+    // A deferred connector writes nothing (ruling R27): the org's ensure creates it once its
+    // connector extension is on there and loaded (the job retries while it is not loaded)
+    for (const orgId of diff.deferredOrgs) await oweTemplateConnectors(this.outbox, t, orgId);
 
     // One version for the deployment: every live org install of the plugin moves with it (one
     // still installing too; an install marked installed later records the platform version
@@ -1035,6 +1059,11 @@ export class PlatformPluginUpdater {
           id: c.id,
           credentialsReset: c.credentialsReset,
         })),
+        ...(diff.deferredOrgs.length > 0 && {
+          deferredConnectors: diff.connectorOrgs.flatMap((o) =>
+            o.deferred.map((d) => ({ orgId: o.orgId, templateId: d.templateId, kind: d.kind })),
+          ),
+        }),
         ...opts.auditDetail,
       },
     });
@@ -1589,7 +1618,7 @@ export class PlatformPluginUpdater {
       });
     const byOrg = new Map<string, PlatformUpdateConnectorOrg>();
     const entry = (orgId: string) => {
-      const e = byOrg.get(orgId) ?? { orgId, connectors: [], created: [] };
+      const e = byOrg.get(orgId) ?? { orgId, connectors: [], created: [], deferred: [] };
       byOrg.set(orgId, e);
       return e;
     };
@@ -1602,6 +1631,8 @@ export class PlatformPluginUpdater {
       });
     }
     const creates: ConnectorCreate[] = [];
+    /** The orgs with a deferred connector: the update owes their template connector ensure. */
+    const deferred = new Set<string>();
     if (addedTemplates.length > 0 || flipped.size > 0) {
       // a named plugin still on in an org it no longer lists gets nothing new there (the scope
       // sync removes it)
@@ -1644,30 +1675,67 @@ export class PlatformPluginUpdater {
             }
           }
         }
+        // A builtin plugin gets no connectors from an update until a design covers builtin
+        // template connectors (ruling R28): it is on everywhere without an install
+        if (item.builtin) continue;
         for (const id of turnedOn.sort()) {
           if (has.has(id)) continue;
           const file = toTemplates.find((x) => x.id === id)?.file;
           if (file === undefined) continue;
+          const t = file.template;
+          // Decided here, not only at the confirm (ruling R27): a template whose connector
+          // extension is not on in the org (database state), or not loaded on this replica yet
+          // (the bootstrap's first pass runs before the extensions load), waits; the update owes
+          // the org's template connector ensure, which creates it once both hold
+          if (
+            !deps.findConnector(t.plugin, t.connector) ||
+            !(await isExtensionEnabled(db, orgId, t.plugin))
+          ) {
+            deferred.add(orgId);
+            entry(orgId).deferred.push({
+              templateId: id,
+              displayName: file.displayName,
+              kind: t.connector,
+            });
+            continue;
+          }
           creates.push({ orgId, templateId: id, file });
           entry(orgId).created.push({
             templateId: id,
+            displayName: file.displayName,
             setup:
-              setupNeed(file.template.auth as unknown as ConnectorAuth) === undefined
+              setupNeed(t.auth as unknown as ConnectorAuth) === undefined
                 ? "ready"
                 : "needs_config",
           });
         }
       }
-      // the connectors as the confirm plans them, checked now: a refusal shows in the preview
+      // the connectors as the confirm plans them, checked now: a refusal shows in the preview as
+      // a readable target refusal
       for (const id of new Set(creates.map((c) => c.templateId))) {
         const file = creates.find((c) => c.templateId === id)?.file as ConnectorTemplateFile;
-        this.installer.planConnector(
-          null,
-          { itemId, version: to.version },
-          { id, file },
-          "",
-          undefined,
-        );
+        try {
+          this.installer.planConnector(
+            null,
+            { itemId, version: to.version },
+            { id, file },
+            "",
+            undefined,
+          );
+        } catch (e) {
+          if (!(e instanceof ApiError)) throw e;
+          throw targetInvalid(
+            `Connector template ${id} of version ${to.version} cannot become a connector (${e.message}); fix the template and import a new version`,
+            [
+              {
+                reason: "template_connector_invalid",
+                template: id,
+                code: e.code,
+                ...(e.details !== undefined && { causeDetails: e.details }),
+              },
+            ],
+          );
+        }
       }
     }
     const scopeInstalls = await this.scopeInstallsOf(item, onOrgs);
@@ -1675,6 +1743,7 @@ export class PlatformPluginUpdater {
       .map((e) => ({
         ...e,
         created: e.created.sort((a, b) => a.templateId.localeCompare(b.templateId)),
+        deferred: e.deferred.sort((a, b) => a.templateId.localeCompare(b.templateId)),
         connectors: e.connectors.sort((a, b) =>
           `${a.templateId}\0${a.id}`.localeCompare(`${b.templateId}\0${b.id}`),
         ),
@@ -1705,7 +1774,8 @@ export class PlatformPluginUpdater {
           reset: c.credentialsReset,
         })),
         connectorOrgs,
-        scopeInstalls,
+        // by org and failing state: an org's name or failure message changes nothing it does
+        scopeInstalls: scopeInstalls.map((o) => ({ orgId: o.orgId, failing: o.failing === true })),
         // only when present: a diff without themes keeps the hash it had before themes
         ...(themes !== undefined && { themes }),
       }),
@@ -1719,6 +1789,7 @@ export class PlatformPluginUpdater {
       extension,
       connectors,
       creates,
+      deferredOrgs: [...deferred].sort(),
       connectorOrgs,
       scopeInstalls,
       ...(themes !== undefined && { themes }),
@@ -1998,7 +2069,7 @@ export class PlatformPluginUpdater {
     onOrgs: readonly string[],
   ): Promise<PlatformUpdatePreview["scopeInstalls"]> {
     if (item.builtin || !isUsable(item)) return [];
-    const [orgs, listed, switches] = await Promise.all([
+    const [orgs, listed, switches, failures] = await Promise.all([
       this.db
         .selectFrom("orgs")
         .select(["id", "name"])
@@ -2015,13 +2086,26 @@ export class PlatformPluginUpdater {
         .select(["org_id", "enabled"])
         .where("item_id", "=", item.id)
         .execute(),
+      this.db
+        .selectFrom("plugin_scope_sync_failures")
+        .select(["org_id", "message"])
+        .where("item_id", "=", item.id)
+        .execute(),
     ]);
+    const failed = new Map(failures.map((r) => [r.org_id, r.message]));
     const on = new Set(onOrgs);
     const inList = new Set(listed.map((r) => r.org_id));
     const sw = new Map(switches.map((r) => [r.org_id, r.enabled]));
     return orgs
       .filter((o) => !on.has(o.id) && wantedOn(item, inList.has(o.id), sw.get(o.id) ?? null))
-      .map((o) => ({ orgId: o.id, orgName: o.name }));
+      .map((o) => {
+        const lastFailure = failed.get(o.id);
+        return {
+          orgId: o.id,
+          orgName: o.name,
+          ...(lastFailure !== undefined && { failing: true as const, lastFailure }),
+        };
+      });
   }
 
   /** The orgs where the plugin is on: a live install (builtin: every live org). */

@@ -5697,8 +5697,10 @@
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
-      "createdNote": "Connectors to be created: {ids}{pending, plural, =0 {} one { (# waits for an org admin to configure it)} other { (# wait for an org admin to configure them)}}",
-      "scopeInstallNote": "The platform scope turns it on in this org; it is installed after the update",
+      "createdNote": "Connectors to be created: {names}{pending, plural, =0 {} one { (# waits for an org admin to configure it)} other { (# wait for an org admin to configure them)}}",
+      "scopeInstallNote": "The platform scope wants it on here: scope sync will try to install it after the update",
+      "deferredNote": "Created once their connector plugin is on in this org: {names}",
+      "scopeInstallFailingNote": "The platform scope wants it on here: scope sync will try to install it again after the update; the last attempt failed: {failure}",
       "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
     },
     "errorDetail": {

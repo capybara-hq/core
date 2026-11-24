@@ -173,7 +173,8 @@ export function PlatformUpdateDialog({
  * new version of its own plugin, ruling P3-12): the versions, every component with its change and
  * marks, the pinned copies, the components kept for agents, the extension's move and, per org,
  * the connectors updated, those whose credentials are cleared, those the update creates (and how
- * many wait for configuration) and the orgs where the scope sync will install the plugin.
+ * many wait for configuration), those deferred until their connector plugin is on, and the orgs
+ * where the scope sync will try to install the plugin (warned with the last failure there).
  * `orgName` names an org id (its id when unknown). An org's own upload (`hideUnknown`, ruling
  * P3-19: an org admin cannot read other orgs) names the orgs the kernel named in `orgNames` or the
  * viewer belongs to, and counts the others ("N 个组织"), never showing an id.
@@ -194,6 +195,7 @@ export function PlatformUpdatePreviewBody({
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const sep = locale === "zh" ? "、" : ", ";
+  const lang = labelLocale(locale);
   const nameOf = (id: string) => preview.orgNames?.[id] ?? orgName(id);
   const one = (id: string) => nameOf(id) ?? (hideUnknown ? t("otherOrg") : id);
   const names = (ids: string[]) => {
@@ -275,17 +277,34 @@ export function PlatformUpdatePreviewBody({
     if (o.created.length > 0) {
       const pending = o.created.filter((c) => c.setup === "needs_config").length;
       notes.push({
-        text: t("createdNote", { ids: o.created.map((c) => c.templateId).join(sep), pending }),
+        text: t("createdNote", {
+          names: o.created.map((c) => c.displayName[lang]).join(sep),
+          pending,
+        }),
         ...(pending > 0 ? { tone: "warn" as const } : {}),
       });
     }
+    if (o.deferred.length > 0)
+      notes.push({
+        text: t("deferredNote", { names: o.deferred.map((c) => c.displayName[lang]).join(sep) }),
+        tone: "warn",
+      });
     if (o.turnedOff !== undefined && o.turnedOff.length > 0)
       notes.push({
         text: t("turnedOffNote", { ids: o.turnedOff.map((x) => x.templateId).join(sep) }),
         tone: "warn",
       });
   }
-  for (const o of preview.scopeInstalls) notesOf(o.orgId).push({ text: t("scopeInstallNote") });
+  for (const o of preview.scopeInstalls) {
+    notesOf(o.orgId).push(
+      o.failing === true
+        ? {
+            text: t("scopeInstallFailingNote", { failure: o.lastFailure ?? "" }),
+            tone: "warn",
+          }
+        : { text: t("scopeInstallNote") },
+    );
+  }
   const scopeNames = new Map(preview.scopeInstalls.map((o) => [o.orgId, o.orgName]));
   const orgItems = [...orgNotes].map(([orgId, notes]) => ({
     id: orgId,

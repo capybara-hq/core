@@ -1116,7 +1116,12 @@ export interface PlatformUpdateConnectorOrg {
    * Connectors the update creates from the templates it turns on (added, or no longer shipped
    * off); `needs_config` ones wait for an org admin's configuration.
    */
-  created: { templateId: string; setup: "ready" | "needs_config" }[];
+  created: { templateId: string; displayName: LocalizedName; setup: "ready" | "needs_config" }[];
+  /**
+   * Templates turned on whose connector waits until the connector plugin of `kind` is on in the
+   * org (then created for it).
+   */
+  deferred: { templateId: string; displayName: LocalizedName; kind: string }[];
   /** Templates now shipped off that turn off in the org; their connectors stay. Absent when none. */
   turnedOff?: {
     templateId: string;
@@ -1143,8 +1148,11 @@ export interface PlatformUpdatePreview {
     needsApproval: boolean;
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
-  /** Orgs where the scope sync will install the plugin after the update (it wants it on there). */
-  scopeInstalls: { orgId: string; orgName: string }[];
+  /**
+   * Orgs where the scope sync will try to install the plugin after the update (it wants it on
+   * there); `failing`: its last attempt there failed, with `lastFailure`.
+   */
+  scopeInstalls: { orgId: string; orgName: string; failing?: true; lastFailure?: string }[];
   /**
    * The names of the orgs the preview mentions, by id (an owner's update preview, Task 9: an org
    * admin cannot read other orgs' names); absent from kernels that do not send it.
