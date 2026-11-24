@@ -150,6 +150,7 @@ export class PluginRouteAccess implements RouteAccessResolver {
       role: claims.role,
       contribution: claims.contribution,
       ...(claims.conversationId !== undefined && { conversationId: claims.conversationId }),
+      ...(claims.skillFile !== undefined && { skillFile: claims.skillFile }),
       exp: claims.exp,
       config,
     };

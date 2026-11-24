@@ -35,6 +35,11 @@ export type RouteCaller =
       role: UiRole;
       contribution: string;
       conversationId?: string;
+      /**
+       * A skill file previewer's token (`OrgEmbedClaims.skillFile`): the skill, version and path;
+       * no conversation.
+       */
+      skillFile?: { skillId: string; version: number; path: string };
       /** The token's expiry (Unix seconds): a long-lived response (SSE) ends by then. */
       exp: number;
       config: unknown;

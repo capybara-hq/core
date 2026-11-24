@@ -717,6 +717,80 @@ describe("file-preview@1 for skill files", () => {
     expect(g.statusCode).toBe(404);
   });
 
+  it("a skill file token reaches the extension's embed routes and stops working once the member is a guest", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [
+      { "SKILL.md": skillMd("docs", "x"), "a.docx": DOCX_BYTES },
+    ]);
+    const minted = await member({
+      method: "POST",
+      url: tokenUrl(),
+      payload: { skillId: s.id, path: "a.docx" },
+    });
+    expect(minted.statusCode, minted.body).toBe(200);
+    const { token } = minted.json() as { token: string };
+    const skillFile = { skillId: s.id, version: 1, path: "a.docx" };
+    const verify = async () =>
+      (
+        await k.http.inject({
+          method: "GET",
+          url: "/plugins/preview-fake/ui/verify",
+          headers: { "x-token": token },
+        })
+      ).json().claims;
+    const claimsRoute = () =>
+      k.http.inject({
+        method: "GET",
+        url: "/plugins/preview-fake/ui/claims",
+        headers: { authorization: `Bearer ${token}` },
+      });
+    expect(await verify()).toMatchObject({ role: "member", skillFile });
+    const caller = await claimsRoute();
+    expect(caller.statusCode, caller.body).toBe(200);
+    expect(caller.json()).toMatchObject({
+      access: "embed",
+      scope: "org",
+      orgId,
+      accountId: memberId,
+      role: "member",
+      contribution: "docx-embed",
+      skillFile,
+    });
+    expect(caller.json().conversationId).toBeUndefined();
+
+    // a guest may use the file.preview slot but not read skills: the token stops working at once
+    await db
+      .updateTable("memberships")
+      .set({ role: "guest" })
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", memberId)
+      .execute();
+    expect(await verify()).toBeNull();
+    expect((await claimsRoute()).statusCode).toBe(401);
+  });
+
+  it("a path is measured in code points, as manifests are", async () => {
+    await enablePreviewFake();
+    const s = await seedOrgSkill("docs", [{ "SKILL.md": skillMd("docs", "x") }]);
+    const routes = (path: string) => [
+      () => member({ method: "GET", url: previewersUrl(s.id, path) }),
+      () => member({ method: "GET", url: previewUrl(s.id, "docx", path) }),
+      () => member({ method: "GET", url: contentUrl(s.id, path) }),
+      () => member({ method: "POST", url: tokenUrl(), payload: { skillId: s.id, path } }),
+    ];
+    // 303 code points (603 UTF-16 code units): a valid path, just not in this manifest (a stored
+    // object's key caps real paths below this, so nothing here can be found)
+    for (const call of routes(`${"😀".repeat(300)}.md`)) {
+      const r = await call();
+      expect(r.statusCode, r.body).toBe(404);
+      expect(r.json().error.code).toBe("skill.file_not_found");
+    }
+    for (const call of routes("a".repeat(513))) {
+      const r = await call();
+      expect(r.statusCode, r.body).toBe(400);
+    }
+  });
+
   it("a platform skill switched off after it was read, and another org's skill: every route 404", async () => {
     await enablePreviewFake();
     const p = await seedPlatformSkill("kit-skill", "kit", [

@@ -1,6 +1,7 @@
-import { SKILL_LIMITS, UI_LIMITS, UI_SLOT_IDS } from "@capybara-hq/plugin-sdk";
+import { UI_LIMITS, UI_SLOT_IDS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
+import { SkillFilePathSchema } from "../skills/skills.schemas.js";
 
 /** The DTO schemas of the org UI routes (`views.controller.ts`). */
 
@@ -74,7 +75,7 @@ export const EmbedTokenBody = z
      */
     skillId: z.string().min(1).max(100).optional(),
     version: z.number().int().min(1).max(2_147_483_647).optional(),
-    path: z.string().min(1).max(SKILL_LIMITS.pathMaxChars).optional(),
+    path: SkillFilePathSchema.optional(),
   })
   .default({});
 

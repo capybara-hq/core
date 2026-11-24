@@ -98,7 +98,7 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
   ),
   "file-preview": info(
     [1],
-    "Renders previews of files of given types in the conversation UI.",
+    "Renders previews of files of given types: conversation files, shared files and skill files.",
     "multi",
     false,
     true,

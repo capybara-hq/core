@@ -56,7 +56,7 @@ import { audit } from "../identity/audit.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { ModelImages } from "../models/images.js";
-import type { OrgRole } from "../orgs/roles.js";
+import { can, type OrgRole } from "../orgs/roles.js";
 import type { HookRunner } from "../runtime/hook-calls.js";
 import type { DeviceReports } from "../sandbox/device-reports.js";
 import type { ShareLiveness } from "../shares/liveness.js";
@@ -701,8 +701,9 @@ export function createExtensionContext(
   // still a member (PG every time, never cached: tokens already issued stop working at once when the
   // extension is switched off, the member leaves or the account is disabled). The returned role is
   // the current one; a token whose current role is below the minRole of its contribution's slot is
-  // refused (A38, UI slots spec §7). A platform token: the contribution is a `platform.page` and the
-  // account is still an active super admin. A share token (file sharing spec §7): the contribution
+  // refused (A38, UI slots spec §7), and a skill file's token also once the current role may no
+  // longer read skills (`skills.read`; the skill's visibility itself is not re-checked). A platform
+  // token: the contribution is a `platform.page` and the account is still an active super admin. A share token (file sharing spec §7): the contribution
   // is a `file.preview` and the share is live at the token's generation in its org with this
   // extension enabled there (`ShareLiveness.embedLive`); returned as is (no account, no role). A
   // token of one scope never verifies for another's slots. Anything else is null.
@@ -724,6 +725,8 @@ export function createExtensionContext(
     if (slot === undefined || slot.id === "platform.page") return null;
     const role = await currentOrgRole(deps.db, name, claims.orgId, claims.accountId);
     if (role === undefined || !canUseSlot(slot, role)) return null;
+    // a skill file's token: the current role must still read skills (the issuing route's check)
+    if (claims.skillFile !== undefined && !can(role, "skills.read")) return null;
     return { ...claims, role };
   };
   /** Ids of the extension's `platform.page` contributions (their invalidate takes no orgId). */

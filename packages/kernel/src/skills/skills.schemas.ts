@@ -23,6 +23,20 @@ export const SkillIdParams = z.object({ id: z.string().min(1).max(100) });
 /** `:id` where the route takes it as is (`@Param`). */
 export const SkillPathParams = z.object({ id: z.string().min(1) });
 
+/**
+ * A path of a skill version's manifest as a request names it: at most
+ * {@link SKILL_LIMITS.pathMaxChars} code points, the manifest's own unit (`chars` in the SDK). The
+ * code point check is explicit rather than left to how a zod version measures strings; `max` in
+ * UTF-16 code units only bounds the work before it.
+ */
+export const SkillFilePathSchema = z
+  .string()
+  .min(1)
+  .max(2 * SKILL_LIMITS.pathMaxChars)
+  .refine((s) => [...s].length <= SKILL_LIMITS.pathMaxChars, {
+    message: `path must be at most ${SKILL_LIMITS.pathMaxChars} characters`,
+  });
+
 /** `?version=` of `GET /skills/:id/files`: a version of the skill (default: the current one). */
 export const SkillFilesQuery = z
   .object({ version: z.coerce.number().int().min(1).max(2_147_483_647).optional() })
@@ -32,14 +46,14 @@ export const SkillFilesQuery = z
  * many bytes, `inline=1` inline for a raster image (never for HTML or SVG).
  */
 export const SkillFileContentQuery = SkillFilesQuery.extend({
-  path: z.string().min(1).max(SKILL_LIMITS.pathMaxChars),
+  path: SkillFilePathSchema,
   limit: z.coerce.number().int().min(1).max(SKILL_LIMITS.fileBytes).optional(),
   inline: z.enum(["0", "1"]).optional(),
 }).strict();
 
 /** `?version=&path=` of `GET /skills/:id/files/previewers`: one file of a version. */
 export const SkillFilePreviewersQuery = SkillFilesQuery.extend({
-  path: z.string().min(1).max(SKILL_LIMITS.pathMaxChars),
+  path: SkillFilePathSchema,
 }).strict();
 /** `GET /skills/:id/files/previews/:plugin/:previewerId?version=&path=&locale=`. */
 export const SkillFilePreviewQuery = SkillFilePreviewersQuery.extend({

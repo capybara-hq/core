@@ -466,7 +466,8 @@ export class PreviewerRegistry {
    * the resolved version and the path (`file.id` is `<skillId>@<version>/<path>`). The file is read
    * and checked against its manifest before the extension is called (a changed object is 409
    * `skill.file_changed`, the extension is not called); the read grant hands those bytes, that one
-   * object only, during the call. Not found and render errors as {@link render}.
+   * object only, during the call. The read and the render share one time limit (over it: 504
+   * `ui.timeout`). Not found and render errors as {@link render}.
    */
   async renderSkill(t: {
     orgId: string;
@@ -481,11 +482,33 @@ export class PreviewerRegistry {
     const file = await this.d.skillFiles.resolve(t.orgId, t.skillId, t.version, t.path);
     const shown = skillPreviewFile(file);
     const l = await this.viewPreviewer(t.orgId, shown, t.plugin, t.id);
-    // the previewer takes the file only within its maxBytes, so this keeps the whole file
-    const bytes = await this.d.skillFiles.bytes(file, {
-      keepBytes: l.previewer.maxBytes,
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    // one deadline for the read and the render: the read uses part of the render's time limit
+    const deadline = Date.now() + this.timeoutMs;
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    let bytes: Uint8Array;
+    try {
+      // the previewer takes the file only within its maxBytes, so this keeps the whole file
+      bytes = await this.d.skillFiles.bytes(file, { keepBytes: l.previewer.maxBytes, signal });
+    } catch (err) {
+      if (!signal.aborted) throw err;
+      this.d.log.warn("file preview read timed out", {
+        plugin: t.plugin,
+        previewer: t.id,
+        orgId: t.orgId,
+        timeoutMs: this.timeoutMs,
+      });
+      throw new ApiError(
+        "ui.timeout",
+        `The skill file could not be read within ${this.timeoutMs / 1000}s`,
+      );
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new ApiError(
+        "ui.timeout",
+        `The skill file could not be read within ${this.timeoutMs / 1000}s`,
+      );
+    }
     return this.renderWith(
       l,
       t,
@@ -499,6 +522,7 @@ export class PreviewerRegistry {
         file: { id: `${t.skillId}@${file.version}/${file.path}`, ...shown },
       },
       async () => streamOf(bytes),
+      remaining,
     );
   }
 
@@ -545,6 +569,8 @@ export class PreviewerRegistry {
     t: { orgId: string; plugin: string; id: string; locale: "zh" | "en" },
     identity: PreviewIdentity,
     open: (signal: AbortSignal) => Promise<ReadableStream<Uint8Array>>,
+    /** The render's time limit (default the previewer limit; less when a read already used some). */
+    timeoutMs: number = this.timeoutMs,
   ): Promise<UiView> {
     const render = l.previewer.render;
     if (render === undefined) throw notFound();
@@ -562,7 +588,7 @@ export class PreviewerRegistry {
         plugin: t.plugin,
         what: "file preview",
         fields,
-        timeoutMs: this.timeoutMs,
+        timeoutMs,
         failCode: "ui.render_failed",
         failMessage: `Plugin ${t.plugin} failed to preview the file with ${t.id}`,
         fn: (signal) =>

@@ -3546,6 +3546,11 @@ export type RouteCaller = {
     role: UiRole;
     contribution: string;
     conversationId?: string;
+    skillFile?: {
+        skillId: string;
+        version: number;
+        path: string;
+    };
     exp: number;
     config: unknown;
 } | {
