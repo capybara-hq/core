@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEVICE_SERVICE_SOCKET_ENV,
   FileSystemGoneError,
   parseDialInMachineFrame,
   type SandboxOperationScope,
@@ -47,6 +48,7 @@ import {
   writePolicy,
 } from "../src/state.js";
 import { FakeKernel } from "./fake-kernel.js";
+import { listenEcho } from "./service-fixture.js";
 
 const FULL_OWNER_CEILING: OwnerCeilingPolicy = {
   outsideSandbox: true,
@@ -114,6 +116,27 @@ function workers(opts: { cancelRejects?: () => boolean } = {}) {
     await r.beforeLaunch();
     await r.onLaunch({ pid: 123, token: "owned-fixture-worker" });
     launched.push(r);
+    // a device service: the echo service listens on the socket the launch names, in-process
+    if (r.kind === "exec" && r.service) {
+      const svc = await listenEcho(r.args.env?.[DEVICE_SERVICE_SOCKET_ENV] as string);
+      return {
+        ready: Promise.resolve(),
+        completion: svc.exited.then(
+          () =>
+            ({
+              stdout: "",
+              stderr: "",
+              exitCode: 0,
+              timedOut: false,
+              truncated: false,
+            }) as never,
+        ),
+        cancel: async () => {
+          cancelled.push(r.scope.operationId);
+          svc.exit(null);
+        },
+      };
+    }
     let finish!: () => void;
     const completion = new Promise<never>((resolve) => {
       finish = () =>
@@ -371,6 +394,43 @@ describe("staged device parts (W3-M)", () => {
     // a removed device directory is never recreated empty
     rmSync(join(root, "device"), { recursive: true, force: true });
     await expect(s.device.create(signal())).rejects.toBeInstanceOf(FileSystemGoneError);
+  });
+
+  const echoSpec = {
+    name: "echo",
+    entry: "main.js",
+    args: [],
+    files: { "main.js": new Uint8Array(Buffer.from("// echo")) },
+  };
+  const allowlist = { kind: "allowlist" as const, hosts: ["a.example.com"] };
+
+  it("a new generation's backend stops every device service", async () => {
+    const s = staged();
+    await s.device.binder.bind(request(G1, B1, null), signal());
+    await s.device.create(signal());
+    await s.device.services.ensure(echoSpec, allowlist, signal());
+    expect(s.device.services.status("echo").state).toBe("running");
+    await s.device.binder.bind(request(G2, B2, G1), signal());
+    expect(s.device.services.status("echo").state).toBe("stopped");
+  });
+
+  it("an owner reconcile stops a device service whose owner ceiling changed", async () => {
+    writePolicy(state, { ...FULL_POLICY, allowedDomains: ["a.example.com"] });
+    const s = staged();
+    await s.device.binder.bind(request(G1, B1, null), signal());
+    await s.device.create(signal());
+    await s.device.services.ensure(echoSpec, allowlist, signal());
+    // nothing changed: kept
+    await s.device.owner.reconcile(signal());
+    expect(s.device.services.status("echo").state).toBe("running");
+    // the owner narrows the network on the machine: stopped, not restarted
+    writePolicy(state, {
+      ...FULL_POLICY,
+      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
+      allowedDomains: [],
+    });
+    await s.device.owner.reconcile(signal());
+    expect(s.device.services.status("echo").state).toBe("stopped");
   });
 
   /** A scoped exec in `<workspace>/core`, admitted until `admitBeforeMs` (the fixture clock is 1). */

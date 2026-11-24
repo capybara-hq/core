@@ -432,15 +432,16 @@ it("service.request waits no longer than the envelope deadline and answers", asy
 function ceiling(
   roots: { workspace: string },
   denies: string[] = [],
-  net: { network: "open" | "allowlist"; allowedDomains: string[] } = {
+  net: { network: "open" | "allowlist"; allowedDomains: string[]; revision?: string } = {
     network: "open",
     allowedDomains: [],
   },
 ): DeviceOwnerCeiling {
+  const { revision = "r", ...rest } = net;
   return {
-    revision: "r",
+    revision,
     outsideSandbox: false,
-    ...net,
+    ...rest,
     roots: { workspace: roots.workspace, skills: "/nonexistent/skills", tmp: "/nonexistent/tmp" },
     projectReach: "workspace",
     projectPaths: [],
@@ -457,7 +458,7 @@ function ceiling(
 /** A supervisor on the macOS launcher with a fake worker that runs the echo service in-process. */
 async function macFixture(
   denies: (deviceDir: string) => string[] = () => [],
-  net?: () => { network: "open" | "allowlist"; allowedDomains: string[] },
+  net?: () => { network: "open" | "allowlist"; allowedDomains: string[]; revision?: string },
 ) {
   const f = await fixture();
   const requests: MacWorkerRequest[] = [];
@@ -746,4 +747,108 @@ it("new files replace the whole code directory", async () => {
   const codeDir = join(deviceDir, "svc-files", "browser");
   await expect(stat(join(codeDir, "old.js"))).rejects.toThrow(/ENOENT/);
   await expect(stat(join(codeDir, ".files-digest"))).rejects.toThrow(/ENOENT/);
+});
+
+// The kernel's ifRunning ensures (the launch review's first look, the refresh after an allowlist
+// change) send only the service's name: { name, entry: "", args: [], files: {} }.
+const nameOnly = { name: "browser", entry: "", args: [], files: {} };
+
+it("an ifRunning ensure with the name-only spec answers stopped, then keeps a running service", async () => {
+  const { deviceDir, supervisor, echo } = await fixture();
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: nameOnly, ifRunning: true },
+      signal(),
+    ),
+  ).toMatchObject({ ok: true, result: { name: "browser", state: "stopped", startedAt: null } });
+  const started = await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: spec({ "main.js": "// reviewed" }) },
+    signal(),
+  );
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: nameOnly, ifRunning: true },
+      signal(),
+    ),
+  ).toEqual(started);
+  expect(echo.calls).toHaveLength(1);
+  // the empty files of the name-only spec never touch the code directory
+  expect(await readFile(join(deviceDir, "svc-files", "browser", "main.js"), "utf8")).toBe(
+    "// reviewed",
+  );
+});
+
+it("a network change under a name-only ifRunning ensure restarts the launched spec on its stored code", async () => {
+  const f = await macFixture();
+  const codeDir = join(f.deviceDir, "svc-files", "browser");
+  const first = await serveServiceOp(
+    f.supervisor,
+    {
+      op: "service.ensure",
+      spec: spec({ "main.js": "// reviewed" }),
+      network: { kind: "allowlist", hosts: ["a.example.com"] },
+    },
+    signal(),
+  );
+  expect(first).toMatchObject({ ok: true, result: { state: "running" } });
+  const restarted = await serveServiceOp(
+    f.supervisor,
+    {
+      op: "service.ensure",
+      spec: nameOnly,
+      ifRunning: true,
+      network: { kind: "allowlist", hosts: ["a.example.com", "b.example.com"] },
+    },
+    signal(),
+  );
+  expect(restarted).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(f.requests).toHaveLength(2);
+  // the same command (entry, args, env) as the reviewed launch, never the request's empty spec
+  expect(f.requests[1]?.args.command).toBe(f.requests[0]?.args.command);
+  expect(f.requests[1]?.args.env?.FOO).toBe("bar");
+  expect([...(f.requests[1]?.grant.hosts ?? [])].sort()).toEqual([
+    "a.example.com",
+    "b.example.com",
+  ]);
+  expect(await readFile(join(codeDir, "main.js"), "utf8")).toBe("// reviewed");
+});
+
+it("reconcile stops a service whose owner ceiling changed, and keeps one whose did not", async () => {
+  let allowedDomains = ["a.example.com", "b.example.com"];
+  let revision = "r1";
+  const f = await macFixture(undefined, () => ({
+    network: "allowlist",
+    allowedDomains,
+    revision,
+  }));
+  const ensure = () =>
+    serveServiceOp(
+      f.supervisor,
+      {
+        op: "service.ensure",
+        spec: spec(),
+        network: { kind: "allowlist", hosts: ["a.example.com", "b.example.com"] },
+      },
+      signal(),
+    );
+  await ensure();
+  // nothing changed: kept
+  await f.supervisor.reconcile(signal());
+  expect(f.supervisor.status("browser").state).toBe("running");
+  // the owner narrows the network: stopped, not restarted (the next ensure starts it again)
+  allowedDomains = ["a.example.com"];
+  revision = "r2";
+  await f.supervisor.reconcile(signal());
+  expect(f.supervisor.status("browser").state).toBe("stopped");
+  expect(f.requests).toHaveLength(1);
+  // a revision change alone (a new deny root) stops it too
+  await ensure();
+  expect(f.requests).toHaveLength(2);
+  revision = "r3";
+  await f.supervisor.reconcile(signal());
+  expect(f.supervisor.status("browser").state).toBe("stopped");
+  expect(f.requests).toHaveLength(2);
 });

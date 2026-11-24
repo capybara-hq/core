@@ -27,12 +27,15 @@ export const MAX_SERVICE_REQUEST_TIMEOUT_MS = 600_000;
  * - `{ op: "service.ensure", spec: { name, entry, args, files, env? }, network?, ifRunning? }`
  *   answers the `DeviceServiceStatus`; `files` values are standard base64; `network` is the
  *   device's network as the provider holds it (its limits), absent = no network; a running service
- *   started with another network is restarted with this one; `ifRunning: true` starts nothing
- *   when the service is stopped (it answers the stopped status). `files` may be left out when
- *   `filesDigest` (the provider's opaque name for the files, {@link FILES_DIGEST_RE}) is given:
- *   a start then uses the files already in the state directory when they were written under the
- *   same digest, and otherwise answers `files_needed` (send again with the files). A start with
- *   neither files nor a digest answers `files_needed` too.
+ *   started with another network is restarted with this one; `ifRunning: true` reads only
+ *   `spec.name` (the kernel sends `{ name, entry: "", args: [], files: {} }`), starts nothing when
+ *   the service is stopped (it answers the stopped status) and restarts a running one whose
+ *   network changed from the spec it was launched with and its stored code. `files` may be left
+ *   out when `filesDigest` (the provider's opaque name for the files, {@link FILES_DIGEST_RE}) is
+ *   given: a start then uses the files already in the service's code directory
+ *   (`<device dir>/svc-files/<name>`) when they were written under the same digest, and otherwise
+ *   answers `files_needed` (send again with the files). A start with neither files nor a digest
+ *   answers `files_needed` too.
  * - `{ op: "service.stop", name }` answers null.
  * - `{ op: "service.status", name }` answers the `DeviceServiceStatus`.
  * - `{ op: "service.request", name, body, timeoutMs }` answers `{ body }` (base64 both ways).

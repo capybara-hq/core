@@ -37,6 +37,7 @@ import {
   type LocalExecAuthority,
   type LocalOperationGrant,
   PROJECT_REFUSAL_MESSAGES,
+  withCanonicalForms,
   within,
 } from "./operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "./operation-worker.js";
@@ -78,6 +79,14 @@ export interface MacOperationBackendOptions {
    * failure never affects the operation.
    */
   onProjectAdmitted?: (projectRoot: string) => void;
+  /**
+   * The device services' directories (`<device dir>/svc` with each service's state, a browser
+   * profile among them, and `<device dir>/svc-files` with their code): added to every sandboxed
+   * grant's denied roots, so an agent operation neither reads nor writes them (the sandbox turns
+   * each denied read root into write denies too). Only grants: the owner ceiling the service
+   * launcher checks its own roots against stays as it is.
+   */
+  serviceRoots?: readonly string[];
 }
 export type MacOperationBackend = Required<
   Pick<
@@ -360,6 +369,17 @@ export async function createLocalOperationBackend(
       revision: c.revision,
     };
   };
+  // the device services' directories, denied to every sandboxed grant (read and so write)
+  const serviceDenies = withCanonicalForms(options.serviceRoots ?? []);
+  const withServiceDenies = (grant: LocalOperationGrant): LocalOperationGrant =>
+    grant.full || serviceDenies.length === 0
+      ? grant
+      : Object.freeze({
+          ...grant,
+          deniedReadRoots: Object.freeze([
+            ...new Set([...grant.deniedReadRoots, ...serviceDenies]),
+          ]),
+        });
   const invoke = async (
     scope: SandboxOperationScope | SandboxBrowseScope | SandboxPreparationScope,
     native: NativeHelperRequest | undefined,
@@ -371,10 +391,11 @@ export async function createLocalOperationBackend(
     signal.throwIfAborted();
     validateScopeDevice(scope);
     const ceiling = await read();
-    const grant =
+    const grant = withServiceDenies(
       "profile" in scope
         ? intersectOperation(scope, ceiling, authority, native !== undefined)
-        : auxiliaryGrant(scope, ceiling);
+        : auxiliaryGrant(scope, ceiling),
+    );
     if (!grant.full && !restrictedNow()) throw new SandboxPermissionUnsupportedError(refusal());
     if (!grant.full) host.checkRestrictedGrant?.(grant, native ? "native" : "exec");
     if (native) boundedPath(native.path, grant, native.method === "writeFile");
@@ -655,7 +676,7 @@ export async function createLocalOperationBackend(
       await supervisor.reconcile((record) => {
         if (!ceiling) return false;
         try {
-          const next =
+          const next = withServiceDenies(
             "profile" in record.scope
               ? intersectOperation(
                   record.scope,
@@ -663,7 +684,8 @@ export async function createLocalOperationBackend(
                   record.authority,
                   record.kind === "native",
                 )
-              : auxiliaryGrant(record.scope, ceiling);
+              : auxiliaryGrant(record.scope, ceiling),
+          );
           return grantStillHolds(record.grant, next);
         } catch {
           return false;

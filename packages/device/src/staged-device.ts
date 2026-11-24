@@ -35,7 +35,7 @@ import type { PolicyStore } from "./policy-store.js";
 import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
 import { macServiceLauncher } from "./services/mac-launcher.js";
-import { ServiceSupervisor } from "./services/supervisor.js";
+import { ServiceSupervisor, serviceCodeRoot, serviceRoot } from "./services/supervisor.js";
 import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
@@ -280,13 +280,21 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       onOperationEnded: (operationId) => running.endOperation(operationId),
       // the project directories this connection used, for the ones it shares with another
       onProjectAdmitted: (projectRoot) => recordProjectRoot(stateDir, projectRoot),
+      // the services' profiles (cookies) and code: never read or written by an agent operation
+      serviceRoots: [serviceRoot(resolve(cred.dir)), serviceCodeRoot(resolve(cred.dir))],
     };
     const deps = o.backendDependencies ?? {};
     if (mode === "docker") {
       const { createDockerOperationBackend } = await import("./exec/docker-operations.js");
       // a command in the container keeps HOME at its working directory (the image's paths); its
       // project roots are the container's paths, never a directory another connection could use
-      const { roots: _host, sandboxHome: _home, onProjectAdmitted: _projects, ...rest } = options;
+      const {
+        roots: _host,
+        sandboxHome: _home,
+        onProjectAdmitted: _projects,
+        serviceRoots: _services,
+        ...rest
+      } = options;
       return createDockerOperationBackend(
         {
           ...rest,
@@ -374,6 +382,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       issueOwnerReport({ stateDir, stateRoot, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);
+      // services hold a grant fixed at launch too: one whose ceiling changed is stopped
+      await services.reconcile(signal);
     },
   };
   const backend = () => binder.current()?.backend ?? UNBOUND_BACKEND;

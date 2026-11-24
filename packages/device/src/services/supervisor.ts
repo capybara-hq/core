@@ -135,6 +135,12 @@ export interface ServiceLaunch {
 
 /** A running service process. */
 export interface ServiceProcess {
+  /**
+   * The owner ceiling revision the launch's grant was built under, when the launcher reads one
+   * ({@link ServiceLauncher.ceilingRevision}): a later revision stops the service at the next
+   * {@link ServiceSupervisor.reconcile}.
+   */
+  readonly ceilingRevision?: string;
   /** Resolves when the process is gone (exit code, or null when killed). */
   readonly exited: Promise<{ code: number | null }>;
   /** Ends the process: a polite signal, then a kill after `graceMs`. Resolves once it is gone. */
@@ -151,6 +157,8 @@ export interface ServiceLauncher {
    * ceiling): a running service whose key differs is restarted. Absent: {@link networkKey}.
    */
   networkKey?(network: SandboxLimits["network"] | undefined): Promise<string>;
+  /** The owner ceiling revision a launch would be built under now (absent: never changes). */
+  ceilingRevision?(): Promise<string>;
 }
 
 /** A service's request or stream connection could not be served. */
@@ -183,6 +191,10 @@ interface Running {
   proc: ServiceProcess;
   /** The effective network it was started with ({@link ServiceLauncher.networkKey}). */
   network: string;
+  /** The device's network as the launch was asked for (before the owner's ceiling). */
+  launchNetwork: SandboxLimits["network"] | undefined;
+  /** The spec it was launched with, its files left out: a restart runs exactly this again. */
+  spec: Omit<LocalServiceSpec, "files">;
   startedAt: string;
   socket: string;
   /** The connections this program opened to the service; ended when it exits. */
@@ -335,7 +347,10 @@ export function checkRelativePath(p: string, what: string): string {
  * with the same network (a changed network restarts it, {@link ServiceSupervisor.ensure}); a
  * service that exits stays stopped until the next `ensure` (never restarted automatically). This
  * program is one process per device, so the table lives in its memory: a service is a child of
- * the launcher's worker and ends with this program.
+ * the launcher's worker and ends with this program. The kernel stops services by stopping the
+ * instance: a machine that was offline when the device was suspended keeps its services running
+ * until a lifecycle call reaches it after it reconnects (the next idle suspension or machine stop,
+ * or the next instance create: each stops them all) or this program ends.
  */
 export class ServiceSupervisor {
   private readonly running = new Map<string, Running>();
@@ -389,7 +404,10 @@ export class ServiceSupervisor {
     opts: { ifRunning?: boolean; filesDigest?: string } = {},
   ): Promise<DeviceServiceStatus> {
     signal.throwIfAborted();
-    checkSpec(spec);
+    // an ifRunning ensure reads only the name (the kernel sends `{ name, entry: "", args: [],
+    // files: {} }`): it never starts a service from the request's spec
+    if (opts.ifRunning) checkName(spec.name);
+    else checkSpec(spec);
     const name = spec.name;
     const previous = this.starting.get(name);
     const run = (async () => {
@@ -400,8 +418,14 @@ export class ServiceSupervisor {
       const current = this.running.get(name);
       if (current?.network === key) return this.status(name);
       if (!current && opts.ifRunning) return this.status(name);
-      // a start follows: refused before a running service is stopped when its files are missing
-      if (spec.files === undefined) await this.checkStoredDigest(name, opts.filesDigest);
+      // under ifRunning a running service is restarted with the new network from the spec it was
+      // launched with (the one the kernel reviewed) and the code already in its code directory,
+      // which this restart never touches; otherwise a start follows the request's spec, refused
+      // before a running service is stopped when its files are missing
+      const launch: LocalServiceSpec | undefined = opts.ifRunning ? current?.spec : spec;
+      if (launch === undefined) return this.status(name);
+      if (!opts.ifRunning && spec.files === undefined)
+        await this.checkStoredDigest(name, opts.filesDigest);
       if (current) {
         await current.proc.stop(SERVICE_STOP_GRACE_MS);
         await current.gone;
@@ -409,7 +433,10 @@ export class ServiceSupervisor {
       const ctl = new AbortController();
       this.startCtl.set(name, ctl);
       try {
-        return await this.start(spec, network, key, ctl.signal, opts.filesDigest);
+        return await this.start(launch, network, key, ctl.signal, {
+          ...(opts.ifRunning ? { storedCode: true } : {}),
+          ...(opts.filesDigest !== undefined && { filesDigest: opts.filesDigest }),
+        });
       } finally {
         if (this.startCtl.get(name) === ctl) this.startCtl.delete(name);
       }
@@ -431,6 +458,42 @@ export class ServiceSupervisor {
     signal.throwIfAborted();
     await r.proc.stop(graceMs);
     await r.gone;
+  }
+
+  /**
+   * Stops (never restarts) every running service whose grant no longer holds: its effective
+   * network ({@link ServiceLauncher.networkKey} of the network it was launched with) or the owner
+   * ceiling revision changed since its launch, or either cannot be read now (fail closed). Called
+   * with every owner reconcile (the connection's periodic policy check): a sandbox grant is fixed
+   * when the worker starts, so a narrowed ceiling must end the process, and the next `ensure`
+   * starts it again under the new one. A service whose start is in flight is left to that start.
+   */
+  async reconcile(signal: AbortSignal): Promise<void> {
+    const launcher = this.o.launcher();
+    const stale: string[] = [];
+    for (const [name, r] of this.running) {
+      if (this.starting.has(name)) continue;
+      let holds = false;
+      try {
+        const key = launcher?.networkKey
+          ? await launcher.networkKey(r.launchNetwork)
+          : networkKey(r.launchNetwork);
+        const revision = launcher?.ceilingRevision ? await launcher.ceilingRevision() : undefined;
+        holds = key === r.network && revision === r.proc.ceilingRevision;
+      } catch {
+        holds = false;
+      }
+      if (!holds && this.running.get(name) === r) stale.push(name);
+    }
+    signal.throwIfAborted();
+    await Promise.all(
+      stale.map(async (name) => {
+        const r = this.running.get(name);
+        if (!r || this.starting.has(name)) return;
+        await r.proc.stop(SERVICE_STOP_GRACE_MS);
+        await r.gone;
+      }),
+    );
   }
 
   /** Stops every service (a new instance, a machine stop, the program's end). */
@@ -548,8 +611,14 @@ export class ServiceSupervisor {
     network: SandboxLimits["network"] | undefined,
     key: string,
     signal: AbortSignal,
-    filesDigest: string | undefined,
+    /**
+     * `storedCode`: a restart of a running service (a network change under `ifRunning`) on the
+     * code already in its code directory, which it was launched from; nothing there is checked
+     * against a digest or written.
+     */
+    o: { filesDigest?: string; storedCode?: boolean },
   ): Promise<DeviceServiceStatus> {
+    const filesDigest = o.filesDigest;
     const launcher = this.o.launcher();
     if (!launcher)
       throw new SandboxPermissionUnsupportedError(
@@ -565,7 +634,9 @@ export class ServiceSupervisor {
     const codeDir = await realDirectory(this.o.deviceDir, ["svc-files", spec.name]);
     // files are (re)written on start only; the state directory is the service's own and kept (a
     // browser profile)
-    if (spec.files === undefined) {
+    if (o.storedCode) {
+      // only this program writes the code directory, and nothing since this service's launch
+    } else if (spec.files === undefined) {
       // checked again at the start itself (after a stop, or a concurrent writer)
       const stored = await readStoredDigest(codeDir);
       if (stored === undefined || stored !== filesDigest)
@@ -623,9 +694,12 @@ export class ServiceSupervisor {
       },
       signal,
     );
+    const { files: _files, ...launched } = spec;
     const record: Running = {
       proc,
       network: key,
+      launchNetwork: network,
+      spec: launched,
       startedAt: this.now().toISOString(),
       socket: paths.socket,
       conns: new Set(),
@@ -733,11 +807,15 @@ async function readStoredDigest(codeDir: string): Promise<string | undefined> {
   }
 }
 
-function checkSpec(spec: LocalServiceSpec): void {
-  if (!DEVICE_SERVICE_NAME_RE.test(spec.name))
+function checkName(name: string): void {
+  if (!DEVICE_SERVICE_NAME_RE.test(name))
     throw new ServiceSpecError(
-      `Invalid device service name ${JSON.stringify(spec.name)}: 1 to 32 characters, a lower-case letter then letters, digits and -`,
+      `Invalid device service name ${JSON.stringify(name)}: 1 to 32 characters, a lower-case letter then letters, digits and -`,
     );
+}
+
+function checkSpec(spec: LocalServiceSpec): void {
+  checkName(spec.name);
   const files = spec.files ?? {};
   for (const rel of Object.keys(files)) checkRelativePath(rel, "A service file path");
   checkRelativePath(spec.entry, "The service entry");

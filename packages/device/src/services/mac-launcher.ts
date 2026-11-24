@@ -39,12 +39,15 @@ export interface MacServiceLauncherOptions {
  * The macOS service launcher (browser use spec §5): a service is one restricted exec of the
  * operation worker, from the sealed runtime the binding attested, so it runs under exactly the
  * sandbox operations run under and gets the same proxy environment. Its grant is fixed here, never
- * by a kernel scope: writes only in its state directory and `<workspace>/downloads`, reads of
- * those, the workspace and the Node runtime's directory (all checked against the owner's denies), the owner's denied read roots kept denied, the
- * unix socket in its state directory, and the device's network (the provider's limits) intersected
- * with the owner's ceiling as for an operation; no network when the provider sent none. It has no
- * time limit of its own beyond {@link SERVICE_TIME_LIMIT_MS} and is stopped by cancelling the
- * worker, which also ends it when this program ends (the worker stops on disconnect).
+ * by a kernel scope: writes only in its state directory and `<workspace>/downloads`; reads of
+ * those, its read-only code directory, the workspace and the Node runtime's directory (all
+ * checked against the owner's denies); the owner's denied read roots kept denied; the unix socket
+ * in its state directory; and the device's network (the provider's limits) intersected with the
+ * owner's ceiling as for an operation, no network when the provider sent none. It has no time
+ * limit of its own beyond {@link SERVICE_TIME_LIMIT_MS} and is stopped by cancelling the worker,
+ * which also ends it when this program ends (the worker stops on disconnect). The launch records
+ * the ceiling revision its grant was built under, so an owner reconcile stops it once the
+ * ceiling changes (`ServiceSupervisor.reconcile`).
  */
 export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLauncher {
   /** The device's network intersected with the owner's ceiling now; undefined = none. */
@@ -69,6 +72,9 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
       if (!egress) return "none";
       if (egress.kind === "open-public") return "open-public";
       return `allowlist:${[...new Set(egress.hosts.map((h) => h.toLowerCase()))].sort().join(",")}`;
+    },
+    async ceilingRevision() {
+      return (await o.readOwnerCeiling()).revision;
     },
     async launch(req: ServiceLaunch, signal: AbortSignal): Promise<ServiceProcess> {
       signal.throwIfAborted();
@@ -149,6 +155,7 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
           () => ({ code: null }),
         );
         return {
+          ceilingRevision: ceiling.revision,
           exited,
           async stop(graceMs) {
             await worker.cancel("Device service stopped", graceMs).catch(() => ctl.abort());
