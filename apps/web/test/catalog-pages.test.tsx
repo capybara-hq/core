@@ -343,7 +343,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
   });
 
-  it("the direct switch toasts what arrived with 撤销, which switches off without the skills dialog", async () => {
+  it("the direct switch toasts what arrived with Undo, which switches off without the skills dialog", async () => {
     const p = zh.plugins;
     let on = false;
     const skills = ["a", "b", "c", "d"].map((n) => ({
@@ -387,7 +387,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(await screen.findByText("已停用「notes」。")).toBeTruthy();
   });
 
-  it("停用 with nothing to lose is one sentence and the two buttons", async () => {
+  it("turning off with nothing to lose is one sentence and the two buttons", async () => {
     const p = en.plugins;
     stubApi({
       [`GET ${ORG}/catalog`]: () =>
