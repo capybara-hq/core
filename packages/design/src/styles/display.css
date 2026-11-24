@@ -1431,6 +1431,39 @@ a.cb-attachment:hover {
   padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);
 }
+/* DisclosureLinks: inline muted text toggles in a wrapping row, the open body under the row */
+.cb-disclosure-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-1) var(--cb-space-4);
+  min-width: 0;
+}
+.cb-disclosure-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  cursor: pointer;
+}
+.cb-disclosure-link:hover,
+.cb-disclosure-link[aria-expanded="true"] {
+  color: var(--cb-ink);
+}
+.cb-disclosure-link:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
 
 /* TextLink / LinkCard (spec §6.5): theme colors only, never the browser's link colors. */
 .cb-text-link {

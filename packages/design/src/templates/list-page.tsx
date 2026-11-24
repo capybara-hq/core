@@ -382,16 +382,21 @@ export function ListPage({
         <WithStats header={header}>
           <LoadingStats count={slots} />
           {wideScope ? (
+            // The scope and the field filters share one row (they wrap when it is too narrow)
             <ClassForms
               compact={null}
               wide={
-                <div className="cb-list-filters cb-list-scope" data-part="list-scope">
+                <div
+                  className="cb-list-filters cb-list-scope"
+                  data-part="list-scope"
+                  data-filters={hasFilters ? "true" : undefined}
+                >
                   {wideScope}
+                  {hasFilters ? filters : null}
                 </div>
               }
             />
-          ) : null}
-          {hasFilters ? (
+          ) : hasFilters ? (
             <ClassForms compact={null} wide={<div className="cb-list-filters">{filters}</div>} />
           ) : null}
           {content}

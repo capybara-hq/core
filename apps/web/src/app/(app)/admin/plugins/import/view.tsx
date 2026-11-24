@@ -660,7 +660,11 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         ))}
       {step === 1 && review !== null && (
         <Stack gap={16}>
-          <PluginReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
+          <PluginReviewBody
+            review={review}
+            mismatch={prepared?.permissionsMismatch ?? null}
+            installedVersion={installedItem?.latestVersion ?? null}
+          />
           {/* An install ends here: the scope, the sensitive ack and the result sit under the
               review */}
           {!modePending && !shownUpdating && (

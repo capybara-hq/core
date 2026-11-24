@@ -1129,7 +1129,8 @@ describe("/admin/plugins/import (WizardPage)", () => {
       expect(within(skill).getByText(fill(c.skillFiles, { n: 2 }))).toBeTruthy();
       const templates = screen.getByRole("region", { name: c.templates });
       expect(within(templates).getByText(r.needsOrgCredential)).toBeTruthy();
-      await user.click(within(templates).getByRole("button", { name: r.endpointDetails }));
+      // the host line (with the org-editable note) opens the full endpoint under the row
+      await user.click(within(templates).getByRole("button", { name: new RegExp(r.orgCanChange) }));
       expect(within(templates).getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
       const deps = screen.getByRole("region", { name: c.dependencies });
       expect(
@@ -1466,6 +1467,10 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       expect(screen.getByText(r.steps.update)).toBeTruthy();
       expect(
         await screen.findByRole("region", { name: msgs[locale].catalog.components.skills }),
+      ).toBeTruthy();
+      // the review's version chip reads installed → staged
+      expect(
+        screen.getByText(fill(r.versionChange, { from: "v1.0.0", to: "v2.0.0" })),
       ).toBeTruthy();
       await userEvent.setup().click(screen.getByRole("button", { name: w.next }));
       // the update preview: versions, per-component changes, the extension and the orgs' config
@@ -2381,20 +2386,35 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
         .closest("li") as HTMLElement;
       expect(within(acme).getByText(/catalog\.acme\.com\/index\.json/)).toBeTruthy();
       expect(within(acme).getByText(m.formHttp, { exact: false })).toBeTruthy();
-      const okPrefix = fill(m.statusValue.ok, { n: 3, at: "@@" }).split("@@")[0] as string;
-      expect(within(acme).getByText((c) => c.startsWith(okPrefix))).toBeTruthy();
+      // A short state at the head; the count and the refresh time lead the description
+      expect(acme.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+        m.statusValue.ok,
+      );
+      const summaryPrefix = fill(m.statusValue.summary, { n: 3, at: "@@" }).split(
+        "@@",
+      )[0] as string;
+      expect(
+        acme
+          .querySelector('[data-part="object-card-description"]')
+          ?.textContent?.startsWith(summaryPrefix),
+      ).toBe(true);
       await userEvent.setup().click(within(acme).getByRole("button", { name: m.refresh }));
       await waitFor(() => expect(calls.some((c) => c.url.endsWith("/s2/refresh"))).toBe(true));
     },
   );
 
-  it("a failing source says the error once, in its state; 详情 shows the raw text", async () => {
+  it("a failing source says the error once, under its name; 详情 shows the raw text", async () => {
     stubApi(list([OFFICIAL, ACME]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const acme = card("Acme");
-    // The sentence is the state label only: the description does not repeat it
+    // The state is the short label; the sentence is the description, said once
+    expect(acme.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+      s.statusValue.failed,
+    );
     expect(within(acme).getAllByText(s.statusValue.errors.http_status)).toHaveLength(1);
-    expect(acme.querySelector('[data-part="object-card-description"]')).toBeNull();
+    expect(acme.querySelector('[data-part="object-card-description"]')?.textContent).toBe(
+      s.statusValue.errors.http_status,
+    );
     expect(within(acme).queryByText("HTTP 500")).toBeNull();
     await open("Acme");
     await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
@@ -2431,7 +2451,7 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
   it("a config-managed source has only its switch and refresh, and says it is managed", async () => {
     stubApi(list([MANAGED]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    expect(within(card("Managed")).getByText(s.managed)).toBeTruthy();
+    expect(within(card("Managed")).getByText(s.managed, { exact: false })).toBeTruthy();
     const managed = card("Managed");
     const sw = within(managed).getByRole("switch") as HTMLButtonElement;
     expect(sw.disabled).toBe(false);
@@ -3096,13 +3116,11 @@ describe("/admin/plugins and marketplace entries", () => {
     const list = await screen.findByRole("list", { name: c.title });
     expect(within(list).getAllByRole("listitem")).toHaveLength(3);
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    // installed at an older version: 可更新到 the latest, 更新到 stages it for the wizard
+    // installed at an older version: the state names it, the update button stages the latest for the wizard
     const cat = row("cat-a");
-    expect(
-      within(cat).getByText(
-        fill(c.adoptedUpdate, { version: "v1.0.0-rc.0", latest: "v1.0.0-rc.10" }),
-      ),
-    ).toBeTruthy();
+    expect(cat.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+      fill(c.adopted, { version: "v1.0.0-rc.0" }),
+    );
     // the state says it: no 有新版本 chip
     expect(within(cat).queryByText(en.catalog.newer)).toBeNull();
     const user = userEvent.setup();

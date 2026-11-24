@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, Disclosure } from "../src/index";
+import { DesignProvider, Disclosure, DisclosureLinks } from "../src/index";
 
 afterEach(cleanup);
 
@@ -88,5 +88,32 @@ describe("Disclosure", () => {
     await userEvent.click(summary);
     expect(seen).toEqual([false]);
     expect(screen.queryByText("fields")).toBeNull();
+  });
+});
+
+describe("DisclosureLinks", () => {
+  it("draws inline toggles; one open at a time, its body under the row", async () => {
+    wrap(
+      <DisclosureLinks
+        items={[
+          { key: "desc", summary: "Full description", children: <p>Long text</p> },
+          { key: "lic", summary: "License", children: <p>MIT License</p> },
+        ]}
+      />,
+    );
+    const desc = screen.getByRole("button", { name: /Full description/ });
+    const lic = screen.getByRole("button", { name: /License/ });
+    expect(screen.queryByText("Long text")).toBeNull();
+    await userEvent.click(desc);
+    expect(desc.getAttribute("aria-expanded")).toBe("true");
+    expect(desc.getAttribute("aria-controls")).toBe(
+      screen.getByText("Long text").parentElement?.id,
+    );
+    await userEvent.click(lic);
+    expect(desc.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Long text")).toBeNull();
+    expect(screen.getByText("MIT License")).toBeTruthy();
+    await userEvent.click(lic);
+    expect(screen.queryByText("MIT License")).toBeNull();
   });
 });

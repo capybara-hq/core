@@ -292,8 +292,14 @@
 }
 
 /* The object's state at the head's right (as ObjectRow's, spec §6.17): mono small, toned. */
+/* It takes at most half the head and is cut with an ellipsis past that (the full text is its
+   `title`), so a long state never squeezes the name away. */
 .cb-object-card-state {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: nowrap;

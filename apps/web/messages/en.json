@@ -5326,7 +5326,6 @@
         "homepage": "Homepage",
         "loadFailed": "Marketplace entries failed to load.",
         "retry": "Retry",
-        "adoptedUpdate": "Installed {version} · update to {latest} available",
         "update": "Update to {version}",
         "otherVersions": "Other versions",
         "deprecated": "{version} (deprecated)",
@@ -5352,7 +5351,9 @@
         "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
         "url": "URL",
         "statusValue": {
-          "ok": "OK ({n} entries, {at})",
+          "ok": "OK",
+          "summary": "{n} entries, refreshed {at}.",
+          "failed": "Failed",
           "never": "Not fetched yet",
           "errors": {
             "private_address": "The marketplace's host resolves to a private or reserved address, so the network rules blocked it.",
