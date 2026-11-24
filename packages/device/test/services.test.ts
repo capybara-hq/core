@@ -22,7 +22,7 @@ import { afterEach, expect, it } from "vitest";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import { macServiceLauncher } from "../src/services/mac-launcher.js";
-import { serveServiceOp } from "../src/services/ops.js";
+import { parseServiceOpBody, serveServiceOp } from "../src/services/ops.js";
 import {
   MAX_SERVICE_SOCKET_PATH_BYTES,
   ServiceSupervisor,
@@ -393,6 +393,43 @@ it("ifRunning starts nothing for a stopped service", async () => {
     ),
   ).toMatchObject({ ok: true, result: { state: "running" } });
   expect(echo.calls).toHaveLength(1);
+});
+
+it("parses service files of several megabytes (a browser daemon bundle)", () => {
+  const big = Buffer.alloc(6 * 1024 * 1024, 7).toString("base64");
+  const parsed = parseServiceOpBody({
+    op: "service.ensure",
+    spec: { name: "browser", entry: "main.js", args: [], files: { "main.js": big } },
+  });
+  expect(parsed.op === "service.ensure" && parsed.spec.files?.["main.js"]?.length).toBe(
+    6 * 1024 * 1024,
+  );
+  for (const bad of ["abc", "ab=c", "a===", "ab c"])
+    expect(() =>
+      parseServiceOpBody({
+        op: "service.ensure",
+        spec: { name: "browser", entry: "main.js", args: [], files: { "main.js": bad } },
+      }),
+    ).toThrow(/standard padded base64/);
+});
+
+it("ifRunning accepts the name-only spec device-local sends", async () => {
+  const { supervisor, echo } = await fixture();
+  const nameOnly = { op: "service.ensure", spec: { name: "browser" }, ifRunning: true };
+  expect(await serveServiceOp(supervisor, nameOnly, signal())).toMatchObject({
+    ok: true,
+    result: { name: "browser", state: "stopped" },
+  });
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  expect(await serveServiceOp(supervisor, nameOnly, signal())).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(echo.calls).toHaveLength(1);
+  // without ifRunning the spec stays complete
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: { name: "browser" } }, signal()),
+  ).toMatchObject({ ok: false, error: { kind: "invalid" } });
 });
 
 it("a cancelled ensure never fails a concurrent one", async () => {
