@@ -122,20 +122,12 @@ export interface KeptToolResult {
  */
 export type NetworkAppliesAt = "next-command" | "next-use" | "files-reset";
 
-/**
- * A network ask's `detail` (network ask-to-allow spec §6.1, P-D2): the device, the refused hosts,
- * the command and its kept `tool_result` (written with a note when the ask settles; the command is
- * never run again), when "add to this device's list" would apply, and once approved what took
- * effect.
- */
-export interface NetworkAskDetail {
+/** What every network ask's `detail` holds ({@link NetworkAskDetail}). */
+interface NetworkAskDetailBase {
   deviceId: string;
-  hosts: { host: string; port: number }[];
-  command: string;
-  description: string | null;
   /** When hosts added to the device's own list apply ({@link NetworkAppliesAt}). */
   appliesAt: NetworkAppliesAt;
-  /** The formatted `tool_result` of the command and its display-only fields. */
+  /** The formatted `tool_result` of the call and its display-only fields. */
   result: KeptToolResult;
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
@@ -146,8 +138,50 @@ export interface NetworkAskDetail {
   outcome?: "once" | "always";
 }
 
-/** A network ask's detail as the API shows it: without the kept command result. */
-export type NetworkAskView = Omit<NetworkAskDetail, "result">;
+/**
+ * A command's network ask (network ask-to-allow spec §6.1, P-D2): the device, the refused hosts,
+ * the command and its kept `tool_result` (written with a note when the ask settles; the command is
+ * never run again), when "add to this device's list" would apply, and once approved what took
+ * effect. `kind` absent: a command too.
+ */
+export interface CommandNetworkAskDetail extends NetworkAskDetailBase {
+  kind?: "command";
+  hosts: { host: string; port: number }[];
+  command: string;
+  description: string | null;
+}
+
+/**
+ * A device service's network ask (browser use spec §7.1): an extension's tool call whose service
+ * saw `hosts` refused by the device's allowlist. It offers only `always` (the device's own list:
+ * a run grant applies per exec and cannot reach a long-lived service); approved, the call runs
+ * again, otherwise its kept result is written with the outcome's note. `service` names the
+ * extension whose service asked; `url` is the page it was loading when known.
+ */
+export interface ServiceNetworkAskDetail extends NetworkAskDetailBase {
+  kind: "service";
+  service: string;
+  url: string | null;
+  hosts: string[];
+  /** The call's attempt (`tool_call_started`) that asked: the re-run takes the next one. */
+  attempt: number;
+}
+
+/** A network ask's `detail`: a command's or a device service's. */
+export type NetworkAskDetail = CommandNetworkAskDetail | ServiceNetworkAskDetail;
+
+/** `Omit` over each member of a union. */
+type OmitEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** A network ask's detail as the API shows it: without the kept call result. */
+export type NetworkAskView = OmitEach<NetworkAskDetail, "result">;
+
+/** The hosts a network ask asked about, whichever kind it is. */
+export function networkAskHosts(detail: Pick<NetworkAskDetail, "hosts" | "kind">): string[] {
+  return detail.kind === "service"
+    ? [...(detail.hosts as string[])]
+    : (detail.hosts as { host: string }[]).map((h) => h.host);
+}
 
 /**
  * A git push ask's `detail` (sandbox git credentials spec §7): the host, the repository
@@ -335,7 +369,7 @@ export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
       r.command !== null && !isSessionGrantableRule(r.command.rule)
         ? r.scopes.filter((s) => s !== "session")
         : r.scopes,
-    detail: strip(r.detail),
+    detail: strip(r.detail) as NetworkAskView | null,
     git: strip(r.git),
     ...(r.kind === "secure_input" && { input: null }),
   };
@@ -499,7 +533,9 @@ export interface NetworkAskInput {
   callId: string;
   /** The device owner: the only person who may decide. */
   requestedFor: string;
-  detail: Omit<NetworkAskDetail, "grantedHosts" | "outcome">;
+  /** The tool key the ask is recorded under: the call's (`Bash` for a command). */
+  toolKey: string;
+  detail: OmitEach<NetworkAskDetail, "grantedHosts" | "outcome">;
   /**
    * What the device's provider enforces (device-provider spec §6.3, `networkAskOffer`): `once` (a
    * run grant) only with per-operation hosts, `always` (add to the device's own list) only when
@@ -525,8 +561,6 @@ const NETWORK_APPLIES_AT: ReadonlySet<NetworkAppliesAt> = new Set([
   "files-reset",
 ]);
 
-/** The tool key a network ask is recorded under (the command ran in `Bash`). */
-export const NETWORK_ASK_TOOL_KEY = "Bash";
 /** The spec hash of a network ask (no tool definition is approved). */
 const NETWORK_ASK_SPEC_HASH = "network";
 /** The tool key a git ask is recorded under (the push ran in a `Bash` command). */
@@ -882,17 +916,22 @@ export class ApprovalsService {
   /**
    * A network ask (network ask-to-allow spec §6.2): a pending approval of kind `network` for the
    * device owner, expiring like a tool approval (`tools.approvalTimeoutHours`), and its
-   * `approval_requested` (tool key `Bash`, the display-only `network.hosts`), in one transaction.
+   * `approval_requested` (the call's tool key, the display-only `network.hosts`), in one transaction.
    * It takes the attempt after the call's other approvals (P-D4: the command ran, so no tool
    * approval of the call follows it). One per call: a second request returns the first.
    */
   async requestNetwork(input: NetworkAskInput): Promise<ApprovalRecord> {
-    const hosts = input.detail.hosts;
+    const hosts = networkAskHosts(input.detail);
     if (hosts.length === 0 || hosts.length > NETWORK_ASK_MAX_HOSTS) {
       throw new Error(`a network ask lists 1 to ${NETWORK_ASK_MAX_HOSTS} hosts`);
     }
-    if (hosts.some((h) => h.host.length === 0 || h.host.length > NETWORK_HOST_MAX_CHARS)) {
+    if (hosts.some((h) => h.length === 0 || h.length > NETWORK_HOST_MAX_CHARS)) {
       throw new Error("a network ask's host is 1 to 255 characters");
+    }
+    if (input.toolKey.length === 0) throw new Error("a network ask names its call's tool key");
+    // a service's ask offers only the device's own list (a run grant cannot reach its process)
+    if (input.detail.kind === "service" && input.scopes.some((k) => k !== "always")) {
+      throw new Error('a device service\'s network ask offers only "always"');
     }
     const scopes = new Set(input.scopes);
     if (
@@ -949,7 +988,7 @@ export class ApprovalsService {
         attempt: Number(last?.attempt ?? 0) + 1,
         kind: "network",
         detail: JSON.stringify(input.detail),
-        tool_key: NETWORK_ASK_TOOL_KEY,
+        tool_key: input.toolKey,
         spec_hash: NETWORK_ASK_SPEC_HASH,
         connector_id: null,
         input: JSON.stringify({}),
@@ -974,7 +1013,7 @@ export class ApprovalsService {
           approvalId: rec.id,
           toolKey: rec.toolKey,
           expiresAt: rec.expiresAt,
-          network: { hosts: input.detail.hosts.map((h) => h.host) },
+          network: { hosts: networkAskHosts(input.detail) },
           requestedFor: rec.requestedFor,
           approverRole: null,
         },
@@ -1432,7 +1471,7 @@ export class ApprovalsService {
       throw new ApiError("approval.already_decided", "Approval has already been decided");
     }
     if (row.expired) throw new ApiError("approval.already_decided", "Approval has expired");
-    const asked = [...new Set(detail.hosts.map((h) => h.host))];
+    const asked = [...new Set(networkAskHosts(detail))];
     let network: NetworkDecision;
     if (body.decision === "approve") {
       const scope = body.scope ?? "once";
@@ -1994,7 +2033,7 @@ export class ApprovalsService {
       },
     ]);
     if (network !== undefined && before.detail !== null) {
-      const asked = [...new Set(before.detail.hosts.map((h) => h.host))];
+      const asked = [...new Set(networkAskHosts(before.detail))];
       const refused = asked.filter((h) => !network.wanted.includes(h));
       await audit(t, {
         actorAccountId: accountId,

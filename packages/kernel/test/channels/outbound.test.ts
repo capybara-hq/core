@@ -1053,6 +1053,7 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
       conversationId,
       runId,
       step: 1,
+      toolKey: "Bash",
       callId: `net-${randomUUID().slice(0, 8)}`,
       requestedFor: owner,
       detail: {

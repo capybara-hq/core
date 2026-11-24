@@ -2041,7 +2041,10 @@
       "fixed": "该工具总是需要审批"
     },
     "network": {
-      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。"
+      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。",
+      "serviceTitle": "智能体的浏览器想访问 {host}",
+      "serviceNote": "开放网络模式下不会再询问",
+      "serviceOtherApprover": "智能体的浏览器想访问 {hosts}，等待设备所有者处理。"
     },
     "permissionScope": {
       "intro": "批准后仅本次操作获得以下访问范围，每个目录包含其中的全部内容。",

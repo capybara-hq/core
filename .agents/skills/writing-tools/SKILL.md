@@ -213,6 +213,11 @@ fails closed.
   "escalated"` (from the admitted scope only); the schema change needs no `DriftReason`.
 - **Network asks** offer a run grant only: "always allow" for a host is refused (a local owner's
   allowlist widens only on the machine).
+- **Service network asks** (browser use spec §7.1): a handler's kernel services report hosts a
+  device service saw refused into the call scope (`tools/call-scope.ts`, a symbol on the call's own
+  context object, never a module map); after the handler the pipeline asks the device owner under
+  the call's tool key (`detail.kind: "service"`), offering only `always`. Approved, the call runs
+  again in the next attempt; one ask per call (a re-run refused more hosts gets a note).
 - **Code it cannot read.** Inline interpreter code, stdin or URL scripts, fetched packages and files
   the conversation wrote are `unsure.interpreter`; `review-guarantees.test.ts` (acts × spellings that
   must never be `allow`) is the authority over the ordered-hit corpus.

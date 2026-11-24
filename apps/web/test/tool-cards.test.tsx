@@ -492,6 +492,57 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     });
   });
 
+  // browser use spec §7.1: a device service's ask names the agent's browser, offers only always
+  it.each([
+    ["zh", "智能体的浏览器想访问 example.org", "开放网络模式下不会再询问", "加入此设备的列表"],
+    [
+      "en",
+      "The agent's browser wants to reach example.org",
+      "Open network mode stops these asks",
+      "Add to this device's list",
+    ],
+  ] as const)(
+    "a device service's ask words the browser's copy (%s)",
+    async (locale, title, note, add) => {
+      const SVC = {
+        ...NET,
+        toolKey: "plugin__browser__navigate",
+        toolName: "navigate",
+        input: { url: "https://example.org/" },
+        scopes: ["always"],
+        detail: {
+          kind: "service",
+          deviceId: "d1",
+          service: "browser",
+          url: null,
+          hosts: ["example.org"],
+          appliesAt: "next-use",
+        },
+      };
+      stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: SVC }) });
+      const { container } = renderPage(
+        <ApprovalCard
+          orgId="o1"
+          item={{
+            ...netItem(),
+            toolKey: "plugin__browser__navigate",
+            input: { url: "https://example.org/" },
+            network: { hosts: ["example.org"] },
+          }}
+        />,
+        { locale },
+      );
+      expect(await screen.findByRole("button", { name: add })).toBeTruthy();
+      expect(screen.getByText(title)).toBeTruthy();
+      expect(screen.getByText(note)).toBeTruthy();
+      // no command block, and "once" is never offered
+      expect(container.querySelector('[data-part="network-command"]')).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: locale === "zh" ? "这次允许" : "Allow this time" }),
+      ).toBeNull();
+    },
+  );
+
   it.each(["en", "zh"] as const)(
     "a stale list-only ask refused by the device names why and what to do (%s)",
     async (locale) => {

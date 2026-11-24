@@ -2053,7 +2053,10 @@
       "fixed": "This tool always asks for approval"
     },
     "network": {
-      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner."
+      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
+      "serviceTitle": "The agent's browser wants to reach {host}",
+      "serviceNote": "Open network mode stops these asks",
+      "serviceOtherApprover": "The agent's browser wants to reach {hosts}; waiting for the device owner."
     },
     "permissionScope": {
       "intro": "Approving grants this access for this operation only. Each directory includes everything inside it.",

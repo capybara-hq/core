@@ -20,15 +20,9 @@ export type ApprovalScope = "once" | "session" | "always";
 
 export const APPROVAL_SCOPES = ["once", "session", "always"] as const satisfies ApprovalScope[];
 
-/**
- * A network ask's detail (network ask spec §6.1): a command on a device was refused these hosts by
- * the device's own policy. `grantedHosts` / `outcome` / `fallback` are set once decided.
- */
-export interface NetworkApprovalDetail {
+/** What every network ask's detail holds. `grantedHosts` / `outcome` are set once decided. */
+interface NetworkApprovalDetailBase {
   deviceId: string;
-  hosts: { host: string; port: number }[];
-  command: string;
-  description: string | null;
   /** The hosts the decision allowed (the checked subset). */
   grantedHosts?: string[];
   /** When an "always" (add to the device's list) takes effect. */
@@ -36,6 +30,27 @@ export interface NetworkApprovalDetail {
   /** Set once decided: this run only, or the hosts were added to the device's list. */
   outcome?: "once" | "always";
 }
+
+/**
+ * A network ask's detail (network ask spec §6.1): a command on a device was refused these hosts by
+ * the device's own policy (`kind` absent or `command`), or a device service such as the agent's
+ * browser was (`service`, browser use spec §7.1: offers only "always").
+ */
+export type NetworkApprovalDetail =
+  | (NetworkApprovalDetailBase & {
+      kind?: "command";
+      hosts: { host: string; port: number }[];
+      command: string;
+      description: string | null;
+    })
+  | (NetworkApprovalDetailBase & {
+      kind: "service";
+      /** The extension whose service asked. */
+      service: string;
+      /** The page the service was loading, when known. */
+      url: string | null;
+      hosts: string[];
+    });
 
 /**
  * A command review ask's detail (auto mode spec §5.4): a shell command, or a file write outside

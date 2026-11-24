@@ -13,6 +13,7 @@ import {
   type ApprovalRecord,
   NETWORK_ASK_CANCELLED_NOTE,
   type NetworkAppliesAt,
+  networkAskHosts,
 } from "./approvals.service.js";
 
 /**
@@ -142,6 +143,28 @@ export function deviceAskTerms(
   };
 }
 
+/**
+ * The ask terms for a device service's refusals (browser use spec §7.1): a long-lived service is
+ * reached only through the device's own list, never a per-exec run grant, so a host is offered
+ * only `always` and refused when the list cannot take it (`listAddRefusal`: beyond the org's or
+ * platform's hosts, or a device with no list of its own); a host the list already holds waits for
+ * it to apply ({@link deviceAskTerms}' `onList`).
+ */
+export function serviceAskTerms(
+  f: DeviceAskFacts,
+): Required<Pick<NetworkPlanContext, "refusal" | "offer" | "onList" | "deviceBlocks">> {
+  const terms = deviceAskTerms(f);
+  return {
+    refusal: f.listAddRefusal,
+    onList: terms.onList,
+    deviceBlocks: () => false,
+    offer: (hosts) => {
+      const o = terms.offer(hosts);
+      return o?.scopes.includes("always") ? { scopes: ["always"], appliesAt: o.appliesAt } : null;
+    },
+  };
+}
+
 /** When a host added to the device's list applies, as the model reads it. */
 const APPLIES_TEXT: Record<NetworkAppliesAt, string> = {
   "next-command": "from the next command",
@@ -159,6 +182,13 @@ export const allowedOnceNote = (hosts: readonly string[]) =>
  */
 export const addedToDeviceNote = (hosts: readonly string[], appliesAt: NetworkAppliesAt) =>
   `${blockedLead(hosts)} The person added ${list(hosts)} to this device's network list; it applies ${APPLIES_TEXT[appliesAt]}. This command is not run again.`;
+
+/**
+ * Not asked: a device service's call that already asked once (it ran again after the person added
+ * hosts to the device's list, browser use spec §7.1) was refused more hosts; one ask per call.
+ */
+export const serviceAskedNote = (hosts: readonly string[]) =>
+  `${blockedLead(hosts)} This call already asked for network access once; call the tool again to ask for ${pron(hosts)}.`;
 
 /**
  * Not asked: the device's network settings already allow the host (its own list, added by an
@@ -464,7 +494,7 @@ const NO_OFFER_WHY = "the device's owner changes the device's network on its pag
  * wait (created to expiry). Null while it is pending.
  */
 export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] | null {
-  const asked = (a.detail?.hosts ?? []).map((h) => h.host);
+  const asked = a.detail === null ? [] : networkAskHosts(a.detail);
   switch (a.status) {
     case "approved": {
       const granted = a.detail?.grantedHosts ?? asked;

@@ -12,12 +12,14 @@ import {
   escalationAskReason,
   quotedJustification,
 } from "../sandbox/review/permission-candidate.js";
-import type {
-  ApprovalsService,
-  ApprovalView,
-  CommandAskDetail,
-  GitAskView,
-  NetworkAskView,
+import {
+  type ApprovalsService,
+  type ApprovalView,
+  type CommandAskDetail,
+  type CommandNetworkAskDetail,
+  type GitAskView,
+  networkAskHosts,
+  type ServiceNetworkAskDetail,
 } from "../tools/approvals.service.js";
 import { type ToolInfo, toolInfo } from "../tools/info.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -252,8 +254,16 @@ export interface NetworkCardText {
   scopeLabels: Partial<Record<"once" | "session" | "always", string>>;
 }
 
+/** What a network ask's card reads: a command's or a device service's view, its `appliesAt` optional. */
+type NetworkCardDetail =
+  | (Pick<CommandNetworkAskDetail, "kind" | "hosts" | "command"> &
+      Partial<Pick<CommandNetworkAskDetail, "appliesAt">>)
+  | (Pick<ServiceNetworkAskDetail, "kind" | "hosts" | "url"> &
+      Partial<Pick<ServiceNetworkAskDetail, "appliesAt">>);
+
 /**
- * A network ask's card text: the title names the host (or the number of hosts); the preview lists
+ * A network ask's card text (a device service's: browser use spec §7.1, its own title and a note
+ * that open network mode stops the asks): the title names the host (or the number of hosts); the preview lists
  * the hosts, then the command clipped to {@link CARD_SUMMARY_MAX}, for several hosts that the
  * decision applies to all of them (an IM card has no per-host choice) and, when `scopes` offers
  * "add to this device's list", when that applies (device-provider spec §6.3). Model-controlled
@@ -261,17 +271,25 @@ export interface NetworkCardText {
  * web.
  */
 export function networkCardText(
-  detail: Pick<NetworkAskView, "hosts" | "command"> & Partial<Pick<NetworkAskView, "appliesAt">>,
+  detail: NetworkCardDetail,
   locale: ChannelLocale,
   redact: (s: string) => string = (s) => s,
   scopes: readonly string[] = [],
 ): NetworkCardText {
-  const hosts = [...new Set(detail.hosts.map((h) => redact(h.host)))];
+  const service = detail.kind === "service";
+  const hosts = [...new Set(networkAskHosts(detail).map(redact))];
   const title =
     hosts.length === 1
-      ? phrase("networkTitleOne", locale).replace("{host}", hosts[0] as string)
+      ? phrase(service ? "networkServiceTitle" : "networkTitleOne", locale).replace(
+          "{host}",
+          hosts[0] as string,
+        )
       : phrase("networkTitleMany", locale).replace("{n}", String(hosts.length));
-  const command = cut(redact(detail.command.trim()), CARD_SUMMARY_MAX);
+  // a service ask shows the page it was loading (when known) where a command ask shows the command
+  const command = cut(
+    redact((detail.kind === "service" ? (detail.url ?? "") : detail.command).trim()),
+    CARD_SUMMARY_MAX,
+  );
   const applies =
     scopes.includes("always") && detail.appliesAt !== undefined
       ? phrase("networkAppliesLine", locale)
@@ -285,6 +303,7 @@ export function networkCardText(
       ...(command !== "" ? ["", command] : []),
       ...(hosts.length > 1 ? ["", phrase("networkAllHosts", locale)] : []),
       ...(applies !== null ? ["", applies] : []),
+      ...(service ? ["", phrase("networkServiceNote", locale)] : []),
     ].join("\n"),
     // what the device's provider enforces: a run grant, the device's own list, or both
     scopeLabels: {
