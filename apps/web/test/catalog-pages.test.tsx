@@ -3115,13 +3115,11 @@ describe("/admin/plugins and marketplace entries", () => {
     const list = await screen.findByRole("list", { name: c.title });
     expect(within(list).getAllByRole("listitem")).toHaveLength(3);
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    // installed at an older version: 可更新到 the latest, 更新到 stages it for the wizard
+    // installed at an older version: the state names it, 更新到 the latest stages it for the wizard
     const cat = row("cat-a");
-    expect(
-      within(cat).getByText(
-        fill(c.adoptedUpdate, { version: "v1.0.0-rc.0", latest: "v1.0.0-rc.10" }),
-      ),
-    ).toBeTruthy();
+    expect(cat.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+      fill(c.adopted, { version: "v1.0.0-rc.0" }),
+    );
     // the state says it: no 有新版本 chip
     expect(within(cat).queryByText(en.catalog.newer)).toBeNull();
     const user = userEvent.setup();

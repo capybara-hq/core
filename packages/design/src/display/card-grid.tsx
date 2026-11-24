@@ -736,6 +736,7 @@ function LoadedCard({
               className="cb-object-card-state"
               data-part="object-card-state"
               data-tone={state.tone}
+              title={state.label}
             >
               {state.label}
             </span>

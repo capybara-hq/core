@@ -8,3 +8,6 @@ both a source filter and field filters draws them on one row (the plugin market'
 after its source filter).
 An update through the import page shows the installed → staged versions in the review's chip for a
 plugin without an extension too (it read 安装 v<new>).
+The plugin market's card state names the installed version only (the 更新到 button carries the
+newer one), and a card's state takes at most half its head, cut with an ellipsis, so a long state
+never squeezes the name away.

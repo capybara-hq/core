@@ -5317,7 +5317,6 @@
         "homepage": "Homepage",
         "loadFailed": "Marketplace entries failed to load.",
         "retry": "Retry",
-        "adoptedUpdate": "Installed {version} · update to {latest} available",
         "update": "Update to {version}",
         "otherVersions": "Other versions",
         "deprecated": "{version} (deprecated)",

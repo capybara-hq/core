@@ -298,15 +298,11 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
     if (entryDeprecated(e)) return { label: deprecatedLabel(e), tone: "warn" as const };
     const top = importedTop(e);
     if (e.adopted === null) return { label: t("notAdopted"), tone: "muted" as const };
+    // An update's target is on the card's 更新到 button: the state names the installed version only
     const older = updatable(e);
+    const installed = older !== undefined && e.version !== null ? older : top;
     return {
-      label:
-        older !== undefined && e.version !== null
-          ? t("adoptedUpdate", {
-              version: versionLabel(older),
-              latest: versionLabel(e.version),
-            })
-          : t("adopted", { version: top === undefined ? "" : versionLabel(top) }),
+      label: t("adopted", { version: installed === undefined ? "" : versionLabel(installed) }),
       tone: "ok" as const,
     };
   };
@@ -382,7 +378,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
             title={name}
             mono={e.displayName === null}
             chips={[
-              // 有新版本 is the state's 可更新到; the changed content is said only here
+              // 有新版本 is the card's 更新到 button; the changed content is said only here
               ...(e.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
             description={summaryOf(e)}

@@ -5305,7 +5305,6 @@
         "homepage": "主页",
         "loadFailed": "市场条目没有加载出来。",
         "retry": "重试",
-        "adoptedUpdate": "已安装 {version} · 可更新到 {latest}",
         "update": "更新到 {version}",
         "otherVersions": "其他版本",
         "deprecated": "{version} 已废弃",
