@@ -87,7 +87,10 @@ export class DialInStreamBridge {
     } else if (f.type === "stream-credit") {
       s.sendCredit += f.messages;
       this.flush(s);
-    } else if (s.conn) {
+    } else if (!s.conn) {
+      // the kernel sends data only after `stream-opened`: anything else breaks the protocol
+      this.end(f.streamId, s, "data before open");
+    } else {
       if (s.recvCredit <= 0) {
         this.end(f.streamId, s, "credit exceeded");
         return;

@@ -34,60 +34,12 @@ export function echoLauncher() {
   const launcher: ServiceLauncher = {
     async launch(req) {
       calls.push(req);
-      const socketPath = req.env[DEVICE_SERVICE_SOCKET_ENV] as string;
-      const conns = new Set<Socket>();
-      const server = createServer((conn) => {
-        conns.add(conn);
-        const decoder = new ServiceMessageDecoder();
-        let kind: string | undefined;
-        conn.on("close", () => {
-          conns.delete(conn);
-          if (kind === "stream") ended();
-        });
-        conn.on("error", () => {});
-        conn.on("data", (chunk: Buffer) => {
-          for (const m of decoder.push(chunk)) {
-            if (kind === undefined) {
-              kind = (JSON.parse(text(m)) as { kind: string }).kind;
-              continue;
-            }
-            if (kind === "request") {
-              conn.end(encodeServiceMessage(bytes(`echo:${text(m)}`)));
-              continue;
-            }
-            const s = text(m);
-            received.push(s);
-            if (s.startsWith("burst:"))
-              for (let i = 0; i < Number(s.slice(6)); i++)
-                conn.write(encodeServiceMessage(bytes(`m${i}`)));
-            else if (s.startsWith("big:"))
-              conn.write(encodeServiceMessage(new Uint8Array(Number(s.slice(4))).fill(65)));
-            else conn.write(encodeServiceMessage(m));
-          }
-        });
+      const svc = await listenEcho(req.env[DEVICE_SERVICE_SOCKET_ENV] as string, {
+        received,
+        onStreamEnd: ended,
       });
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(socketPath, () => resolve());
-      });
-      let resolveExit!: (v: { code: number | null }) => void;
-      const exited = new Promise<{ code: number | null }>((r) => {
-        resolveExit = r;
-      });
-      let done = false;
-      const exit = (code: number | null) => {
-        if (done) return;
-        done = true;
-        server.close();
-        for (const c of conns) c.destroy();
-        resolveExit({ code });
-      };
-      running.push({ exit });
-      return {
-        exited,
-        stop: async () => exit(null),
-        output: () => "",
-      };
+      running.push(svc);
+      return { exited: svc.exited, stop: async () => svc.exit(null), output: () => "" };
     },
   };
   return {
@@ -104,6 +56,67 @@ export function echoLauncher() {
     /** Ends every running service as if its process exited with `code`. */
     exitAll: (code: number | null) => {
       for (const r of running.splice(0)) r.exit(code);
+    },
+  };
+}
+
+/**
+ * The echo service itself, listening on `socketPath` in this process: a `request` is answered
+ * with `echo:<body>` (`hang` is never answered); on a `stream`, `burst:<n>` sends n messages,
+ * `big:<n>` one message of n bytes, anything else is echoed. `exit` ends it like a process exit.
+ */
+export async function listenEcho(
+  socketPath: string,
+  hooks: { received?: string[]; onStreamEnd?: () => void } = {},
+) {
+  const conns = new Set<Socket>();
+  const server = createServer((conn) => {
+    conns.add(conn);
+    const decoder = new ServiceMessageDecoder();
+    let kind: string | undefined;
+    conn.on("close", () => {
+      conns.delete(conn);
+      if (kind === "stream") hooks.onStreamEnd?.();
+    });
+    conn.on("error", () => {});
+    conn.on("data", (chunk: Buffer) => {
+      for (const m of decoder.push(chunk)) {
+        if (kind === undefined) {
+          kind = (JSON.parse(text(m)) as { kind: string }).kind;
+          continue;
+        }
+        if (kind === "request") {
+          if (text(m) !== "hang") conn.end(encodeServiceMessage(bytes(`echo:${text(m)}`)));
+          continue;
+        }
+        const s = text(m);
+        hooks.received?.push(s);
+        if (s.startsWith("burst:"))
+          for (let i = 0; i < Number(s.slice(6)); i++)
+            conn.write(encodeServiceMessage(bytes(`m${i}`)));
+        else if (s.startsWith("big:"))
+          conn.write(encodeServiceMessage(new Uint8Array(Number(s.slice(4))).fill(65)));
+        else conn.write(encodeServiceMessage(m));
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => resolve());
+  });
+  let resolveExit!: (v: { code: number | null }) => void;
+  const exited = new Promise<{ code: number | null }>((r) => {
+    resolveExit = r;
+  });
+  let done = false;
+  return {
+    exited,
+    exit(code: number | null) {
+      if (done) return;
+      done = true;
+      server.close();
+      for (const c of conns) c.destroy();
+      resolveExit({ code });
     },
   };
 }

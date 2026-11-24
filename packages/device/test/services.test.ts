@@ -1,16 +1,30 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEVICE_SERVICE_SOCKET_ENV, DEVICE_SERVICE_STATE_ENV } from "@capybara-hq/plugin-sdk";
 import { afterEach, expect, it } from "vitest";
+import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
+import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { macServiceLauncher } from "../src/services/mac-launcher.js";
 import { serveServiceOp } from "../src/services/ops.js";
 import {
   MAX_SERVICE_SOCKET_PATH_BYTES,
   ServiceSupervisor,
   servicePaths,
 } from "../src/services/supervisor.js";
-import { bytes, echoLauncher, text } from "./service-fixture.js";
+import { bytes, echoLauncher, listenEcho, text } from "./service-fixture.js";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
@@ -238,4 +252,242 @@ it("a long device directory still serves the socket inside the state dir", async
     });
     c.on("error", reject);
   });
+  // the alias goes with the service
+  await supervisor.stop(name, signal());
+  await expect(lstat(socket.slice(0, -2))).rejects.toThrow(/ENOENT/);
+});
+
+async function plantedFixture() {
+  const f = await fixture();
+  const outside = join(f.root, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "secret"), "keep");
+  const stateDir = join(f.deviceDir, "svc", "browser");
+  await mkdir(stateDir, { recursive: true });
+  return { ...f, outside, stateDir };
+}
+
+it("a link a service planted as a file is replaced, never followed", async () => {
+  const f = await plantedFixture();
+  await symlink(join(f.outside, "secret"), join(f.stateDir, "main.js"));
+  await link(join(f.outside, "secret"), join(f.stateDir, "other.js"));
+  const res = await serveServiceOp(
+    f.supervisor,
+    { op: "service.ensure", spec: spec({ "main.js": "// main", "other.js": "// other" }) },
+    signal(),
+  );
+  expect(res).toMatchObject({ ok: true });
+  expect(await readFile(join(f.outside, "secret"), "utf8")).toBe("keep");
+  expect((await lstat(join(f.stateDir, "main.js"))).isFile()).toBe(true);
+  expect(await readFile(join(f.stateDir, "main.js"), "utf8")).toBe("// main");
+  expect((await lstat(join(f.stateDir, "other.js"))).nlink).toBe(1);
+});
+
+it("a link a service planted as a directory component is refused", async () => {
+  const f = await plantedFixture();
+  await symlink(f.outside, join(f.stateDir, "lib"));
+  const res = await serveServiceOp(
+    f.supervisor,
+    { op: "service.ensure", spec: spec({ "main.js": "//", "lib/x.js": "// x" }) },
+    signal(),
+  );
+  expect(res).toMatchObject({
+    ok: false,
+    error: { kind: "denied", message: expect.stringMatching(/symbolic link/) },
+  });
+  await expect(stat(join(f.outside, "x.js"))).rejects.toThrow(/ENOENT/);
+  expect(f.echo.calls).toHaveLength(0);
+});
+
+it("a state directory or downloads that is a link is refused", async () => {
+  const f = await fixture();
+  const elsewhere = join(f.root, "elsewhere");
+  await mkdir(elsewhere);
+  await symlink(elsewhere, join(f.workspace, "downloads"));
+  expect(
+    await serveServiceOp(f.supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "denied" },
+  });
+  await rm(join(f.workspace, "downloads"));
+  // the refused first attempt made the state directory; a service could replace it with a link
+  await rm(join(f.deviceDir, "svc", "browser"), { recursive: true });
+  await symlink(elsewhere, join(f.deviceDir, "svc", "browser"));
+  expect(
+    await serveServiceOp(f.supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "denied" },
+  });
+  expect(f.echo.calls).toHaveLength(0);
+});
+
+it("spec files cannot use the socket or temporary names", async () => {
+  const { supervisor } = await fixture();
+  for (const files of [
+    { "main.js": "//", s: "x" },
+    { "main.js": "//", "tmp/x": "x" },
+  ])
+    expect(
+      await serveServiceOp(supervisor, { op: "service.ensure", spec: spec(files) }, signal()),
+    ).toMatchObject({ ok: false, error: { kind: "invalid" } });
+});
+
+it("ifRunning starts nothing for a stopped service", async () => {
+  const { supervisor, echo } = await fixture();
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: spec(), ifRunning: true },
+      signal(),
+    ),
+  ).toEqual({ ok: true, result: { name: "browser", state: "stopped", startedAt: null } });
+  expect(echo.calls).toHaveLength(0);
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: spec(), ifRunning: true },
+      signal(),
+    ),
+  ).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(echo.calls).toHaveLength(1);
+});
+
+it("a cancelled ensure never fails a concurrent one", async () => {
+  const { supervisor, echo } = await fixture();
+  const first = new AbortController();
+  const a = supervisor.ensure(
+    { ...spec(), files: { "main.js": bytes("//") } },
+    undefined,
+    first.signal,
+  );
+  const b = supervisor.ensure(
+    { ...spec(), files: { "main.js": bytes("//") } },
+    undefined,
+    signal(),
+  );
+  first.abort(new Error("caller went away"));
+  await expect(a).rejects.toThrow(/caller went away/);
+  expect(await b).toMatchObject({ state: "running" });
+  expect(echo.calls).toHaveLength(1);
+});
+
+it("service.request waits no longer than the envelope deadline and answers", async () => {
+  const { supervisor } = await fixture();
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  const res = await serveServiceOp(
+    supervisor,
+    { op: "service.request", name: "browser", body: b64("hang"), timeoutMs: 600_000 },
+    signal(),
+    { deadlineMs: 300 },
+  );
+  expect(res).toMatchObject({
+    ok: false,
+    error: { kind: "error", message: expect.stringMatching(/did not answer within 50 ms/) },
+  });
+});
+
+function ceiling(roots: { workspace: string }, denies: string[] = []): DeviceOwnerCeiling {
+  return {
+    revision: "r",
+    outsideSandbox: false,
+    network: "open",
+    allowedDomains: [],
+    roots: { workspace: roots.workspace, skills: "/nonexistent/skills", tmp: "/nonexistent/tmp" },
+    projectReach: "workspace",
+    projectPaths: [],
+    secretAndStateDenies: denies,
+    otherConnectionDenies: [],
+    unreadableConnections: [],
+    mountReexposedDenies: [],
+    mountReexposureProblem: null,
+    restrictedDeniedReadRoots: [],
+    preparation: { skillsRoot: "/nonexistent/skills", attachmentsBase: "/nonexistent/a" },
+  } as unknown as DeviceOwnerCeiling;
+}
+
+/** A supervisor on the macOS launcher with a fake worker that runs the echo service in-process. */
+async function macFixture(denies: (deviceDir: string) => string[] = () => []) {
+  const f = await fixture();
+  const requests: MacWorkerRequest[] = [];
+  const launcher = macServiceLauncher({
+    deviceId: "d",
+    stateDir: f.root,
+    pythonPath: "/usr/bin/python3",
+    runtimeHash: () => "hash",
+    readOwnerCeiling: async () => ceiling({ workspace: f.workspace }, denies(f.deviceDir)),
+    startWorker: async (request) => {
+      requests.push(request);
+      if (request.kind !== "exec") throw new Error("exec only");
+      const svc = await listenEcho(request.args.env?.[DEVICE_SERVICE_SOCKET_ENV] as string);
+      return {
+        ready: Promise.resolve(),
+        completion: svc.exited.then(({ code }) => ({
+          exitCode: code,
+          stdout: "",
+          stderr: "",
+          truncated: false,
+          timedOut: false,
+        })),
+        cancel: async () => svc.exit(null),
+      };
+    },
+  });
+  const supervisor = new ServiceSupervisor({
+    deviceDir: f.deviceDir,
+    workspace: f.workspace,
+    launcher: () => launcher,
+    socketAliasRoot: join(f.root, "a"),
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
+  return { ...f, supervisor, requests };
+}
+
+it("the macOS launcher refuses roots the owner ceiling denies, as a typed error", async () => {
+  const f = await macFixture((deviceDir) => [join(deviceDir, "svc")]);
+  expect(
+    await serveServiceOp(f.supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "denied" },
+  });
+  expect(f.requests).toHaveLength(0);
+});
+
+it("ensure with a widened host list restarts the running service with the new grant", async () => {
+  const f = await macFixture();
+  const ensure = (hosts: string[]) =>
+    serveServiceOp(
+      f.supervisor,
+      { op: "service.ensure", spec: spec(), network: { kind: "allowlist", hosts } },
+      signal(),
+    );
+  expect(await ensure(["a.example.com"])).toMatchObject({ ok: true, result: { state: "running" } });
+  const first = f.requests[0];
+  expect(first?.grant).toMatchObject({
+    full: false,
+    hosts: ["a.example.com"],
+    writeRoots: [join(f.deviceDir, "svc", "browser"), join(f.workspace, "downloads")],
+  });
+  expect(first?.service?.unixSockets).toEqual([join(f.deviceDir, "svc", "browser")]);
+  // the same network again: kept as is
+  await ensure(["a.example.com"]);
+  expect(f.requests).toHaveLength(1);
+  // a host approved later: the grant cannot change in place, so the service restarts with it
+  expect(await ensure(["a.example.com", "b.example.com"])).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(f.requests).toHaveLength(2);
+  expect([...(f.requests[1]?.grant.hosts ?? [])].sort()).toEqual([
+    "a.example.com",
+    "b.example.com",
+  ]);
+  const reply = await f.supervisor.request("browser", bytes("x"), {
+    timeoutMs: 5000,
+    signal: signal(),
+  });
+  expect(text(reply)).toBe("echo:x");
 });

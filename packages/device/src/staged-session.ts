@@ -496,11 +496,12 @@ export function serveStagedSession(
           () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
           envelope.deadlineMs,
         );
-        const done = serveServiceOp(services, envelope.body, ctl.signal)
-          .then((answer) => {
-            if (ctl.signal.aborted) return;
-            deliver({ type: "res", id, ...answer } as DeviceResponse);
-          })
+        // always answered, an elapsed deadline as a typed error: a request's own wait ends
+        // before the deadline (clamped), so the kernel hears why instead of nothing
+        const done = serveServiceOp(services, envelope.body, ctl.signal, {
+          deadlineMs: envelope.deadlineMs,
+        })
+          .then((answer) => deliver({ type: "res", id, ...answer } as DeviceResponse))
           .catch(fail)
           .finally(() => {
             clearTimeout(timer);

@@ -284,3 +284,14 @@ it("the staged session serves service bodies and stream frames on its socket", a
   client.close();
   await f.echo.untilStreamEnds(1);
 });
+
+it("data before the stream opened closes it", async () => {
+  const kernel = kernelEnd();
+  // an opener that never finishes: the service connection is still being made
+  const bridge = new DialInStreamBridge(kernel.transport, () => new Promise(() => {}));
+  bridge.onFrame({ type: "stream-open", streamId: "s1", body: { service: "browser" } });
+  bridge.onFrame({ type: "stream-data", streamId: "s1", data: b64("early") });
+  expect(kernel.of("stream-close")).toEqual([
+    { type: "stream-close", streamId: "s1", reason: "data before open" },
+  ]);
+});

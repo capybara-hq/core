@@ -1,11 +1,15 @@
 import {
   DEVICE_SERVICE_MAX_MESSAGE,
   isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { ENV_NAME_RE } from "../exec/shared.js";
 import { type LocalServiceSpec, ServiceSpecError, type ServiceSupervisor } from "./supervisor.js";
+
+/** How long before the envelope's deadline a `service.request` stops waiting, to answer in time. */
+export const DEADLINE_MARGIN_MS = 250;
 
 /** The longest a `service.request` may wait for the service's answer. */
 export const MAX_SERVICE_REQUEST_TIMEOUT_MS = 600_000;
@@ -14,15 +18,22 @@ export const MAX_SERVICE_REQUEST_TIMEOUT_MS = 600_000;
  * The service request bodies the device-local provider sends on the dial-in relay (browser use
  * plan Task 10/11), beside the device protocol's `{ op, args }` operations:
  *
- * - `{ op: "service.ensure", spec: { name, entry, args, files, env? }, network? }` answers the
- *   `DeviceServiceStatus`; `files` values are standard base64; `network` is the device's network
- *   as the provider holds it (its limits), absent = no network.
+ * - `{ op: "service.ensure", spec: { name, entry, args, files, env? }, network?, ifRunning? }`
+ *   answers the `DeviceServiceStatus`; `files` values are standard base64; `network` is the
+ *   device's network as the provider holds it (its limits), absent = no network; a running service
+ *   started with another network is restarted with this one; `ifRunning: true` starts nothing
+ *   when the service is stopped (it answers the stopped status).
  * - `{ op: "service.stop", name }` answers null.
  * - `{ op: "service.status", name }` answers the `DeviceServiceStatus`.
  * - `{ op: "service.request", name, body, timeoutMs }` answers `{ body }` (base64 both ways).
  */
 export type ServiceOpBody =
-  | { op: "service.ensure"; spec: LocalServiceSpec; network?: SandboxLimits["network"] }
+  | {
+      op: "service.ensure";
+      spec: LocalServiceSpec;
+      network?: SandboxLimits["network"];
+      ifRunning?: boolean;
+    }
   | { op: "service.stop"; name: string }
   | { op: "service.status"; name: string }
   | { op: "service.request"; name: string; body: Uint8Array; timeoutMs: number };
@@ -30,7 +41,10 @@ export type ServiceOpBody =
 /** The answer body of a service op (the `res` envelope's body). */
 export type ServiceOpAnswer =
   | { ok: true; result: unknown }
-  | { ok: false; error: { kind: "invalid" | "unsupported" | "error"; message: string } };
+  | {
+      ok: false;
+      error: { kind: "invalid" | "unsupported" | "denied" | "error"; message: string };
+    };
 
 /** Whether a relay body is a service op (`op` starting with `service.`), not a device operation. */
 export function isServiceOpBody(body: unknown): boolean {
@@ -73,7 +87,9 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
   const o = record(body, "A service request");
   const op = o.op;
   if (op === "service.ensure") {
-    keys(o, ["op", "spec", "network"], "service.ensure");
+    keys(o, ["op", "spec", "network", "ifRunning"], "service.ensure");
+    if (o.ifRunning !== undefined && typeof o.ifRunning !== "boolean")
+      invalid("service.ensure ifRunning must be a boolean");
     const s = record(o.spec, "service.ensure spec");
     keys(s, ["name", "runtime", "entry", "args", "files", "env"], "service.ensure spec");
     if (s.runtime !== undefined && s.runtime !== "node")
@@ -113,6 +129,7 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
         ...(env && { env }),
       },
       ...(network && { network }),
+      ...(o.ifRunning === true && { ifRunning: true }),
     };
   }
   if (op === "service.stop" || op === "service.status") {
@@ -148,6 +165,8 @@ export async function serveServiceOp(
   services: ServiceSupervisor | undefined,
   body: unknown,
   signal: AbortSignal,
+  /** The request envelope's deadline: a `service.request` wait ends before it, with an answer. */
+  opts: { deadlineMs?: number } = {},
 ): Promise<ServiceOpAnswer> {
   try {
     const parsed = parseServiceOpBody(body);
@@ -158,15 +177,24 @@ export async function serveServiceOp(
       };
     switch (parsed.op) {
       case "service.ensure":
-        return { ok: true, result: await services.ensure(parsed.spec, parsed.network, signal) };
+        return {
+          ok: true,
+          result: await services.ensure(parsed.spec, parsed.network, signal, {
+            ...(parsed.ifRunning && { ifRunning: true }),
+          }),
+        };
       case "service.stop":
         await services.stop(parsed.name, signal);
         return { ok: true, result: null };
       case "service.status":
         return { ok: true, result: services.status(parsed.name) };
       case "service.request": {
+        const timeoutMs =
+          opts.deadlineMs === undefined
+            ? parsed.timeoutMs
+            : Math.max(1, Math.min(parsed.timeoutMs, opts.deadlineMs - DEADLINE_MARGIN_MS));
         const reply = await services.request(parsed.name, parsed.body, {
-          timeoutMs: parsed.timeoutMs,
+          timeoutMs,
           signal,
         });
         return { ok: true, result: { body: Buffer.from(reply).toString("base64") } };
@@ -182,7 +210,9 @@ export async function serveServiceOp(
             ? "invalid"
             : isSandboxPermissionUnsupportedError(error)
               ? "unsupported"
-              : "error",
+              : isSandboxScopeDeniedError(error)
+                ? "denied"
+                : "error",
         message,
       },
     };

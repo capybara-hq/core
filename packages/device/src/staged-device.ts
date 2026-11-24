@@ -230,6 +230,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     binding: StoredBinding,
   ): Promise<MacOperationBackend> => {
     const runtimeHash = binding.runtimeIdentity.runtimeHash;
+    // a new generation's backend: no service keeps the old generation's runtime or grant
+    await services.stopAll(AbortSignal.timeout(30_000));
     const options: MacOperationBackendOptions = {
       deviceId: cred.deviceId,
       instanceGeneration: binding.instanceGeneration,

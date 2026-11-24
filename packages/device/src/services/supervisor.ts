@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readlink, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { constants, realpathSync } from "node:fs";
+import { lstat, mkdir, open, readlink, stat, symlink, unlink } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
@@ -10,6 +11,7 @@ import {
   encodeServiceMessage,
   type SandboxLimits,
   SandboxPermissionUnsupportedError,
+  SandboxScopeDeniedError,
   ServiceMessageDecoder,
 } from "@capybara-hq/plugin-sdk";
 
@@ -21,6 +23,8 @@ export const MAX_SERVICE_SOCKET_PATH_BYTES = 103;
 
 /** The socket's file name inside the state directory: one byte, to leave room for the path. */
 const SOCKET_NAME = "s";
+/** The service's temporary directory inside the state directory. */
+const TMP_NAME = "tmp";
 
 /** How long a started service has to create its socket before the start fails. */
 export const SERVICE_READY_TIMEOUT_MS = 15_000;
@@ -134,6 +138,8 @@ export class ServiceSpecError extends Error {
 
 interface Running {
   proc: ServiceProcess;
+  /** The network it was started with ({@link networkKey}). */
+  network: string;
   startedAt: string;
   socket: string;
   /** The connections this program opened to the service; ended when it exits. */
@@ -153,6 +159,98 @@ export interface ServiceSupervisorOptions {
   socketAliasRoot?: string;
   readyTimeoutMs?: number;
   now?: () => Date;
+}
+
+/** The network a service runs with, comparable: kind and sorted hosts, or none. */
+export function networkKey(n: SandboxLimits["network"] | undefined): string {
+  if (!n) return "none";
+  return `${n.kind}:${[...new Set(n.hosts.map((h) => h.toLowerCase()))].sort().join(",")}`;
+}
+
+/** Rejects with `signal`'s reason when it aborts first; `p` itself goes on. */
+function withSignal<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+const refusePath = (path: string, what: string) =>
+  new SandboxScopeDeniedError(
+    `${path} is ${what}, not a plain directory or file of the device; remove it and retry`,
+  );
+
+/**
+ * Makes (or checks) the real directory `base/<parts...>` one component at a time, never following
+ * a link: a symbolic link or any other non-directory on the way is refused. The service's state
+ * directory is its own write root and persists, so a service may have planted a link there; this
+ * program writes outside the sandbox and must never follow one. `base` is the device's own.
+ */
+export async function realDirectory(base: string, parts: readonly string[]): Promise<string> {
+  let dir = base;
+  for (const part of parts) {
+    dir = join(dir, part);
+    for (;;) {
+      try {
+        const st = await lstat(dir);
+        if (st.isSymbolicLink()) throw refusePath(dir, "a symbolic link");
+        if (!st.isDirectory()) throw refusePath(dir, "not a directory");
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        try {
+          await mkdir(dir, { mode: 0o700 });
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        }
+      }
+    }
+  }
+  return dir;
+}
+
+/**
+ * Removes what is at `path` unless it is a directory (refused): a link is removed itself, never
+ * its target; a hard link loses only this name.
+ */
+async function removeEntry(path: string): Promise<void> {
+  try {
+    const st = await lstat(path);
+    if (st.isDirectory()) throw refusePath(path, "a directory");
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+/**
+ * Writes a spec file inside a {@link realDirectory}: the old entry (whatever it is: a link, a hard
+ * link to a file elsewhere) is removed, then a new file is created exclusively without following
+ * links, so the write never lands outside the state directory.
+ */
+async function writeNewFile(path: string, content: Uint8Array): Promise<void> {
+  await removeEntry(path);
+  const fh = await open(
+    path,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    await fh.writeFile(content);
+  } finally {
+    await fh.close();
+  }
 }
 
 /** A relative path of a spec file: no `..`, not absolute, no empty or `.` segment. */
@@ -175,14 +273,18 @@ export function checkRelativePath(p: string, what: string): string {
  * The named services of one device (browser use spec §5): each runs under the device's local
  * sandbox through the host's {@link ServiceLauncher}, with `process.execPath` as its Node runtime,
  * writing only in its state directory and `<workspace>/downloads`. `ensure` starts a service that
- * is not running (its files are written then, and only then) and is a no-op for a running one; a
+ * is not running (its files are written then, and only then) and is a no-op for a running one
+ * with the same network (a changed network restarts it, {@link ServiceSupervisor.ensure}); a
  * service that exits stays stopped until the next `ensure` (never restarted automatically). This
  * program is one process per device, so the table lives in its memory: a service is a child of
  * the launcher's worker and ends with this program.
  */
 export class ServiceSupervisor {
   private readonly running = new Map<string, Running>();
+  /** The ensure in flight per name (ensures of one name run one after another). */
   private readonly starting = new Map<string, Promise<DeviceServiceStatus>>();
+  /** Aborts the start in flight per name (a stop during a start). */
+  private readonly startCtl = new Map<string, AbortController>();
   private readonly aliasRoot: string;
   private readonly now: () => Date;
 
@@ -203,22 +305,55 @@ export class ServiceSupervisor {
     await this.running.get(name)?.gone;
   }
 
+  /**
+   * Starts the service, or finds it running. A running service started with another network is
+   * restarted with the requested one (controller ruling R14): the sandbox's network grant is fixed
+   * when the worker starts and cannot be changed in place, so hosts approved later reach the
+   * service only through a restart (its state directory, a browser profile included, persists).
+   * With `ifRunning` a stopped service stays stopped and its stopped status is answered (R15).
+   * Ensures of one name run one after another under an internal signal; `signal` bounds only
+   * this caller's wait, so a cancelled caller never fails another's start.
+   */
   ensure(
     spec: LocalServiceSpec,
     network: SandboxLimits["network"] | undefined,
     signal: AbortSignal,
+    opts: { ifRunning?: boolean } = {},
   ): Promise<DeviceServiceStatus> {
     signal.throwIfAborted();
     checkSpec(spec);
-    if (this.running.has(spec.name)) return Promise.resolve(this.status(spec.name));
-    const pending = this.starting.get(spec.name);
-    if (pending) return pending;
-    const start = this.start(spec, network, signal).finally(() => this.starting.delete(spec.name));
-    this.starting.set(spec.name, start);
-    return start;
+    const name = spec.name;
+    const r = this.running.get(name);
+    if (r && !this.starting.has(name) && r.network === networkKey(network))
+      return Promise.resolve(this.status(name));
+    const previous = this.starting.get(name);
+    const run = (async () => {
+      await previous?.catch(() => {});
+      const current = this.running.get(name);
+      if (current) {
+        if (current.network === networkKey(network)) return this.status(name);
+        await current.proc.stop(SERVICE_STOP_GRACE_MS);
+        await current.gone;
+      } else if (opts.ifRunning) return this.status(name);
+      const ctl = new AbortController();
+      this.startCtl.set(name, ctl);
+      try {
+        return await this.start(spec, network, ctl.signal);
+      } finally {
+        if (this.startCtl.get(name) === ctl) this.startCtl.delete(name);
+      }
+    })();
+    this.starting.set(name, run);
+    void run
+      .finally(() => {
+        if (this.starting.get(name) === run) this.starting.delete(name);
+      })
+      .catch(() => {});
+    return withSignal(run, signal);
   }
 
   async stop(name: string, signal: AbortSignal, graceMs = SERVICE_STOP_GRACE_MS): Promise<void> {
+    this.startCtl.get(name)?.abort(new Error(`The device service ${name} was stopped`));
     await this.starting.get(name)?.catch(() => {});
     const r = this.running.get(name);
     if (!r) return;
@@ -229,6 +364,7 @@ export class ServiceSupervisor {
 
   /** Stops every service (a new instance, a machine stop, the program's end). */
   async stopAll(signal: AbortSignal): Promise<void> {
+    for (const ctl of this.startCtl.values()) ctl.abort(new Error("Device services were stopped"));
     await Promise.allSettled([...this.starting.values()]);
     await Promise.all([...this.running.keys()].map((name) => this.stop(name, signal)));
   }
@@ -347,21 +483,20 @@ export class ServiceSupervisor {
         "Device services need a macOS host device in this version of capybara-device",
       );
     const paths = servicePaths(this.o.deviceDir, spec.name, this.aliasRoot);
-    const { stateDir } = paths;
-    const downloads = join(this.o.workspace, "downloads");
-    const tmpDir = join(stateDir, "tmp");
-    await mkdir(stateDir, { recursive: true, mode: 0o700 });
-    await mkdir(tmpDir, { recursive: true, mode: 0o700 });
-    await mkdir(downloads, { recursive: true });
+    // every directory and file written here is checked component by component and never through
+    // a link: the state directory is the service's own write root, the workspace the agent's
+    const stateDir = await realDirectory(this.o.deviceDir, ["svc", spec.name]);
+    const downloads = await realDirectory(this.o.workspace, ["downloads"]);
+    const tmpDir = await realDirectory(stateDir, [TMP_NAME]);
     // files are (re)written on start only; everything else in the state directory is kept (the
     // service's own state, a browser profile)
     for (const [rel, content] of Object.entries(spec.files)) {
-      const file = join(stateDir, rel);
-      await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-      await writeFile(file, content, { mode: 0o600 });
+      const parts = rel.split("/");
+      const dir = await realDirectory(stateDir, parts.slice(0, -1));
+      await writeNewFile(join(dir, parts[parts.length - 1] as string), content);
     }
     // a socket left by an earlier run would make the bind fail
-    await rm(join(stateDir, SOCKET_NAME), { force: true });
+    await removeEntry(join(stateDir, SOCKET_NAME));
     if (paths.alias) await this.makeAlias(paths.alias, stateDir);
     const env: Record<string, string> = {
       ...spec.env,
@@ -376,7 +511,7 @@ export class ServiceSupervisor {
         env,
         stateDir,
         writeRoots: [stateDir, downloads],
-        readRoots: [nodePrefix(), this.o.workspace, ...(paths.alias ? [paths.alias] : [])],
+        readRoots: [nodeDirectory(), this.o.workspace, ...(paths.alias ? [paths.alias] : [])],
         unixSockets: [stateDir, ...(paths.alias ? [paths.alias] : [])],
         tmpDir,
         ...(network && { network }),
@@ -385,6 +520,7 @@ export class ServiceSupervisor {
     );
     const record: Running = {
       proc,
+      network: networkKey(network),
       startedAt: this.now().toISOString(),
       socket: paths.socket,
       conns: new Set(),
@@ -394,10 +530,11 @@ export class ServiceSupervisor {
       ),
     };
     let exited = false;
-    record.gone = record.gone.then(() => {
+    record.gone = record.gone.then(async () => {
       exited = true;
       if (this.running.get(spec.name) === record) this.running.delete(spec.name);
       for (const c of record.conns) c.destroy();
+      if (paths.alias) await this.removeAlias(paths.alias, stateDir).catch(() => {});
     });
     this.running.set(spec.name, record);
     try {
@@ -438,11 +575,20 @@ export class ServiceSupervisor {
     }
     await symlink(stateDir, alias);
   }
+
+  /** Removes the alias once its service is gone (only when it is still this service's link). */
+  private async removeAlias(alias: string, stateDir: string): Promise<void> {
+    const st = await lstat(alias);
+    if (st.isSymbolicLink() && (await readlink(alias)) === stateDir) await unlink(alias);
+  }
 }
 
-/** The Node installation the service runs from (`<prefix>/bin/node`): read by the service. */
-function nodePrefix(): string {
-  return dirname(dirname(process.execPath));
+/**
+ * The directory holding the Node runtime the service runs with (`process.execPath` resolved):
+ * the narrowest read root that reaches it. The launcher checks it against the owner's ceiling.
+ */
+function nodeDirectory(): string {
+  return dirname(realpathSync(process.execPath));
 }
 
 function checkSpec(spec: LocalServiceSpec): void {
@@ -454,6 +600,13 @@ function checkSpec(spec: LocalServiceSpec): void {
   checkRelativePath(spec.entry, "The service entry");
   if (!(spec.entry in spec.files))
     throw new ServiceSpecError(`The service entry ${spec.entry} is not one of its files`);
+  for (const rel of Object.keys(spec.files)) {
+    const first = rel.split("/")[0];
+    if (first === SOCKET_NAME || first === TMP_NAME)
+      throw new ServiceSpecError(
+        `The service file ${rel} uses a name the device reserves in the state directory (${SOCKET_NAME}, ${TMP_NAME}/)`,
+      );
+  }
   for (const key of Object.keys(spec.env ?? {}))
     if (key === DEVICE_SERVICE_SOCKET_ENV || key === DEVICE_SERVICE_STATE_ENV)
       throw new ServiceSpecError(`${key} is set by the device; leave it out of the service env`);

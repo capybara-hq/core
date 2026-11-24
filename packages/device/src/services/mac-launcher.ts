@@ -4,7 +4,11 @@ import {
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
-import type { DeviceOwnerCeiling, LocalOperationGrant } from "../exec/operation-types.js";
+import {
+  checkRoots,
+  type DeviceOwnerCeiling,
+  type LocalOperationGrant,
+} from "../exec/operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "../exec/operation-worker.js";
 import { shellQuote } from "../exec/shared.js";
 import { effectiveEgress } from "../policy.js";
@@ -35,7 +39,7 @@ export interface MacServiceLauncherOptions {
  * operation worker, from the sealed runtime the binding attested, so it runs under exactly the
  * sandbox operations run under and gets the same proxy environment. Its grant is fixed here, never
  * by a kernel scope: writes only in its state directory and `<workspace>/downloads`, reads of
- * those, the workspace and the Node installation, the owner's denied read roots kept denied, the
+ * those, the workspace and the Node runtime's directory (all checked against the owner's denies), the owner's denied read roots kept denied, the
  * unix socket in its state directory, and the device's network (the provider's limits) intersected
  * with the owner's ceiling as for an operation; no network when the provider sent none. It has no
  * time limit of its own beyond {@link SERVICE_TIME_LIMIT_MS} and is stopped by cancelling the
@@ -51,6 +55,11 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
           "The instance is not bound yet; the deployment binds it before starting services",
         );
       const ceiling = await o.readOwnerCeiling();
+      // the service's roots are the device's own (its state directory, the workspace downloads,
+      // the Node runtime's directory), outside any project reach by design, so they are held to
+      // the owner's denies as preparation roots are: none may be or pass through a link into a
+      // denied path or another connection, or sit in a system socket directory
+      checkRoots(req.readRoots, req.writeRoots, ceiling, true);
       const egress = req.network
         ? effectiveEgress(
             {
