@@ -2,12 +2,9 @@
 
 import {
   type ActionRowProps,
-  Badge,
   Field,
   type FieldShape,
   Input,
-  ItemList,
-  ItemListItem,
   type PageHeaderProps,
   Stack,
   Text,
@@ -19,8 +16,6 @@ import { type ReactNode, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { ApiClientError, issueLines } from "../lib/api";
 import {
-  agentTemplateNameOf,
-  chosenByDefault,
   descriptionOf,
   displayNameOf,
   endpointLeaves,
@@ -31,19 +26,20 @@ import {
   setOrgPluginSwitch,
   setPath,
   showValue,
-  skillNameOf,
   templateNeed,
 } from "../lib/catalog";
+import type { OrgComponent } from "../lib/components";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import type { OrgExtension } from "../lib/extensions";
 import type { TemplateConnectorInput } from "../lib/pending-connectors";
 import { orgCatalogItemQuery, pluginChangeKeys } from "../lib/query/catalog";
 import { orgExtensionsQuery } from "../lib/query/channels";
 import { retryOnMountOf } from "../lib/query/client";
+import { orgComponentsQuery } from "../lib/query/components";
 import { useAppMutation } from "../lib/query/mutation";
 import { type PageState, usePageQuery } from "../lib/query/page-query";
 import { useErrorMessage } from "../lib/use-error-message";
-import { ComponentSection, useCatalogErrorLines } from "./CatalogParts";
+import { useCatalogErrorLines } from "./CatalogParts";
 import {
   buildCredential,
   buildOAuthClient,
@@ -54,6 +50,8 @@ import {
   OAuthClientFields,
 } from "./ConnectorForm";
 import { FormError } from "./form-error";
+import { type EnableState, enableState, fromOrgDetail } from "./plugin-contents/from-org";
+import { PluginContents } from "./plugin-contents/PluginContents";
 import { usePagePath } from "./shell/path";
 
 export type TemplateDraft = {
@@ -205,28 +203,39 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Templat
 }
 
 /**
- * What the install wizard starts from: the catalog item and the org's extensions (`null` when they
- * could not be read).
+ * What the install wizard starts from: the catalog item, the org's extensions and the item's
+ * components with their descriptions (`null` when they could not be read).
  */
 export interface CatalogInstallData {
   detail: OrgCatalogDetail;
   extensions: OrgExtension[] | null;
+  components: OrgComponent[] | null;
 }
 
 /**
  * The install wizard's reads from the query cache (the layout prefetched them on a first load): the
- * item (a 404 is the page's not-found) and the org's extensions (a section). Loading until both
- * answered, so the steps don't change under the person.
+ * item (a 404 is the page's not-found), the org's extensions and the item's components (sections).
+ * Loading until all answered, so the page doesn't change under the person.
  */
 export function useCatalogInstall(orgId: string, itemId: string): PageState<CatalogInstallData> {
   const item = usePageQuery(orgCatalogItemQuery(orgId, itemId));
   const extQ = orgExtensionsQuery(orgId);
   const ext = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
+  const compQ = orgComponentsQuery(orgId, { itemId });
+  const comps = useQuery({ ...compQ, retryOnMount: retryOnMountOf(compQ.queryKey) });
   if (item.kind !== "ready") return item;
-  if (ext.data === undefined && ext.error === null) return { kind: "loading" };
+  if (
+    (ext.data === undefined && ext.error === null) ||
+    (comps.data === undefined && comps.error === null)
+  )
+    return { kind: "loading" };
   return {
     kind: "ready",
-    data: { detail: item.data, extensions: ext.data?.extensions ?? null },
+    data: {
+      detail: item.data,
+      extensions: ext.data?.extensions ?? null,
+      components: comps.data?.components ?? null,
+    },
     refreshing: item.refreshing,
   };
 }
@@ -299,6 +308,7 @@ export function CatalogInstallWizard({
       orgId={orgId}
       detail={data.detail}
       orgExtensions={data.extensions ?? []}
+      components={data.components ?? []}
       header={header}
       frame={frame}
     />
@@ -309,19 +319,19 @@ function Review({
   orgId,
   detail,
   orgExtensions,
+  components,
   header,
   frame,
 }: {
   orgId: string;
   detail: OrgCatalogDetail;
   orgExtensions: OrgExtension[];
+  components: OrgComponent[];
   header(title: string): PageHeaderProps;
   frame(view: WizardView): ReactNode;
 }) {
   const t = useTranslations("catalog.org.install");
-  const tr = useTranslations("catalog.admin.review");
   const tp = useTranslations("plugins");
-  const tc = useTranslations("catalog.components");
   const locale = useLocale();
   const router = useRouter();
   const toast = useToast();
@@ -329,16 +339,22 @@ function Review({
   const catalogLines = useCatalogErrorLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
-  const templateName = (c: OrgCatalogTemplate) =>
-    c.displayName ? displayNameOf({ name: c.id, displayName: c.displayName }, locale) : c.connector;
   const own =
     detail.extension === null
       ? undefined
       : orgExtensions.find((o) => o.plugin === detail.extension);
   // The templates on in the org make (or keep) their connectors; default-off ones stay templates
-  const templates = detail.templates.filter(chosenByDefault);
-  const defaultOff = detail.templates.length - templates.length;
-  const needsConfig = templates.some((c) => c.connected !== true && templateNeed(c) !== undefined);
+  const needsConfig = detail.templates.some((c) => {
+    const state = enableState(c);
+    return state === "needs_client" || state === "needs_credential";
+  });
+  const model = fromOrgDetail(detail, components, own, locale, {
+    template: (c) => (
+      <Text variant="small" tone="muted">
+        {t(`state.${enableState(c)}` satisfies `state.${EnableState}`)}
+      </Text>
+    ),
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   // Switching it on changes the catalog's view, the installed plugins and what the plugin brings.
@@ -423,103 +439,11 @@ function Review({
     body: (
       <Stack gap={12}>
         {!installable && <FormError message={t("notInstallable")} />}
-        <Text variant="prose">{t("summary")}</Text>
-        {/* What the package brings, from the org catalog detail (ruling R33): the full
-            permission review stayed at the platform import the super admin approved */}
-        {detail.extension !== null && (
-          <ComponentSection title={tc("extension")} count={1} empty={tc("extensionNone")}>
-            <ItemList label={tc("extension")} rows={[{ id: "ext", title: detail.extension }]} />
-          </ComponentSection>
-        )}
-        {detail.skills.length > 0 && (
-          <ComponentSection
-            title={tc("skills")}
-            count={detail.skills.length}
-            empty={tc("skillsNone")}
-          >
-            <ItemList
-              label={tc("skills")}
-              rows={detail.skills.map((s) => ({ id: s, title: skillNameOf(s) }))}
-            />
-          </ComponentSection>
-        )}
-        {/* The connector templates switched on with it: icon, name, what it needs; one the org
-            already has a connector for keeps it */}
-        {templates.length > 0 && (
-          <ComponentSection
-            title={tc("templates")}
-            count={templates.length}
-            empty={tc("templatesNone")}
-          >
-            <ItemList label={tc("templates")}>
-              {templates.map((c) => {
-                const need = c.connected === true ? undefined : templateNeed(c);
-                const description = descriptionOf(c, locale);
-                return (
-                  <ItemListItem
-                    key={c.id}
-                    title={templateName(c)}
-                    mark={{ text: templateName(c), image: c.icon ?? null }}
-                    marks={
-                      need !== undefined && (
-                        <Badge>
-                          {need === "client" ? tr("needsOAuthClient") : tr("needsOrgCredential")}
-                        </Badge>
-                      )
-                    }
-                    meta={
-                      c.connected === true ? (
-                        <Text variant="small" tone="muted">
-                          {t("connectorKept", { name: templateName(c) })}
-                        </Text>
-                      ) : description !== "" ? (
-                        <Text variant="small" tone="muted" truncate>
-                          {description}
-                        </Text>
-                      ) : null
-                    }
-                  />
-                );
-              })}
-            </ItemList>
-          </ComponentSection>
-        )}
+        <PluginContents model={model} audience="org" stage="enable" />
         {needsConfig && (
           <Text variant="small" tone="muted">
-            {t("summaryNeedsConfig")}
+            {t("needsConfigNote")}
           </Text>
-        )}
-        {defaultOff > 0 && (
-          <Text variant="small" tone="muted">
-            {t("summaryDefaultOff", { n: defaultOff })}
-          </Text>
-        )}
-        {detail.agents.length > 0 && (
-          <ComponentSection
-            title={tc("agentTemplates")}
-            count={detail.agents.length}
-            empty={tc("agentTemplatesNone")}
-          >
-            <ItemList
-              label={tc("agentTemplates")}
-              rows={detail.agents.map((a) => ({ id: a, title: agentTemplateNameOf(a) }))}
-            />
-          </ComponentSection>
-        )}
-        {detail.dependencies.length > 0 && (
-          <ComponentSection
-            title={tc("dependencies")}
-            count={detail.dependencies.length}
-            empty={tc("dependenciesNone")}
-          >
-            <Text variant="small" tone="muted">
-              {t("summaryDependencies")}
-            </Text>
-            <ItemList
-              label={tc("dependencies")}
-              rows={detail.dependencies.map((d) => ({ id: d.name, title: d.name, meta: d.range }))}
-            />
-          </ComponentSection>
         )}
         {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       </Stack>

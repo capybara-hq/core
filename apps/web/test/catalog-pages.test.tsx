@@ -1901,6 +1901,7 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
     templates: unknown[],
     over: Record<string, unknown> = {},
     answer: () => Response = () => json(200, { item: orgItem({ name: "github", state: "on" }) }),
+    reads: { extensions?: unknown[]; components?: unknown[] } = {},
   ) =>
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -1914,7 +1915,9 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
           agents: [],
           ...over,
         }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: reads.extensions ?? [] }),
+      [`GET ${ORG}/components?itemId=${ID}`]: () =>
+        json(200, { components: reads.components ?? [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: answer,
     });
 
@@ -1929,50 +1932,73 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         reviewTpl("drive", { auth: { type: "oauth_code", client: "manual" } }),
         reviewTpl("pat", { connected: true }),
         reviewTpl("bigquery", { defaultOff: true, on: false }),
+        reviewTpl("plain"),
       ],
       {
+        item: orgItem({
+          name: "github",
+          description: "GitHub for agents. It reads issues and pull requests.",
+        }),
         dependencies: [{ name: "crm-core", range: "^1.0.0" }],
         extension: "github",
         skills: ["skills/triage"],
         agents: ["agents/reviewer.md"],
       },
+      undefined,
+      {
+        extensions: [
+          { plugin: "github", version: "1.0.0", provides: ["tools@1"], needsConfig: true },
+        ],
+        components: [
+          { kind: "skill", name: "triage", description: "Triage the queue." },
+          { kind: "agent_template", name: "reviewer", description: "Reviews pull requests." },
+        ],
+      },
     );
     await renderInstall();
     const list = await screen.findByRole("list", { name: en.catalog.components.templates });
-    // the package contents, from the org catalog detail (ruling R33): extension, skills, agent
-    // templates and dependencies by name, each as a list
     const c = en.catalog.components;
+    // the head: name, version, publisher and the description with its full text
+    expect(screen.getAllByText("github")).toHaveLength(2);
+    expect(screen.getByText("v1.0.0")).toBeTruthy();
+    expect(screen.getByText("Acme")).toBeTruthy();
+    expect(screen.getByRole("button", { name: r.fullDescription })).toBeTruthy();
+    // skills and agent templates with their descriptions, from the org's components
     const named = (label: string) =>
       within(screen.getByRole("list", { name: label }))
         .getAllByRole("listitem")
         .map((li) => li.textContent);
-    expect(named(c.extension)).toEqual(["github"]);
-    expect(named(c.skills)).toEqual(["triage"]);
-    expect(named(c.agentTemplates)).toEqual(["reviewer"]);
-    expect(named(c.dependencies)).toEqual(["crm-core^1.0.0"]);
+    expect(named(c.skills)).toEqual(["triageTriage the queue."]);
+    expect(named(c.agentTemplates)[0]).toContain("reviewerReviews pull requests.");
+    // the extension: what it provides and, since it needs config, the note
+    expect(screen.getByText("tools@1")).toBeTruthy();
+    expect(screen.getByText(r.configAfterEnable)).toBeTruthy();
+    // the dependencies are installed with it
+    expect(screen.getByText(c.dependenciesWith)).toBeTruthy();
+    expect(screen.getByText("crm-core")).toBeTruthy();
+    expect(screen.getByText("^1.0.0")).toBeTruthy();
     expect(template("WizardPage")).not.toBeNull();
-    // one step only, and nothing to fill in or pick
+    // one step only (no step bar), nothing to fill in or pick
+    expect(document.querySelector("[data-part='step-count']")).toBeNull();
+    expect(document.querySelector("ol.cb-steps")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
-    // the templates switched on with it: their needs, the kept one, their icons
+    // every template is a row with the state it has once enabled, default-off one included
     const rows = within(list).getAllByRole("listitem");
-    expect(rows).toHaveLength(3);
-    expect(within(list).getByText(r.needsOrgCredential)).toBeTruthy();
-    expect(within(list).getByText(r.needsOAuthClient)).toBeTruthy();
-    expect(within(list).getByText(fill(t.connectorKept, { name: "pat" }))).toBeTruthy();
+    expect(rows).toHaveLength(5);
+    const stateOf = (i: number) => rows[i]?.textContent ?? "";
+    expect(stateOf(0)).toContain(t.state.needs_credential);
+    expect(stateOf(1)).toContain(t.state.needs_client);
+    expect(stateOf(2)).toContain(t.state.kept);
+    expect(stateOf(3)).toContain(t.state.off);
+    expect(stateOf(4)).toContain(t.state.ready);
     expect(rows[0]?.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
-    // connectors that need setup are configured on the connectors page afterwards; a default-off
-    // one is not created
-    expect(screen.getByText(t.summaryNeedsConfig)).toBeTruthy();
-    expect(
-      screen.getByText(
-        "1 connector is off by default and is not created; turn it on later on the Connectors page.",
-      ),
-    ).toBeTruthy();
+    // connectors that need setup are configured on the connectors page afterwards
+    expect(screen.getByText(t.needsConfigNote)).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/extensions#plugin=github"));
     const put = bodyOf(calls.find((c) => c.method === "PUT") as Parameters<typeof bodyOf>[0]);
     expect(put).toEqual({ enabled: true });
   });
@@ -1980,18 +2006,30 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
   it("the review speaks Chinese: 启用, the zh names and the needs", async () => {
     params.current = { itemId: ID };
     const t = zh.catalog.org.install;
-    stubReview([
-      reviewTpl("gh", {
-        auth: { type: "bearer", ownership: "org" },
-        description: "GitHub tools.",
-        descriptionZh: "GitHub 工具。",
-      }),
-    ]);
+    stubReview(
+      [
+        reviewTpl("gh", {
+          auth: { type: "bearer", ownership: "org" },
+          description: "GitHub tools.",
+          descriptionZh: "GitHub 工具。",
+        }),
+      ],
+      {
+        item: orgItem({
+          name: "github",
+          description: "GitHub tools.",
+          descriptionZh: "GitHub 助手",
+        }),
+      },
+    );
     await renderInstall({ locale: "zh" });
     const list = await screen.findByRole("list", { name: zh.catalog.components.templates });
+    expect(screen.getByText("GitHub 助手")).toBeTruthy();
     expect(within(list).getByText("gh-zh")).toBeTruthy();
-    expect(within(list).getByText("GitHub 工具。")).toBeTruthy();
-    expect(within(list).getByText(zh.catalog.admin.review.needsOrgCredential)).toBeTruthy();
+    // the description opens under the row's endpoint line
+    await userEvent.setup().click(within(list).getByText("mcp.example.com"));
+    expect(await within(list).findByText("GitHub 工具。")).toBeTruthy();
+    expect(within(list).getByText(t.state.needs_credential)).toBeTruthy();
     expect(screen.getByRole("button", { name: "启用" })).toBeTruthy();
     expect(t.submit).toBe("启用");
   });
@@ -2041,7 +2079,7 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         }),
     });
     await renderInstall();
-    expect(screen.getByText(t.summaryDependencies)).toBeTruthy();
+    expect(screen.getByText(en.catalog.components.dependenciesWith)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
     expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
     expect(
@@ -2100,7 +2138,12 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
     expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
     await waitFor(() =>
       expect(new Set(calls.filter((c) => c.method === "GET").map((c) => c.url))).toEqual(
-        new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`, `${ORG}/readiness`]),
+        new Set([
+          `${ORG}/catalog/${ID}`,
+          `${ORG}/components?itemId=${ID}`,
+          `${ORG}/extensions`,
+          `${ORG}/readiness`,
+        ]),
       ),
     );
     expect(switchInputs(calls)).toBeUndefined();
@@ -4222,7 +4265,7 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
           }),
       });
       await renderInstall({ locale });
-      await screen.findByText(m.catalog.org.install.summary);
+      await screen.findByRole("button", { name: m.catalog.org.install.submit });
       await userEvent
         .setup()
         .click(screen.getByRole("button", { name: m.catalog.org.install.submit }));
@@ -4761,6 +4804,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
   const routes = {
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
     [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/components?itemId=${ID}`]: () => json(200, { components: [] }),
   };
   const as = (role: "member" | "admin"): Me => ({
     ...ME,
@@ -4804,6 +4848,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
     await renderRouteWithCache(path, {
       [`GET ${ORG}/catalog/${ID}`]: () => json(404, { error: { code: "catalog.not_found" } }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${ORG}/components?itemId=${ID}`]: () => json(200, { components: [] }),
     });
     expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });

@@ -811,6 +811,7 @@ describe("/connectors/install reads from the query cache", () => {
   const routes = {
     "GET /api/v1/orgs/o1/catalog/acme-crm": () => json(200, ITEM),
     "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+    "GET /api/v1/orgs/o1/components?itemId=acme-crm": () => json(200, { components: [] }),
   };
   /** Lets pending reads and effects run (a read after mount would show up in the calls). */
   const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));

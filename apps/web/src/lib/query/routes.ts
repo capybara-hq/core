@@ -928,7 +928,11 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       if (orgId === null || !atLeast(me, "admin")) return [];
       return itemId === ""
         ? [q(connectorKindsQuery(orgId))]
-        : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
+        : [
+            q(orgCatalogItemQuery(orgId, itemId)),
+            q(orgExtensionsQuery(orgId)),
+            q(orgComponentsQuery(orgId, { itemId })),
+          ];
     },
   },
   {
@@ -1101,12 +1105,17 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/plugins/[itemId]/enable",
-    // Org admins: the item and the org's extensions (an extension that needs config goes on to
-    // its Sheet after the review).
+    // Org admins: the item, the org's extensions (an extension that needs config goes on to its
+    // Sheet after the review) and the item's components (the descriptions of its skills and agent
+    // templates).
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "admin")
         ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
+        : [
+            q(orgCatalogItemQuery(orgId, params.itemId)),
+            q(orgExtensionsQuery(orgId)),
+            q(orgComponentsQuery(orgId, { itemId: params.itemId })),
+          ],
   },
   {
     pattern: "/s/[code]",

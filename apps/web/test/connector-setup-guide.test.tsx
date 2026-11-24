@@ -364,6 +364,7 @@ describe("配置: a needs_config template connector's form shows the admin guide
           json(200, orgDetail({ ...TEMPLATE, defaultOff: false, connected: false })),
         [`GET ${GUIDE_URL}`]: guideRoute(),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+        [`GET ${ORG}/components?itemId=${ITEM}`]: () => json(200, { components: [] }),
       },
       { locale: "zh" },
     );
