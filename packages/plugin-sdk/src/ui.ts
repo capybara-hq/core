@@ -17,6 +17,7 @@ export const UI_ICONS = [
   "bot",
   "book",
   "message-square",
+  "globe",
   "puzzle",
 ] as const;
 

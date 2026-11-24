@@ -4797,7 +4797,7 @@ export const UI_COMPONENT_SLOTS: readonly UiSlotId[];
 export const UI_CONTRIBUTION_KEY_RE: RegExp;
 
 // @public
-export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
+export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "globe", "puzzle"];
 
 // @public
 export const UI_LIMITS: {

@@ -34,6 +34,7 @@ export const ICON_OF: Record<UiIcon, IconName> = {
   bot: "agent",
   book: "skills",
   "message-square": "channel",
+  globe: "globe",
   puzzle: "extension",
 };
 
