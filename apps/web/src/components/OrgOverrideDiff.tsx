@@ -23,8 +23,8 @@ export function OrgOverrideDiff({
   onTake(path: string): void;
 }) {
   const t = useTranslations("extensions.overrides");
-  const differing = view.fields.filter((f) => f.level === "override" && !f.secret && f.differs);
-  const secrets = view.fields.filter((f) => f.level === "override" && f.secret);
+  const differing = view.fields.filter((f) => !f.secret && f.differs);
+  const secrets = view.fields.filter((f) => f.secret);
   return (
     <Subsection title={t("compare")} description={t("compareHint")}>
       {differing.length === 0 && secrets.length === 0 ? (

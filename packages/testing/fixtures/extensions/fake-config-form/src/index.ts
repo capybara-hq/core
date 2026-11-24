@@ -2,6 +2,7 @@ import {
   type ConfigUiHints,
   defineExtension,
   type LocalizedName,
+  platformOnly,
   secret,
   ui,
 } from "@capybara-hq/plugin-sdk";
@@ -141,56 +142,61 @@ const ENDPOINTS: ConfigUiHints = {
   ],
 };
 
-/** The deployment config: endpoints, and their API keys by endpoint name. */
-export const FakeConfigFormSchema = ui(
-  z
-    .object({
-      endpoints: ui(
-        z
-          .array(EndpointSchema)
-          .min(1)
-          .refine((es) => new Set(es.map((e) => e.name)).size === es.length, {
-            params: { ui: "duplicateEndpoint" },
-          }),
-        ENDPOINTS,
-      ),
-      apiKeys: secret(z.record(z.string(), z.string().min(1))).default({}),
-    })
-    .superRefine((cfg, ctx) => {
-      cfg.endpoints.forEach((e, i) => {
-        if (acceptsPdf(e.dialect)) return;
-        e.models.forEach((m, j) => {
-          if (m.documents !== true) return;
-          ctx.addIssue({
-            code: "custom",
-            path: ["endpoints", i, "models", j, "documents"],
-            message: `dialect "${e.dialect}" does not accept PDF documents; documents must be false`,
-            params: { ui: "pdfDialect" },
+/**
+ * The deployment config: endpoints, and their API keys by endpoint name. Platform-only as a whole:
+ * the fixture has no org-bound entry, so an org value would never reach it.
+ */
+export const FakeConfigFormSchema = platformOnly(
+  ui(
+    z
+      .object({
+        endpoints: ui(
+          z
+            .array(EndpointSchema)
+            .min(1)
+            .refine((es) => new Set(es.map((e) => e.name)).size === es.length, {
+              params: { ui: "duplicateEndpoint" },
+            }),
+          ENDPOINTS,
+        ),
+        apiKeys: secret(z.record(z.string(), z.string().min(1))).default({}),
+      })
+      .superRefine((cfg, ctx) => {
+        cfg.endpoints.forEach((e, i) => {
+          if (acceptsPdf(e.dialect)) return;
+          e.models.forEach((m, j) => {
+            if (m.documents !== true) return;
+            ctx.addIssue({
+              code: "custom",
+              path: ["endpoints", i, "models", j, "documents"],
+              message: `dialect "${e.dialect}" does not accept PDF documents; documents must be false`,
+              params: { ui: "pdfDialect" },
+            });
           });
         });
-      });
-      const names = new Set(cfg.endpoints.map((e) => e.name));
-      for (const key of Object.keys(cfg.apiKeys)) {
-        if (names.has(key)) continue;
-        ctx.addIssue({
-          code: "custom",
-          path: ["apiKeys", key],
-          message: `apiKeys["${key}"] does not match any endpoint name`,
-          params: { ui: "unknownKey" },
-        });
-      }
-    }),
-  {
-    messages: {
-      duplicateEndpoint: T("端点名称重复", "Endpoint names must be unique"),
-      duplicateModel: T("模型 ID 重复", "Model ids must be unique within an endpoint"),
-      pdfDialect: T(
-        "该方言不支持 PDF，请取消勾选",
-        "This dialect does not accept PDF; clear the box",
-      ),
-      unknownKey: T("密钥没有对应的端点", "This key has no endpoint"),
+        const names = new Set(cfg.endpoints.map((e) => e.name));
+        for (const key of Object.keys(cfg.apiKeys)) {
+          if (names.has(key)) continue;
+          ctx.addIssue({
+            code: "custom",
+            path: ["apiKeys", key],
+            message: `apiKeys["${key}"] does not match any endpoint name`,
+            params: { ui: "unknownKey" },
+          });
+        }
+      }),
+    {
+      messages: {
+        duplicateEndpoint: T("端点名称重复", "Endpoint names must be unique"),
+        duplicateModel: T("模型 ID 重复", "Model ids must be unique within an endpoint"),
+        pdfDialect: T(
+          "该方言不支持 PDF，请取消勾选",
+          "This dialect does not accept PDF; clear the box",
+        ),
+        unknownKey: T("密钥没有对应的端点", "This key has no endpoint"),
+      },
     },
-  },
+  ),
 );
 
 export default defineExtension({

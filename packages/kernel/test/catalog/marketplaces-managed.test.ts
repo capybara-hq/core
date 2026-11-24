@@ -270,6 +270,21 @@ describe("syncExtraFromConfig", () => {
     });
   });
 
+  it("shows the owner its marketplace.json names once refreshed, the config name before", async () => {
+    await marketplaceRepo("acme-label");
+    await svc.syncExtraFromConfig([{ name: "acme", url: srv.url("acme-label") }]);
+    expect(await view("config:acme")).toMatchObject({ name: "acme" });
+    expect((await refresh("config:acme")).statusCode).toBe(200);
+    expect(await view("config:acme")).toMatchObject({ name: "Acme Corp" });
+    // The row keeps its config name: the key of the manifest entry and of its token
+    const row = await db
+      .selectFrom("marketplaces")
+      .select("name")
+      .where("id", "=", "config:acme")
+      .executeTakeFirstOrThrow();
+    expect(row.name).toBe("acme");
+  });
+
   it("the token never appears in the marketplace view, audit detail or error", async () => {
     await marketplaceRepo("acme-secret");
     await svc.syncExtraFromConfig([{ name: "acme", url: srv.url("acme-secret") }]);

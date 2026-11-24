@@ -3,12 +3,11 @@ import {
   MODEL_PROVIDER_EXTENSION_POINT_V2,
   type ModelProvider,
   type ModelStreamEvent,
-  orgAccess,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** `fail` is overridable: an org's copy with `fail: true` makes that org's list fail. */
-const Config = z.object({ fail: orgAccess(z.boolean().optional(), "override") });
+const Config = z.object({ fail: z.boolean().optional() });
 
 /**
  * A model provider whose `listModels` fails when the config it is called with says `fail` (model

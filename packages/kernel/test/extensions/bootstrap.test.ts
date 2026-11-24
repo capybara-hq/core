@@ -46,6 +46,7 @@ import {
   runConfig,
   session,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 const PERM_A = fileURLToPath(new URL("../fixtures/plugins/perm-a/index.ts", import.meta.url));
@@ -516,6 +517,65 @@ describe("a core upgrade (Review Focus 3)", () => {
     admin = await session(k, "root");
     const off = await admin({ method: "POST", url: "/api/v1/admin/extensions/gamma/disable" });
     expect(off.statusCode, off.body).toBe(200);
+  });
+});
+
+describe("a required entry that becomes optional (core#720)", () => {
+  afterAll(stopAll);
+
+  it("owes its scope sync: an existing org whose scope is all keeps it on, now through an org install", async () => {
+    await reset();
+    const v1 = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    let k = await boot(v1);
+    await loginAdmin(k);
+    const orgId = await createOrgWithProviders(k, admin, "Existing");
+    // Always-on while required: enabled without an org row
+    expect(await isExtensionEnabled(db, orgId, "alpha")).toBe(true);
+    expect(
+      await db
+        .selectFrom("extension_org_configs")
+        .select("plugin")
+        .where("org_id", "=", orgId)
+        .where("plugin", "=", "alpha")
+        .execute(),
+    ).toEqual([]);
+    await stopAll();
+
+    const v2 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }), required: false },
+    ]);
+    k = await boot(v2);
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["builtin", "scope"])
+        .where("name", "=", "alpha")
+        .executeTakeFirst(),
+    ).toEqual({ builtin: false, scope: "all" });
+    // The scope sync the demotion owed installs the plugin in the org and enables its extension
+    // there (its config is valid, so not needs_config)
+    await waitFor(
+      async () =>
+        (await db
+          .selectFrom("plugin_installs as p")
+          .innerJoin("catalog_items as i", "i.id", "p.item_id")
+          .select("p.status")
+          .where("p.org_id", "=", orgId)
+          .where("i.name", "=", "alpha")
+          .where("p.status", "=", "installed")
+          .executeTakeFirst()) ?? false,
+      20_000,
+      "the scope sync's install of alpha",
+    );
+    expect(await isExtensionEnabled(db, orgId, "alpha")).toBe(true);
+    expect(
+      await db
+        .selectFrom("extension_org_configs")
+        .select("enabled")
+        .where("org_id", "=", orgId)
+        .where("plugin", "=", "alpha")
+        .executeTakeFirst(),
+    ).toEqual({ enabled: true });
   });
 });
 
@@ -1126,6 +1186,145 @@ describe("a declarative entry whose pin moves (core#710)", () => {
       .where("deleted_at", "is", null)
       .executeTakeFirstOrThrow();
     expect(theme.current_version).toBe(2);
+  });
+});
+
+describe("an entry with an extension whose pin moves (core#727)", () => {
+  afterAll(stopAll);
+
+  const platformSkills = (plugin: string) =>
+    db
+      .selectFrom("platform_skills")
+      .select("name")
+      .where("plugin_name", "=", plugin)
+      .where("deleted_at", "is", null)
+      .orderBy("name")
+      .execute()
+      .then((rows) => rows.map((r) => r.name));
+  const platformVersions = () =>
+    db
+      .selectFrom("catalog_items")
+      .select(["name", "latest_version", "platform_synced_version"])
+      .where("name", "in", ["alpha", "gamma"])
+      .orderBy("name")
+      .execute();
+
+  it("the raised extension's version becomes the platform version; a disabled item waits", async () => {
+    await reset();
+    const v1 = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      {
+        bytes: await lifePkg({ name: "alpha", version: "1.0.0", skills: ["one"] }),
+        required: false,
+      },
+      {
+        bytes: await lifePkg({ name: "gamma", version: "1.0.0", skills: ["one"] }),
+        required: false,
+      },
+    ]);
+    const k = await boot(v1, OBJECT_STORE_CONFIG);
+    expect(await platformSkills("alpha")).toEqual(["one"]);
+    await loginAdmin(k);
+    // The super admin disables gamma on the deployment
+    const gamma = await db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("name", "=", "gamma")
+      .executeTakeFirstOrThrow();
+    const pv = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${gamma.id}/scope/preview`,
+      payload: { disabled: true },
+    });
+    expect(pv.statusCode, pv.body).toBe(200);
+    const off = await admin({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${gamma.id}/disabled`,
+      payload: { disabled: true, scopeHash: pv.json().scopeHash },
+    });
+    expect(off.statusCode, off.body).toBeLessThan(300);
+    await stopAll();
+
+    const v2 = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      {
+        bytes: await lifePkg({ name: "alpha", version: "1.1.0", skills: ["one", "two"] }),
+        required: false,
+      },
+      {
+        bytes: await lifePkg({ name: "gamma", version: "1.1.0", skills: ["one", "two"] }),
+        required: false,
+      },
+    ]);
+    const k2 = await boot(v2, OBJECT_STORE_CONFIG);
+    expect(await k2.app.get(BootstrapService).isDone(v2.manifest)).toBe(true);
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "fake-bootstrap-b", action: "kept", version: "0.1.0" },
+        { name: "alpha", action: "upgraded", version: "1.1.0" },
+        { name: "gamma", action: "upgraded", version: "1.1.0" },
+      ],
+    });
+    // alpha's platform moved with its extension; gamma's waits until the super admin enables it
+    expect(await platformVersions()).toEqual([
+      { name: "alpha", latest_version: "1.1.0", platform_synced_version: "1.1.0" },
+      { name: "gamma", latest_version: "1.1.0", platform_synced_version: "1.0.0" },
+    ]);
+    expect(await platformSkills("alpha")).toEqual(["one", "two"]);
+    expect(await platformSkills("gamma")).toEqual(["one"]);
+    expect((await audits("plugin.platform_updated")).map((a) => a.detail)).toEqual([
+      expect.objectContaining({ name: "alpha", from: "1.0.0", to: "1.1.0" }),
+    ]);
+    expect(k2.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.1.0");
+
+    // A restart with the same manifest changes nothing more
+    await stopAll();
+    await boot(v2, OBJECT_STORE_CONFIG);
+    expect(await platformVersions()).toEqual([
+      { name: "alpha", latest_version: "1.1.0", platform_synced_version: "1.1.0" },
+      { name: "gamma", latest_version: "1.1.0", platform_synced_version: "1.0.0" },
+    ]);
+  });
+
+  it("an extension already at the pin whose platform stayed behind is caught up", async () => {
+    await reset();
+    const v1 = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      {
+        bytes: await lifePkg({ name: "alpha", version: "1.0.0", skills: ["one"] }),
+        required: false,
+      },
+    ]);
+    await boot(v1, OBJECT_STORE_CONFIG);
+    await stopAll();
+    const v2 = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      {
+        bytes: await lifePkg({ name: "alpha", version: "1.1.0", skills: ["one", "two"] }),
+        required: false,
+      },
+    ]);
+    await boot(v2, OBJECT_STORE_CONFIG);
+    await stopAll();
+    // A run before core#727 left the platform on 1.0.0 with the extension on 1.1.0
+    await db
+      .updateTable("catalog_items")
+      .set({ platform_synced_version: "1.0.0" })
+      .where("name", "=", "alpha")
+      .execute();
+    await db.deleteFrom("bootstrap_runs").execute();
+    await boot(v2, OBJECT_STORE_CONFIG);
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "fake-bootstrap-b", action: "kept", version: "0.1.0" },
+        { name: "alpha", action: "upgraded", version: "1.1.0" },
+      ],
+    });
+    expect((await platformVersions())[0]).toEqual({
+      name: "alpha",
+      latest_version: "1.1.0",
+      platform_synced_version: "1.1.0",
+    });
   });
 });
 

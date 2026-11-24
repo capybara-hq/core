@@ -259,6 +259,15 @@ export {
   permissionCutoverReport,
   permissionCutoverSnapshot,
 } from "./infra/cli/permission-cutover.js";
+export {
+  asPlatform,
+  currentScope,
+  type OrgScope,
+  setUnscopedQueryCheck,
+  type UnscopedQueryCheck,
+  withOrgScope,
+} from "./infra/database/org-scope.js";
+export type { RlsMode } from "./infra/database/scoped-dialect.js";
 export { onProcessFault } from "./infra/health/process-fault.js";
 export {
   GUARD_CIRCUIT_LIMIT,

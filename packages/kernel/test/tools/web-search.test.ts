@@ -10,6 +10,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import { OrgOverrides } from "../../src/extensions/org-overrides.js";
 import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -88,8 +89,11 @@ beforeEach(async () => {
   orgId = await createOrgWithProviders(k, owner);
 });
 
-const enable = (org: string, plugin: string, token = "tok") =>
-  k.app.get(OrgExtensionConfigs).put(org, plugin, { enabled: true, config: { token } }, ownerId);
+/** Enables `plugin` in `org` with the org's copy holding its token (the platform leaves it empty). */
+const enable = async (org: string, plugin: string, token = "tok") => {
+  await k.app.get(OrgExtensionConfigs).put(org, plugin, { enabled: true }, ownerId);
+  await k.app.get(OrgOverrides).save(org, plugin, { token }, [], { accountId: ownerId });
+};
 
 const tool = (now = () => new Date("2026-11-04T23:30:00Z")) =>
   webSearchTool({

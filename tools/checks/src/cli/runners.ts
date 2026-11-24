@@ -4,9 +4,15 @@ import { checkAgentDocs } from "../agent-docs.js";
 import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
+import {
+  checkDeviceImagePin,
+  DEVICE_IMAGE_PIN_FILE,
+  DEVICE_SOURCE_DIR,
+} from "../device-image-pin.js";
 import { checkSdkComments } from "../english-comments.js";
 import { checkDesignI18n, checkI18n, checkWebI18nKeys } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
+import { checkOrgFilter } from "../org-filter.js";
 import { checkOutboxRegistry } from "../outbox-registry.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkPlatformOps } from "../platform-ops.js";
@@ -21,6 +27,7 @@ import { checkTestPortfolio } from "../test-portfolio.js";
 import { checkTokens } from "../tokens.js";
 import { checkUiParts } from "../ui-parts.js";
 import { checkUiSlots } from "../ui-slots.js";
+import { checkWebApiParityRepo } from "../web-api-parity.js";
 import { checkWebUi } from "../web-ui.js";
 import { root } from "./report.js";
 
@@ -35,6 +42,7 @@ export const RUNNERS: Record<string, NamedCheck> = {
     name: "Bootstrap manifest",
     run: () =>
       checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root, {
+        fixedSet: true,
         composeFiles: BOOTSTRAP_COMPOSE_FILES.map((f) => join(root, f)),
       }),
   },
@@ -74,7 +82,9 @@ export const RUNNERS: Record<string, NamedCheck> = {
   terms: { name: "Terms", run: () => checkTerms(root) },
   "kernel-conventions": { name: "Kernel conventions", run: () => checkKernelConventions(root) },
   "outbox-registry": { name: "Outbox registry", run: () => checkOutboxRegistry(root) },
+  "org-filter": { name: "Org filter", run: () => checkOrgFilter(root) },
   "platform-ops": { name: "Platform operations", run: () => checkPlatformOps(root) },
+  "web-api-parity": { name: "Web API parity", run: () => checkWebApiParityRepo(root) },
   "compose-haproxy": {
     name: "compose haproxy",
     run: () =>
@@ -82,5 +92,10 @@ export const RUNNERS: Record<string, NamedCheck> = {
         join(root, "docker/compose.yaml"),
         join(root, "docker/sandbox-proxy/haproxy.cfg"),
       ),
+  },
+  "device-image-pin": {
+    name: "device image pin",
+    run: () =>
+      checkDeviceImagePin(join(root, DEVICE_IMAGE_PIN_FILE), join(root, DEVICE_SOURCE_DIR)),
   },
 };

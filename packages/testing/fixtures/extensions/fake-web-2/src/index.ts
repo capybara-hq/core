@@ -1,5 +1,5 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
-import { FakeWebOrgConfig, makeFakeWeb } from "./web.js";
+import { FakeWebConfig, makeFakeWeb } from "./web.js";
 
 /** Test fake: `fake-web` under another name (a second provider of `web-search@1` / `web-fetch@1`). */
 export default defineExtension({
@@ -7,7 +7,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["web-search@1", "web-fetch@1"],
-  config: { org: FakeWebOrgConfig },
+  config: { deployment: FakeWebConfig },
   setup(ctx) {
     const { search, fetch } = makeFakeWeb("fake-web-2");
     ctx.provide("web-search@1", search);

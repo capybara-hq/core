@@ -141,6 +141,7 @@ export async function decideGitPush(
     const row = await db
       .selectFrom("connector_tool_account_policies")
       .select("policy")
+      .where("org_id", "=", input.orgId)
       .where("connector_id", "=", input.connectorId)
       .where("account_id", "=", input.accountId)
       .where("tool_name", "=", gitPushPolicyName(host, repo))
@@ -235,6 +236,8 @@ async function hasRunGrant(
  * repositories granted and refused in the tree (keyed `<host>/<owner>/<repo>`, {@link gitRepoKey}),
  * this run's asks, a pending ask of the tree.
  */
+// org-filter: takes a runtime run id (no HTTP or tool input reaches it; only kernel code and tests
+// call it), and the rows are that run tree's
 export async function gitRunState(db: KernelSchemaDb, runId: string): Promise<GitRunState> {
   const root = await budgetRunOf(db, runId);
   const rows = await db

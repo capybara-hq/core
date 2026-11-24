@@ -1,7 +1,7 @@
 import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
-import { withJobContext } from "../log-context.js";
+import { runJob } from "../infra/queue/run-job.js";
 import { assertNamespace } from "./namespace.js";
 
 /** 未注入 logger 时的兜底：输出到 stderr。 */
@@ -82,8 +82,9 @@ export function createQueue(
       active.set(name, st);
       const worker = new Worker(
         queueName(name),
+        // runJob: the log context and the org scope of the job (its data's `orgId`, else platform)
         (job) =>
-          withJobContext(queueName(name), job, async () => {
+          runJob(queueName(name), job, async () => {
             st.n += 1;
             try {
               await handler(job.data);

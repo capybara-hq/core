@@ -62,6 +62,12 @@ export interface BackgroundTaskView {
   finishedAt: string | null;
   /** True while a stop has claimed the task and it is still running. */
   stopping: boolean;
+  /**
+   * True while the task's start was sent but not yet confirmed (a managed launch without its
+   * exact ref, still `running`): the kernel is reconciling it under its original identity, and it
+   * either becomes a confirmed running task or ends (`lost` when given up).
+   */
+  starting: boolean;
 }
 
 /**
@@ -179,6 +185,10 @@ export class BackgroundTasks {
       stopping:
         task.status === "running" &&
         (task.stoppingAt !== null || task.launchState === "cancel-pending"),
+      starting:
+        task.status === "running" &&
+        task.executionRef === null &&
+        (task.launchState === "pending" || task.launchState === "dispatched"),
     };
   }
 
@@ -270,7 +280,7 @@ export class BackgroundTasks {
     if (read.kind === "ok") return { ...read.value, source: "live" };
     const unavailable: OutputUnavailable = {
       reason: read.reason,
-      provider: await this.providerOf(task.deviceId),
+      provider: await this.providerOf(task.orgId, task.deviceId),
     };
     if (task.status !== "running") {
       const ev = await this.eventLog.findByIdem(task.conversationId, finishedEventKey(task.id));
@@ -286,12 +296,13 @@ export class BackgroundTasks {
   }
 
   /** The provider of the device the task ran on (`devices.provider`); null when none is known. */
-  private async providerOf(deviceId: string | null): Promise<string | null> {
+  private async providerOf(orgId: string, deviceId: string | null): Promise<string | null> {
     if (deviceId === null) return null;
     const row = await this.db.db
       .selectFrom("devices")
       .select("provider")
       .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
     return row?.provider ?? null;
   }

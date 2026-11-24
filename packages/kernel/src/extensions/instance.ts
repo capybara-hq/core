@@ -54,7 +54,7 @@ const canonical = (v: unknown): string => {
   return JSON.stringify(v) ?? "null";
 };
 
-/** 模块清单与审阅过的静态清单是否一致（名字与 {@link staticManifestOf} 都须相同）。 */
+/** Whether a module's manifest matches the reviewed static manifest (same name and {@link staticManifestOf}). */
 export function matchesSection(
   manifest: ExtensionManifest,
   name: string,

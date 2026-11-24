@@ -113,7 +113,6 @@ export const ERROR_CODES = {
   /** The extension registers no tool of that name (org tool switches, layering spec A §7). */
   "extension.tool_not_found": 404,
   "extension.unavailable": 503,
-  "extension.no_org_config": 400,
   "extension.config_invalid": 400,
   "extension.config_readonly": 409,
   "extension.field_not_overridable": 400,
@@ -245,6 +244,8 @@ export const ERROR_CODES = {
    */
   "client.not_found": 404,
   "directory.not_configured": 409,
+  /** A manual directory sync could not read the extension's state for the org (transient). */
+  "directory.unavailable": 503,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,
   "plugin.scope_locked": 409,

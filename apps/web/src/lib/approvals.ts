@@ -190,6 +190,19 @@ export const listApprovals = (orgId: string, status?: ApprovalStatus) =>
 export const getApproval = (orgId: string, id: string) =>
   apiFetch<{ approval: Approval }>(`${base(orgId)}/approvals/${encodeURIComponent(id)}`);
 
+/** What the decision route answers (kernel `ApprovalPublicRecord`): the approval without its view fields. */
+export type ApprovalPublic = Omit<
+  Approval,
+  | "toolName"
+  | "connector"
+  | "extension"
+  | "agent"
+  | "conversationPath"
+  | "parentConversationId"
+  | "initiatorAccountId"
+  | "decidedByPerson"
+>;
+
 export const decideApproval = (
   orgId: string,
   id: string,
@@ -204,7 +217,7 @@ export const decideApproval = (
     inputs?: Record<string, string>;
   },
 ) =>
-  apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "extension" | "agent"> }>(
+  apiFetch<{ approval: ApprovalPublic }>(
     `${base(orgId)}/approvals/${encodeURIComponent(id)}/decision`,
     { method: "POST", body: JSON.stringify(body) },
   );

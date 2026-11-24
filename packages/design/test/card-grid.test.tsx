@@ -73,6 +73,94 @@ function grid(cards: ObjectCardProps[] = NAMES.map((n, i) => card({ title: n, hr
 }
 
 describe("ObjectCard", () => {
+  it("renders chips after the title in the title line", () => {
+    withNav(grid([card({ chips: [{ label: "内置" }, { label: "待配置", tone: "warn" }] })]));
+    const item = screen.getAllByRole("listitem")[0] as HTMLElement;
+    const head = item.querySelector(".cb-object-card-head") as HTMLElement;
+    expect(within(head).getByText("内置")).toBeTruthy();
+    expect(within(head).getByText("待配置")).toBeTruthy();
+    const name = head.querySelector(".cb-object-card-name") as HTMLElement;
+    const chips = head.querySelector(".cb-object-card-chips") as HTMLElement;
+    expect(within(head).getByText("待配置").getAttribute("data-tone")).toBe("warn");
+    expect(name.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("draws a switch before the buttons that calls onChange and waits while loading", async () => {
+    const onChange = vi.fn();
+    withNav(
+      grid([
+        card({
+          toggle: { label: "启用 X", checked: true, onChange },
+          primary: { label: "刷新", onSelect: () => {} },
+        }),
+      ]),
+    );
+    const sw = screen.getByRole("switch", { name: "启用 X" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(
+      sw.compareDocumentPosition(screen.getByRole("button", { name: "刷新" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await userEvent.setup().click(sw);
+    expect(onChange).toHaveBeenCalledWith(false);
+  });
+
+  it("disables the switch while loading", () => {
+    withNav(
+      grid([
+        card({ toggle: { label: "启用 X", checked: false, onChange: () => {}, loading: true } }),
+      ]),
+    );
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("draws no chip box without chips", () => {
+    withNav(grid([card({ chips: [] })]));
+    expect(document.querySelector(".cb-object-card-chips")).toBeNull();
+  });
+
+  it("sets the title in the mono face when mono", () => {
+    withNav(grid([card({ title: "plugin-github", mono: true, href: "/p/1" })]));
+    expect(screen.getByText("plugin-github").getAttribute("data-mono")).toBe("true");
+  });
+
+  it("busy marks the card and shows the primary action loading", () => {
+    withNav(grid([card({ primary: { label: "启用", onSelect: () => {} }, busy: true })]));
+    expect(screen.getAllByRole("listitem")[0]?.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByRole("button", { name: "启用" }).getAttribute("aria-busy")).toBe("true");
+    expect((screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("busy without a primary puts the spinner on the menu", () => {
+    withNav(
+      grid([
+        {
+          title: "研究助手",
+          href: "/agents/a",
+          menu: [
+            { label: "设置", href: "/s" },
+            { label: "删除", danger: true, onSelect: () => {} },
+          ],
+          busy: true,
+        },
+      ]),
+    );
+    const menu = screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement;
+    expect(menu.getAttribute("aria-busy")).toBe("true");
+    expect(menu.disabled).toBe(true);
+    expect(menu.querySelector(".cb-btn-spin")).not.toBeNull();
+  });
+
+  it("busy shows a link primary as a waiting button", () => {
+    withNav(grid([card({ primary: { label: "查看", href: "/p/1" }, busy: true })]));
+    const b = screen.getByRole("button", { name: "查看" }) as HTMLButtonElement;
+    expect(b.getAttribute("aria-busy")).toBe("true");
+    expect(b.disabled).toBe(true);
+    expect(screen.queryByRole("link", { name: "查看" })).toBeNull();
+  });
+
   it("draws a meta part in warn or fail by its tone", () => {
     withNav(
       grid([

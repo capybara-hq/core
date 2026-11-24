@@ -239,7 +239,6 @@
       "not_found": "The extension is not installed.",
       "not_enabled": "The extension is not enabled for this organization. Enable it under Settings → Extensions.",
       "config_invalid": "The config is invalid:",
-      "no_org_config": "This extension has no organization config.",
       "dependency_missing": "Enable the extensions it depends on first.",
       "has_dependents": "Other enabled extensions depend on this extension.",
       "config_readonly": "This field comes from the startup config and is read-only.",
@@ -303,7 +302,8 @@
       "check_not_found": "This check is not part of the setup guide shown here. Reload the page."
     },
     "directory": {
-      "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
+      "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first.",
+      "unavailable": "Cannot read this extension's state right now, so the directory sync did not start. Try again shortly."
     },
     "ui": {
       "not_found": "This panel is not available. The extension may be disabled or you cannot access this conversation.",
@@ -503,7 +503,7 @@
       "fetch_failed": "Fetching the marketplace failed; the previous entries are kept.",
       "invalid": "The marketplace is invalid; the previous entries are kept.",
       "integrity_mismatch": "The downloaded package does not match the marketplace's sha512 and was rejected. It may have been tampered with; contact the marketplace maintainer.",
-      "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to marketplaces.allowPrivateHosts in the deployment config.",
+      "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to net.allowPrivateHosts in the deployment config.",
       "redirect": "The download was refused: the server responded with a redirect, and redirects are not followed. Use the final URL instead.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
       "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be installed. Choose another version.",
@@ -1534,6 +1534,7 @@
     "pickModel": "Switch model",
     "pickDevice": "Device",
     "deviceNote": "Fixed once the first message is sent",
+    "noDevice": "No device",
     "deviceOffline": "Your local devices are offline, so this conversation starts without a device. Start capybara-device on the machine to use it.",
     "deviceLocked": "A conversation keeps its device",
     "projectGroup": "Project",
@@ -1742,11 +1743,10 @@
     "download": "Download",
     "previewTruncated": "Showing the beginning only; download for the full file.",
     "previewFailed": "Preview failed to load.",
-    "deviceLine": "Device: {name} · {state}",
+    "deviceLine": "{name} · {state}",
     "deviceNone": "No device",
     "deviceDeleted": "Device deleted",
-    "deviceFailed": "Device status unavailable",
-    "lastRun": "Last run · {parts}"
+    "deviceFailed": "Device status unavailable"
   },
   "pluginPage": {
     "pathLabel": "Extension page",
@@ -2293,6 +2293,8 @@
     "form": {
       "nameLabel": "Name",
       "nameRequired": "Enter a name.",
+      "descriptionLabel": "Description",
+      "descriptionHint": "Shown on the connector card and page.",
       "slugLabel": "Slug",
       "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
       "urlLabel": "Endpoint URL",
@@ -2389,6 +2391,7 @@
     },
     "settings": {
       "title": "General",
+      "descriptionFallback": "Left empty, the connector shows its template's description (the greyed-out text).",
       "activeLabel": "Connector enabled",
       "save": "Save",
       "saved": "Saved.",
@@ -2788,7 +2791,7 @@
     "jsonHint": "Enter a JSON value.",
     "linesHint": "One item per line.",
     "hot": "applies immediately",
-    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} platform {Set by the platform} other {Read-only}}",
+    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} other {Read-only}}",
     "tristate": {
       "default": "Default",
       "on": "On",
@@ -2827,9 +2830,8 @@
       "unset": "Not configured"
     },
     "level": {
-      "hidden": "Hidden from orgs",
-      "readonly": "Read-only for orgs",
-      "override": "Orgs can override"
+      "platform": "Platform only",
+      "override": "Org can override"
     }
   },
   "channels": {
@@ -3041,13 +3043,7 @@
       "dialIn": "Machine connections (protocol)",
       "deviceAccess": "Device services"
     },
-    "configTitle": "Organization config",
-    "save": "Save config",
-    "saveLabel": "Save config of {plugin}",
-    "saveAndEnable": "Save and enable",
-    "saveAndEnableLabel": "Save config of {plugin} and enable",
-    "configFirstHint": "Fill in the organization config before enabling",
-    "configSaved": "Config of \"{plugin}\" saved.",
+    "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
     "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
@@ -3148,8 +3144,6 @@
       "embedRoutes": "Embed routes",
       "provides": "Extension points"
     },
-    "missingRequired": "Missing required: {fields}",
-    "listSep": ", ",
     "toolSwitches": {
       "title": "Tools",
       "hint": "Turn off a tool to stop every agent in this organization from using it.",
@@ -3815,7 +3809,6 @@
         "cleared": "Cleared the price for \"{model}\"."
       },
       "purposes": {
-        "title": "Default model per purpose",
         "description": "The kernel and extensions pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
       },
       "toMarket": "Browse the marketplace",
@@ -3834,7 +3827,6 @@
     },
     "org": {
       "pageTitle": "Models",
-      "title": "Model purposes",
       "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default.",
       "noProviders": "The platform has no model services yet. Super admins deploy them under Admin → Models.",
       "toAdminModels": "Set up model services",
@@ -3842,7 +3834,6 @@
         "title": "Model services",
         "description": "This organization's models come from the model services turned on here. A service the platform deploys works here once this organization turns it on.",
         "orgFixable": "No model service is ready in this organization yet. Turn one on or finish its configuration below so agents can answer.",
-        "enable": "Turn on",
         "enableLabel": "Turn on {plugin} for this organization",
         "configure": "Configure",
         "configureLabel": "Configure {plugin}"
@@ -3863,9 +3854,11 @@
       "modelInvalid": "The selected model is not available.",
       "unset": "Not set",
       "useDefault": "Use deployment default ({target})",
+      "none": "No purposes to set.",
       "overridden": "Overridden",
       "unavailable": "{target} (unavailable)",
-      "params": "Parameters",
+      "paramsAllDefault": "Parameters · all default",
+      "paramsCustomized": "Parameters · {n} customized",
       "save": "Save",
       "savedAll": "{n, plural, one {Saved # purpose.} other {Saved # purposes.}}",
       "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them.",
@@ -4947,7 +4940,7 @@
     },
     "source": {
       "manual": "Manual install",
-      "official": "Official marketplace",
+      "official": "Capybara",
       "removed": "Removed marketplace"
     },
     "versionSource": {
@@ -4998,6 +4991,7 @@
       },
       "actions": {
         "addSource": "Add marketplace source",
+        "sources": "Sources",
         "upload": "Upload plugin package"
       },
       "detail": {
@@ -5096,7 +5090,7 @@
         "steps": {
           "source": "Choose package",
           "review": "Review",
-          "confirm": "Confirm",
+          "reviewConfirm": "Review and confirm",
           "update": "Update preview"
         },
         "sourceLabel": "Source",
@@ -5122,7 +5116,7 @@
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
-        "confirm": "Confirm install",
+        "confirm": "Install",
         "done": "Installed plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the plugin is kept on the platform. Retry in the extension admin.",
@@ -5140,7 +5134,6 @@
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
         "gitPathHelp": "Optional; the plugin's directory in the repository (default the root).",
-        "provenance": "Attestation (not verified): built from {repository}@{commit} by {workflow}",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
         "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {
@@ -5158,6 +5151,7 @@
             "warnings": "Warnings",
             "other": "Other"
           },
+          "details": "Details",
           "groupNone": "None",
           "components": {
             "plugin": "Plugin",
@@ -5247,6 +5241,25 @@
           "provenance": "Provenance",
           "provenanceNotChecked": "Not checked ({reason})"
         },
+        "sensitiveCount": "{n} sensitive",
+        "fullDescription": "Full description",
+        "build": "Build",
+        "unverified": "(declared, not verified)",
+        "noneOf": "No {kinds}.",
+        "newMark": "New",
+        "configAfterInstall": "Fill these in on the Extensions page after installing.",
+        "needsOAuthClient": "Needs an OAuth client",
+        "needsOrgCredential": "Needs an organization credential",
+        "endpointUnchecked": "Address not checked",
+        "translationSummary": "Imported {imported} · Converted {converted} · Needs input {needsInput} · Ignored {ignored} · Warnings {warnings}",
+        "versionChange": "{from} → {to}",
+        "provides": "Provides",
+        "config": "Config",
+        "hiddenCharacters": "Hidden characters",
+        "secret": "Secret",
+        "tools": "Tools",
+        "endpointDetails": "Endpoint details",
+        "orgCanChange": "Org can change",
         "titleUpdate": "Update plugin \"{name}\"",
         "confirmUpdate": "Confirm update",
         "updateHint": "Confirming adds {version} to the platform and updates the plugin to it, for every organization at once. Cancelling before you confirm changes nothing.",
@@ -5254,7 +5267,7 @@
       },
       "entries": {
         "title": "Browse marketplaces",
-        "empty": "No marketplace entries. Add or refresh a marketplace with Add marketplace source.",
+        "empty": "No marketplace entries. Add or refresh a marketplace with Sources.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
@@ -5303,13 +5316,19 @@
         "search": "Search sources",
         "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
-        "official": "Official marketplace",
-        "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
-        "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
         "enabledLabel": "Enable {name}",
+        "details": "Details",
+        "detailsTitle": "{name}: details",
+        "close": "Close",
+        "addConfirm": "Add",
+        "cancel": "Cancel",
+        "edit": "Edit",
+        "editTitle": "Edit {name}",
+        "officialNote": "Its address is set in the deployment config (marketplaces.official.*) and is read-only here.",
+        "disabled": "Disabled",
+        "official": "Capybara",
+        "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
         "url": "URL",
-        "mirrors": "Mirrors",
-        "status": "Status",
         "statusValue": {
           "ok": "OK ({n} entries, {at})",
           "never": "Not fetched yet",
@@ -5324,9 +5343,7 @@
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
-        "custom": "Custom marketplaces",
         "customHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
-        "customEmpty": "No custom marketplaces yet.",
         "name": "Name",
         "token": "Token",
         "tokenHelp": "Optional; leave empty to keep it unchanged.",
@@ -5336,6 +5353,7 @@
         "managed": "Configured by the deployment",
         "managedTokenSet": "Token set by the deployment",
         "managedTokenUnset": "No token set by the deployment",
+        "mirrors": "Mirrors",
         "clearToken": "Clear token",
         "save": "Save",
         "saved": "Saved \"{name}\".",
@@ -5346,7 +5364,7 @@
           "confirm": "Remove"
         },
         "removed": "Removed \"{name}\".",
-        "add": "Add custom marketplace",
+        "add": "Add marketplace source",
         "added": "Added \"{name}\".",
         "form": "Type",
         "formHttp": "marketplace.json URL",
@@ -5360,7 +5378,6 @@
         "skipped": {
           "title": "{n, plural, one {# entry was} other {# entries were}} skipped by the last refresh",
           "line": "{name}: {reason}",
-          "more": "…and {n} more",
           "reasons": {
             "claude_npm_unpinned": "an npm source without integrity, not supported yet",
             "claude_source_unsupported": "this kind of source is not supported",
@@ -5500,8 +5517,9 @@
         "title": "Turn on {name}",
         "alreadyOn": "{name} is already on; nothing to fill in.",
         "backToPlugin": "Back to the plugin",
+        "chooseStep": "Choose connectors",
+        "chooseHint": "Check the connectors to create with the plugin; the next steps ask for each one. Unchecked ones are not created and stay available as templates on the Connectors page.",
         "connectorStep": "Connector: {name}",
-        "extensionStep": "Extension settings",
         "confirmStep": "Confirm",
         "name": "Connector name",
         "slug": "Slug",
@@ -5514,15 +5532,21 @@
         "personalMembersHint": "This connector uses personal credentials: each member connects later.",
         "noneHint": "This connector needs no credentials.",
         "dcrHint": "The client is registered automatically; nothing to fill in.",
-        "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
-        "extensionNone": "No extension settings to fill in.",
-        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
+        "need": {
+          "kept": "Keeps its connector",
+          "client": "Needs an OAuth client",
+          "endpoint": "Needs an address",
+          "personal": "Needs your credential",
+          "credential": "Credential can wait",
+          "none": "Nothing to fill in"
+        },
         "connectorKept": "{name}: this organization already has its connector, which is kept as it is; nothing to fill in.",
         "summary": "Turning it on gives this organization:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
         "summarySkills": "{n} skills",
         "summaryDependencies": "Installed with it first (unless this organization already has them):",
+        "summaryNotChosen": "{n, plural, one {# unchecked connector is} other {# unchecked connectors are}} not created; add them later from their templates on the Connectors page.",
         "submit": "Turn on",
         "next": "Next",
         "back": "Back",
@@ -5567,7 +5591,8 @@
         "connector": "Connector",
         "skill": "Skill",
         "plugin": "Dependency plugin",
-        "agent_template": "Agent template"
+        "agent_template": "Agent template",
+        "theme": "Theme"
       },
       "installedAt": "Installed {at}",
       "cleanup": "Clean up",
@@ -5771,7 +5796,7 @@
       "toolsNone": "None",
       "loadFailed": "The sub-agent cannot be opened."
     },
-    "contextTotal": "Total tokens with sub-agents {n}",
+    "contextTotal": "{n} tokens incl. sub-agents",
     "background": "Background tasks",
     "startingGrant": "Running work keeps the permissions it started with; a permission change applies to new operations. Revoked device or organization access can still stop it."
   },
@@ -5940,7 +5965,6 @@
     },
     "action": {
       "enable": "Turn on",
-      "configure": "Organization config",
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
@@ -5981,6 +6005,8 @@
     },
     "market": {
       "title": "Marketplace",
+      "source": "Source",
+      "allSources": "All sources",
       "empty": "The marketplaces have no entries yet.",
       "adopted": "Installed",
       "unavailable": "Cannot be installed",
@@ -6696,7 +6722,9 @@
         "not_grantable": "Can't be approved in advance",
         "not_available": "Not one of the agent's tools now",
         "needs_role": "Needs a role you don't have",
-        "fixed_ask": "Always asks a person"
+        "fixed_ask": "Always asks a person",
+        "needs_admin": "Outside the organization's network allowlist: an organization admin must add it",
+        "device_refuses": "The task's device can't take network changes"
       },
       "network": "Network access",
       "networkHint": "Domains the task's runs may reach on its device without asking (within what the organization allows).",

@@ -25,7 +25,14 @@ export const PLUGIN_SCOPES = ["all", "optional", "named"] as const;
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
 
 /** The effective state of a plugin in one org (kernel `OrgPluginState`). */
-export type OrgPluginState = "on" | "off" | "needs_config" | "unavailable" | "not_offered";
+export type OrgPluginState =
+  | "on"
+  | "off"
+  | "needs_config"
+  | "unavailable"
+  | "not_offered"
+  /** The org's own upload, waiting for the super admin's confirmation (`awaitingConfirmation`). */
+  | "awaiting_confirmation";
 
 export interface LocalizedName {
   zh: string;
@@ -129,7 +136,15 @@ export interface StaticExtensionManifest {
     /** Long-lived services the extension runs in conversations' devices (SDK `deviceAccess`). */
     deviceAccess?: { services: string[] };
   };
-  config?: { deployment: { key: string }[]; org: { key: string }[] };
+  /** The config fields the extension declares (SDK `StaticConfigField`). */
+  config?: { deployment: StaticConfigField[] };
+}
+
+/** One declared config field (SDK `StaticConfigField`). */
+export interface StaticConfigField {
+  path: string;
+  secret: boolean;
+  hot: boolean;
 }
 
 /** A version's normalized plugin.json (SDK `PluginManifest`, the parts the web reads). */
@@ -144,7 +159,7 @@ export interface PluginManifest {
   license?: string;
   homepage?: string;
   dependencies?: { name: string; version: string }[];
-  skills?: { path: string; pinned?: boolean }[];
+  skills?: { path: string }[];
   connectorTemplates?: { path: string }[];
   /** Agent templates (`agents/<name>.md`, phase C). */
   agents?: { path: string }[];
@@ -412,7 +427,10 @@ export interface PluginReviewClient {
 export interface PluginReviewTemplate {
   id: string;
   displayName: LocalizedName;
+  /** The English or only text ("" without one); show it with `descriptionOf`. */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh?: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -431,7 +449,7 @@ export type Provenance =
 
 /** Where an import comes from (kernel `PluginImportSource`). */
 export interface PluginImportSource {
-  kind: "file" | "npm" | "marketplace" | "git";
+  kind: "file" | "npm" | "marketplace" | "git" | "bootstrap";
   ref: string;
   integrity?: string;
   marketplaceId?: string;
@@ -869,7 +887,10 @@ export interface OrgCatalogItem
 export interface OrgCatalogTemplate {
   id: string;
   displayName: LocalizedName | null;
+  /** The English or only text ("" without one); show it with `descriptionOf`. */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh?: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -893,6 +914,11 @@ export interface OrgCatalogTemplate {
    * wizard shows it above the template's input. Null without one (absent for other kinds).
    */
   guide?: { itemId: string; guideId: string } | null;
+  /**
+   * The template's icon (its own, else its plugin's; a kernel icon route), null without one
+   * (absent for other kinds).
+   */
+  icon?: string | null;
 }
 
 /**
@@ -901,13 +927,26 @@ export interface OrgCatalogTemplate {
  * whose connector the org already has (`connected`): the install reuses that connector.
  */
 export function installTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => (!c.defaultOff || c.on === true) && c.connected !== true);
+  return templates.filter((c) => chosenByDefault(c) && c.connected !== true);
 }
 
 /** The templates whose existing connector the install keeps instead of asking for input. */
 export function keptTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => (!c.defaultOff || c.on === true) && c.connected === true);
+  return templates.filter((c) => chosenByDefault(c) && c.connected === true);
 }
+
+/**
+ * Whether the install wizard starts with the template chosen: on by default, or a default-off one
+ * an admin already switched on in this org.
+ */
+export const chosenByDefault = (c: OrgCatalogTemplate): boolean => !c.defaultOff || c.on === true;
+
+/**
+ * Whether the install wizard opens on its "choose connectors" step: the plugin has more than one connector
+ * template, or a default-off one (otherwise there is nothing to choose beyond the default).
+ */
+export const hasChooseStep = (templates: OrgCatalogTemplate[]): boolean =>
+  templates.length > 1 || templates.some((c) => c.defaultOff);
 
 /** `GET /orgs/:orgId/catalog/:itemId` (kernel `OrgCatalogDetail`, latest version). */
 export interface OrgCatalogDetail {
@@ -937,10 +976,14 @@ export interface ConnectorInstallInput {
   client?: { clientId: string; clientSecret?: string };
 }
 
-/** The org install body: template input by template id, the plugin's own extension's org config. */
+/** The org install body: template input by template id (kernel `OrgPluginInstallBody`). */
 export interface OrgInstallBody {
   connectors?: Record<string, ConnectorInstallInput>;
-  extensionConfig?: Record<string, unknown>;
+  /**
+   * The template ids to switch on with the install (the wizard's choose step): exactly these make
+   * connectors, the others are switched off in the org. Absent: the templates on there now.
+   */
+  templatesOn?: string[];
 }
 
 /** What switching a plugin off in an org takes away (kernel `UninstallPreview`). */
@@ -1008,8 +1051,14 @@ export interface ScopeConflict {
 /** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable). */
 export type ScopeTarget = { scope: PluginScope; orgs?: string[] } | { disabled: true };
 
-/** `plugin` is a dependency install (ref = its plugin install id). */
-export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
+/** `plugin` is a dependency install (ref = its plugin install id); kernel `ComponentKind`. */
+export type ComponentKind =
+  | "extension"
+  | "connector"
+  | "skill"
+  | "plugin"
+  | "agent_template"
+  | "theme";
 
 /** An installed plugin (kernel `PluginInstallView`). */
 export interface PluginInstall {
@@ -1396,7 +1445,8 @@ export const confirmOrgUpload = (
   body: { reviewHash: string; shareable?: boolean },
 ) =>
   apiFetch<{
-    item: OrgCatalogItem;
+    /** The org's plugin, admin view (kernel `CatalogItemView`). */
+    item: CatalogItem;
     outcome: OrgUploadOutcome;
     /** An update left the plugin's extension disabled (see `PlatformUpdateResult`). */
     extensionLeftDisabled?: SingleProviderNote;
@@ -1642,6 +1692,22 @@ export const showValue = (v: unknown): string =>
 /** 认证预设是不是 OAuth（组织填客户端 id / secret，而不是静态凭据）。 */
 export const isOAuth = (auth: Record<string, unknown>): boolean =>
   auth.type === "oauth_code" || auth.type === "oauth_client";
+
+/**
+ * What a connector template needs before it can be used: `client` (an OAuth client: the client
+ * credentials flow always, the authorization-code flow only with a manually registered client) or
+ * `credential` (a static credential the org owns); nothing otherwise.
+ */
+export function templateNeed(t: {
+  auth: Record<string, unknown>;
+}): "client" | "credential" | undefined {
+  const a = t.auth;
+  if (a.type === "oauth_client" || (a.type === "oauth_code" && a.client === "manual")) {
+    return "client";
+  }
+  if (a.type !== "none" && !isOAuth(a) && a.ownership === "org") return "credential";
+  return undefined;
+}
 
 /** Whether a review has sensitive items (the plugin, its extension, or migration warnings). */
 export const pluginReviewSensitive = (r: PluginReview): boolean =>

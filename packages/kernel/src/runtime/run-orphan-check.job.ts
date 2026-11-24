@@ -4,6 +4,7 @@ import { EventLog } from "../conversations/event-log.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
@@ -123,19 +124,23 @@ export async function orphanCandidates(
 
 /** Whether delivery is still owed by a pending outbox row; dead copies are not active work.
  */
+// org-filter: outbox rows looked up by queue and deterministic kernel job id (unique across the
+// deployment) in the deployment-wide orphan check; outbox.org_id is nullable
 export async function jobInOutbox(
   db: KernelSchemaDb,
   queue: string,
   jobId: string,
 ): Promise<boolean> {
-  const row = await db
-    .selectFrom("outbox")
-    .select("id")
-    .where("queue", "=", queue)
-    .where("job_id", "=", jobId)
-    .where("dead_at", "is", null)
-    .executeTakeFirst();
-  return row !== undefined;
+  return asPlatform("orphan check: outbox rows by kernel job id", async () => {
+    const row = await db
+      .selectFrom("outbox")
+      .select("id")
+      .where("queue", "=", queue)
+      .where("job_id", "=", jobId)
+      .where("dead_at", "is", null)
+      .executeTakeFirst();
+    return row !== undefined;
+  });
 }
 
 /** Every page of {@link orphanCandidates}, at most {@link RUN_ORPHAN_CHECK_MAX_PAGES}. */
@@ -295,16 +300,20 @@ export class RunOrphanCheck {
       .execute();
   }
 
+  // org-filter: outbox rows looked up by queue and deterministic kernel job id (unique across the
+  // deployment) in the deployment-wide orphan check; outbox.org_id is nullable
   private async hasDeadDelivery(c: OrphanCandidate): Promise<boolean> {
-    return (
-      (await this.db
-        .selectFrom("outbox")
-        .select("id")
-        .where("queue", "=", c.queue)
-        .where("job_id", "=", c.jobId)
-        .where("dead_at", ">=", sql<Date>`${c.since}::timestamptz`)
-        .executeTakeFirst()) !== undefined
-    );
+    return asPlatform("orphan check: outbox rows by kernel job id", async () => {
+      return (
+        (await this.db
+          .selectFrom("outbox")
+          .select("id")
+          .where("queue", "=", c.queue)
+          .where("job_id", "=", c.jobId)
+          .where("dead_at", ">=", sql<Date>`${c.since}::timestamptz`)
+          .executeTakeFirst()) !== undefined
+      );
+    });
   }
 
   /**
@@ -356,6 +365,8 @@ export class RunOrphanCheck {
     if (deliveryFailed) {
       // Lock dead rows against admin retry. A pending retry always takes precedence over a
       // historical dead copy. Producers of replacement jobs also hold this conversation lock.
+      // org-filter: outbox rows by queue and deterministic kernel job id (unique across the
+      // deployment); outbox.org_id is nullable
       const deliveries = await this.db
         .selectFrom("outbox")
         .select("dead_at")
@@ -408,6 +419,7 @@ export class RunOrphanCheck {
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", c.conversationId)
+      .where("org_id", "=", c.orgId)
       .forUpdate()
       .executeTakeFirst();
     const r = await this.db

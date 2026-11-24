@@ -221,6 +221,8 @@ export async function resolveRequestsByInstall(
 }
 
 /** The pending `import` request linked to a staged import (its approval prepared it), if any. */
+// org-filter: by the staging id of the confirm's own staging row (ownStaging checked it); a platform
+// staging prepared by approving import requests links requests of several orgs, read on purpose
 export async function importRequestOf(
   db: KernelSchemaDb,
   stagingId: string,
@@ -236,6 +238,8 @@ export async function importRequestOf(
 }
 
 /** Whether pending `import` requests are linked to the staging (its confirm resolves them). */
+// org-filter: by the staging id of the confirm's own staging row (ownStaging checked it); a platform
+// staging prepared by approving import requests links requests of several orgs, read on purpose
 export async function hasImportRequests(db: KernelSchemaDb, stagingId: string): Promise<boolean> {
   const r = await db
     .selectFrom("catalog_requests")
@@ -252,6 +256,8 @@ export async function hasImportRequests(db: KernelSchemaDb, stagingId: string): 
  * staging are approved (decider: the confirming admin) and point at the item. Audits
  * `catalog.request_decided`. Returns the requests' orgs.
  */
+// org-filter: by the staging id of the confirm's own staging row (ownStaging checked it); a platform
+// staging prepared by approving import requests links requests of several orgs, read on purpose
 export async function resolveImportRequests(
   db: KernelSchemaDb,
   stagingId: string,

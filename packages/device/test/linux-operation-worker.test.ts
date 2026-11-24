@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import {
   mkdir,
@@ -14,8 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { containerUser } from "../src/exec/docker.js";
+import { sandboxImageReference } from "../src/exec/docker-image.js";
 import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-operations.js";
+import { containerHelperLauncher } from "../src/exec/helper-launcher.js";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
@@ -113,7 +116,11 @@ async function fakeTransport(behaviour: string) {
   let spawned = 0;
   const transport: LinuxAgentTransport = {
     kind: "host",
-    bundle: { runtime: {}, expect: { "linux-sandbox.py": "x", "native-files.py": "y" } },
+    bundle: {
+      runtime: {},
+      expect: { "linux-sandbox.py": "x", "native-files.py": "y" },
+      fileReadRoots: true,
+    },
     spawn: async () => {
       spawned++;
       return spawn(process.execPath, ["-e", FAKE_AGENT], {
@@ -500,6 +507,34 @@ describe("Linux operation worker", () => {
     // the regular files directly inside the expanded directories, never a denied one, a link or
     // a FIFO, go to the agent as exact file roots
     expect(sent?.readFileRoots).toEqual(["/h/u/.bashrc", "/top.txt"]);
+    // a launcher that does not declare file roots gets none: the same directories, and the files
+    // beside the denied paths stay unreadable rather than granted by a launcher that ignores them
+    const older = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...older,
+        transport: {
+          ...older.transport,
+          bundle: { ...older.transport.bundle, fileReadRoots: false },
+        },
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+        carveFs,
+      })(
+        execRequest(false, {
+          grant: { ...grant(false), readRoots: ["/"], deniedReadRoots: denied },
+        }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [olderSent] = await older.lines();
+    expect(olderSent).not.toHaveProperty("readFileRoots");
+    const olderTemp = (await older.temp()).temp;
+    const firstTemp = (await fake.temp()).temp;
+    expect((olderSent?.readRoots as string[] | undefined)?.filter((r) => r !== olderTemp)).toEqual(
+      roots.filter((r) => r !== firstTemp),
+    );
     // native work keeps the reach as granted: the agent checks each resolved path against denied
     const native = await fakeTransport("exit");
     await (
@@ -868,7 +903,15 @@ describe("Linux runtime probe", () => {
   });
 });
 
-describe("local-Docker skill preparation", () => {
+const dockerAvailable = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!dockerAvailable)("local-Docker skill preparation", () => {
+  beforeAll(() => {
+    // the device container pulls the pinned image before any helper runs; helpers never pull
+    const image = sandboxImageReference({});
+    if (spawnSync("docker", ["image", "inspect", image], { stdio: "ignore" }).status !== 0)
+      execFileSync("docker", ["pull", image], { stdio: "ignore" });
+  });
   it("writes the host skills directory behind the read-only mount through the native helper", async () => {
     const dir = await realpath(await mkdtemp(join(tmpdir(), "cap-docker-skills-")));
     dirs.push(dir);
@@ -881,7 +924,8 @@ describe("local-Docker skill preparation", () => {
         deviceId: "d",
         instanceGeneration: "g",
         stateDir: state,
-        pythonPath: "/usr/bin/python3",
+        // no host interpreter: the native helper runs in a helper container of the pinned image
+        pythonPath: "/nonexistent/python3",
         runtimeHash: "hash",
         hostRoots,
         readOwnerCeiling: async () => ({
@@ -904,8 +948,13 @@ describe("local-Docker skill preparation", () => {
           },
         }),
         container: {
+          helpers: containerHelperLauncher({
+            deviceId: "d",
+            image: sandboxImageReference({}),
+            user: containerUser(),
+          }),
           operationContainer: async () => {
-            throw new Error("skill preparation never enters the container");
+            throw new Error("skill preparation never enters the device container");
           },
         },
       },
@@ -937,7 +986,7 @@ describe("Linux agent read files", () => {
   it("appends to exactly the SDK launcher's default system roots", () => {
     const tuple = (source: string, name: string) =>
       new RegExp(`^${name} = \\(([^)]*)\\)`, "m").exec(source)?.[1];
-    const launcher = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+    const launcher = SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "linux-sandbox.py");
     const sdk = tuple(launcher?.source ?? "", "DEFAULT_SYSTEM_ROOTS");
     expect(sdk).toBeDefined();
     expect(tuple(LINUX_DEVICE_AGENT, "LAUNCHER_SYSTEM_ROOTS")).toBe(sdk);

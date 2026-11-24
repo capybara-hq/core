@@ -5,6 +5,7 @@ import type { JobsOptions, Queue } from "bullmq";
 import { sql } from "kysely";
 import type { KernelLogger } from "../../log.js";
 import { KernelDb } from "../database/kernel-db.js";
+import { asPlatform } from "../database/org-scope.js";
 import { TransactionHost } from "../database/transaction-host.js";
 import { Transactional } from "../database/transactional.decorator.js";
 import { QUEUE_JOB_DEFAULTS } from "../queue/queue.module.js";
@@ -110,6 +111,8 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
  * process that has it.
  */
 @Injectable()
+// org-filter: deployment-wide relay; it claims and delivers due outbox rows of every org by row id
+// (kernel-written ids, never caller input), each job carrying its own org in its data
 export class OutboxDispatcher {
   /** The owners' queue instances resolved so far (a per-process handle cache). */
   private readonly queues = new Map<KernelQueueName, OutboxQueue>();
@@ -211,78 +214,81 @@ export class OutboxDispatcher {
    */
   @Transactional({ propagation: "requires_new" })
   private async claimAndSend(claim: Claim): Promise<{ sent: number; failed: FailedGroup[] }> {
-    const queues = new Map(this.reachable());
-    if (queues.size === 0) return { sent: 0, failed: [] };
-    // rows of a queue this process cannot reach are left for a process that can
-    let query = this.db
-      .selectFrom("outbox")
-      .select(["id", "queue", "job_name", "job_id", "data", "run_at"])
-      .where("dead_at", "is", null)
-      .where("queue", "in", [...queues.keys()]);
-    query =
-      "ids" in claim
-        ? query.where("id", "in", [...claim.ids])
-        : query.where("next_attempt_at", "<=", sql<Date>`now()`).limit(claim.limit);
-    const rows = await query.orderBy("id").forUpdate().skipLocked().execute();
-    if (rows.length === 0) return { sent: 0, failed: [] };
+    return asPlatform("deployment-wide relay", async () => {
+      const queues = new Map(this.reachable());
+      if (queues.size === 0) return { sent: 0, failed: [] };
+      // rows of a queue this process cannot reach are left for a process that can
+      let query = this.db
+        .selectFrom("outbox")
+        .select(["id", "queue", "job_name", "job_id", "data", "run_at"])
+        .where("dead_at", "is", null)
+        .where("queue", "in", [...queues.keys()]);
+      query =
+        "ids" in claim
+          ? query.where("id", "in", [...claim.ids])
+          : query.where("next_attempt_at", "<=", sql<Date>`now()`).limit(claim.limit);
+      const rows = await query.orderBy("id").forUpdate().skipLocked().execute();
+      if (rows.length === 0) return { sent: 0, failed: [] };
 
-    const byQueue = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const group = byQueue.get(row.queue);
-      if (group) group.push(row);
-      else byQueue.set(row.queue, [row]);
-    }
+      const byQueue = new Map<string, typeof rows>();
+      for (const row of rows) {
+        const group = byQueue.get(row.queue);
+        if (group) group.push(row);
+        else byQueue.set(row.queue, [row]);
+      }
 
-    const now = Date.now();
-    const deadline = now + OUTBOX_REDIS_TIMEOUT_MS;
-    const delivered: string[] = [];
-    const failed: FailedGroup[] = [];
-    // after the first failure the queues left are failed without a try: Redis is likely down
-    let firstError: string | undefined;
-    for (const [name, group] of byQueue) {
-      const ids = group.map((r) => r.id);
-      if (firstError !== undefined) {
-        failed.push({
-          ids,
-          error: `not tried after an earlier queue failed: ${firstError}`.slice(
-            0,
-            MAX_ERROR_LENGTH,
-          ),
-        });
-        continue;
+      const now = Date.now();
+      const deadline = now + OUTBOX_REDIS_TIMEOUT_MS;
+      const delivered: string[] = [];
+      const failed: FailedGroup[] = [];
+      // after the first failure the queues left are failed without a try: Redis is likely down
+      let firstError: string | undefined;
+      for (const [name, group] of byQueue) {
+        const ids = group.map((r) => r.id);
+        if (firstError !== undefined) {
+          failed.push({
+            ids,
+            error: `not tried after an earlier queue failed: ${firstError}`.slice(
+              0,
+              MAX_ERROR_LENGTH,
+            ),
+          });
+          continue;
+        }
+        try {
+          if (this.dispatchFails(name as KernelQueueName))
+            throw new Error("outbox dispatch failure (test seam)");
+          const queue = queues.get(name as KernelQueueName);
+          if (!queue) throw new Error(`"${name}" is not a kernel queue`);
+          const left = deadline - Date.now();
+          if (left <= 0)
+            throw new Error(`no time left of the pass's ${OUTBOX_REDIS_TIMEOUT_MS} ms`);
+          await withTimeout(
+            queue.addBulk(
+              group.map((r) => ({
+                name: r.job_name,
+                data: r.data,
+                opts: {
+                  ...(QUEUE_JOB_DEFAULTS as JobsOptions),
+                  ...outboxJobOptions(r.job_name),
+                  jobId: r.job_id,
+                  delay: r.run_at ? Math.max(0, r.run_at.getTime() - now) : 0,
+                },
+              })),
+            ),
+            left,
+            `addBulk to ${name}`,
+          );
+          delivered.push(...ids);
+        } catch (e) {
+          firstError = errMsg(e);
+          failed.push({ ids, error: firstError.slice(0, MAX_ERROR_LENGTH) });
+        }
       }
-      try {
-        if (this.dispatchFails(name as KernelQueueName))
-          throw new Error("outbox dispatch failure (test seam)");
-        const queue = queues.get(name as KernelQueueName);
-        if (!queue) throw new Error(`"${name}" is not a kernel queue`);
-        const left = deadline - Date.now();
-        if (left <= 0) throw new Error(`no time left of the pass's ${OUTBOX_REDIS_TIMEOUT_MS} ms`);
-        await withTimeout(
-          queue.addBulk(
-            group.map((r) => ({
-              name: r.job_name,
-              data: r.data,
-              opts: {
-                ...(QUEUE_JOB_DEFAULTS as JobsOptions),
-                ...outboxJobOptions(r.job_name),
-                jobId: r.job_id,
-                delay: r.run_at ? Math.max(0, r.run_at.getTime() - now) : 0,
-              },
-            })),
-          ),
-          left,
-          `addBulk to ${name}`,
-        );
-        delivered.push(...ids);
-      } catch (e) {
-        firstError = errMsg(e);
-        failed.push({ ids, error: firstError.slice(0, MAX_ERROR_LENGTH) });
-      }
-    }
-    if (delivered.length > 0)
-      await this.db.deleteFrom("outbox").where("id", "in", delivered).execute();
-    return { sent: delivered.length, failed };
+      if (delivered.length > 0)
+        await this.db.deleteFrom("outbox").where("id", "in", delivered).execute();
+      return { sent: delivered.length, failed };
+    });
   }
 
   /**
@@ -291,30 +297,35 @@ export class OutboxDispatcher {
    * and `dead_at` at the last attempt. Returns how many rows it made dead.
    */
   private async recordFailure(group: FailedGroup): Promise<number> {
-    const { baseMs, capMs, maxAttempts } = OUTBOX_BACKOFF;
-    // the right-hand sides read the row before the update: the first failure waits baseMs
-    const backoffMs = sql`least(${capMs}::float8, ${baseMs}::float8 * power(2, attempts))`;
-    const updated = await this.db
-      .updateTable("outbox")
-      .set({
-        attempts: sql`attempts + 1`,
-        last_error: group.error,
-        next_attempt_at: sql`now() + ${backoffMs} * interval '1 millisecond'`,
-        dead_at: sql`case when attempts + 1 >= ${maxAttempts}::int then now() end`,
-      })
-      .where("id", "in", group.ids)
-      .where("dead_at", "is", null)
-      .returning(["dead_at"])
-      .execute();
-    const dead = updated.filter((r) => r.dead_at !== null).length;
-    this.log.warn("outbox delivery failed; retrying with backoff", {
-      rows: group.ids.length,
-      dead,
-      error: group.error,
+    return asPlatform("deployment-wide relay", async () => {
+      const { baseMs, capMs, maxAttempts } = OUTBOX_BACKOFF;
+      // the right-hand sides read the row before the update: the first failure waits baseMs
+      const backoffMs = sql`least(${capMs}::float8, ${baseMs}::float8 * power(2, attempts))`;
+      const updated = await this.db
+        .updateTable("outbox")
+        .set({
+          attempts: sql`attempts + 1`,
+          last_error: group.error,
+          next_attempt_at: sql`now() + ${backoffMs} * interval '1 millisecond'`,
+          dead_at: sql`case when attempts + 1 >= ${maxAttempts}::int then now() end`,
+        })
+        .where("id", "in", group.ids)
+        .where("dead_at", "is", null)
+        .returning(["dead_at"])
+        .execute();
+      const dead = updated.filter((r) => r.dead_at !== null).length;
+      this.log.warn("outbox delivery failed; retrying with backoff", {
+        rows: group.ids.length,
+        dead,
+        error: group.error,
+      });
+      if (dead > 0) {
+        this.log.error("outbox rows dead after the last attempt", {
+          rows: dead,
+          error: group.error,
+        });
+      }
+      return dead;
     });
-    if (dead > 0) {
-      this.log.error("outbox rows dead after the last attempt", { rows: dead, error: group.error });
-    }
-    return dead;
   }
 }

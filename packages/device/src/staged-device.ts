@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -16,6 +17,7 @@ import type {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { RunningOperations } from "./activity.js";
 import { CommandLog } from "./command-log.js";
+import { HOST_PYTHON } from "./docker-host.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
 import { credentialIdentity, InstanceBinder, type StoredBinding } from "./exec/instance-binding.js";
 import type { LinuxBackendDependencies } from "./exec/linux-operation-backend.js";
@@ -28,7 +30,6 @@ import { readStrictOwnerCeiling } from "./exec/operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "./exec/operation-worker.js";
 import type { EnvironmentInputs, VerifiedRuntime } from "./exec/runtime-manifest.js";
 import { deviceSandboxHome, osRoots, RootGuard } from "./exec/shared.js";
-import { HOST_PYTHON } from "./host-python.js";
 import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
 import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
@@ -40,6 +41,9 @@ import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
 export { HOST_PYTHON };
+
+/** The interpreter a docker-mode device's helpers run with: the pinned image's. */
+const IMAGE_PYTHON = "/usr/bin/python3";
 /** How long a stopped operation gets to end on its own before it is killed (machine stop). */
 export const MACHINE_STOP_GRACE_MS = 2000;
 /**
@@ -105,8 +109,8 @@ export interface StagedDeviceOptions {
   /** Releases what construction acquired; called by {@link StagedDevice.dispose}. */
   dispose?: () => Promise<void>;
   /**
-   * The host interpreter the trusted helpers run with (the output spool helper and the native
-   * helper, also for a docker-mode device's host-side skills preparation).
+   * The host interpreter the trusted helpers run with in OS mode (the output spool helper and the
+   * native helper). A docker-mode device never uses it: its helpers run in helper containers.
    */
   pythonPath?: string;
   /**
@@ -123,6 +127,8 @@ export interface StagedDeviceOptions {
   selfCheckRetryMs?: number;
   /** The clock of the self-check retry interval (default: `Date.now`). */
   selfCheckNow?: () => number;
+  /** Where a docker-mode bind logs which pinned image digest the container matched. */
+  log?: (line: string) => void;
   /** The image id (`sha256:…`) the docker-mode device's running container was created from. */
   containerImageDigest?: (containerName: string, signal: AbortSignal) => Promise<string>;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
@@ -196,27 +202,54 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   const readOwnerCeiling = () =>
     readStrictOwnerCeiling({ stateDir, stateRoot, deviceId: cred.deviceId, dir: cred.dir, home });
 
+  /** The pinned index digest, once the running container proved to be the pinned image. */
   const containerImage = async (): Promise<string> => {
     const signal = AbortSignal.timeout(60_000);
-    const held = await (o.container as OperationContainerHost).operationContainer(signal);
+    const container = o.container as OperationContainerHost;
+    const held = await container.operationContainer(signal);
     try {
       const digest = await (o.containerImageDigest ?? inspectContainerImage)(held.name, signal);
       if (!/^sha256:[0-9a-f]{64}$/.test(digest))
         throw new Error(`The device container's image id is not a sha256 digest: ${digest}`);
-      return digest;
+      // only the pinned image is attested: anything else binds no runtime identity (fail closed)
+      const { matchPinnedImage, pinnedPlatform, SANDBOX_IMAGE_PIN } = await import(
+        "./exec/docker-image.js"
+      );
+      const platform =
+        "imagePlatform" in container ? container.imagePlatform : pinnedPlatform(process.arch);
+      const matched = matchPinnedImage(digest, platform);
+      if (matched === undefined) {
+        const { RuntimeManifestError } = await import("./exec/runtime-manifest.js");
+        throw new RuntimeManifestError(
+          `The device container runs image ${digest}, not the pinned sandbox image ` +
+            `${SANDBOX_IMAGE_PIN.version} (${SANDBOX_IMAGE_PIN.index}) for ${platform ?? process.arch}`,
+        );
+      }
+      // which digest matched: a change in how Docker reports image ids shows here
+      o.log?.(`device container image ${digest} is the pinned ${matched} digest`);
+      // recorded as the pinned index whatever the image store reports: constant per program
+      // version, so a change of image store is not a changed runtime
+      return SANDBOX_IMAGE_PIN.index;
     } finally {
       held.release();
     }
   };
 
   const verify = async () => {
-    const environment: EnvironmentInputs = {
-      pythonPath,
-      roots,
-      // a docker-mode device runs in its container: the image it was created from is part of the
-      // attested environment, so a re-pulled tag is a changed runtime
-      ...(mode === "docker" && { providerImageDigest: await containerImage() }),
-    };
+    const environment: EnvironmentInputs =
+      mode === "docker"
+        ? {
+            // the pinned image's interpreter and shell, probed in a helper container; the host's
+            // are never used in docker mode
+            place: "image",
+            ...((o.container as OperationContainerHost).helpers && {
+              helpers: (o.container as OperationContainerHost).helpers,
+            }),
+            pythonPath: IMAGE_PYTHON,
+            roots,
+            providerImageDigest: await containerImage(),
+          }
+        : { place: "host", pythonPath, roots };
     // restricted workers launch only from the closure this verification stages and seals
     if (o.verifyRuntime) return o.verifyRuntime(environment, { stageIn: stateDir });
     const { verifyInstalledRuntime } = await import("./exec/runtime-manifest.js");
@@ -255,7 +288,13 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       // project roots are the container's paths, never a directory another connection could use
       const { roots: _host, sandboxHome: _home, onProjectAdmitted: _projects, ...rest } = options;
       return createDockerOperationBackend(
-        { ...rest, hostRoots, container: o.container as OperationContainerHost },
+        {
+          ...rest,
+          // the real directory, as the device container mounts it: helper containers mount these
+          // paths and refuse one with a link in it
+          hostRoots: osRoots(realDir(resolve(cred.dir))),
+          container: o.container as OperationContainerHost,
+        },
         { ...deps, ...o.linux },
       );
     }
@@ -426,13 +465,18 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   };
 }
 
+/** A directory's real path, or the path itself while it does not exist. */
+function realDir(dir: string): string {
+  return existsSync(dir) ? realpathSync(dir) : dir;
+}
+
 /** The image id the container was created from (`docker inspect`), never a mutable tag. */
 async function inspectContainerImage(name: string, signal: AbortSignal): Promise<string> {
   const { execFile } = await import("node:child_process");
   return new Promise((resolve, reject) => {
     execFile(
       "docker",
-      ["inspect", "--format", "{{.Image}}", name],
+      ["inspect", "--type", "container", "--format", "{{.Image}}", name],
       { signal, timeout: 30_000 },
       (error, stdout) => (error ? reject(error) : resolve(String(stdout).trim())),
     );

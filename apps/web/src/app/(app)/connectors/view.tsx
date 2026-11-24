@@ -13,11 +13,12 @@ import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
-import { componentLabel, type OrgComponent } from "../../../lib/components";
+import { componentDescription, componentLabel, type OrgComponent } from "../../../lib/components";
 import {
   type ConnectorDetail,
   type ConnectorSummary,
   canManageConnectors,
+  connectorDescriptionOf,
   personalConnectors,
 } from "../../../lib/connectors";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -103,7 +104,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const made = new Set(all.flatMap((c) => (c.platformTemplateId ? [c.platformTemplateId] : [])));
   const templates = (offered.data?.components ?? [])
     .filter((c) => c.kind === "connector_template" && c.pluginOn && !made.has(c.id))
-    .sort((a, b) => componentLabel(a, locale).localeCompare(componentLabel(b, locale)));
+    .sort((a, b) => componentLabel(a, locale).localeCompare(componentLabel(b, locale), locale));
   const disabled = all.filter((c) => c.status === "disabled");
   // A tab only when it holds something different from "all".
   const active = tab === "disabled" && disabled.length > 0 ? "disabled" : "all";
@@ -178,9 +179,11 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     const own = personal.some((p) => p.id === c.id);
     // for org admins: the connector's 凭据 tab, or 设置 without credentials (alone, the one button)
     const config: MenuItem[] = manage ? [connectorAdminItem(c, tn)] : [];
+    const description = connectorDescriptionOf(c, locale);
     const base = {
       avatar: { image: c.icon ?? null },
       title: c.name,
+      ...(description !== null ? { description } : {}),
       href: `/connectors/${encodeURIComponent(c.id)}`,
       meta: [t(`auth.${c.auth.type}`), c.slug],
       ...(config.length > 0 ? { menu: config } : {}),
@@ -200,10 +203,11 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   /** A template's card: off (启用 for admins) or on without its connector (配置 for admins). */
   const templateCard = (c: OrgComponent) => {
     const name = componentLabel(c, locale);
+    const description = componentDescription(c, locale);
     const base = {
       avatar: { image: c.icon ?? null },
       title: name,
-      ...(c.description ? { description: c.description } : {}),
+      ...(description !== null ? { description } : {}),
       // where it came from (its plugin, else its owner) and its id, unless the plugin says it
       meta: [
         tc("kind.connector_template"),

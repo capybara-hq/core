@@ -55,7 +55,7 @@ interface DeviceProvider {
 }
 ```
 
-On the activated tree (device protocol 5, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
+Since the paired activation (device protocol 5) the kernel never calls the raw `exec` / `readFile` /
 `writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
 permission-scoped surface (`packages/plugin-sdk/src/device-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
 (the admitted `SandboxOperationScope`: its filesystem is `{ kind: "scoped", projectRoot, writeRoots }` or `{ kind: "device" }`, with
@@ -193,7 +193,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   timeoutMs, maxOutputBytes, taskId, outputPath, retainUntilMs, instanceGeneration })` under the admitted operation scope; the
   output artifact is `${workingRoot}/.capybara/tasks/<taskId>.out` (never a caller path). The provider persists exact ownership
   before it acknowledges, returns a `SandboxExecutionRef` (a retry of the same generation, operation and input returns the same
-  ref) and keeps the starting grants for the execution's lifetime. The poll, `TaskOutput` and `TaskStop` act only by that exact
+  ref; the ref's `instanceGeneration` is the provider's own, e.g. device-local's bound machine generation, the kernel's only for a
+  provider that keeps none, so the kernel matches the ref by operation id and handle id and pins the task to its own recorded
+  generation, never the ref's: #765) and keeps the starting grants for the execution's lifetime. The poll, `TaskOutput` and `TaskStop` act only by that exact
   ref on its exact recorded generation, through `SandboxService.ifRunning` (a shared lease only on a running instance of that
   generation, never creating, resuming or rebuilding one): `status`, `readOutput` (an append-only prefix, at most 65,536 bytes
   a read), `tail` and `stop` (a persisted pending cancellation when unreachable, applied before an explicit resume runs
@@ -401,15 +403,22 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - **The network follows running instances; the rest applies at create.** The kernel records the
   limits an instance was created with (`device_instances.instance_limits`; NULL reads as unknown, and
   an old `{ tier, egress }` record reads as unknown too). On use, when the effective network kind
-  differs, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
-  records the new limits; `"recreate"`, a gone instance, or a provider without `update` destroys and
-  recreates the instance on the same files (the existing "recreated" notice). A non-gone `update`
+  differs, the recorded network allows a host the desired one does not cover, or it lacks a desired
+  host, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
+  records the new limits (for a narrowing a provider answers it only once no connection to a removed
+  host survives and no new one can open, the SDK doc of `update`; Docker applies allowlist changes
+  in place, its egress proxy closing what the new list no longer covers); `"recreate"`, a gone instance, or a provider without `update` destroys and
+  recreates the instance on the same files (the existing "recreated" notice). `update` carries the
+  holder's fence token and its target is recorded as `pending` first, so a stale replica's late
+  `update` cannot leave the instance wider than the record (see "Fencing token" under Lifecycle;
+  providers that cannot fence, like E2B, state the residual race in their README and implement `appliedNetwork`, which
+  closes it at the next lifecycle step). A non-gone `update`
   failure recreates on instance-bound providers; after an abort, or on a provider with
   `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance is quarantined
   (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful
   `update` keeps the old record, and the device view says `pendingFilesReset` (「重置文件后生效」): the
-  record never claims more than is in force. Changes of `network.hosts`, `cpu`, `memoryMb` still
-  reach only instances created afterwards, and `diskMb` only file systems created afterwards. When an
+  record never claims more than is in force. Changes of `cpu` and `memoryMb` still reach only
+  instances created afterwards, and `diskMb` only file systems created afterwards. When an
   item cannot be done, say so in the README (Docker's default local volume driver does not limit
   `diskMb`; E2B's cpu / memory / disk are decided by the template).
 - **Provider refusals** (auto mode spec §4.2): a failed `createFileSystem` / `create` / `update`
@@ -581,6 +590,37 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
   serialized; the `Bash` description says other sub-agents may run commands at the same time.
 - **Fencing generation**: each lease acquisition (shared ones too) first increments `generation`, and later state writes (exclusive holders only; shared holders only move `last_used_at` forward with `GREATEST`) compare against it, so an old exclusive holder's writes necessarily fail (`SandboxLockLostError`).
+- **Fencing token** (design `2026-11-23-device-update-fencing-design.md`): the record fence protects the kernel's row,
+  not the provider's resources, so `update`, `create`, `destroy` and `destroyByName` made under the exclusive lease carry
+  `{ token: fence.gen }` (`DeviceFence`): the generation the holder's own last fenced write committed, strictly higher for
+  every later exclusive holder (`destroyRow` and `resetFileSystem` do a fenced increment before their destroys for that;
+  the legacy cleanup, which holds no lease, passes `null`). Every fenced write on this path commits on its own before the
+  provider call (no transaction around the lifecycle). A provider that can stores the highest token next to its state
+  and throws `StaleFenceError`; the kernel handles it as `SandboxLockLostError` (`staleHolder`, warned once with both
+  tokens), checked **before** the recreate fallback of `applyLimits`, and never recreates for it; when the holder's
+  fenced no-op still succeeds, the provider is ahead of the record and `staleHolder` raises the generation past
+  `StaleFenceError.current`, so the next use heals. Fenced writes run outside any ambient transaction. A record write that
+  fails after `updated` is outside the `update` try (a stale holder must not fall into the recreate branch and destroy
+  the newer holder's instance), and the recreate path does a fenced write before its `destroy`.
+  **Intent first**: `applyLimits` and `reconcileLimits` write the target as `instance_limits.pending` (fenced) before
+  calling `update`; `updated` records it and clears `pending`, a recreate writes a fresh record, a provider answer that
+  changed nothing restores the record, and a thrown or aborted update keeps `pending`. `mustApply` is true while
+  `pending` is present (the next exclusive holder re-sends the desired limits with its higher token, which wins whatever
+  the arrival order) and `limitsState` says `pendingNextUse`. Tests: the "device update fencing (two replicas)" cases of `test/sandbox/mode-limits.dual.test.ts` (the
+  fake's `fencing: "ignore"` shows the race without the fence; `holdNextFakeSandboxUpdate` holds a call in flight) and
+  the "fencing token and update intent" cases of `mode-limits.test.ts`.
+  **Installed network** (issue #766): a provider that cannot fence its `update` (E2B) implements `appliedNetwork` (a
+  read of what its backend enforces, never resuming the instance). Under the exclusive lease, on a resumed instance, a
+  running one `ensure` holds, and a new instance of a `limitsApplyAt: "fileSystem"` provider (`createSettled`; an
+  instance-bound provider's new instance got the desired limits at `create`), `installedNetworkWider` compares it with
+  the recorded `applied` (`installedWider` in `modes.ts`): wider (open public over a list, or a host no recorded entry
+  covers), null, or a failed read applies the desired limits again through `applyLimits` (intent, holder's token);
+  equal or narrower changes nothing. A `limitsApplyAt: "fileSystem"` provider that cannot apply them then (`update`
+  answers `recreate`) is quarantined with the intent kept, never recorded `unapplied` and used. An abort during the read
+  on a running instance throws without quarantine. A shared use reads nothing, so a late stale call that lands while the instance
+  keeps running is narrowed at its next resume or rebuild. Only asked when the provider also has `update`. Tests: the
+  "installed network wider than the record (#766)" cases of `mode-limits.test.ts` (the fake's `reportsNetwork`,
+  `setFakeSandboxNetwork`) and the red-proof case of `mode-limits.dual.test.ts`.
 - **Access**: the kernel checks the conversation owner's access to the device when it acquires the instance for a tool call; a loss fails the tool with `device.forbidden` / `device.not_found`.
 - **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on instances idle (no command from any session of the device) longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
   (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`
@@ -653,6 +693,19 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   `https://github.com/capybara-hq/plugins.git#<marketplace.commit>:plugins/sandbox-docker/image` (and `…:plugins/sandbox-docker/egress-proxy`), pinned to the same commit
   (rule `bootstrap-compose-ref` of `pnpm check:bootstrap`). The images themselves (container hardening, the egress proxy that blocks DNS rebinding by checking every resolved IP)
   are the plugin's; see its skill.
+- **SDK runtime files** (`SANDBOX_RUNTIME_SOURCE`: `native-files.py`, `linux-sandbox.py`). Two consumers with different
+  release units: `capybara-device` sends the bytes of its own bundled SDK inline with every request (always
+  `current`), while device-docker builds them into its image in capybara-hq/plugins and, running in the kernel,
+  checks the staged copy against the **host** SDK (a mismatch makes every cloud device report "The staged … does not
+  match its digest"). So the bundle has a staged set `files` (exactly what released images stage), `current` (the
+  newest bytes; inline consumers run these and use a capability only when the file declares it in `features`) and
+  `accepted` (by name, every digest a staged copy may have). A runtime change never edits `files` directly: it lands
+  in three steps, described in [tools/checks/README.md](../../../tools/checks/README.md) ("Changing the SDK runtime
+  sources"): (1) core changes `current` (new bytes in the runtime source file, the old ones kept byte for byte as
+  the staged file), the kernel keeps accepting the staged digest and a consumer gates new launcher protocol on
+  `features`, falling back to the old behaviour and never granting what the staged launcher cannot enforce; (2)
+  after that SDK is released, device-docker restages from `current` and checks against `accepted`; (3) core promotes
+  `current` to `files`, deletes the staged copy and moves `marketplace.commit` and the device-docker pin in one PR.
 - Logs and errors carry no secrets and no other orgs' ids.
 - **Restricted write policy** (`packages/plugin-sdk/src/sandbox-write-denies.ts`, one source for the
   Linux broker, `native-files.py` with `denyWrites`, the device agent and the macOS runtime's ordered
@@ -724,9 +777,11 @@ suite in `@capybara-hq/testing` checks it):
 
 ## Known limitations (permission activation)
 
-- **Local Docker mode needs the host's `/usr/bin/python3`.** A `capybara-device` in Docker mode runs the
-  restricted output helper with the host interpreter; without it the device reports restricted support
-  unavailable.
+- **Local Docker mode runs its trusted helpers in helper containers.** A `capybara-device` in Docker mode
+  needs no host interpreter: the output spool, recovered-output finalization, skills preparation and the
+  environment probe run in helper containers of the digest-pinned sandbox image (no network, read-only
+  root, no capabilities, only the step's host paths mounted at the same paths). Spec:
+  `docs/superpowers/specs/2026-11-23-docker-device-without-host-python-design.md`.
 - **Cloud providers must ship with the kernel.** A cloud provider that still reports `permissionSupport` version 1 or
   reads `limits.mode` reads unprobed against an R3 kernel and admits nothing: release `sandbox-docker` / `sandbox-e2b`
   with support v2 (`boundary: "instance"`) together with the kernel and its bootstrap pins.
@@ -748,7 +803,11 @@ suite in `@capybara-hq/testing` checks it):
   the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`): subdirectories whole, and the non-denied
   regular files directly inside each expanded directory as exact file roots (the agent pins each O_PATH|O_NOFOLLOW,
   one name only; the SDK launcher's `roots.readFiles` re-checks S_ISREG and identity on the pinned descriptor, skips
-  one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). An
+  one renamed, deleted or hard-linked since the pin, and grants file reads only, never READ_DIR or EXECUTE). The
+  worker sends file roots only when the launcher it carries declares `features: ["fileReadRoots"]`
+  (`LinuxRuntimeBundle.fileReadRoots`); with a launcher that does not, the files stay unreadable (the launcher
+  before core#742 ignored `readFiles` and closed every inherited descriptor before exec, proven on a real kernel while
+  both shipped). An
   expanded directory cannot be listed, more than 4096 carved directories refuses machine reach, and files past the cap
   or the agent's open-file limit are dropped.
   Mounts that show a denied path again (a bind mount, a mount of an ancestor's subtree, covered content, a file system

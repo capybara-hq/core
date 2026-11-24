@@ -255,7 +255,7 @@ export function OrgPluginUploadDialog({
                   />
                 </ContentSection>
               )}
-              <PluginReviewBody review={review} />
+              <PluginReviewBody review={review} audience="org" />
             </>
           )
         )}

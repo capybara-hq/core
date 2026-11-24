@@ -14,7 +14,7 @@ import type { z } from "zod";
 export { configJsonSchema as configToJsonSchema, type JsonSchema } from "@capybara-hq/plugin-sdk";
 
 /** The config level a schema belongs to (which hints `validateConfigUi` allows). */
-export type ConfigLevel = "deployment" | "org" | "connection";
+export type ConfigLevel = "deployment" | "connection";
 
 /** A config schema as served to forms, with the problems of its hints (empty = kept). */
 export interface ConfigFormSchema {
@@ -63,7 +63,6 @@ export function checkConfigUi(schema: JsonSchema, level: ConfigLevel): ConfigUiP
 /** Manifests are immutable: one conversion per zod schema object and level (read-only, per replica). */
 const caches: Record<ConfigLevel, WeakMap<object, ConfigFormSchema>> = {
   deployment: new WeakMap(),
-  org: new WeakMap(),
   connection: new WeakMap(),
 };
 
@@ -82,13 +81,12 @@ export function configFormSchema(schema: z.ZodTypeAny, level: ConfigLevel): Conf
 /** The schemas whose hinted conversion threw: their fallback (plain schema, or null). */
 const fallbacks: Record<ConfigLevel, WeakMap<object, ConfigFormSchema | null>> = {
   deployment: new WeakMap(),
-  org: new WeakMap(),
   connection: new WeakMap(),
 };
 
 /**
  * {@link configFormSchema} that never throws, for every caller that serves a form schema or reads
- * its messages (deployment, org, connection, issues). A hint conversion that throws (a hand-made
+ * its messages (deployment, connection, issues). A hint conversion that throws (a hand-made
  * package, e.g. hints that won't serialize as JSON) drops the hints: the plain schema with every
  * `x-ui` stripped, else `null` when even the plain conversion fails. `onFallback` runs once per
  * schema object and level on this replica (the caller's one warning); later calls reuse the result.

@@ -112,6 +112,8 @@ export class NetworkGrants {
   async runState(runId: string, deviceId?: string): Promise<NetworkRunState> {
     const task = deviceId === undefined ? undefined : await this.taskGrants({ runId, deviceId });
     const root = await budgetRunOf(this.db.db, runId);
+    // org-filter: runId is the executing tool call's own run (the pipeline's ctx.runId), so its
+    // run tree lies in that run's org; no caller-supplied id reaches this query
     const rows = await this.db
       .selectFrom("approvals")
       .select(["run_id", "status", "scope", "detail"])

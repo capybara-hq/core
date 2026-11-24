@@ -354,8 +354,8 @@ export function ApprovalCard({
       setLocal({
         decision: r.status === "pending" ? "cancelled" : r.status,
         ...(r.scope !== null ? { scope: r.scope } : {}),
+        // the decision route answers no person: `decidedBy` (the viewer) is looked up
         byAccountId: r.decidedBy,
-        byPerson: r.decidedByPerson,
         ...(reason !== undefined ? { reason } : {}),
         at: r.decidedAt ?? new Date().toISOString(),
       });

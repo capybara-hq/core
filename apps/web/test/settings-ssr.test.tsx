@@ -164,9 +164,6 @@ const EXTENSION = {
   enabled: true,
   available: true,
   configurable: false,
-  orgConfigSchema: null,
-  config: null,
-  secrets: [],
   permissions: [],
   provides: [],
 };
@@ -230,11 +227,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       `GET ${O}/settings`,
       { radios: 4, kv: 1, items: 0, switches: 0, groups: 0, hints: 0 },
     ],
-    // the 用途默认 tab: the kernel's seven purposes as item rows, each with its model select
+    // the purposes tab: the kernel's nine purposes, each its own section over its model select
     [
       "/settings/models?tab=purposes",
       `GET ${O}/model-purposes`,
-      { radios: 0, kv: 0, items: 7, switches: 0, groups: 0, hints: 0 },
+      { radios: 0, kv: 0, items: 0, switches: 0, groups: 0, hints: 0 },
     ],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
@@ -462,6 +459,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       expect(screen.getByText(text)).toBeTruthy();
     },
   );
+
+  it("/settings/models?tab=purposes: the purposes load as the kernel's nine sections", async () => {
+    const { release } = await renderHeld(
+      "/settings/models?tab=purposes",
+      `GET ${O}/model-purposes`,
+    );
+    await vi.waitFor(() => {
+      if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
+    });
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(9);
+    // the tab's description is real while the purposes load
+    expect(screen.getByText(en.models.org.description)).toBeTruthy();
+    await release();
+  });
 
   it("/settings/tokens: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();

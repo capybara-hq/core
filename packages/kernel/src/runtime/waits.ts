@@ -212,6 +212,8 @@ export class Waits implements OnApplicationShutdown {
    * Not a run of a sub-agent, or a `subagents` wait: nothing. Display only: a failure is logged,
    * the wait goes on.
    */
+  // org-filter: the wait's approval / question id was written by this run's own suspend (kernel
+  // state, not caller input)
   private async surfaceInRoot(
     runId: string,
     conversationId: string,
@@ -356,6 +358,8 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /** {@link abortWaiting}'s transaction; the open `Agent` calls it wrote go back through `st`. */
+  // org-filter: stops a run by kernel-resolved ids (ConversationsService.abort checked the org, or
+  // a tree stop / timeout / offboarding job); wait rows are read by that run's id
   @Transactional({ propagation: "requires_new" })
   private async abortWaitingIn(
     conversationId: string,
@@ -496,6 +500,7 @@ export class Waits implements OnApplicationShutdown {
    * Whether the wait is over: an approval or input request is no longer pending (decided, expired
    * or cancelled); `subagents`: the run's fork invocation child is no longer active.
    */
+  // org-filter: the wait's approval / question id was written by this run's own suspend
   private async isSettled(w: WaitingFor, runId: string): Promise<boolean> {
     if (w.kind === "subagents") {
       const active = await this.db

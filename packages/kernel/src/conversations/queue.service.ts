@@ -80,11 +80,12 @@ export class ConversationQueue {
     accountId: string,
   ): Promise<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }> {
     await this.conversations.get(orgId, conversationId, accountId);
-    return this.listIn(conversationId);
+    return this.listIn(orgId, conversationId);
   }
 
   @Transactional({ isolationLevel: "repeatable read" })
   private async listIn(
+    orgId: string,
     conversationId: string,
   ): Promise<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }> {
     const t = this.db.db;
@@ -92,6 +93,7 @@ export class ConversationQueue {
       .selectFrom("conversations")
       .select(["queue_paused", "queue_pause_reason"])
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     const rows = await t
       .selectFrom("conversation_queue")
@@ -183,6 +185,7 @@ export class ConversationQueue {
       .selectFrom("conversations")
       .select("last_seq")
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirstOrThrow();
     const existing = await t
@@ -473,6 +476,7 @@ export class ConversationQueue {
       .updateTable("conversations")
       .set({ queue_paused: false, queue_pause_reason: null })
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .returning("last_seq")
       .executeTakeFirstOrThrow();
     await this.runs.oweEnsureRun(conversationId, conv.last_seq, orgId);
@@ -499,6 +503,7 @@ export class ConversationQueue {
     return event ? { item: null, event, created: false } : null;
   }
 
+  // org-filter: both callers (remove, sendNow) checked writable(orgId, conversationId, ...) first
   @Transactional({ propagation: "mandatory" })
   private async lockConversation(conversationId: string): Promise<void> {
     await this.db

@@ -623,6 +623,13 @@ async function buildAndImport(
   if (typeof mod.default !== "object" || mod.default === null) {
     throw new Error(`${label}: the bundle has no default export object`);
   }
+  // defineExtension refuses config.org too; this check comes first to name the migration
+  const config = (mod.default as { config?: unknown }).config;
+  if (typeof config === "object" && config !== null && Object.hasOwn(config, "org")) {
+    throw new Error(
+      `${label}: config.org was removed: move org fields into config.deployment (every field an org may override is a deployment field without platformOnly)`,
+    );
+  }
   const m = defineExtension(mod.default as ExtensionManifest);
   return { code, m, inputs: Object.keys(result.metafile?.inputs ?? {}) };
 }
@@ -711,7 +718,7 @@ async function bundleExtension(
       }
       extension.ui = "./ui";
     }
-    if (config.schemas.deployment !== undefined || config.schemas.org !== undefined) {
+    if (config.schemas.deployment !== undefined) {
       extension.configSchemas = config.schemas;
     }
     const client = await buildClient(dir, stage);

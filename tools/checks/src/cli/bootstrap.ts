@@ -12,7 +12,8 @@ import { report, root } from "./report.js";
 // CAPYBARA_PACKAGES__NPM_TOKEN is sent to a private registry's origin. The compose files' git build
 // contexts of the plugins repository are checked against marketplace.commit (offline), and with
 // --network their Dockerfiles, the device-docker plugin's copy of the socket proxy config there and
-// the image's SHA256SUMS against the SDK runtime sources (SANDBOX_RUNTIME_SOURCE).
+// the image's SHA256SUMS against the SDK runtime digests (SANDBOX_RUNTIME_SOURCE: the staged set
+// or a digest it accepts).
 const { values } = parseArgs({
   options: {
     write: { type: "boolean", default: false },
@@ -30,9 +31,13 @@ report(
   values.network ? "Bootstrap manifest (with npm and the marketplace)" : "Bootstrap manifest",
   await checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root, {
     write: values.write,
+    fixedSet: true,
     composeFiles: BOOTSTRAP_COMPOSE_FILES.map((f) => join(root, f)),
     haproxyFile: join(root, SANDBOX_PROXY_HAPROXY),
-    sandboxRuntime: SANDBOX_RUNTIME_SOURCE.files,
+    sandboxRuntime: {
+      files: SANDBOX_RUNTIME_SOURCE.files,
+      accepted: SANDBOX_RUNTIME_SOURCE.accepted,
+    },
     ...(values.network && {
       network: {
         registry,

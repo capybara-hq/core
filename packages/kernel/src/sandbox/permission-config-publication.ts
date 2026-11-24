@@ -7,6 +7,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -374,6 +375,8 @@ export class PermissionConfigPublication {
     // a B1 snapshot an older replica wrote after migration 0167 becomes the device's own network
     // at every activation, before anything reads it (as 0165 and 0167 copy it: never wider)
     await copyCloudSnapshotNetworks(this.db.db);
+    // org-filter: platform publication under the platform write lock: pins devices of every org,
+    // each judged against its own org's settings
     if (pinDevices) {
       const stored = await readStoredDeviceSandbox(this.db.db, this.log, configuredCeiling);
       const view = resolveDeviceSandboxSettings(configuredView(projection), stored);
@@ -443,106 +446,112 @@ export class PermissionConfigPublication {
     previous: string,
     next: PermissionConfigProjection,
   ): Promise<"matching" | "activated"> {
-    const fingerprint = permissionProjectionFingerprint(next);
-    const row = await this.db
-      .selectFrom("permission_config_publication")
-      .select(["fingerprint", "projection"])
-      .where("id", "=", "platform")
-      .executeTakeFirst();
-    if (!row) throw new PermissionConfigActivationConflict(undefined, fingerprint);
-    const stored = this.validateStored(row);
-    const before = stored.projection;
-    if (row.fingerprint === fingerprint) return "matching";
-    if (row.fingerprint !== previous)
-      throw new PermissionConfigActivationConflict(row.fingerprint, fingerprint);
-    await this.replaceLocked(previous, next);
-    // the stored keys convert at every publication (old keys an old replica wrote meanwhile
-    // too); an older predecessor also pins its cloud devices, in this same transaction
-    await this.convertLocked(next, stored.legacy);
-    // format only: the same semantics publish the new fingerprint (the barrier) and nothing else
-    if (permissionProjectionFingerprint(before) === fingerprint) return "activated";
-    const storedChoice = await readStoredDeviceSandbox(
-      this.db.db,
-      this.log,
-      configuredOf(next.network.ceiling),
-    );
-    const effective = (projection: PermissionConfigProjection) =>
-      resolveDeviceSandboxSettings(configuredView(projection), storedChoice);
-    const beforeView = effective(before),
-      nextView = effective(next);
-    const beforeMode = beforeView.outsideSandbox.permission,
-      nextMode = nextView.outsideSandbox.permission;
-    // a network opened anywhere is a widening: consent given under the narrower network resets
-    const networkWidened =
-      (beforeView.network.ceiling === "allowlist" && nextView.network.ceiling === "open") ||
-      (beforeView.network.default === "allowlist" && nextView.network.default === "open");
-    const orgs = await this.db.selectFrom("orgs").select(["id", "settings"]).execute();
-    const settings = new Map(
-      orgs.map((org) => [org.id, orgDeviceSandboxOf(org.settings).deviceNetwork] as const),
-    );
-    // the kill switch lifted is a widening for every device (closing it only narrows)
-    if (before.egress === "none" && next.egress !== "none")
-      await this.ceilings.invalidateDeviceConsentUnderPlatform(
-        (await this.db.selectFrom("devices").select("id").execute()).map((device) => device.id),
+    return asPlatform("platform publication: the kill switch spans every org", async () => {
+      const fingerprint = permissionProjectionFingerprint(next);
+      const row = await this.db
+        .selectFrom("permission_config_publication")
+        .select(["fingerprint", "projection"])
+        .where("id", "=", "platform")
+        .executeTakeFirst();
+      if (!row) throw new PermissionConfigActivationConflict(undefined, fingerprint);
+      const stored = this.validateStored(row);
+      const before = stored.projection;
+      if (row.fingerprint === fingerprint) return "matching";
+      if (row.fingerprint !== previous)
+        throw new PermissionConfigActivationConflict(row.fingerprint, fingerprint);
+      await this.replaceLocked(previous, next);
+      // the stored keys convert at every publication (old keys an old replica wrote meanwhile
+      // too); an older predecessor also pins its cloud devices, in this same transaction
+      await this.convertLocked(next, stored.legacy);
+      // format only: the same semantics publish the new fingerprint (the barrier) and nothing else
+      if (permissionProjectionFingerprint(before) === fingerprint) return "activated";
+      const storedChoice = await readStoredDeviceSandbox(
+        this.db.db,
+        this.log,
+        configuredOf(next.network.ceiling),
       );
-    // a network ceiling narrowed to the allowlist, or closed by the kill switch, takes running
-    // open-network work
-    const networkNarrowed =
-      (beforeView.network.ceiling === "open" && nextView.network.ceiling === "allowlist") ||
-      (before.egress !== "none" && next.egress === "none");
-    // a default narrowed to the allowlist takes it from the devices following it
-    const following =
-      !networkNarrowed &&
-      beforeView.network.default === "open" &&
-      nextView.network.default === "allowlist"
-        ? new Set(
-            [...(await devicesFollowingDefault(this.db.db))]
-              .filter(([, org]) => settings.get(org)?.default === undefined)
-              .map(([id]) => id),
-          )
-        : null;
-    // the per-call host list widened: hosts the platform list did not cover, or orgs allowed
-    // beyond it again (`within` to `extend`)
-    const hostsWidened =
-      (before.orgHosts === "within" && next.orgHosts === "extend") ||
-      next.allowHosts.some(
-        (h) => !before.allowHosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())),
+      const effective = (projection: PermissionConfigProjection) =>
+        resolveDeviceSandboxSettings(configuredView(projection), storedChoice);
+      const beforeView = effective(before),
+        nextView = effective(next);
+      const beforeMode = beforeView.outsideSandbox.permission,
+        nextMode = nextView.outsideSandbox.permission;
+      // a network opened anywhere is a widening: consent given under the narrower network resets
+      const networkWidened =
+        (beforeView.network.ceiling === "allowlist" && nextView.network.ceiling === "open") ||
+        (beforeView.network.default === "allowlist" && nextView.network.default === "open");
+      const orgs = await this.db.selectFrom("orgs").select(["id", "settings"]).execute();
+      const settings = new Map(
+        orgs.map((org) => [org.id, orgDeviceSandboxOf(org.settings).deviceNetwork] as const),
       );
-    const grantable = (orgId: string, host: string) => {
-      const org = settings.get(orgId);
-      const ceiling =
-        nextView.network.ceiling === "allowlist" || org?.ceiling === "allowlist"
-          ? "allowlist"
-          : "open";
-      return hostGrantable(
-        hostGrantCeiling(
-          { boundary: "operation", networkMode: "allowlist", networkCeiling: ceiling },
-          next,
-          org === undefined ? {} : { deviceNetwork: org },
-        ),
-        host,
-      );
-    };
-    await this.ceilings.publishLocked(
-      {},
-      "platform",
-      (scope, row) => {
-        if (needsOpenNetwork(scope) && (networkNarrowed || following?.has(row.device_id) === true))
-          return true;
-        // escalated work goes with the outside-sandbox switch, and with the kill switch closing
-        if (needsFullCeiling(scope))
-          return nextMode === "off" || (before.egress !== "none" && next.egress === "none");
-        return hostsNarrowed(
-          scope,
-          row,
-          orgEffectiveHosts(next, settings.get(row.org_id)),
-          (host) => next.egress !== "none" && grantable(row.org_id, host),
+      // the kill switch lifted is a widening for every device (closing it only narrows)
+      // org-filter: platform publication: the kill switch is deployment-wide, every org's devices
+      if (before.egress === "none" && next.egress !== "none")
+        await this.ceilings.invalidateDeviceConsentUnderPlatform(
+          (await this.db.selectFrom("devices").select("id").execute()).map((device) => device.id),
         );
-      },
-      // only a widening resets Full consent: a narrowing keeps what the consent covered
-      (beforeMode === "off" && nextMode === "allowed") || networkWidened || hostsWidened,
-    );
-    return "activated";
+      // a network ceiling narrowed to the allowlist, or closed by the kill switch, takes running
+      // open-network work
+      const networkNarrowed =
+        (beforeView.network.ceiling === "open" && nextView.network.ceiling === "allowlist") ||
+        (before.egress !== "none" && next.egress === "none");
+      // a default narrowed to the allowlist takes it from the devices following it
+      const following =
+        !networkNarrowed &&
+        beforeView.network.default === "open" &&
+        nextView.network.default === "allowlist"
+          ? new Set(
+              [...(await devicesFollowingDefault(this.db.db))]
+                .filter(([, org]) => settings.get(org)?.default === undefined)
+                .map(([id]) => id),
+            )
+          : null;
+      // the per-call host list widened: hosts the platform list did not cover, or orgs allowed
+      // beyond it again (`within` to `extend`)
+      const hostsWidened =
+        (before.orgHosts === "within" && next.orgHosts === "extend") ||
+        next.allowHosts.some(
+          (h) => !before.allowHosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())),
+        );
+      const grantable = (orgId: string, host: string) => {
+        const org = settings.get(orgId);
+        const ceiling =
+          nextView.network.ceiling === "allowlist" || org?.ceiling === "allowlist"
+            ? "allowlist"
+            : "open";
+        return hostGrantable(
+          hostGrantCeiling(
+            { boundary: "operation", networkMode: "allowlist", networkCeiling: ceiling },
+            next,
+            org === undefined ? {} : { deviceNetwork: org },
+          ),
+          host,
+        );
+      };
+      await this.ceilings.publishLocked(
+        {},
+        "platform",
+        (scope, row) => {
+          if (
+            needsOpenNetwork(scope) &&
+            (networkNarrowed || following?.has(row.device_id) === true)
+          )
+            return true;
+          // escalated work goes with the outside-sandbox switch, and with the kill switch closing
+          if (needsFullCeiling(scope))
+            return nextMode === "off" || (before.egress !== "none" && next.egress === "none");
+          return hostsNarrowed(
+            scope,
+            row,
+            orgEffectiveHosts(next, settings.get(row.org_id)),
+            (host) => next.egress !== "none" && grantable(row.org_id, host),
+          );
+        },
+        // only a widening resets Full consent: a narrowing keeps what the consent covered
+        (beforeMode === "off" && nextMode === "allowed") || networkWidened || hostsWidened,
+      );
+      return "activated";
+    });
   }
   async assertCurrent(): Promise<void> {
     const row = await this.db
@@ -564,6 +573,7 @@ export class PermissionConfigPublication {
  * permission locks), so the publication must never hold the platform lock while it waits for a
  * device row.
  */
+// org-filter: platform publication: locks the devices of every org that follow their org
 export async function lockDevicesFollowingTheirOrg(db: KernelSchemaDb): Promise<void> {
   await db
     .selectFrom("devices")
@@ -580,22 +590,25 @@ export async function lockDevicesFollowingTheirOrg(db: KernelSchemaDb): Promise<
  * stays that allowlist, an empty or unreadable one ran closed and becomes `none`; an open snapshot
  * follows the org. Idempotent: only rows still following the org are written.
  */
+// org-filter: deployment-wide idempotent copy (migrations 0165/0167, publication) over every org
 export async function copyCloudSnapshotNetworks(db: KernelSchemaDb): Promise<void> {
-  const readable = sql<boolean>`jsonb_typeof(outer_network -> 'hosts') = 'array'
+  return asPlatform("deployment-wide idempotent copy", async () => {
+    const readable = sql<boolean>`jsonb_typeof(outer_network -> 'hosts') = 'array'
     AND NOT EXISTS (
       SELECT 1 FROM jsonb_array_elements(outer_network -> 'hosts') AS h(v)
       WHERE jsonb_typeof(h.v) <> 'string'
     )`;
-  await db
-    .updateTable("devices")
-    .set({
-      network_mode: sql<"allowlist" | "none">`CASE
+    await db
+      .updateTable("devices")
+      .set({
+        network_mode: sql<"allowlist" | "none">`CASE
         WHEN ${readable} AND jsonb_array_length(outer_network -> 'hosts') > 0 THEN 'allowlist'
         ELSE 'none' END`,
-      network_hosts: sql<string>`CASE WHEN ${readable} THEN outer_network -> 'hosts'
+        network_hosts: sql<string>`CASE WHEN ${readable} THEN outer_network -> 'hosts'
         ELSE '[]'::jsonb END`,
-    })
-    .where("network_mode", "is", null)
-    .where(sql<boolean>`outer_network ->> 'kind' = 'allowlist'`)
-    .execute();
+      })
+      .where("network_mode", "is", null)
+      .where(sql<boolean>`outer_network ->> 'kind' = 'allowlist'`)
+      .execute();
+  });
 }

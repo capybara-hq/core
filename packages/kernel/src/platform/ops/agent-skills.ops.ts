@@ -563,7 +563,7 @@ export class AgentSkillsOperations implements OnModuleInit {
             path: input.filePath,
             maxBytes: SKILL_PACKAGE_MAX_BYTES,
             signal: ctx.signal,
-            // the read is this call's managed operation once the activation gate is on
+            // the read is this call's managed operation
             ...(ctx.callId !== undefined && { callId: ctx.callId }),
           });
           const o = await this.agentSkills.register(

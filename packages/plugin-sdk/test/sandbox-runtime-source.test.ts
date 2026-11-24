@@ -9,16 +9,58 @@ describe("sandbox runtime source bundle", () => {
     expect(sdk).toHaveProperty("SANDBOX_RUNTIME_SOURCE");
     const bundle = sdk.SANDBOX_RUNTIME_SOURCE;
     expect(bundle.version).toBe(2);
-    expect(bundle.files.map((file) => file.name)).toEqual(["native-files.py", "linux-sandbox.py"]);
     expect(Object.isFrozen(bundle)).toBe(true);
-    expect(Object.isFrozen(bundle.files)).toBe(true);
-    for (const file of bundle.files) {
-      expect(Object.isFrozen(file)).toBe(true);
-      expect(file.source.length).toBeGreaterThan(0);
-      expect(file.sha256).toBe(createHash("sha256").update(file.source).digest("hex"));
-      expect(() => Object.assign(file, { source: "replaced" })).toThrow();
+    for (const set of [bundle.files, bundle.current]) {
+      expect(set.map((file) => file.name)).toEqual(["native-files.py", "linux-sandbox.py"]);
+      expect(Object.isFrozen(set)).toBe(true);
+      for (const file of set) {
+        expect(Object.isFrozen(file)).toBe(true);
+        expect(file.source.length).toBeGreaterThan(0);
+        expect(file.sha256).toBe(createHash("sha256").update(file.source).digest("hex"));
+        expect(() => Object.assign(file, { source: "replaced" })).toThrow();
+      }
     }
-    expect(Object.keys(bundle).sort()).toEqual(["files", "version"]);
+    expect(Object.keys(bundle).sort()).toEqual(["accepted", "current", "files", "version"]);
+  });
+
+  it("keeps the staged set at the bytes released image providers stage", () => {
+    // device-docker checks its image against the host SDK's `files`: these digests move only with
+    // marketplace.commit and the device-docker pin (tools/checks/README.md, SDK runtime sources)
+    const digests = Object.fromEntries(
+      sdk.SANDBOX_RUNTIME_SOURCE.files.map((file) => [file.name, file.sha256]),
+    );
+    expect(digests).toEqual({
+      "native-files.py": "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
+      "linux-sandbox.py": "ceb5bb0971437978a7695091792bfafcf3dbf2e7c74e8425d8aceb76e442f848",
+    });
+    // promoted: no runtime change is between its steps
+    expect(sdk.SANDBOX_RUNTIME_SOURCE.current).toBe(sdk.SANDBOX_RUNTIME_SOURCE.files);
+  });
+
+  it("accepts the staged and current digests of each file, plus one previous revision", () => {
+    const bundle = sdk.SANDBOX_RUNTIME_SOURCE;
+    expect(Object.isFrozen(bundle.accepted)).toBe(true);
+    const expected: Record<string, string[]> = {};
+    // the launcher before exact file read roots, for instances of earlier device-docker images
+    const previous = [
+      {
+        name: "linux-sandbox.py",
+        sha256: "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
+      },
+    ];
+    for (const file of [...bundle.files, ...bundle.current, ...previous]) {
+      const list = expected[file.name] ?? [];
+      if (!list.includes(file.sha256)) list.push(file.sha256);
+      expected[file.name] = list;
+    }
+    expect(bundle.accepted).toEqual(expected);
+    for (const list of Object.values(bundle.accepted)) expect(Object.isFrozen(list)).toBe(true);
+  });
+
+  it("declares file read roots on the launcher that enforces them", () => {
+    const current = sdk.SANDBOX_RUNTIME_SOURCE.current.find((f) => f.name === "linux-sandbox.py");
+    expect(current?.features).toEqual(["fileReadRoots"]);
+    expect(current?.source).toContain('"readFiles"');
   });
 
   it("keeps SDK source packaging free of Node runtime imports and I/O", async () => {
@@ -36,7 +78,7 @@ describe("sandbox runtime source bundle", () => {
 
 const python = spawnSync("python3", ["--version"]).status === 0;
 const linux = () =>
-  sdk.SANDBOX_RUNTIME_SOURCE.files.find((file) => file.name === "linux-sandbox.py")?.source ?? "";
+  sdk.SANDBOX_RUNTIME_SOURCE.current.find((file) => file.name === "linux-sandbox.py")?.source ?? "";
 
 /**
  * Loads the launcher source as a module with only the platform facts stubbed (no syscalls) and

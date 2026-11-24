@@ -642,7 +642,12 @@ export class ConversationsService {
     }
     await this.eventLog.notify(id, written.seq);
     await this.startRun(id);
-    return { conversation: await this.rowView(id), event: written, events: all, created: true };
+    return {
+      conversation: await this.rowView(orgId, id),
+      event: written,
+      events: all,
+      created: true,
+    };
   }
 
   /** The conversation row and its first message (undefined: a concurrent retry committed first). */
@@ -798,12 +803,13 @@ export class ConversationsService {
     return this.runs.ensureRunAfterCommit(conversationId);
   }
 
-  private async rowView(id: string): Promise<ConversationView> {
+  private async rowView(orgId: string, id: string): Promise<ConversationView> {
     return toView(
       await this.db
         .selectFrom("conversations")
         .select(viewColumns())
         .where("id", "=", id)
+        .where("org_id", "=", orgId)
         .executeTakeFirstOrThrow(),
     );
   }
@@ -823,6 +829,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ title, title_source: "manual" })
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .returning(viewColumns())
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "title");
@@ -844,6 +851,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ archived_at: archived ? sql<Date>`now()` : null })
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .returning(viewColumns())
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "archived");
@@ -905,6 +913,7 @@ export class ConversationsService {
       .selectFrom("conversations")
       .select("device_id")
       .where("id", "=", rootId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     return {
       orgId,
@@ -950,6 +959,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
       .execute();
     await this.runs.oweStopDeletedTree(conversationId, accountId, orgId);
     // Queued messages must not start a run on a deleted conversation
@@ -1275,7 +1285,8 @@ export class ConversationsService {
         ? sql``
         : sql`AND (c.created_at, c.id) < (
             SELECT c2.created_at, c2.id FROM capybara.conversations c2
-            WHERE c2.id = ${opts.after} AND c2.parent_conversation_id = ${conversationId}
+            WHERE c2.id = ${opts.after} AND c2.org_id = ${orgId}
+              AND c2.parent_conversation_id = ${conversationId}
           )`;
     const { rows } = await sql<{
       id: string;
@@ -1532,6 +1543,7 @@ export class ConversationsService {
         .updateTable("conversations")
         .set({ archived_at: null })
         .where("id", "=", conversationId)
+        .where("org_id", "=", orgId)
         .execute();
       await this.eventLog.publishChanged(conversationId, "archived");
     }
@@ -1760,6 +1772,7 @@ export class ConversationsService {
         .updateTable("conversations")
         .set({ selection: JSON.stringify(await readSelection(t, conversationId)) })
         .where("id", "=", conversationId)
+        .where("org_id", "=", orgId)
         .execute();
     }
     return { events: written, skipped: skips.skipped, skippedToSeq: skips.toSeq };
@@ -1941,6 +1954,7 @@ export class ConversationsService {
    * Marks a person's stop of the root's tree (`tree_stopped_at`, see {@link abort}); committed
    * before any stop, so every wake decided after it (under the root's row lock) sees it.
    */
+  // org-filter: conversationId was checked by get(orgId, ...) in abort, the only entry point
   @Transactional()
   private async holdTree(conversationId: string): Promise<void> {
     await this.db

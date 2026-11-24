@@ -295,7 +295,7 @@ export function secretFieldsOf(
 /**
  * A refusal of a call's person fields (model-visible English, never a value): thrown by the plan,
  * or by an operation's `personFields` for an input the plan cannot see (a dynamic record such as
- * the install's `extensionConfig`). The tool denies the call with the message before the card.
+ * a channel connection config). The tool denies the call with the message before the card.
  */
 export class PersonFieldsRefused extends Error {}
 

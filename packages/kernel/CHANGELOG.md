@@ -1,5 +1,247 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.84
+
+### Patch Changes
+
+- 6730339: A `source: "git"` bootstrap entry installed from the offline directory now records the tree oid of
+  its verified files, as a git read does. Its plugin no longer shows "same version, content changed"
+  after a commit elsewhere in the marketplace repository.
+- 18b24bc: Remove the transition compatibility for plugins packed before core#720. The deprecated no-op
+  `orgAccess` / `OrgAccess` exports are gone. `defineExtension` now throws on `config.org`, the
+  plugin.json reader refuses `extension.manifest.config.org` and `extension.configSchemas.org`, and
+  the kernel no longer drops `config.org` from a stored reviewed section. Repack a plugin built before
+  core#720 (or install its current release) before upgrading.
+- Updated dependencies [18b24bc]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.69
+
+## 0.1.0-rc.83
+
+### Patch Changes
+
+- 0591382: A manual directory sync that cannot read the extension's state for the org (a transient failure
+  such as a database error) now answers 503 `directory.unavailable` instead of 400
+  `extension.config_invalid`; real configuration problems keep their 4xx (`extension.needs_config`,
+  `directory.not_configured`). The skip reason of a scheduled sync is renamed from `config_invalid`
+  to `state_unreadable`.
+- c3475c6: The Platform tool's new `extensions.set-enabled` switches an extension that is not a catalog
+  plugin's (config-declared, or brought by several plugins) on or off in an org. The Extensions page
+  and Model services switch an extension that needs config on, then let the org configure it.
+
+## 0.1.0-rc.82
+
+### Patch Changes
+
+- 2a87cde: Bootstrap plugins are pinned to the plugins release built on the unified plugin config (core#720):
+  every pinned extension is repacked without the removed `config.org` list, model providers and
+  web tools read org-overridable fields per call, and `marketplace.commit` plus the compose sandbox
+  build contexts move to plugins `1abf9e6`.
+- f0e1138: Pin the device-docker bootstrap plugin to 0.1.0-rc.28 and the plugins marketplace commit (with the compose
+  sandbox image build context) to 727f62b, the release that carries device-e2b's read-only `appliedNetwork`.
+- Updated dependencies [20e9817]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.68
+
+## 0.1.0-rc.81
+
+### Minor Changes
+
+- 43eb3a1: RLS phase 2 (issue #115): the kernel carries an org scope from its entry points (org guard, super
+  admin routes, extension routes, jobs, cron ticks, run claims, channel and dial-in events, the start
+  sequence, CLI commands) and, with the new `db.rls` config (`off` by default, `scoped`, `enforce`),
+  sets it on every PostgreSQL connection. No behaviour change while `db.rls` is `off`.
+- c7b4dcf: RLS phase 3 (issue #115): migration 0182 creates `capybara.rls_admits` and one row level security
+  policy per kernel table with an `org_id` column, truly dark: no table enables RLS yet (a later
+  migration does), so nothing changes for any database role. With `db.rls: enforce` the kernel logs
+  an error at start while RLS is not enabled on the tables or its role is a superuser or has
+  BYPASSRLS, since PostgreSQL filters nothing then.
+
+### Patch Changes
+
+- 76f58f0: A background Bash start the kernel sent but could not confirm (a transport loss) no longer shows as
+  failed in the thread while the kernel reconciles it. Its result keeps the same error text for the
+  model and adds the display-only `launch_unconfirmed` view; the background tasks list gains
+  `starting`, and reconciling a start announces `changed: background`. The row reads "正在确认是否已启动"
+  / "Confirming whether it started" until the task is confirmed running or ends, and becomes a
+  failed row only when the launch is given up, revoked or refused (#790).
+- af84f8c: A provider whose `update` cannot honor the fence token (E2B) no longer leaves the instance wider than
+  the kernel's record until the limits change again (#766). The SDK adds the optional
+  `DeviceProvider.appliedNetwork(h, signal)`: the network the instance enforces now, as the provider's
+  backend reports it. Under the exclusive lease, on a resumed instance, a running one the use holds
+  exclusively, and a new instance of a provider whose limits are fixed at its file system, the kernel
+  compares it with the recorded limits; a wider network (the open public network over a list, or a host
+  the record does not cover), an unknown one or a failed read applies the desired limits again through
+  `update` with the holder's token. Equal or narrower changes nothing.
+- 3efbc4b: RLS (issue #115): queries marked deployment-wide run in the platform scope (`asPlatform`), and
+  `check:org-filter` requires that and an RLS policy for every org-scoped table. No behaviour change
+  while `db.rls` is `off`.
+- Updated dependencies [af84f8c]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.67
+
+## 0.1.0-rc.80
+
+### Patch Changes
+
+- 36738ec: A background start's reference names the provider's own instance generation (device-local's bound
+  machine generation), so the kernel no longer compares it with its own generation: it matches the
+  ref by operation id and handle id and pins the task to the generation it recorded. Every
+  background Bash on a device-local device was left unconfirmed ("its start was not confirmed; it is
+  being reconciled") and never settled; scheduled recovery now acknowledges those starts. A start
+  stopped before it was confirmed now ends `stopped` once the provider acknowledges its operation
+  revoke, instead of running until its retention expires (#765).
+- ab71de9: The plugin enable wizard opens on a 选择连接器 / "Choose connectors" step when the plugin has more
+  than one connector template or a default-off one: every template with its icon, name, description
+  and a mark saying what its step needs (nothing, an OAuth client, an address, a credential). Default-on
+  templates start checked, default-off ones unchecked, one the org already has a connector for is kept
+  (locked on); only checked templates get a step and a connector. The org install body
+  (`PUT …/catalog/:itemId/switch` inputs, `POST …/catalog/:itemId/install`) takes `templatesOn`: the
+  template ids to switch on with the install; the plugin's other templates are switched off in the org
+  (audited `component.org_switched`) and stay available on /connectors. Unknown, disabled or not offered
+  ids are refused (`validation_failed` at `templatesOn`); absent keeps the templates on in the org now.
+  The Platform operation `plugins.install` takes `templatesOn` too. The design `CheckList` row takes an
+  optional `mark` (a 24 px mark tile before the name).
+- Updated dependencies [36738ec]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.66
+
+## 0.1.0-rc.79
+
+### Patch Changes
+
+- b22a19d: Connector template descriptions in zh and en: component lists, the install wizard's templates
+  (`OrgCatalogTemplate`) and the import review (`PluginReviewTemplate`) carry `descriptionZh` next to
+  `description` (null when the template has one text). Connectors made from a platform template return that template's description
+  (`templateDescription`, `templateDescriptionZh`; its current version, under the same visibility
+  gate as its icon; null for a custom connector). A connector may also carry its own description
+  (`description`, migration 0181 `connectors.description`, plain text up to 1024 characters): org
+  admins set it in the create body or by PATCH (null or blank clears it; audited in
+  `connector.updated`), and the Platform operations `connectors.create` / `connectors.update` take it
+  too. The web shows the own description, else the template's in the page language, on the connector
+  cards of /connectors and at the top of the connector's detail page; the add-connector wizard and the
+  connector's 设置 tab edit it (the template's text as the placeholder). Template cards, the admin
+  template page, the plugin page and the install wizard pick the text for the page language too.
+- efdeb87: Rename the deployment config key `marketplaces.allowPrivateHosts` to `net.allowPrivateHosts`
+  (environment variable `CAPYBARA_NET__ALLOW_PRIVATE_HOSTS`, was
+  `CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS`). It is the one list of internal hosts for every
+  outbound request the kernel resolves itself (marketplace, archive and git downloads, npm registry
+  downloads, OAuth discovery, registration and token requests, git identity), so it now sits next to
+  `net.httpsProxy` and `net.noProxy`. Refusal hints and the web's download error name the new key.
+  A config file that still sets `marketplaces.allowPrivateHosts` fails startup as an unknown key:
+  move the list to `net.allowPrivateHosts`.
+- 2b2b48c: Kernel queries on tables with an `org_id` column now filter by it wherever the org is known (about
+  270 queries), and a schedule approval card no longer shows the name of another org's channel
+  connection when the tool input names its id (#115).
+- Updated dependencies [b22a19d]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.65
+
+## 0.1.0-rc.78
+
+### Patch Changes
+
+- ff74e46: The bootstrap step retries each npm package download (registry lookup and tarball) up to three
+  times with backoff when it fails transiently (a dropped connection, a timeout, HTTP 408 / 429 /
+  5xx), never on a 404 or a package that differs from its pin; the final error still names the
+  plugin. Docker Compose upgrades now run `docker compose run --rm init` before `docker compose up
+  -d`, so a failing migration or bootstrap no longer takes the serving containers down.
+- c0dc748: `openai-compatible` is an optional bootstrap preinstall, no longer required: only `object-store-s3`,
+  `skills-core` and `file-preview` are fixed in every org. On an existing deployment the
+  demoted plugin keeps scope `all`: the bootstrap owes its scope sync, which installs it in every org
+  that has not switched it off, so it stays on there.
+- 8bdbb9b: Device provider lifecycle calls carry a fence token (device update fencing design, #748). The SDK
+  adds `DeviceFence` and `StaleFenceError` (with `isStaleFenceError`): `update` and `create` get the
+  device's fencing generation as the calling holder last committed it, `destroy` and `destroyByName`
+  get it too (`null` when the kernel holds no device lease). A provider that keeps per-instance state
+  stores the highest token next to it and refuses a lower one, so a replica whose lease ended while
+  its call was in flight can no longer apply an older network list. The kernel records the target of
+  an `update` before sending it (`instance_limits.pending`), so the next exclusive holder applies the
+  desired limits again even when the record of what succeeded already matches them; it handles
+  `StaleFenceError` as a lost lease and never recreates for it; and a failed record write after an
+  `updated` answer no longer falls into the recreate branch (it used to let a stale holder destroy the
+  instance a newer holder was using).
+- c55f359: The kernel drops the org-only extension config: an org's config of an extension is its copy of the
+  overridable deployment fields. `PUT /orgs/:orgId/extensions/:extension` takes `{ enabled, force,
+  confirm }` only, the org extension view loses `config`, `secrets` and `orgConfigSchema`
+  (`configurable` now means "has an overridable field", `needsConfig` comes from the effective config
+  alone), the install body loses `extensionConfig`, `extension.no_org_config` and the
+  `extensions.set-org-config` operation are gone, and point providers, directory sync, web tools and
+  setup checks get the org's effective config only. Deployment fields are org-overridable by default
+  (`platformOnly` marks the rest). The testing fixtures move their org fields into `deployment`
+  (fake-web's `token`, fake-im's `directoryUrl`) and mark the fixtures of points without org config
+  platform-only. `plugins.set-enabled` switches a plugin on whose
+  extension still needs the org's config (as the web does) and says so in `configNeeded`. A
+  `platformOnly` mark below a top-level key (a hand-made package) makes that whole key platform-only,
+  and a pipe or transform deployment root is read through to its input object.
+  
+  A config field's meta is merged across its default / optional / nullable / prefault / catch /
+  readonly wrappers, and `secret` counts on any of them: a mark on a wrapper
+  (`platformOnly(secret(x).optional())`) no longer hides the secret below it, which made the load
+  fail as an unreachable secret.
+- 1ae08aa: Load installed plugins packed before core#720 again: the reviewed static manifest stored with
+  their install record still lists `config.org`, which the module's manifest no longer has, so every
+  such plugin was refused with `manifest_mismatch`. The legacy list is dropped before the comparison.
+  With the SDK's temporary `orgAccess` no-op and `defineExtension` dropping `config.org` (same
+  release), modules such as deepseek, jina, ark, bailian, lark and slack import and load again; their
+  org-only fields reach no permission set or view. Removed in core#720 plan Task 17.
+- 2c45b54: An approval asked by a member's own tool policy no longer fails to record (`approval_requested`
+  now takes `policy: "member"`). The web's API types now match the kernel routes they call
+  (checked by `check:web-api-parity`): plugins with themes, an org's upload awaiting confirmation,
+  migration-warning permissions, network grant refusals and skipped questions are typed and labeled,
+  the account avatar upload no longer sends a field the route refuses, and an agent avatar of another
+  image type is refused before the upload.
+- Updated dependencies [8bdbb9b]
+- Updated dependencies [5d3e31b]
+- Updated dependencies [03fa6f6]
+- Updated dependencies [94ed9ef]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.64
+
+## 0.1.0-rc.77
+
+### Patch Changes
+
+- 4e207e4: The bootstrap step now moves the platform version of a pinned plugin with an extension along with
+  its extension: once the extension runs the raised pin, a platform version that came from the
+  bootstrap and is lower is applied through the platform plugin update, so the plugin's skills,
+  connector templates, themes and org installs follow it. A platform version the super admin moved to
+  is kept, a disabled plugin is left for the super admin, and a platform an earlier run left behind
+  is caught up.
+- b4c0d80: `Skill` on a project skill whose recorded root makes no clean absolute SKILL.md path now names that
+  cause instead of claiming the path is outside what the device can read in sandbox mode.
+- Updated dependencies [95d479c]
+- Updated dependencies [608a3b4]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.62
+
+## 0.1.0-rc.76
+
+### Patch Changes
+
+- c6d4a02: The bootstrap step now raises a pinned plugin without an extension (a theme, skills or connector
+  templates) like one with an extension: when its platform version came from the bootstrap and is
+  lower than the pin, the pinned version is imported and applied through the platform plugin update
+  (`upgraded`). A version the super admin moved to (another source or a higher version) is kept, and
+  the run reports the version actually in place instead of the pin.
+- 99a2c5b: Deleting a device whose provider plugin is no longer installed no longer retries forever: the
+  instance is marked abandoned (migration 0180), its provider-side names are kept on the row and in
+  a `device.instance_abandoned` platform audit event, and the destroy job finishes.
+- e71a6c5: A device report's limit value is text now: `DeviceReportLimit.value` is `DeviceText`
+  (`{ en, zh? }`, at most 60 characters per language, checked by `parseDeviceReport`) instead of a
+  string, so a provider can translate words in it; a string value no longer passes. Migration 0179
+  turns the string values of stored reports into `{ en }`, and the device page shows each value in
+  the UI language.
+- 8e9fe85: Org readiness agrees with the agent form: the model step is ready only when the org has a chat
+  model an agent can pick (the same cached lists and time limit as the agent form's model list).
+  Providers that are on but give no model make the new state `no_models`, with each provider and
+  why (its list failed, with the error kind such as `auth`, or it has no chat model on in the org).
+  The setup checklist names the provider and the problem and links to `/admin/models` or
+  `/settings/models`; the agent form says the configured model services list no usable model
+  instead of asking to install a provider.
+- 7cbe0e2: The kernel's legacy sandbox route is gone: `SandboxService.withSandbox`, the protocol-2 held
+  provider, the builtin tools' legacy entry and `device_paths` writer, and the
+  `PERMISSION_CONTEXT_ACTIVATION` test seam with every dormant branch behind it. Every use of the
+  instance through the sandbox service's use entry is an operation invocation, a trusted preparation
+  or a kernel read. Production already took only
+  these routes, so nothing changes for a deployment; `device_paths` events already in logs still
+  render and replay as before.
+- Updated dependencies [e71a6c5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.61
+
 ## 0.1.0-rc.75
 
 ### Minor Changes

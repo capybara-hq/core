@@ -83,7 +83,6 @@ describe("computePermissionSet", () => {
             region: z.string(),
             nested: z.object({ key: secret(z.string()) }),
           }),
-          org: z.object({ apiKey: secret(z.string()), enabledFlag: z.boolean().default(false) }),
         },
         migrations: "./m1",
         permissions: {
@@ -108,10 +107,6 @@ describe("computePermissionSet", () => {
           { path: "nested.key", secret: true },
           { path: "region", secret: false },
         ],
-        org: [
-          { path: "apiKey", secret: true },
-          { path: "enabledFlag", secret: false },
-        ],
       },
       tables: ["alpha", "zeta"],
       permissions: {
@@ -133,8 +128,6 @@ describe("computePermissionSet", () => {
       [
         "config.deployment.secret:nested.key",
         "config.deployment:region",
-        "config.org.secret:apiKey",
-        "config.org:enabledFlag",
         "optional:channel@1",
         "permissions.http.member:GET /a",
         "permissions.http.public:POST /hook",
@@ -212,8 +205,10 @@ describe("permissionKeys and marketplace manifests", () => {
       requires: ["model-provider@2"],
       optional: ["directory@1"],
       config: {
-        deployment: [{ path: "apiKey", secret: true }],
-        org: [{ path: "team", secret: false }],
+        deployment: [
+          { path: "apiKey", secret: true },
+          { path: "team", secret: false },
+        ],
       },
       tables: ["todos"],
       permissions: {
@@ -263,7 +258,7 @@ describe("permissions.dialIn", () => {
     const set = (protocol?: string) =>
       buildPermissionSet({
         provides: ["device-provider@1"],
-        config: { deployment: [], org: [] },
+        config: { deployment: [] },
         tables: [],
         permissions: protocol ? { dialIn: { protocol } } : {},
       });
@@ -284,7 +279,7 @@ describe("permissions.dialIn", () => {
     const groups = permissionGroups(
       buildPermissionSet({
         provides: ["device-provider@1"],
-        config: { deployment: [], org: [] },
+        config: { deployment: [] },
         tables: [],
         permissions: { dialIn: { protocol: "fake-dial-in/1" } },
       }),

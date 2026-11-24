@@ -1,4 +1,4 @@
-import { EXTENSION_POINTS, parseExtensionPoint } from "@capybara-hq/plugin-sdk";
+import { EXTENSION_POINTS, parseExtensionPoint, ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import {
@@ -32,7 +32,7 @@ import { type PersonFieldTarget, personFieldParams, secretFieldsOf } from "../pe
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-import { configChanges, flatValues, nestedConfig, withPersonInputs } from "./person-inputs.js";
+import { configChanges, flatValues, withPersonInputs } from "./person-inputs.js";
 import { roleOf } from "./role.js";
 import { localized, named, orElse } from "./summary.js";
 import { roleFor, unavailableFields } from "./unavailable.js";
@@ -42,16 +42,24 @@ const NoInput = z.object({}).strict();
 const Extension = OrgExtensionParams.shape.extension;
 const Tool = OrgExtensionToolParams.shape.tool;
 const SwitchConfirm = OrgToolSwitchPut.shape.confirm.unwrap();
+const Force = OrgExtensionPut.shape.force;
+
+/**
+ * Why `extensions.set-enabled` does not switch an extension that ships in one catalog plugin: that
+ * switch is the plugin's (with its uninstall preview), `plugins.set-enabled`.
+ */
+const viaPlugin = (extension: string, itemId: string): string =>
+  `Extension ${extension} ships in a catalog plugin, whose switch it is: switch the plugin with plugins.set-enabled (itemId ${itemId}; switching off takes the confirm value of plugins.disable-preview).`;
 
 /** The next step of an extension that needs its org config. */
 const NEEDS_ORG_CONFIG = {
   orgAdmin:
-    "Read what is missing with extensions.org-config, then fill it in with extensions.set-org-config (or the org's own copy of overridable platform fields with extensions.save-org-config); the person enters secrets in a secure input request.",
+    "Read what is missing with extensions.org-config, then fill in the org's own copy of the overridable fields with extensions.save-org-config; the person enters secrets in a secure input request.",
   member: "Ask an org admin to fill in its org config on the Extensions page.",
 };
 
-/** The org config a write replaces (the whole non-secret config; secrets left out keep). */
-const OrgConfigValues = OrgExtensionPut.shape.config.unwrap();
+/** What `extensions.set-enabled` adds when the extension is on but its org config is not valid. */
+const CONFIG_NEEDED = `The extension is on, but has no valid config for this org yet and gets no calls until it does: ${NEEDS_ORG_CONFIG.orgAdmin} If only platform-only fields are missing, the super admin must set them.`;
 
 /**
  * Secret fields of a target the schema walk cannot address (no form schema, a record): web only,
@@ -69,9 +77,9 @@ function withUnaddressed(
 }
 
 /**
- * The person fields of the org's copy: the copy's own secrets (under overridable top-level fields),
- * set or not. A secret under a read-only field is not the org's to set: never asked, and a value
- * for it in `values` is refused as well.
+ * The person fields of the org's copy: the copy's own secrets (under the listed overridable
+ * top-level fields), set or not. A secret under any other field is not the org's to set: never
+ * asked, and a value for it in `values` is refused as well.
  */
 export function copyPersonFields(
   v: OrgOverrideView,
@@ -80,9 +88,8 @@ export function copyPersonFields(
   const stored = new Set(secrets.filter((f) => f.org?.set === true).map((f) => f.path));
   // levels are per top-level property (org-levels.ts)
   const top = (path: string) => path.split(/[.[]/)[0] as string;
-  const overridable = new Set(
-    v.fields.filter((f) => f.level === "override").map((f) => top(f.path)),
-  );
+  // the view lists overridable fields only
+  const overridable = new Set(v.fields.map((f) => top(f.path)));
   const found = secretFieldsOf(v.schema, stored);
   const fields = found.fields.filter((f) => overridable.has(top(f.path)));
   const notOurs = found.fields.filter((f) => !overridable.has(top(f.path))).map((f) => f.path);
@@ -102,8 +109,8 @@ function stateOf(v: OrgExtensionView): "on" | "off" | "needs_config" | "unavaila
 /**
  * Extension operations of the `Platform` tool (spec §7): the org's extensions (the member projection
  * of `GET /orgs/:orgId/extensions`, whatever the actor's role), their tool switches and point
- * defaults, and for org admins the org config and the org's copy of overridable platform fields
- * (read, write, take, save, drop; platform web parity spec §7.2). Secrets are never returned (only
+ * defaults, and for org admins the org's copy of overridable platform fields (read, take, save,
+ * drop; platform web parity spec §7.2). Secrets are never returned (only
  * whether each is set) and never taken as params: the person enters them in a secure input request.
  */
 @Injectable()
@@ -118,6 +125,36 @@ export class ExtensionsOperations implements OnModuleInit {
     @Inject(OrgOverrides) private readonly overrides: OrgOverrides,
     @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
   ) {}
+
+  /**
+   * Why `extensions.set-enabled` refuses the switch before writing, or null: an extension of one
+   * catalog plugin is switched through its plugin; a required or builtin one cannot go off. The
+   * write itself repeats every rule ({@link OrgExtensionSwitch.put}).
+   */
+  private async switchRefusal(
+    orgId: string,
+    extension: string,
+    enabled: boolean,
+  ): Promise<{ code: string; message: string } | null> {
+    const v = await this.viewOf(orgId, extension);
+    const plan = await this.configs.switchPlan(extension, enabled);
+    if (plan.kind === "item") {
+      return { code: "extension.switch_via_plugin", message: viaPlugin(extension, plan.itemId) };
+    }
+    if (!enabled && v.required) {
+      return {
+        code: "extension.required",
+        message: `Extension ${extension} is required: it is on in every organization`,
+      };
+    }
+    if (!enabled && plan.kind === "locked") {
+      return {
+        code: "plugin.scope_locked",
+        message: `Extension ${extension} is built in: it is on in every organization`,
+      };
+    }
+    return null;
+  }
 
   /** The org view of one extension, or `extension.not_found` (not installed or not offered). */
   private async viewOf(orgId: string, name: string): Promise<OrgExtensionView> {
@@ -141,7 +178,7 @@ export class ExtensionsOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.list",
         description:
-          "List the extensions installed on the platform as this org sees them, one compact row each: the state here (on, off, needs_config: the org config is missing, unavailable: it cannot run on the platform), why an unavailable one cannot be used (reason) and your next step (next), whether it is available on the platform, the extension points it provides and the plugin that brings it. State only: an org admin reads and sets the config with extensions.org-config and extensions.set-org-config. Pages by 50: pass the returned next as params.cursor.",
+          "List the extensions installed on the platform as this org sees them, one compact row each: the state here (on, off, needs_config: its config for this org is not valid, unavailable: it cannot run on the platform), why an unavailable one cannot be used (reason) and your next step (next), whether it is available on the platform, the extension points it provides and the plugin that brings it. State only: an org admin reads the config with extensions.org-config and sets the org's copy with extensions.save-org-config. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "org.extensions.read" },
@@ -174,6 +211,103 @@ export class ExtensionsOperations implements OnModuleInit {
             startOf(input.cursor),
             50,
           );
+        },
+      }),
+      defineOperation({
+        id: "extensions.set-enabled",
+        description:
+          "Switch an extension that is not a catalog plugin's on or off in this org (org admins): one declared in the deployment config, or one several catalog plugins bring. An extension shipped in one catalog plugin is switched with plugins.set-enabled; extensions.list shows its catalogItemId. Switching on never waits for config: an extension with no valid config for the org is switched on anyway and the result's configNeeded says how to fill in the org's copy (extensions.save-org-config). Switching off is refused while other enabled extensions depend on it, unless force is true (they lose what they depend on).",
+        input: z.object({ extension: Extension, enabled: z.boolean(), force: Force }).strict(),
+        example: { extension: "web-search-tavily", enabled: true },
+        authz: { orgAction: "org.extensions.manage" },
+        mirrors: ["PUT /api/v1/orgs/:orgId/extensions/:extension"],
+        // the confirm of a catalog plugin's switch-off: that switch is plugins.set-enabled's
+        omits: ["confirm"],
+        confirm: "org",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "The extension is not running or not visible to this org; check the name with extensions.list.",
+          },
+          {
+            code: "extension.switch_via_plugin",
+            next: "Switch its plugin with plugins.set-enabled (the itemId is extensions.list's catalogItemId).",
+          },
+          {
+            code: "extension.required",
+            next: "The extension is required on the platform and stays on in every org.",
+          },
+          {
+            code: "plugin.scope_locked",
+            next: "The extension's plugin is built in: it is on in every org and cannot be switched off in one org.",
+          },
+          {
+            code: "extension.dependency_missing",
+            next: "The extension needs an extension point no enabled extension provides in this org (the details name it); switch on a provider first (extensions.points, extensions.list).",
+          },
+          {
+            code: "extension.has_dependents",
+            next: "Other enabled extensions depend on it (the details name them): switch those off first, or call again with force: true after the person agreed that they lose it.",
+          },
+          {
+            code: "plugin.disabled",
+            next: {
+              superAdmin:
+                "The plugin is stopped on the platform: turn it back on in the admin console under Plugins, then call again.",
+              orgAdmin: "The super admin stopped this plugin on the platform; ask them.",
+              member:
+                "The super admin stopped this plugin on the platform; tell your org admin, who can ask the super admin.",
+            },
+          },
+          {
+            code: "catalog.approval_required",
+            next: "A plugin that brings the extension is not offered to this org: create an access request with requests.create.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const found: { refusal: { code: string; message: string } | null } = { refusal: null };
+          const r = await precheckBy(async () => {
+            found.refusal = await this.switchRefusal(ctx.orgId, i.extension, i.enabled);
+          });
+          if (!r.ok) return r;
+          return found.refusal === null ? { ok: true } : { ok: false, ...found.refusal };
+        },
+        summary: async (i) => {
+          const x = await this.nameOf(i.extension);
+          if (i.enabled) {
+            return {
+              zh: `在本组织启用扩展「${x.zh}」`,
+              en: `Enable extension "${x.en}" in the org`,
+            };
+          }
+          return i.force === true
+            ? {
+                zh: `在本组织强制停用扩展「${x.zh}」：依赖它的扩展将失去依赖`,
+                en: `Force-disable extension "${x.en}" in the org: extensions that depend on it lose it`,
+              }
+            : { zh: `在本组织停用扩展「${x.zh}」`, en: `Disable extension "${x.en}" in the org` };
+        },
+        run: async (input, ctx) => {
+          const refusal = await this.switchRefusal(ctx.orgId, input.extension, input.enabled);
+          if (refusal?.code === "extension.switch_via_plugin") throw new ToolError(refusal.message);
+          const r = await this.extSwitch.put(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.extension,
+            { enabled: input.enabled, ...(input.force === true && { force: true }) },
+            undefined,
+            viaAgent("extensions.set-enabled", ctx),
+          );
+          // unreachable: only a catalog plugin's switch-off answers a preview, refused above
+          if (r.kind === "preview") throw new Error("extensions.set-enabled: unexpected preview");
+          const v = r.view;
+          return {
+            extension: v.plugin,
+            state: stateOf(v),
+            enabled: v.enabled,
+            needsConfig: v.needsConfig,
+            ...(v.enabled && v.needsConfig && { configNeeded: CONFIG_NEEDED }),
+          };
         },
       }),
       defineOperation({
@@ -309,7 +443,7 @@ export class ExtensionsOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.org-config",
         description:
-          "Read an extension's config in this org (org admins): orgConfig is the org's own config (the non-secret values, whether each secret is set, never its value, the form's JSON Schema with x-secret on secret fields, and needsConfig); deploymentCopy is the org's side of the platform's deployment config: following the platform or a copy, the read-only and overridable fields (platform values, the copy's values, secrets as set or not) and whether the effective config is valid. Null when the extension does not run on the platform.",
+          "Read an extension's config in this org (org admins): configurable (it has fields the org can override) and needsConfig (its config for this org is not valid); deploymentCopy is the org's side of the platform's deployment config: following the platform or a copy, the overridable fields (platform values, the copy's values, secrets as set or not, never a value) and whether the effective config is valid. deploymentCopy is null when the extension does not run on the platform.",
         input: z.object({ extension: Extension }).strict(),
         example: { extension: "model-anthropic" },
         authz: { orgAction: "org.extensions.manage" },
@@ -322,103 +456,17 @@ export class ExtensionsOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => {
-          // the web's Extensions page reads both: the org's own config (`config.org`) comes with the
-          // org extension list, the copy of the platform's overridable fields from the overrides route
+          // the state comes with the org extension list, the copy of the platform's overridable
+          // fields from the overrides route
           const v = await this.viewOf(ctx.orgId, input.extension);
           return {
             extension: v.plugin,
             state: stateOf(v),
-            orgConfig: {
-              configurable: v.configurable,
-              config: v.config,
-              secrets: v.secrets,
-              schema: v.orgConfigSchema,
-              needsConfig: v.needsConfig,
-            },
+            configurable: v.configurable,
+            needsConfig: v.needsConfig,
             deploymentCopy: v.available
               ? await this.overrides.view(ctx.orgId, input.extension)
               : null,
-          };
-        },
-      }),
-      defineOperation({
-        id: "extensions.set-org-config",
-        description:
-          "Save an extension's org config (org admins): values is the whole non-secret config and replaces the stored one (read it first with extensions.org-config and keep the fields you do not change). Secret fields are never in values: list them in askPerson and the person types them in a secure input request (on the web); a secret not listed keeps its stored value; list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. For overridable fields of the platform's deployment config (an org's own API key for a model provider, say) use extensions.save-org-config. Switching the extension on is plugins.set-enabled.",
-        input: z
-          .object({
-            extension: Extension,
-            values: OrgConfigValues,
-            askPerson: personFieldParams.askPerson,
-            clearSecrets: personFieldParams.clearSecrets,
-          })
-          .strict(),
-        example: {
-          extension: "lark",
-          values: { appId: "cli_a1b2c3" },
-          askPerson: ["appSecret"],
-          clearSecrets: [],
-        },
-        authz: { orgAction: "org.extensions.manage" },
-        mirrors: ["PUT /api/v1/orgs/:orgId/extensions/:extension"],
-        renames: { values: "config" },
-        // switching on and off is plugins.set-enabled (its preview and confirm)
-        omits: ["enabled", "force", "confirm"],
-        extras: ["askPerson", "clearSecrets"],
-        confirm: "org",
-        errors: [
-          {
-            code: "extension.not_found",
-            next: "The extension is not running or not visible to this org; check the name with extensions.list.",
-          },
-          {
-            code: "extension.no_org_config",
-            next: "This extension has no org config. Its overridable platform fields, if any, are set with extensions.save-org-config.",
-          },
-          {
-            code: "extension.config_invalid",
-            next: "Read the form schema with extensions.org-config, correct the values (the error's details name the fields), then call again.",
-          },
-        ],
-        personFields: async (i, ctx) => {
-          const v = await this.viewOf(ctx.orgId, i.extension);
-          const n = await this.nameOf(i.extension);
-          const stored = new Set(v.secrets.filter((x) => x.set).map((x) => x.path));
-          return {
-            target: { zh: `扩展「${n.zh}」的组织配置`, en: `${n.en}: org config` },
-            ...withUnaddressed(
-              secretFieldsOf(v.orgConfigSchema, stored),
-              v.secrets.map((x) => x.path),
-            ),
-          };
-        },
-        summary: async (i, ctx) => {
-          const n = await this.nameOf(i.extension);
-          const c = configChanges(i, ctx);
-          return {
-            zh: `保存扩展「${n.zh}」的组织配置：${c.zh}`,
-            en: `Save the org config of extension "${n.en}": ${c.en}`,
-          };
-        },
-        run: async (input, ctx) => {
-          const r = await withPersonInputs("extensions.set-org-config", ctx, (entered, detail) =>
-            this.extSwitch.put(
-              ctx.orgId,
-              ctx.actorAccountId,
-              input.extension,
-              { config: nestedConfig(input.values, entered, input.clearSecrets) },
-              undefined,
-              detail,
-            ),
-          );
-          // a config-only write never previews (only switching off does)
-          if (r.kind !== "done") throw new Error("a config-only org extension write previewed");
-          const v = r.view;
-          return {
-            extension: v.plugin,
-            state: stateOf(v),
-            config: v.config,
-            secrets: v.secrets,
           };
         },
       }),

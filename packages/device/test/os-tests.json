@@ -1,6 +1,7 @@
 [
   "background-output.test.ts",
   "exec-docker.test.ts",
+  "helper-containers.test.ts",
   "linux-agent-network.test.ts",
   "linux-agent-pin.test.ts",
   "linux-operation-backend.test.ts",

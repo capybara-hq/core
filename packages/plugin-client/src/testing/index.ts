@@ -14,7 +14,13 @@ import {
   type HostContextValue,
 } from "../context.js";
 import type { ClientExtension } from "../define.js";
-import { clientHost, DESIGN_NAMES, type SelectProps, setClientHost } from "../design.js";
+import {
+  clientHost,
+  DESIGN_NAMES,
+  type SelectProps,
+  type SwitchProps,
+  setClientHost,
+} from "../design.js";
 import type { ComponentSlotId } from "../slots.generated.js";
 import type {
   CapybaraEvent,
@@ -60,7 +66,8 @@ export interface FakeHost {
 
 /**
  * Plain stand-ins for the host's design components: `<span data-fake-design="Name">`. `Select` is
- * a native select over its options, so a test picks a value the way a person would.
+ * a native select over its options and `Switch` a `role="switch"` button, so a test picks a value
+ * or flips the switch the way a person would.
  */
 function fakeDesign(): Record<string, ComponentType<never>> {
   const out: Record<string, ComponentType<never>> = {};
@@ -89,6 +96,19 @@ function fakeDesign(): Record<string, ComponentType<never>> {
       ),
     );
   out.Select = FakeSelect as ComponentType<never>;
+  const FakeSwitch = (props: SwitchProps) =>
+    createElement("button", {
+      type: "button",
+      role: "switch",
+      id: props.id,
+      disabled: props.disabled,
+      "aria-checked": props.checked,
+      "aria-label": props.label,
+      "aria-describedby": props["aria-describedby"],
+      "data-fake-design": "Switch",
+      onClick: () => props.onChange(!props.checked),
+    });
+  out.Switch = FakeSwitch as ComponentType<never>;
   return out;
 }
 

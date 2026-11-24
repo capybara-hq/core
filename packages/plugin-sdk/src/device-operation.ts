@@ -300,7 +300,11 @@ export interface SandboxBrowseScope extends SandboxOperationRef {
 export type SandboxBrowse = Pick<SandboxOperation, "stat"> &
   Required<Pick<SandboxOperation, "list" | "scan">>;
 
-/** An opaque locator over authenticated transport; validate generation before status, tail or stop. */
+/**
+ * An opaque locator over authenticated transport; validate generation before status, tail or stop.
+ * `instanceGeneration` is the provider's own generation of the instance (the kernel's when the
+ * provider keeps none); the kernel stores the ref as returned and never compares it with its own.
+ */
 export interface SandboxExecutionRef {
   readonly executionId: string;
   readonly operationId: string;
@@ -329,7 +333,9 @@ export interface SandboxBackground {
    * Validate outputPath inside the scope. retainUntilMs bounds status/output record retention.
    * instanceGeneration is the kernel's generation of the held instance `h` (the kernel always
    * passes it, and allocates it only after `create` returns): a provider that keeps no generation
-   * of its own (a cloud provider) returns it in the reference and keys start idempotency by it.
+   * of its own (a cloud provider) returns it in the reference and keys start idempotency by it; one
+   * that keeps its own (device-local's bound machine generation) returns that one instead. The
+   * kernel pins the task to its own generation and the held handle's id, not the ref's generation.
    */
   start(
     h: SandboxHandle,

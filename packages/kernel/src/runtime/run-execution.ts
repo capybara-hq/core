@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { withOrgScope } from "../infra/database/org-scope.js";
 import { TransactionHost, withTransactionFence } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
@@ -100,6 +101,7 @@ export class RunExecution {
     live: () => boolean = () => true,
   ): Promise<ExecutionClaim | null> {
     if (!live()) return null;
+    // org-filter: the worker's claim of a kernel-written run job; reads the conversation's own org
     const conv = await this.db
       .selectFrom("conversations")
       .select("org_id")
@@ -121,6 +123,11 @@ export class RunExecution {
   }
 
   withClaim<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
+    // the run works in its org (RLS spec §5.1): every query of the claimed run carries that scope
+    return withOrgScope(claim.orgId, () => this.claimed(claim, live, fn));
+  }
+
+  private claimed<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
     return invocationClaim.run(Object.freeze({ ...claim }), () =>
       withTransactionFence(async ({ shared, prelude }) => {
         const admitShared = shared && !exclusiveScope.getStore();
@@ -168,6 +175,7 @@ export class RunExecution {
       .selectFrom("conversations")
       .select("deleted_at")
       .where("id", "=", claim.rootId)
+      .where("org_id", "=", claim.orgId)
       .forNoKeyUpdate()
       .executeTakeFirst();
     if (!root || !isLive(root.deleted_at)) return false;

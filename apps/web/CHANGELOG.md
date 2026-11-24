@@ -1,5 +1,122 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.108
+
+No changes in this release.
+
+## 0.1.0-rc.107
+
+### Patch Changes
+
+- c3475c6: The Platform tool's new `extensions.set-enabled` switches an extension that is not a catalog
+  plugin's (config-declared, or brought by several plugins) on or off in an org. The Extensions page
+  and Model services switch an extension that needs config on, then let the org configure it.
+
+## 0.1.0-rc.106
+
+No changes in this release.
+
+## 0.1.0-rc.105
+
+### Patch Changes
+
+- Updated dependencies [76f58f0]
+  - @capybara-hq/design@0.2.0-rc.45
+
+## 0.1.0-rc.104
+
+### Patch Changes
+
+- ab71de9: The plugin enable wizard opens on a 选择连接器 / "Choose connectors" step when the plugin has more
+  than one connector template or a default-off one: every template with its icon, name, description
+  and a mark saying what its step needs (nothing, an OAuth client, an address, a credential). Default-on
+  templates start checked, default-off ones unchecked, one the org already has a connector for is kept
+  (locked on); only checked templates get a step and a connector. The org install body
+  (`PUT …/catalog/:itemId/switch` inputs, `POST …/catalog/:itemId/install`) takes `templatesOn`: the
+  template ids to switch on with the install; the plugin's other templates are switched off in the org
+  (audited `component.org_switched`) and stay available on /connectors. Unknown, disabled or not offered
+  ids are refused (`validation_failed` at `templatesOn`); absent keeps the templates on in the org now.
+  The Platform operation `plugins.install` takes `templatesOn` too. The design `CheckList` row takes an
+  optional `mark` (a 24 px mark tile before the name).
+- Updated dependencies [ab71de9]
+  - @capybara-hq/design@0.2.0-rc.44
+
+## 0.1.0-rc.103
+
+### Patch Changes
+
+- b22a19d: Connector template descriptions in zh and en: component lists, the install wizard's templates
+  (`OrgCatalogTemplate`) and the import review (`PluginReviewTemplate`) carry `descriptionZh` next to
+  `description` (null when the template has one text). Connectors made from a platform template return that template's description
+  (`templateDescription`, `templateDescriptionZh`; its current version, under the same visibility
+  gate as its icon; null for a custom connector). A connector may also carry its own description
+  (`description`, migration 0181 `connectors.description`, plain text up to 1024 characters): org
+  admins set it in the create body or by PATCH (null or blank clears it; audited in
+  `connector.updated`), and the Platform operations `connectors.create` / `connectors.update` take it
+  too. The web shows the own description, else the template's in the page language, on the connector
+  cards of /connectors and at the top of the connector's detail page; the add-connector wizard and the
+  connector's 设置 tab edit it (the template's text as the placeholder). Template cards, the admin
+  template page, the plugin page and the install wizard pick the text for the page language too.
+- efdeb87: Rename the deployment config key `marketplaces.allowPrivateHosts` to `net.allowPrivateHosts`
+  (environment variable `CAPYBARA_NET__ALLOW_PRIVATE_HOSTS`, was
+  `CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS`). It is the one list of internal hosts for every
+  outbound request the kernel resolves itself (marketplace, archive and git downloads, npm registry
+  downloads, OAuth discovery, registration and token requests, git identity), so it now sits next to
+  `net.httpsProxy` and `net.noProxy`. Refusal hints and the web's download error name the new key.
+  A config file that still sets `marketplaces.allowPrivateHosts` fails startup as an unknown key:
+  move the list to `net.allowPrivateHosts`.
+- Updated dependencies [855e6d9]
+  - @capybara-hq/design@0.2.0-rc.43
+
+## 0.1.0-rc.102
+
+### Patch Changes
+
+- a14caad: The connectors page sorts template cards with the page's locale, so the server render and the
+  browser agree (they differed for Chinese names such as Google 表格 / Google 云端硬盘 and failed
+  hydration).
+
+## 0.1.0-rc.101
+
+### Patch Changes
+
+- b0b933c: Connector templates and the connectors made from them show the template's own icon (for example
+  Gmail, Drive and Calendar of one Google plugin) instead of their plugin's icon; a template without
+  an icon of its own still shows its plugin's. The plugin install wizard lists the connector
+  templates with their icons. A connector's icon is served on its own route, so guests, who see the
+  connector pages but not the catalog, can load it too. New routes:
+  `GET /api/v1/orgs/:orgId/connector-templates/:templateId/icon`,
+  `GET /api/v1/admin/catalog/connector-templates/:templateId/icon` and
+  `GET /api/v1/orgs/:orgId/connectors/:connectorId/icon`.
+- 019b6ed: Marketplace labels: the official marketplace is named "Capybara" (it was "Official marketplace" /
+  "官方市场"), and a marketplace managed by the deployment config (an extra bootstrap manifest)
+  shows the `owner.name` of its marketplace.json once a refresh has read it, instead of its config
+  key. The config key stays the row's name, its id (`config:<name>`) and its token's env name.
+
+## 0.1.0-rc.100
+
+No changes in this release.
+
+## 0.1.0-rc.99
+
+### Patch Changes
+
+- 61e77a7: The new conversation's device picker no longer opens an empty list: with no device but a device
+  provider on, it reads "No device" and offers only New device (the Devices page's dialog); with no
+  way to create one it is gone. The org Models page shows a locked model service's state on a
+  disabled switch, as the Extensions page does.
+- ae21a49: Settings → Models gives each model service the Extensions page's on / off switch, so org admins can
+  switch a service off there too, including one the platform turns on by default (scope `all`), which
+  keeps its "on by platform default" state beside the switch. Locked services (platform-wide, not
+  switchable, unavailable, or waiting for config while off) keep their state with no switch.
+- 8e9fe85: Org readiness agrees with the agent form: the model step is ready only when the org has a chat
+  model an agent can pick (the same cached lists and time limit as the agent form's model list).
+  Providers that are on but give no model make the new state `no_models`, with each provider and
+  why (its list failed, with the error kind such as `auth`, or it has no chat model on in the org).
+  The setup checklist names the provider and the problem and links to `/admin/models` or
+  `/settings/models`; the agent form says the configured model services list no usable model
+  instead of asking to install a provider.
+
 ## 0.1.0-rc.98
 
 ### Patch Changes

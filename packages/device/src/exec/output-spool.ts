@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -7,6 +7,7 @@ import {
   type SandboxExecutionRef,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import type { HelperLauncher } from "./helper-launcher.js";
 import { OUTPUT_SPOOL_HELPER } from "./output-spool-helper.js";
 
 export interface OutputLocator {
@@ -19,9 +20,18 @@ export interface OutputLocator {
 export interface OutputSpoolOptions {
   privateRoot: string;
   artifactRoot: string;
+  /**
+   * The directory a helper container mounts to reach the artifact root (default: the artifact
+   * root): a directory the program made, which the work being recorded cannot replace.
+   */
+  artifactMount?: string;
   outputPath: string;
   ref: SandboxExecutionRef;
-  pythonPath: string;
+  /**
+   * Runs the spool helper: the host interpreter, or a helper container that mounts exactly the
+   * private root and (on creation) the artifact root.
+   */
+  helpers: HelperLauncher;
   publish: (locator: OutputLocator) => Promise<void>;
   /** Trusted deterministic I/O boundary injection; never supplied by a user or wire request. */
   barrier?: ((name: string) => Promise<void>) | undefined;
@@ -59,7 +69,7 @@ function nameFor(ref: SandboxExecutionRef): string {
 /** Recovery only: verify the pinned prefix and finalize its file/namespace durability. */
 export function finalizeRecoveredOutput(
   privateRoot: string,
-  pythonPath: string,
+  helpers: HelperLauncher,
   locator: OutputLocator,
 ): void {
   const ref = parseSandboxExecutionRef(locator.ref);
@@ -83,11 +93,13 @@ export function finalizeRecoveredOutput(
     { op: "syncParent" },
     { op: "close" },
   ];
-  const result = spawnSync(pythonPath, ["-I", "-c", OUTPUT_SPOOL_HELPER], {
-    input: `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`,
-    encoding: "utf8",
-    maxBuffer: 90000,
-  });
+  const result = helpers.run(
+    OUTPUT_SPOOL_HELPER,
+    [],
+    [canonical(privateRoot)],
+    `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`,
+    90000,
+  );
   if (result.error || result.status !== 0) throw Error("Cannot finalize recovered output");
   const replies = result.stdout
     .trim()
@@ -116,9 +128,14 @@ export class ManagedOutputSpool {
     existing: boolean,
   ) {
     this.readonly = existing;
-    this.child = spawn(options.pythonPath, ["-I", "-c", OUTPUT_SPOOL_HELPER], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    this.child = options.helpers.spawn(
+      OUTPUT_SPOOL_HELPER,
+      [],
+      [
+        canonical(options.privateRoot),
+        ...(existing ? [] : [canonical(options.artifactMount ?? options.artifactRoot)]),
+      ],
+    );
     let pending = "";
     // Responses are bounded to base64(65,536) plus envelope; diagnostics never enter user output.
     this.child.stdout.on("data", (bytes: Buffer) => {
@@ -181,6 +198,11 @@ export class ManagedOutputSpool {
     const rel = relative(root, path);
     if (!rel || rel.startsWith("../") || rel === ".." || resolve(path) !== path)
       throw new SandboxScopeDeniedError("Output artifact is outside its starting root");
+    if (options.artifactMount !== undefined) {
+      const mount = relative(canonical(options.artifactMount), root);
+      if (mount.startsWith("../") || mount === ".." || mount.startsWith("/"))
+        throw new SandboxScopeDeniedError("Output artifact root is outside its mount");
+    }
     const spool = new ManagedOutputSpool(options, false);
     try {
       const info = await spool.rpc<{

@@ -28,6 +28,7 @@ import {
 import {
   type ComponentScopePreview,
   ComponentScopeService,
+  type ComponentSwitchResult,
   type ComponentVersionView,
   type ComponentView,
   type OrgComponentView,
@@ -51,18 +52,24 @@ class ComponentShownBody extends createZodDto(ShownBody, "ComponentShownBody") {
 class ComponentSwitchBody extends createZodDto(SwitchBody, "ComponentSwitchBody") {}
 
 /**
- * Each component with `icon`: its plugin's icon URL on the reader's route (null without one, for
- * a component without a plugin, or when the reader may not see the plugin; maintainer decision
- * 2026-11-09: a connector template without an icon of its own shows its plugin's).
+ * Each component with `icon` on the reader's route: a connector template's own icon, else its
+ * plugin's icon (maintainer decision 2026-11-09: a connector template without an icon of its own
+ * shows its plugin's); null without one, for a component without a plugin, or when the reader may
+ * not see the plugin.
  */
-async function withIcons<T extends { itemId: string | null }>(
+async function withIcons<T extends { kind: string; id: string; itemId: string | null }>(
   icons: PluginIcons,
   rows: T[],
   scope: PluginIconScope,
 ): Promise<(T & { icon: string | null })[]> {
-  const ids = rows.flatMap((r) => (r.itemId === null ? [] : [r.itemId]));
-  const urls = await icons.ofItems(ids, scope);
-  return rows.map((r) => ({ ...r, icon: r.itemId === null ? null : (urls.get(r.itemId) ?? null) }));
+  const urls = await icons.ofTemplatesOrItems(
+    rows.map((r) => ({
+      templateId: r.kind === "connector_template" ? r.id : null,
+      itemId: r.itemId,
+    })),
+    scope,
+  );
+  return rows.map((r, i) => ({ ...r, icon: urls[i] ?? null }));
 }
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
@@ -132,7 +139,8 @@ export class AdminComponentsController {
 
   /**
    * `GET ?kind=`: every platform component of the kind (plugin, owner, scope, version, orgs on),
-   * each with its display name and its plugin's icon (`icon`, the admin route; null without one).
+   * each with its display name and `icon` (a connector template's own icon, else its plugin's, on
+   * the admin routes; null without one).
    */
   @Get()
   async list(
@@ -261,8 +269,9 @@ export class OrgComponentsController {
    * The platform components offered to the org (`?kind=`, `?itemId=`: only those; Task 10): each
    * with its state in the org (`on`, `locked` for `all`, the org's `switch`) and whether an org
    * admin may switch it. Members read it (the workspace pages are read-only for them). Each has
-   * its display name and `icon`, its plugin's icon on the org's catalog route (null without one,
-   * or when the org's catalog does not show the plugin to the reader: the share gate holds).
+   * its display name and `icon`, a connector template's own icon, else its plugin's, on the org's
+   * routes (null without one, or when the org's catalog does not show the plugin to the reader:
+   * the share gate holds).
    */
   @Get()
   @OrgAction("catalog.read")
@@ -286,10 +295,7 @@ export class OrgComponentsController {
     @ZBody(ComponentSwitchBody) body: z.infer<typeof SwitchBody>,
   ): Promise<
     | { component: OrgComponentView }
-    | {
-        preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
-        confirm: string;
-      }
+    | Omit<Extract<ComponentSwitchResult, { kind: "preview" }>, "kind">
   > {
     const actor = requireUser(principal);
     const r = await this.scope.setSwitch(

@@ -6,6 +6,7 @@ import {
   deviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
+  installedWider,
   instanceLimitsJson,
   type NetworkLimits,
   type OrgDeviceSettings,
@@ -307,17 +308,66 @@ describe("instance limits", () => {
     expect(readInstanceLimits(JSON.parse(instanceLimitsJson(applied) as string))).toEqual({
       applied,
       unapplied: null,
+      pending: null,
     });
     expect(readInstanceLimits(JSON.parse(instanceLimitsJson(null, applied) as string))).toEqual({
       applied: null,
       unapplied: applied,
+      pending: null,
     });
+    // the intent of an update in flight (device update fencing design §7.2)
+    expect(
+      readInstanceLimits(JSON.parse(instanceLimitsJson(applied, undefined, applied) as string)),
+    ).toEqual({ applied, unapplied: null, pending: applied });
     expect(instanceLimitsJson(null)).toBeNull();
     // an instance made before auto mode recorded { tier, egress }: it differs from every value
     expect(readInstanceLimits({ tier: "open", egress: "open" })).toEqual({
       applied: null,
       unapplied: null,
+      pending: null,
     });
-    expect(readInstanceLimits("nonsense")).toEqual({ applied: null, unapplied: null });
+    expect(readInstanceLimits("nonsense")).toEqual({
+      applied: null,
+      unapplied: null,
+      pending: null,
+    });
+  });
+});
+
+describe("installedWider (#766)", () => {
+  const list = (...hosts: string[]) =>
+    appliedOf({ mode: "sandbox", network: { kind: "allowlist", hosts } });
+  const open = appliedOf({ mode: "auto", network: { kind: "open-public", hosts: [] } });
+
+  it("a host the record does not cover, or the open public network over a list, is wider", () => {
+    const rec = list("a.com", "*.b.com");
+    expect(installedWider({ kind: "allowlist", hosts: ["a.com", "evil.com"] }, rec, rec)).toBe(
+      true,
+    );
+    expect(installedWider({ kind: "open-public", hosts: [] }, rec, rec)).toBe(true);
+    // a wildcard the record lacks is wider even when it names a covered subdomain's parent
+    expect(installedWider({ kind: "allowlist", hosts: ["*.a.com"] }, rec, rec)).toBe(true);
+  });
+
+  it("equal or narrower is not wider; hosts compare case-insensitively", () => {
+    const rec = list("a.com", "*.b.com");
+    expect(installedWider({ kind: "allowlist", hosts: ["a.com", "*.b.com"] }, rec, rec)).toBe(
+      false,
+    );
+    expect(installedWider({ kind: "allowlist", hosts: ["A.COM", "x.b.com"] }, rec, rec)).toBe(
+      false,
+    );
+    expect(installedWider({ kind: "allowlist", hosts: [] }, rec, rec)).toBe(false);
+    expect(installedWider({ kind: "open-public", hosts: [] }, open, open)).toBe(false);
+    expect(installedWider({ kind: "allowlist", hosts: ["any.com"] }, open, open)).toBe(false);
+  });
+
+  it("an unknown or malformed answer is wider (fail closed); an unknown record compares with the target", () => {
+    const rec = list("a.com");
+    for (const v of [null, undefined, "allowlist", { kind: "none" }, { kind: "allowlist" }])
+      expect(installedWider(v, rec, rec)).toBe(true);
+    expect(installedWider({ kind: "allowlist", hosts: ["a.com", 7] }, rec, rec)).toBe(true);
+    expect(installedWider({ kind: "allowlist", hosts: ["a.com"] }, null, rec)).toBe(false);
+    expect(installedWider({ kind: "allowlist", hosts: ["b.com"] }, null, rec)).toBe(true);
   });
 });

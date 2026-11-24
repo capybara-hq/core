@@ -316,7 +316,11 @@ export function linuxOperationWorker(
           ? {}
           : {
               readRoots: carved ? carved.roots : readRoots,
-              ...(carved?.files.length ? { readFileRoots: carved.files } : {}),
+              // only a launcher that declares exact file roots gets them: one without would not
+              // enforce them, so the files beside a denied path then stay unreadable (fail closed)
+              ...(carved?.files.length && options.transport.bundle.fileReadRoots
+                ? { readFileRoots: carved.files }
+                : {}),
               writeRoots: [...new Set([...request.grant.writeRoots, ...extra, ...tempRoots])],
               ...(writeDenies.length ? { writeDenies } : {}),
             };

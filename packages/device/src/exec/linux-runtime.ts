@@ -1,33 +1,45 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { SANDBOX_RUNTIME_SOURCE, SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
+import {
+  SANDBOX_RUNTIME_SOURCE,
+  SandboxPermissionUnsupportedError,
+  type SandboxRuntimeFile,
+} from "@capybara-hq/plugin-sdk";
 import { LINUX_DEVICE_AGENT } from "./linux-agent.js";
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /**
- * What every agent request carries: the SDK's restricted Linux launcher and native helper (bundle
- * version 2, each checked here against its shipped digest) with those digests. The agent seals the
- * bytes into memfds and checks the digests again before anything runs from them.
+ * What every agent request carries: the SDK's current restricted Linux launcher and native helper
+ * (`SANDBOX_RUNTIME_SOURCE.current`, bundle version 2, each checked here against its shipped
+ * digest) with those digests. The agent seals the bytes into memfds and checks the digests again
+ * before anything runs from them. `fileReadRoots` says whether that launcher declares exact file
+ * read roots (`features`); without it an exec sends none, so the files beside a denied path stay
+ * unreadable, as before the launcher had them.
  */
 export interface LinuxRuntimeBundle {
   runtime: Readonly<Record<string, string>>;
   expect: Readonly<Record<string, string>>;
+  fileReadRoots: boolean;
 }
 
-export function linuxRuntimeBundle(): LinuxRuntimeBundle {
+export function linuxRuntimeBundle(
+  files: readonly SandboxRuntimeFile[] = SANDBOX_RUNTIME_SOURCE.current,
+): LinuxRuntimeBundle {
   if (SANDBOX_RUNTIME_SOURCE.version !== 2)
     throw new SandboxPermissionUnsupportedError("Unsupported sandbox runtime bundle");
   const runtime: Record<string, string> = {};
   const expect: Record<string, string> = {};
+  let fileReadRoots = false;
   for (const name of ["linux-sandbox.py", "native-files.py"]) {
-    const file = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === name);
+    const file = files.find((f) => f.name === name);
     if (!file || sha256(file.source) !== file.sha256)
       throw new SandboxPermissionUnsupportedError(`The bundled ${name} does not match its digest`);
     runtime[name] = file.source;
     expect[name] = file.sha256;
+    if (name === "linux-sandbox.py") fileReadRoots = !!file.features?.includes("fileReadRoots");
   }
-  return { runtime: Object.freeze(runtime), expect: Object.freeze(expect) };
+  return { runtime: Object.freeze(runtime), expect: Object.freeze(expect), fileReadRoots };
 }
 
 /** The agent's command line: its source inline, so no file stands between check and run. */

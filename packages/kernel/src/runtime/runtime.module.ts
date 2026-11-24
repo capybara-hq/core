@@ -70,7 +70,7 @@ import { Waits } from "./waits.js";
     DevicesModule,
     SandboxModule,
     // the recorded permission context: the authority projection shared with admission, its locks
-    // and publication, and the stored root (dormant until the request boundary activates)
+    // and publication, and the stored root
     OperationAuthorityModule,
     PermissionAuthorityModule,
     PermissionProfileStoreModule,

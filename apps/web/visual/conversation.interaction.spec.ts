@@ -55,7 +55,7 @@ test("opening a group and a row inside it animates both", async ({ page }) => {
   const sel = '[data-ref-block="tool-group-collapsed"] .cb-expand';
   expect((await animation(page, sel)).name).toBe("cb-expand");
   const e = block(page, "tool-group-expanded");
-  const row = e.getByRole("button", { name: /\[get_file_metadata\] 失败/ });
+  const row = e.getByRole("button", { name: /\[get_file_metadata\] 调用返回了错误/ });
   await row.click();
   await expect(row).toHaveAttribute("aria-expanded", "true");
   const detail = e.locator('[data-part="tool-detail"][data-animate="true"]');
@@ -119,8 +119,8 @@ test("the resize handle moves by 16 with the arrow keys, is clamped and remember
   await page.keyboard.press("ArrowRight");
   await expect.poll(width).toBe(544);
   // Clamped to layout.panel-min…
-  for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
-  await expect.poll(width).toBe(520);
+  for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowRight");
+  await expect.poll(width).toBe(360);
   // …and to the content width minus layout.chat-min (1184 − 480).
   await page.keyboard.press("End");
   await expect.poll(width).toBe(704);

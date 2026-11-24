@@ -199,6 +199,7 @@ export class EvalSetsService {
           .selectFrom("eval_cases as c")
           .select(sql<string>`count(*)`.as("n"))
           .whereRef("c.set_id", "=", "s.id")
+          .where("c.org_id", "=", orgId)
           .as("case_count"),
       ])
       .where("s.org_id", "=", orgId)
@@ -386,7 +387,7 @@ export class EvalSetsService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (Number(r.numUpdatedRows) === 0) throw setNotFound();
-    await stopAndPurgeRuns(this.db, this.budget, setId);
+    await stopAndPurgeRuns(this.db, this.budget, orgId, setId);
     await audit(this.db, {
       actorAccountId: actor,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -422,7 +423,7 @@ export class EvalSetsService {
       .forUpdate()
       .executeTakeFirst();
     if (!set) throw setNotFound();
-    if ((await this.caseCount(this.db, setId)) >= max) return "full";
+    if ((await this.caseCount(this.db, orgId, setId)) >= max) return "full";
     const row = await this.db
       .insertInto("eval_cases")
       .values({
@@ -517,11 +518,12 @@ export class EvalSetsService {
     return set;
   }
 
-  private async caseCount(db: KernelSchemaDb, setId: string): Promise<number> {
+  private async caseCount(db: KernelSchemaDb, orgId: string, setId: string): Promise<number> {
     const r = await db
       .selectFrom("eval_cases")
       .select(sql<string>`count(*)`.as("n"))
       .where("set_id", "=", setId)
+      .where("org_id", "=", orgId)
       .executeTakeFirstOrThrow();
     return Number(r.n);
   }
@@ -596,6 +598,7 @@ export class EvalSetsService {
       .selectFrom("eval_cases")
       .select("id")
       .where("set_id", "=", setId)
+      .where("org_id", "=", orgId)
       .where("source_run_id", "=", input.runId)
       .executeTakeFirst();
     if (exists) throw caseExists();
@@ -603,7 +606,8 @@ export class EvalSetsService {
       throw new ApiError("eval.run_not_finished", "The run has not finished yet");
     }
     const { maxCasesPerSet } = this.config.get().evals;
-    if ((await this.caseCount(this.db, setId)) >= maxCasesPerSet) throw tooMany(maxCasesPerSet);
+    if ((await this.caseCount(this.db, orgId, setId)) >= maxCasesPerSet)
+      throw tooMany(maxCasesPerSet);
   }
 
   /**
@@ -655,7 +659,7 @@ export class EvalSetsService {
   ): Promise<{ added: number; skipped: number }> {
     const set = await this.liveSet(orgId, setId);
     const { maxCasesPerSet, maxCaseBytes } = this.config.get().evals;
-    const room = maxCasesPerSet - (await this.caseCount(this.db, setId));
+    const room = maxCasesPerSet - (await this.caseCount(this.db, orgId, setId));
     if (room <= 0) throw tooMany(maxCasesPerSet);
 
     let q = this.db
@@ -675,6 +679,7 @@ export class EvalSetsService {
               .selectFrom("eval_cases as e")
               .select(sql`1`.as("one"))
               .where("e.set_id", "=", setId)
+              .where("e.org_id", "=", orgId)
               .whereRef("e.source_run_id", "=", "r.id"),
           ),
         ),
@@ -786,22 +791,29 @@ export class EvalSetsService {
 async function stopAndPurgeRuns(
   db: KernelSchemaDb,
   budget: Pick<EvalBudget, "skipRun">,
+  orgId: string,
   setId: string,
 ): Promise<void> {
   const runs = await db
     .updateTable("eval_runs")
     .set({ status: "cancelled", finished_at: sql`now()` })
     .where("set_id", "=", setId)
+    .where("org_id", "=", orgId)
     .where("status", "in", ["queued", "running"])
     .returning("id")
     .execute();
   for (const r of runs) {
     await budget.skipRun(r.id);
   }
-  const all = db.selectFrom("eval_runs").select("id").where("set_id", "=", setId);
+  const all = db
+    .selectFrom("eval_runs")
+    .select("id")
+    .where("set_id", "=", setId)
+    .where("org_id", "=", orgId);
   const convs = db
     .selectFrom("conversations")
     .select("id")
+    .where("org_id", "=", orgId)
     .where("kind", "=", "eval")
     .where("eval_run_id", "in", all);
   const threads = db.selectFrom("runs").select("id").where("conversation_id", "in", convs);
@@ -809,9 +821,14 @@ async function stopAndPurgeRuns(
   await db.deleteFrom("lg_checkpoints").where("thread_id", "in", threads).execute();
   await db
     .deleteFrom("conversations")
+    .where("org_id", "=", orgId)
     .where("kind", "=", "eval")
     .where("eval_run_id", "in", all)
     .execute();
   // 用例快照是复制来的对话内容：硬删（结果随之级联删除），与单个移除用例一致
-  await db.deleteFrom("eval_cases").where("set_id", "=", setId).execute();
+  await db
+    .deleteFrom("eval_cases")
+    .where("set_id", "=", setId)
+    .where("org_id", "=", orgId)
+    .execute();
 }

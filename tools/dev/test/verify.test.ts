@@ -35,6 +35,7 @@ const basePlan: Plan = {
   e2e: false,
   docker: false,
   bootstrapNetwork: false,
+  deviceImagePinNetwork: false,
 };
 const find = (plan: Plan, id: string) => verifySteps(plan, "abc").find((s) => s.id === id);
 
@@ -89,6 +90,13 @@ describe("verifySteps", () => {
       "packages/kernel/",
       "tools/dev/",
     ]);
+  });
+
+  it("runs the network half of check:device-image-pin when the plan says so", () => {
+    expect(
+      find({ ...basePlan, deviceImagePinNetwork: true }, "device-image-pin-network")?.cmd,
+    ).toEqual(["pnpm", "check:device-image-pin", "--network"]);
+    expect(find(basePlan, "device-image-pin-network")).toBeUndefined();
   });
 
   it("runs the network half of check:bootstrap when the plan says so", () => {

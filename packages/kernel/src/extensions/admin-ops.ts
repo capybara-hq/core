@@ -12,6 +12,7 @@ import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
@@ -681,29 +682,32 @@ function fallbackView(
 
 /** 插件名已留下的数据：权限快照、部署配置、任一组织的配置，或插件 schema（`plugin_<name>`）。 */
 async function hasRetainedData(db: KernelSchemaDb, name: string): Promise<boolean> {
-  const schema = await sql<{
-    x: number;
-  }>`SELECT 1 AS x FROM pg_namespace WHERE nspname = ${pluginSchemaName(name)}`.execute(db);
-  if (schema.rows.length > 0) return true;
-  const hit = await db
-    .selectFrom("extension_permission_snapshots")
-    .select(sql<number>`1`.as("x"))
-    .where("plugin", "=", name)
-    .union(
-      db
-        .selectFrom("extension_deployment_configs")
-        .select(sql<number>`1`.as("x"))
-        .where("plugin", "=", name),
-    )
-    .union(
-      db
-        .selectFrom("extension_org_configs")
-        .select(sql<number>`1`.as("x"))
-        .where("plugin", "=", name),
-    )
-    .limit(1)
-    .executeTakeFirst();
-  return hit !== undefined;
+  return asPlatform("whether any org kept config for a plugin", async () => {
+    const schema = await sql<{
+      x: number;
+    }>`SELECT 1 AS x FROM pg_namespace WHERE nspname = ${pluginSchemaName(name)}`.execute(db);
+    if (schema.rows.length > 0) return true;
+    // org-filter: whether any org kept config for the plugin name (a deployment-wide existence check)
+    const hit = await db
+      .selectFrom("extension_permission_snapshots")
+      .select(sql<number>`1`.as("x"))
+      .where("plugin", "=", name)
+      .union(
+        db
+          .selectFrom("extension_deployment_configs")
+          .select(sql<number>`1`.as("x"))
+          .where("plugin", "=", name),
+      )
+      .union(
+        db
+          .selectFrom("extension_org_configs")
+          .select(sql<number>`1`.as("x"))
+          .where("plugin", "=", name),
+      )
+      .limit(1)
+      .executeTakeFirst();
+    return hit !== undefined;
+  });
 }
 
 const required = (name: string) =>

@@ -1,5 +1,64 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.34
+
+### Patch Changes
+
+- 53a09aa: Docker mode no longer needs the host's `/usr/bin/python3`: the trusted helpers (background output
+  spool, recovered-output finalization, skills preparation, the interpreter probe of the environment
+  fingerprint) run in short-lived helper containers of the pinned sandbox image with no network, a
+  read-only root, no capabilities and only the step's host paths mounted. The environment
+  fingerprint moves to version 2 (docker mode fingerprints the image's interpreter and shell), so
+  every docker device re-binds once after the upgrade; retained output of background tasks started
+  before the upgrade reads as lost (spools now live in the connection's `output` directory). The
+  `host_python_missing` login error is gone.
+- e90bc58: Docker mode runs the sandbox image by a pinned digest instead of a tag and attests the device
+  container's image against the pin at every bind (fail closed). `CAPYBARA_DEVICE_IMAGE_REPOSITORY`
+  points the repository at a digest-preserving mirror. An architecture without a pinned image
+  platform is refused at login and start (`docker_unsupported_architecture`).
+
+## 0.1.0-rc.33
+
+### Patch Changes
+
+- 95d479c: Linux machine reach reads the files beside a denied path. The SDK's restricted Linux launcher
+  accepts exact file read roots (`roots.readFiles`, exec mode only): each an O_PATH, no-follow
+  descriptor the consumer pinned, re-checked on that descriptor as a regular file with its recorded
+  identity (a link, directory, FIFO or other type is refused; one renamed, deleted or given a second
+  name since the pin is skipped), and granted file reads only, without directory
+  listing or execution. The device's read carve now grants the non-denied regular files directly
+  inside each directory it expands (for example `~/.bashrc` when `~/.ssh` is denied,
+  `~/.cargo/config.toml` beside `~/.cargo/credentials`); the agent pins each without following links
+  and grants nothing for one that changed type or has a second name. Directories alone above 4096
+  refuse machine reach; files fill the rest of the cap and the agent's open-file budget, and the
+  rest are dropped. Comparisons with denied paths are case-insensitive for directories too, and
+  canonical forms of denied paths are read as bytes. The device deny list adds database, X11 and
+  other credential files (`~/.pgpass`, `~/.my.cnf`, `~/.Xauthority`, `~/.ICEauthority`,
+  `~/.config/hub`, `~/.boto`, `~/.dockercfg`, `~/.smbcredentials`, `~/.terraformrc`,
+  `~/.yarnrc.yml`, `~/.databrickscfg`, `~/.passwd-s3fs`, `~/.erlang.cookie`, `~/.curlrc`,
+  `~/.wgetrc`, `~/.claude.json`) and more shell, REPL and editor histories.
+  `SANDBOX_RUNTIME_SOURCE` now has three parts so a runtime change no longer has to land in step
+  with the images that stage it: `files` (the staged set, unchanged: still the `linux-sandbox.py`
+  released images stage, so device-docker keeps working), `current` (the newest bytes, which
+  `capybara-device` runs; this launcher declares `features: ["fileReadRoots"]`) and `accepted` (by
+  name, every digest a staged copy may have). The device sends file roots only to a launcher that
+  declares them; otherwise the files stay unreadable as before. New types `SandboxRuntimeFile` and
+  `SandboxRuntimeFeature`.
+
+## 0.1.0-rc.32
+
+### Patch Changes
+
+- 8dafd84: Docker mode checks for the host's /usr/bin/python3 at login and at start, and refuses with what is
+  missing, why it is needed and how to install it; a refused login stores nothing.
+- bcc7da3: Linux: every operation start reads `/proc/self/mountinfo` and denies each path where another mount
+  shows a denied directory or something inside it (a bind mount, a mount of an ancestor's subtree,
+  covered content, a file system mounted inside it and elsewhere, an overlay layer, a loop image),
+  under every project reach, so the carve no longer leaves a bind mount of `~/.ssh` readable. Mounts of
+  unknown content (an automount point with nothing on it, an unresolvable overlay layer, an unreadable
+  loop image) are denied wholesale. A mount table it cannot read or decide refuses machine project
+  reach with the cause (fixing it restores machine reach); `ceiling` shows the cause.
+
 ## 0.1.0-rc.31
 
 ### Minor Changes

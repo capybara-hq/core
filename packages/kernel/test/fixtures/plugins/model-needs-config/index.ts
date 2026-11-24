@@ -1,8 +1,12 @@
-import { defineExtension, MODEL_PROVIDER_EXTENSION_POINT_V2 } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
+  platformOnly,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
-/** Required deployment config: without `apiKey` the extension is pending configuration. */
-const Config = z.object({ apiKey: z.string().min(1) });
+/** Required platform-only config: without `apiKey` the extension is pending configuration. */
+const Config = z.object({ apiKey: platformOnly(z.string().min(1)) });
 
 /**
  * A model provider that needs configuration before it loads (the readiness tests: a provider

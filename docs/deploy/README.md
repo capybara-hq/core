@@ -123,7 +123,9 @@ There are two ways to create the first super admin:
 
 A failing `init` (for example PostgreSQL older than 15, a bootstrap package that can't be downloaded,
 or one that doesn't match its pin) keeps `api`, `worker` and `gateway` from
-starting. Read its output with `docker compose logs init`.
+starting. Read its output with `docker compose logs init`. When upgrading a running deployment, run
+`docker compose run --rm init` before `docker compose up -d`, so a failing `init` doesn't take the
+serving containers down ([upgrade.md](upgrade.md#docker-compose)).
 
 ### Services, ports and networks
 
@@ -395,14 +397,18 @@ Every extension is installed from a plugin package (an npm-pack tgz with
 `.capybara-plugin/plugin.json`). Installing, enabling, upgrading and disabling extensions don't need a
 restart.
 
-**Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
-`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512,
-as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
-`deepseek`, `bailian`, `ark`, `connector-mcp`, `connector-openapi`, `jina`, `device-docker`,
-`device-local` and `todo`. They are installed and enabled on the deployment, but each organization
-gets them off until an org admin switches them on (catalog scope `optional`), except `device-local`
-(local devices), which the manifest gives `scope: "all"`: on in every organization, and an org
-admin may switch it off. A super admin may disable or uninstall any of them, and owns its scope
+**Bootstrap plugins.** The fixed set every deployment needs is pinned in
+`packages/kernel/bootstrap.json` by exact version and sha512: `object-store-s3` (storage) as a
+required entry, `skills-core` and `file-preview` as builtin entries (on in every organization; a
+change to this set is a maintainer decision, checked by `check:bootstrap`). The same manifest pins
+optional preinstalls: `openai-compatible`, `anthropic`, `openai`, `deepseek`, `bailian`, `ark`,
+`connector-mcp`, `connector-openapi`, `jina`, `device-docker`, `device-local` and `todo`. They are
+installed and enabled on the deployment, but each organization gets them off until an org admin
+switches them on (catalog scope `optional`), except `device-local` (local devices), which the
+manifest gives `scope: "all"`: on in every organization, and an org admin may switch it off. On a
+deployment where `openai-compatible` was still a required entry, it keeps scope `all` when it
+becomes optional: it stays on in every organization (now through an org install) until an org
+admin switches it off. A super admin may disable or uninstall any of them, and owns its scope
 after the first import; an uninstalled one is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
@@ -424,10 +430,12 @@ into the CLI any more.
 - `capybara bootstrap` installs them: compose's `init` runs it after `migrate` (`--dir <path>` overrides
   the offline directory). When the step is already done it reads nothing and needs no network.
   Otherwise, holding a PostgreSQL advisory lock (replicas starting together run it once, and download
-  once), it obtains and checks every package before writing anything: `bootstrap.download_failed`
-  (the registry could not be reached or refused, naming the registry and the offline directory),
-  `bootstrap.integrity_mismatch` (a download that differs from the pin) or `bootstrap.missing_file`
-  name the plugin. Each one is imported into the catalog with source
+  once), it obtains and checks every package before writing anything. A download that fails
+  transiently (a dropped connection, a timeout, HTTP 408 / 429 / 5xx) is retried up to three times,
+  about 8 seconds in all per package; then, or at once for a 404, a refused connection or a
+  refusal by the network rules, `bootstrap.download_failed` (naming the registry and the offline
+  directory), `bootstrap.integrity_mismatch` (a download that differs from the pin) or
+  `bootstrap.missing_file` name the plugin. Each one is imported into the catalog with source
   `bootstrap`, installed, approved (audited `extension.permissions_approved`, source `bootstrap`) and
   enabled. A run is recorded once per manifest (table `bootstrap_runs`, audit `bootstrap.completed`),
   so later runs print `Bootstrap already done ...; nothing to do.` If a required plugin fails to
@@ -529,9 +537,11 @@ other plugins) go through the catalog:
   (manifests, mirrors, archive and git sources, git imports) is https only, follows no redirects and
   may reach only public addresses; the connection is pinned to the address that was checked. Two
   settings change that:
-  - `marketplaces.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
-    an internal GitLab or mirror. List an internal DNS name **by name**
-    (`CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
+  - `net.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
+    an internal GitLab, mirror or identity provider. It is the one list of internal hosts for every
+    outbound request the kernel resolves itself: these downloads, npm registry downloads, OAuth
+    requests (discovery, client registration, token endpoints) and git identity checks. List an internal DNS name **by name**
+    (`CAPYBARA_NET__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
     (`10.20.0.0/16`) match only URLs that use an IP literal (`https://10.20.0.5/…`), never a DNS name
     that resolves into the range. Link-local and cloud metadata addresses (`169.254.0.0/16`,
     `fe80::/10`) are always refused, and very broad prefixes (shorter than /8 for IPv4, /16 for IPv6)
@@ -551,20 +561,20 @@ other plugins) go through the catalog:
   - the kernel does **not** resolve the target's hostname: the proxy does. Blocking private,
     internal and metadata addresses for DNS names is then **the proxy's job**: configure it to refuse
     them (most corporate proxies do). The kernel still refuses IP-literal URLs in private ranges
-    (unless `marketplaces.allowPrivateHosts` lists them) and link-local IP literals, and still applies
+    (unless `net.allowPrivateHosts` lists them) and link-local IP literals, and still applies
     `marketplaces.allowedHosts`, https-only and no redirects.
   - `net.noProxy` (default `[]`; e.g. `CAPYBARA_NET__NO_PROXY='["gitlab.corp.example"]'`) lists
     hostnames or IPs that go direct (an entry also matches its subdomains). Those are resolved locally
-    and pinned as above, so an internal host listed there also needs `marketplaces.allowPrivateHosts`.
+    and pinned as above, so an internal host listed there also needs `net.allowPrivateHosts`.
     Loopback hosts never use the proxy.
   - npm registry downloads (`packages.npmRegistry`) use the proxy too; an internal https registry
-    goes in `net.noProxy` (its origin is trusted, so it needs no `marketplaces.allowPrivateHosts`
+    goes in `net.noProxy` (its origin is trusted, so it needs no `net.allowPrivateHosts`
     entry). An `http://` registry is fetched directly.
 
   This is also the fix for a fake-IP DNS resolver (one that answers every name with an address in
   `198.18.0.0/15`, as some proxy and VPN clients do): without a proxy every host looks private and
   downloads are refused, so either set `net.httpsProxy`, give the kernel real DNS, or list each host
-  by name in `marketplaces.allowPrivateHosts`.
+  by name in `net.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash
@@ -824,6 +834,23 @@ Offline route (no access to ghcr.io): build the images locally with
 GitHub), or `docker build -t capybara-sandbox:latest https://github.com/capybara-hq/plugins.git#<commit>:plugins/sandbox-docker/image`
 and `.../egress-proxy` for `capybara-sandbox-egress:latest`; then set `CAPYBARA_SANDBOX__IMAGE` and the
 extension's `egressProxyImage` to those tags.
+
+## Row level security (`db.rls`)
+
+Every kernel table with an `org_id` column has a row level security policy (migration 0182; spec
+`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`), shipped dark: no table enables row level
+security yet, so the policies apply to nothing (a later migration enables them). `db.rls`
+(`CAPYBARA_DB__RLS`) decides what the kernel's connections carry: `off` (default) sends nothing;
+`scoped` sets each request's, job's or run's org on its connection (one extra round trip per pool
+query and per transaction); `enforce` also asks the policies to filter by it, which takes effect
+only once row level security is enabled on the tables: until then the kernel logs an error at start.
+
+- PostgreSQL never applies RLS to a **superuser** or a role with **BYPASSRLS**. The compose file's
+  `POSTGRES_USER` is a superuser, so `enforce` will need the kernel to connect as a role without
+  either (it may own the `capybara` schema); the kernel logs an error at start when it enforces on
+  such a role.
+- With `db.rls` other than `off`, no PgBouncer in transaction pooling mode in front of the kernel:
+  the scope of a read outside a transaction is a session setting.
 
 ## Rotating the master key
 

@@ -623,7 +623,7 @@ export class ScheduledTasksService {
     if (opts.conversationId !== undefined) {
       tasks = await this.postingInto(orgId, tasks, opts.conversationId);
     }
-    return this.withLastRuns(tasks);
+    return this.withLastRuns(orgId, tasks);
   }
 
   /**
@@ -728,13 +728,17 @@ export class ScheduledTasksService {
   }
 
   /** Each task with its latest settled non-trial run, in one query. */
-  private async withLastRuns(plain: ScheduledTask[]): Promise<ScheduledTaskListItem[]> {
+  private async withLastRuns(
+    orgId: string,
+    plain: ScheduledTask[],
+  ): Promise<ScheduledTaskListItem[]> {
     if (plain.length === 0) return [];
     const tasks = await this.withAccounts(plain);
     const rows = await this.db.db
       .selectFrom("scheduled_task_runs")
       .select(["task_id", "status", "skip_reason", "fired_at", "scheduled_for"])
       .distinctOn("task_id")
+      .where("org_id", "=", orgId)
       .where(
         "task_id",
         "in",
@@ -956,6 +960,7 @@ export class ScheduledTasksService {
       .selectFrom("scheduled_task_runs")
       .select(["task_id", "fired_at", "scheduled_for", "missing_grants", "status", "error"])
       .distinctOn("task_id")
+      .where("org_id", "=", orgId)
       .where("task_id", "in", ids)
       .where("trial", "=", false)
       .where("status", "<>", "skipped")

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../src/lib/conversations";
 import { hasBackgroundTasks } from "../src/lib/query/conversation";
-import { buildTimeline, type TimelineEntry } from "../src/lib/timeline";
+import { type BackgroundTaskLive, buildTimeline, type TimelineEntry } from "../src/lib/timeline";
 
 /**
  * Background Bash in the timeline (background Bash spec §5): a background `Bash` row carries its
@@ -153,5 +153,97 @@ describe("background Bash in the timeline", () => {
     expect(hasBackgroundTasks(LAUNCH.slice(0, 2))).toBe(true);
     expect(hasBackgroundTasks([finished(1)])).toBe(true);
     expect(hasBackgroundTasks([ev(1, "subagent_dispatched", { subagentId: "ch1" })])).toBe(true);
+  });
+});
+
+describe("a background start whose launch is being reconciled (#790)", () => {
+  const UNCONFIRMED_TEXT =
+    'Background task bt_abc234 ("Start the dev server") may have started, but its start was not confirmed; it is being reconciled under its original identity and will not be started again. Check TaskList before starting it again.';
+  const unconfirmed = (seq: number) =>
+    ev(seq, "tool_result", {
+      step: 0,
+      callId: "k1",
+      toolKey: "Bash",
+      content: UNCONFIRMED_TEXT,
+      isError: true,
+      view: { kind: "launch_unconfirmed", taskId: "bt_abc234" },
+    });
+  const LOG: ConversationEvent[] = [...LAUNCH.slice(0, 2), unconfirmed(3)];
+  const live = (t: Partial<BackgroundTaskLive>): ReadonlyMap<string, BackgroundTaskLive> =>
+    new Map([
+      ["bt_abc234", { status: "running", starting: false, exitCode: null, lostReason: null, ...t }],
+    ]);
+  const rowOf = (events: ConversationEvent[], tasks?: ReadonlyMap<string, BackgroundTaskLive>) =>
+    rows(buildTimeline(events, [], new Map(), "en", tasks ? { backgroundTasks: tasks } : {}))[0];
+
+  it("reads reconciling, not failed, and links its task", () => {
+    const row = rowOf(LOG);
+    expect(row?.row.status).toBe("done");
+    expect(row?.row.notice).toBe("reconciling");
+    expect(row?.row.error).toBeUndefined();
+    expect(row?.row.detail?.errorText).toBeUndefined();
+    expect(row?.row.detail?.output).toBe(UNCONFIRMED_TEXT);
+    expect(row?.background).toEqual({ taskId: "bt_abc234" });
+  });
+
+  it("stays reconciling while the list says the start is still unconfirmed", () => {
+    expect(rowOf(LOG, live({ starting: true }))?.row.notice).toBe("reconciling");
+  });
+
+  it("a start the list confirmed running is a done start", () => {
+    const row = rowOf(LOG, live({}));
+    expect(row?.row.status).toBe("done");
+    expect(row?.row.notice).toBeUndefined();
+  });
+
+  it("a task that ran and ended (its finish in the log) is a done start", () => {
+    const row = rowOf([...LOG, finished(4, { status: "completed", exitCode: 0 })]);
+    expect(row?.row.status).toBe("done");
+    expect(row?.row.notice).toBeUndefined();
+  });
+
+  it("a task that ran and was lost later is still a done start", () => {
+    const row = rowOf([
+      ...LOG,
+      finished(4, { status: "lost", exitCode: null, lostReason: "sandbox_recreated" }),
+    ]);
+    expect(row?.row.status).toBe("done");
+  });
+
+  it("a launch given up (its finish in the log) shows the real outcome: failed", () => {
+    const row = rowOf([
+      ...LOG,
+      finished(4, { status: "lost", exitCode: null, lostReason: "launch_unknown" }),
+    ]);
+    expect(row?.row.status).toBe("failed");
+    expect(row?.row.notice).toBeUndefined();
+    expect(row?.row.error).toBe(UNCONFIRMED_TEXT);
+    expect(row?.row.detail?.errorText).toBe(UNCONFIRMED_TEXT);
+  });
+
+  it("a launch the list shows refused or given up is failed, without a finish in the log", () => {
+    expect(
+      rowOf(LOG, live({ status: "failed", lostReason: "launch refused: denied" }))?.row.status,
+    ).toBe("failed");
+    expect(rowOf(LOG, live({ status: "lost", lostReason: "launch_revoked" }))?.row.status).toBe(
+      "failed",
+    );
+    // ended after running (an exit code): the start happened
+    expect(rowOf(LOG, live({ status: "failed", exitCode: 1 }))?.row.status).toBe("done");
+  });
+
+  it("an error result without the view still fails (older logs, other errors)", () => {
+    const row = rowOf([
+      ...LAUNCH.slice(0, 2),
+      ev(3, "tool_result", {
+        step: 0,
+        callId: "k1",
+        toolKey: "Bash",
+        content: UNCONFIRMED_TEXT,
+        isError: true,
+      }),
+    ]);
+    expect(row?.row.status).toBe("failed");
+    expect(row?.row.notice).toBeUndefined();
   });
 });

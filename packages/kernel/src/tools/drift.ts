@@ -16,6 +16,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -337,6 +338,8 @@ export class ToolDrift {
    * 把新快照与当前工具行比对并写入（调用方已在事务内锁住连接器行：`mandatory`）；返回按名排序的变化。
    * 规则见文件头。待复核的新定义也写进 `tool_specs`（内容寻址，只增不改）。
    */
+  // org-filter: app is the connector row the caller read with its org filter and holds locked
+  // FOR UPDATE (applyChecked, ConnectorsService's refresh); connector_tools has no org column
   @Transactional({ propagation: "mandatory" })
   async apply(
     app: { id: string; tools_synced_at: Date | null },
@@ -589,6 +592,7 @@ export class ToolDrift {
       .selectFrom("connectors")
       .select(["id", "tools_synced_at"])
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .where("status", "=", "active")
       .forUpdate()
@@ -637,39 +641,47 @@ export class ToolDrift {
    * 周期扫描：给本周期内还没检查过的活动连接器（`tools_synced_at` 为空或早于半个周期）各投递一次检查，
    * jobId 按周期桶去重——即使扫描在多个副本上重复执行，每个连接器每周期也只检查一次。返回投递数。
    */
+  // org-filter: deployment-wide sweep across all orgs (LockedInterval in ToolJobs); each job
+  // carries its connector's own org_id
   async scan(): Promise<number> {
-    const interval = this.intervalMs();
-    const bucket = Math.floor(Date.now() / interval);
-    const apps = await this.db
-      .selectFrom("connectors")
-      .select(["id", "org_id"])
-      .where("deleted_at", "is", null)
-      .where("status", "=", "active")
-      .where((eb) =>
-        eb.or([
-          eb("tools_synced_at", "is", null),
-          eb(
-            "tools_synced_at",
-            "<",
-            sql<Date>`now() - ${Math.floor(interval / 2)}::bigint * interval '1 millisecond'`,
-          ),
-        ]),
-      )
-      .orderBy("id")
-      .execute();
-    for (const a of apps) {
-      if (a.id.includes(":")) continue;
-      await this.queue.add(
-        DRIFT_CONNECTOR_JOB,
-        { orgId: a.org_id, connectorId: a.id, trigger: "schedule" } satisfies DriftConnectorJobData,
-        {
-          jobId: driftScanJobId(a.id, bucket),
-          attempts: 1,
-          removeOnComplete: { age: Math.ceil(interval / 1000) },
-          removeOnFail: KEEP_FAILED,
-        },
-      );
-    }
-    return apps.length;
+    return asPlatform("deployment-wide sweep across all orgs", async () => {
+      const interval = this.intervalMs();
+      const bucket = Math.floor(Date.now() / interval);
+      const apps = await this.db
+        .selectFrom("connectors")
+        .select(["id", "org_id"])
+        .where("deleted_at", "is", null)
+        .where("status", "=", "active")
+        .where((eb) =>
+          eb.or([
+            eb("tools_synced_at", "is", null),
+            eb(
+              "tools_synced_at",
+              "<",
+              sql<Date>`now() - ${Math.floor(interval / 2)}::bigint * interval '1 millisecond'`,
+            ),
+          ]),
+        )
+        .orderBy("id")
+        .execute();
+      for (const a of apps) {
+        if (a.id.includes(":")) continue;
+        await this.queue.add(
+          DRIFT_CONNECTOR_JOB,
+          {
+            orgId: a.org_id,
+            connectorId: a.id,
+            trigger: "schedule",
+          } satisfies DriftConnectorJobData,
+          {
+            jobId: driftScanJobId(a.id, bucket),
+            attempts: 1,
+            removeOnComplete: { age: Math.ceil(interval / 1000) },
+            removeOnFail: KEEP_FAILED,
+          },
+        );
+      }
+      return apps.length;
+    });
   }
 }

@@ -72,6 +72,7 @@ import { versionUsable } from "./catalog-items.js";
 import {
   agentDefinitionRefs,
   componentOn,
+  connectorTemplateChoice,
   connectorTemplateState,
   connectorTemplatesOn,
   type DefinitionRefs,
@@ -81,6 +82,7 @@ import {
   pluginFactsOf,
   referenceIds,
   switchOf,
+  type TemplateSwitch,
   themeIdClashes,
 } from "./component-state.js";
 import { LIVE_INSTALL_STATUSES } from "./install-status.js";
@@ -111,8 +113,12 @@ export interface ConnectorInstallInput {
  */
 export interface PluginInstallInput {
   connectors?: Record<string /* templateId */, ConnectorInstallInput>;
-  /** The org config of the plugin's extension (used only when this install enables it). */
-  extensionConfig?: Record<string, unknown>;
+  /**
+   * The connector templates the org chose to switch on with the install (the install wizard's choose step):
+   * exactly these are on afterwards, the others switched off in the org. Absent: the templates on
+   * in the org now. Root installs only (dependencies get no input).
+   */
+  templatesOn?: string[];
 }
 
 /**
@@ -286,8 +292,12 @@ export interface InstallPlan {
   sourceFormat: SourceFormat;
   /** The plugin's own extension, to enable in the org. */
   extension: string | null;
-  extensionConfig: Record<string, unknown> | undefined;
   templates: { id: string; file: ConnectorTemplateFile }[];
+  /**
+   * The org switches of the plugin's connector templates the install writes with its completion
+   * (the org's `templatesOn` choice); empty without a choice.
+   */
+  templateSwitches: TemplateSwitch[];
   /** The connector inputs built from the templates (empty for a preflight without input). */
   connectors: Map<string, CreateConnectorInput>;
   /** The names of the plugin's skills (from each SKILL.md). */
@@ -787,12 +797,21 @@ export class PluginInstaller {
     const allTemplates = await readCatalogTemplates(this.storage, v);
     // Only the connector templates on in the org make connectors (ruling P2-6): one switched off
     // there, outside its own scope or disabled is skipped (input given for it is ignored)
-    const on = await connectorTemplatesOn(
-      this.db,
-      orgId,
-      itemId,
-      allTemplates.map((t) => t.id),
-    );
+    // The org's choice (`templatesOn`), else the templates on in the org now
+    let on: Set<string>;
+    let templateSwitches: TemplateSwitch[] = [];
+    if (input?.templatesOn !== undefined) {
+      const choice = await this.templateChoice(orgId, itemId, allTemplates, input.templatesOn, at);
+      on = choice.on;
+      templateSwitches = choice.switches;
+    } else {
+      on = await connectorTemplatesOn(
+        this.db,
+        orgId,
+        itemId,
+        allTemplates.map((t) => t.id),
+      );
+    }
     const templates = allTemplates.filter((t) => on.has(t.id));
     const deps = [
       ...declared,
@@ -807,7 +826,7 @@ export class PluginInstaller {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
       }
     } else {
-      this.checkInput(manifest, allTemplates, input, at);
+      this.checkInput(allTemplates, input, at);
       for (const ct of templates) {
         // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
         if (actor === null) throw systemNeedsInput(manifest.name);
@@ -854,13 +873,40 @@ export class PluginInstaller {
       row: v,
       sourceFormat: v.source_format,
       extension,
-      extensionConfig: input?.extensionConfig,
       templates,
+      templateSwitches,
       connectors,
       skillNames,
       agentTemplates,
       dependencies,
     };
+  }
+
+  /**
+   * Checks the org's choice of connector templates (`templatesOn`): every id is one of the
+   * plugin's templates and can come on in the org, and no template of a builtin plugin is left
+   * out (`validation_failed` at `templatesOn`). Returns the chosen ids and the switches to write.
+   */
+  private async templateChoice(
+    orgId: string,
+    itemId: string,
+    allTemplates: { id: string }[],
+    chosen: string[],
+    at: string,
+  ): Promise<{ on: Set<string>; switches: TemplateSwitch[] }> {
+    const ids = new Set(allTemplates.map((t) => t.id));
+    for (const id of chosen) {
+      if (!ids.has(id))
+        throw fail(`${at}templatesOn`, `No such connector template in this plugin: ${id}`);
+    }
+    const choice = await connectorTemplateChoice(this.db, orgId, itemId, new Set(chosen));
+    if (choice.refused.length > 0) {
+      throw fail(
+        `${at}templatesOn`,
+        `These connector templates cannot be chosen in this organization (disabled, not offered, or built in): ${choice.refused.join(", ")}`,
+      );
+    }
+    return { on: choice.on, switches: choice.switches };
   }
 
   /**
@@ -1162,10 +1208,7 @@ export class PluginInstaller {
         await this.enableExtension(
           orgId,
           plan.extension,
-          {
-            enabled: true,
-            ...(plan.extensionConfig !== undefined && { config: plan.extensionConfig }),
-          },
+          { enabled: true },
           actor,
           opts.actorTokenId,
           { viaItem: itemId, ...(nested && { approvedBy }) },
@@ -1362,6 +1405,7 @@ export class PluginInstaller {
         ),
       }))
       .where("id", "=", installId)
+      .where("org_id", "=", orgId)
       .where("status", "=", "installing")
       .executeTakeFirst();
     // The install row was already cleaned up as stale: do not audit plugin.org_installed, roll
@@ -1376,6 +1420,43 @@ export class PluginInstaller {
     // The org switch is written with the install, in one transaction under the org lock
     if (ctx.switchOn === true && ctx.parent === undefined) {
       await upsertOrgSwitch(t, orgId, itemId, true, actor);
+    }
+    // The org's choice of connector templates is written with the install too: the chosen ones on,
+    // the ones left out off (they stay available on the connectors page)
+    for (const sw of plan.templateSwitches) {
+      await t
+        .insertInto("component_org_switches")
+        .values({
+          kind: "connector_template",
+          component_id: sw.componentId,
+          org_id: orgId,
+          enabled: sw.to,
+          updated_by: actor,
+        })
+        .onConflict((oc) =>
+          oc.columns(["kind", "component_id", "org_id"]).doUpdateSet({
+            enabled: sw.to,
+            updated_by: actor,
+            updated_at: sql<Date>`now()` as unknown as Date,
+          }),
+        )
+        .execute();
+      await audit(t, {
+        actorAccountId: actor,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        orgId,
+        action: "component.org_switched",
+        target: sw.componentId,
+        detail: {
+          kind: "connector_template",
+          name: sw.name,
+          plugin: sw.plugin,
+          from: sw.from,
+          to: sw.to,
+          viaInstall: installId,
+          ...opts.auditDetail,
+        },
+      });
     }
     await audit(t, {
       actorAccountId: actor,
@@ -1413,6 +1494,7 @@ export class PluginInstaller {
       .updateTable("plugin_installs")
       .set({ status: "failed", error: JSON.stringify({ step, code }) })
       .where("id", "=", installId)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(t, {
       actorAccountId: actor,
@@ -1457,20 +1539,12 @@ export class PluginInstaller {
     return name;
   }
 
-  /** The input only names the plugin's template ids, and an extension config needs an extension. */
-  private checkInput(
-    manifest: PluginManifest,
-    templates: { id: string }[],
-    input: PluginInstallInput,
-    at: string,
-  ): void {
+  /** The input only names the plugin's template ids. */
+  private checkInput(templates: { id: string }[], input: PluginInstallInput, at: string): void {
     const ids = new Set(templates.map((c) => c.id));
     for (const k of Object.keys(input.connectors ?? {})) {
       if (!ids.has(k))
         throw fail(`${at}connectors.${k}`, "No such connector template in this plugin");
-    }
-    if (input.extensionConfig !== undefined && !manifest.extension) {
-      throw fail(`${at}extensionConfig`, "This plugin has no extension");
     }
   }
 
@@ -1950,7 +2024,11 @@ export class PluginInstaller {
       if (outcome === "removed") addRemoved({ kind: c.kind, ref: c.ref });
       else if (outcome !== "gone") keep(outcome);
     }
-    await t.deleteFrom("plugin_installs").where("id", "=", installId).execute();
+    await t
+      .deleteFrom("plugin_installs")
+      .where("id", "=", installId)
+      .where("org_id", "=", orgId)
+      .execute();
     await audit(t, {
       actorAccountId: actor,
       ...(ctx.opts.actorTokenId !== undefined && { actorTokenId: ctx.opts.actorTokenId }),

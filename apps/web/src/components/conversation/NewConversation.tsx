@@ -35,6 +35,7 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
 import { HOME_PATH } from "../../lib/routes";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { DeviceCreateDialog } from "../DeviceCreateDialog";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
@@ -442,6 +443,15 @@ export function useNewConversationPage(
           </Text>
         ) : null}
         {permission.dialog}
+        {device.create && devices ? (
+          // the device picker's "New device": the Devices page's dialog (it opens the new device)
+          <DeviceCreateDialog
+            orgId={orgId}
+            providers={devices.providers}
+            defaultProvider={devices.defaultProvider}
+            onClose={device.create.onClose}
+          />
+        ) : null}
         {sent && blocked ? (
           <Text variant="small" tone="muted">
             {t("sendAfterCreate")}

@@ -202,10 +202,10 @@ export interface FieldMeta {
   /** Saving applies at once (no reload). */
   hot?: boolean;
   /**
-   * What orgs may do with the field (the platform form's level tag): `hidden` (orgs never see it),
-   * `readonly` or `override`.
+   * What orgs may do with the field (the platform form's level tag): `platform` (platform only,
+   * orgs never see it) or `override` (orgs may override it).
    */
-  level?: "hidden" | "readonly" | "override";
+  level?: "platform" | "override";
   /**
    * The field shows the platform's value (an org form: a read-only field, or an overridable one
    * while the org follows the platform), labelled as set by the platform.

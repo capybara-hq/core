@@ -422,8 +422,7 @@ describe("project knowledge at run start", () => {
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
       {
-        // activated: the kernel read route only (its callback checks the root before any read)
-        withSandbox: () => Promise.reject(new Error("no raw device use once activated")),
+        // the kernel read route (its callback checks the root before any read)
         withKernelRead: (async (_opts: unknown, _read: unknown, fn: (...a: unknown[]) => unknown) =>
           fn(
             {},
@@ -610,10 +609,6 @@ describe("project knowledge at run start", () => {
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
       {
-        withSandbox: async () => {
-          asked++;
-          throw new Error("the device must not be asked");
-        },
         withKernelRead: async () => {
           asked++;
           throw new Error("the device must not be asked");

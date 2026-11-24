@@ -337,6 +337,30 @@ export function appliedLacksHost(a: AppliedLimits | null | undefined, b: Applied
   return b.network.hosts.some((host) => !a.network.hosts.some((p) => coversHost(p, host)));
 }
 
+/**
+ * Whether the network a provider reports its instance enforces (`installed`, from
+ * `DeviceProvider.appliedNetwork`) may allow more than the kernel's record `recorded` (issue
+ * #766): the open public network over an allowlist, or a host no recorded entry covers (hosts
+ * compare lowercased). An unknown record (null) compares with `target`. Anything that is not a
+ * network the kernel can read (null: the provider cannot tell; a malformed answer) counts as wider:
+ * the remedy only applies the desired limits again, so failing closed never widens. Equal or
+ * narrower is false. The mode is not a dimension ({@link AppliedLimits}).
+ */
+export function installedWider(
+  installed: unknown,
+  recorded: AppliedLimits | null,
+  target: AppliedLimits,
+): boolean {
+  const against = recorded ?? target;
+  if (typeof installed !== "object" || installed === null) return true;
+  const { kind, hosts } = installed as { kind?: unknown; hosts?: unknown };
+  if (kind === "open-public") return against.network.kind !== "open-public";
+  if (kind !== "allowlist" || !Array.isArray(hosts)) return true;
+  if (!hosts.every((h): h is string => typeof h === "string")) return true;
+  const network = normalizeNetwork({ kind: "allowlist", hosts });
+  return appliedWider({ mode: against.mode, network }, against);
+}
+
 const isMode = (v: unknown): v is SandboxMode => v === "auto" || v === "sandbox";
 
 function appliedFrom(v: unknown): AppliedLimits | null {
@@ -357,16 +381,20 @@ function appliedFrom(v: unknown): AppliedLimits | null {
  * `device_instances.instance_limits` read leniently: `applied` is what the instance runs with
  * (null: unknown, e.g. an instance made before auto mode recorded tiers, which differs from every
  * effective value); `unapplied` is a newer value the provider could not apply without a file
- * reset.
+ * reset; `pending` is the target of an `update` the kernel sent and never heard back from (device
+ * update fencing design §7.2): the instance enforces `applied`, or `pending` if that update landed,
+ * so the next exclusive use applies the desired limits again.
  */
 export function readInstanceLimits(v: unknown): {
   applied: AppliedLimits | null;
   unapplied: AppliedLimits | null;
+  pending: AppliedLimits | null;
 } {
-  if (typeof v !== "object" || v === null) return { applied: null, unapplied: null };
+  if (typeof v !== "object" || v === null) return { applied: null, unapplied: null, pending: null };
   return {
     applied: appliedFrom(v),
     unapplied: appliedFrom((v as { unapplied?: unknown }).unapplied),
+    pending: appliedFrom((v as { pending?: unknown }).pending),
   };
 }
 
@@ -374,10 +402,12 @@ export function readInstanceLimits(v: unknown): {
 export function instanceLimitsJson(
   applied: AppliedLimits | null,
   unapplied?: AppliedLimits,
+  pending?: AppliedLimits,
 ): string | null {
-  if (applied === null && unapplied === undefined) return null;
+  if (applied === null && unapplied === undefined && pending === undefined) return null;
   return JSON.stringify({
     ...(applied !== null && appliedOf(applied)),
     ...(unapplied !== undefined && { unapplied: appliedOf(unapplied) }),
+    ...(pending !== undefined && { pending: appliedOf(pending) }),
   });
 }

@@ -170,8 +170,20 @@ describe("hooks, more", () => {
   });
 
   it("every design name is a package export", () => {
-    expect(DESIGN_NAMES.length).toBe(13);
+    expect(DESIGN_NAMES.length).toBe(14);
     expect(DESIGN_NAMES.filter((n) => !(n in exports))).toEqual([]);
+  });
+
+  it("the fake host's Switch is a switch a test flips", () => {
+    const flips: boolean[] = [];
+    renderWithFakeHost(
+      <exports.Switch checked={false} onChange={(next) => flips.push(next)} label="Sound" />,
+      { slot: "shell.overlay" },
+    );
+    const sw = screen.getByRole("switch", { name: "Sound" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    sw.click();
+    expect(flips).toEqual([true]);
   });
 });
 

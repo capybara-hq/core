@@ -267,6 +267,9 @@ function judgeInputOf(
 }
 
 @Injectable()
+// org-filter: queue worker of cap-kernel-evals: every id it uses is the kernel-written job payload
+// (runId, caseId of one run in one org, enqueued by EvalRunsService.start) or a result row of that
+// run it claimed; no caller input reaches these queries
 export class EvalWorker {
   private worker: Worker<EvalJobData> | undefined;
   /** 本进程在执行的任务：停机时中止，任务回到队列。 */

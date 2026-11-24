@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type DeviceProvider, ToolError } from "@capybara-hq/plugin-sdk";
+import { type DeviceProvider, StaleFenceError, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -13,6 +13,8 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import { SandboxLockLostError } from "../../src/sandbox/leases.js";
+import { appliedOf } from "../../src/sandbox/modes.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   mapSandboxError,
@@ -27,7 +29,9 @@ import {
   fakeSandboxState,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  removeFakeSandbox,
   setFakeSandboxDelays,
+  setFakeSandboxNetwork,
   setFakeSandboxRefuseOpenEgress,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -486,6 +490,325 @@ describe("a changed mode on use", () => {
       pendingNextUse: false,
       pendingFilesReset: true,
     });
+  });
+});
+
+// device update fencing design §7, §9: every lifecycle call carries the holder's committed
+// fencing generation; the intent of an update is recorded before it is sent
+describe("fencing token and update intent", () => {
+  const hostsOf = (rec: Record<string, unknown> | null | undefined) =>
+    (rec?.network as { hosts?: string[] } | undefined)?.hosts ?? [];
+  /** The row as another connection sees it now (only committed writes). */
+  const committed = async () =>
+    (
+      await sql<{ generation: number; instance_limits: Record<string, unknown> | null }>`
+        SELECT generation, instance_limits FROM capybara.device_instances
+        WHERE device_id = ${deviceId}`.execute(raw)
+    ).rows[0];
+
+  it("create and update carry the generation already committed, and the intent precedes the update", async () => {
+    const base = fake({ updateMode: "updated" });
+    const seen: { op: string; token: number; row: Awaited<ReturnType<typeof committed>> }[] = [];
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      create: async (a: Parameters<DeviceProvider["create"]>[0]) => {
+        seen.push({ op: "create", token: a.fence.token, row: await committed() });
+        return base.create(a);
+      },
+      update: async (...a: Parameters<NonNullable<DeviceProvider["update"]>>) => {
+        seen.push({ op: "update", token: a[3].token, row: await committed() });
+        return (base.update as NonNullable<DeviceProvider["update"]>)(...a);
+      },
+    });
+    const s = service();
+    await setAutoMode("off");
+    await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
+    });
+    await use(s);
+    expect(seen.map((c) => c.op)).toEqual(["create", "update"]);
+    for (const c of seen) expect(c.token).toBe(c.row?.generation);
+    // the intent: what was in force stays `applied`, the target is `pending` while the call runs
+    const during = seen[1]?.row?.instance_limits;
+    expect(hostsOf(during)).not.toContain("example.com");
+    expect(hostsOf(during?.pending as Record<string, unknown> | undefined)).toContain(
+      "example.com",
+    );
+    // answered `updated`: recorded, the intent cleared
+    const after = await record();
+    expect(after?.pending).toBeUndefined();
+    expect(hostsOf(after)).toContain("example.com");
+  });
+
+  it("a StaleFenceError from update is a lost lease: nothing recreated, nothing recorded", async () => {
+    const base = fake({ updateMode: "updated" });
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      update: async () => {
+        throw new StaleFenceError("a newer holder applied a higher token", { current: 99 });
+      },
+    });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
+    });
+    await expect(use(s)).rejects.toBeInstanceOf(SandboxLockLostError);
+    expect(await ops("create")).toHaveLength(1);
+    expect(await ops("destroy")).toHaveLength(0);
+    // a stale holder touches nothing more (no quarantine of what a newer holder may use)
+    expect(await ops("suspend")).toHaveLength(0);
+    expect(await status()).toBe("running");
+    expect((await fakeSandboxMeta(root, first.h.id))?.limits.network).not.toMatchObject({
+      hosts: expect.arrayContaining(["example.com"]),
+    });
+    // never recorded as applied; the intent stays for the next holder
+    const rec = await record();
+    expect(hostsOf(rec)).not.toContain("example.com");
+    expect(rec?.pending).toBeDefined();
+    // here the record still holds (only the provider is ahead), so the kernel raised its generation
+    expect(warned).toContain(
+      "a device provider holds a fence token ahead of the device record; generation raised so the next use applies again",
+    );
+  });
+
+  it("a StaleFenceError from create while the record still holds heals: the generation passes the provider's token", async () => {
+    const base = fake();
+    let refuse = true;
+    const tokens: number[] = [];
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      create: async (a: Parameters<DeviceProvider["create"]>[0]) => {
+        tokens.push(a.fence.token);
+        if (refuse) {
+          refuse = false;
+          throw new StaleFenceError("the instance holds a newer token", { current: 1000 });
+        }
+        return base.create(a);
+      },
+    });
+    const s = service();
+    // this holder still holds the record: the provider is ahead of it (a restored database)
+    await expect(use(s)).rejects.toBeInstanceOf(SandboxLockLostError);
+    expect((await committed())?.generation).toBeGreaterThan(1000);
+    expect(warned).toContain(
+      "a device provider holds a fence token ahead of the device record; generation raised so the next use applies again",
+    );
+    await use(s);
+    expect(tokens[1]).toBeGreaterThan(1000);
+  });
+
+  it("the lifecycle reconcile records its intent; an answer that changed nothing restores the record, a failure keeps it", async () => {
+    const base = fake({ updateMode: "recreate" });
+    let answer: "recreate" | "throw" = "recreate";
+    const during: (Record<string, unknown> | null | undefined)[] = [];
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      update: async (...a: Parameters<NonNullable<DeviceProvider["update"]>>) => {
+        during.push((await committed())?.instance_limits);
+        if (answer === "throw") throw new Error("provider down");
+        return (base.update as NonNullable<DeviceProvider["update"]>)(...a);
+      },
+    });
+    await setAutoMode("off");
+    await use(service());
+    const before = await record();
+    const policy = await service().devicePolicy({ orgId, deviceId });
+    const target = appliedOf({ mode: policy.mode, network: policy.network });
+    const s = service(undefined, undefined, {
+      snapshots: {
+        reconcileHeld: async () => ({ state: "reconcile-required", action: "reset-files", target }),
+      },
+    });
+    await s.reconcileLimits(deviceId);
+    expect(during[0]?.pending).toBeDefined();
+    expect(await record()).toEqual(before);
+    answer = "throw";
+    await s.reconcileLimits(deviceId);
+    expect((await record())?.pending).toBeDefined();
+  });
+
+  it("a recorded intent whose applied limits match the desired ones is applied again at the next use", async () => {
+    provider = fake({ updateMode: "updated" });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    const rec = await record();
+    // an update sent by a holder that never heard back, to limits the org since left again
+    await sql`UPDATE capybara.device_instances
+      SET instance_limits = ${JSON.stringify({
+        ...rec,
+        pending: { ...rec, network: { kind: "allowlist", hosts: ["wide.example"] } },
+      })}::jsonb WHERE device_id = ${deviceId}`.execute(raw);
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(true);
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    const updates = (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.limits.network).toMatchObject({ kind: "allowlist" });
+    expect(
+      updates[0]?.limits.network.kind === "allowlist" && updates[0].limits.network.hosts,
+    ).not.toContain("wide.example");
+    expect((await record())?.pending).toBeUndefined();
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
+  });
+});
+
+/**
+ * Issue #766: a provider whose `update` cannot honor the fence (E2B) may end up enforcing a stale
+ * replica's wider list after the newer holder's change. The instance's installed network
+ * (`appliedNetwork`) is read at a lifecycle step under the exclusive lease; wider than the record
+ * (or unknown) applies the desired limits again, equal or narrower changes nothing.
+ */
+describe("installed network wider than the record (#766)", () => {
+  const hostsOf = (rec: Record<string, unknown> | null | undefined) =>
+    ((rec?.network as { hosts?: string[] } | undefined)?.hosts ?? []).slice();
+  const later = () => new Date(Date.now() + 24 * 60 * 60_000);
+  const updates = async () => (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
+  const sentHosts = (e: Awaited<ReturnType<typeof updates>>[number] | undefined) =>
+    e?.limits.network.kind === "allowlist" ? e.limits.network.hosts : ["<open-public>"];
+
+  /** A running instance on the org's allowlist, then suspended (its next use resumes it). */
+  async function suspendedOnAllowlist(o: FakeSandboxOptions = {}) {
+    provider = fake({ updateMode: "updated", reportsNetwork: true, ...o });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    const rec = await record();
+    // a new instance is read only when its limits are fixed at its file system (createSettled)
+    const reads = (await ops("applied-network")).length;
+    expect(reads).toBe(o.limitsApplyAt === "fileSystem" ? 1 : 0);
+    // a shared use of the running instance reads nothing: the check is on lifecycle steps only
+    await use(s);
+    expect(await ops("applied-network")).toHaveLength(reads);
+    await s.suspendIdle(later());
+    return { s, first, rec };
+  }
+
+  it("a resumed instance allowing a host the record lacks gets the desired list again", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist();
+    await setFakeSandboxNetwork(root, first.h.id, {
+      kind: "allowlist",
+      hosts: [...hostsOf(rec), "wide.example"],
+    });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect(again.info).toMatchObject({ fresh: false, restarted: false });
+    expect(await ops("applied-network")).toHaveLength(1);
+    const sent = await updates();
+    expect(sent).toHaveLength(1);
+    expect(sentHosts(sent[0])).toEqual(hostsOf(rec));
+    expect(hostsOf((await fakeSandboxMeta(root, first.h.id))?.limits as never)).not.toContain(
+      "wide.example",
+    );
+    expect(await record()).toEqual(rec);
+    expect(await ops("create")).toHaveLength(1);
+  });
+
+  it("a resumed instance on the open public network while the record is a list is narrowed", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist();
+    await setFakeSandboxNetwork(root, first.h.id, { kind: "open-public", hosts: [] });
+    await use(s);
+    const sent = await updates();
+    expect(sent).toHaveLength(1);
+    expect(sentHosts(sent[0])).toEqual(hostsOf(rec));
+    expect((await fakeSandboxMeta(root, first.h.id))?.limits.network.kind).toBe("allowlist");
+  });
+
+  it("an equal or narrower installed network changes nothing", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist();
+    await use(s);
+    expect(await ops("applied-network")).toHaveLength(1);
+    await s.suspendIdle(later());
+    await setFakeSandboxNetwork(root, first.h.id, {
+      kind: "allowlist",
+      hosts: hostsOf(rec).slice(1),
+    });
+    await use(s);
+    expect(await ops("applied-network")).toHaveLength(2);
+    expect(await updates()).toHaveLength(0);
+    expect(await record()).toEqual(rec);
+  });
+
+  it("an installed network the provider cannot tell, or a failed read, applies the desired list again", async () => {
+    const { s, rec } = await suspendedOnAllowlist();
+    const base = provider;
+    let answer: "null" | "throw" = "null";
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      appliedNetwork: async () => {
+        if (answer === "throw") throw new Error("backend unavailable");
+        return null;
+      },
+    });
+    await use(s);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec)]);
+    await s.suspendIdle(later());
+    answer = "throw";
+    await use(s);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec), hostsOf(rec)]);
+    expect(warned).toContain(
+      "cannot read the instance's installed network; applying the desired limits again",
+    );
+    expect((await record())?.pending).toBeUndefined();
+  });
+
+  it("limits fixed at the file system (E2B): a wider installed network is narrowed through update", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({ limitsApplyAt: "fileSystem" });
+    await setFakeSandboxNetwork(root, first.h.id, {
+      kind: "allowlist",
+      hosts: [...hostsOf(rec), "wide.example"],
+    });
+    await use(s);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec)]);
+    expect(hostsOf((await fakeSandboxMeta(root, first.h.id))?.limits as never)).not.toContain(
+      "wide.example",
+    );
+    expect(await ops("create")).toHaveLength(1);
+  });
+
+  it("limits fixed at the file system: an update that cannot narrow a wider instance stops it and keeps the intent", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({
+      limitsApplyAt: "fileSystem",
+      updateMode: "recreate",
+    });
+    await setFakeSandboxNetwork(root, first.h.id, { kind: "open-public", hosts: [] });
+    const err = await use(s).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/enforces a wider network than its recorded limits/);
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+    expect(await status()).toBe("suspended");
+    // never recorded unapplied (that would claim the instance runs the record); the intent stays
+    const after = await record();
+    expect(after?.unapplied).toBeUndefined();
+    expect(hostsOf(after?.pending as Record<string, unknown> | undefined)).toEqual(hostsOf(rec));
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(true);
+  });
+
+  it("limits fixed at the file system: an instance created on kept files that came up wider is narrowed", async () => {
+    const { s, first, rec } = await suspendedOnAllowlist({ limitsApplyAt: "fileSystem" });
+    // the instance is gone; the next one comes up with the network its file system kept (E2B)
+    await removeFakeSandbox(root, first.h.id);
+    const base = provider;
+    provider = Object.assign(Object.create(base) as DeviceProvider, {
+      create: async (a: Parameters<DeviceProvider["create"]>[0]) => {
+        const h = await base.create(a);
+        await setFakeSandboxNetwork(root, h.id, { kind: "open-public", hosts: [] });
+        return h;
+      },
+    });
+    const again = await use(s);
+    expect(again.h).not.toEqual(first.h);
+    expect((await updates()).map(sentHosts)).toEqual([hostsOf(rec)]);
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.network.kind).toBe("allowlist");
+    expect((await record())?.pending).toBeUndefined();
+  });
+
+  it("an instance-bound provider's new instance is not read: create applied the desired limits", async () => {
+    const { s, first } = await suspendedOnAllowlist();
+    await removeFakeSandbox(root, first.h.id);
+    await use(s);
+    expect(await ops("create")).toHaveLength(2);
+    expect(await ops("applied-network")).toHaveLength(0);
+    expect(await updates()).toHaveLength(0);
   });
 });
 

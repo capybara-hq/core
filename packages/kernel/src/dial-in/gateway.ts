@@ -15,6 +15,7 @@ import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { asPlatform, withOrgScope, withoutOrgScope } from "../infra/database/org-scope.js";
 import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -303,7 +304,24 @@ class DeviceConnection {
     return this.identity.deviceId;
   }
 
+  /**
+   * Runs `fn` in the device's org (RLS spec §5.3: per-event work of a long connection enters the
+   * org its credential resolved). Socket listeners run in the emitter's async context, not the
+   * one that registered them, so each enters it again.
+   */
+  private inOrg<T>(fn: () => T): T {
+    // never throw inside a socket listener: a device without an org (impossible by the schema)
+    // runs unscoped, which fails closed
+    const { orgId } = this.identity;
+    return orgId ? withOrgScope(orgId, fn) : withoutOrgScope(fn);
+  }
+
   start(): void {
+    // the timers armed here keep this scope (timers carry their creator's async context)
+    this.inOrg(() => this.arm());
+  }
+
+  private arm(): void {
     const { socket } = this;
     this.helloTimer = setTimeout(
       () => this.close(DEVICE_CLOSE.protocol, "hello expected"),
@@ -326,10 +344,10 @@ class DeviceConnection {
         : Buffer.isBuffer(data)
           ? data.toString("utf8")
           : Buffer.from(data).toString("utf8");
-      void this.onFrame(text);
+      void this.inOrg(() => this.onFrame(text));
     });
     socket.on("close", () => {
-      void this.shutdown();
+      void this.inOrg(() => this.shutdown());
     });
   }
 
@@ -1018,6 +1036,11 @@ export class DialInGateway {
    * before the upgrade): null for an unknown or revoked credential.
    */
   async admit(credential: string): Promise<DialInAdmission> {
+    // the credential names the device and its org: looked up before any org is known
+    return asPlatform("dial-in credential lookup", () => this.admitted(credential));
+  }
+
+  private async admitted(credential: string): Promise<DialInAdmission> {
     const identity = await this.machines.authenticate(credential);
     if (identity === null) return null;
     const serving = await this.handlers.forDevice(identity.deviceId);

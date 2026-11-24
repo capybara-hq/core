@@ -63,6 +63,7 @@ export function enabledExtensionsQuery(db: KernelSchemaDb, orgId: string) {
  * `plugin`): `.innerJoin(enabledExtensionsByOrg(db).as("en"), (j) => j.onRef("en.org_id", …)…)`.
  * Soft-deleted orgs are included, as their org config rows are; callers filter `orgs.deleted_at`.
  */
+// org-filter: every (org, extension) pair by design; callers join it on their own org column
 export function enabledExtensionsByOrg(db: KernelSchemaDb) {
   return db
     .selectFrom("extension_org_configs as eoc")

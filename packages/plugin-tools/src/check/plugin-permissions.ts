@@ -21,13 +21,15 @@ const WRAPPERS = new Set([
   "TSTypeAssertion",
 ]);
 
-function unwrap(n: Node): Node {
+/** The expression under parentheses and TypeScript-only wrappers (`as`, `satisfies`, `!`). */
+export function unwrap(n: Node): Node {
   let cur = n;
   while (WRAPPERS.has(cur.type)) cur = cur.expression as Node;
   return cur;
 }
 
-const propName = (p: Node): string | undefined => {
+/** The static key of an object property (`a: …`, `"a": …`); undefined when computed. */
+export const propName = (p: Node): string | undefined => {
   if (p.type !== "Property" || p.computed) return undefined;
   const k = p.key as Node;
   if (k.type === "Identifier") return k.name as string;

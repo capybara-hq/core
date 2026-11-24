@@ -19,7 +19,7 @@ import {
   resolveConnection,
   unreadableConnections,
 } from "./connections.js";
-import type { HostProbes } from "./host-python.js";
+import type { HostProbes } from "./docker-host.js";
 import { stamped } from "./log-timestamp.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
@@ -48,7 +48,7 @@ export interface CliEnv {
   stdinIsTTY?: boolean;
   /** Whether the OS sandbox can run here, for `login` (default: the runtime's check). */
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
-  /** Whether a path is an executable file (default: the file system), for docker mode's python3. */
+  /** The host facts of the docker-mode check (default: this machine). */
   hostProbes?: HostProbes;
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
@@ -72,7 +72,7 @@ async function askOnTerminal(question: string): Promise<string> {
  * generation, built for this host (macOS, Linux) or the device's container (docker mode). Loaded
  * on demand: only start needs them.
  */
-export function defaultCreateStaged(stateDir: string, home: string) {
+export function defaultCreateStaged(stateDir: string, home: string, log?: (line: string) => void) {
   // the program state root is the machine directory holding every connection (this one included)
   const stateRoot = machineDirOfConnection(stateDir);
   return async (cred: Credential, store: PolicyStore): Promise<StagedDevice> => {
@@ -84,7 +84,15 @@ export function defaultCreateStaged(stateDir: string, home: string) {
         deviceId: cred.deviceId,
         policy: () => store.current(),
       });
-      return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home, container });
+      return createStagedDevice({
+        cred,
+        stateDir,
+        stateRoot,
+        policy: store,
+        home,
+        container,
+        ...(log && { log }),
+      });
     }
     return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home });
   };
@@ -269,7 +277,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         stateDir: dir,
         out: stamped(out),
         err: stamped(err),
-        createStaged: io.createStaged ?? defaultCreateStaged(dir, home),
+        createStaged: io.createStaged ?? defaultCreateStaged(dir, home, stamped(out)),
         ...(io.env && { env: io.env }),
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),

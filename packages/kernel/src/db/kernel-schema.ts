@@ -339,7 +339,9 @@ export interface ExtensionOrgConfigsTable {
   plugin: string;
   org_id: string;
   enabled: Generated<boolean>;
-  /** null when there is no config. */
+  /**
+   * Retired (the org-only config): neither read nor written; dropped by a later contract migration.
+   */
   config: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;
@@ -743,6 +745,8 @@ export interface ConnectorsTable {
    * re-enables exactly the connectors it disabled.
    */
   disabled_by_plugin_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0181: the connector's own description, set by an org admin (null: none). */
+  description: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**

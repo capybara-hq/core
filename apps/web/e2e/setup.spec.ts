@@ -38,7 +38,7 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
   await expect(page.getByRole("heading", { level: 1, name: zh.chat.setup.title })).toBeVisible();
   // the e2e stack loads model-fake, but a provider is on only in the orgs that enabled it: the model
   // step leads the org's admin to Settings → Models, where turning model-fake on completes it (through the
-  // UI alone). The step's action is a link and the page's "Turn on" a button: a click lands only once
+  // UI alone). The step's action is a link and the page's on / off control a switch: a click lands only once
   // the page is hydrated (a cold `next dev` compile can keep the first document's script from
   // running for a while)
   await hydrated(page);
@@ -50,7 +50,7 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
   await expect(page.getByText(zh.models.org.providers.orgFixable)).toBeVisible();
   await hydrated(page);
   await page
-    .getByRole("button", {
+    .getByRole("switch", {
       name: zh.models.org.providers.enableLabel.replace("{plugin}", "模拟模型"),
     })
     .click();

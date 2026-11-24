@@ -22,6 +22,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const spin = (size = 12) => `<span class="r-spin" role="img" aria-label="进行中">${icon("spinner", size)}</span>`;
   const chev = (open) => icon(open ? "chevron-down" : "chevron-right", 12);
   const failWord = '<span class="r-fail-word">失败</span>';
+  // A call that returned an error (§2.4, §6.16.9): the error dot, never the word.
+  const errorDot = (label = "调用返回了错误") =>
+    `<span class="r-error-dot" data-part="error-dot" role="img" aria-label="${label}" title="${label}"></span>`;
   const QUICK_LABEL = "常用任务";
   const iconBtn = (name, label, o = {}) =>
     `<button class="r-icon-btn"${o.step ? ` data-step="${o.step}"` : ""}${o.pressed ? ' aria-pressed="true"' : ""}${state(o.state)} aria-label="${esc(label)}">${icon(name, o.size || 16)}</button>`;
@@ -115,7 +118,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         : t.extra
           ? ` <span class="r-faint">· ${esc(t.extra)}</span>`
           : "";
-    const fail = t.status === "failed" ? ` ${failWord}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
+    const fail = t.status === "failed" ? ` ${errorDot()}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
     return `<span class="r-tlabel"${t.tooltip ? ` title="${esc(t.tooltip)}"` : ""}>${name}${key}${extra}${fail}</span>${toolMeta(t)}`;
   }
 
@@ -200,7 +203,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (by.edit.length === 1) parts.push(`已修改 <span class="r-em">${esc(by.edit[0].keyArg)}</span>`);
     else if (by.edit.length) parts.push(`已修改 ${by.edit.length} 个文件`);
     const failed = rows.filter((r) => r.status === "failed").length;
-    const fail = failed ? `<span class="r-fail-word">（${failed} 个失败）</span>` : "";
+    const fail = failed
+      ? ` <span class="r-tool-errors" data-part="tool-errors">${errorDot(`${failed} 个调用返回了错误`)}<span aria-hidden="true">${failed}</span></span>`
+      : "";
     const added = by.edit.reduce((n, r) => n + (r.added || 0), 0);
     const removed = by.edit.reduce((n, r) => n + (r.removed || 0), 0);
     const diff = by.edit.length ? `<span class="r-faint"> · +${added} −${removed}</span>` : "";
@@ -1091,12 +1096,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   function propSection(o) {
-    const sec = (title, value, body, extra = "") =>
-      `<section class="r-psec"${extra}><div class="r-psec-head"><span class="r-muted">${esc(title)}</span>${value ? `<span>${value}</span>` : ""}</div>${body}</section>`;
+    const sec = (title, value, body, extra = "", hint = false) =>
+      `<section class="r-psec"${extra}><div class="r-psec-head"><span class="r-psec-title"><span class="r-muted">${esc(title)}</span>${hint ? `<span class="r-psec-hint" aria-label="关于「${esc(title)}」">${icon("info", 12)}</span>` : ""}</span>${value ? `<span>${value}</span>` : ""}</div>${body}</section>`;
     switch (o.state) {
       case "context": {
         const X = P.context;
-        return sec("上下文", `${X.ratio}%`, `<div class="r-meter" role="meter" aria-valuenow="${X.ratio}"><span style="width:${X.ratio}%"></span></div><div class="r-muted r-small">${esc(X.model)} · ${esc(X.sandbox)}</div><div class="r-muted r-small">连接器：${X.connectors.map(esc).join("、")}</div>`);
+        return sec("上下文", `${X.ratio}%`, `<div class="r-meter" role="meter" aria-valuenow="${X.ratio}"><span style="width:${X.ratio}%"></span></div><dl class="r-ctx-facts"><div class="r-ctx-row"><dt>模型</dt><dd>${esc(X.model)}</dd></div><div class="r-ctx-row"><dt>设备</dt><dd>${esc(X.device)}</dd></div><div class="r-ctx-row"><dt>连接器</dt><dd>${X.connectors.map(esc).join("、")}</dd></div><div class="r-ctx-row"><dt>上次运行</dt><dd>${X.lastRun.map(esc).join(" · ")}</dd></div></dl>`);
       }
       case "files":
         return sec(
@@ -1110,6 +1115,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
           "后台任务",
           "",
           `${B.running.map((r) => `<div class="r-bgrow">${spin()}<span class="r-ellipsis r-grow">${esc(r.name)}</span><span class="r-muted">${esc(r.duration)}</span>${iconBtn("square", K.stop, { step: "dense", size: 12 })}</div>`).join("")}<a class="r-pmore" href="#">已完成 ${B.completed} 项${icon("chevron-right", 12)}</a>`,
+          "",
+          true,
         );
       }
       case "extension":

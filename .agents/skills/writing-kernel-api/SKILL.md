@@ -175,7 +175,7 @@ Deployment-level endpoints always go under `/api/v1/admin/*`, with `@SuperAdmin(
 
 - Super admins **cannot read conversations** by default: trajectories and evals go only to org admins and agent owners (C1); do not add endpoints under `/admin` that read conversation content.
 - The package upload route takes raw bytes (`application/octet-stream`, limit `packages.maxBytes`, with the bodyLimit raised separately in Fastify); the web layer proxy has its own limit `CAPYBARA_WEB_MAX_PACKAGE_BYTES`, see `docs/config.md`.
-- Every download from a URL a marketplace or an admin supplied (marketplace manifests, mirrors, archive and git sources, git marketplaces, direct git import) goes through `packages/kernel/src/net` (`safeFetch`: https, no redirects, public addresses only unless `marketplaces.allowPrivateHosts`, connection pinned to the checked address); never call `fetch` on such a URL directly. Refusals map to `marketplace.private_address` / `marketplace.redirect` (422), with the refused host in `details` when known.
+- Every download from a URL a marketplace or an admin supplied (marketplace manifests, mirrors, archive and git sources, git marketplaces, direct git import) goes through `packages/kernel/src/net` (`safeFetch`: https, no redirects, public addresses only unless `net.allowPrivateHosts`, connection pinned to the checked address); never call `fetch` on such a URL directly. Refusals map to `marketplace.private_address` / `marketplace.redirect` (422), with the refused host in `details` when known.
 - The CLI reuses the same providers (`capybara admin grant|revoke <login>`, `capybara extensions …`) through `openKernelCli`, so domain classes must not depend on request context.
 
 ### Audit and personal tokens
@@ -200,6 +200,13 @@ async create(@ZBody(WidgetCreateBody) body: z.infer<typeof CreateSchema>) {}
 ```
 
 `createZodDto` (`src/infra/validation/create-zod-dto.ts`) turns a zod schema into a named DTO class; `@ZBody(Dto)` / `@ZQuery(Dto)` / `@ZParam(Dto)` pass the DTO to the global validation pipe (no decorator metadata, so a bare `@Body()` typed with a DTO is never validated and `kc-zod-pipe` rejects it) and feed the OpenAPI document (`http.swagger`, served at `/docs`). A failure returns 400 `validation_failed` with `details` as the list of field problems. Route parameters that need validation go through a `@ZParam` DTO too (decision R20), so `details[].path` names the parameter. Give every string an upper bound (`max`) to prevent oversized input.
+
+Declare every controller method's return type (`Promise<{ items: ItemView[] }>`, a union for
+answers that differ): `pnpm check:web-api-parity` compares it, and the `z.input` of the
+`@ZBody` schema, with the web's hand-written types, so a renamed, dropped or narrowed field fails
+there naming the route; fix the web type it names in the same change. A view field read from a
+column typed `string` that only holds an enum is typed as that enum (`kind: ReportBodyInput["kind"]`),
+or the web cannot switch on it safely.
 
 ## People in responses
 
@@ -231,6 +238,35 @@ Production runs multiple replicas, and consecutive requests from the same user l
 | Same-process notifications | `KernelEvents` only when the event may be lost and something re-derives it (a sweep, the next append); cross-replica ones go over the kernel bus |
 
 Do not use in-process Maps, timers or local events to hold cross-request state. The dual-replica acceptance test (`packages/testing/test/m1-acceptance.test.ts`) exposes this kind of defect.
+
+## The org scope (row level security)
+
+Every query on a table with an `org_id` column runs under an **org scope** (RLS spec
+`docs/superpowers/specs/2026-11-23-postgres-rls-design.md`, issue #115): `infra/database/org-scope.ts`
+keeps it in AsyncLocalStorage, and the kernel pool (`infra/database/scoped-dialect.ts`) copies it onto
+each connection (`capybara.org_id`, `capybara.scope`, `capybara.rls`) when `db.rls` is `scoped` or
+`enforce`: transaction-local right after `BEGIN`, session-level on the first query of a pool checkout.
+Services never set it. It is set once, at entry points:
+
+| Entry point | Scope |
+|---|---|
+| An `@OrgAction` route (`OrgGuard`) | the guarded org (`bindRequestScope`) |
+| A `@SuperAdmin` route without `@OrgAction` (`AuthGuard`) | platform |
+| An extension route (`plugin-dispatch.ts`) | its caller's org; platform for a super admin's embed |
+| `runJob` (every queue processor, extension `ctx.queue` jobs too) | the job data's `orgId`; else platform when the queue passes `{ platform: reason }`; else none |
+| `@LockedCron` / `@LockedInterval` and `ScheduledRuns.runNow` | platform |
+| A claimed run (`RunExecution.withClaim`) | the run's org |
+| A channel inbound event, a dial-in connection's frames | the connection's or device's org once resolved |
+| The start sequence, CLI admin commands | platform |
+
+Deployment-wide work inside one of them wraps exactly the deployment-wide part in
+`asPlatform(reason, fn)` (a sweep over every org, a lookup made before any org is known, a query marked
+`// org-filter: deployment-wide …`); a sweep that handles each org in turn enters `withOrgScope(orgId,
+fn)` per org. A scope entered inside a transaction applies to the queries made in it. A callback that
+outlives its registrant (a shared connection's listener) starts with `withoutOrgScope`. Tests that seed
+through a raw pool are unaffected (`db.rls` is `off` by default); `setUnscopedQueryCheck` reports
+unscoped queries on org-scoped tables under the scoped pool. No PgBouncer transaction pooling unless
+`db.rls` is `off` (the session-level setting needs a session).
 
 ## Owed work: the transactional outbox
 

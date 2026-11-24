@@ -14,6 +14,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { readGitTreeAndOids } from "../../src/catalog/git-source.js";
 import { MarketplacesService } from "../../src/catalog/marketplaces.service.js";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
 import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
@@ -546,6 +547,15 @@ describe("git entries of the extra bootstrap manifest", () => {
     const files = themeFiles("theme-off", "1.0.0");
     const commit = await gone.commit("off", under("plugins/theme-off", files));
     const url = gone.url("off");
+    const { trees } = await readGitTreeAndOids(
+      { url, commit, path: "plugins/theme-off" },
+      {
+        net: { allowInsecureLoopback: true, allowPrivateHosts: [], trustedOrigins: [] },
+        maxBytes: 10 * 1024 * 1024,
+        signal: new AbortController().signal,
+        trees: () => ["plugins/theme-off"],
+      },
+    );
     await gone.stop();
     const entry = await gitEntry("theme-off", "off", commit, files);
     await writeFile(join(offlineDir, "any-name.tgz"), await packOf(files));
@@ -554,7 +564,8 @@ describe("git entries of the extra bootstrap manifest", () => {
     expect(r.results).toEqual([
       { name: "theme-off", action: "imported", version: "1.0.0", extra: true },
     ]);
-    // recorded as the managed marketplace's source all the same (no tree oid offline)
+    // recorded as the managed marketplace's source all the same, with the tree oid of the verified
+    // files (what a git read records), so a later commit elsewhere in the repo is no content change
     const u = new URL(url);
     expect(await versions()).toEqual([
       expect.objectContaining({
@@ -565,8 +576,42 @@ describe("git entries of the extra bootstrap manifest", () => {
           host: u.host,
           path: "plugins/theme-off",
           commit,
+          tree: trees.get("plugins/theme-off"),
         }),
       }),
     ]);
+  });
+
+  it("installed offline, a later commit elsewhere in the repo is no content change of the plugin", async () => {
+    const { commit, theme, ext } = await distCommit();
+    const entry = await gitEntry("theme-x", "dist", commit, theme);
+    await writeFile(join(offlineDir, "theme-x.tgz"), await packOf(theme));
+    await run(manifestOf([entry]), offlineDir);
+    // the next commit touches only the README
+    await srv.commit("dist", {
+      ".capybara-plugin/marketplace.json": marketplaceJson("1.0.0"),
+      "README.md": "# dist, edited\n",
+      ...under("plugins/theme-x", theme),
+      ...under("plugins/ext-x", ext),
+    });
+    const refresh = await admin({
+      method: "POST",
+      url: "/api/v1/admin/marketplaces/config:dist/refresh",
+    });
+    expect(refresh.statusCode, refresh.body).toBe(200);
+    const res = await admin({
+      method: "GET",
+      url: "/api/v1/admin/marketplaces/entries?sourceId=config:dist",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "theme-x",
+          adopted: expect.anything(),
+          contentChanged: false,
+        }),
+      ]),
+    );
   });
 });

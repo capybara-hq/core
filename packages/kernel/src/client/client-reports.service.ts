@@ -3,6 +3,7 @@ import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { ReportBodyInput } from "./client.schemas.js";
@@ -81,11 +82,14 @@ export class ClientReports {
 
   /** Deletes the reports last seen more than {@link REPORT_RETENTION_DAYS} days ago; the count. */
   async prune(): Promise<number> {
-    const r = await this.db.db
-      .deleteFrom("extension_client_reports")
-      .where("last_at", "<", sql<Date>`now() - make_interval(days => ${REPORT_RETENTION_DAYS})`)
-      .executeTakeFirst();
-    return Number(r.numDeletedRows);
+    return asPlatform("deployment-wide retention sweep over every org's reports", async () => {
+      // org-filter: deployment-wide retention sweep over every org's reports (maintenance job)
+      const r = await this.db.db
+        .deleteFrom("extension_client_reports")
+        .where("last_at", "<", sql<Date>`now() - make_interval(days => ${REPORT_RETENTION_DAYS})`)
+        .executeTakeFirst();
+      return Number(r.numDeletedRows);
+    });
   }
 }
 

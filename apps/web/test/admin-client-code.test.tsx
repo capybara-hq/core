@@ -554,7 +554,6 @@ describe("客户端代码 with sizes in the reviews", () => {
               configurable: false,
               config: null,
               secrets: [],
-              orgConfigSchema: null,
               provides: [],
               permissions: ext().permissions,
               client: {

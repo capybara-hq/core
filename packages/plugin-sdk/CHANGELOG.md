@@ -1,5 +1,158 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.69
+
+### Patch Changes
+
+- 18b24bc: Remove the transition compatibility for plugins packed before core#720. The deprecated no-op
+  `orgAccess` / `OrgAccess` exports are gone. `defineExtension` now throws on `config.org`, the
+  plugin.json reader refuses `extension.manifest.config.org` and `extension.configSchemas.org`, and
+  the kernel no longer drops `config.org` from a stored reviewed section. Repack a plugin built before
+  core#720 (or install its current release) before upgrading.
+
+## 0.1.0-rc.68
+
+### Patch Changes
+
+- 20e9817: `isPlatformOnly` is true when any node along the wrapper chain carries `platformOnly: true`, like `secret`; an outer `false` never clears an inner `true`.
+
+## 0.1.0-rc.67
+
+### Patch Changes
+
+- af84f8c: A provider whose `update` cannot honor the fence token (E2B) no longer leaves the instance wider than
+  the kernel's record until the limits change again (#766). The SDK adds the optional
+  `DeviceProvider.appliedNetwork(h, signal)`: the network the instance enforces now, as the provider's
+  backend reports it. Under the exclusive lease, on a resumed instance, a running one the use holds
+  exclusively, and a new instance of a provider whose limits are fixed at its file system, the kernel
+  compares it with the recorded limits; a wider network (the open public network over a list, or a host
+  the record does not cover), an unknown one or a failed read applies the desired limits again through
+  `update` with the holder's token. Equal or narrower changes nothing.
+
+## 0.1.0-rc.66
+
+### Patch Changes
+
+- 36738ec: A background start's reference names the provider's own instance generation (device-local's bound
+  machine generation), so the kernel no longer compares it with its own generation: it matches the
+  ref by operation id and handle id and pins the task to the generation it recorded. Every
+  background Bash on a device-local device was left unconfirmed ("its start was not confirmed; it is
+  being reconciled") and never settled; scheduled recovery now acknowledges those starts. A start
+  stopped before it was confirmed now ends `stopped` once the provider acknowledges its operation
+  revoke, instead of running until its retention expires (#765).
+
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- b22a19d: A connector template's `description` may be `{ zh, en }` as well as a string
+  (`ConnectorTemplateFile.description: string | LocalizedName`); the 1024-character limit applies to
+  each text. A plain string stays valid and is shown in both languages. The connector template JSON
+  Schema follows.
+
+## 0.1.0-rc.64
+
+### Patch Changes
+
+- 8bdbb9b: Device provider lifecycle calls carry a fence token (device update fencing design, #748). The SDK
+  adds `DeviceFence` and `StaleFenceError` (with `isStaleFenceError`): `update` and `create` get the
+  device's fencing generation as the calling holder last committed it, `destroy` and `destroyByName`
+  get it too (`null` when the kernel holds no device lease). A provider that keeps per-instance state
+  stores the highest token next to it and refuses a lower one, so a replica whose lease ended while
+  its call was in flight can no longer apply an older network list. The kernel records the target of
+  an `update` before sending it (`instance_limits.pending`), so the next exclusive holder applies the
+  desired limits again even when the record of what succeeded already matches them; it handles
+  `StaleFenceError` as a lost lease and never recreates for it; and a failed record write after an
+  `updated` answer no longer falls into the recreate branch (it used to let a stale holder destroy the
+  instance a newer holder was using).
+- 5d3e31b: Plugin modules packed before core#720 load again on a kernel from main. `orgAccess(schema, access)`
+  and the `OrgAccess` type are back as deprecated no-ops (the schema is returned unchanged, both
+  levels are ignored: the field stays overridable unless marked `platformOnly`), and
+  `defineExtension` drops a `config.org` key instead of refusing it (the manifest keeps only
+  `config.deployment`; other unknown `config` keys still throw). `capybara-plugin pack` and the
+  checks that import the module still refuse `config.org`. Temporary: removed in core#720 plan
+  Task 17 once the official plugins are republished.
+- 03fa6f6: Deployment config fields are org-overridable by default: `platformOnly(schema)` marks a field, or the
+  whole deployment schema, that only the platform sets (`"x-platform-only": true` in
+  `configJsonSchema`, allowed on the root and its top-level properties; `isPlatformOnly` reads it).
+  `orgAccess`, `orgAccessOf`, `OrgAccess` and `x-org` are removed, and so is the org-only config:
+  `defineExtension({ config })` takes `deployment` only, and the static manifest and
+  `extension.configSchemas` have no `org` entry. `web-search@1`, `web-fetch@1` and `directory@1`
+  drop `orgConfig`: `config` (the effective config for the org) is required and
+  `configured?(config)` takes it alone. Their call args gain `orgId` (the org the call is made for),
+  to pass to `configUrlFetch` or `ctx.net.fetch`.
+  
+  `configUrlFetch(net, { url, platform, orgId })` returns the `fetch` for a config URL an org may
+  override: the global `fetch` for the platform's own URL (trailing slashes ignored), `ctx.net.fetch`
+  for any other.
+  
+  `secret`, `platformOnly` and `ui` keep each other's marks whatever their order and whichever
+  wrapper (`.optional()`, `.default()`, `.nullable()`, `.prefault()`, `.catch()`, `.readonly()`) they
+  sit on, and `isSecret` reads the mark through those wrappers (any node of the chain counts), so
+  `platformOnly(ui(secret(x)).optional())` is a secret like `platformOnly(ui(secret(x))).optional()`.
+  `configJsonSchema` sets `"x-secret"` (and `"x-platform-only"`) on a wrapper around a marked node
+  too, so `secret(x).nullable().default(v)` no longer publishes its default, and the static manifest
+  reads the marks the same way.
+- 94ed9ef: `defineExtension` refuses any `config` key other than `deployment`; a leftover `config.org` gets
+  "config.org was removed: move org fields into config.deployment".
+  
+  Until the official plugins are republished, `parsePluginManifest` still reads plugin.json files
+  packed before this change: a legacy `extension.manifest.config.org` list and
+  `extension.configSchemas.org` schema are accepted and dropped (the parsed manifest has no `org`).
+  Nothing else reads them.
+
+## 0.1.0-rc.63
+
+### Patch Changes
+
+- 4c1002a: `SANDBOX_RUNTIME_SOURCE.files` is now the Linux launcher with exact file read roots (the
+  `current` of core#742; `current` and `files` are the same again), and `accepted` keeps the earlier
+  launcher's digest for one revision so device containers made from an earlier device-docker image
+  stay available until they are recreated. The image pins device-docker rc.25 (its image stages the
+  new launcher and checks staged files against `accepted`) and device-local rc.7, at plugins commit
+  03a53c8.
+
+## 0.1.0-rc.62
+
+### Patch Changes
+
+- 95d479c: Linux machine reach reads the files beside a denied path. The SDK's restricted Linux launcher
+  accepts exact file read roots (`roots.readFiles`, exec mode only): each an O_PATH, no-follow
+  descriptor the consumer pinned, re-checked on that descriptor as a regular file with its recorded
+  identity (a link, directory, FIFO or other type is refused; one renamed, deleted or given a second
+  name since the pin is skipped), and granted file reads only, without directory
+  listing or execution. The device's read carve now grants the non-denied regular files directly
+  inside each directory it expands (for example `~/.bashrc` when `~/.ssh` is denied,
+  `~/.cargo/config.toml` beside `~/.cargo/credentials`); the agent pins each without following links
+  and grants nothing for one that changed type or has a second name. Directories alone above 4096
+  refuse machine reach; files fill the rest of the cap and the agent's open-file budget, and the
+  rest are dropped. Comparisons with denied paths are case-insensitive for directories too, and
+  canonical forms of denied paths are read as bytes. The device deny list adds database, X11 and
+  other credential files (`~/.pgpass`, `~/.my.cnf`, `~/.Xauthority`, `~/.ICEauthority`,
+  `~/.config/hub`, `~/.boto`, `~/.dockercfg`, `~/.smbcredentials`, `~/.terraformrc`,
+  `~/.yarnrc.yml`, `~/.databrickscfg`, `~/.passwd-s3fs`, `~/.erlang.cookie`, `~/.curlrc`,
+  `~/.wgetrc`, `~/.claude.json`) and more shell, REPL and editor histories.
+  `SANDBOX_RUNTIME_SOURCE` now has three parts so a runtime change no longer has to land in step
+  with the images that stage it: `files` (the staged set, unchanged: still the `linux-sandbox.py`
+  released images stage, so device-docker keeps working), `current` (the newest bytes, which
+  `capybara-device` runs; this launcher declares `features: ["fileReadRoots"]`) and `accepted` (by
+  name, every digest a staged copy may have). The device sends file roots only to a launcher that
+  declares them; otherwise the files stay unreadable as before. New types `SandboxRuntimeFile` and
+  `SandboxRuntimeFeature`.
+- 608a3b4: Document the narrowing rule of `DeviceProvider.update`: `"updated"` for a narrowing only once no
+  connection to a removed host survives and no new one can open (otherwise `"recreate"` or throw), and
+  never a state a later rebuild of the instance could widen.
+
+## 0.1.0-rc.61
+
+### Patch Changes
+
+- e71a6c5: A device report's limit value is text now: `DeviceReportLimit.value` is `DeviceText`
+  (`{ en, zh? }`, at most 60 characters per language, checked by `parseDeviceReport`) instead of a
+  string, so a provider can translate words in it; a string value no longer passes. Migration 0179
+  turns the string values of stored reports into `{ en }`, and the device page shows each value in
+  the UI language.
+
 ## 0.1.0-rc.60
 
 ### Minor Changes

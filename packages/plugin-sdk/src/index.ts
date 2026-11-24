@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.60";
+export const SDK_VERSION = "0.1.0-rc.69";
 export * from "./agent-template.js";
 export * from "./avatar-presets.js";
 export * from "./bootstrap.js";
@@ -7,6 +7,7 @@ export * from "./channel.js";
 export * from "./client-css.js";
 export * from "./client-section.js";
 export * from "./config-ui.js";
+export * from "./config-url-fetch.js";
 export * from "./connector.js";
 export * from "./connector-auth.js";
 export * from "./context.js";
@@ -29,12 +30,16 @@ export * from "./model.js";
 export * from "./model-params.js";
 export * from "./net.js";
 export * from "./network-classes.js";
-export * from "./org-access.js";
 export * from "./permissions.js";
+export * from "./platform-only.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./push.js";
-export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
+export {
+  SANDBOX_RUNTIME_SOURCE,
+  type SandboxRuntimeFeature,
+  type SandboxRuntimeFile,
+} from "./sandbox-runtime-source.js";
 export {
   isSandboxHomeWriteDenied,
   isSandboxMoveDenied,

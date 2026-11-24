@@ -282,7 +282,7 @@ describe("permission reader behavior", () => {
       .execute();
     const sandbox = k.app.get(SandboxService);
     const spies: MockInstance[] = [
-      vi.spyOn(sandbox, "withSandbox"),
+      vi.spyOn(sandbox, "withOperations"),
       vi.spyOn(sandbox, "ifRunning"),
     ];
     const impl = k.app.get(DeviceProviders).forDevice("@permission-test")?.impl;

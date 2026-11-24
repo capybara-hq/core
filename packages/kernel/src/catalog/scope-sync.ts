@@ -2,6 +2,7 @@ import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { KernelSchemaDb, ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -134,6 +135,7 @@ export class PluginScopeSync {
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add" | "addMany">,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     @Inject(LockService) private readonly locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -400,7 +402,7 @@ export class PluginScopeSync {
     // Wanted off: only a settled install is removed (one still installing waits for the next
     // enqueue)
     if (live?.status !== "installed") return "unchanged";
-    const deps = await this.createdDependencies(live.id);
+    const deps = await this.createdDependencies(orgId, live.id);
     try {
       await this.installer.uninstall(orgId, null, live.id, { via: "scope" });
     } catch (e) {
@@ -431,8 +433,8 @@ export class PluginScopeSync {
     return row !== undefined;
   }
 
-  /** The items of the dependency installs this install created. */
-  private async createdDependencies(installId: string): Promise<string[]> {
+  /** The items of the dependency installs this install (of `orgId`) created. */
+  private async createdDependencies(orgId: string, installId: string): Promise<string[]> {
     // `ref` is text: the child install ids are read first, then their items
     const refs = await this.db
       .selectFrom("plugin_install_components")
@@ -445,6 +447,7 @@ export class PluginScopeSync {
     const rows = await this.db
       .selectFrom("plugin_installs")
       .select("item_id")
+      .where("org_id", "=", orgId)
       .where(
         "id",
         "in",
@@ -456,8 +459,8 @@ export class PluginScopeSync {
 
   /**
    * Whether installing the item (with the dependencies the org lacks) needs the org's input: a
-   * connector template, or an extension whose org config is required and not set in the org. The
-   * same rule as the org catalog's `needs_config`, applied to the whole tree.
+   * connector template, or an extension whose effective config for the org is not valid. The same
+   * rule as the org catalog's `needs_config`, applied to the whole tree.
    */
   async needsInput(orgId: string, itemId: string, version: string): Promise<boolean> {
     const v = await this.db
@@ -482,7 +485,8 @@ export class PluginScopeSync {
   /**
    * Whether installing plugin `itemId` (manifest `m`) needs the org's input: a connector template
    * on in the org (ruling P2-6: templates switched off there, outside their own scope or disabled
-   * make no connector), or a required org config of its extension not set yet.
+   * make no connector), or its extension's effective config for the org is not valid (a required
+   * overridable field the platform leaves empty and the org has no copy of).
    */
   private async manifestNeedsInput(
     orgId: string,
@@ -492,17 +496,9 @@ export class PluginScopeSync {
     const ids = (m.connectorTemplates ?? []).map((t) => templateIdOfPath(t.path));
     if ((await connectorTemplatesOn(this.db, orgId, itemId, ids)).size > 0) return true;
     if (!m.extension) return false;
-    const ext = this.registry.manifests().find((x) => x.name === m.name);
-    const schema = ext?.config?.org;
-    if (schema === undefined || schema.safeParse({}).success) return false;
-    const configured = await this.db
-      .selectFrom("extension_org_configs")
-      .select("plugin")
-      .where("org_id", "=", orgId)
-      .where("plugin", "=", m.name)
-      .where("config", "is not", null)
-      .executeTakeFirst();
-    return configured === undefined;
+    // not loaded here: `extensionReady` decides; an extension without overridable fields is ok
+    if (!this.registry.manifests().some((x) => x.name === m.name)) return false;
+    return !(await this.effective.get(orgId, m.name)).ok;
   }
 
   /**

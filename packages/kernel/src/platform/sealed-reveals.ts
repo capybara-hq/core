@@ -8,6 +8,7 @@ import { audit } from "../identity/audit.js";
 import type { RevealCall } from "../identity/initial-passwords.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KEYRING } from "../infra/tokens.js";
@@ -121,6 +122,7 @@ export class SealedReveals {
             .selectFrom("invitations")
             .select("invitations.id")
             .whereRef("invitations.id", "=", "platform_sealed_reveals.id")
+            .where("invitations.org_id", "=", orgId)
             .where("invitations.accepted_at", "is", null)
             .where("invitations.revoked_at", "is", null)
             .where(sql<boolean>`invitations.expires_at > now()`),
@@ -151,9 +153,12 @@ export class SealedReveals {
 
 /** Deletes the sealed reveals past `expires_at`; returns how many. */
 export async function deleteExpiredSealedReveals(db: KernelSchemaDb): Promise<number> {
-  const r = await db
-    .deleteFrom("platform_sealed_reveals")
-    .where("expires_at", "<=", sql<Date>`now()`)
-    .executeTakeFirst();
-  return Number(r.numDeletedRows);
+  return asPlatform("deployment-wide expiry sweep over every org's sealed reveals", async () => {
+    // org-filter: deployment-wide expiry sweep over every org's sealed reveals (maintenance job)
+    const r = await db
+      .deleteFrom("platform_sealed_reveals")
+      .where("expires_at", "<=", sql<Date>`now()`)
+      .executeTakeFirst();
+    return Number(r.numDeletedRows);
+  });
 }

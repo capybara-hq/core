@@ -1,3 +1,4 @@
+import { formSectionLayout } from "@capybara-hq/design";
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -134,7 +135,7 @@ const actionRow = () =>
     })(),
   );
 
-/** The titles the stubbed purposes carry (both locales): rows are found by title, ids never show. */
+/** The titles the stubbed purposes carry (both locales): sections are found by title, ids never show. */
 const PURPOSE_TITLES: Record<string, string[]> = {
   eval: ["评测评委", "Eval judge"],
   image: ["图片生成", "Image generation"],
@@ -145,14 +146,21 @@ const PURPOSE_TITLES: Record<string, string[]> = {
   subagent_capable: ["Sub-agent: capable"],
 };
 
-/** A purpose's row (an ItemListItem, never a card): the row titled with the purpose's label. */
+/** A purpose's box: its own FormSection, named by the purpose's label. */
 const purposeRow = (purpose: string): HTMLElement | null => {
   const titles = PURPOSE_TITLES[purpose] ?? [];
-  const title = [...document.querySelectorAll('[data-part="item-list-title"]')].find((el) =>
-    titles.includes(el.textContent ?? ""),
+  return (
+    [...document.querySelectorAll<HTMLElement>('[data-part="form-section"]')].find((el) =>
+      titles.includes(el.getAttribute("aria-label") ?? ""),
+    ) ?? null
   );
-  return (title?.closest('[data-part="item-list-row"]') as HTMLElement | null) ?? null;
 };
+
+/** The purpose's folded parameters: the Disclosure's summary button. */
+const paramsToggle = (box: ReturnType<typeof within>, locale: "zh" | "en" = "en") =>
+  box.getByRole("button", {
+    name: new RegExp(`^${msgs[locale].models.purpose.paramsAllDefault.split(" · ")[0]} · `),
+  });
 
 const purposeBox = async (purpose: string) =>
   within(
@@ -364,9 +372,18 @@ describe("/admin/models（ListPage）", () => {
         "alpha/alpha-large",
         user,
       );
-      // 选中模型后出现它的参数（复用 ModelParams）
+      // The chosen model's parameters (ModelParams) fold away, closed by default
+      const toggle = paramsToggle(ev, locale);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(toggle.textContent).toContain(m.models.purpose.paramsAllDefault);
+      expect(ev.queryByRole("radiogroup")).toBeNull();
+      await user.click(toggle);
       const effort = ev.getByRole("radiogroup", { name: locale === "zh" ? "思考深度" : "Effort" });
       await user.click(within(effort).getByRole("radio", { name: m.agents.params.effort.high }));
+      // the summary counts the parameters set away from the default
+      expect(paramsToggle(ev, locale).textContent).toContain(
+        fill(m.models.purpose.paramsCustomized, { n: 1 }),
+      );
       expect(actionRow().getByText(fill(UNSAVED[locale], { n: 1 }))).toBeTruthy();
       await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
@@ -382,7 +399,7 @@ describe("/admin/models（ListPage）", () => {
     },
   );
 
-  it("validation_failed：参数错误显示在对应参数下", async () => {
+  it("validation_failed: a parameter error opens the folded parameters and shows under its field", async () => {
     adminRoutes({
       "PUT /api/v1/admin/model-purposes/eval": () =>
         json(400, {
@@ -401,11 +418,17 @@ describe("/admin/models（ListPage）", () => {
       "alpha/alpha-large",
       user,
     );
+    await user.click(paramsToggle(ev));
     await user.click(
       within(ev.getByRole("radiogroup", { name: "Effort" })).getByRole("radio", { name: "Low" }),
     );
+    // folded again before the save: the error has to open it
+    await user.click(paramsToggle(ev));
+    expect(ev.queryByRole("radiogroup")).toBeNull();
     await user.click(actionRow().getByRole("button", { name: en.models.purpose.save }));
     expect(await ev.findByText(`${en.agents.params.invalid}`)).toBeTruthy();
+    expect(paramsToggle(ev).getAttribute("aria-expanded")).toBe("true");
+    expect(ev.getByRole("radiogroup", { name: "Effort" })).toBeTruthy();
     // The failed purpose stays changed: the ActionRow keeps it and counts the error
     expect(actionRow().getByText(fill(UNSAVED.en, { n: 1 }))).toBeTruthy();
   });
@@ -421,25 +444,92 @@ describe("/admin/models（ListPage）", () => {
 describe("one box is enough (acceptance item AB)", () => {
   const noNested = () => expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
 
-  it("/admin/models 用途默认: the purposes are rows of one flush card", async () => {
-    adminRoutes();
+  it("/admin/models 用途默认: one section per purpose, siblings, in columns from three", async () => {
+    const three = [
+      evalView(),
+      evalView({ purpose: "title", label: { zh: "会话标题", en: "Conversation titles" } }),
+      pluginView(),
+    ];
+    adminRoutes({
+      "GET /api/v1/admin/model-purposes": () => json(200, { purposes: three }),
+    });
     await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes());
-    await purposeBox("eval");
-    const purposes = document.getElementById("purposes") as HTMLElement;
-    // the tab's one section: its head above the card, no side label column
-    expect(purposes.getAttribute("data-layout")).toBe("stacked");
-    const card = purposes.querySelector('[data-part="form-card"]') as HTMLElement;
-    expect(card.getAttribute("data-flush")).toBe("true");
-    // rows, not cards: one flush ItemList holding a row per purpose
-    expect(card.querySelector('[data-part="card"]')).toBeNull();
-    const list = within(card).getByRole("list", { name: en.models.admin.purposes.title });
-    expect(list.getAttribute("data-inset")).toBe("flush");
-    expect(list.querySelectorAll(':scope > [data-part="item-list-row"]')).toHaveLength(2);
-    // the purpose's row is a group named by its title, the model select one of its fields
-    const row = screen.getByRole("group", { name: "Eval judge" });
-    expect(within(row).getByRole("combobox", { name: en.models.purpose.model })).toBeTruthy();
+    const ev = await purposeBox("eval");
+    const sections = [...document.querySelectorAll<HTMLElement>('[data-part="form-section"]')];
+    expect(sections.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Eval judge",
+      "Conversation titles",
+      "Summarize",
+    ]);
+    // siblings with no page prop: the template counts them and puts each head in the side column
+    expect(new Set(sections.map((s) => s.parentElement)).size).toBe(1);
+    expect(sections.some((s) => s.getAttribute("data-layout") === "stacked")).toBe(false);
+    expect(formSectionLayout(sections[0] as HTMLElement)).toBe("columns");
+    // the tab's description is the page head's, the purpose's line is its section's
+    expect(screen.getByText(en.models.admin.purposes.description)).toBeTruthy();
+    const head = sections[0]?.querySelector('[data-part="form-section-head"]') as HTMLElement;
+    expect(within(head).getByText(en.models.purpose.hint.eval)).toBeTruthy();
+    // the warning stays in the purpose's card, the model select in it
+    const card = sections[0]?.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(within(card).getByText(en.models.evalUnmapped)).toBeTruthy();
+    expect(within(card).getByRole("combobox", { name: en.models.purpose.model })).toBeTruthy();
+    // no model chosen: no parameters to fold
+    expect(ev.queryByRole("button", { name: /Parameters/ })).toBeNull();
     // the models tab is not drawn
     expect(screen.queryByRole("table", { name: en.models.providers.label })).toBeNull();
+    noNested();
+  });
+
+  it("/admin/models 用途默认: a chosen model's parameters fold, closed, with no box inside", async () => {
+    adminRoutes({
+      "GET /api/v1/admin/model-purposes": () =>
+        json(200, {
+          purposes: [
+            evalView({
+              default: target("alpha-large", { effort: "high" }),
+              effective: target("alpha-large", { effort: "high" }),
+            }),
+            evalView({
+              purpose: "title",
+              label: { zh: "会话标题", en: "Conversation titles" },
+              default: target("alpha-small"),
+              effective: target("alpha-small"),
+            }),
+          ],
+        }),
+    });
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes());
+    const ev = await purposeBox("eval");
+    const toggle = paramsToggle(ev);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toContain(fill(en.models.purpose.paramsCustomized, { n: 1 }));
+    // a model that declares no parameters draws no disclosure
+    expect((await purposeBox("title")).queryByRole("button", { name: /Parameters/ })).toBeNull();
+    // two sections: stacked
+    expect(
+      formSectionLayout(document.querySelector('[data-part="form-section"]') as HTMLElement),
+    ).toBe("stacked");
+    const user = userEvent.setup();
+    await user.click(toggle);
+    expect(ev.getByRole("radiogroup", { name: "Effort" })).toBeTruthy();
+    noNested();
+  });
+
+  it("/admin/models 用途默认 while loading: the purposes' sections, already in columns", async () => {
+    stubApi({
+      "GET /api/v1/admin/models": () => json(200, ADMIN_MODELS),
+      "GET /api/v1/admin/model-purposes": () => new Promise<Response>(() => {}),
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+      "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
+    });
+    await renderRouteEmptyCache("/admin/models?tab=purposes", lastStubRoutes());
+    const first = await vi.waitFor(() => {
+      const el = document.querySelector('[data-part="form-section"]');
+      if (el === null) throw new Error("no loading sections yet");
+      return el as HTMLElement;
+    });
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(9);
+    expect(formSectionLayout(first)).toBe("columns");
     noNested();
   });
 
@@ -499,7 +589,7 @@ describe("one box is enough (acceptance item AB)", () => {
     noNested();
   });
 
-  it("/settings/models 用途默认: the purposes are rows of one flush card", async () => {
+  it("/settings/models 用途默认: one section per purpose, stacked beside the settings nav", async () => {
     resetNavigation("/settings/models");
     stubApi({
       "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
@@ -510,9 +600,11 @@ describe("one box is enough (acceptance item AB)", () => {
     await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes());
     const ev = await purposeBox("eval");
     expect(ev.getByText(en.models.evalUnmapped)).toBeTruthy();
-    const card = document.querySelector('#purposes [data-part="form-card"]') as HTMLElement;
-    expect(card.getAttribute("data-flush")).toBe("true");
+    const section = purposeRow("eval") as HTMLElement;
+    const card = section.querySelector('[data-part="form-card"]') as HTMLElement;
     expect(card.querySelector('[data-part="card"]')).toBeNull();
+    expect(formSectionLayout(section)).toBe("stacked");
+    expect(screen.getByText(en.models.org.description)).toBeTruthy();
     noNested();
   });
 

@@ -330,19 +330,18 @@ async function migratePlugin(
 }
 
 /**
- * 插件两级配置 schema 中的每个 `secret()` 都必须标在对象路径的字段上（见 `unreachableSecrets`），
- * 否则内核无法把它单独加密存储 / 打码、会按明文保存与回显——此时拒绝加载并点名插件与路径。
+ * Every `secret()` in an extension's deployment schema must sit on an object field path (see
+ * `unreachableSecrets`); otherwise the kernel cannot store and mask it on its own and would keep
+ * and echo it in clear, so the load is refused, naming the extension and the path.
  */
 export function assertSecretsReachable(manifest: ExtensionManifest): void {
-  for (const level of ["deployment", "org"] as const) {
-    const schema = manifest.config?.[level];
-    if (!schema) continue;
-    const bad = unreachableSecrets(schema);
-    if (bad.length > 0) {
-      throw new Error(
-        `plugin ${manifest.name}: config.${level}: ${bad.map((p) => `secret() at "${p}"`).join(", ")} is not on an object field path; secret() inside union / intersection / transform / pipe / lazy / array / record / tuple is not supported — mark the whole enclosing object field secret instead`,
-      );
-    }
+  const schema = manifest.config?.deployment;
+  if (!schema) return;
+  const bad = unreachableSecrets(schema);
+  if (bad.length > 0) {
+    throw new Error(
+      `plugin ${manifest.name}: config.deployment: ${bad.map((p) => `secret() at "${p}"`).join(", ")} is not on an object field path; secret() inside union / intersection / transform / pipe / lazy / array / record / tuple is not supported — mark the whole enclosing object field secret instead`,
+    );
   }
 }
 
@@ -1517,7 +1516,7 @@ export class ExtensionHost {
   }
 
   /**
-   * Checks the config UI hints of a loaded module's deployment and org schemas (spec §4.1). Invalid
+   * Checks the config UI hints of a loaded module's deployment schema (spec §4.1). Invalid
    * hints never fail the load: the form schemas drop their `x-ui` (`configFormSchema`), one warning
    * per `<name>@<version>` is logged, and the returned text goes into the status detail (null when
    * every hint is valid). The packer refuses such a package; this covers hand-made ones. It never
@@ -1526,7 +1525,7 @@ export class ExtensionHost {
    */
   private checkConfigUi(manifest: ExtensionManifest): string | null {
     const parts: string[] = [];
-    for (const level of ["deployment", "org"] as const) {
+    for (const level of ["deployment"] as const) {
       const schema = manifest.config?.[level];
       if (!schema) continue;
       try {

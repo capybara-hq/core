@@ -82,6 +82,7 @@ import { useConversationPermission } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
+import { useBackgroundLive } from "./useBackgroundLive";
 import { type SendResult, useConversation } from "./useConversation";
 import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
 import { lockedDevicePicker, useSelection } from "./useSelection";
@@ -188,7 +189,6 @@ export function useConversationPage(
 ): { page: ConversationPageProps; dialogs: ReactNode } {
   const t = useTranslations("chat");
   const ts = useTranslations("subagents");
-  const tp = useTranslations("chatPanel");
   const locale = useLocale() === "zh" ? "zh" : "en";
   const session = useSession();
   const toast = useToast();
@@ -300,6 +300,7 @@ export function useConversationPage(
     [subagents.views],
   );
   const whoWaits = useWhoWaits(conv.people);
+  const backgroundTasks = useBackgroundLive(orgId, conversationId, conv.events);
   // the tree is a root's (a sub-agent's page, or one still loading, reads none)
   const isRoot = conv.conversation !== undefined && !conv.conversation.parentConversationId;
   const tree = useTreeLookup(orgId, conversationId, conv.events, isRoot);
@@ -311,8 +312,9 @@ export function useConversationPage(
         ...(views ? { views } : {}),
         whoWaits,
         ...(tree ?? {}),
+        ...(backgroundTasks ? { backgroundTasks } : {}),
       }),
-    [conv.events, info, locale, conv.state.progress, views, whoWaits, tree],
+    [conv.events, info, locale, conv.state.progress, views, whoWaits, tree, backgroundTasks],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   const pending = usePendingSends(conv.events);
@@ -482,13 +484,17 @@ export function useConversationPage(
     conv.waiting ? "waiting" : busy ? "running" : statusFailed ? "failed" : "idle",
   );
   useClientEventFeed(conversationId, conv.events, !conv.loading);
-  // The properties panel's last-run line (spec §6.16.17): the newest run row's parts.
+  // The properties panel's last-run row (spec §6.16.17): the newest run row's parts, its model
+  // only when it differs from the Model row's.
   const lastRun = useMemo(() => {
     const r = base.entries.findLast((e) => e.kind === "run");
     if (r?.kind !== "run") return undefined;
-    const parts = runParts(r, locale, (n) => t("run.tokens", { n }));
-    return parts.length > 0 ? tp("lastRun", { parts: parts.join(" · ") }) : undefined;
-  }, [base, locale, t, tp]);
+    const sameModel = r.model !== null && r.model.model === usageModel?.model;
+    const parts = runParts(sameModel ? { ...r, model: null } : r, locale, (n) =>
+      t("run.tokens", { n }),
+    );
+    return parts.length > 0 ? parts : undefined;
+  }, [base, locale, t, usageModel]);
 
   const now = useNow(0);
   const timeZone = useTimeZone();

@@ -213,7 +213,15 @@ export function PlatformUpdatePreviewBody({
   const columns: Column<PlatformUpdateComponent>[] = [
     { key: "name", header: t("columns.name"), cell: (c) => c.name },
     { key: "kind", header: t("columns.kind"), tone: "muted", cell: (c) => t(`kind.${c.kind}`) },
-    { key: "change", header: t("columns.change"), cell: (c) => t(`change.${c.change}`) },
+    {
+      key: "change",
+      header: t("columns.change"),
+      cell: (c) => (
+        <Badge tone={c.change === "removed" || c.change === "downgrade" ? "warn" : "default"}>
+          {t(`change.${c.change}`)}
+        </Badge>
+      ),
+    },
     {
       key: "version",
       header: t("columns.version"),
@@ -340,12 +348,15 @@ export function PlatformUpdatePreviewBody({
   return (
     <>
       {ext?.needsApproval === true && <Callout tone="warn">{t("needsApproval")}</Callout>}
-      <Text>
-        {t("versions", {
-          from: optVersion(preview.from),
-          to: versionLabel(preview.to),
-        })}
-      </Text>
+      <Stack direction="row" gap={8} align="center">
+        <Text>{preview.name}</Text>
+        <Badge>
+          {t("versions", {
+            from: optVersion(preview.from),
+            to: versionLabel(preview.to),
+          })}
+        </Badge>
+      </Stack>
       <ImpactPreview groups={groups} empty={t("none")} />
     </>
   );

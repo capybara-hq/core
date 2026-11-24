@@ -758,6 +758,60 @@ describe("fix round 1", () => {
     expect(pat?.on).toBe(true);
   });
 
+  it("templatesOn: the install creates exactly the chosen templates and switches the rest off; an unknown id is refused", async () => {
+    ghBody.connectors.gh.endpoint.url = env.mcp.url;
+    const itemId = await seedPlugin(env, {
+      name: "github",
+      skills: [],
+      templates: { gh: {}, bq: {} },
+      defaultOff: ["bq"],
+    });
+    const ids = Object.fromEntries(
+      (
+        await env.db
+          .selectFrom("platform_connector_templates")
+          .select(["id", "template_id"])
+          .execute()
+      ).map((r) => [r.template_id, r.id]),
+    ) as Record<string, string>;
+    const bqBody = { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } };
+    // a template id the plugin does not have: refused before anything is written
+    const bad = await install(env.boss, env, itemId, { ...ghBody, templatesOn: ["gh", "nope"] });
+    expect(bad.statusCode, bad.body).toBe(400);
+    expect(bad.json().error.code).toBe("validation_failed");
+    expect(JSON.stringify(bad.json().error.details)).toContain("templatesOn");
+    expect(await liveConnectors()).toHaveLength(0);
+    // the default-off bq chosen, the default-on gh left out: only bq gets a connector
+    const r = await install(env.boss, env, itemId, {
+      connectors: { bq: bqBody },
+      templatesOn: ["bq"],
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    const made = await env.db
+      .selectFrom("connectors")
+      .innerJoin("platform_connector_templates as t", "t.id", "connectors.platform_template_id")
+      .select("t.template_id")
+      .where("connectors.deleted_at", "is", null)
+      .execute();
+    expect(made.map((m) => m.template_id)).toEqual(["bq"]);
+    // the org's switches follow the choice: bq on, gh off (still offered on the connectors page)
+    expect(await connectorTemplateState(env.db, env.orgId, ids.bq as string)).toBe("on");
+    expect(await connectorTemplateState(env.db, env.orgId, ids.gh as string)).toBe("off");
+    // nothing is missing: the plugin does not ask for gh's input afterwards
+    const d = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}` });
+    expect(d.json().missingTemplates).toEqual([]);
+    expect(d.json().item.state).toBe("on");
+    const switched = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "component.org_switched")
+      .execute();
+    expect(switched.map((a) => (a.detail as { name: string; to: boolean }).name).sort()).toEqual([
+      "bq",
+      "gh",
+    ]);
+  });
+
   it("a defaultEnabled false template moved from its own scope back to follow: the preview lists the orgs it turns off in", async () => {
     ghBody.connectors.gh.endpoint.url = env.mcp.url;
     const itemId = await seedPlugin(env, { name: "github", skills: [] });
@@ -868,12 +922,14 @@ describe("fix round 1", () => {
     const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
     const [conn] = (list.json() as { connectors: { id: string; icon: string | null }[] })
       .connectors;
-    expect(conn?.icon).toBe(orgUrl);
+    // on the connector's own route (guests load it too), sourced from the plugin icon
+    const connUrl = `/api/v1/orgs/${env.orgId}/connectors/${conn?.id}/icon?v=p-1.0.0`;
+    expect(conn?.icon).toBe(connUrl);
     const one = await env.mem({
       method: "GET",
       url: `/api/v1/orgs/${env.orgId}/connectors/${conn?.id}`,
     });
-    expect(one.json().connector.icon).toBe(orgUrl);
+    expect(one.json().connector.icon).toBe(connUrl);
     // a plugin the org's catalog no longer shows (a hidden `named` list without the org): no icon
     // URL, the connector stays the org's own
     await setScope(env, itemId, "named", [org2]);

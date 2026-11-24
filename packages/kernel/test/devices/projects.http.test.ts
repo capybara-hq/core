@@ -390,7 +390,9 @@ describe("device projects", () => {
   it("refuses a root above the owner's home, without using the device; the home itself is fine", async () => {
     const d = await owned();
     const machine = await connect(d);
-    const uses = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const sandbox = k.app.get(SandboxService);
+    const starts = vi.spyOn(sandbox, "ensureRunningForOwner");
+    const uses = vi.spyOn(sandbox, "withBrowse");
     // `/home` (and `/Users`) whatever the home and in any case (a case-insensitive volume), `/`,
     // and every ancestor of the reported home
     try {
@@ -400,8 +402,10 @@ describe("device projects", () => {
         expect(errCode(res)).toBe("device.project_path_too_broad");
       }
       // refused before the device is leased (a cloud device is never started for it)
+      expect(starts).not.toHaveBeenCalled();
       expect(uses).not.toHaveBeenCalled();
     } finally {
+      starts.mockRestore();
       uses.mockRestore();
     }
     expect(reqsOf(machine, "list")).toEqual([]);
@@ -720,7 +724,6 @@ describe("device projects", () => {
           return fn(browse as never, signal);
         },
         ensureRunningForOwner: async () => {},
-        withSandbox: () => Promise.reject(new Error("no raw route once activated")),
       },
       k.app.get(DeviceAccess),
       new PermissionFacts(

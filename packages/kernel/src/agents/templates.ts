@@ -780,6 +780,7 @@ export async function putTemplateVersionIn(
         updated_at: new Date(),
       })
       .where("id", "=", id)
+      .where("org_id", "=", s.orgId)
       .execute();
   }
   return { id, version, created: !live, changed: true };

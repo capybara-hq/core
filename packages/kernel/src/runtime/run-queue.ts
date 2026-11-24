@@ -161,6 +161,8 @@ export class RunQueue {
   }
 
   /** {@link startCompaction}'s transaction: the active-run check, the run row and its owed job. */
+  // org-filter: the only caller (ConversationsService.compact) checked writable(orgId, ...) first;
+  // the conversation's own org is read under its row lock
   @Transactional({ propagation: "requires_new" })
   private async startCompactionIn(conversationId: string, accountId: string): Promise<string> {
     const t = this.db;
@@ -194,6 +196,7 @@ export class RunQueue {
       .selectFrom("agents")
       .select(["current_version", "deleted_at"])
       .where("id", "=", conv.agent_id)
+      .where("org_id", "=", conv.org_id)
       .executeTakeFirst();
     if (!agent || agent.deleted_at !== null) {
       throw new ApiError("conversation.not_found", "Conversation not found");
@@ -222,6 +225,8 @@ export class RunQueue {
   }
 
   /** {@link ensureRun}'s transaction: what it decided goes back through `st`. */
+  // org-filter: ensure-run is keyed by a kernel-resolved conversation id (after a write that checked
+  // the org, or an owed outbox job); the conversation's own org is read under its row lock
   @Transactional({ propagation: "requires_new" })
   private async ensureRunIn(conversationId: string, st: EnsureState): Promise<string | null> {
     const t = this.db;
@@ -272,6 +277,7 @@ export class RunQueue {
         .selectFrom("agents")
         .select("deleted_at")
         .where("id", "=", conv.agent_id)
+        .where("org_id", "=", conv.org_id)
         .executeTakeFirstOrThrow();
       if (owner.deleted_at !== null) return null;
       const head = await t
@@ -348,6 +354,7 @@ export class RunQueue {
       .selectFrom("agents")
       .select(["current_version", "deleted_at"])
       .where("id", "=", conv.agent_id)
+      .where("org_id", "=", conv.org_id)
       .executeTakeFirstOrThrow();
     // agent 已软删除：会话对任何人都不可见，不再为它起运行。
     if (agent.deleted_at !== null) return null;
@@ -381,6 +388,7 @@ export class RunQueue {
         .updateTable("conversations")
         .set({ tree_stopped_at: null })
         .where("id", "=", conversationId)
+        .where("org_id", "=", conv.org_id)
         .execute();
     }
     return runId;
@@ -472,7 +480,12 @@ export class RunQueue {
     // with nothing running (or one whose report raced the stop) is not woken by a late finish
     if (await treeStopped(t, rootId)) return null;
     const wake =
-      (await this.pendingMessageIn(conversationId, Number(conv.consumed_seq), rootId)) ??
+      (await this.pendingMessageIn(
+        conversationId,
+        Number(conv.consumed_seq),
+        rootId,
+        conv.org_id,
+      )) ??
       (await wakeDecisionIn(
         t,
         { id: conversationId, orgId: conv.org_id, rootId },
@@ -489,6 +502,7 @@ export class RunQueue {
       .selectFrom("agents")
       .select(["current_version", "deleted_at"])
       .where("id", "=", conv.agent_id)
+      .where("org_id", "=", conv.org_id)
       .executeTakeFirstOrThrow();
     if (agent.deleted_at !== null) return null;
     // a sub-agent runs its definition frozen at dispatch: its runs keep the version recorded then
@@ -533,6 +547,7 @@ export class RunQueue {
     conversationId: string,
     consumed: number,
     rootId: string,
+    orgId: string,
   ): Promise<{ kind: "wake"; seq: number; triggerAccountId: string } | null> {
     const t = this.db;
     const message = await t
@@ -549,6 +564,7 @@ export class RunQueue {
       .selectFrom("conversations")
       .select(["queue_paused", "deleted_at"])
       .where("id", "=", rootId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!root || root.queue_paused || !isLive(root.deleted_at)) return null;
     const accountId = (message.payload as { authorAccountId: string }).authorAccountId;
@@ -580,6 +596,8 @@ export class RunQueue {
    * before that call leaves no held wake behind. A root whose queue is still paused (or that is
    * deleted) releases nothing and owes nothing.
    */
+  // org-filter: every caller (QueueService resume / remove / sendNow) checked
+  // writable(orgId, rootId, ...) first
   @Transactional({ propagation: "mandatory" })
   async oweHeldTreeIn(rootId: string): Promise<void> {
     const root = await this.db
@@ -598,6 +616,7 @@ export class RunQueue {
    * unconsumed wake event (a finished background task, a delivery) or message, and no active run;
    * with their org and newest seq. Reads only (no row locks).
    */
+  // org-filter: the sub-agents below a root the caller checked; each row's own org is returned
   private async heldTree(rootId: string) {
     const ids = (await conversationTree(this.db, rootId))
       .filter((c) => c.level > 0)
@@ -664,6 +683,8 @@ export class RunQueue {
     return true;
   }
 
+  // org-filter: callers checked the conversation in the org (ConversationsService.abort via get),
+  // stop a tree's kernel-resolved descendants, or pass an org offboarding job's kernel-written id
   @Transactional({ propagation: "requires_new" })
   private async abortOrphanIn(
     conversationId: string,
@@ -719,6 +740,8 @@ export class RunQueue {
     return true;
   }
 
+  // org-filter: callers checked the conversation in the org (ConversationsService.abort via get) or
+  // pass the kernel-written id of an org offboarding job
   @Transactional({ propagation: "requires_new" })
   private async abortQueuedIn(
     conversationId: string,
@@ -820,6 +843,7 @@ async function authorCanSend(
             .selectFrom("agents")
             .select(sql`1`.as("one"))
             .whereRef("agents.id", "=", "conversations.agent_id")
+            .whereRef("agents.org_id", "=", "conversations.org_id")
             .where("agents.deleted_at", "is", null)
             .where(visibleTo(accountId)),
         ),
@@ -833,6 +857,7 @@ async function authorCanSend(
  * Whether a person's stop of the root conversation holds its tree (`tree_stopped_at`, agent map
  * spec §6): set by the stop, cleared when the root next starts a run.
  */
+// org-filter: rootId is rootConversationOf a conversation the caller holds the row lock of
 async function treeStopped(t: KernelSchemaDb, rootId: string): Promise<boolean> {
   const root = await t
     .selectFrom("conversations")

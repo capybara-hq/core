@@ -6,6 +6,7 @@ import { SuperAdminLock } from "../identity/super-admin.js";
 import type { WriteActor } from "../identity/write-actor.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OUTBOX_FAST_PATH, type OutboxFastPath } from "../infra/outbox/outbox.service.js";
@@ -70,6 +71,8 @@ const notFound = (id: string) =>
  * job name added through the outbox is harmless when its work is gone or done (spec §3.5).
  */
 @Injectable()
+// org-filter: super-admin service (callers authorize through SuperAdminLock / admin routes); the
+// outbox is deployment-wide and every dead row of every org is listed and handled on purpose
 export class OutboxDeadService {
   constructor(
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -83,66 +86,70 @@ export class OutboxDeadService {
    * first by `(dead_at, id)`; one extra row tells `next`. A malformed cursor is a validation error.
    */
   async list(q: { after?: string | undefined; limit?: number } = {}): Promise<OutboxDeadPage> {
-    const limit = Math.min(q.limit ?? OUTBOX_DEAD_LIST_MAX, OUTBOX_DEAD_LIST_MAX);
-    const cursor = q.after === undefined ? null : decodeOutboxDeadCursor(q.after);
-    if (q.after !== undefined && cursor === null) {
-      throw new ApiError("validation_failed", "after must be a cursor from a previous page");
-    }
-    let query = this.db.db
-      .selectFrom("outbox")
-      .select([
-        "id",
-        "queue",
-        "job_name",
-        "job_id",
-        "org_id",
-        "attempts",
-        "last_error",
-        "dead_at",
-        "created_at",
-        // PG's own text keeps the microseconds a JS Date would cut
-        sql<string>`dead_at::text`.as("dead_at_text"),
-      ])
-      .where("dead_at", "is not", null);
-    if (cursor !== null) {
-      query = query.where(
-        sql<boolean>`(dead_at, id) > (${cursor.deadAt}::timestamptz, ${cursor.id}::bigint)`,
-      );
-    }
-    const rows = await query
-      .orderBy("dead_at")
-      .orderBy("id")
-      .limit(limit + 1)
-      .execute();
-    const page = rows.slice(0, limit);
-    const last = page.at(-1);
-    return {
-      next:
-        rows.length > limit && last !== undefined
-          ? encodeOutboxDeadCursor({ deadAt: last.dead_at_text, id: String(last.id) })
-          : null,
-      items: page.map((r) => ({
-        id: String(r.id),
-        queue: r.queue,
-        jobName: r.job_name,
-        jobId: r.job_id,
-        orgId: r.org_id,
-        attempts: r.attempts,
-        lastError: r.last_error,
-        deadAt: (r.dead_at as Date).toISOString(),
-        createdAt: r.created_at.toISOString(),
-      })),
-    };
+    return asPlatform("super admin: the dead outbox rows of every org", async () => {
+      const limit = Math.min(q.limit ?? OUTBOX_DEAD_LIST_MAX, OUTBOX_DEAD_LIST_MAX);
+      const cursor = q.after === undefined ? null : decodeOutboxDeadCursor(q.after);
+      if (q.after !== undefined && cursor === null) {
+        throw new ApiError("validation_failed", "after must be a cursor from a previous page");
+      }
+      let query = this.db.db
+        .selectFrom("outbox")
+        .select([
+          "id",
+          "queue",
+          "job_name",
+          "job_id",
+          "org_id",
+          "attempts",
+          "last_error",
+          "dead_at",
+          "created_at",
+          // PG's own text keeps the microseconds a JS Date would cut
+          sql<string>`dead_at::text`.as("dead_at_text"),
+        ])
+        .where("dead_at", "is not", null);
+      if (cursor !== null) {
+        query = query.where(
+          sql<boolean>`(dead_at, id) > (${cursor.deadAt}::timestamptz, ${cursor.id}::bigint)`,
+        );
+      }
+      const rows = await query
+        .orderBy("dead_at")
+        .orderBy("id")
+        .limit(limit + 1)
+        .execute();
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        next:
+          rows.length > limit && last !== undefined
+            ? encodeOutboxDeadCursor({ deadAt: last.dead_at_text, id: String(last.id) })
+            : null,
+        items: page.map((r) => ({
+          id: String(r.id),
+          queue: r.queue,
+          jobName: r.job_name,
+          jobId: r.job_id,
+          orgId: r.org_id,
+          attempts: r.attempts,
+          lastError: r.last_error,
+          deadAt: (r.dead_at as Date).toISOString(),
+          createdAt: r.created_at.toISOString(),
+        })),
+      };
+    });
   }
 
   /** How many rows are dead, and the oldest one's `dead_at`. */
   async summary(): Promise<OutboxDeadSummary> {
-    const row = await this.db.db
-      .selectFrom("outbox")
-      .select([sql<string>`count(*)`.as("count"), sql<Date | null>`min(dead_at)`.as("oldest")])
-      .where("dead_at", "is not", null)
-      .executeTakeFirstOrThrow();
-    return { count: Number(row.count), oldestAt: row.oldest };
+    return asPlatform("super admin: the dead outbox rows of every org", async () => {
+      const row = await this.db.db
+        .selectFrom("outbox")
+        .select([sql<string>`count(*)`.as("count"), sql<Date | null>`min(dead_at)`.as("oldest")])
+        .where("dead_at", "is not", null)
+        .executeTakeFirstOrThrow();
+      return { count: Number(row.count), oldestAt: row.oldest };
+    });
   }
 
   /**
@@ -181,63 +188,67 @@ export class OutboxDeadService {
     actor: WriteActor,
     detail: Record<string, unknown>,
   ): Promise<{ outcome: OutboxRetryOutcome }> {
-    await this.adminLock.lockAndAuthorize(actor.accountId);
-    await this.lockRunRetryIn(id);
-    const row = await this.lockDead(id);
-    const owed = await this.db.db
-      .selectFrom("outbox")
-      .select("id")
-      .where("queue", "=", row.queue)
-      .where("job_id", "=", row.job_id)
-      .where("dead_at", "is", null)
-      .executeTakeFirst();
-    let outcome: OutboxRetryOutcome;
-    if (owed) {
-      await this.db.db.deleteFrom("outbox").where("id", "=", id).execute();
-      outcome = "already_owed";
-    } else {
-      await this.db.db
-        .updateTable("outbox")
-        .set({ dead_at: null, attempts: 0, next_attempt_at: sql<Date>`now()` })
-        .where("id", "=", id)
-        .execute();
-      outcome = "retried";
-      afterCommit(() => this.fastPath([id]));
-    }
-    await this.audit("outbox.retried", id, row, actor, { ...detail, outcome });
-    return { outcome };
+    return asPlatform("super admin: the dead outbox rows of every org", async () => {
+      await this.adminLock.lockAndAuthorize(actor.accountId);
+      await this.lockRunRetryIn(id);
+      const row = await this.lockDead(id);
+      const owed = await this.db.db
+        .selectFrom("outbox")
+        .select("id")
+        .where("queue", "=", row.queue)
+        .where("job_id", "=", row.job_id)
+        .where("dead_at", "is", null)
+        .executeTakeFirst();
+      let outcome: OutboxRetryOutcome;
+      if (owed) {
+        await this.db.db.deleteFrom("outbox").where("id", "=", id).execute();
+        outcome = "already_owed";
+      } else {
+        await this.db.db
+          .updateTable("outbox")
+          .set({ dead_at: null, attempts: 0, next_attempt_at: sql<Date>`now()` })
+          .where("id", "=", id)
+          .execute();
+        outcome = "retried";
+        afterCommit(() => this.fastPath([id]));
+      }
+      await this.audit("outbox.retried", id, row, actor, { ...detail, outcome });
+      return { outcome };
+    });
   }
 
   /** A run-job retry is a new delivery generation, serialized with its terminal transition. */
   @Transactional({ propagation: "mandatory" })
   private async lockRunRetryIn(id: string): Promise<void> {
-    // Read before taking any outbox lock: the lock order is conversation, then outbox. The
-    // subsequent lockDead rechecks this row, so a concurrent discard/retry rolls this back.
-    const row = await this.db
-      .selectFrom("outbox")
-      .select(["job_name", "job_id", "data"])
-      .where("id", "=", id)
-      .where("dead_at", "is not", null)
-      .executeTakeFirst();
-    if (row?.job_name !== "run" || row.data === null || typeof row.data !== "object") return;
-    const data = row.data as { conversationId?: unknown; runId?: unknown };
-    if (typeof data.conversationId !== "string" || typeof data.runId !== "string") return;
-    await this.db
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", data.conversationId)
-      .forUpdate()
-      .execute();
-    await this.db
-      .updateTable("runs")
-      .set({ queued_at: sql<Date>`clock_timestamp()` })
-      .where("id", "=", data.runId)
-      .where("conversation_id", "=", data.conversationId)
-      .where("status", "=", "queued")
-      .where(
-        sql<boolean>`COALESCE(job_id, 'run-' || conversation_id || '-' || trigger_seq::text) = ${row.job_id}`,
-      )
-      .execute();
+    return asPlatform("super admin: the dead outbox rows of every org", async () => {
+      // Read before taking any outbox lock: the lock order is conversation, then outbox. The
+      // subsequent lockDead rechecks this row, so a concurrent discard/retry rolls this back.
+      const row = await this.db
+        .selectFrom("outbox")
+        .select(["job_name", "job_id", "data"])
+        .where("id", "=", id)
+        .where("dead_at", "is not", null)
+        .executeTakeFirst();
+      if (row?.job_name !== "run" || row.data === null || typeof row.data !== "object") return;
+      const data = row.data as { conversationId?: unknown; runId?: unknown };
+      if (typeof data.conversationId !== "string" || typeof data.runId !== "string") return;
+      await this.db
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", data.conversationId)
+        .forUpdate()
+        .execute();
+      await this.db
+        .updateTable("runs")
+        .set({ queued_at: sql<Date>`clock_timestamp()` })
+        .where("id", "=", data.runId)
+        .where("conversation_id", "=", data.conversationId)
+        .where("status", "=", "queued")
+        .where(
+          sql<boolean>`COALESCE(job_id, 'run-' || conversation_id || '-' || trigger_seq::text) = ${row.job_id}`,
+        )
+        .execute();
+    });
   }
 
   /** Deletes a dead row: its job is never delivered. `outbox.not_found` (404) when none. */
@@ -247,23 +258,27 @@ export class OutboxDeadService {
     actor: WriteActor,
     detail: Record<string, unknown> = {},
   ): Promise<void> {
-    await this.adminLock.lockAndAuthorize(actor.accountId);
-    const row = await this.lockDead(id);
-    await this.db.db.deleteFrom("outbox").where("id", "=", id).execute();
-    await this.audit("outbox.discarded", id, row, actor, detail);
+    return asPlatform("super admin: the dead outbox rows of every org", async () => {
+      await this.adminLock.lockAndAuthorize(actor.accountId);
+      const row = await this.lockDead(id);
+      await this.db.db.deleteFrom("outbox").where("id", "=", id).execute();
+      await this.audit("outbox.discarded", id, row, actor, detail);
+    });
   }
 
   /** The dead row `id`, locked for the transaction; `outbox.not_found` when it is not dead. */
   private async lockDead(id: string) {
-    const row = await this.db.db
-      .selectFrom("outbox")
-      .select(["queue", "job_name", "job_id", "org_id", "attempts", "last_error"])
-      .where("id", "=", id)
-      .where("dead_at", "is not", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row) throw notFound(id);
-    return row;
+    return asPlatform("super admin: the dead outbox rows of every org", async () => {
+      const row = await this.db.db
+        .selectFrom("outbox")
+        .select(["queue", "job_name", "job_id", "org_id", "attempts", "last_error"])
+        .where("id", "=", id)
+        .where("dead_at", "is not", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!row) throw notFound(id);
+      return row;
+    });
   }
 
   /**

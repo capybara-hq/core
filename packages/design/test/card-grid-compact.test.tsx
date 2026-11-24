@@ -276,6 +276,21 @@ describe("compact CSS (below 600)", () => {
         .map((r) => r.decls),
     );
 
+  it("hides neutral chips but keeps warn chips", () => {
+    expect(at('.cb-object-card-chips > .cb-object-chip:not([data-tone="warn"])').display).toBe(
+      "none",
+    );
+    const all = rules.filter((r) => r.at === "not all and (min-width: 600px)");
+    expect(
+      all.some(
+        (r) =>
+          r.selector.startsWith(".cb-object-card-chips") &&
+          r.decls.display === "none" &&
+          !r.selector.includes('"warn"'),
+      ),
+    ).toBe(false);
+  });
+
   it("the grid is one rounded card (panel, line-soft, radius.md) with no gap", () => {
     const g = at(".cb-card-grid");
     expect(g["grid-template-columns"]).toBe("1fr");

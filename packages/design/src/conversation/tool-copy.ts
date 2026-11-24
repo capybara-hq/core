@@ -25,9 +25,11 @@ export type ToolGuard = "not_read" | "modified";
 /**
  * A protocol notice on a done call (§6.16.9): `not_loaded`, the call named a tool that the step's
  * request did not carry (the catalog holds it), so the kernel answered "load it first" and the
- * model retried in the next step. Expected behaviour, not a failure: the row adds a neutral word.
+ * model retried in the next step; `reconciling`, a background start the kernel sent but could not
+ * confirm, which it is reconciling until the task is confirmed running or ends. Expected
+ * behaviour, not a failure: the row adds a neutral word.
  */
-export type ToolNotice = "not_loaded";
+export type ToolNotice = "not_loaded" | "reconciling";
 
 /**
  * The kind of a boundary crossing Auto granted by itself (§6.16.9): a directory outside the
@@ -68,9 +70,15 @@ export type SummaryRow = {
 
 /** One run of the group header text; `part` names the size-table part it carries. */
 export type SummaryPart = {
+  /** The run's text; for an error mark, its plain form (accessible names, tests). */
   text: string;
-  tone?: "ink" | "fail" | "faint" | "accent";
-  part?: "key-arg" | "fail-word" | "waiting-word";
+  tone?: "ink" | "faint" | "accent";
+  part?: "key-arg" | "waiting-word";
+  /**
+   * The calls that returned an error (§6.16.8): drawn as the error dot and the count, not as
+   * words; `label` is the dot's accessible name and tooltip.
+   */
+  errors?: { count: number; label: string };
 };
 
 const fmt = (tpl: string, vars: Record<string, string | number>) =>
@@ -140,9 +148,13 @@ export function summaryParts(rows: readonly SummaryRow[], locale: Locale): Summa
     const key = (list.length === 1 ? `tool.count.${g}1` : `tool.count.${g}`) as DesignKey;
     out.push({ text: adjust(fmt(m[key], { n: list.length })) });
   });
+  // calls that returned an error: a calm mark (the error dot and the count), never an alarm word;
+  // the agent often corrects such a step itself on the next call
   const failed = rows.filter((r) => r.status === "failed").length;
-  if (failed > 0)
-    out.push({ text: fmt(m["tool.failedCount"], { n: failed }), tone: "fail", part: "fail-word" });
+  if (failed > 0) {
+    const label = failed === 1 ? m["tool.errorCount1"] : fmt(m["tool.errorCount"], { n: failed });
+    out.push({ text: ` · ${label}`, errors: { count: failed, label } });
+  }
   // refused by a guard: told apart in the header's own color, never as a failure
   const guarded = rows.filter((r) => r.status === "done" && r.guard !== undefined).length;
   if (guarded > 0) out.push({ text: fmt(m["tool.guardedCount"], { n: guarded }) });

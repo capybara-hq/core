@@ -33,7 +33,7 @@ export interface ExtensionManifest {
    * unknown slot or version is only dropped when the host resolves the slots (`resolveUiSlots`).
    */
   ui?: UiContribution[];
-  config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
+  config?: { deployment?: z.ZodTypeAny };
   migrations?: string;
   setup(ctx: ExtensionContext): void | Promise<void>;
   /**
@@ -92,10 +92,7 @@ function checkRefs(
   }
 }
 
-/**
- * Validates the plugin manifest and returns it unchanged; throws ExtensionManifestError when
- * invalid.
- */
+/** Validates the plugin manifest and returns it unchanged; throws ExtensionManifestError when invalid. */
 export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   const plugin = typeof m?.name === "string" && m.name !== "" ? m.name : "<unnamed>";
   const fail = (msg: string): never => {
@@ -132,6 +129,15 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   for (const r of optional) {
     if (m.provides.includes(r) || requires.includes(r)) {
       fail(`field "optional" entry "${r}" overlaps with "provides" or "requires"`);
+    }
+  }
+  if (m.config !== undefined) {
+    if (typeof m.config !== "object" || m.config === null || Array.isArray(m.config)) {
+      fail(`field "config" must be an object`);
+    }
+    for (const key of Object.keys(m.config)) {
+      if (key === "deployment") continue;
+      fail(`config.${key} is not a config level: the only one is config.deployment`);
     }
   }
   if (m.permissions !== undefined) {

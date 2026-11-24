@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { CacheService } from "../infra/cache/cache.service.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -430,7 +431,7 @@ export class AttachmentsService {
       ttlHours,
     });
     const head = await this.storage.kernel(orgId).put(key, file.bytes, { contentType, size });
-    await this.markStored(id, head.size, head.etag ?? null);
+    await this.markStored(orgId, id, head.size, head.etag ?? null);
     return { id };
   }
 
@@ -456,11 +457,17 @@ export class AttachmentsService {
 
   /** The last step of {@link createFromBytes}: the stored object's size and etag, `ready`. */
   @Transactional()
-  private async markStored(id: string, size: number, etag: string | null): Promise<void> {
+  private async markStored(
+    orgId: string,
+    id: string,
+    size: number,
+    etag: string | null,
+  ): Promise<void> {
     await this.db.db
       .updateTable("attachments")
       .set({ status: "ready", size, etag })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "pending")
       .execute();
   }
@@ -565,6 +572,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ status: "ready", etag: got?.head.etag ?? head.etag ?? null, pages })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "pending")
       .execute();
     return view;
@@ -810,6 +818,7 @@ export class AttachmentsService {
         .updateTable("attachments")
         .set({ conversation_id: conversationId, expires_at: null })
         .where("id", "in", toBind)
+        .where("org_id", "=", orgId)
         .execute();
     }
     return blocks;
@@ -975,6 +984,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now() + make_interval(hours => ${SKILL_PACKAGE_TTL_HOURS})` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "ready")
       .where("purpose", "=", "skill-package")
       .returning(["object_key", "size", "etag"])
@@ -1013,6 +1023,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ status: "deleting", expires_at: sql<Date>`now()` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
   }
 
@@ -1057,6 +1068,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now() + make_interval(hours => ${AGENT_AVATAR_TTL_HOURS})` })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("status", "=", "ready")
       .where("agent_id", "is", null)
       .where("expires_at", "is not", null)
@@ -1093,6 +1105,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ agent_id: agentId, expires_at: null })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .execute();
   }
 
@@ -1167,7 +1180,7 @@ export class AttachmentsService {
     const head = await this.storage
       .kernel(orgId)
       .put(key, file.data, { contentType: contentType || "application/octet-stream" });
-    await this.bindRead(id, conversationId, head.size, head.etag ?? null);
+    await this.bindRead(orgId, id, conversationId, head.size, head.etag ?? null);
     return { ok: true, attachmentId: id, size: head.size };
   }
 
@@ -1226,6 +1239,7 @@ export class AttachmentsService {
   /** Step 4 of {@link storeRead}: binds the unbound row in one transaction. */
   @Transactional()
   private async bindRead(
+    orgId: string,
     id: string,
     conversationId: string,
     size: number,
@@ -1235,6 +1249,7 @@ export class AttachmentsService {
       .updateTable("attachments")
       .set({ conversation_id: conversationId, status: "ready", expires_at: null, size, etag })
       .where("id", "=", id)
+      .where("org_id", "=", orgId)
       .where("purpose", "=", "read")
       .where("status", "=", "pending")
       .where("conversation_id", "is", null)
@@ -1253,26 +1268,29 @@ export class AttachmentsService {
    * Chat attachments of deleted conversations are not touched. Does nothing without an object
    * store. Returns the number of rows deleted.
    */
+  // org-filter: deployment-wide cleanup job across all orgs; each claimed row is deleted by its
+  // own id and handled in its own org (r.org_id)
   async purgeRead(): Promise<number> {
-    if (!this.storage.available) return 0;
-    const hours = this.config.get().attachments.readPurgeAfterHours;
-    let deleted = 0;
-    const failed: string[] = [];
-    for (;;) {
-      const claimed = await this.db
-        .updateTable("attachments")
-        .set({ status: "deleting" })
-        .where(
-          "id",
-          "in",
-          this.db
-            .selectFrom("attachments")
-            .select("id")
-            .where("purpose", "=", "read")
-            .where(
-              "conversation_id",
-              "in",
-              sql<string>`(
+    return asPlatform("deployment-wide cleanup job across all orgs", async () => {
+      if (!this.storage.available) return 0;
+      const hours = this.config.get().attachments.readPurgeAfterHours;
+      let deleted = 0;
+      const failed: string[] = [];
+      for (;;) {
+        const claimed = await this.db
+          .updateTable("attachments")
+          .set({ status: "deleting" })
+          .where(
+            "id",
+            "in",
+            this.db
+              .selectFrom("attachments")
+              .select("id")
+              .where("purpose", "=", "read")
+              .where(
+                "conversation_id",
+                "in",
+                sql<string>`(
                 WITH RECURSIVE gone(id, level) AS (
                   SELECT c.id, 0 FROM capybara.conversations c
                   WHERE c.deleted_at < now() - make_interval(hours => ${hours})
@@ -1283,36 +1301,37 @@ export class AttachmentsService {
                 )
                 SELECT id FROM gone
               )`,
-            )
-            .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
-            .orderBy("created_at")
-            .limit(READ_PURGE_BATCH)
-            .forUpdate()
-            .skipLocked(),
-        )
-        .returning(["id", "org_id", "object_key"])
-        .execute();
-      if (claimed.length === 0) return deleted;
-      for (const r of claimed) {
-        try {
-          await this.storage.kernel(r.org_id).delete(r.object_key);
-          await this.db
-            .deleteFrom("attachments")
-            .where("id", "=", r.id)
-            .where("purpose", "=", "read")
-            .execute();
-          deleted++;
-        } catch (err) {
-          failed.push(r.id);
-          this.log.warn("cannot purge read attachment; will retry", {
-            orgId: r.org_id,
-            attachmentId: r.id,
-            err,
-          });
+              )
+              .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
+              .orderBy("created_at")
+              .limit(READ_PURGE_BATCH)
+              .forUpdate()
+              .skipLocked(),
+          )
+          .returning(["id", "org_id", "object_key"])
+          .execute();
+        if (claimed.length === 0) return deleted;
+        for (const r of claimed) {
+          try {
+            await this.storage.kernel(r.org_id).delete(r.object_key);
+            await this.db
+              .deleteFrom("attachments")
+              .where("id", "=", r.id)
+              .where("purpose", "=", "read")
+              .execute();
+            deleted++;
+          } catch (err) {
+            failed.push(r.id);
+            this.log.warn("cannot purge read attachment; will retry", {
+              orgId: r.org_id,
+              attachmentId: r.id,
+              err,
+            });
+          }
         }
+        if (claimed.length < READ_PURGE_BATCH) return deleted;
       }
-      if (claimed.length < READ_PURGE_BATCH) return deleted;
-    }
+    });
   }
 
   /**
@@ -1322,62 +1341,66 @@ export class AttachmentsService {
    * 解出的文件 `skills/<id>/` 只在没有任何技能版本引用时一并删除。
    * 没有对象存储时什么也不做。返回删除的附件数。
    */
+  // org-filter: deployment-wide cleanup job across all orgs; each claimed row is deleted by its
+  // own id and handled in its own org (r.org_id)
   async deleteExpired(): Promise<number> {
-    if (!this.storage.available) return 0;
-    let deleted = 0;
-    const failed: string[] = [];
-    for (;;) {
-      const claimed = await this.db
-        .updateTable("attachments")
-        .set({ status: "deleting" })
-        .where(
-          "id",
-          "in",
-          this.db
-            .selectFrom("attachments")
-            .select("id")
-            .where("conversation_id", "is", null)
-            .where("expires_at", "<", sql<Date>`now()`)
-            .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
-            .orderBy("expires_at")
-            .limit(CLEANUP_BATCH)
-            .forUpdate()
-            .skipLocked(),
-        )
-        .returning(["id", "org_id", "object_key", "purpose"])
-        .execute();
-      if (claimed.length === 0) return deleted;
-      for (const r of claimed) {
-        try {
-          const store = this.storage.kernel(r.org_id);
-          await store.delete(r.object_key);
-          if (r.purpose === "skill-package") {
-            // 解出的文件没被任何版本引用（处理中途失败、或从未用掉）才删
-            const prefix = skillFilesPrefix(r.id);
-            const used = await this.db
-              .selectFrom("skill_versions")
-              .select("skill_id")
-              .where("object_prefix", "=", prefix)
-              .executeTakeFirst();
-            if (!used) await store.deletePrefix(prefix);
+    return asPlatform("deployment-wide cleanup job across all orgs", async () => {
+      if (!this.storage.available) return 0;
+      let deleted = 0;
+      const failed: string[] = [];
+      for (;;) {
+        const claimed = await this.db
+          .updateTable("attachments")
+          .set({ status: "deleting" })
+          .where(
+            "id",
+            "in",
+            this.db
+              .selectFrom("attachments")
+              .select("id")
+              .where("conversation_id", "is", null)
+              .where("expires_at", "<", sql<Date>`now()`)
+              .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
+              .orderBy("expires_at")
+              .limit(CLEANUP_BATCH)
+              .forUpdate()
+              .skipLocked(),
+          )
+          .returning(["id", "org_id", "object_key", "purpose"])
+          .execute();
+        if (claimed.length === 0) return deleted;
+        for (const r of claimed) {
+          try {
+            const store = this.storage.kernel(r.org_id);
+            await store.delete(r.object_key);
+            if (r.purpose === "skill-package") {
+              // delete the unpacked files only when no version references them (a failed or unused upload)
+              const prefix = skillFilesPrefix(r.id);
+              const used = await this.db
+                .selectFrom("skill_versions")
+                .select("skill_id")
+                .where("object_prefix", "=", prefix)
+                .executeTakeFirst();
+              if (!used) await store.deletePrefix(prefix);
+            }
+            await this.db
+              .deleteFrom("attachments")
+              .where("id", "=", r.id)
+              .where("conversation_id", "is", null)
+              .execute();
+            deleted++;
+          } catch (err) {
+            failed.push(r.id);
+            this.log.warn("cannot delete expired attachment; will retry", {
+              orgId: r.org_id,
+              attachmentId: r.id,
+              err,
+            });
           }
-          await this.db
-            .deleteFrom("attachments")
-            .where("id", "=", r.id)
-            .where("conversation_id", "is", null)
-            .execute();
-          deleted++;
-        } catch (err) {
-          failed.push(r.id);
-          this.log.warn("cannot delete expired attachment; will retry", {
-            orgId: r.org_id,
-            attachmentId: r.id,
-            err,
-          });
         }
+        if (claimed.length < CLEANUP_BATCH) return deleted;
       }
-      if (claimed.length < CLEANUP_BATCH) return deleted;
-    }
+    });
   }
 }
 

@@ -56,6 +56,7 @@ import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
@@ -127,6 +128,7 @@ import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
 import { oweScopeItem } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
+import { templateDescriptionText } from "./template-description.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
@@ -233,7 +235,10 @@ export interface PluginReviewClient {
 export interface PluginReviewTemplate {
   id: string;
   displayName: LocalizedName;
+  /** The English text, or the one text of a plain-string description ("" without one). */
   description: string;
+  /** The Chinese text of a `{ zh, en }` description; null: `description` serves both languages. */
+  descriptionZh: string | null;
   plugin: string;
   connector: string;
   endpoint: Record<string, unknown>;
@@ -1151,6 +1156,7 @@ export class PluginImport {
     permissionsMismatch?: PermissionsMismatch;
   }> {
     if (!UUID_RE.test(stagingId)) throw notFound();
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .select(["id", "review", "manifest"])
@@ -1177,6 +1183,7 @@ export class PluginImport {
    */
   async stagedTarget(stagingId: string, owner?: ImportOwner): Promise<StagedTarget> {
     if (!UUID_RE.test(stagingId)) throw notFound();
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .select(["review", "manifest", "object_prefix"])
@@ -1315,6 +1322,7 @@ export class PluginImport {
         { path: "orgs", message: "scope named needs at least one organization" },
       ]);
     }
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .selectAll()
@@ -1488,6 +1496,7 @@ export class PluginImport {
     const { owner } = scope;
     await this.authorizeActor(actor, owner);
     const t = this.db;
+    // org-filter: ownStaging(owner) pins the row to the caller's org (org_id NULL for the platform)
     const used = await t
       .deleteFrom("plugin_import_staging")
       .where("id", "=", stagingId)
@@ -1565,6 +1574,7 @@ export class PluginImport {
       await assertNameNotReserved(t, m.name);
       await this.resolveDependencies(m, owner);
     }
+    // org-filter: the existing item's whole named list (spans orgs), keyed by its item id
     const actual =
       existing === undefined
         ? scope
@@ -1966,53 +1976,59 @@ export class PluginImport {
   }
 
   /** The expired staging rows, batch by batch; returns the rows deleted. */
+  // org-filter: deployment-wide expiry sweep (maintenance job) over every org's staging rows
   private async cleanupStagingRows(): Promise<number> {
-    let total = 0;
-    for (;;) {
-      const batch = await this.db
-        .selectFrom("plugin_import_staging")
-        .select(["id", "object_prefix"])
-        .where("expires_at", "<=", sql<Date>`now()`)
-        .orderBy("expires_at")
-        .limit(CLEANUP_BATCH)
-        .execute();
-      if (batch.length === 0) return total;
-      let progressed = 0;
-      for (const r of batch) {
-        try {
-          const done = await this.cleanupOne(r);
-          if (done) {
-            total++;
-            progressed++;
+    return asPlatform("deployment-wide expiry sweep", async () => {
+      let total = 0;
+      for (;;) {
+        const batch = await this.db
+          .selectFrom("plugin_import_staging")
+          .select(["id", "object_prefix"])
+          .where("expires_at", "<=", sql<Date>`now()`)
+          .orderBy("expires_at")
+          .limit(CLEANUP_BATCH)
+          .execute();
+        if (batch.length === 0) return total;
+        let progressed = 0;
+        for (const r of batch) {
+          try {
+            const done = await this.cleanupOne(r);
+            if (done) {
+              total++;
+              progressed++;
+            }
+          } catch (err) {
+            this.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
           }
-        } catch (err) {
-          this.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
         }
+        if (progressed === 0 || batch.length < CLEANUP_BATCH) return total;
       }
-      if (progressed === 0 || batch.length < CLEANUP_BATCH) return total;
-    }
+    });
   }
 
   /**
    * One expired staging row (row lock, `SKIP LOCKED`): its objects, then the row; false when another
    * replica has it or it is gone.
    */
+  // org-filter: deployment-wide expiry sweep; the row id comes from the sweep's own read
   @Transactional()
   private async cleanupOne(r: { id: string; object_prefix: string | null }): Promise<boolean> {
-    const t = this.db;
-    const locked = await t
-      .selectFrom("plugin_import_staging")
-      .select(["id", "org_id", "review", "manifest"])
-      .where("id", "=", r.id)
-      .where("expires_at", "<=", sql<Date>`now()`)
-      .forUpdate()
-      .skipLocked()
-      .executeTakeFirst();
-    if (!locked) return false;
-    if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
-    await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
-    await this.dropOrgPackage(locked);
-    return true;
+    return asPlatform("deployment-wide expiry sweep", async () => {
+      const t = this.db;
+      const locked = await t
+        .selectFrom("plugin_import_staging")
+        .select(["id", "org_id", "review", "manifest"])
+        .where("id", "=", r.id)
+        .where("expires_at", "<=", sql<Date>`now()`)
+        .forUpdate()
+        .skipLocked()
+        .executeTakeFirst();
+      if (!locked) return false;
+      if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
+      await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
+      await this.dropOrgPackage(locked);
+      return true;
+    });
   }
 
   /**
@@ -2041,6 +2057,7 @@ export class PluginImport {
       .forUpdate()
       .executeTakeFirst();
     if (!pkg) return;
+    // org-filter: whether any staging of any org still uses the package (content-addressed sha)
     const used =
       (await t
         .selectFrom("extension_installs")
@@ -2253,7 +2270,7 @@ export class PluginImport {
       return {
         id: c.id,
         displayName: c.file.displayName,
-        description: c.file.description ?? "",
+        ...templateDescriptionText(c.file.description),
         plugin: t.plugin,
         connector: t.connector,
         endpoint: t.endpoint,

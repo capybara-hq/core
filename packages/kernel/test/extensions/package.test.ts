@@ -67,7 +67,7 @@ const manifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionM
   requires: [],
   optional: [],
   permissions: { tools: ["write"] },
-  config: { deployment: [], org: [{ path: "apiKey", secret: true, hot: false }] },
+  config: { deployment: [{ path: "apiKey", secret: true, hot: false }] },
   ...over,
 });
 
@@ -742,7 +742,6 @@ describe("permissionSetOfPackage", () => {
       },
       config: {
         deployment: z.object({ url: z.string(), nested: z.object({ k: secret(z.string()) }) }),
-        org: z.object({ apiKey: secret(z.string()) }),
       },
       setup() {},
     });

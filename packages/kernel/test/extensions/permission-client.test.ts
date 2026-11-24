@@ -24,7 +24,7 @@ const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const setOf = (permissions: ExtensionPermissions) =>
   buildPermissionSet({
     provides: [],
-    config: { deployment: [], org: [] },
+    config: { deployment: [] },
     tables: [],
     permissions,
   });
@@ -121,7 +121,7 @@ describe("client code and components in the permission set (client extensions sp
       provides: [],
       requires: [],
       optional: [],
-      config: { deployment: [], org: [] },
+      config: { deployment: [] },
       tables: [],
       permissions: {
         secrets: false,

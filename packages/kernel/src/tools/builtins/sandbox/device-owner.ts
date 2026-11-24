@@ -6,15 +6,14 @@ export const DEVICE_OF_ANOTHER_ACCOUNT_TEXT =
 
 /**
  * The one run-account guard of every device entry (the sandbox tools' `inSandboxWith`, the task
- * tools, a background launch before its reservation is written): once the paired activation is
- * on, a run whose account is not the conversation's owner (a wake attributed to another member)
- * never uses the owner's device, refused before any device or database effect. Dormant, nothing
- * changes (the earlier behaviour).
+ * tools, a background launch before its reservation is written): a run whose account is not the
+ * conversation's owner (a wake attributed to another member) never uses the owner's device,
+ * refused before any device or database effect.
  */
-export function assertDeviceOfRunAccount(
-  active: boolean | undefined,
-  ctx: { accountId: string; ownerAccountId?: string | undefined },
-): void {
-  if (active && ctx.ownerAccountId !== undefined && ctx.ownerAccountId !== ctx.accountId)
+export function assertDeviceOfRunAccount(ctx: {
+  accountId: string;
+  ownerAccountId?: string | undefined;
+}): void {
+  if (ctx.ownerAccountId !== undefined && ctx.ownerAccountId !== ctx.accountId)
     throw new ToolError(DEVICE_OF_ANOTHER_ACCOUNT_TEXT);
 }

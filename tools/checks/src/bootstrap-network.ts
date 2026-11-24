@@ -56,10 +56,11 @@ export interface PluginsRepoFiles {
   /** Core's socket proxy config, which the device-docker plugin's test copy must equal. */
   haproxy?: { file: string; bytes: Uint8Array };
   /**
-   * The sha256 (hex) of each file of core's SDK `SANDBOX_RUNTIME_SOURCE`, which the device-docker
-   * image stages: the image's `SHA256SUMS` must list each name with that digest.
+   * Each runtime file of core's SDK `SANDBOX_RUNTIME_SOURCE` the device-docker image stages, with
+   * the sha256 (hex) digests a staged copy may have (the staged set's digest first, then the
+   * others `accepted` lists): the image's `SHA256SUMS` must list each name with one of them.
    */
-  sandboxRuntime?: readonly { name: string; sha256: string }[];
+  sandboxRuntime?: readonly { name: string; sha256s: readonly string[] }[];
 }
 
 const MARKETPLACE_FILE = ".capybara-plugin/marketplace.json";
@@ -241,20 +242,22 @@ function parseSums(text: string): Map<string, string> {
 
 /**
  * `bootstrap-sandbox-runtime`: the device-docker image at the commit stages the SDK runtime files
- * core's kernel verifies (`SANDBOX_RUNTIME_SOURCE`); its `SHA256SUMS` must list every file with the
- * digest of core's in-repo source. A mismatch means every device on a current kernel refuses the
- * staged file ("does not match its digest").
+ * a kernel on core's SDK accepts (`SANDBOX_RUNTIME_SOURCE`: the staged set `files`, or any digest
+ * `accepted` lists for that name, e.g. `current` while a runtime change is between its steps); its
+ * `SHA256SUMS` must list every file with one of those digests. A mismatch means every device on a
+ * current kernel refuses the staged file ("does not match its digest").
  */
 function checkSandboxRuntime(
   files: Map<string, Uint8Array>,
-  expected: readonly { name: string; sha256: string }[],
+  expected: readonly { name: string; sha256s: readonly string[] }[],
   url: string,
   at: string,
 ): NetworkProblem[] {
   const fix =
     "restage the device-docker image in capybara-hq/plugins with the current SDK runtime sources " +
-    "(plugins/device-docker/image/runtime and its SHA256SUMS), then bump marketplace.commit and " +
-    "the device-docker pin in packages/kernel/bootstrap.json in the same change";
+    "(SANDBOX_RUNTIME_SOURCE.current into plugins/device-docker/image/runtime and its SHA256SUMS), " +
+    "then bump marketplace.commit and the device-docker pin in packages/kernel/bootstrap.json in " +
+    "the same change (tools/checks/README.md, Changing the SDK runtime sources)";
   const raw = files.get(PLUGIN_SANDBOX_RUNTIME_SUMS);
   if (raw === undefined) {
     return [
@@ -268,10 +271,10 @@ function checkSandboxRuntime(
   const out: NetworkProblem[] = [];
   for (const f of expected) {
     const listed = sums.get(f.name);
-    if (listed === f.sha256) continue;
+    if (listed !== undefined && f.sha256s.includes(listed)) continue;
     out.push({
       rule: "bootstrap-sandbox-runtime",
-      message: `${PLUGIN_SANDBOX_RUNTIME_SUMS} at ${at} of ${url} ${listed === undefined ? `does not list ${f.name}` : `lists ${f.name} as ${listed}`}, but core's SDK source hashes to ${f.sha256} (SANDBOX_RUNTIME_SOURCE); devices on this kernel would refuse the staged file: ${fix}`,
+      message: `${PLUGIN_SANDBOX_RUNTIME_SUMS} at ${at} of ${url} ${listed === undefined ? `does not list ${f.name}` : `lists ${f.name} as ${listed}`}, but core's SDK accepts ${f.sha256s.join(" or ")} for it (SANDBOX_RUNTIME_SOURCE); devices on this kernel would refuse the staged file: ${fix}`,
     });
   }
   return out;

@@ -97,6 +97,19 @@
   font-size: var(--cb-type-body-size);
   line-height: var(--cb-type-body-line);
 }
+.cb-object-card-name[data-mono="true"] {
+  font-family: var(--cb-font-code);
+}
+/* Badges after the title: they wrap among themselves and leave the title its room. */
+.cb-object-card-chips {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--cb-space-1);
+  max-width: 50%;
+}
 .cb-object-card-head > .cb-object-card-name {
   flex: 1;
   min-width: 0;
@@ -138,7 +151,8 @@
 }
 /* The buttons sit in ClassForms' wide copy (a box-less wrapper) on a linked card, directly in
    the foot on a card without a link. */
-.cb-object-card-foot .cb-btn {
+.cb-object-card-foot .cb-btn,
+.cb-object-card-foot .cb-switch {
   position: relative;
   z-index: 1;
   flex: none;
@@ -253,10 +267,15 @@
   :is(.cb-object-card-link, .cb-object-card-head > .cb-object-card-name) {
     grid-row: 1 / span 2;
   }
+  /* The grouped row has no room for neutral chips beside the name; attention chips stay. */
+  .cb-object-card-chips > .cb-object-chip:not([data-tone="warn"]) {
+    display: none;
+  }
   /* The trailing parts, in DOM order after the text column: the state, a card without a link's
      one button, the chevron. */
   .cb-object-card-state,
   .cb-object-card-foot .cb-btn,
+  .cb-object-card-foot .cb-switch,
   .cb-object-card-chevron {
     grid-row: 1 / span 2;
   }

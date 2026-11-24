@@ -323,6 +323,7 @@ export class PromptSuggestionGenerator {
    * The run's facts by spec §2 (outcome, conversation kind and source, trigger) and its hook scope,
    * or why it gets no suggestion.
    */
+  // org-filter: job payload ids are kernel-written at run finish; the row's own org is read here
   private async runFacts(conversationId: string, runId: string): Promise<RunFacts | string> {
     const conv = await this.db
       .selectFrom("conversations")
@@ -552,6 +553,7 @@ export class PromptSuggestionQueue {
     if (this.closed) return;
     if (kind !== "completed" && kind !== "max_steps") return;
     try {
+      // org-filter: conversationId is the finished run's, passed by the kernel, not caller input
       const due = await this.kdb.db
         .selectFrom("conversations as c")
         .select("c.id")

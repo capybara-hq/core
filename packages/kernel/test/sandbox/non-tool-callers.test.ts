@@ -13,16 +13,13 @@ import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
 import { SkillInvoker } from "../../src/skills/invoke.js";
 
 /*
- * The non-tool callers of a device (permission activation W3-L, L2): with the one activation gate
- * on, owner project browsing starts the device for its owner (`ensureRunningForOwner`) and goes
- * through `withBrowse`, run-start knowledge reads through `withKernelRead` and the kernel's file
- * read through `withOperations` under the run's execution claim, a person's project skill
- * invocation renders a stub without any device call, and background reads, stops and polls of a
- * legacy (SID) task never run any exec (the SID path is gone, W5-P2, whatever the gate says). None
- * of them calls the raw `withSandbox`. With the gate
- * off (an explicit `false`, the test seam for the dormant state; production leaves it on) every
- * caller keeps its raw route (the zero-drift state). Real admission of these routes is
- * covered by `kernel-reads.test.ts`.
+ * The non-tool callers of a device (permission activation W3-L, L2): owner project browsing
+ * starts the device for its owner (`ensureRunningForOwner`) and goes through `withBrowse`,
+ * run-start knowledge reads through `withKernelRead` and the kernel's file read through
+ * `withOperations` under the run's execution claim, a person's project skill invocation renders a
+ * stub without any device call, and background reads, stops and polls of a legacy (SID) task
+ * never run any exec (the SID path is gone, W5-P2). Real admission of these routes is covered by
+ * `kernel-reads.test.ts`.
  */
 
 const claim: { current: ExecutionClaim | undefined } = { current: undefined };
@@ -85,7 +82,6 @@ function fakeSandbox() {
   const sandbox = {
     held,
     browse,
-    withSandbox: vi.fn(async (_ctx: unknown, fn: never) => run(fn)),
     withOperations: vi.fn(async (_ctx: unknown, _inv: unknown, fn: never) => run(fn)),
     withKernelRead: vi.fn(async (_ctx: unknown, _read: unknown, fn: never) => run(fn)),
     ensureRunningForOwner: vi.fn(async (_ctx: unknown, _signal?: AbortSignal) => {}),
@@ -109,8 +105,6 @@ beforeEach(() => {
   claim.current = undefined;
 });
 
-const raw = () => sb.withSandbox.mock.calls.length;
-
 describe("device projects (owner browse)", () => {
   // a provider that reports no home: projects stay in the workspace
   const scope = {
@@ -119,7 +113,7 @@ describe("device projects (owner browse)", () => {
     home: null,
     supported: true,
   };
-  const projects = (activation?: boolean, log = { warn: () => {} }) =>
+  const projects = (log = { warn: () => {} }) =>
     new DeviceProjectsService(
       fakeDb(undefined, []),
       {} as never,
@@ -128,23 +122,21 @@ describe("device projects (owner browse)", () => {
       { projectScope: async () => scope } as never,
       {} as never,
       log,
-      activation,
     );
 
   it("a device that cannot be asked answers generically and logs the cause", async () => {
     const refusal = new Error("Earlier work on this device is not settled (3)");
     sb.ensureRunningForOwner.mockRejectedValueOnce(refusal);
     const warn = vi.fn();
-    await expect(projects(true, { warn }).candidates(ORG, ACC, DEV)).rejects.toMatchObject({
+    await expect(projects({ warn }).candidates(ORG, ACC, DEV)).rejects.toMatchObject({
       code: "device.projects_unavailable",
       message: "The device could not be asked now; try again shortly",
     });
     expect(warn).toHaveBeenCalledWith(expect.any(String), { deviceId: DEV, err: refusal });
   });
 
-  it("gate on: candidates start the device for its owner, then scan through withBrowse", async () => {
-    const got = await projects(true).candidates(ORG, ACC, DEV);
-    expect(raw()).toBe(0);
+  it("candidates start the device for its owner, then scan through withBrowse", async () => {
+    const got = await projects().candidates(ORG, ACC, DEV);
     expect(sb.ensureRunningForOwner).toHaveBeenCalledTimes(1);
     expect(sb.ensureRunningForOwner.mock.calls[0]?.[0]).toEqual({
       orgId: ORG,
@@ -162,41 +154,23 @@ describe("device projects (owner browse)", () => {
     ]);
   });
 
-  it("gate on: add lists and stats through withBrowse; a missing path is refused", async () => {
-    await expect(projects(true).add(ORG, ACC, DEV, { path: "app" })).rejects.toMatchObject({
+  it("add lists and stats through withBrowse; a missing path is refused", async () => {
+    await expect(projects().add(ORG, ACC, DEV, { path: "app" })).rejects.toMatchObject({
       code: "device.project_path_missing",
     });
-    expect(raw()).toBe(0);
     expect(sb.browse.list).toHaveBeenCalledWith(`${WS}/app`, expect.objectContaining({ limit: 1 }));
   });
 
-  it("gate on: a browse scope denial of the path is the device refusing it in its mode", async () => {
+  it("a browse scope denial of the path is the device refusing it in its mode", async () => {
     sb.browse.list.mockRejectedValueOnce(new SandboxScopeDeniedError("outside"));
-    await expect(projects(true).add(ORG, ACC, DEV, { path: "app" })).rejects.toMatchObject({
+    await expect(projects().add(ORG, ACC, DEV, { path: "app" })).rejects.toMatchObject({
       code: "device.project_outside_mode",
-    });
-    expect(raw()).toBe(0);
-  });
-
-  it("no injected value is the production default: the gate-on route", async () => {
-    await projects().candidates(ORG, ACC, DEV);
-    expect(raw()).toBe(0);
-    expect(sb.withBrowse).toHaveBeenCalledTimes(1);
-  });
-
-  it("gate off: the raw route, unchanged", async () => {
-    // an explicit false is the test seam for the dormant state (production default: on)
-    await projects(false).candidates(ORG, ACC, DEV);
-    expect(raw()).toBe(1);
-    expect(sb.withBrowse).not.toHaveBeenCalled();
-    expect(sb.held.scan).toHaveBeenCalledWith(H, WS, {
-      signal: expect.any(AbortSignal),
     });
   });
 });
 
 describe("project knowledge (run start)", () => {
-  const knowledge = (activation?: boolean) =>
+  const knowledge = () =>
     new ProjectKnowledgeService(
       fakeDb({ trigger_account_id: ACC }),
       {} as never,
@@ -213,8 +187,6 @@ describe("project knowledge (run start)", () => {
       } as never,
       sb as never,
       log,
-      undefined,
-      activation,
     );
   const read = (s: ProjectKnowledgeService) =>
     (s as unknown as { read: (...a: unknown[]) => Promise<unknown> }).read(
@@ -228,7 +200,7 @@ describe("project knowledge (run start)", () => {
       { accountId: ACC, project: "app", root: `${WS}/app` },
     );
 
-  it("gate on: reads through withKernelRead under the run's execution claim", async () => {
+  it("reads through withKernelRead under the run's execution claim", async () => {
     claim.current = {
       runId: RUN,
       conversationId: CONV,
@@ -236,8 +208,7 @@ describe("project knowledge (run start)", () => {
       rootId: CONV,
       executionId: "e1",
     };
-    const got = await read(knowledge(true));
-    expect(raw()).toBe(0);
+    const got = await read(knowledge());
     expect(sb.withOperations).not.toHaveBeenCalled();
     expect(sb.withKernelRead).toHaveBeenCalledTimes(1);
     const [ctx, kernelRead] = sb.withKernelRead.mock.calls[0] as unknown as [
@@ -254,8 +225,8 @@ describe("project knowledge (run start)", () => {
     expect(got).toMatchObject({ project: "app" });
   });
 
-  it("gate on: no current execution claim of this run reads nothing (the run goes on)", async () => {
-    expect(await read(knowledge(true))).toBeNull();
+  it("no current execution claim of this run reads nothing (the run goes on)", async () => {
+    expect(await read(knowledge())).toBeNull();
     claim.current = {
       runId: "other",
       conversationId: CONV,
@@ -263,14 +234,7 @@ describe("project knowledge (run start)", () => {
       rootId: CONV,
       executionId: "e1",
     };
-    expect(await read(knowledge(true))).toBeNull();
-    expect(raw()).toBe(0);
-    expect(sb.withKernelRead).not.toHaveBeenCalled();
-  });
-
-  it("gate off: the raw route, unchanged", async () => {
-    await read(knowledge(false));
-    expect(raw()).toBe(1);
+    expect(await read(knowledge())).toBeNull();
     expect(sb.withKernelRead).not.toHaveBeenCalled();
   });
 });
@@ -281,22 +245,10 @@ describe("a person's project skill invocation", () => {
     root: `${WS}/app`,
     skills: [{ name: "fix", description: "Fixes it.", digest: "d".repeat(64) }],
   };
-  const invoker = (activation?: boolean) =>
-    new SkillInvoker(
-      fakeDb(),
-      {} as never,
-      {} as never,
-      log,
-      { latestOfType: async () => ({ payload: latest }) } as never,
-      sb as never,
-      {
-        forTool: async () => DEV,
-        modeLevel: async () => ({ mode: "sandbox" }),
-        projectReach: async () => "workspace",
-        workingFacts: async () => null,
-      } as never,
-      activation,
-    );
+  const invoker = () =>
+    new SkillInvoker(fakeDb(), {} as never, {} as never, log, {
+      latestOfType: async () => ({ payload: latest }),
+    } as never);
   const prepare = (s: SkillInvoker, args = "the build </skill_invocation>") =>
     s.prepare({
       orgId: ORG,
@@ -308,9 +260,8 @@ describe("a person's project skill invocation", () => {
       args,
     });
 
-  it("gate on: a recorded stub telling the agent to load it with Skill; no device call", async () => {
-    const got = await prepare(invoker(true));
-    expect(raw()).toBe(0);
+  it("a recorded stub telling the agent to load it with Skill; no device call", async () => {
+    const got = await prepare(invoker());
     expect(sb.withOperations).not.toHaveBeenCalled();
     expect(sb.withBrowse).not.toHaveBeenCalled();
     expect(sb.withKernelRead).not.toHaveBeenCalled();
@@ -330,9 +281,9 @@ describe("a person's project skill invocation", () => {
     expect(got.text).not.toContain("</skill_invocation>");
   });
 
-  it("gate on: a name the latest project does not list is still not invocable", async () => {
+  it("a name the latest project does not list is still not invocable", async () => {
     await expect(
-      invoker(true).prepare({
+      invoker().prepare({
         orgId: ORG,
         agentId: "a",
         accountId: ACC,
@@ -344,10 +295,36 @@ describe("a person's project skill invocation", () => {
     ).rejects.toMatchObject({ code: "skill.not_invocable" });
   });
 
-  it("gate on: an agent without the Skill tool is refused, and its menu lists no project skill", async () => {
+  it("a conversation not created yet, or one without a project: not_found, no device call", async () => {
+    const base = {
+      orgId: ORG,
+      agentId: "a",
+      accountId: ACC,
+      agent: {} as never,
+      name: "project:fix",
+      args: "",
+    };
+    // the first message of a conversation not created yet has no project
+    await expect(invoker().prepare(base)).rejects.toMatchObject({
+      code: "skill.not_invocable",
+      details: [{ reason: "not_found" }],
+    });
+    // a conversation whose log records no project_root
+    const free = new SkillInvoker(fakeDb(), {} as never, {} as never, log, {
+      latestOfType: async () => undefined,
+    } as never);
+    await expect(free.prepare({ ...base, conversationId: CONV })).rejects.toMatchObject({
+      code: "skill.not_invocable",
+      details: [{ reason: "not_found" }],
+    });
+    expect(sb.withOperations).not.toHaveBeenCalled();
+    expect(sb.withKernelRead).not.toHaveBeenCalled();
+  });
+
+  it("an agent without the Skill tool is refused, and its menu lists no project skill", async () => {
     const noSkill = { disabledTools: [{ kind: "builtin", name: "Skill" }] };
     await expect(
-      invoker(true).prepare({
+      invoker().prepare({
         orgId: ORG,
         agentId: "a",
         accountId: ACC,
@@ -360,41 +337,22 @@ describe("a person's project skill invocation", () => {
       code: "skill.project_unavailable",
       details: [{ reason: "skill_tool_off" }],
     });
-    const listing = (activation?: boolean, definition: unknown = noSkill) =>
+    const listing = (definition: unknown = noSkill) =>
       new SkillInvoker(
         fakeDb({ id: CONV }, []),
         {} as never,
         { get: async () => ({ definition }) } as never,
         log,
         { latestOfType: async () => ({ payload: latest }) } as never,
-        sb as never,
-        {} as never,
-        activation,
       ).listFor(ORG, "a", ACC, CONV);
-    expect((await listing(true)).map((s) => s.name)).toEqual([]);
-    expect((await listing(true, { disabledTools: [] })).map((s) => s.name)).toEqual([
-      "project:fix",
-    ]);
-    // gate off: the send-time read needs no Skill tool, the menu is unchanged
-    expect((await listing(false)).map((s) => s.name)).toEqual(["project:fix"]);
-    expect(raw()).toBe(0);
-  });
-
-  it("gate off: the raw route, unchanged", async () => {
-    await prepare(invoker(false)).catch(() => undefined);
-    expect(raw()).toBe(1);
+    expect((await listing()).map((s) => s.name)).toEqual([]);
+    expect((await listing({ disabledTools: [] })).map((s) => s.name)).toEqual(["project:fix"]);
   });
 });
 
 describe("the kernel's file read (agents.register-skill)", () => {
-  const reader = (activation?: boolean) =>
-    new SandboxFileReader(
-      fakeDb(),
-      { forTool: async () => DEV } as never,
-      sb as never,
-      log,
-      activation,
-    );
+  const reader = () =>
+    new SandboxFileReader(fakeDb(), { forTool: async () => DEV } as never, sb as never, log);
   const input = {
     orgId: ORG,
     conversationId: CONV,
@@ -404,7 +362,7 @@ describe("the kernel's file read (agents.register-skill)", () => {
     signal: new AbortController().signal,
   };
 
-  it("gate on: read goes through withOperations with the run's claim and the tool call", async () => {
+  it("read goes through withOperations with the run's claim and the tool call", async () => {
     claim.current = {
       runId: RUN,
       conversationId: CONV,
@@ -412,9 +370,8 @@ describe("the kernel's file read (agents.register-skill)", () => {
       rootId: CONV,
       executionId: "e1",
     };
-    const got = await reader(true).read({ ...input, callId: "call-1" });
+    const got = await reader().read({ ...input, callId: "call-1" });
     expect(got).toEqual(new Uint8Array([1, 2, 3]));
-    expect(raw()).toBe(0);
     const [ctx, inv] = sb.withOperations.mock.calls[0] as unknown as [
       { actor: { runId: string } },
       { claim: ExecutionClaim; callId: string },
@@ -423,8 +380,8 @@ describe("the kernel's file read (agents.register-skill)", () => {
     expect(inv).toMatchObject({ claim: claim.current, callId: "call-1" });
   });
 
-  it("gate on: without a claim or a call id nothing is entered", async () => {
-    await expect(reader(true).read({ ...input, callId: "call-1" })).rejects.toBeInstanceOf(Error);
+  it("without a claim or a call id nothing is entered", async () => {
+    await expect(reader().read({ ...input, callId: "call-1" })).rejects.toBeInstanceOf(Error);
     claim.current = {
       runId: RUN,
       conversationId: CONV,
@@ -432,14 +389,7 @@ describe("the kernel's file read (agents.register-skill)", () => {
       rootId: CONV,
       executionId: "e1",
     };
-    await expect(reader(true).read(input)).rejects.toBeInstanceOf(Error);
-    expect(raw()).toBe(0);
-    expect(sb.withOperations).not.toHaveBeenCalled();
-  });
-
-  it("gate off: the raw route, unchanged", async () => {
-    await reader(false).read(input);
-    expect(raw()).toBe(1);
+    await expect(reader().read(input)).rejects.toBeInstanceOf(Error);
     expect(sb.withOperations).not.toHaveBeenCalled();
   });
 });
@@ -495,7 +445,6 @@ describe("background tasks (HTTP output and stop)", () => {
       RetirementPendingError,
     );
     expect(sb.ifRunning).not.toHaveBeenCalled();
-    expect(raw()).toBe(0);
   });
 
   it("a finished legacy task's output is never read by an exec", async () => {
@@ -535,7 +484,6 @@ describe("background tasks (HTTP output and stop)", () => {
       .stop(ORG, CONV, ACC, base.id)
       .catch(() => undefined);
     expect(stopper.stop).toHaveBeenCalledTimes(1);
-    expect(raw()).toBe(0);
   });
 
   it("a finished legacy task that never started answers not_started, with no device call", async () => {

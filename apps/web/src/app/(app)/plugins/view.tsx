@@ -1,6 +1,13 @@
 "use client";
 
-import { ListPage, type MenuItem, ObjectRow, Stack, Text, versionLabel } from "@capybara-hq/design";
+import {
+  ListPage,
+  type MenuItem,
+  ObjectCard,
+  Stack,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -8,7 +15,7 @@ import { useCatalogErrorLines, useOwnerLabel } from "../../../components/Catalog
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { OrgPluginUploadDialog } from "../../../components/OrgPluginUploadDialog";
-import { rowActions, usePluginActions, usePluginState } from "../../../components/PluginSwitch";
+import { cardActions, usePluginActions, usePluginState } from "../../../components/PluginSwitch";
 import { useComponentsLabel } from "../../../components/PluginsHead";
 import { usePagePath } from "../../../components/shell/path";
 import { issueLines } from "../../../lib/api";
@@ -25,7 +32,6 @@ import {
 } from "../../../lib/catalog";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { orgCatalogQuery, orgMarketplaceEntriesQuery } from "../../../lib/query/catalog";
-import { orgExtensionsQuery } from "../../../lib/query/channels";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -66,14 +72,9 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
   const [tab, setTab] = useState<"plugins" | "market">("plugins");
   const [uploading, setUploading] = useState(staging !== null && canUpdateOrg(me));
   const list = usePageQuery(orgCatalogQuery(orgId));
-  // Org admins: the extensions (a row's 组织配置, whether 启用 asks for input) and the entries
-  // (the 市场 tab), both sections
-  const eq = orgExtensionsQuery(orgId);
-  const extensions = useQuery({
-    ...eq,
-    enabled: admin,
-    retryOnMount: retryOnMountOf(eq.queryKey),
-  }).data?.extensions;
+  const [source, setSource] = useState("");
+  // Org admins: the entries (the Marketplace tab). The unfiltered read gives the count and the source
+  // options; the grid reads the chosen source.
   const mq = orgMarketplaceEntriesQuery(orgId, "", "");
   const market = useQuery({
     ...mq,
@@ -81,13 +82,36 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
     retry: false,
     retryOnMount: retryOnMountOf(mq.queryKey),
   });
-  const { actionsOf, dialog, error } = usePluginActions({ orgId, admin, extensions });
+  // The sources the entries come from, by name; the filter shows with two or more. A chosen
+  // source that is no longer among them reads as all.
+  const sources = market.data === undefined ? [] : sourcesOf(market.data.items);
+  const chosen = sources.length > 1 && sources.some((o) => o.id === source) ? source : "";
+  const fq = orgMarketplaceEntriesQuery(orgId, chosen, "");
+  const filtered = useQuery({
+    ...fq,
+    enabled: admin && chosen !== "",
+    retry: false,
+  });
+  const { actionsOf, dialog, error } = usePluginActions({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const items = list.kind === "ready" ? list.data.items : [];
   // One row per plugin of a marketplace, at its latest version
   const entries =
     market.data === undefined ? undefined : groupMarketplaceEntries(market.data.items);
+  // The grid of a chosen source is that source's read: loading or failed, never the unfiltered list
+  const marketStatus: "ready" | "loading" | "error" =
+    chosen === ""
+      ? "ready"
+      : filtered.isError
+        ? "error"
+        : filtered.data === undefined
+          ? "loading"
+          : "ready";
+  const shown =
+    chosen !== "" && filtered.data !== undefined
+      ? groupMarketplaceEntries(filtered.data.items)
+      : entries;
   const showMarket = admin && entries !== undefined;
   const active = showMarket && tab === "market" ? "market" : "plugins";
 
@@ -127,7 +151,7 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
         }
       : {}),
   };
-  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  if (list.kind === "loading") return <ListPage header={header} variant="cards" loading />;
   const upload = uploading && (
     <OrgPluginUploadDialog
       orgId={orgId}
@@ -139,7 +163,16 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
   if (active === "market") {
     return (
       <>
-        <Market orgId={orgId} header={header} entries={entries ?? []} />
+        <Market
+          orgId={orgId}
+          header={header}
+          entries={shown ?? []}
+          sources={sources}
+          source={chosen}
+          status={marketStatus}
+          loadError={filtered.error}
+          onSource={setSource}
+        />
         {upload}
       </>
     );
@@ -169,7 +202,7 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
     <>
       <ListPage
         header={header}
-        variant="objects"
+        variant="cards"
         listLabel={t("title")}
         {...(callout ? { callout } : {})}
         {...(items.length === 0 ? { empty: { text: t("empty") } } : {})}
@@ -178,10 +211,10 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
           const name = displayNameOf(i, locale);
           const upgrade = admin ? (i.installed?.upgradeAvailable ?? null) : null;
           return (
-            <ObjectRow
+            <ObjectCard
               key={i.id}
-              mark={{ text: name, image: i.icon ?? null }}
-              name={name}
+              avatar={{ image: i.icon ?? null }}
+              title={name}
               href={`/plugins/${encodeURIComponent(i.id)}`}
               chips={[
                 ...(i.builtin ? [{ label: tc("admin.chips.builtin") }] : []),
@@ -205,7 +238,7 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
               description={descriptionOf(i, locale)}
               meta={[componentsLabel(i.componentCounts), scopeText(i)]}
               state={stateOf(i)}
-              {...rowActions(actionsOf(i))}
+              {...cardActions(actionsOf(i))}
             />
           );
         })}
@@ -215,6 +248,12 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
     </>
   );
 }
+
+/** The distinct sources of the entries, sorted by name. */
+const sourcesOf = (items: MarketplaceEntry[]) =>
+  [...new Map(items.map((e) => [e.sourceId, e.sourceName])).entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
 /** One entry's key: an entry is one version of a plugin in one marketplace. */
 const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? ""}`;
@@ -232,10 +271,21 @@ function Market({
   orgId,
   header,
   entries,
+  sources,
+  source,
+  status,
+  loadError,
+  onSource,
 }: {
   orgId: string;
   header: Parameters<typeof ListPage>[0]["header"];
   entries: MarketplacePlugin[];
+  sources: { id: string; name: string }[];
+  source: string;
+  /** The chosen source's read (`ready` without one). */
+  status: "ready" | "loading" | "error";
+  loadError: unknown;
+  onSource(id: string): void;
 }) {
   const t = useTranslations("plugins");
   const tc = useTranslations("catalog.admin.entries");
@@ -327,19 +377,38 @@ function Market({
     });
     return items.length > 0 ? [{ label: t("market.otherVersions"), submenu: items }] : [];
   };
+  const shownError =
+    error ??
+    (status === "error"
+      ? { message: errorMessage(loadError), extra: catalogLines(loadError) }
+      : undefined);
   return (
     <ListPage
       header={header}
-      variant="objects"
+      variant="cards"
       listLabel={t("market.title")}
-      {...(error !== undefined
+      {...(status === "loading" ? { loading: true as const } : {})}
+      {...(sources.length > 1
+        ? {
+            scope: {
+              label: t("market.source"),
+              value: source,
+              options: [
+                { value: "", label: t("market.allSources") },
+                ...sources.map((o) => ({ value: o.id, label: o.name })),
+              ],
+              onChange: onSource,
+            },
+          }
+        : {})}
+      {...(shownError !== undefined
         ? {
             callout: {
               tone: "fail" as const,
               children: (
                 <Stack gap={4}>
-                  <Text tone="fail">{error.message}</Text>
-                  {error.extra.map((m) => (
+                  <Text tone="fail">{shownError.message}</Text>
+                  {shownError.extra.map((m) => (
                     <Text key={m} variant="small" tone="fail">
                       {m}
                     </Text>
@@ -349,18 +418,20 @@ function Market({
             },
           }
         : {})}
-      {...(entries.length === 0 ? { empty: { text: t("market.empty") } } : {})}
+      {...(status === "ready" && entries.length === 0
+        ? { empty: { text: t("market.empty") } }
+        : {})}
     >
-      {entries.map((plugin) => {
+      {(status === "error" ? [] : entries).map((plugin) => {
         const e = plugin.latest;
         const state = stateOf(plugin);
         const name = displayNameOf(e, locale);
         return (
-          <ObjectRow
+          <ObjectCard
             key={plugin.key}
             // the imported plugin's icon (when this org sees it), else the marketplace's
-            mark={{ text: name, image: e.icon ?? null }}
-            name={name}
+            avatar={{ image: e.icon ?? null }}
+            title={name}
             mono={e.displayName === null}
             description={summaryOf(e)}
             meta={[e.sourceName, ...(e.version !== null ? [versionLabel(e.version)] : [])]}
@@ -368,7 +439,7 @@ function Market({
             menu={menuOf(plugin)}
             {...(requestable(e)
               ? {
-                  action: {
+                  primary: {
                     label: t("action.requestImport"),
                     onSelect: () => void request(e),
                   },

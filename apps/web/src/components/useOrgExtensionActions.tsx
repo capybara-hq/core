@@ -4,7 +4,7 @@ import { useToast } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
-import { ApiClientError, configIssues, issueLines } from "../lib/api";
+import { ApiClientError, issueLines } from "../lib/api";
 import type { SwitchPreview } from "../lib/catalog";
 import { extensionLabel, labelLocale } from "../lib/extension-label";
 import {
@@ -18,11 +18,10 @@ import { orgExtensionsQuery } from "../lib/query/channels";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
-import { hasConfigFields } from "./config-form/model";
-import type { SaveError, ToggleProblem } from "./OrgExtensionSheet";
+import type { ToggleProblem } from "./OrgExtensionSheet";
 import { SwitchOffDialog } from "./PluginSwitch";
 
-type Busy = "toggle" | "save" | "saveEnable" | "sync";
+type Busy = "toggle" | "sync";
 
 /** One org extension and what its page decided about it. */
 export interface OrgExtensionRow {
@@ -30,12 +29,14 @@ export interface OrgExtensionRow {
   label: string;
   /** Platform-wide (`all` / builtin): on in every org, the switch is the platform's. */
   platform: boolean;
-  /** The switch cannot be used (platform, unavailable, not switchable or waiting for config). */
+  /**
+   * The switch cannot be used (platform, unavailable or not switchable). Needing config never
+   * locks it: an extension is switched on first and configured after, as on the Plugins page (it
+   * gets no org-bound call until its effective config is valid, the kernel's `needsConfig`).
+   */
   locked: boolean;
   unavailable: boolean;
-  /** The org config form is shown (an admin, an available extension with fields). */
-  configForm: boolean;
-  /** The two-level deployment form is shown (an admin, an available extension with overridable fields). */
+  /** The deployment form is shown (an admin, an available extension with overridable fields). */
   overrides: boolean;
   /** Needs config: the kernel's `needsConfig` (effective config invalid or a required field missing). */
   needsConfig: boolean;
@@ -60,8 +61,7 @@ const strings = (raw: unknown[], key: string): string[] => [
  * Extensions page, Model services on `/settings/models`): each extension's row state (unavailable
  * with the kernel's reason, a refused switch, Needs config, on / platform / off), the switch (switching a plugin
  * off answers its switch-off preview first, shown in {@link OrgExtensionActions.switchOffDialog} and
- * confirmed with its hash; a stale preview is read again), saving the org config, Save and enable (one
- * PUT), the directory sync, and why a switch or a config was refused (the Sheet opens for it via
+ * confirmed with its hash; a stale preview is read again), the directory sync, and why a switch was refused (the Sheet opens for it via
  * `onOpen`). A change also invalidates what an extension brings to the org (its readiness, UI,
  * models, purposes, the catalog's view); the cached list takes the answered extension.
  */
@@ -83,12 +83,9 @@ export function useOrgExtensionActions({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const qc = useQueryClient();
-  // Per extension: what is in flight, why a switch was refused, a refused config, and the form's
-  // round (bumped after a save: the form starts again from the saved config).
+  // Per extension: what is in flight and why a switch was refused.
   const [busy, setBusy] = useState<Record<string, Busy>>({});
   const [problems, setProblems] = useState<Record<string, ToggleProblem>>({});
-  const [saveErrors, setSaveErrors] = useState<Record<string, SaveError>>({});
-  const [rounds, setRounds] = useState<Record<string, number>>({});
   const [off, setOff] = useState<{
     plugin: string;
     label: string;
@@ -137,8 +134,6 @@ export function useOrgExtensionActions({
     const label = extensionLabel({ name: ext.plugin, displayName: ext.displayName }, lang);
     const unavailable = ext.available === false;
     const platform = ext.required === true;
-    const configForm =
-      canEdit && !unavailable && ext.configurable && hasConfigFields(ext.orgConfigSchema);
     const overrides =
       canEdit && !unavailable && ext.overrideState !== undefined && ext.overrideState !== "none";
     // The kernel decides (spec A §6)
@@ -176,9 +171,8 @@ export function useOrgExtensionActions({
       ext,
       label,
       platform,
-      locked: platform || ext.switchable === false || unavailable || (needsConfig && !ext.enabled),
+      locked: platform || ext.switchable === false || unavailable,
       unavailable,
-      configForm,
       overrides,
       needsConfig,
       problem,
@@ -236,16 +230,11 @@ export function useOrgExtensionActions({
   }
 
   /**
-   * Why a switch (or Save and enable) was refused, shown in the extension's Sheet (opened for it): a
-   * refused config marks the form's fields (as when saving), the rest shows under the state.
+   * Why a switch was refused, shown under the state in the extension's Sheet (opened for it).
    */
   function refused(row: OrgExtensionRow, e: unknown) {
     const plugin = row.ext.plugin;
     onOpen(plugin);
-    if (row.configForm && e instanceof ApiClientError && e.code === "extension.config_invalid") {
-      configRefused(plugin, e);
-      return;
-    }
     let problem: ToggleProblem;
     if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
       problem = {
@@ -268,47 +257,6 @@ export function useOrgExtensionActions({
     setOne(setProblems, plugin, problem);
   }
 
-  function configRefused(plugin: string, e: unknown) {
-    const issues = configIssues(e);
-    setOne<SaveError>(setSaveErrors, plugin, {
-      message: errorMessage(e),
-      extra: issues.length > 0 ? [] : issueLines(e),
-      issues,
-    });
-  }
-
-  async function save(row: OrgExtensionRow, config: Record<string, unknown>) {
-    const plugin = row.ext.plugin;
-    setOne<Busy>(setBusy, plugin, "save");
-    setOne<SaveError>(setSaveErrors, plugin, undefined);
-    try {
-      await put.mutateAsync({ plugin, input: { config } });
-      setRounds((m) => ({ ...m, [plugin]: (m[plugin] ?? 0) + 1 }));
-      toast.success(t("configSaved", { plugin: row.label }));
-    } catch (e) {
-      configRefused(plugin, e);
-    } finally {
-      setOne<Busy>(setBusy, plugin, undefined);
-    }
-  }
-
-  /** Save and enable: the config and the switch in one PUT (the kernel validates before installing). */
-  async function saveAndEnable(row: OrgExtensionRow, config: Record<string, unknown>) {
-    const plugin = row.ext.plugin;
-    setOne<Busy>(setBusy, plugin, "saveEnable");
-    setOne<SaveError>(setSaveErrors, plugin, undefined);
-    setOne<ToggleProblem>(setProblems, plugin, undefined);
-    try {
-      await put.mutateAsync({ plugin, input: { enabled: true, config } });
-      setRounds((m) => ({ ...m, [plugin]: (m[plugin] ?? 0) + 1 }));
-      toast.success(t("enabledToast", { plugin: row.label }));
-    } catch (e) {
-      refused(row, e);
-    } finally {
-      setOne<Busy>(setBusy, plugin, undefined);
-    }
-  }
-
   async function sync(row: OrgExtensionRow) {
     const plugin = row.ext.plugin;
     setOne<Busy>(setBusy, plugin, "sync");
@@ -329,17 +277,10 @@ export function useOrgExtensionActions({
     state: row.state,
     platform: row.platform,
     unavailable: row.unavailable,
-    configForm: row.configForm,
     overrides: row.overrides,
     needsConfig: row.needsConfig,
-    // The Sheet's Save and enable waits for no config: only the switch's owner and availability lock it
-    locked: row.platform || row.ext.switchable === false || row.unavailable,
     problem: row.problem,
-    saveError: saveErrors[row.ext.plugin],
-    round: rounds[row.ext.plugin] ?? 0,
     busy: busy[row.ext.plugin],
-    onSave: (config: Record<string, unknown>) => void save(row, config),
-    onSaveAndEnable: (config: Record<string, unknown>) => void saveAndEnable(row, config),
     onForceDisable: () => void toggle(row, false, true),
     onSync: () => void sync(row),
   });

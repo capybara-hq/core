@@ -74,6 +74,7 @@ export class PermissionInstanceWrites {
       .selectFrom("device_instances")
       .select(["generation", "permission_roots"])
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirst();
     if (!row || row.generation !== generation)
@@ -94,6 +95,7 @@ export class PermissionInstanceWrites {
         generation: generation + 1,
       })
       .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .where("generation", "=", generation)
       .returning("created_at")
       .executeTakeFirst();
@@ -224,6 +226,8 @@ export class PermissionInstanceWrites {
     return next;
   }
 
+  // org-filter: only reached from commitHandle, which locked this device row by its org first;
+  // the mark must count every recorded generation of the device
   private async initialHighWater(deviceId: string): Promise<number> {
     const [instance, intents, tasks, reports] = await Promise.all([
       this.db

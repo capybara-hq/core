@@ -65,19 +65,3 @@ export class PermissionContextSubjectChanged extends Error {
     super("The conversation's root or device changed before its permission context was read");
   }
 }
-
-/**
- * The paired activation of the recorded permission context (Gate 9.4 with Task 8 phase 8.6): the
- * one explicit gate for both live producers, the request boundary (`RunSteps`) and the managed
- * device context writer (`BuiltinTools` into `common.ts`). Production provides nothing and reads
- * {@link PERMISSION_CONTEXT_ACTIVE}; tests provide this token to exercise either state.
- */
-export const PERMISSION_CONTEXT_ACTIVATION = Symbol("PERMISSION_CONTEXT_ACTIVATION");
-
-/** The production state of the gate: on since the paired activation (device protocol 3). */
-export const PERMISSION_CONTEXT_ACTIVE = true;
-
-/** Whether the live producers are on: an injected test value, else {@link PERMISSION_CONTEXT_ACTIVE}. */
-export function permissionContextActive(injected: boolean | undefined): boolean {
-  return injected ?? PERMISSION_CONTEXT_ACTIVE;
-}

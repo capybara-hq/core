@@ -149,8 +149,8 @@ export function ContextSection({
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
-  /** The last run's line, once a run ended. */
-  lastRun?: string | undefined;
+  /** The last run's parts, once a run ended (the model only when it differs from `model`). */
+  lastRun?: readonly string[] | undefined;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
 }) {
@@ -195,9 +195,9 @@ export function ContextSection({
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
-      {...(deviceText !== undefined ? { sandbox: deviceText } : {})}
+      {...(deviceText !== undefined ? { device: deviceText } : {})}
       {...(mark !== null
-        ? { sandboxBadge: te(`sandbox.mark.${mark}`), sandboxBadgeTone: "default" as const }
+        ? { deviceBadge: te(`sandbox.mark.${mark}`), deviceBadgeTone: "default" as const }
         : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}
@@ -256,7 +256,7 @@ export function PropertiesSections({
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
-  lastRun?: string | undefined;
+  lastRun?: readonly string[] | undefined;
   files: FileOutput[];
   onOpenFile(id: string): void;
   background?:

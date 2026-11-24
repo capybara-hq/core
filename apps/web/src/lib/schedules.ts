@@ -1,3 +1,4 @@
+import type { Effort } from "./agents";
 import { apiFetch } from "./api";
 import type { ModelRef } from "./conversations";
 
@@ -56,8 +57,8 @@ export const SKIP_REASONS = [
 ] as const;
 export type TaskRunSkipReason = (typeof SKIP_REASONS)[number];
 
-export const SCHEDULE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-export type ScheduleEffort = (typeof SCHEDULE_EFFORTS)[number];
+export { EFFORTS as SCHEDULE_EFFORTS } from "./agents";
+export type ScheduleEffort = Effort;
 
 export interface ScheduledTask {
   id: string;
@@ -117,7 +118,11 @@ export type GrantRefusal =
   | "not_grantable"
   | "not_available"
   | "needs_role"
-  | "fixed_ask";
+  | "fixed_ask"
+  /** A network grant outside the org's allowlist: only an org admin can add the host. */
+  | "needs_admin"
+  /** A network grant the task's device cannot take (Docker mode or an older program). */
+  | "device_refuses";
 
 /** One of an agent's tools as the grant picker offers it (`GET …/schedules/grantable-tools`). */
 export interface GrantableTool {

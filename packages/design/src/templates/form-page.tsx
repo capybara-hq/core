@@ -122,6 +122,7 @@ export type FormSectionLayout = "stacked";
 export function FormSection({
   id,
   title,
+  marks,
   description,
   layout,
   flush,
@@ -130,6 +131,8 @@ export function FormSection({
 }: {
   id: string;
   title: string;
+  /** Beside the title: a state word (a muted "overridden"), never an action (spec §5.3). */
+  marks?: ReactNode;
   description?: string;
   /** `stacked`: the head above the card even where the page's sections stand in columns. */
   layout?: FormSectionLayout;
@@ -159,7 +162,14 @@ export function FormSection({
     >
       {loading && announces ? <SkeletonAnnouncement /> : null}
       <div className="cb-form-section-head" data-part="form-section-head">
-        <Text variant="h2">{title}</Text>
+        {marks !== undefined && marks !== null ? (
+          <div className="cb-form-section-title" data-part="form-section-title">
+            <Text variant="h2">{title}</Text>
+            <span className="cb-form-section-marks">{marks}</span>
+          </div>
+        ) : (
+          <Text variant="h2">{title}</Text>
+        )}
         {description ? <p className="cb-form-section-description">{description}</p> : null}
       </div>
       <div

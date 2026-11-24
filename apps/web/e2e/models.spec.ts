@@ -17,7 +17,7 @@ const P = M.purpose;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
-/** The page's one save: the ActionRow's primary (the purpose rows have no save of their own). */
+/** The page's one save: the ActionRow's primary (the purposes have no save of their own). */
 const saveAll = (page: import("@playwright/test").Page) =>
   page.locator('[data-part="action-row"]').getByRole("button", { name: P.save }).click();
 
@@ -44,11 +44,11 @@ const chatTable = (page: import("@playwright/test").Page) =>
   page.getByRole("table", { name: new RegExp(`^${MODEL_FAKE}( · ${M.kind.chat})?$`) });
 
 /**
- * The eval purpose's row (an ItemListItem, never a card): a group named by the purpose's label,
- * the kernel's `KERNEL_PURPOSES` zh label.
+ * The eval purpose's section (each purpose its own FormSection): a region named by the purpose's
+ * label, the kernel's `KERNEL_PURPOSES` zh label.
  */
 const evalRow = (page: import("@playwright/test").Page) =>
-  page.getByRole("group", { name: "评测评委", exact: true });
+  page.getByRole("region", { name: "评测评委", exact: true });
 
 test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认", async ({ page }) => {
   await signIn(page);

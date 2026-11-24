@@ -132,6 +132,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
+    route: "GET /api/v1/admin/catalog/connector-templates/:templateId/icon",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
+  {
     route: "GET /api/v1/admin/catalog/:itemId/guides/:guideId",
     category: "internal",
     reason:
@@ -162,6 +167,16 @@ export const PLATFORM_EXCLUSIONS: readonly {
   // org-catalog
   {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/connector-templates/:templateId/icon",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/connectors/:connectorId/icon",
     category: "transport",
     reason: "Serves icon image bytes",
   },

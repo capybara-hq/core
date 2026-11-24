@@ -79,13 +79,16 @@ export const CatalogConnectorInput = z
   .strict();
 
 /**
- * The org install body: template input, the extension's org config. No version: an org installs the
- * platform version (one per deployment, ruling P2-17).
+ * The org install body: template input, and the connector templates the org chose to switch on
+ * (`templatesOn`: exactly these are on after the install and make connectors, the plugin's other
+ * templates are switched off in the org and stay available on the connectors page; absent: the
+ * templates on in the org now). No version: an org installs the platform version (one per
+ * deployment, ruling P2-17).
  */
 export const OrgPluginInstallBody = z
   .object({
     connectors: z.record(z.string(), CatalogConnectorInput).optional(),
-    extensionConfig: z.record(z.string(), z.unknown()).optional(),
+    templatesOn: z.array(z.string().min(1).max(100)).max(50).optional(),
   })
   .strict();
 

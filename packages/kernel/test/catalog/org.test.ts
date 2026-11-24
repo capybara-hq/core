@@ -1,16 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { defineExtension, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { enabledExtensionsQuery } from "../../src/extensions/enabled.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
-import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { type PluginIconScope, PluginIcons } from "../../src/extensions/plugin-icons.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { Credentials } from "../../src/tools/credentials.js";
+import { pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
@@ -33,7 +33,7 @@ import {
   startOrgEnv,
   TEMPLATE_ID,
 } from "./org-env.js";
-import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
+import { mcpTemplate, SVG_ICON, skillPlugin, templateFiles, templatePlugin } from "./packages.js";
 
 let env: OrgEnv;
 
@@ -753,7 +753,7 @@ describe("自建开关与权限", () => {
     expect(r.json().error.code).toBe("forbidden");
     // 成员拿 disabled 条目 / 不存在的版本：先判角色，一律 forbidden（不能借错误码探测条目）
     const off = await importSkill(env, { name: "off", policy: "disabled" });
-    for (const body of [{}, { extensionConfig: {} }, { connectors: {} }]) {
+    for (const body of [{}, { connectors: {} }]) {
       const x = await install(env.mem, env, off, body);
       expect(x.json().error.code).toBe("forbidden");
     }
@@ -942,6 +942,328 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       .where("id", "=", itemId)
       .execute();
     expect(await has(member)).toBe(true);
+  });
+
+  it("connector templates show their own icons, else the plugin's; connectors follow their template", async () => {
+    // a plugin icon, two templates with different icons, one without an icon of its own
+    const mailSvg = SVG_ICON.replace("/>", "><title>mail</title></svg>");
+    const driveSvg = SVG_ICON.replace("/>", "><title>drive</title></svg>");
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "suite",
+          icon: "./icon.svg",
+          connectorTemplates: ["mail", "drive", "plain"].map((t) => ({
+            path: `./connectors/${t}.json`,
+          })),
+        },
+        files: {
+          "icon.svg": SVG_ICON,
+          ...templateFiles("mail", mcpTemplate(), { icon: mailSvg }),
+          ...templateFiles("drive", mcpTemplate(), { icon: driveSvg }),
+          ...templateFiles("plain", mcpTemplate(), { icon: null }),
+        },
+      }),
+    );
+    const rows = await env.db
+      .selectFrom("platform_connector_templates")
+      .select(["id", "template_id"])
+      .where("catalog_item_id", "=", itemId)
+      .execute();
+    const tpl = Object.fromEntries(rows.map((r) => [r.template_id, r.id]));
+    const orgTplUrl = (t: string) =>
+      `/api/v1/orgs/${env.orgId}/connector-templates/${tpl[t]}/icon?v=1.0.0`;
+    const adminTplUrl = (t: string) =>
+      `/api/v1/admin/catalog/connector-templates/${tpl[t]}/icon?v=1.0.0`;
+    const orgPluginUrl = `/api/v1/orgs/${env.orgId}/catalog/${itemId}/icon?v=1.0.0`;
+    const iconsOf = async (req: OrgEnv["root"], url: string) =>
+      Object.fromEntries(
+        (
+          (await req({ method: "GET", url })).json() as {
+            components: { name: string; icon: string | null }[];
+          }
+        ).components.map((c) => [c.name, c.icon]),
+      );
+    // the template cards: two different own icons, the plugin's for the template without one
+    expect(
+      await iconsOf(
+        env.mem,
+        `/api/v1/orgs/${env.orgId}/components?kind=connector_template&itemId=${itemId}`,
+      ),
+    ).toEqual({ mail: orgTplUrl("mail"), drive: orgTplUrl("drive"), plain: orgPluginUrl });
+    // the install wizard's template list (the item detail) resolves them the same way
+    const detail = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+    });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(
+      Object.fromEntries(
+        (detail.json() as { templates: { id: string; icon: string | null }[] }).templates.map(
+          (t) => [t.id, t.icon],
+        ),
+      ),
+    ).toEqual({ mail: orgTplUrl("mail"), drive: orgTplUrl("drive"), plain: orgPluginUrl });
+    const adminIcons = await iconsOf(env.root, "/api/v1/admin/components?kind=connector_template");
+    expect(adminIcons.mail).toBe(adminTplUrl("mail"));
+    expect(adminIcons.drive).toBe(adminTplUrl("drive"));
+    expect(adminIcons.plain).toBe(`/api/v1/admin/catalog/items/${itemId}/icon?v=1.0.0`);
+    // each URL serves its own icon, with the item icon's headers
+    for (const [req, url, title] of [
+      [env.mem, orgTplUrl("mail"), "mail"],
+      [env.mem, orgTplUrl("drive"), "drive"],
+      [env.root, adminTplUrl("mail"), "mail"],
+      [env.root, adminTplUrl("drive"), "drive"],
+    ] as const) {
+      const r = await req({ method: "GET", url });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.headers["content-type"]).toBe("image/svg+xml");
+      expect(r.headers["x-content-type-options"]).toBe("nosniff");
+      expect(r.headers["content-security-policy"]).toBe(
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      );
+      expect(r.body).toContain(`<title>${title}</title>`);
+    }
+    // no icon of its own; unknown template ids
+    const plain = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connector-templates/${tpl.plain}/icon`,
+    });
+    expect(plain.statusCode).toBe(404);
+    expect(plain.json().error.code).toBe("catalog.icon_not_found");
+    for (const id of [randomUUID(), "not-a-uuid"]) {
+      const r = await env.root({
+        method: "GET",
+        url: `/api/v1/admin/catalog/connector-templates/${id}/icon`,
+      });
+      expect(r.statusCode).toBe(404);
+      expect(r.json().error.code).toBe("component.not_found");
+    }
+    // the connectors made from the templates show their template's icon, else the plugin's
+    const made = await install(env.boss, env, itemId, {
+      connectors: Object.fromEntries(
+        ["mail", "drive", "plain"].map((t) => [
+          t,
+          { name: t, endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } },
+        ]),
+      ),
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    const conns = (list.json() as { connectors: { id: string; name: string; icon: string }[] })
+      .connectors;
+    const connId = (name: string) => conns.find((c) => c.name === name)?.id as string;
+    // served on the connector's own route; `v` names the source (template / plugin) and version
+    const connUrl = (name: string, v: string) =>
+      `/api/v1/orgs/${env.orgId}/connectors/${connId(name)}/icon?v=${v}`;
+    expect(Object.fromEntries(conns.map((c) => [c.name, c.icon]))).toEqual({
+      mail: connUrl("mail", "t-1.0.0"),
+      drive: connUrl("drive", "t-1.0.0"),
+      plain: connUrl("plain", "p-1.0.0"),
+    });
+    const one = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connId("mail")}`,
+    });
+    expect(one.json().connector.icon).toBe(connUrl("mail", "t-1.0.0"));
+    // a guest reads the connector pages: every icon URL there loads, the catalog stays closed
+    await env.db
+      .updateTable("memberships")
+      .set({ role: "guest" })
+      .where("account_id", "=", env.memId)
+      .where("org_id", "=", env.orgId)
+      .execute();
+    try {
+      const guestList = await env.mem({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/connectors`,
+      });
+      expect(guestList.statusCode, guestList.body).toBe(200);
+      for (const c of (guestList.json() as { connectors: { name: string; icon: string }[] })
+        .connectors) {
+        const r = await env.mem({ method: "GET", url: c.icon });
+        expect(r.statusCode, r.body).toBe(200);
+        expect(r.headers["content-type"]).toBe("image/svg+xml");
+        expect(r.headers["x-content-type-options"]).toBe("nosniff");
+        // the template-less fallback is the plugin icon itself
+        expect(r.body).toBe(c.name === "plain" ? SVG_ICON : c.name === "mail" ? mailSvg : driveSvg);
+      }
+      for (const url of [
+        `/api/v1/orgs/${env.orgId}/catalog`,
+        `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+        `/api/v1/orgs/${env.orgId}/catalog/${itemId}/icon`,
+        `/api/v1/orgs/${env.orgId}/components?kind=connector_template`,
+      ]) {
+        expect((await env.mem({ method: "GET", url })).statusCode, url).toBe(403);
+      }
+    } finally {
+      await env.db
+        .updateTable("memberships")
+        .set({ role: "member" })
+        .where("account_id", "=", env.memId)
+        .where("org_id", "=", env.orgId)
+        .execute();
+    }
+    // a plugin the org's catalog no longer shows: no icon URL, the routes say not found
+    await setScope(env, itemId, "named", []);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    const after = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    expect(
+      (after.json() as { connectors: { icon: string | null }[] }).connectors.map((c) => c.icon),
+    ).toEqual([null, null, null]);
+    const hidden = await env.boss({ method: "GET", url: orgTplUrl("mail") });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("component.not_found");
+    const hiddenConn = await env.boss({ method: "GET", url: connUrl("plain", "p-1.0.0") });
+    expect(hiddenConn.statusCode).toBe(404);
+    expect(hiddenConn.json().error.code).toBe("catalog.icon_not_found");
+    const unknownConn = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${randomUUID()}/icon`,
+    });
+    expect(unknownConn.json().error.code).toBe("connector.not_found");
+    const icons = env.k.app.get(PluginIcons);
+    const member = { kind: "org", orgId: env.orgId, isAdmin: false } as const;
+    expect((await icons.ofTemplates([tpl.mail as string], member)).size).toBe(0);
+    expect((await env.root({ method: "GET", url: adminTplUrl("mail") })).statusCode).toBe(200);
+  });
+
+  it("connector template descriptions in zh and en reach the template views and their connectors", async () => {
+    const both = { zh: "邮件与日历", en: "Mail and calendar" };
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "described",
+          connectorTemplates: ["mail", "drive", "bare"].map((t) => ({
+            path: `./connectors/${t}.json`,
+          })),
+        },
+        files: {
+          ...templateFiles("mail", mcpTemplate(), { icon: null, description: both }),
+          ...templateFiles("drive", mcpTemplate(), { icon: null, description: "Files over MCP" }),
+          ...templateFiles("bare", mcpTemplate(), { icon: null, description: null }),
+        },
+      }),
+    );
+    const expected = {
+      mail: { description: both.en, descriptionZh: both.zh },
+      drive: { description: "Files over MCP", descriptionZh: null },
+      bare: { description: null, descriptionZh: null },
+    };
+    type Described = { description: string | null; descriptionZh: string | null };
+    const pick = (x: Described) => ({ description: x.description, descriptionZh: x.descriptionZh });
+    // the component lists (org and admin)
+    for (const [req, url] of [
+      [env.mem, `/api/v1/orgs/${env.orgId}/components?kind=connector_template&itemId=${itemId}`],
+      [env.root, "/api/v1/admin/components?kind=connector_template"],
+    ] as const) {
+      const r = await req({ method: "GET", url });
+      expect(r.statusCode, r.body).toBe(200);
+      const byName = Object.fromEntries(
+        (r.json() as { components: (Described & { name: string })[] }).components
+          .filter((c) => c.name in expected)
+          .map((c) => [c.name, pick(c)]),
+      );
+      expect(byName, url).toEqual(expected);
+    }
+    // the install wizard's templates ("" rather than null without one)
+    const detail = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+    });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(
+      Object.fromEntries(
+        (detail.json() as { templates: (Described & { id: string })[] }).templates.map((t) => [
+          t.id,
+          pick(t),
+        ]),
+      ),
+    ).toEqual({ ...expected, bare: { description: "", descriptionZh: null } });
+    // connectors made from the templates carry their template's description; a custom one none
+    const made = await install(env.boss, env, itemId, {
+      connectors: Object.fromEntries(
+        ["mail", "drive", "bare"].map((t) => [
+          t,
+          { name: `d-${t}`, endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } },
+        ]),
+      ),
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const custom = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connectors`,
+      payload: {
+        name: "d-custom",
+        connector: "fake",
+        endpoint: { url: env.mcp.url },
+        auth: { type: "bearer", ownership: "org" },
+        credential: { token: MCP_TOKEN },
+      },
+    });
+    expect(custom.statusCode, custom.body).toBe(201);
+    type Shown = {
+      description: string | null;
+      templateDescription: string | null;
+      templateDescriptionZh: string | null;
+    };
+    const shown = (x: Shown) => ({
+      own: x.description,
+      template: { description: x.templateDescription, descriptionZh: x.templateDescriptionZh },
+    });
+    const none = { description: null, descriptionZh: null };
+    const listed = async () => {
+      const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+      expect(list.statusCode, list.body).toBe(200);
+      return (list.json() as { connectors: (Shown & { id: string; name: string })[] }).connectors;
+    };
+    const conns = await listed();
+    expect(
+      Object.fromEntries(
+        conns.filter((c) => c.name.startsWith("d-")).map((c) => [c.name, shown(c)]),
+      ),
+    ).toEqual({
+      "d-mail": { own: null, template: expected.mail },
+      "d-drive": { own: null, template: expected.drive },
+      "d-bare": { own: null, template: none },
+      "d-custom": { own: null, template: none },
+    });
+    const mail = conns.find((c) => c.name === "d-mail") as { id: string };
+    const detailOf = async () => {
+      const r = await env.mem({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return shown(r.json().connector);
+    };
+    expect(await detailOf()).toEqual({ own: null, template: expected.mail });
+    // an own description sits next to the template's (the page shows the own one first)
+    const set = await env.boss({
+      method: "PATCH",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${mail.id}`,
+      payload: { description: "Our team mailbox" },
+    });
+    expect(set.statusCode, set.body).toBe(200);
+    expect(shown(set.json().connector)).toEqual({
+      own: "Our team mailbox",
+      template: expected.mail,
+    });
+    expect(await detailOf()).toEqual({ own: "Our team mailbox", template: expected.mail });
+    // a plugin the org's catalog no longer shows: the template's goes with the icon, the own stays
+    await setScope(env, itemId, "named", []);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await detailOf()).toEqual({ own: "Our team mailbox", template: none });
   });
 
   it("the org extensions list carries each extension's plugin icon (null without one)", async () => {
@@ -1232,8 +1554,8 @@ describe("the org switch (plugin scope)", () => {
     ).toHaveLength(0);
   });
 
-  describe("an extension whose org config has a required secret", () => {
-    /** Deploys a plugin whose extension's org config needs the secret `apiKey`. */
+  describe("an extension with a required overridable secret the platform leaves empty", () => {
+    /** Deploys a plugin whose extension's deployment config needs the overridable secret `apiKey`. */
     const deploy = async (name: string) => {
       const real = defineExtension({
         name,
@@ -1241,13 +1563,15 @@ describe("the org switch (plugin scope)", () => {
         sdk: "^0.1.0-rc.0",
         provides: [],
         permissions: {},
-        config: { org: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) },
+        config: {
+          deployment: z.object({ apiKey: secret(z.string()), region: z.string().optional() }),
+        },
         setup() {},
       });
       const entry = [
         'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
         'import { z } from "zod";',
-        `export default defineExtension({ name: "${name}", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { org: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) }, setup() {} });`,
+        `export default defineExtension({ name: "${name}", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) }, setup() {} });`,
       ].join("\n");
       const { itemId } = await importDeployedPlugin(env, name, {
         manifest: { ...staticManifestOf(real) },
@@ -1256,98 +1580,42 @@ describe("the org switch (plugin scope)", () => {
       return { itemId, url: `/api/v1/orgs/${env.orgId}/extensions/${name}` };
     };
 
-    it("switching on without the required config: 400 extension.config_invalid with its issues, nothing installed", async () => {
+    it("switching on installs it and reports needsConfig until the org saves its copy", async () => {
       const name = "needs-key1";
-      const { itemId, url } = await deploy(name);
+      const { url } = await deploy(name);
       const r = await env.boss({ method: "PUT", url, payload: { enabled: true } });
-      expect(r.statusCode, r.body).toBe(400);
-      const error = r.json().error as { code: string; details: { path: string }[] };
-      expect(error.code).toBe("extension.config_invalid");
-      expect(error.details.map((d) => d.path)).toEqual(["apiKey"]);
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json().extension).toMatchObject({
+        plugin: name,
+        enabled: true,
+        configurable: true,
+        needsConfig: true,
+      });
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+      const saved = await env.boss({
+        method: "PUT",
+        url: `${url}/overrides`,
+        payload: { values: { apiKey: "k-1" } },
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` });
       expect(
-        await env.db
-          .selectFrom("catalog_item_org_switches")
-          .select("enabled")
-          .where("item_id", "=", itemId)
-          .execute(),
-      ).toHaveLength(0);
-      expect(
-        await env.db
-          .selectFrom("extension_org_configs")
-          .select("enabled")
-          .where("plugin", "=", name)
-          .execute(),
-      ).toHaveLength(0);
+        (list.json().extensions as { plugin: string }[]).find((e) => e.plugin === name),
+      ).toMatchObject({ enabled: true, overrideState: "copy", needsConfig: false });
     });
 
-    it("switching on with the config in the same PUT installs and saves it", async () => {
+    it("the switch body takes no config: 400 validation_failed, nothing installed", async () => {
       const name = "needs-key2";
-      const { url } = await deploy(name);
+      const { itemId, url } = await deploy(name);
       const r = await env.boss({
         method: "PUT",
         url,
         payload: { enabled: true, config: { apiKey: "k-1" } },
       });
-      expect(r.statusCode, r.body).toBe(200);
-      expect(r.json().extension).toMatchObject({ plugin: name, enabled: true });
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
-      expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
-        enabled: true,
-        config: { apiKey: "k-1" },
-      });
-    });
-
-    it("a config write that fails after the switch rolls the switch back too (one transaction)", async () => {
-      const name = "needs-key4";
-      const { url } = await deploy(name);
-      const on = await env.boss({
-        method: "PUT",
-        url,
-        payload: { enabled: true, config: { apiKey: "k-3" } },
-      });
-      expect(on.statusCode, on.body).toBe(200);
-      const preview = await env.boss({ method: "PUT", url, payload: { enabled: false } });
-      expect(preview.statusCode, preview.body).toBe(200);
-      const confirm = preview.json().confirm as string;
-      const configs = env.k.app.get(OrgExtensionConfigs);
-      const realPut = configs.put.bind(configs);
-      const spy = vi.spyOn(configs, "put").mockImplementation(async (...args) => {
-        if (args[5]?.validateOnly) return realPut(...args);
-        throw new Error("config write failed");
-      });
-      try {
-        const r = await env.boss({
-          method: "PUT",
-          url,
-          payload: { enabled: false, confirm, config: { apiKey: "k-4" } },
-        });
-        expect(r.statusCode).toBe(500);
-      } finally {
-        spy.mockRestore();
-      }
-      // the uninstall and the switch row were rolled back with the failed config write
-      const installs = await env.db.selectFrom("plugin_installs").select("status").execute();
-      expect(installs.map((i) => i.status)).toEqual(["installed"]);
-      expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
-        enabled: true,
-        config: { apiKey: "k-3" },
-      });
-    });
-
-    it("switching on after the config was saved installs", async () => {
-      const name = "needs-key3";
-      const { url } = await deploy(name);
-      const saved = await env.boss({
-        method: "PUT",
-        url,
-        payload: { config: { apiKey: "k-2" } },
-      });
-      expect(saved.statusCode, saved.body).toBe(200);
-      const r = await env.boss({ method: "PUT", url, payload: { enabled: true } });
-      expect(r.statusCode, r.body).toBe(200);
-      expect(r.json().extension).toMatchObject({ plugin: name, enabled: true });
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+      expect(r.statusCode, r.body).toBe(400);
+      expect(r.json().error.code).toBe("validation_failed");
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+      expect(await switchRow(itemId)).toBeUndefined();
     });
   });
 

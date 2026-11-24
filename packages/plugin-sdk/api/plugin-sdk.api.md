@@ -634,6 +634,13 @@ export interface ConfigUiSection {
 }
 
 // @public
+export function configUrlFetch(net: Pick<ExtensionNet, "fetch">, opts: {
+    url: string;
+    platform?: string | readonly string[] | undefined;
+    orgId?: string | undefined;
+}): typeof fetch;
+
+// @public
 export type ConfigWidget = "text" | "textarea" | "url" | "number" | "select" | "radio" | "switch" | "checkbox" | "tristate" | "tags" | "json";
 
 // @public
@@ -776,7 +783,7 @@ export interface ConnectorSession {
 // @public
 export interface ConnectorTemplateFile {
     defaultEnabled?: boolean;
-    description?: string;
+    description?: string | LocalizedName;
     displayName: LocalizedName;
     icon?: string;
     template: ConnectorTemplateSpec;
@@ -999,6 +1006,11 @@ export type DeviceAccessScope = {
 };
 
 // @public
+export interface DeviceFence {
+    readonly token: number;
+}
+
+// @public
 export class DeviceOfflineError extends Error {
     constructor(deviceId: string, opts?: {
         cause?: unknown;
@@ -1008,6 +1020,7 @@ export class DeviceOfflineError extends Error {
 
 // @public
 export interface DeviceProvider {
+    appliedNetwork?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxLimits["network"] | null>;
     background?: SandboxBackground;
     browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
     readonly concurrentExec: true;
@@ -1017,14 +1030,15 @@ export interface DeviceProvider {
         limits: SandboxLimits;
         fileSystem: FileSystemHandle_2;
         signal: AbortSignal;
+        fence: DeviceFence;
     }): Promise<SandboxHandle>;
     createFileSystem(args: {
         name: string;
         limits: SandboxLimits;
         signal: AbortSignal;
     }): Promise<FileSystemHandle_2>;
-    destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    destroyByName(name: string, signal: AbortSignal): Promise<void>;
+    destroy(h: SandboxHandle, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
+    destroyByName(name: string, signal: AbortSignal, fence: DeviceFence | null): Promise<void>;
     destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
     destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
     readonly dialIn?: DialInHandler;
@@ -1089,7 +1103,7 @@ export interface DeviceProvider {
     } | null>;
     stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
     suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
+    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal, fence: DeviceFence): Promise<"updated" | "recreate">;
     writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
 }
 
@@ -1306,10 +1320,10 @@ export type DialInStreamFrame = {
 
 // @public
 export interface Directory {
-    configured?(orgConfig: unknown, config?: unknown): boolean;
+    configured?(config: unknown): boolean;
     listMembers(args: {
-        orgConfig: unknown;
-        config?: unknown;
+        config: unknown;
+        orgId?: string;
         cursor?: string;
         signal: AbortSignal;
     }): Promise<{
@@ -1676,7 +1690,6 @@ export interface ExtensionImageGenerateResult {
 export interface ExtensionManifest {
     config?: {
         deployment?: z.ZodTypeAny;
-        org?: z.ZodTypeAny;
     };
     dispose?(ctx: ExtensionContext): void | Promise<void>;
     migrations?: string;
@@ -2280,6 +2293,9 @@ export function isNetDeniedError(e: unknown): e is NetDeniedError;
 export function isPermissionProfile(value: unknown): value is PermissionProfile;
 
 // @public
+export function isPlatformOnly(schema: z.ZodTypeAny): boolean;
+
+// @public
 export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError;
 
 // @public
@@ -2323,6 +2339,9 @@ export function isSecret(schema: z.ZodTypeAny): boolean;
 
 // @public
 export function isSkillName(s: unknown): s is string;
+
+// @public
+export function isStaleFenceError(e: unknown): e is StaleFenceError;
 
 // @public
 export function isThemeAssetPath(v: unknown): v is string;
@@ -2896,15 +2915,6 @@ export interface OpenExternalCapabilityV1 {
 }
 
 // @public
-export type OrgAccess = "readonly" | "override";
-
-// @public
-export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess): T;
-
-// @public
-export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
-
-// @public
 export interface OrgDeletedPayload {
     orgId: string;
 }
@@ -3127,6 +3137,9 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
 }
 
 // @public
+export function platformOnly<T extends z.ZodTypeAny>(schema: T): T;
+
+// @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
 
 // @public
@@ -3189,7 +3202,6 @@ export interface PluginExtensionSection {
     client?: PluginClientSection;
     configSchemas?: {
         deployment?: JsonSchema;
-        org?: JsonSchema;
     };
     entry: string;
     manifest: StaticExtensionManifest;
@@ -3578,11 +3590,9 @@ export const SANDBOX_RUNTIME_DIRECTORIES: readonly string[];
 // @public
 export const SANDBOX_RUNTIME_SOURCE: {
     readonly version: number;
-    readonly files: readonly {
-        readonly name: string;
-        readonly source: string;
-        readonly sha256: string;
-    }[];
+    readonly files: readonly SandboxRuntimeFile[];
+    readonly current: readonly SandboxRuntimeFile[];
+    readonly accepted: Readonly<Record<string, readonly string[]>>;
 };
 
 // @public
@@ -3832,6 +3842,17 @@ export interface SandboxRoots {
 export function sandboxRuntimeDirectoryOf(root: string): string | null;
 
 // @public
+export type SandboxRuntimeFeature = "fileReadRoots";
+
+// @public
+export interface SandboxRuntimeFile {
+    readonly features?: readonly SandboxRuntimeFeature[];
+    readonly name: string;
+    readonly sha256: string;
+    readonly source: string;
+}
+
+// @public
 export class SandboxScopeDeniedError extends Error {
     constructor(message: string, opts?: ErrorOptions);
     readonly sandboxScopeDenied: true;
@@ -3882,7 +3903,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.60";
+export const SDK_VERSION = "0.1.0-rc.69";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -4192,6 +4213,16 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
 
 // @public
+export class StaleFenceError extends Error {
+    constructor(message: string, opts?: {
+        cause?: unknown;
+        current?: number;
+    });
+    readonly current: number | undefined;
+    readonly staleFence: true;
+}
+
+// @public
 export const STANDARD_KNOBS: readonly StandardKnob[];
 
 // @public
@@ -4208,7 +4239,6 @@ export interface StaticConfigField {
 export interface StaticExtensionManifest {
     config: {
         deployment: StaticConfigField[];
-        org: StaticConfigField[];
     };
     name: string;
     optional: string[];
@@ -5056,7 +5086,7 @@ export function validateChannelCard(card: unknown): string[];
 export function validateClientSection(s: unknown): string[];
 
 // @public
-export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org" | "connection"): ConfigUiProblem[];
+export function validateConfigUi(schema: JsonSchema, level: "deployment" | "connection"): ConfigUiProblem[];
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
@@ -5165,11 +5195,11 @@ export interface WebFetchPage {
 
 // @public
 export interface WebFetchProvider {
-    configured?(orgConfig: unknown, config?: unknown): boolean;
+    configured?(config: unknown): boolean;
     fetch(args: {
         url: string;
-        orgConfig: unknown;
-        config?: unknown;
+        config: unknown;
+        orgId?: string;
         signal: AbortSignal;
     }): Promise<WebFetchPage>;
 }
@@ -5187,14 +5217,14 @@ export type WebProviderErrorKind = "not_found" | "blocked" | "auth" | "rate_limi
 
 // @public
 export interface WebSearchProvider {
-    configured?(orgConfig: unknown, config?: unknown): boolean;
+    configured?(config: unknown): boolean;
     search(args: {
         query: string;
         allowedDomains?: string[];
         blockedDomains?: string[];
         maxResults: number;
-        orgConfig: unknown;
-        config?: unknown;
+        config: unknown;
+        orgId?: string;
         signal: AbortSignal;
     }): Promise<{
         results: WebSearchResult[];

@@ -27,7 +27,6 @@ import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
-import { PERMISSION_CONTEXT_ACTIVATION } from "../../src/sandbox/permission-context-types.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
@@ -52,7 +51,7 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
 import { identityFor, REPORTS, type ReportKind } from "../runtime/permission-context-fixture.js";
 
 /**
- * The non-tool device callers once the one activation gate is on (permission activation L2), on
+ * The non-tool device callers (permission activation L2), on
  * real admission (no mock of `SandboxService` or of the intents): a run start's project knowledge
  * read is a set of kernel reads (`withKernelRead`: the run's current claim, its run still
  * `queued`, random operation ids, the profile scope narrowed to the root's `stat`, `AGENTS.md`
@@ -116,9 +115,7 @@ const within = (path: string, roots: readonly string[]) =>
 
 beforeAll(async () => {
   [pg, redis] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await startKernel(runConfig({ pg: pg.url, redis: redis.url }, { roles: ["api"] }), {
-    overrides: [{ provide: PERMISSION_CONTEXT_ACTIVATION, useValue: true }],
-  });
+  k = await startKernel(runConfig({ pg: pg.url, redis: redis.url }, { roles: ["api"] }));
   raw = createDb(pg.url, 5);
   root = await mkdtemp(join(tmpdir(), "kernel-reads-"));
   const base = createFakeSandbox(root);

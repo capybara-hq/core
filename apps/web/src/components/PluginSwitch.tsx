@@ -23,7 +23,6 @@ import {
   type UninstallPreview,
   withdrawPending,
 } from "../lib/catalog";
-import type { OrgExtension } from "../lib/extensions";
 import { pluginChangeKeys } from "../lib/query/catalog";
 import { retryOnMountOf } from "../lib/query/client";
 import { keys } from "../lib/query/keys";
@@ -32,7 +31,6 @@ import { pluginInstallsQuery } from "../lib/query/settings";
 import { skillsQuery } from "../lib/query/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
-import { hasConfigFields } from "./config-form/model";
 import { FormError } from "./form-error";
 import { useOrgThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
@@ -78,36 +76,31 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
   };
 }
 
-/** The org's extension a plugin brings (matched by its catalog item), when the list has it. */
-export const ownExtension = (
-  item: Pick<OrgCatalogItem, "id">,
-  extensions: OrgExtension[] | undefined,
-): OrgExtension | undefined => extensions?.find((e) => e.catalogItem?.itemId === item.id);
-
 /**
  * Whether switching a plugin on asks for input first (the wizard at `/plugins/<id>/enable`): its
- * connector templates, an org config the kernel still misses (`needs_config`), or its extension's
- * org config form when the extension is off (unknown extensions: ask, the wizard says when there
- * is nothing to fill in).
+ * connector templates (the only input the wizard collects).
  */
-export function needsInput(item: OrgCatalogItem, extensions: OrgExtension[] | undefined): boolean {
-  if (item.state === "needs_config") return true;
-  if (item.componentCounts.connectorTemplates > 0) return true;
-  if (item.componentCounts.extension === 0) return false;
-  if (extensions === undefined) return true;
-  const own = ownExtension(item, extensions);
-  return own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema);
+export function needsInput(item: OrgCatalogItem): boolean {
+  return item.componentCounts.connectorTemplates > 0;
 }
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
 export interface PluginAction {
-  id: "enable" | "configure" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
+  id: "enable" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
   label: string;
   href?: string;
   onSelect?(): void;
   danger?: boolean;
   /** Its call is running: drawn pending (the Button's loading state), not pressable again. */
   loading?: boolean;
+}
+
+/**
+ * A card's actions as ObjectCard wants them: {@link rowActions} with `action` named `primary`.
+ */
+export function cardActions(actions: readonly Omit<PluginAction, "id">[]) {
+  const { action, ...rest } = rowActions(actions);
+  return { ...rest, ...(action !== undefined && { primary: action }) };
 }
 
 /**
@@ -140,7 +133,7 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
       menu: danger.map((a) => ({
         label: a.label,
         ...(a.danger === true && { danger: true }),
-        onSelect: a.onSelect ?? (() => {}),
+        ...(a.href !== undefined ? { href: a.href } : { onSelect: a.onSelect ?? (() => {}) }),
       })),
     }),
   };
@@ -148,23 +141,15 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
 
 /**
  * The actions on the org's plugins (spec §5.1, §9) and the switch-off dialog they open. Org admins:
- * 启用 (straight to the switch, or to the input wizard when it asks for input), 组织配置 (the
- * extension's org config on 扩展), 停用 (previewed: what it takes away and the agents that use it;
- * confirmed with the preview's hash; never on `all` / builtin plugins), 申请 (`access`, a plugin
- * not offered to the org). Members: 申请启用 (`enable`) on an `optional` plugin that is off.
+ * Enable (straight to the switch, or to the input wizard when it asks for input), Finish setup (a
+ * plugin whose connector template misses its connector), Disable (previewed: what it takes away and
+ * the agents that use it; confirmed with the preview's hash; never on `all` / builtin plugins),
+ * Request access (`access`, a plugin not offered to the org). Members: Request enable (`enable`) on an `optional`
+ * plugin that is off.
  * Nothing while a request is pending, or on a plugin the platform stopped. Each call invalidates
  * what a plugin change touches; failures land in `error`.
  */
-export function usePluginActions({
-  orgId,
-  admin,
-  extensions,
-}: {
-  orgId: string;
-  admin: boolean;
-  /** The org's extensions (org admins), undefined while they load or for members. */
-  extensions: OrgExtension[] | undefined;
-}): {
+export function usePluginActions({ orgId, admin }: { orgId: string; admin: boolean }): {
   actionsOf(item: OrgCatalogItem): PluginAction[];
   /** The switch-off dialog, to render once on the page. */
   dialog: ReactNode;
@@ -344,7 +329,7 @@ export function usePluginActions({
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
       ];
     }
-    // Installed but a connector template on here misses its connector (P2-10): 补充配置
+    // Installed but a connector template on here misses its connector (P2-10): Complete setup
     if (i.state === "needs_config" && i.installed !== null) {
       return [
         {
@@ -367,7 +352,7 @@ export function usePluginActions({
     if (i.state === "off" || i.state === "needs_config") {
       if (i.notDeployed) return [];
       return [
-        needsInput(i, extensions)
+        needsInput(i)
           ? {
               id: "enable",
               label: t("action.enable"),
@@ -376,18 +361,8 @@ export function usePluginActions({
           : { id: "enable", label: t("action.enable"), onSelect: () => void enable(i) },
       ];
     }
-    // On: the extension's org config when it has a form; 停用 unless the platform turned it on
-    const own = ownExtension(i, extensions);
+    // On: Disable unless the platform turned it on
     return [
-      ...(own?.configurable === true && hasConfigFields(own.orgConfigSchema)
-        ? [
-            {
-              id: "configure" as const,
-              label: t("action.configure"),
-              href: `/extensions#plugin-${encodeURIComponent(own.plugin)}`,
-            },
-          ]
-        : []),
       ...(i.switchable
         ? [
             {

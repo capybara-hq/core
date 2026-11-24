@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { defineExtension, secret, staticManifestOf, ToolError } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  platformOnly,
+  secret,
+  staticManifestOf,
+  ToolError,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AgentsService } from "../../src/agents/agents.service.js";
@@ -154,7 +160,7 @@ describe("registration", () => {
       "extensions.points",
       "extensions.previewers",
       "extensions.save-org-config",
-      "extensions.set-org-config",
+      "extensions.set-enabled",
       "extensions.set-point-default",
       "extensions.set-previewers",
       "extensions.set-tool-enabled",
@@ -644,6 +650,130 @@ describe("connectors and extensions", () => {
   });
 });
 
+describe("extensions.set-enabled (a direct-path extension)", () => {
+  const orgView = async (name: string) =>
+    (
+      (await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` })).json() as {
+        extensions: { plugin: string; enabled: boolean }[];
+      }
+    ).extensions.find((e) => e.plugin === name);
+
+  it("an org admin switches a config-declared extension on and off; the audit says via agent", async () => {
+    expect(availability(op("extensions.set-enabled"), facts("admin"))).toEqual({ ok: true });
+    const input = { extension: "dep-provider", enabled: true };
+    expect(await precheck("extensions.set-enabled", input, ctxOf(env.bossId))).toEqual({
+      ok: true,
+    });
+    expect(await summarize("extensions.set-enabled", input, ctxOf(env.bossId))).toEqual({
+      zh: "在本组织启用扩展「dep-provider」",
+      en: 'Enable extension "dep-provider" in the org',
+    });
+    const on = await run("extensions.set-enabled", input, ctxOf(env.bossId));
+    expect(on).toMatchObject({ extension: "dep-provider", state: "on", enabled: true });
+    expect(on).not.toHaveProperty("configNeeded");
+    expect(await orgView("dep-provider")).toMatchObject({ enabled: true });
+    const [audit] = await audits("org.plugin_config.updated");
+    expect(audit?.detail).toMatchObject({
+      enabled: true,
+      via: "agent",
+      operation: "extensions.set-enabled",
+    });
+    const off = await run(
+      "extensions.set-enabled",
+      { extension: "dep-provider", enabled: false },
+      ctxOf(env.bossId),
+    );
+    expect(off).toMatchObject({ state: "off", enabled: false });
+    expect(await orgView("dep-provider")).toMatchObject({ enabled: false });
+  });
+
+  it("keeps the route's dependency rules: a missing provider, dependents unless force", async () => {
+    const missing = await failure(
+      run(
+        "extensions.set-enabled",
+        { extension: "dep-requirer", enabled: true },
+        ctxOf(env.bossId),
+      ),
+    );
+    expect(missing.message).toContain("extension.dependency_missing");
+    await run(
+      "extensions.set-enabled",
+      { extension: "dep-provider", enabled: true },
+      ctxOf(env.bossId),
+    );
+    await run(
+      "extensions.set-enabled",
+      { extension: "dep-requirer", enabled: true },
+      ctxOf(env.bossId),
+    );
+    const held = await failure(
+      run(
+        "extensions.set-enabled",
+        { extension: "dep-provider", enabled: false },
+        ctxOf(env.bossId),
+      ),
+    );
+    expect(held.message).toContain("extension.has_dependents");
+    const forced = { extension: "dep-provider", enabled: false, force: true };
+    expect((await summarize("extensions.set-enabled", forced, ctxOf(env.bossId)))?.en).toBe(
+      'Force-disable extension "dep-provider" in the org: extensions that depend on it lose it',
+    );
+    expect(await run("extensions.set-enabled", forced, ctxOf(env.bossId))).toMatchObject({
+      state: "off",
+    });
+  });
+
+  it("a member gets it unavailable, and the route's role check refuses a member anyway", async () => {
+    const a = availability(op("extensions.set-enabled"), facts("member"));
+    expect(a.ok).toBe(false);
+    const e = await failure(
+      run("extensions.set-enabled", { extension: "dep-provider", enabled: true }, ctxOf(env.memId)),
+    );
+    expect(e.message).toContain("forbidden");
+  });
+
+  it("refuses an extension of one catalog plugin before the card, pointing at plugins.set-enabled", async () => {
+    const NAME = "solo-ext";
+    const real = defineExtension({
+      name: NAME,
+      version: "1.0.0",
+      sdk: "^0.1.0-rc.0",
+      provides: [],
+      permissions: {},
+      setup() {},
+    });
+    const entry = [
+      'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+      `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, setup() {} });`,
+    ].join("\n");
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: { name: NAME },
+        extension: { manifest: { ...staticManifestOf(real) }, entry },
+      }),
+    );
+    await waitFor(async () => (await orgView(NAME)) !== undefined, 15_000, NAME);
+    const input = { extension: NAME, enabled: true };
+    const p = await precheck("extensions.set-enabled", input, ctxOf(env.bossId));
+    expect(p).toMatchObject({ ok: false, code: "extension.switch_via_plugin" });
+    expect(p.ok ? "" : p.message).toContain(`plugins.set-enabled (itemId ${itemId}`);
+    const e = await failure(run("extensions.set-enabled", input, ctxOf(env.bossId)));
+    expect(e.message).toContain("plugins.set-enabled");
+    expect(await orgView(NAME)).toMatchObject({ enabled: false });
+  });
+
+  it("an unknown extension is extension.not_found before the card", async () => {
+    expect(
+      await precheck(
+        "extensions.set-enabled",
+        { extension: "no-such-ext", enabled: true },
+        ctxOf(env.bossId),
+      ),
+    ).toMatchObject({ ok: false, code: "extension.not_found" });
+  });
+});
+
 /**
  * The acceptance case (session c9a4e7bf, spec §14.2 problems 1-4): an extension installed on the
  * platform but not loaded because its deployment API key is missing. One call tells why and what
@@ -651,7 +781,7 @@ describe("connectors and extensions", () => {
  */
 describe("an extension waiting for its deployment config", () => {
   const NAME = "keyed-ai";
-  const config = { deployment: z.object({ apiKey: secret(z.string().min(1)) }) };
+  const config = { deployment: z.object({ apiKey: platformOnly(secret(z.string().min(1))) }) };
   const real = defineExtension({
     name: NAME,
     version: "1.0.0",
@@ -662,9 +792,9 @@ describe("an extension waiting for its deployment config", () => {
     setup() {},
   });
   const entry = [
-    'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
+    'import { defineExtension, platformOnly, secret } from "@capybara-hq/plugin-sdk";',
     'import { z } from "zod";',
-    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: secret(z.string().min(1)) }) }, setup() {} });`,
+    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: platformOnly(secret(z.string().min(1))) }) }, setup() {} });`,
   ].join("\n");
   const ADMIN_PATH = `admin console → Extensions → ${NAME} → fill in the deployment config`;
   let itemId: string;

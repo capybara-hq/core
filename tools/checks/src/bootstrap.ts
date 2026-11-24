@@ -13,6 +13,11 @@ import type { Finding } from "./source.js";
 export interface BootstrapCheckOptions {
   /** Rewrite stale versions and integrities in the manifest instead of reporting them. */
   write?: boolean;
+  /**
+   * Require the entries that are `required` or `builtin` to be exactly {@link BOOTSTRAP_FIXED}
+   * (`bootstrap-fixed-set`); on for core's real manifest, off for the test fixtures.
+   */
+  fixedSet?: boolean;
   /** Also check the npm entries against the registry and the marketplace commit (network mode). */
   network?: BootstrapNetworkOptions;
   /**
@@ -27,17 +32,42 @@ export interface BootstrapCheckOptions {
    */
   haproxyFile?: string;
   /**
-   * The SDK runtime files the device-docker image stages (`SANDBOX_RUNTIME_SOURCE.files`); with
-   * `network`, the image's `SHA256SUMS` at `marketplace.commit` must list each with the sha256 of
-   * its `source` (`bootstrap-sandbox-runtime`).
+   * The SDK runtime the device-docker image stages: the staged set (`SANDBOX_RUNTIME_SOURCE.files`)
+   * and, by name, the other digests a staged copy may have (`SANDBOX_RUNTIME_SOURCE.accepted`).
+   * With `network`, the image's `SHA256SUMS` at `marketplace.commit` must list every file with the
+   * sha256 of its staged `source` or an accepted digest (`bootstrap-sandbox-runtime`).
    */
-  sandboxRuntime?: readonly { name: string; source: string }[];
+  sandboxRuntime?: {
+    files: readonly { name: string; source: string }[];
+    accepted?: Readonly<Record<string, readonly string[]>>;
+  };
 }
+
+/**
+ * The plugins that are builtin and fixed in every org (`required: true` or `builtin: true`);
+ * every other bootstrap entry is an optional preinstall.
+ */
+export const BOOTSTRAP_FIXED = ["object-store-s3", "skills-core", "file-preview"];
 
 /** Core's compose files (repo-relative) whose sandbox images build from the plugins repository. */
 export const BOOTSTRAP_COMPOSE_FILES = ["docker/compose.yaml", "docker/compose.dev.yaml"];
 /** Core's socket proxy config (repo-relative), copied by the device-docker plugin's tests. */
 export const SANDBOX_PROXY_HAPROXY = "docker/sandbox-proxy/haproxy.cfg";
+
+/** Each staged runtime file with its own digest first, then every other digest accepted for it. */
+function sandboxRuntimeDigests(
+  runtime: NonNullable<BootstrapCheckOptions["sandboxRuntime"]>,
+): { name: string; sha256s: string[] }[] {
+  const out = new Map<string, string[]>();
+  for (const f of runtime.files)
+    out.set(f.name, [createHash("sha256").update(f.source, "utf8").digest("hex")]);
+  for (const [name, digests] of Object.entries(runtime.accepted ?? {})) {
+    const list = out.get(name) ?? [];
+    for (const d of digests) if (!list.includes(d)) list.push(d);
+    out.set(name, list);
+  }
+  return [...out].map(([name, sha256s]) => ({ name, sha256s }));
+}
 
 /** 1-based line of the entry's `"name": "<name>"` in the manifest text, else 1. */
 function lineOf(text: string, name: string): number {
@@ -73,7 +103,7 @@ function lineOf(text: string, name: string): number {
  * must exist at that commit, and with `haproxyFile` the plugin's test copy of the socket proxy
  * config there must equal core's file (`bootstrap-haproxy`). With `sandboxRuntime` and `network`,
  * the device-docker image's `SHA256SUMS` at that commit must list each SDK runtime file with the
- * digest of core's source (`bootstrap-sandbox-runtime`).
+ * digest of core's staged source or one the SDK accepts (`bootstrap-sandbox-runtime`).
  */
 export async function checkBootstrap(
   manifestFile: string,
@@ -107,6 +137,24 @@ export async function checkBootstrap(
   }
 
   const findings: Finding[] = [];
+  if (opts.fixedSet) {
+    const actual = parsed.plugins.filter((e) => e.required || e.builtin).map((e) => e.name);
+    const extra = actual.filter((n) => !BOOTSTRAP_FIXED.includes(n));
+    const missing = BOOTSTRAP_FIXED.filter((n) => !actual.includes(n));
+    if (extra.length > 0 || missing.length > 0) {
+      const parts = [
+        ...(extra.length > 0 ? [`extra required or builtin: ${extra.join(", ")}`] : []),
+        ...(missing.length > 0 ? [`missing required or builtin: ${missing.join(", ")}`] : []),
+      ];
+      findings.push(
+        at(
+          lineOf(text, extra[0] ?? missing[0] ?? ""),
+          "bootstrap-fixed-set",
+          `the required or builtin entries must be exactly ${BOOTSTRAP_FIXED.join(", ")} (${parts.join("; ")})`,
+        ),
+      );
+    }
+  }
   const rawPlugins = (raw as { plugins: Record<string, unknown>[] }).plugins;
   let rewritten = false;
   const out = await mkdtemp(join(tmpdir(), "check-bootstrap-"));
@@ -192,10 +240,7 @@ export async function checkBootstrap(
         },
       }),
       ...(opts.sandboxRuntime !== undefined && {
-        sandboxRuntime: opts.sandboxRuntime.map((f) => ({
-          name: f.name,
-          sha256: createHash("sha256").update(f.source, "utf8").digest("hex"),
-        })),
+        sandboxRuntime: sandboxRuntimeDigests(opts.sandboxRuntime),
       }),
     });
     for (const p of problems) {

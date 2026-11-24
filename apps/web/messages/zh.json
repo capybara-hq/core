@@ -239,7 +239,6 @@
       "not_found": "扩展未安装。",
       "not_enabled": "该扩展未在本组织启用，请到「设置 → 扩展」中启用。",
       "config_invalid": "配置不正确：",
-      "no_org_config": "该扩展没有组织级配置。",
       "dependency_missing": "请先启用它依赖的扩展。",
       "has_dependents": "还有其他已启用的扩展依赖它。",
       "config_readonly": "这个字段由启动配置给出，只读。",
@@ -303,7 +302,8 @@
       "check_not_found": "这项检查不在当前显示的接入指南里，请刷新页面。"
     },
     "directory": {
-      "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
+      "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。",
+      "unavailable": "暂时无法读取该扩展的状态，通讯录同步未开始。请稍后重试。"
     },
     "ui": {
       "not_found": "这个面板不可用：扩展可能未启用，或你无权访问这个会话。",
@@ -503,7 +503,7 @@
       "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
       "invalid": "市场内容格式不合法，已保留上一份条目。",
       "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝安装。包可能被篡改，请联系市场维护者。",
-      "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
+      "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 net.allowPrivateHosts 中加入它。",
       "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
       "entry_deprecated": "这个版本已被市场标为废弃，不能安装，请选择其他版本。",
@@ -1534,6 +1534,7 @@
     "pickModel": "切换模型",
     "pickDevice": "设备",
     "deviceNote": "发出第一条消息后不能更换",
+    "noDevice": "不用设备",
     "deviceOffline": "你的本地设备都已离线，本对话将在没有设备的情况下开始。在机器上启动 capybara-device 后即可使用设备。",
     "deviceLocked": "对话开始后设备不再更换",
     "projectGroup": "项目",
@@ -1730,11 +1731,10 @@
     "download": "下载",
     "previewTruncated": "只显示开头部分，完整内容请下载。",
     "previewFailed": "预览加载失败。",
-    "deviceLine": "设备：{name} · {state}",
+    "deviceLine": "{name} · {state}",
     "deviceNone": "未绑定设备",
     "deviceDeleted": "设备已删除",
-    "deviceFailed": "设备状态读取失败",
-    "lastRun": "上次运行 · {parts}"
+    "deviceFailed": "设备状态读取失败"
   },
   "pluginPage": {
     "pathLabel": "扩展页",
@@ -2281,6 +2281,8 @@
     "form": {
       "nameLabel": "名称",
       "nameRequired": "请填写名称。",
+      "descriptionLabel": "说明",
+      "descriptionHint": "显示在连接器卡片和详情页上。",
       "slugLabel": "Slug",
       "slugHelp": "小写字母、数字与下划线，最长 24 位；留空则由名称推导。slug 越短，工具名可用的长度越长；工具键最长 64 个字符。",
       "urlLabel": "端点 URL",
@@ -2377,6 +2379,7 @@
     },
     "settings": {
       "title": "常规",
+      "descriptionFallback": "留空时显示其模板的说明，即框中的灰色文字。",
       "activeLabel": "启用连接器",
       "save": "保存",
       "saved": "已保存。",
@@ -2776,7 +2779,7 @@
     "jsonHint": "填写 JSON 值。",
     "linesHint": "每行一项。",
     "hot": "即时生效",
-    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} platform {平台配置} other {只读}}",
+    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} other {只读}}",
     "tristate": {
       "default": "默认",
       "on": "开",
@@ -2815,8 +2818,7 @@
       "unset": "未配置"
     },
     "level": {
-      "hidden": "组织不可见",
-      "readonly": "组织只读",
+      "platform": "仅平台",
       "override": "组织可覆盖"
     }
   },
@@ -3029,13 +3031,7 @@
       "dialIn": "机器接入（协议）",
       "deviceAccess": "设备服务"
     },
-    "configTitle": "组织配置",
-    "save": "保存配置",
-    "saveLabel": "保存 {plugin} 的配置",
-    "saveAndEnable": "保存并启用",
-    "saveAndEnableLabel": "保存 {plugin} 的配置并启用",
-    "configFirstHint": "先填写组织配置再启用",
-    "configSaved": "「{plugin}」的配置已保存。",
+    "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
@@ -3136,8 +3132,6 @@
       "embedRoutes": "嵌入页路由",
       "provides": "扩展点"
     },
-    "missingRequired": "缺少必填项：{fields}",
-    "listSep": "、",
     "toolSwitches": {
       "title": "工具",
       "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
@@ -3803,7 +3797,6 @@
         "cleared": "已清除「{model}」的价格。"
       },
       "purposes": {
-        "title": "用途默认映射",
         "description": "内核与扩展按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
       },
       "toMarket": "浏览插件市场",
@@ -3822,7 +3815,6 @@
     },
     "org": {
       "pageTitle": "模型",
-      "title": "模型用途",
       "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。",
       "noProviders": "平台还没有部署模型服务。模型服务由超级管理员在「管理 → 模型」里部署。",
       "toAdminModels": "去部署模型服务",
@@ -3830,7 +3822,6 @@
         "title": "模型服务",
         "description": "本组织的模型来自这里启用的模型服务。平台部署的服务要在本组织启用后才能使用。",
         "orgFixable": "本组织还没有可用的模型服务。启用下面的一个服务或补全它的配置，智能体才能回答。",
-        "enable": "启用",
         "enableLabel": "在本组织启用 {plugin}",
         "configure": "配置",
         "configureLabel": "配置 {plugin}"
@@ -3851,9 +3842,11 @@
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
       "useDefault": "使用部署默认（{target}）",
+      "none": "没有可设置的用途。",
       "overridden": "已覆盖",
       "unavailable": "{target}（不可用）",
-      "params": "参数",
+      "paramsAllDefault": "参数 · 全部默认",
+      "paramsCustomized": "参数 · {n} 项已自定义",
       "save": "保存",
       "savedAll": "已保存 {n} 个用途。",
       "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。",
@@ -4935,7 +4928,7 @@
     },
     "source": {
       "manual": "手动安装",
-      "official": "官方市场",
+      "official": "Capybara",
       "removed": "已删除的市场"
     },
     "versionSource": {
@@ -4986,6 +4979,7 @@
       },
       "actions": {
         "addSource": "添加市场源",
+        "sources": "市场源",
         "upload": "上传插件包"
       },
       "detail": {
@@ -5084,7 +5078,7 @@
         "steps": {
           "source": "选择插件包",
           "review": "审阅",
-          "confirm": "确认",
+          "reviewConfirm": "审阅并确认",
           "update": "更新预览"
         },
         "sourceLabel": "来源",
@@ -5110,7 +5104,7 @@
         "keepExtension": "扩展 {name} {version} 已安装在部署上。",
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
-        "confirm": "确认安装",
+        "confirm": "安装",
         "done": "已安装插件「{name}」。",
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），插件已保留在平台上。可在扩展后台重试。",
@@ -5128,7 +5122,6 @@
         "gitRefHelp": "可选；留空用远端 HEAD。",
         "gitPath": "目录",
         "gitPathHelp": "可选；插件在仓库里的目录（默认根目录）。",
-        "provenance": "声明（未验证）：由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
         "buildVersion": "记为 {version}：{pluginVersion} 已在平台目录中，但内容不同。",
         "translation": {
@@ -5146,6 +5139,7 @@
             "warnings": "警告",
             "other": "其他"
           },
+          "details": "详情",
           "groupNone": "无",
           "components": {
             "plugin": "插件",
@@ -5235,6 +5229,25 @@
           "provenance": "来源证明",
           "provenanceNotChecked": "未核对（{reason}）"
         },
+        "sensitiveCount": "{n} 项敏感",
+        "fullDescription": "完整说明",
+        "build": "构建",
+        "unverified": "（声明，未验证）",
+        "noneOf": "没有{kinds}。",
+        "newMark": "新增",
+        "configAfterInstall": "安装后在「扩展」页填写",
+        "needsOAuthClient": "需要 OAuth 客户端",
+        "needsOrgCredential": "需要组织凭据",
+        "endpointUnchecked": "地址未检查",
+        "translationSummary": "导入 {imported} · 转换 {converted} · 需要填写 {needsInput} · 忽略 {ignored} · 警告 {warnings}",
+        "versionChange": "{from} → {to}",
+        "provides": "提供",
+        "config": "配置",
+        "hiddenCharacters": "含隐藏字符",
+        "secret": "密钥",
+        "tools": "工具",
+        "endpointDetails": "端点详情",
+        "orgCanChange": "组织可改",
         "titleUpdate": "更新插件「{name}」",
         "confirmUpdate": "确认更新",
         "updateHint": "确认后把 {version} 加入平台并把插件更新到它，所有组织一起更新。确认前取消不会改动任何东西。",
@@ -5242,7 +5255,7 @@
       },
       "entries": {
         "title": "浏览市场",
-        "empty": "没有市场条目。先用「添加市场源」添加或刷新市场。",
+        "empty": "没有市场条目。先用「市场源」添加或刷新市场。",
         "noResults": "没有符合条件的条目。",
         "truncated": "条目太多，只显示了前一部分；请按市场或关键词缩小范围。",
         "search": "搜索",
@@ -5291,13 +5304,19 @@
         "search": "搜索市场源",
         "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
-        "official": "官方市场",
-        "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
-        "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
         "enabledLabel": "启用「{name}」",
+        "details": "详情",
+        "detailsTitle": "「{name}」详情",
+        "close": "关闭",
+        "addConfirm": "添加",
+        "cancel": "取消",
+        "edit": "编辑",
+        "editTitle": "编辑「{name}」",
+        "officialNote": "地址在部署配置（marketplaces.official.*）里设置，这里只读。",
+        "disabled": "已停用",
+        "official": "Capybara",
+        "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
         "url": "地址",
-        "mirrors": "镜像",
-        "status": "状态",
         "statusValue": {
           "ok": "正常（{n} 个条目，{at}）",
           "never": "还没有拉取过",
@@ -5312,9 +5331,7 @@
         },
         "refresh": "立即刷新",
         "refreshed": "已刷新 {name}",
-        "custom": "自定义市场源",
         "customHint": "地址只认 https；令牌只发往市场地址的源。",
-        "customEmpty": "还没有自定义市场源。",
         "name": "名称",
         "token": "令牌",
         "tokenHelp": "可选；留空不改。",
@@ -5324,6 +5341,7 @@
         "managed": "由部署配置管理",
         "managedTokenSet": "部署已配置令牌",
         "managedTokenUnset": "部署未配置令牌",
+        "mirrors": "镜像",
         "clearToken": "清除令牌",
         "save": "保存",
         "saved": "已保存「{name}」。",
@@ -5334,7 +5352,7 @@
           "confirm": "删除"
         },
         "removed": "已删除「{name}」。",
-        "add": "添加自定义市场源",
+        "add": "添加市场源",
         "added": "已添加「{name}」。",
         "form": "类型",
         "formHttp": "marketplace.json 地址",
@@ -5348,7 +5366,6 @@
         "skipped": {
           "title": "上次刷新跳过了 {n} 个条目",
           "line": "{name}：{reason}",
-          "more": "……另有 {n} 个",
           "reasons": {
             "claude_npm_unpinned": "npm 来源没有完整性校验值，暂不支持",
             "claude_source_unsupported": "不支持这类来源",
@@ -5488,8 +5505,9 @@
         "title": "启用 {name}",
         "alreadyOn": "{name} 已启用，无需再填写。",
         "backToPlugin": "返回插件",
+        "chooseStep": "选择连接器",
+        "chooseHint": "勾选要随插件一起创建的连接器，下一步逐个填写。未勾选的不会创建，之后仍可在「连接器」页从模板添加。",
         "connectorStep": "连接器：{name}",
-        "extensionStep": "扩展配置",
         "confirmStep": "确认",
         "name": "连接器名称",
         "slug": "标识（slug）",
@@ -5502,15 +5520,21 @@
         "personalMembersHint": "这个连接器使用个人凭据：每位成员之后各自连接。",
         "noneHint": "这个连接器不需要凭据。",
         "dcrHint": "客户端会自动注册，不需要填写。",
-        "extensionHint": "插件会在本组织启用它的扩展；有组织配置的请填写（已启用的扩展不改配置）。",
-        "extensionNone": "没有需要填写的扩展配置。",
-        "extensionEnabled": "{name}：已在本组织启用，保持现有配置。",
+        "need": {
+          "kept": "沿用已有连接器",
+          "client": "需要 OAuth 客户端",
+          "endpoint": "需要填写地址",
+          "personal": "需要你的凭据",
+          "credential": "凭据可稍后填写",
+          "none": "无需填写"
+        },
         "connectorKept": "{name}：本组织已有它的连接器，将保留现有连接器，无需填写。",
         "summary": "启用后本组织会得到：",
         "summaryExtension": "扩展 {name}",
         "summaryTemplates": "{n} 个连接器",
         "summarySkills": "{n} 个技能",
         "summaryDependencies": "先一并安装（本组织已有的不重装）：",
+        "summaryNotChosen": "{n} 个未勾选的连接器不会创建，之后可在「连接器」页从模板添加。",
         "submit": "启用",
         "next": "下一步",
         "back": "上一步",
@@ -5555,7 +5579,8 @@
         "connector": "连接器",
         "skill": "技能",
         "plugin": "依赖插件",
-        "agent_template": "智能体模板"
+        "agent_template": "智能体模板",
+        "theme": "主题"
       },
       "installedAt": "安装于 {at}",
       "cleanup": "清理",
@@ -5759,7 +5784,7 @@
       "toolsNone": "无",
       "loadFailed": "无法打开该子智能体。"
     },
-    "contextTotal": "含子智能体的 token 总数 {n}",
+    "contextTotal": "{n} token（含子智能体）",
     "background": "后台任务",
     "startingGrant": "运行中的工作保留开始时的权限，权限更改只对新的操作生效；撤销设备或组织的访问仍可能使其停止。"
   },
@@ -5928,7 +5953,6 @@
     },
     "action": {
       "enable": "启用",
-      "configure": "组织配置",
       "disable": "停用",
       "request": "申请",
       "requestEnable": "申请启用",
@@ -5969,6 +5993,8 @@
     },
     "market": {
       "title": "市场",
+      "source": "来源",
+      "allSources": "全部来源",
       "empty": "市场里还没有条目。",
       "adopted": "已安装",
       "unavailable": "不能安装",
@@ -6684,7 +6710,9 @@
         "not_grantable": "不能预先批准",
         "not_available": "智能体目前没有这个工具",
         "needs_role": "需要你没有的角色",
-        "fixed_ask": "总是需要人确认"
+        "fixed_ask": "总是需要人确认",
+        "needs_admin": "不在组织的网络许可内，需要组织管理员添加",
+        "device_refuses": "任务的设备不接受网络设置的变更"
       },
       "network": "网络访问",
       "networkHint": "任务运行时可以在其设备上直接访问、无需询问的域名（不超出组织允许的范围）。",

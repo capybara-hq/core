@@ -253,6 +253,7 @@ export class ComponentPromotion {
         .updateTable("skills")
         .set({ platform_skill_id: p.platformId, updated_at: sql`now()` })
         .where("id", "=", row.id)
+        .where("org_id", "=", row.orgId)
         .execute();
     } else {
       const v = await this.db
@@ -292,6 +293,7 @@ export class ComponentPromotion {
         .updateTable("agent_templates")
         .set({ platform_template_id: p.platformId, updated_at: new Date() })
         .where("id", "=", row.id)
+        .where("org_id", "=", row.orgId)
         .execute();
     }
     await this.db

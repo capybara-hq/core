@@ -2,11 +2,12 @@
 
 import {
   type ActionRowProps,
-  Card,
-  EmptyState,
+  Badge,
+  CheckList,
   Field,
   type FieldShape,
   Input,
+  ItemList,
   type PageHeaderProps,
   Stack,
   Text,
@@ -19,10 +20,12 @@ import { useRouter } from "../i18n/navigation";
 import { ApiClientError, issueLines } from "../lib/api";
 import {
   type ConnectorInstallInput,
+  chosenByDefault,
+  descriptionOf,
   displayNameOf,
   endpointLeaves,
   getPath,
-  installTemplates,
+  hasChooseStep,
   isOAuth,
   keptTemplates,
   type OrgCatalogDetail,
@@ -31,9 +34,9 @@ import {
   setOrgPluginSwitch,
   setPath,
   showValue,
+  templateNeed,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
-import { extensionLabel, labelLocale } from "../lib/extension-label";
 import type { OrgExtension } from "../lib/extensions";
 import { orgCatalogItemQuery, pluginChangeKeys } from "../lib/query/catalog";
 import { orgExtensionsQuery } from "../lib/query/channels";
@@ -41,7 +44,7 @@ import { retryOnMountOf } from "../lib/query/client";
 import { useAppMutation } from "../lib/query/mutation";
 import { type PageState, usePageQuery } from "../lib/query/page-query";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useCatalogErrorLines } from "./CatalogParts";
+import { ComponentSection, useCatalogErrorLines } from "./CatalogParts";
 import {
   buildCredential,
   buildOAuthClient,
@@ -52,9 +55,6 @@ import {
   OAuthClientFields,
 } from "./ConnectorForm";
 import { TemplateGuideSection } from "./ConnectorGuides";
-import { ConfigForm } from "./config-form/ConfigForm";
-import { hasConfigFields } from "./config-form/model";
-import { orgConfig } from "./config-form/org";
 import { FormError } from "./form-error";
 import { usePagePath } from "./shell/path";
 
@@ -85,10 +85,6 @@ export function endpointFields(
   return out;
 }
 
-/** OAuth 模板是否要组织填客户端：客户端凭据流总要；授权码流只在手填客户端时要（自动注册时不要）。 */
-export const needsClient = (auth: Record<string, unknown>) =>
-  auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual");
-
 /**
  * 由模板 id 推导默认 slug（与内核规则一致：小写字母开头，小写字母、数字与单个下划线，最长 24 位）；推导不出为空。
  * 显示名可能是中文，内核由名称推导不出 slug，所以默认填上。
@@ -110,8 +106,9 @@ export function slugOf(id: string): string {
 export const defaultSlug = (t: Pick<OrgCatalogTemplate, "id">, itemName: string): string =>
   slugOf(t.id === "connector" ? itemName : t.id);
 
-// The wizard asks for `installTemplates` only; the helper lives in lib/catalog so the route table's
-// server-side prefetch uses the same filter (a "use client" module cannot be called from there).
+// `installTemplates`: the templates the wizard asks for by default (the choose step may change
+// that); the helper lives in lib/catalog so the route table's server-side prefetch uses the same
+// filter (a "use client" module cannot be called from there).
 export { installTemplates } from "../lib/catalog";
 
 export const initialTemplateDraft = (
@@ -174,7 +171,8 @@ export function missingInput(
   o: { personalCredential?: boolean } = {},
 ): "client" | "credential" | undefined {
   const auth = t.auth;
-  if (needsClient(auth)) return d.client.clientId.trim() === "" ? "client" : undefined;
+  if (templateNeed({ auth }) === "client")
+    return d.client.clientId.trim() === "" ? "client" : undefined;
   if (auth.type === "none" || isOAuth(auth)) return undefined;
   if (t.ownership !== "org" && o.personalCredential === false) return undefined;
   const credential = buildCredential(
@@ -203,7 +201,7 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
           Array.isArray(auth.names) ? (auth.names as string[]) : [],
         )
       : undefined;
-  const client = needsClient(auth) ? buildOAuthClient(d.client) : undefined;
+  const client = templateNeed({ auth }) === "client" ? buildOAuthClient(d.client) : undefined;
   return {
     ...(d.name.trim() !== "" && { name: d.name.trim() }),
     ...(d.slug.trim() !== "" && { slug: d.slug.trim() }),
@@ -215,7 +213,7 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
 
 /**
  * What the install wizard starts from: the catalog item and the org's extensions (`null` when they
- * could not be read: no extension config step is offered then).
+ * could not be read).
  */
 export interface CatalogInstallData {
   detail: OrgCatalogDetail;
@@ -259,8 +257,7 @@ export interface WizardView {
  * The wizard that asks for a plugin's input before switching it on (the page puts `frame` into a
  * WizardPage; the last step calls the plugin's switch with the input): for
  * each of its connector templates, the name, the editable endpoint fields (the rest read-only),
- * credentials or client id / secret; a plugin with an extension has a step for that extension's org
- * config (asked only when this install enables it and it has org config); then confirm, listing the
+ * credentials or client id / secret; then confirm, listing the
  * components and the dependencies installed with it (they take no input). A failure shows the failed
  * step (and the dependency it failed in) and says the components this install created were rolled
  * back.
@@ -327,6 +324,7 @@ function Wizard({
 }) {
   const t = useTranslations("catalog.org.install");
   const tp = useTranslations("plugins");
+  const tc = useTranslations("catalog.components");
   const locale = useLocale();
   const router = useRouter();
   const toast = useToast();
@@ -336,37 +334,36 @@ function Wizard({
   const name = displayNameOf(item, locale);
   const templateName = (c: OrgCatalogTemplate) =>
     c.displayName ? displayNameOf({ name: c.id, displayName: c.displayName }, locale) : c.connector;
-  // A default-off template starts switched off in every org: it is set up when an org admin
-  // switches it on, so the wizard does not ask for it.
-  // A default-off template is not asked for, unless an admin switched it on in this org: the
-  // install is what creates its connector, so its input is needed like any other.
-  // A template whose connector this org already has is not asked either: the install takes that
-  // connector back (its endpoint and credentials), so an input here would be discarded.
-  const templates = installTemplates(detail.templates);
-  const kept = keptTemplates(detail.templates);
-  // The plugin's own extension in this org: its org config is asked only when this install enables it
   const own =
     detail.extension === null
       ? undefined
       : orgExtensions.find((o) => o.plugin === detail.extension);
-  const withConfig =
-    own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema) ? own : undefined;
-  const hasExtensionStep = detail.extension !== null;
+  // The choose step (shown for more than one template, or a default-off one): the admin picks the
+  // templates to switch on, default-on ones (and default-off ones already switched on here)
+  // checked. Only the chosen ones get a step and a connector; the others are switched off in the
+  // org and stay as template cards on the connectors page. A template whose connector this org
+  // already has (a switch-off kept it) is not asked for: the install takes that connector back.
+  const choosing = hasChooseStep(detail.templates);
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(
+    () => new Set(detail.templates.filter(chosenByDefault).map((c) => c.id)),
+  );
+  // A template that is kept and on stays as it is (its row is locked on the choose step)
+  const locked = new Set(keptTemplates(detail.templates).map((c) => c.id));
+  const picked = detail.templates.filter((c) => chosen.has(c.id) || locked.has(c.id));
+  const templates = picked.filter((c) => c.connected !== true);
+  const kept = picked.filter((c) => c.connected === true);
+  const offset = choosing ? 1 : 0;
   const steps = [
+    ...(choosing ? [t("chooseStep")] : []),
     ...templates.map((c) => t("connectorStep", { name: templateName(c) })),
-    ...(hasExtensionStep ? [t("extensionStep")] : []),
     t("confirmStep"),
   ];
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>(() =>
-    Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)])),
+    Object.fromEntries(
+      detail.templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)]),
+    ),
   );
-  // The extension step's config as the form last reported it (kept across steps).
-  const [config, setConfig] = useState<{ value: Record<string, unknown>; ok: boolean }>({
-    value: {},
-    ok: true,
-  });
-  const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   // Switching it on (with the input) changes the catalog's view, the installed plugins and what
@@ -376,11 +373,11 @@ function Wizard({
     invalidates: () => pluginChangeKeys(orgId),
   });
   const confirmIdx = steps.length - 1;
-  const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
   const installable =
     item.state !== "unavailable" && item.state !== "not_offered" && !item.notDeployed;
 
-  const template = step < templates.length ? templates[step] : undefined;
+  const template =
+    step >= offset && step - offset < templates.length ? templates[step - offset] : undefined;
   const draft = template ? drafts[template.id] : undefined;
   const setDraft = (next: TemplateDraft) => {
     if (template) setDrafts((d) => ({ ...d, [template.id]: next }));
@@ -390,26 +387,31 @@ function Wizard({
   const templateIncomplete =
     template !== undefined &&
     draft !== undefined &&
-    (needsClient(template.auth) || template.ownership === "personal") &&
+    (templateNeed(template) === "client" || template.ownership === "personal") &&
     missingInput(template, draft) !== undefined;
-  const configErrors = withConfig !== undefined && !config.ok;
 
   const submit = async () => {
     setSubmitting(true);
     setError(undefined);
     // no version: an org always installs the platform version (ruling P2-17)
+    // With the choose step the kernel switches on exactly the chosen templates (templatesOn)
     const body: OrgInstallBody = {
       ...(templates.length > 0 && {
         connectors: Object.fromEntries(
           templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
         ),
       }),
-      ...(withConfig !== undefined && { extensionConfig: config.value }),
+      ...(choosing && { templatesOn: picked.map((c) => c.id) }),
     };
     try {
       await install.mutateAsync(body);
       toast.success(tp("toast.enabled", { name }));
-      router.push(`/plugins/${encodeURIComponent(item.id)}`);
+      // An extension that still needs config goes on to its Sheet (the wizard collects none)
+      router.push(
+        own?.needsConfig === true
+          ? `/extensions#plugin=${encodeURIComponent(own.plugin)}`
+          : `/plugins/${encodeURIComponent(item.id)}`,
+      );
     } catch (e) {
       setError({ message: failureMessage(e), extra: [...failureLines(e), ...catalogLines(e)] });
     } finally {
@@ -445,10 +447,6 @@ function Wizard({
   };
 
   const next = () => {
-    if (step === extensionIdx && configErrors) {
-      setShowRequired(true);
-      return;
-    }
     setStep((s) => Math.min(s + 1, confirmIdx));
   };
 
@@ -494,42 +492,26 @@ function Wizard({
     actionRow,
     body: (
       <>
+        {choosing && step === 0 && (
+          <ChooseTemplates
+            templates={detail.templates}
+            chosen={chosen}
+            locked={locked}
+            templateName={templateName}
+            onCheck={(id, next) =>
+              setChosen((cur) => {
+                const out = new Set(cur);
+                if (next) out.add(id);
+                else out.delete(id);
+                return out;
+              })
+            }
+          />
+        )}
         {/* The template's setup guide above its input (setup guides v2 spec §9.3) */}
         {template !== undefined && <TemplateGuideSection orgId={orgId} template={template} />}
         {template !== undefined && draft !== undefined && (
           <TemplateStep template={template} draft={draft} onChange={setDraft} />
-        )}
-        {step === extensionIdx && (
-          <Stack gap={16}>
-            <Text variant="prose" tone="muted">
-              {t("extensionHint")}
-            </Text>
-            {own?.enabled === true && (
-              <Text variant="small" tone="muted">
-                {t("extensionEnabled", { name: own.plugin })}
-              </Text>
-            )}
-            {withConfig === undefined && own?.enabled !== true && (
-              <EmptyState text={t("extensionNone")} />
-            )}
-            {withConfig !== undefined && (
-              <Card
-                title={extensionLabel(
-                  { name: withConfig.plugin, displayName: withConfig.displayName },
-                  labelLocale(locale),
-                )}
-              >
-                <ConfigForm
-                  schema={withConfig.orgConfigSchema}
-                  value={config.value}
-                  showRequired={showRequired}
-                  onChange={(value, _entries, state) =>
-                    setConfig({ value: orgConfig(value), ok: state.problems.length === 0 })
-                  }
-                />
-              </Card>
-            )}
-          </Stack>
         )}
         {step === confirmIdx && (
           <Stack gap={12}>
@@ -548,12 +530,33 @@ function Wizard({
                 .filter((s) => s !== null)
                 .join(" · ")}
             </Text>
-            {/* A template the org already has a connector for: it is kept, not asked for again */}
-            {kept.map((c) => (
-              <Text key={c.id} variant="small" tone="muted">
-                {t("connectorKept", { name: templateName(c) })}
+            {/* The connector templates with their icons; one the org already has a connector for
+                is kept, not asked for again */}
+            {templates.length + kept.length > 0 && (
+              <ComponentSection
+                title={tc("templates")}
+                count={templates.length + kept.length}
+                empty={tc("templatesNone")}
+              >
+                <ItemList
+                  label={tc("templates")}
+                  rows={[...templates, ...kept].map((c) => ({
+                    id: c.id,
+                    mark: { text: templateName(c), image: c.icon ?? null },
+                    title: templateName(c),
+                    ...(kept.includes(c) && {
+                      meta: t("connectorKept", { name: templateName(c) }),
+                    }),
+                  }))}
+                />
+              </ComponentSection>
+            )}
+            {/* Templates left out on the choose step: switched off, still on the connectors page */}
+            {choosing && detail.templates.length > picked.length && (
+              <Text variant="small" tone="muted">
+                {t("summaryNotChosen", { n: detail.templates.length - picked.length })}
               </Text>
-            ))}
+            )}
             {detail.dependencies.length > 0 && (
               <Stack gap={4}>
                 <Text variant="small" tone="muted">
@@ -570,6 +573,72 @@ function Wizard({
       </>
     ),
   });
+}
+
+/** What a template's step will ask for, as one short mark on the choose step. */
+export type TemplateNeed = "kept" | "client" | "endpoint" | "personal" | "credential" | "none";
+
+/**
+ * What choosing a template asks for on its step, the most demanding first: nothing for one whose
+ * connector the org keeps; an OAuth client (manual client registration); an address (an editable
+ * endpoint field without a preset); the installer's own credential (a personal template); an org
+ * credential, which may be left for later; else nothing (no auth, or a client registered
+ * automatically, and every endpoint field preset).
+ */
+export function chooseMark(t: OrgCatalogTemplate): TemplateNeed {
+  if (t.connected === true) return "kept";
+  const need = templateNeed(t);
+  if (need === "client") return "client";
+  if (endpointFields(t).some((f) => f.editable && showValue(f.preset).trim() === "")) {
+    return "endpoint";
+  }
+  if (need === "credential") return "credential";
+  return t.auth.type === "none" || isOAuth(t.auth) ? "none" : "personal";
+}
+
+/**
+ * The choose step: every connector template of the plugin as a checklist row (its icon, name and
+ * description in the page's language, a mark saying what its step asks for). Kept templates are
+ * locked on; the hint says the unchosen ones stay available on the connectors page.
+ */
+function ChooseTemplates({
+  templates,
+  chosen,
+  locked,
+  templateName,
+  onCheck,
+}: {
+  templates: OrgCatalogTemplate[];
+  chosen: ReadonlySet<string>;
+  locked: ReadonlySet<string>;
+  templateName(c: OrgCatalogTemplate): string;
+  onCheck(id: string, next: boolean): void;
+}) {
+  const t = useTranslations("catalog.org.install");
+  const locale = useLocale();
+  return (
+    <Stack gap={12}>
+      <Text variant="prose" tone="muted">
+        {t("chooseHint")}
+      </Text>
+      <CheckList
+        label={t("chooseStep")}
+        rows={templates.map((c) => {
+          const description = descriptionOf(c, locale);
+          return {
+            id: c.id,
+            title: templateName(c),
+            mark: { text: templateName(c), image: c.icon ?? null },
+            marks: <Badge>{t(`need.${chooseMark(c)}`)}</Badge>,
+            ...(description !== "" && { description }),
+            checked: locked.has(c.id) || chosen.has(c.id),
+            ...(locked.has(c.id) && { locked: true }),
+          };
+        })}
+        onCheck={onCheck}
+      />
+    </Stack>
+  );
 }
 
 /**
@@ -589,13 +658,15 @@ export function TemplateStep({
   credentialsOnly?: boolean;
 }) {
   const t = useTranslations("catalog.org.install");
+  const locale = useLocale();
   const auth = template.auth;
   const oauth = isOAuth(auth);
+  const description = descriptionOf(template, locale);
   return (
     <Stack gap={16}>
-      {template.description !== "" && (
+      {description !== "" && (
         <Text variant="prose" tone="muted">
-          {template.description}
+          {description}
         </Text>
       )}
       {!credentialsOnly && (
@@ -644,7 +715,7 @@ export function TemplateStep({
             {t("noneHint")}
           </Text>
         ) : oauth ? (
-          needsClient(auth) ? (
+          templateNeed({ auth }) === "client" ? (
             <OAuthClientFields
               values={draft.client}
               onChange={(client) => onChange({ ...draft, client })}

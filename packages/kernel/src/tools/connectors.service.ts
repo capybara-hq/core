@@ -32,6 +32,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { UUID_RE } from "../ui/registry.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -119,6 +120,12 @@ export interface ConnectorToolView {
   } | null;
 }
 
+/** A connector's own description as stored: trimmed, blank or absent as null. */
+function ownDescription(v: string | null | undefined): string | null {
+  const text = v?.trim() ?? "";
+  return text === "" ? null : text;
+}
+
 /** 列表项：不含工具与凭据（`auth` 只有类型与非密钥字段）。 */
 export interface ConnectorSummary {
   id: string;
@@ -150,6 +157,11 @@ export interface ConnectorSummary {
    * the virtual tool `git_push`; sandbox git credentials spec §7); meaningful only with `git`.
    */
   gitPushPolicy: ToolPolicy;
+  /**
+   * Its own description, set by an org admin (`connectors.description`); null: none (the pages
+   * then show its template's, `templateDescription` on the connector routes).
+   */
+  description: string | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -173,6 +185,8 @@ export interface CreateConnectorInput {
    * create body's; validated by the SDK's `GitSourceSchema`), stored in `connectors.git_hosts`.
    */
   git?: GitSource | undefined;
+  /** The connector's own description (`connectors.description`; blank or absent: none). */
+  description?: string | undefined;
   /**
    * Install from a platform catalog connector template (T26, filled in by the catalog service,
    * not accepted over HTTP): the connector records its source item and version, the item policy is
@@ -296,6 +310,8 @@ export interface UpdateConnectorInput {
    * an org-ownership connector that declares git hosts; pushes are then the bot's.
    */
   useForGit?: boolean | undefined;
+  /** The connector's own description; null or blank removes it. */
+  description?: string | null | undefined;
 }
 
 const notFound = () => new ApiError("connector.not_found", "Connector not found");
@@ -837,6 +853,7 @@ export class ConnectorsService {
         endpoint: JSON.stringify(endpoint),
         auth: JSON.stringify(auth),
         git_hosts: input.git !== undefined ? JSON.stringify(input.git.hosts) : null,
+        description: ownDescription(input.description),
         created_by: actorAccountId,
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
@@ -962,6 +979,7 @@ export class ConnectorsService {
         updated_at: sql`now()`,
       })
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .execute();
     // Tools at a default the org did not set (template or derived): a tool the new template names
     // takes its policy (`template`); an unnamed `template` one returns to the derived policy;
@@ -1221,6 +1239,7 @@ export class ConnectorsService {
       git: r.git_hosts !== null && r.git_hosts.length > 0 ? { hosts: r.git_hosts } : null,
       useForGit: r.use_for_git,
       gitPushPolicy: r.git_push_policy,
+      description: r.description ?? null,
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -1423,6 +1442,19 @@ export class ConnectorsService {
     return rows.map((r) => this.summary(r));
   }
 
+  /**
+   * Where a live connector of the org takes its icon from: its platform template and its plugin
+   * (catalog item). Unknown -> `connector.not_found`.
+   */
+  async iconRef(
+    orgId: string,
+    connectorId: string,
+  ): Promise<{ templateId: string | null; itemId: string | null }> {
+    if (!UUID_RE.test(connectorId)) throw notFound();
+    const r = await this.row(this.db, orgId, connectorId);
+    return { templateId: r.platform_template_id ?? null, itemId: r.catalog_item_id ?? null };
+  }
+
   async get(orgId: string, connectorId: string, viewerAccountId: string): Promise<ConnectorDetail> {
     return this.detail(this.db, orgId, connectorId, viewerAccountId);
   }
@@ -1506,7 +1538,15 @@ export class ConnectorsService {
     }
 
     const gitChanged = patch.useForGit !== undefined && patch.useForGit !== app.use_for_git;
-    if (patch.name !== undefined || patch.status !== undefined || gitChanged) {
+    const description =
+      patch.description !== undefined ? ownDescription(patch.description) : undefined;
+    const descriptionChanged = description !== undefined && description !== app.description;
+    if (
+      patch.name !== undefined ||
+      patch.status !== undefined ||
+      gitChanged ||
+      descriptionChanged
+    ) {
       await t
         .updateTable("connectors")
         .set({
@@ -1518,9 +1558,11 @@ export class ConnectorsService {
             disabled_by_plugin_id: null,
           }),
           ...(gitChanged && { use_for_git: patch.useForGit === true }),
+          ...(descriptionChanged && { description }),
           updated_at: sql`now()`,
         })
         .where("id", "=", connectorId)
+        .where("org_id", "=", orgId)
         .execute();
     }
     const allowed: string[] = [];
@@ -1570,6 +1612,7 @@ export class ConnectorsService {
         ...(patch.name !== undefined && { name: { from: app.name, to: patch.name } }),
         ...(patch.status !== undefined && { status: { from: app.status, to: patch.status } }),
         ...(gitChanged && { useForGit: { from: app.use_for_git, to: patch.useForGit } }),
+        ...(descriptionChanged && { description: { from: app.description, to: description } }),
         ...(toolChanges.length > 0 && { tools: Object.fromEntries(toolChanges) }),
         ...(allowed.length > 0 && { allowedUnannotated: allowed }),
       },
@@ -1619,6 +1662,7 @@ export class ConnectorsService {
         .updateTable("connectors")
         .set({ git_push_policy: policy, updated_at: sql`now()` })
         .where("id", "=", connectorId)
+        .where("org_id", "=", orgId)
         .execute();
       await audit(t, {
         actorAccountId,
@@ -1730,6 +1774,7 @@ export class ConnectorsService {
       // leaves the connector as the platform set it
       .set({ status, disabled_by_plugin_id: null, updated_at: sql`now()` })
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .execute();
     await audit(t, {
       actorAccountId: actor.accountId,
@@ -1794,10 +1839,15 @@ export class ConnectorsService {
       .updateTable("connectors")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
       .execute();
     await this.credentials.clearConnector(orgId, connectorId);
     // 授权绑定连接器 id（软删除不触发外键级联）：一并删掉，不留给任何后来的连接器
-    await t.deleteFrom("tool_grants").where("connector_id", "=", connectorId).execute();
+    await t
+      .deleteFrom("tool_grants")
+      .where("org_id", "=", orgId)
+      .where("connector_id", "=", connectorId)
+      .execute();
     await t
       .deleteFrom("conversation_tool_grants")
       .where("connector_id", "=", connectorId)

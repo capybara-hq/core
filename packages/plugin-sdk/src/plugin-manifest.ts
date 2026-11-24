@@ -111,7 +111,7 @@ export interface PluginExtensionSection {
    * extension not loaded on a replica still gets its form; each ≤
    * {@link CONFIG_UI_LIMITS}`.configSchemaBytes`. Not part of the `manifest_mismatch` comparison.
    */
-  configSchemas?: { deployment?: JsonSchema; org?: JsonSchema };
+  configSchemas?: { deployment?: JsonSchema };
   /** Browser code, styles and assets (needs `permissions.client: true`); see {@link PluginClientSection}. */
   client?: PluginClientSection;
 }
@@ -179,7 +179,11 @@ export interface PluginManifest {
 /** A connector template file `connectors/<id>.json`; the template id is the file's base name. */
 export interface ConnectorTemplateFile {
   displayName: LocalizedName;
-  description?: string;
+  /**
+   * A string (shown in both languages) or `{ zh, en }`; each text ≤
+   * {@link CONNECTOR_TEMPLATE_LIMITS}`.descriptionChars` characters.
+   */
+  description?: string | LocalizedName;
   /** Safe path relative to the plugin root (an optional leading `./`), .svg / .png. */
   icon?: string;
   /**
@@ -230,6 +234,15 @@ const configFields = z
   .array(z.strictObject({ path: z.string().max(1000), secret: z.boolean(), hot: z.boolean() }))
   .max(1000);
 
+const configSchemaJson = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
+    {
+      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
+    },
+  );
+
 const staticExtensionManifest = z.strictObject({
   name: z.string(),
   version: z.string(),
@@ -239,17 +252,8 @@ const staticExtensionManifest = z.strictObject({
   optional: z.array(z.string()),
   permissions: z.record(z.string(), z.unknown()),
   ui: z.array(z.record(z.string(), z.unknown())).optional(),
-  config: z.strictObject({ deployment: configFields, org: configFields }),
+  config: z.strictObject({ deployment: configFields }),
 });
-
-const configSchemaJson = z
-  .record(z.string(), z.unknown())
-  .refine(
-    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
-    {
-      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
-    },
-  );
 
 const setupGuide = z.strictObject({
   id: z.string().regex(CATALOG_ITEM_NAME_RE, {
@@ -295,9 +299,7 @@ const extensionSection = z.strictObject({
   manifest: staticExtensionManifest,
   migrations: dotPath("migrations").optional(),
   ui: dotPath("ui").optional(),
-  configSchemas: z
-    .strictObject({ deployment: configSchemaJson.optional(), org: configSchemaJson.optional() })
-    .optional(),
+  configSchemas: z.strictObject({ deployment: configSchemaJson.optional() }).optional(),
   client: clientSection.optional(),
 });
 
@@ -594,14 +596,15 @@ const schema = z
         `"${em.sdk}" has no upper bound: use a range such as ^0.1.0 so a future major SDK is not assumed compatible`,
       );
     }
-    for (const k of ["deployment", "org"] as const) {
-      const seen = new Set<string>();
-      for (const f of em.config[k]) {
-        if (seen.has(f.path)) {
-          issue(["extension", "manifest", "config", k], `duplicate config path "${f.path}"`);
-        }
-        seen.add(f.path);
+    const seen = new Set<string>();
+    for (const f of em.config.deployment) {
+      if (seen.has(f.path)) {
+        issue(
+          ["extension", "manifest", "config", "deployment"],
+          `duplicate config path "${f.path}"`,
+        );
       }
+      seen.add(f.path);
     }
     // Name, version, sdk range, extension point refs, permissions, UI contributions: the same
     // rules as defineExtension (with a placeholder setup).
@@ -643,7 +646,15 @@ const template = z.strictObject({
 const templateFile = z
   .strictObject({
     displayName: localized,
-    description: text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description").optional(),
+    description: z
+      .union([
+        text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description"),
+        z.strictObject({
+          zh: text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description.zh"),
+          en: text(CONNECTOR_TEMPLATE_LIMITS.descriptionChars, "description.en"),
+        }),
+      ])
+      .optional(),
     icon: z
       .string()
       .max(L.pathChars)

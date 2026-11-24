@@ -4,6 +4,7 @@ import {
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectHead,
   type ObjectStore,
+  platformOnly,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -17,10 +18,13 @@ import { z } from "zod";
  * from a browser.
  */
 
-const DeploymentConfig = z.object({
-  bucket: z.string().min(1),
-  secretKey: secret(z.string().min(1)),
-});
+/** Platform-only (object-store@1 is infrastructure, unified config spec §5.3). */
+const DeploymentConfig = platformOnly(
+  z.object({
+    bucket: z.string().min(1),
+    secretKey: secret(z.string().min(1)),
+  }),
+);
 
 type Db = ExtensionContext["db"];
 

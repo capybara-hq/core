@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ObjectMark } from "../display/object-mark";
 import { useDesignT } from "../provider";
 import { Checkbox } from "./toggles";
 
@@ -7,6 +8,12 @@ export type CheckListRow = {
   id: string;
   /** The name, on the first line (`ink`, one line with an ellipsis). */
   title: string;
+  /**
+   * A 24 px mark tile before the name, for a thing a plugin brings (its icon, else the initial of
+   * `text`; spec §6.17): decorative, the name is the checkbox's text. The description then lines
+   * up under the name.
+   */
+  mark?: { text: string; image?: string | null };
   /** Short marks after the name on its line (`Badge`s): they never shrink or wrap. */
   marks?: ReactNode;
   /** One `small` `muted` prose line under the name, cut at one line; its full text is the hover. */
@@ -106,19 +113,33 @@ export function CheckList({
             data-part="check-list-row"
             data-state={r.checked ? "checked" : "unchecked"}
             data-locked={r.locked === true ? "true" : undefined}
+            data-marked={r.mark ? "true" : undefined}
           >
             <span className="cb-check-list-line" data-part="check-list-line">
               <Checkbox
                 checked={r.checked}
                 disabled={disabled || r.locked === true}
                 label={
-                  <span
-                    className="cb-check-list-title"
-                    data-part="check-list-title"
-                    title={r.title}
-                  >
-                    {r.title}
-                  </span>
+                  r.mark ? (
+                    <span className="cb-check-list-named" data-part="check-list-named">
+                      <ObjectMark text={r.mark.text} image={r.mark.image ?? null} size={24} />
+                      <span
+                        className="cb-check-list-title"
+                        data-part="check-list-title"
+                        title={r.title}
+                      >
+                        {r.title}
+                      </span>
+                    </span>
+                  ) : (
+                    <span
+                      className="cb-check-list-title"
+                      data-part="check-list-title"
+                      title={r.title}
+                    >
+                      {r.title}
+                    </span>
+                  )
                 }
                 onChange={(next) => onCheck(r.id, next)}
               />

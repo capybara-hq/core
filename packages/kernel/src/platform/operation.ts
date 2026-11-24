@@ -86,6 +86,8 @@ export interface OperationError {
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
  * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`,
  * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org),
+ * `extension.switch_via_plugin` (`extensions.set-enabled` leaves a catalog plugin's extension to
+ * `plugins.set-enabled`),
  * `account.self` / `account.no_change` (disabling your own account, a status that is set already),
  * and `platform.secret_record_web_only` (a secret record the card cannot ask for; ruling R1).
  */

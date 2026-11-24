@@ -1,5 +1,5 @@
 // Violations (plugin-config-labels): a public plugin whose rendered config fields lack a zh + en
-// label (`timeout`, `endpoints.items.url`, the org `region`). `apiKeys` is a secret record drawn
+// label (`timeout`, `endpoints.items.url`, `region`). `apiKeys` is a secret record drawn
 // per endpoint by `x-ui.secrets` (with its own label), so it needs none.
 import { defineExtension, secret, ui } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -27,8 +27,6 @@ export default defineExtension({
       ),
       apiKeys: secret(z.record(z.string(), z.string()).optional()),
       timeout: z.number().optional(),
-    }),
-    org: z.object({
       region: ui(z.string().optional(), { help: { zh: "部署区域。", en: "The region." } }),
     }),
   },

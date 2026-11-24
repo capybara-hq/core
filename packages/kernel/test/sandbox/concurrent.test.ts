@@ -32,6 +32,7 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { managedCall, managedRoute, withStubEvidence } from "../helpers/managed-tool-stubs.js";
 import { managedUse, type SandboxServiceDeps, sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
@@ -195,7 +196,7 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
     createFileSystem: (a) => inner.createFileSystem(a),
     destroyFileSystem: (fs, sig) => inner.destroyFileSystem(fs, sig),
     destroyFileSystemByName: (n, sig) => inner.destroyFileSystemByName(n, sig),
-    destroyByName: (n, sig) => inner.destroyByName(n, sig),
+    destroyByName: (n, sig, f) => inner.destroyByName(n, sig, f),
     async create(a) {
       const old = byName.get(a.name);
       if (old) await removeFakeSandbox(root, old);
@@ -204,7 +205,7 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
     },
     resume: (h, s) => inner.resume(r(h), s),
     suspend: (h, s) => inner.suspend(r(h), s),
-    destroy: (h, s) => inner.destroy(r(h), s),
+    destroy: (h, s, f) => inner.destroy(r(h), s, f),
     exec: (h, a) => inner.exec(r(h), a),
     readFile: (h, p, o) => inner.readFile(r(h), p, o),
     writeFile: (h, p, d, s) => inner.writeFile(r(h), p, d, s),
@@ -613,8 +614,9 @@ describe("path leases in the sandbox tools", () => {
   beforeEach(() => {
     asked = [];
   });
+  // a call of a run holding its server execution claim (the managed route refuses one without)
   const callCtx = (): BuiltinCallContext =>
-    ({
+    managedCall({
       orgId,
       accountId: "a",
       agentId: "g",
@@ -623,9 +625,15 @@ describe("path leases in the sandbox tools", () => {
       signal: signal(),
     }) as BuiltinCallContext;
 
+  // the managed route on the real service (its leases, path leases and provider calls)
   const tools = (s: SandboxService) =>
     sandboxTools({
-      sandbox: s,
+      sandbox: {
+        ...withStubEvidence(s),
+        // read at call time: a test replaces the service's path lease
+        pathLease: (env, path, sig) => s.pathLease(env, path, sig),
+      },
+      ...managedRoute(),
       devices,
       // biome-ignore lint/suspicious/noExplicitAny: only lists attachments
       attachments: { listForConversation: async () => [] } as any,

@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { LockedInterval } from "../infra/schedule/locked-interval.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -53,80 +54,90 @@ export class LegacySandboxCleanupJob {
   }
 
   /** One run (see the class); `signal` (the stop, or a lost run lock) is read between rows. */
+  // org-filter: deployment-wide sweep of the legacy sandboxes table across all orgs
+  // (LockedInterval), each row keyed by its own conversation id
   async runOnce(now = new Date(), signal?: AbortSignal): Promise<LegacyCleanupResult> {
-    const any = await this.db
-      .selectFrom("sandboxes")
-      .select("conversation_id")
-      .limit(1)
-      .executeTakeFirst();
-    if (any === undefined) return { destroyed: 0, kept: 0 };
+    return asPlatform(
+      "deployment-wide sweep of the legacy sandboxes table across all orgs",
+      async () => {
+        const any = await this.db
+          .selectFrom("sandboxes")
+          .select("conversation_id")
+          .limit(1)
+          .executeTakeFirst();
+        if (any === undefined) return { destroyed: 0, kept: 0 };
 
-    const byProvider = await this.db
-      .selectFrom("sandboxes")
-      .select(["provider", (eb) => eb.fn.countAll<string>().as("n")])
-      .groupBy("provider")
-      .execute();
-    const loaded = byProvider.filter((p) => this.providers.forDevice(p.provider) !== undefined);
-    const unloaded = byProvider.filter((p) => this.providers.forDevice(p.provider) === undefined);
-    const kept = unloaded.reduce((sum, p) => sum + Number(p.n), 0);
-    if (unloaded.length > 0 && now.getTime() % 3_600_000 < PERIOD_MS) {
-      this.log.warn("legacy sandboxes kept: their provider is not loaded", {
-        providers: unloaded.map((p) => p.provider),
-        count: kept,
-      });
-    }
-    if (loaded.length === 0) return { destroyed: 0, kept };
+        const byProvider = await this.db
+          .selectFrom("sandboxes")
+          .select(["provider", (eb) => eb.fn.countAll<string>().as("n")])
+          .groupBy("provider")
+          .execute();
+        const loaded = byProvider.filter((p) => this.providers.forDevice(p.provider) !== undefined);
+        const unloaded = byProvider.filter(
+          (p) => this.providers.forDevice(p.provider) === undefined,
+        );
+        const kept = unloaded.reduce((sum, p) => sum + Number(p.n), 0);
+        if (unloaded.length > 0 && now.getTime() % 3_600_000 < PERIOD_MS) {
+          this.log.warn("legacy sandboxes kept: their provider is not loaded", {
+            providers: unloaded.map((p) => p.provider),
+            count: kept,
+          });
+        }
+        if (loaded.length === 0) return { destroyed: 0, kept };
 
-    const rows = await this.db
-      .selectFrom("sandboxes")
-      .select(["conversation_id", "provider", "prev_provider"])
-      .where(
-        "provider",
-        "in",
-        loaded.map((p) => p.provider),
-      )
-      .orderBy("sweep_failed_at", (o) => o.asc().nullsFirst())
-      .orderBy("conversation_id")
-      .limit(BATCH)
-      .execute();
+        const rows = await this.db
+          .selectFrom("sandboxes")
+          .select(["conversation_id", "provider", "prev_provider"])
+          .where(
+            "provider",
+            "in",
+            loaded.map((p) => p.provider),
+          )
+          .orderBy("sweep_failed_at", (o) => o.asc().nullsFirst())
+          .orderBy("conversation_id")
+          .limit(BATCH)
+          .execute();
 
-    let destroyed = 0;
-    for (const row of rows) {
-      if (signal?.aborted) break;
-      const name = `cap-${row.conversation_id}`;
-      const impl = this.providers.forDevice(row.provider)?.impl;
-      if (impl === undefined) continue; // unloaded since the query: kept for a later tick
-      const callSignal = () =>
-        signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT_MS)])
-          : AbortSignal.timeout(CALL_TIMEOUT_MS);
-      try {
-        await impl.destroyByName(name, callSignal());
-        await impl.destroyFileSystemByName(name, callSignal());
-        if (row.prev_provider !== null && row.prev_provider !== row.provider) {
-          const prev = this.providers.forDevice(row.prev_provider)?.impl;
-          if (prev !== undefined) await prev.destroyByName(name, callSignal());
-          else {
-            this.log.warn("legacy sandbox of a replaced provider left: provider not loaded", {
-              name,
-              provider: row.prev_provider,
-            });
+        let destroyed = 0;
+        for (const row of rows) {
+          if (signal?.aborted) break;
+          const name = `cap-${row.conversation_id}`;
+          const impl = this.providers.forDevice(row.provider)?.impl;
+          if (impl === undefined) continue; // unloaded since the query: kept for a later tick
+          const callSignal = () =>
+            signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT_MS)])
+              : AbortSignal.timeout(CALL_TIMEOUT_MS);
+          try {
+            // no device lease holds a legacy row: nothing to fence the destroy with
+            await impl.destroyByName(name, callSignal(), null);
+            await impl.destroyFileSystemByName(name, callSignal());
+            if (row.prev_provider !== null && row.prev_provider !== row.provider) {
+              const prev = this.providers.forDevice(row.prev_provider)?.impl;
+              if (prev !== undefined) await prev.destroyByName(name, callSignal(), null);
+              else {
+                this.log.warn("legacy sandbox of a replaced provider left: provider not loaded", {
+                  name,
+                  provider: row.prev_provider,
+                });
+              }
+            }
+            await this.db
+              .deleteFrom("sandboxes")
+              .where("conversation_id", "=", row.conversation_id)
+              .execute();
+            destroyed++;
+          } catch (err) {
+            this.log.warn("cannot destroy legacy sandbox; will retry", { name, err });
+            await this.db
+              .updateTable("sandboxes")
+              .set({ sweep_failed_at: now })
+              .where("conversation_id", "=", row.conversation_id)
+              .execute();
           }
         }
-        await this.db
-          .deleteFrom("sandboxes")
-          .where("conversation_id", "=", row.conversation_id)
-          .execute();
-        destroyed++;
-      } catch (err) {
-        this.log.warn("cannot destroy legacy sandbox; will retry", { name, err });
-        await this.db
-          .updateTable("sandboxes")
-          .set({ sweep_failed_at: now })
-          .where("conversation_id", "=", row.conversation_id)
-          .execute();
-      }
-    }
-    return { destroyed, kept };
+        return { destroyed, kept };
+      },
+    );
   }
 }

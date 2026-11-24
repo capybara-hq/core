@@ -273,7 +273,7 @@ export function useRightAreaSlot(p: {
   model: ModelRef | null;
   contextPct: number | null;
   /** The Context section's last-run line (model, duration, tokens), once a run ended. */
-  lastRun?: string | undefined;
+  lastRun?: readonly string[] | undefined;
   /** The conversation's sub-agents (`GET …/subagents`), once there are any. */
   subagents?: SubagentView[] | undefined;
   /** The Context section's tokens-with-sub-agents line. */

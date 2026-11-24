@@ -23,6 +23,7 @@ import {
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
+import { BackgroundTasks } from "../../src/background/tasks.service.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -46,11 +47,12 @@ import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import type { SandboxToolDeps } from "../../src/tools/builtins/sandbox/common.js";
-import type { BuiltinCallContext } from "../../src/tools/registry.js";
+import type { BuiltinCallContext, BuiltinResult } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
+import { recordingDeviceContext } from "../helpers/managed-tool-stubs.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -126,7 +128,7 @@ interface StartCall {
  * operation returns the same ref and launches nothing new (the SDK contract). `launches` counts
  * actual launches; `hooks` inject denials before effects and losses after them.
  */
-function managedProvider() {
+function managedProvider(opts: { generation?: string | undefined } = {}) {
   const calls: StartCall[] = [];
   const launched = new Map<string, SandboxExecutionRef>();
   const inflight = new Map<string, Promise<SandboxExecutionRef>>();
@@ -154,7 +156,9 @@ function managedProvider() {
           executionId: `x-${scope.operationId.slice(0, 12)}`,
           operationId: scope.operationId,
           instanceId: h.id,
-          instanceGeneration: String(GENERATION),
+          // a provider with a generation of its own (device-local's bound machine generation)
+          // names that one; the SDK leaves the reference's generation to the provider
+          instanceGeneration: opts.generation ?? String(GENERATION),
         };
         launched.set(scope.operationId, ref);
         return ref;
@@ -283,10 +287,10 @@ async function createOrg(): Promise<{ orgId: string; agentId: string; conversati
 }
 
 /** One org, one local device running instance, one root conversation with one running run. */
-async function fixture(opts: { project?: string } = {}) {
+async function fixture(opts: { project?: string; providerGeneration?: string } = {}) {
   const { orgId, agentId, conversationId } = await createOrg();
   const db = kernelDb(raw);
-  const provider = managedProvider();
+  const provider = managedProvider({ generation: opts.providerGeneration });
   k.app.get(DeviceProviders).register({ plugin: PROVIDER, version: "test-1", impl: provider.impl });
   const deviceId = randomUUID();
   await db
@@ -422,6 +426,8 @@ async function fixture(opts: { project?: string } = {}) {
     storage: {} as SandboxToolDeps["storage"],
     eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
+    // the call runs outside a run's claim wrapper: a recording writer stands in for the real one
+    managedDeviceContext: recordingDeviceContext(),
   };
   const ctxFor = async (claim?: ExecutionClaim): Promise<BuiltinCallContext> => ({
     orgId,
@@ -449,9 +455,16 @@ async function fixture(opts: { project?: string } = {}) {
     );
   };
   const opFor = (call: string) => operationIdFor({ claim: { runId }, callId: call, ordinal: 0 });
-  const outcome = (p: Promise<unknown>) =>
+  /**
+   * How the call ended for the model: a thrown `ToolError`, or an error result (a start sent but
+   * not confirmed returns one with its `launch_unconfirmed` view), is `ok: false` with its text.
+   */
+  const outcome = (p: Promise<BuiltinResult>) =>
     p.then(
-      (value) => ({ ok: true as const, value }),
+      (value) =>
+        "isError" in value && value.isError === true
+          ? { ok: false as const, error: new ToolError(textOf(value)), value }
+          : { ok: true as const, value },
       (error: unknown) => ({ ok: false as const, error }),
     );
   const operationId = operationIdFor({ claim: { runId }, callId, ordinal: 0 });
@@ -665,6 +678,104 @@ describe("managed background launch identity", () => {
       String(GENERATION),
       recorded,
     ]);
+  });
+
+  // #765: device-local's machine names its own bound generation in the ref, never the kernel's
+  // (allocated after create returns); the kernel's exact instance is its own recorded generation
+  it("acknowledges a ref naming the provider's own generation, and polls and stops by it", async () => {
+    const own = String(GENERATION - 250);
+    const f = await fixture({ providerGeneration: own });
+    const result = await f.run({ command: "npm run dev" });
+    const row = await f.task();
+    if (!row) throw new Error("no reservation");
+    expect(row).toMatchObject({
+      launch_state: "acknowledged",
+      instance_generation: String(GENERATION),
+      execution_ref: f.provider.launched.get(f.operationId),
+    });
+    expect((row.execution_ref as { instanceGeneration: string }).instanceGeneration).toBe(own);
+    expect((await f.intent())?.state).toBe("background-running");
+    expect(textOf(result)).toContain(`Output: /work/.capybara/tasks/${row.id}.out`);
+    // the exact consumers act by the provider's ref on the kernel's generation
+    f.provider.statusWith({ state: "exited", exitCode: 0, timedOut: false });
+    await poller().pollOnce();
+    expect(await f.task()).toMatchObject({ status: "completed", launch_state: "terminal" });
+  });
+
+  it("recovers a start left unconfirmed by a provider-generation ref (#765)", async () => {
+    const f = await fixture({ providerGeneration: String(GENERATION - 250) });
+    f.provider.hooks.afterEffect = async () => {
+      throw new Error("acknowledgement lost");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.afterEffect = undefined;
+    expect(await f.intent()).toMatchObject({ state: "started-or-unknown" });
+    await reconcileJob().reconcile(f.operationId);
+    expect(await f.intent()).toMatchObject({ state: "background-running" });
+    expect((await f.task())?.launch_state).toBe("acknowledged");
+    expect(f.provider.launched.size).toBe(1);
+    // a revoke stops it by its exact ref
+    await narrow({ orgId: f.orgId, deviceId: f.deviceId }, "device");
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.stops).toEqual([f.provider.launched.get(f.operationId)]);
+    expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
+  });
+
+  // #790: the thread shows such a start as reconciling, not failed, until the task settles
+  it("an unconfirmed start keeps its error text, adds the launch_unconfirmed view and lists as starting", async () => {
+    const f = await fixture();
+    f.provider.hooks.afterEffect = async () => {
+      throw new Error("acknowledgement lost");
+    };
+    const result = await f.run({ command: "sleep 100" });
+    f.provider.hooks.afterEffect = undefined;
+    const row = await f.task();
+    if (!row) throw new Error("no reservation");
+    // the model's text and isError are those of the former thrown ToolError; the view is display only
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `Background task ${row.id} ("Serve") may have started, but its start was not confirmed; it is being reconciled under its original identity and will not be started again. Check TaskList before starting it again.`,
+        },
+      ],
+      isError: true,
+      view: { kind: "launch_unconfirmed", taskId: row.id },
+    });
+    const tasks = k.app.get(BackgroundTasks);
+    const listed = async () =>
+      (await tasks.list(f.orgId, f.conversationId, owner.id)).find((t) => t.id === row.id);
+    expect(await listed()).toMatchObject({ status: "running", starting: true, stopping: false });
+    // recovery confirms it, and tells the pages listing it to read the list again
+    const eventLog = k.app.get(EventLog);
+    const published = vi.spyOn(eventLog, "publishChanged");
+    await new SandboxOperationReconcileJob(
+      k.app.get(SandboxOperationIntents),
+      k.app.get(KernelDb),
+      k.app.get(DeviceProviders),
+      k.app.get(SandboxService),
+      k.app.get(BackgroundTaskStore),
+      k.app.get(BackgroundTaskStopper),
+      k.app.get(KernelConfigService),
+      undefined,
+      eventLog,
+    ).reconcile(f.operationId);
+    expect(await listed()).toMatchObject({ status: "running", starting: false });
+    expect(published).toHaveBeenCalledWith(f.conversationId, "background");
+    // a reconcile that moves nothing publishes nothing
+    published.mockClear();
+    await new SandboxOperationReconcileJob(
+      k.app.get(SandboxOperationIntents),
+      k.app.get(KernelDb),
+      k.app.get(DeviceProviders),
+      k.app.get(SandboxService),
+      k.app.get(BackgroundTaskStore),
+      k.app.get(BackgroundTaskStopper),
+      k.app.get(KernelConfigService),
+      undefined,
+      eventLog,
+    ).reconcile(f.operationId);
+    expect(published).not.toHaveBeenCalled();
   });
 
   it("an unreachable instance keeps the uncertainty durable and defers recovery", async () => {
@@ -887,6 +998,7 @@ describe("managed background launch identity", () => {
       storage: {},
       eventLog: k.app.get(EventLog),
       config: k.app.get(KernelConfigService),
+      managedDeviceContext: recordingDeviceContext(),
     } as unknown as SandboxToolDeps;
     await expect(
       runInBackgroundManaged(
@@ -1232,6 +1344,46 @@ describe("managed background launch identity", () => {
     expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
     await reconcileJob().revoke(f.operationId);
     expect(f.provider.revoked).toEqual([f.operationId]);
+  });
+
+  // #765: a TaskStop of a start never confirmed left the task cancel-pending / running until its
+  // retention expired (30 days), holding a background slot
+  it("an acknowledged operation revoke of an unconfirmed start settles its task stopped", async () => {
+    const f = await fixture();
+    f.provider.hooks.afterEffect = async () => {
+      throw new Error("acknowledgement lost");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.afterEffect = undefined;
+    const row = await f.task();
+    if (!row) throw new Error("no task");
+    const store = k.app.get(BackgroundTaskStore);
+    expect(await store.claimStop(row.id)).toBe(true);
+    await store.requestCancel(row.id, "person", false);
+    await reconcileJob().reconcile(f.operationId);
+    expect(await f.task()).toMatchObject({ launch_state: "cancel-pending", execution_ref: null });
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.revoked).toEqual([f.operationId]);
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: true });
+    // the end is reported; the record stays owed should a ref still be attached
+    expect(await f.task()).toMatchObject({ status: "stopped", launch_state: "cancel-pending" });
+    const finished = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", f.conversationId)
+      .where("type", "=", "background_task_finished")
+      .execute();
+    expect(finished.map((e) => e.payload)).toEqual([
+      expect.objectContaining({ taskId: row.id, status: "stopped", stoppedBy: "person" }),
+    ]);
+    // at its retention expiry the record is settled
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ retain_until: new Date(Date.now() - 1000) })
+      .where("operation_id", "=", f.operationId)
+      .execute();
+    await reconcileJob().reconcile(f.operationId);
+    expect(await f.task()).toMatchObject({ status: "stopped", launch_state: "terminal" });
   });
 
   it("a typed provider refusal during recovery settles as a pre-effect failure", async () => {

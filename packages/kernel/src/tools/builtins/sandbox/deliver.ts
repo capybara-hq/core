@@ -144,8 +144,8 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       const { value: data, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
         // bounded as the other file tools are: the admitted scope (a project file outside the
-        // workspace too), the fixed roots only on the legacy route in sandbox mode
-        path = checkToolPath((input as DeliverInput).file_path, s, "file_path");
+        // workspace too)
+        path = checkToolPath((input as DeliverInput).file_path, "file_path");
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         if (st.isDir) throw new ToolError(isDirectory(path));

@@ -55,13 +55,13 @@ export function gitIdentityApiBase(host: string): string | null {
 
 /**
  * The kernel's outbound rules for git hosts and their APIs: the deployment's egress proxy, its
- * private host exemptions (`marketplaces.allowPrivateHosts`) and loopback http only under
+ * private host exemptions (`net.allowPrivateHosts`) and loopback http only under
  * `tools.oauthAllowInsecureLoopback` (tests), as for OAuth URLs. Redirects are never followed.
  */
 export function gitNetPolicy(config: KernelConfig): NetPolicy {
   return {
     allowInsecureLoopback: config.tools.oauthAllowInsecureLoopback,
-    allowPrivateHosts: config.marketplaces.allowPrivateHosts,
+    allowPrivateHosts: config.net.allowPrivateHosts,
     trustedOrigins: [],
     ...(config.net.httpsProxy !== undefined && {
       proxy: { url: config.net.httpsProxy, noProxy: config.net.noProxy },

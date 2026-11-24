@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
@@ -260,6 +261,9 @@ const toObligation = (r: {
 });
 
 @Injectable()
+// org-filter: deployment-wide retirement of legacy launches: the worker sweeps (retire-legacy-tasks
+// job), the release-gate report and the cutover CLI span every org; the per-device and per-obligation
+// calls come from SandboxService's retirement gate with kernel-held device and obligation ids
 export class LegacyRetirementStore {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
@@ -367,78 +371,80 @@ export class LegacyRetirementStore {
    * Returns the counts.
    */
   async abandonDeleted(limit: number): Promise<{ resolved: number; abandoned: number }> {
-    let resolved = 0,
-      abandoned = 0;
-    // abandoned obligations that gained a matching recorded destruction
-    const evidenced = await this.db
-      .selectFrom("device_retirement_obligations as o")
-      .innerJoin("device_instance_destructions as x", (j) =>
-        j
-          .onRef("x.device_id", "=", "o.device_id")
-          .onRef("x.provider", "=", "o.provider")
-          .onRef("x.instance_generation", "=", "o.instance_generation"),
-      )
-      .select("o.id")
-      .where("o.state", "=", "abandoned")
-      .limit(limit)
-      .execute();
-    for (const r of evidenced) {
-      const u = await this.db
-        .updateTable("device_retirement_obligations")
-        .set({
-          state: "resolved",
-          resolution: "provider-destroyed",
-          resolved_at: sql<Date>`now()`,
-          abandoned_at: null,
-          last_error: null,
-        })
-        .where("id", "=", r.id)
-        .where("state", "=", "abandoned")
-        .executeTakeFirst();
-      resolved += Number(u.numUpdatedRows);
-    }
-    const rows = await this.db
-      .selectFrom("device_retirement_obligations as o")
-      .leftJoin("devices as d", "d.id", "o.device_id")
-      .leftJoin("orgs as g", "g.id", "d.org_id")
-      .select(["o.id", "o.device_id", "o.provider", "o.instance_generation"])
-      .where("o.state", "in", ["open", "quarantined"])
-      .where((eb) =>
-        eb.or([
-          eb("d.id", "is", null),
-          eb("d.deleted_at", "is not", null),
-          eb("g.deleted_at", "is not", null),
-        ]),
-      )
-      // a destroy still owed keeps its instance row (R2-I2)
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom("device_instances as i")
-              .select("i.device_id")
-              .whereRef("i.device_id", "=", "o.device_id"),
-          ),
-        ),
-      )
-      .orderBy("o.created_at")
-      .limit(limit)
-      .execute();
-    for (const r of rows) {
-      if (await this.destructionRecorded(r.device_id, r.provider, r.instance_generation)) {
-        await this.resolveDestroyed(r.id);
-        resolved++;
-        continue;
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      let resolved = 0,
+        abandoned = 0;
+      // abandoned obligations that gained a matching recorded destruction
+      const evidenced = await this.db
+        .selectFrom("device_retirement_obligations as o")
+        .innerJoin("device_instance_destructions as x", (j) =>
+          j
+            .onRef("x.device_id", "=", "o.device_id")
+            .onRef("x.provider", "=", "o.provider")
+            .onRef("x.instance_generation", "=", "o.instance_generation"),
+        )
+        .select("o.id")
+        .where("o.state", "=", "abandoned")
+        .limit(limit)
+        .execute();
+      for (const r of evidenced) {
+        const u = await this.db
+          .updateTable("device_retirement_obligations")
+          .set({
+            state: "resolved",
+            resolution: "provider-destroyed",
+            resolved_at: sql<Date>`now()`,
+            abandoned_at: null,
+            last_error: null,
+          })
+          .where("id", "=", r.id)
+          .where("state", "=", "abandoned")
+          .executeTakeFirst();
+        resolved += Number(u.numUpdatedRows);
       }
-      const u = await this.db
-        .updateTable("device_retirement_obligations")
-        .set({ state: "abandoned", abandoned_at: sql<Date>`now()` })
-        .where("id", "=", r.id)
-        .where("state", "in", ["open", "quarantined"])
-        .executeTakeFirst();
-      abandoned += Number(u.numUpdatedRows);
-    }
-    return { resolved, abandoned };
+      const rows = await this.db
+        .selectFrom("device_retirement_obligations as o")
+        .leftJoin("devices as d", "d.id", "o.device_id")
+        .leftJoin("orgs as g", "g.id", "d.org_id")
+        .select(["o.id", "o.device_id", "o.provider", "o.instance_generation"])
+        .where("o.state", "in", ["open", "quarantined"])
+        .where((eb) =>
+          eb.or([
+            eb("d.id", "is", null),
+            eb("d.deleted_at", "is not", null),
+            eb("g.deleted_at", "is not", null),
+          ]),
+        )
+        // a destroy still owed keeps its instance row (R2-I2)
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom("device_instances as i")
+                .select("i.device_id")
+                .whereRef("i.device_id", "=", "o.device_id"),
+            ),
+          ),
+        )
+        .orderBy("o.created_at")
+        .limit(limit)
+        .execute();
+      for (const r of rows) {
+        if (await this.destructionRecorded(r.device_id, r.provider, r.instance_generation)) {
+          await this.resolveDestroyed(r.id);
+          resolved++;
+          continue;
+        }
+        const u = await this.db
+          .updateTable("device_retirement_obligations")
+          .set({ state: "abandoned", abandoned_at: sql<Date>`now()` })
+          .where("id", "=", r.id)
+          .where("state", "in", ["open", "quarantined"])
+          .executeTakeFirst();
+        abandoned += Number(u.numUpdatedRows);
+      }
+      return { resolved, abandoned };
+    });
   }
 
   async frozen(): Promise<boolean> {
@@ -482,6 +488,8 @@ export class LegacyRetirementStore {
    * all). The `(status = 'running' OR kill_pending OR sid IS NULL)` conjunct is the partial index's
    * predicate (0157), stated as is so the planner can use it.
    */
+  // org-filter: a query fragment, not run here: its callers (the retirement sweep's methods)
+  // execute it inside their asPlatform
   private legacyCandidates(deviceId?: string) {
     let q = this.db
       .selectFrom("background_tasks as t")
@@ -516,21 +524,25 @@ export class LegacyRetirementStore {
   }
 
   private async scanLegacyTasks(deviceId?: string): Promise<number> {
-    const rows = await this.legacyCandidates(deviceId)
-      .orderBy("t.started_at", "asc")
-      .orderBy("t.id", "asc")
-      .execute();
-    let added = 0;
-    for (const r of rows) {
-      const deviceId = r.device_id as string;
-      const { provider, generation } = legacyKey(r);
-      if (await this.addMember(deviceId, r.org_id, provider, generation, "legacy-task", r.id))
-        added++;
-    }
-    return added;
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const rows = await this.legacyCandidates(deviceId)
+        .orderBy("t.started_at", "asc")
+        .orderBy("t.id", "asc")
+        .execute();
+      let added = 0;
+      for (const r of rows) {
+        const deviceId = r.device_id as string;
+        const { provider, generation } = legacyKey(r);
+        if (await this.addMember(deviceId, r.org_id, provider, generation, "legacy-task", r.id))
+          added++;
+      }
+      return added;
+    });
   }
 
   /** Revoked managed starts on an incarnation that no longer runs, not members yet. */
+  // org-filter: a query fragment, not run here: its callers (the retirement sweep's methods)
+  // execute it inside their asPlatform
   private revokedCandidates(deviceId?: string) {
     let q = this.db
       .selectFrom("sandbox_operation_intents as o")
@@ -570,25 +582,27 @@ export class LegacyRetirementStore {
   }
 
   private async scanRevokedStarts(deviceId?: string): Promise<number> {
-    const rows = await this.revokedCandidates(deviceId).orderBy("o.operation_id").execute();
-    let added = 0;
-    for (const r of rows) {
-      const generation = GENERATION_RE.test(r.instance_generation)
-        ? r.instance_generation
-        : "unknown";
-      if (
-        await this.addMember(
-          r.device_id,
-          r.org_id,
-          r.provider,
-          generation,
-          "revoked-start",
-          r.operation_id,
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const rows = await this.revokedCandidates(deviceId).orderBy("o.operation_id").execute();
+      let added = 0;
+      for (const r of rows) {
+        const generation = GENERATION_RE.test(r.instance_generation)
+          ? r.instance_generation
+          : "unknown";
+        if (
+          await this.addMember(
+            r.device_id,
+            r.org_id,
+            r.provider,
+            generation,
+            "revoked-start",
+            r.operation_id,
+          )
         )
-      )
-        added++;
-    }
-    return added;
+          added++;
+      }
+      return added;
+    });
   }
 
   /** The obligation of the incarnation (created when missing), with the member added. */
@@ -601,68 +615,74 @@ export class LegacyRetirementStore {
     kind: RetirementMember["kind"],
     refId: string,
   ): Promise<boolean> {
-    await this.db
-      .insertInto("device_retirement_obligations")
-      .values({
-        device_id: deviceId,
-        org_id: orgId,
-        provider,
-        instance_generation: generation,
-      })
-      .onConflict((oc) => oc.columns(["device_id", "provider", "instance_generation"]).doNothing())
-      .execute();
-    const obligation = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select(["id", "state", "resolution"])
-      .where("device_id", "=", deviceId)
-      .where("provider", "=", provider)
-      .where("instance_generation", "=", generation)
-      .forUpdate()
-      .executeTakeFirstOrThrow();
-    const r = await this.db
-      .insertInto("device_retirement_members")
-      .values({ obligation_id: obligation.id, kind, ref_id: refId })
-      .onConflict((oc) => oc.columns(["kind", "ref_id", "obligation_id"]).doNothing())
-      .returning("ref_id")
-      .executeTakeFirst();
-    // an exact cancel covers only the refs it stopped, and the incarnation lives on (B-22): a
-    // member found later (a row of an old replica) reopens the obligation; so does one found on
-    // an incarnation an old replica resolved by a restart of its computer
-    if (
-      r !== undefined &&
-      obligation.state === "resolved" &&
-      (obligation.resolution === "host-rebooted" || obligation.resolution === "exact-cancelled")
-    ) {
+    return asPlatform("retirement of legacy launches across every org", async () => {
       await this.db
-        .updateTable("device_retirement_obligations")
-        .set({ state: "open", resolution: null, resolved_at: null })
-        .where("id", "=", obligation.id)
+        .insertInto("device_retirement_obligations")
+        .values({
+          device_id: deviceId,
+          org_id: orgId,
+          provider,
+          instance_generation: generation,
+        })
+        .onConflict((oc) =>
+          oc.columns(["device_id", "provider", "instance_generation"]).doNothing(),
+        )
         .execute();
-    }
-    return r !== undefined;
+      const obligation = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select(["id", "state", "resolution"])
+        .where("device_id", "=", deviceId)
+        .where("provider", "=", provider)
+        .where("instance_generation", "=", generation)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      const r = await this.db
+        .insertInto("device_retirement_members")
+        .values({ obligation_id: obligation.id, kind, ref_id: refId })
+        .onConflict((oc) => oc.columns(["kind", "ref_id", "obligation_id"]).doNothing())
+        .returning("ref_id")
+        .executeTakeFirst();
+      // an exact cancel covers only the refs it stopped, and the incarnation lives on (B-22): a
+      // member found later (a row of an old replica) reopens the obligation; so does one found on
+      // an incarnation an old replica resolved by a restart of its computer
+      if (
+        r !== undefined &&
+        obligation.state === "resolved" &&
+        (obligation.resolution === "host-rebooted" || obligation.resolution === "exact-cancelled")
+      ) {
+        await this.db
+          .updateTable("device_retirement_obligations")
+          .set({ state: "open", resolution: null, resolved_at: null })
+          .where("id", "=", obligation.id)
+          .execute();
+      }
+      return r !== undefined;
+    });
   }
 
   /** The device's unresolved obligations (open and quarantined), oldest first. */
   async unresolved(deviceId: string): Promise<RetirementObligation[]> {
-    const rows = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select([
-        "id",
-        "device_id",
-        "org_id",
-        "provider",
-        "instance_generation",
-        "state",
-        "reason",
-        "attempts",
-        "created_at",
-      ])
-      .where("device_id", "=", deviceId)
-      .where("state", "in", ["open", "quarantined"])
-      .orderBy("created_at", "asc")
-      .orderBy("id", "asc")
-      .execute();
-    return rows.map(toObligation);
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const rows = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select([
+          "id",
+          "device_id",
+          "org_id",
+          "provider",
+          "instance_generation",
+          "state",
+          "reason",
+          "attempts",
+          "created_at",
+        ])
+        .where("device_id", "=", deviceId)
+        .where("state", "in", ["open", "quarantined"])
+        .orderBy("created_at", "asc")
+        .orderBy("id", "asc")
+        .execute();
+      return rows.map(toObligation);
+    });
   }
 
   /**
@@ -671,31 +691,33 @@ export class LegacyRetirementStore {
    * the device goes to the gate, which enumerates it under the exclusive lease (C1).
    */
   async hasUnresolved(deviceId: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select("id")
-      .where("device_id", "=", deviceId)
-      .where("state", "in", ["open", "quarantined"])
-      .limit(1)
-      .executeTakeFirst();
-    if (row !== undefined) return true;
-    if ((await this.revokedCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined)
-      return true;
-    // an exact-cancelled obligation a member was added to after the cancel (a rolling upgrade)
-    const late = await this.db
-      .selectFrom("device_retirement_obligations as o")
-      .select("o.id")
-      .where("o.device_id", "=", deviceId)
-      .where("o.state", "=", "resolved")
-      .where("o.resolution", "=", "exact-cancelled")
-      .where(({ exists }) => exists(this.lateMember()))
-      .limit(1)
-      .executeTakeFirst();
-    if (late !== undefined) return true;
-    return (
-      (await this.frozen()) &&
-      (await this.legacyCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined
-    );
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const row = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select("id")
+        .where("device_id", "=", deviceId)
+        .where("state", "in", ["open", "quarantined"])
+        .limit(1)
+        .executeTakeFirst();
+      if (row !== undefined) return true;
+      if ((await this.revokedCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined)
+        return true;
+      // an exact-cancelled obligation a member was added to after the cancel (a rolling upgrade)
+      const late = await this.db
+        .selectFrom("device_retirement_obligations as o")
+        .select("o.id")
+        .where("o.device_id", "=", deviceId)
+        .where("o.state", "=", "resolved")
+        .where("o.resolution", "=", "exact-cancelled")
+        .where(({ exists }) => exists(this.lateMember()))
+        .limit(1)
+        .executeTakeFirst();
+      if (late !== undefined) return true;
+      return (
+        (await this.frozen()) &&
+        (await this.legacyCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined
+      );
+    });
   }
 
   /**
@@ -703,47 +725,53 @@ export class LegacyRetirementStore {
    * unavailable). A resolved obligation is left as it is.
    */
   async quarantine(id: string, reason: string): Promise<void> {
-    await this.db
-      .updateTable("device_retirement_obligations")
-      .set((eb) => ({
-        state: "quarantined",
-        reason: reason.slice(0, 1000),
-        attempts: eb("attempts", "+", 1),
-        last_attempt_at: sql<Date>`now()`,
-      }))
-      .where("id", "=", id)
-      .where("state", "in", ["open", "quarantined"])
-      .execute();
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      await this.db
+        .updateTable("device_retirement_obligations")
+        .set((eb) => ({
+          state: "quarantined",
+          reason: reason.slice(0, 1000),
+          attempts: eb("attempts", "+", 1),
+          last_attempt_at: sql<Date>`now()`,
+        }))
+        .where("id", "=", id)
+        .where("state", "in", ["open", "quarantined"])
+        .execute();
+    });
   }
 
   /** A failed destroy or verification: the obligation stays as it is, the attempt is recorded. */
   async noteFailure(id: string, error: unknown): Promise<void> {
-    const text = error instanceof Error ? error.message : String(error);
-    await this.db
-      .updateTable("device_retirement_obligations")
-      .set((eb) => ({
-        attempts: eb("attempts", "+", 1),
-        last_attempt_at: sql<Date>`now()`,
-        last_error: text.slice(0, 1000),
-      }))
-      .where("id", "=", id)
-      .where("state", "in", ["open", "quarantined"])
-      .execute();
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const text = error instanceof Error ? error.message : String(error);
+      await this.db
+        .updateTable("device_retirement_obligations")
+        .set((eb) => ({
+          attempts: eb("attempts", "+", 1),
+          last_attempt_at: sql<Date>`now()`,
+          last_error: text.slice(0, 1000),
+        }))
+        .where("id", "=", id)
+        .where("state", "in", ["open", "quarantined"])
+        .execute();
+    });
   }
 
   /** The provider confirmed the incarnation destroyed: the obligation resolves. */
   async resolveDestroyed(id: string): Promise<void> {
-    await this.db
-      .updateTable("device_retirement_obligations")
-      .set({
-        state: "resolved",
-        resolution: "provider-destroyed",
-        resolved_at: sql<Date>`now()`,
-        last_error: null,
-      })
-      .where("id", "=", id)
-      .where("state", "in", ["open", "quarantined"])
-      .execute();
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      await this.db
+        .updateTable("device_retirement_obligations")
+        .set({
+          state: "resolved",
+          resolution: "provider-destroyed",
+          resolved_at: sql<Date>`now()`,
+          last_error: null,
+        })
+        .where("id", "=", id)
+        .where("state", "in", ["open", "quarantined"])
+        .execute();
+    });
   }
 
   /**
@@ -756,41 +784,43 @@ export class LegacyRetirementStore {
    */
   @Transactional({ propagation: "requires_new" })
   async resolveCancelled(id: string, covered: readonly string[]): Promise<boolean> {
-    const o = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select(["state"])
-      .where("id", "=", id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (o === undefined || (o.state !== "open" && o.state !== "quarantined")) return false;
-    const members = await this.db
-      .selectFrom("device_retirement_members")
-      .select(["kind", "ref_id"])
-      .where("obligation_id", "=", id)
-      .execute();
-    const set = new Set(covered);
-    if (
-      members.length === 0 ||
-      members.some((m) => m.kind !== "revoked-start" || !set.has(m.ref_id))
-    )
-      return false;
-    await this.db
-      .updateTable("sandbox_operation_intents")
-      .set({ revoke_acknowledged: true, updated_at: new Date() })
-      .where("operation_id", "in", [...set])
-      .where("state", "=", "revoked")
-      .execute();
-    await this.db
-      .updateTable("device_retirement_obligations")
-      .set({
-        state: "resolved",
-        resolution: "exact-cancelled",
-        resolved_at: sql<Date>`now()`,
-        last_error: null,
-      })
-      .where("id", "=", id)
-      .execute();
-    return true;
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const o = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select(["state"])
+        .where("id", "=", id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (o === undefined || (o.state !== "open" && o.state !== "quarantined")) return false;
+      const members = await this.db
+        .selectFrom("device_retirement_members")
+        .select(["kind", "ref_id"])
+        .where("obligation_id", "=", id)
+        .execute();
+      const set = new Set(covered);
+      if (
+        members.length === 0 ||
+        members.some((m) => m.kind !== "revoked-start" || !set.has(m.ref_id))
+      )
+        return false;
+      await this.db
+        .updateTable("sandbox_operation_intents")
+        .set({ revoke_acknowledged: true, updated_at: new Date() })
+        .where("operation_id", "in", [...set])
+        .where("state", "=", "revoked")
+        .execute();
+      await this.db
+        .updateTable("device_retirement_obligations")
+        .set({
+          state: "resolved",
+          resolution: "exact-cancelled",
+          resolved_at: sql<Date>`now()`,
+          last_error: null,
+        })
+        .where("id", "=", id)
+        .execute();
+      return true;
+    });
   }
 
   /**
@@ -801,21 +831,25 @@ export class LegacyRetirementStore {
    * reopens it. Returns how many it reopened.
    */
   private async reopenLateMembers(deviceId?: string): Promise<number> {
-    let q = this.db
-      .updateTable("device_retirement_obligations as o")
-      .set({ state: "open", resolution: null, resolved_at: null })
-      .where("o.state", "=", "resolved")
-      .where("o.resolution", "=", "exact-cancelled")
-      .where(({ exists }) => exists(this.lateMember()));
-    if (deviceId !== undefined) q = q.where("o.device_id", "=", deviceId);
-    const r = await q.executeTakeFirst();
-    return Number(r.numUpdatedRows);
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      let q = this.db
+        .updateTable("device_retirement_obligations as o")
+        .set({ state: "open", resolution: null, resolved_at: null })
+        .where("o.state", "=", "resolved")
+        .where("o.resolution", "=", "exact-cancelled")
+        .where(({ exists }) => exists(this.lateMember()));
+      if (deviceId !== undefined) q = q.where("o.device_id", "=", deviceId);
+      const r = await q.executeTakeFirst();
+      return Number(r.numUpdatedRows);
+    });
   }
 
   /**
    * A member of obligation `o` an exact cancel never covered (see {@link reopenLateMembers}),
    * correlated on `o.id`.
    */
+  // org-filter: a correlated subquery fragment on o.id, run only inside the retirement sweep's
+  // asPlatform
   private lateMember() {
     // fail closed: a revoked start is covered only when its intent exists acknowledged (a missing
     // intent row proves nothing was stopped)
@@ -888,20 +922,22 @@ export class LegacyRetirementStore {
    * attempted longer ago than the backoff (30 s doubling per attempt, at most an hour).
    */
   async due(limit: number): Promise<string[]> {
-    const rows = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select("device_id")
-      .where("state", "in", ["open", "quarantined"])
-      .where(
-        sql<boolean>`(last_attempt_at IS NULL OR last_attempt_at <
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const rows = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select("device_id")
+        .where("state", "in", ["open", "quarantined"])
+        .where(
+          sql<boolean>`(last_attempt_at IS NULL OR last_attempt_at <
           now() - LEAST(3600, 30 * power(2, LEAST(attempts, 7))) * interval '1 second')`,
-      )
-      .groupBy("device_id")
-      .orderBy(sql`min(last_attempt_at) ASC NULLS FIRST`)
-      .orderBy("device_id")
-      .limit(limit)
-      .execute();
-    return rows.map((r) => r.device_id);
+        )
+        .groupBy("device_id")
+        .orderBy(sql`min(last_attempt_at) ASC NULLS FIRST`)
+        .orderBy("device_id")
+        .limit(limit)
+        .execute();
+      return rows.map((r) => r.device_id);
+    });
   }
 
   /** Members of resolved obligations whose own records are not settled yet. */
@@ -952,170 +988,180 @@ export class LegacyRetirementStore {
   private async unfencedWriters(
     state: LegacyFreezeState,
   ): Promise<LegacyRetirementReport["unfencedWriters"]> {
-    // the migrator's own bookkeeping (schema `capybara`, `migrate()`): when 0157 was applied
-    const applied = await sql<{ applied_at: Date }>`SELECT applied_at FROM capybara._migrations
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      // the migrator's own bookkeeping (schema `capybara`, `migrate()`): when 0157 was applied
+      const applied = await sql<{ applied_at: Date }>`SELECT applied_at FROM capybara._migrations
       WHERE name = ${MARKER_MIGRATION}`.execute(this.db.db);
-    const since = applied.rows[0]?.applied_at;
-    if (since === undefined)
-      return { sinceMigration: 0, afterFreeze: 0, afterEnumeration: 0, recent: 0, latestAt: null };
-    const after = (at: Date | null) => sql`CASE WHEN started_at > ${at}::timestamptz THEN 1 END`;
-    const row = await this.db
-      .selectFrom("background_tasks")
-      .select((eb) => [
-        eb.fn.countAll<string>().as("n"),
-        eb.fn.count<string>(after(state.frozenAt)).as("after"),
-        eb.fn.count<string>(after(state.enumeratedAt)).as("afterEnumeration"),
-        // by the database clock, the one that stamped started_at
-        eb.fn
-          .count<string>(sql`CASE WHEN started_at > now() - ${RECENT}::interval THEN 1 END`)
-          .as("recent"),
-        eb.fn.max("started_at").as("latest"),
-      ])
-      .where("launch_state", "=", "legacy")
-      .where("legacy_dispatch", "=", "unknown")
-      .where("started_at", ">", since)
-      .executeTakeFirstOrThrow();
-    return {
-      sinceMigration: Number(row.n),
-      afterFreeze: Number(row.after),
-      afterEnumeration: Number(row.afterEnumeration),
-      recent: Number(row.recent),
-      latestAt: (row.latest as Date | null) ?? null,
-    };
+      const since = applied.rows[0]?.applied_at;
+      if (since === undefined)
+        return {
+          sinceMigration: 0,
+          afterFreeze: 0,
+          afterEnumeration: 0,
+          recent: 0,
+          latestAt: null,
+        };
+      const after = (at: Date | null) => sql`CASE WHEN started_at > ${at}::timestamptz THEN 1 END`;
+      const row = await this.db
+        .selectFrom("background_tasks")
+        .select((eb) => [
+          eb.fn.countAll<string>().as("n"),
+          eb.fn.count<string>(after(state.frozenAt)).as("after"),
+          eb.fn.count<string>(after(state.enumeratedAt)).as("afterEnumeration"),
+          // by the database clock, the one that stamped started_at
+          eb.fn
+            .count<string>(sql`CASE WHEN started_at > now() - ${RECENT}::interval THEN 1 END`)
+            .as("recent"),
+          eb.fn.max("started_at").as("latest"),
+        ])
+        .where("launch_state", "=", "legacy")
+        .where("legacy_dispatch", "=", "unknown")
+        .where("started_at", ">", since)
+        .executeTakeFirstOrThrow();
+      return {
+        sinceMigration: Number(row.n),
+        afterFreeze: Number(row.after),
+        afterEnumeration: Number(row.afterEnumeration),
+        recent: Number(row.recent),
+        latestAt: (row.latest as Date | null) ?? null,
+      };
+    });
   }
 
   /** The release gate's honest view (a quarantined device is unavailable, not retired). */
   async report(): Promise<LegacyRetirementReport> {
-    const freeze = await this.freezeState();
-    const frozen = freeze.frozenAt !== null;
-    const fenced = await this.db
-      .selectFrom("background_tasks")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("launch_state", "=", "legacy")
-      .where("status", "=", "running")
-      .where("sid", "is", null)
-      .where("legacy_dispatch", "=", "reserved")
-      .executeTakeFirstOrThrow();
-    const unfenced = await this.unfencedWriters(freeze);
-    const counts = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select(["state", (eb) => eb.fn.countAll<string>().as("n")])
-      .groupBy("state")
-      .execute();
-    const n = (s: string) => Number(counts.find((c) => c.state === s)?.n ?? 0);
-    const unsettled = await this.db
-      .selectFrom("device_retirement_members as m")
-      .innerJoin("device_retirement_obligations as o", "o.id", "m.obligation_id")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("o.state", "=", "resolved")
-      .where("m.settled", "=", false)
-      .executeTakeFirstOrThrow();
-    const unresolved = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select(["device_id", "provider", "instance_generation", "state", "reason"])
-      .where("state", "in", ["open", "quarantined"])
-      .orderBy("created_at", "asc")
-      .execute();
-    const abandonedRows = await this.db
-      .selectFrom("device_retirement_obligations")
-      .select(["device_id", "provider", "instance_generation", "abandoned_at"])
-      .where("state", "=", "abandoned")
-      .orderBy("abandoned_at", "asc")
-      .execute();
-    const abandonedMembers = await this.db
-      .selectFrom("device_retirement_members as m")
-      .innerJoin("device_retirement_obligations as o", "o.id", "m.obligation_id")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("o.state", "=", "abandoned")
-      .executeTakeFirstOrThrow();
-    const cloudCandidates = await this.db
-      .selectFrom("background_tasks as t")
-      .innerJoin("devices as d", "d.id", "t.device_id")
-      .leftJoin("device_instances as i", "i.device_id", "t.device_id")
-      .select([
-        "t.device_id",
-        "t.sandbox_created_at",
-        "t.legacy_dispatch_generation",
-        "t.legacy_dispatch_provider",
-        "i.provider as instance_provider",
-        "i.created_at as instance_created_at",
-        "i.prev_handle",
-        "i.status as instance_status",
-        "i.handle as instance_handle",
-        "i.had_instance",
-      ])
-      .where("d.deleted_at", "is", null)
-      .where("t.launch_state", "=", "legacy")
-      .where(MAY_STILL_RUN)
-      .where(MAY_HAVE_DISPATCHED)
-      .orderBy("t.device_id")
-      .execute();
-    const cloudUnknown = new Map<
-      string,
-      { prevHandle: boolean; noInstance: boolean; currentUnconfirmed: boolean }
-    >();
-    for (const r of cloudCandidates) {
-      const key = legacyKey(r);
-      if (key.generation !== "unknown" && key.provider !== "unknown") continue;
-      if (cloudUnknown.has(r.device_id as string)) continue;
-      const live =
-        r.instance_handle !== null &&
-        (r.instance_status === "running" ||
-          r.instance_status === "suspended" ||
-          r.instance_status === "creating");
-      const createdAt = r.instance_created_at;
-      const noInstance = createdAt === null || r.had_instance !== true;
-      const currentUnconfirmed =
-        createdAt !== null &&
-        !noInstance &&
-        !live &&
-        !(
-          r.instance_provider !== null &&
-          (await this.destructionRecorded(
-            r.device_id as string,
-            r.instance_provider,
-            generationOf(createdAt),
-          ))
-        );
-      cloudUnknown.set(r.device_id as string, {
-        prevHandle: r.prev_handle !== null,
-        noInstance,
-        currentUnconfirmed,
-      });
-    }
-    const open = n("open"),
-      quarantined = n("quarantined"),
-      abandoned = n("abandoned"),
-      unsettledMembers = Number(unsettled.n);
-    const retired = frozen && open === 0 && quarantined === 0 && unsettledMembers === 0;
-    return {
-      frozen,
-      frozenAt: freeze.frozenAt,
-      freezeEnumeratedAt: freeze.enumeratedAt,
-      fencedReservations: Number(fenced.n),
-      unfencedWriters: unfenced,
-      open,
-      quarantined,
-      resolved: n("resolved"),
-      unsettledMembers,
-      retired,
-      cleanRetirement: retired && abandoned === 0,
-      abandoned,
-      abandonedMembers: Number(abandonedMembers.n),
-      abandonedList: abandonedRows.map((r) => ({
-        deviceId: r.device_id,
-        provider: r.provider,
-        instanceGeneration: r.instance_generation,
-        abandonedAt: r.abandoned_at as Date,
-      })),
-      cloudUnknown: [...cloudUnknown].map(([deviceId, flags]) => ({ deviceId, ...flags })),
-      unresolved: unresolved.map((r) => ({
-        deviceId: r.device_id,
-        provider: r.provider,
-        instanceGeneration: r.instance_generation,
-        state: r.state as "open" | "quarantined",
-        reason: r.reason,
-      })),
-    };
+    return asPlatform("retirement of legacy launches across every org", async () => {
+      const freeze = await this.freezeState();
+      const frozen = freeze.frozenAt !== null;
+      const fenced = await this.db
+        .selectFrom("background_tasks")
+        .select((eb) => eb.fn.countAll<string>().as("n"))
+        .where("launch_state", "=", "legacy")
+        .where("status", "=", "running")
+        .where("sid", "is", null)
+        .where("legacy_dispatch", "=", "reserved")
+        .executeTakeFirstOrThrow();
+      const unfenced = await this.unfencedWriters(freeze);
+      const counts = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select(["state", (eb) => eb.fn.countAll<string>().as("n")])
+        .groupBy("state")
+        .execute();
+      const n = (s: string) => Number(counts.find((c) => c.state === s)?.n ?? 0);
+      const unsettled = await this.db
+        .selectFrom("device_retirement_members as m")
+        .innerJoin("device_retirement_obligations as o", "o.id", "m.obligation_id")
+        .select((eb) => eb.fn.countAll<string>().as("n"))
+        .where("o.state", "=", "resolved")
+        .where("m.settled", "=", false)
+        .executeTakeFirstOrThrow();
+      const unresolved = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select(["device_id", "provider", "instance_generation", "state", "reason"])
+        .where("state", "in", ["open", "quarantined"])
+        .orderBy("created_at", "asc")
+        .execute();
+      const abandonedRows = await this.db
+        .selectFrom("device_retirement_obligations")
+        .select(["device_id", "provider", "instance_generation", "abandoned_at"])
+        .where("state", "=", "abandoned")
+        .orderBy("abandoned_at", "asc")
+        .execute();
+      const abandonedMembers = await this.db
+        .selectFrom("device_retirement_members as m")
+        .innerJoin("device_retirement_obligations as o", "o.id", "m.obligation_id")
+        .select((eb) => eb.fn.countAll<string>().as("n"))
+        .where("o.state", "=", "abandoned")
+        .executeTakeFirstOrThrow();
+      const cloudCandidates = await this.db
+        .selectFrom("background_tasks as t")
+        .innerJoin("devices as d", "d.id", "t.device_id")
+        .leftJoin("device_instances as i", "i.device_id", "t.device_id")
+        .select([
+          "t.device_id",
+          "t.sandbox_created_at",
+          "t.legacy_dispatch_generation",
+          "t.legacy_dispatch_provider",
+          "i.provider as instance_provider",
+          "i.created_at as instance_created_at",
+          "i.prev_handle",
+          "i.status as instance_status",
+          "i.handle as instance_handle",
+          "i.had_instance",
+        ])
+        .where("d.deleted_at", "is", null)
+        .where("t.launch_state", "=", "legacy")
+        .where(MAY_STILL_RUN)
+        .where(MAY_HAVE_DISPATCHED)
+        .orderBy("t.device_id")
+        .execute();
+      const cloudUnknown = new Map<
+        string,
+        { prevHandle: boolean; noInstance: boolean; currentUnconfirmed: boolean }
+      >();
+      for (const r of cloudCandidates) {
+        const key = legacyKey(r);
+        if (key.generation !== "unknown" && key.provider !== "unknown") continue;
+        if (cloudUnknown.has(r.device_id as string)) continue;
+        const live =
+          r.instance_handle !== null &&
+          (r.instance_status === "running" ||
+            r.instance_status === "suspended" ||
+            r.instance_status === "creating");
+        const createdAt = r.instance_created_at;
+        const noInstance = createdAt === null || r.had_instance !== true;
+        const currentUnconfirmed =
+          createdAt !== null &&
+          !noInstance &&
+          !live &&
+          !(
+            r.instance_provider !== null &&
+            (await this.destructionRecorded(
+              r.device_id as string,
+              r.instance_provider,
+              generationOf(createdAt),
+            ))
+          );
+        cloudUnknown.set(r.device_id as string, {
+          prevHandle: r.prev_handle !== null,
+          noInstance,
+          currentUnconfirmed,
+        });
+      }
+      const open = n("open"),
+        quarantined = n("quarantined"),
+        abandoned = n("abandoned"),
+        unsettledMembers = Number(unsettled.n);
+      const retired = frozen && open === 0 && quarantined === 0 && unsettledMembers === 0;
+      return {
+        frozen,
+        frozenAt: freeze.frozenAt,
+        freezeEnumeratedAt: freeze.enumeratedAt,
+        fencedReservations: Number(fenced.n),
+        unfencedWriters: unfenced,
+        open,
+        quarantined,
+        resolved: n("resolved"),
+        unsettledMembers,
+        retired,
+        cleanRetirement: retired && abandoned === 0,
+        abandoned,
+        abandonedMembers: Number(abandonedMembers.n),
+        abandonedList: abandonedRows.map((r) => ({
+          deviceId: r.device_id,
+          provider: r.provider,
+          instanceGeneration: r.instance_generation,
+          abandonedAt: r.abandoned_at as Date,
+        })),
+        cloudUnknown: [...cloudUnknown].map(([deviceId, flags]) => ({ deviceId, ...flags })),
+        unresolved: unresolved.map((r) => ({
+          deviceId: r.device_id,
+          provider: r.provider,
+          instanceGeneration: r.instance_generation,
+          state: r.state as "open" | "quarantined",
+          reason: r.reason,
+        })),
+      };
+    });
   }
 }

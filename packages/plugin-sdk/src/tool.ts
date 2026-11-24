@@ -236,8 +236,7 @@ export interface ToolCallContext {
    * from the conversation, the run and `callId`. The same for every invocation of the call
    * (each `InputRequired` round), different for every other call, including a later call the
    * model makes to retry it. A re-run of the same call after its network ask was approved
-   * (`ctx.deviceAccess.reportBlockedHosts`) keeps the key too. Optional in the type so older
-   * extensions compile; the kernel always passes it.
+   * (`ctx.deviceAccess.reportBlockedHosts`) keeps the key too.
    */
   idempotencyKey?: string;
   signal: AbortSignal;
@@ -245,10 +244,9 @@ export interface ToolCallContext {
   resume?: { state: unknown; answer: FormAnswer | null };
   /**
    * The extension's effective deployment config for this org: the platform's deployment config
-   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
-   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
-   * for work done for this org. Optional in the type so older extensions compile; the kernel
-   * always passes it.
+   * with the org's copy applied to the overridable fields (every field not marked `platformOnly`),
+   * or the platform's config (equal to `ctx.config`) while the org follows it. Use it, not
+   * `ctx.config`, for work done for this org.
    */
   config?: unknown;
   /** Where the conversation comes from. The kernel always passes it. */

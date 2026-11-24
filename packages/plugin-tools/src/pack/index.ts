@@ -1,6 +1,5 @@
 export { PACK_USAGE, packCommand } from "./cli.js";
 export {
-  type ConfigSchemaLevel,
   type ConfigSchemaProblem,
   type ExtensionConfigSchemas,
   extensionConfigSchemas,
