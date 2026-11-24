@@ -378,7 +378,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     });
     await renderList();
     const slack = await cardOf("Slack workspace");
-    // not a dead 已启用: what is missing, and the way to make it
+    // not a dead "on": what is missing, and the way to make it
     expect(within(slack).queryByText(en.orgComponents.state.on)).toBeNull();
     expect(within(slack).getByText(en.connectors.setup.noConnector)).toBeTruthy();
     expect(within(slack).getByText(en.connectors.setup.noConnectorHint)).toBeTruthy();

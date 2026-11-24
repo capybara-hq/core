@@ -494,7 +494,7 @@ function Review({
             {t("summaryDefaultOff", { n: defaultOff })}
           </Text>
         )}
-        {(detail.agents ?? []).length > 0 && (
+        {detail.agents.length > 0 && (
           <ComponentSection
             title={tc("agentTemplates")}
             count={detail.agents.length}

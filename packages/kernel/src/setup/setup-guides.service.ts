@@ -88,7 +88,7 @@ export const setupWebPath = {
   connector: (id: string) => `/connectors/${enc(id)}?tab=guide`,
   /** A member's connector section: the connector's row on their connections page (§9.3). */
   memberConnections: () => "/account/connections",
-  /** A connector's 配置: its credentials tab (the guide, editable endpoint fields, credential). */
+  /** A connector's configure page: its credentials tab (the guide, editable endpoint fields, credential). */
   configure: (id: string) => `/connectors/${enc(id)}?tab=credentials`,
   /** The connectors page: a template on in the org without a connector shows its card there. */
   connectors: () => "/connectors",
@@ -97,7 +97,7 @@ export const setupWebPath = {
 /**
  * The page a rendered guide belongs on: a member's connections page for the member audience, else
  * its target's, else where a target is created; a connector template's guide without a target goes
- * to the 配置 of `templateConnector` (a connector of the org made from the template) when there is
+ * to the configure page of `templateConnector` (a connector of the org made from the template) when there is
  * one, else to the connectors page.
  */
 function webPathOf(g: RenderedSetupGuide, templateConnector: string | undefined): string {

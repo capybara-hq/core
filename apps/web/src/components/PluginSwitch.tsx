@@ -40,9 +40,9 @@ export type PluginStateLabel = { label: string; tone: "ok" | "warn" | "muted" };
 /**
  * The state copy of a plugin from the org's view: a pending request first (已申请，等待处理),
  * then the state; `on` for an `all` or builtin plugin reads 已启用 · 平台统一. An extension the
- * deployment lacks is said instead of 未启用 (it cannot be switched on); one that cannot run reads
- * 不可用 with the kernel's reason (不可用 · 缺少部署配置). A plugin never reads 需要配置: an invalid
- * extension config shows on the extensions page.
+ * deployment lacks is said instead of off (it cannot be switched on); one that cannot run reads
+ * unavailable with the kernel's reason (unavailable · missing deployment config). A plugin never
+ * reads needs configuration: an invalid extension config shows on the extensions page.
  */
 export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
   const t = useTranslations("plugins.state");
@@ -71,7 +71,7 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
         return { label: t("not_offered"), tone: "muted" };
       case "needs_config":
         // its extension's config is invalid: configured on the extensions page, which shows
-        // 待配置; the plugin itself reads on when installed, else off (spec §5.2.3, §5.6)
+        // needs setup; the plugin itself reads on when installed, else off (spec §5.2.3, §5.6)
         if (i.installed === null) {
           return i.notDeployed
             ? { label: t("notDeployed"), tone: "warn" }

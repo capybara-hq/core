@@ -304,14 +304,14 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(within(row("asked")).getByText(p.state.requested)).toBeTruthy();
     expect(actionsOf(row("asked"), "asked")).toEqual([]);
     const needsConfig = { zh: "需要配置", en: "Needs configuration" }[locale];
-    // A plugin's state never reads 需要配置 (spec §5.6): not installed it is off, and a plugin with
+    // A plugin's state never reads needs configuration (spec §5.6): not installed it is off, and a plugin with
     // connector templates goes through its review page first
     expect(within(row("needs")).getByText(p.state.off)).toBeTruthy();
     expect(within(row("needs")).queryByText(needsConfig)).toBeNull();
     expect(
       within(row("needs")).getByRole("link", { name: p.action.enable }).getAttribute("href"),
     ).toBe("/plugins/g/enable");
-    // installed with an invalid extension config it is on (the extensions page shows 待配置)
+    // installed with an invalid extension config it is on (the extensions page shows needs setup)
     expect(within(row("broken")).getByText(p.state.on)).toBeTruthy();
     expect(within(row("broken")).queryByText(needsConfig)).toBeNull();
     expect(within(row("broken")).getByRole("button", { name: RAW_MORE[locale] })).toBeTruthy();
@@ -2014,6 +2014,7 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
           templates: [],
           dependencies: [{ name: "crm-core", range: "^1.0.0" }],
           skills: ["skills/notes"],
+          agents: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: () =>

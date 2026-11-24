@@ -28,7 +28,7 @@ import NotFound from "../../not-found";
  * to Plugins).
  * `?template=<catalog item id>`: the enable page of the plugin that ships a connector template,
  * the same review as `/plugins/<id>/enable` with no input (its connectors are created as they
- * are; one that needs org input is configured afterwards with 配置 on the connectors page). The
+ * are; one that needs org input is configured afterwards with configure on the connectors page). The
  * template's item comes from the query cache (the layout prefetched it on a first load); a
  * missing one is the not-found state.
  */

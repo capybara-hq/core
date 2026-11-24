@@ -804,6 +804,7 @@ describe("/connectors/install reads from the query cache", () => {
     },
     templates: [],
     skills: [],
+    agents: [],
     extension: null,
     dependencies: [],
   };

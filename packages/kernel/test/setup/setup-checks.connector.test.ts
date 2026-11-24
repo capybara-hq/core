@@ -334,7 +334,7 @@ describe("setup guides for connectors", () => {
   });
 
   it("a template on in the org without a connector is listed for admins, not members", async () => {
-    // with a connector from the template, setup.read without a target points at its 配置 (the
+    // with a connector from the template, setup.read without a target points at its configure page (the
     // credentials tab)
     const configure = await callOp("setup.read", { itemId, guideId: "gh" }, env.bossId);
     expect((configure.guide as { webPath: string }).webPath).toBe(
