@@ -394,9 +394,6 @@ export function PluginReviewBody({
                             />
                           ),
                       },
-                      ...((a.connectors ?? []).length > 0
-                        ? [{ k: t("needs"), v: <Chips items={a.connectors ?? []} /> }]
-                        : []),
                     ]}
                   />
                   <Disclosure summary={tc("agentInstructions", { name: a.name })}>
@@ -467,8 +464,9 @@ function hostOf(endpoint: Record<string, unknown>): string {
 function Chips({ items }: { items: string[] }) {
   return (
     <Stack direction="row" gap={4} wrap>
-      {items.map((x) => (
-        <Badge key={x}>{x}</Badge>
+      {items.map((x, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: names may repeat; the order is fixed
+        <Badge key={`${i}:${x}`}>{x}</Badge>
       ))}
     </Stack>
   );

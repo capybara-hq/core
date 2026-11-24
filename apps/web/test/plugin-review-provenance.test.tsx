@@ -3,8 +3,10 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
+import zhMessages from "../messages/zh.json";
+import { PlatformUpdatePreviewBody } from "../src/components/PlatformUpdateDialog";
 import { PluginReviewBody } from "../src/components/PluginReviewBody";
-import type { PluginReview } from "../src/lib/catalog";
+import type { PlatformUpdatePreview, PluginReview } from "../src/lib/catalog";
 import { renderPage } from "./support/render";
 
 afterEach(cleanup);
@@ -238,5 +240,88 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText(/SessionStart/)).toBeTruthy();
     // the ignored group is in the details, closed
     expect(screen.queryByText(/other_harness|其他工具的文件/)).toBeNull();
+  });
+});
+
+describe("PluginReviewBody rows", () => {
+  it("agent templates: name and tier, a tools row with inherit and removed chips, instructions folded", async () => {
+    const agents: PluginReview = {
+      ...review,
+      agentTemplates: [
+        {
+          name: "reviewer",
+          path: "agents/reviewer.md",
+          description: "Reviews work.",
+          instructions: "Review it carefully.",
+          model: "fast",
+          tools: ["Read", "Grep"],
+          disallowedTools: ["Bash"],
+        },
+        {
+          name: "planner",
+          path: "agents/planner.md",
+          description: "Plans.",
+          instructions: "Plan.",
+          model: "inherit",
+        },
+      ],
+    };
+    renderPage(<PluginReviewBody review={agents} />, zh);
+    const reviewer = screen.getByRole("group", { name: "reviewer" });
+    expect(within(reviewer).getByText("快速档")).toBeTruthy();
+    expect(within(reviewer).getByText("工具")).toBeTruthy();
+    expect(within(reviewer).getByText("Read")).toBeTruthy();
+    expect(within(reviewer).getByText("Grep")).toBeTruthy();
+    expect(within(reviewer).getByText("移除的工具：Bash")).toBeTruthy();
+    expect(within(reviewer).queryByText("Review it carefully.")).toBeNull();
+    await userEvent.setup().click(within(reviewer).getByRole("button", { name: /reviewer/ }));
+    expect(within(reviewer).getByText("Review it carefully.")).toBeTruthy();
+    const planner = screen.getByRole("group", { name: "planner" });
+    expect(within(planner).getByText("工具：沿用派发它的智能体的工具")).toBeTruthy();
+    expect(screen.queryByText("需要")).toBeNull();
+  });
+
+  it("skills: name, file count, description and a hidden-characters tag", () => {
+    const skills: PluginReview = {
+      ...review,
+      skills: [
+        { name: "pdf", description: "PDF helpers", body: "# PDF", path: "skills/pdf", files: 2 },
+        { name: "odd", description: "Odd\u202e", body: "# Odd", path: "skills/odd", files: 1 },
+      ],
+    };
+    renderPage(<PluginReviewBody review={skills} />, zh);
+    const pdf = screen.getByRole("group", { name: "pdf" });
+    expect(within(pdf).getByText("2 个文件")).toBeTruthy();
+    expect(within(pdf).getByText("PDF helpers")).toBeTruthy();
+    expect(within(pdf).queryByText("含隐藏字符")).toBeNull();
+    const odd = screen.getByRole("group", { name: "odd" });
+    expect(within(odd).getByText("含隐藏字符")).toBeTruthy();
+  });
+});
+
+describe("PlatformUpdatePreviewBody header and chips", () => {
+  it("shows the name with a version chip and a chip per component change", () => {
+    const preview = {
+      itemId: "i1",
+      name: "neon",
+      from: "0.1.0-rc.2",
+      to: "0.1.0-rc.4",
+      components: [
+        { kind: "skill", name: "a", change: "upgrade", from: "1", to: "2", pinnedOrgs: [] },
+        { kind: "skill", name: "b", change: "removed", from: "1", to: null, pinnedOrgs: [] },
+      ],
+      extension: null,
+      connectorOrgs: [],
+      diffHash: "h",
+    } as unknown as PlatformUpdatePreview;
+    renderPage(<PlatformUpdatePreviewBody preview={preview} orgName={() => undefined} />, zh);
+    expect(screen.getByText("neon")).toBeTruthy();
+    const chip = screen.getByText("v0.1.0-rc.2 → v0.1.0-rc.4");
+    expect(chip.getAttribute("data-part") ?? chip.className).toContain("badge");
+    const up = screen.getByText("升级");
+    expect(up.className).toContain("badge");
+    expect(up.getAttribute("data-tone")).toBe("default");
+    const removed = screen.getByText(zhMessages.catalog.update.change.removed);
+    expect(removed.getAttribute("data-tone")).toBe("warn");
   });
 });

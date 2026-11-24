@@ -5251,7 +5251,6 @@
         "hiddenCharacters": "Hidden characters",
         "secret": "Secret",
         "tools": "Tools",
-        "needs": "Needs",
         "endpointDetails": "Endpoint details",
         "orgCanChange": "Org can change",
         "titleUpdate": "Update plugin \"{name}\"",

@@ -5239,7 +5239,6 @@
         "hiddenCharacters": "含隐藏字符",
         "secret": "密钥",
         "tools": "工具",
-        "needs": "需要",
         "endpointDetails": "端点详情",
         "orgCanChange": "组织可改",
         "titleUpdate": "更新插件「{name}」",

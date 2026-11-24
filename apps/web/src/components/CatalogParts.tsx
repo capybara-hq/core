@@ -80,10 +80,11 @@ const GROUP_TONE: Record<TranslationGroup, "ink" | "warn" | "muted"> = {
 
 /**
  * The translation report of a Claude Code plugin (spec §8.4), shared by the import review and the
- * catalog item: the five groups in order, each as a labelled region with its count (empty groups
- * say "None"), then "Other" for items whose group a newer kernel added (only when there are any);
- * an item reads "<component> <name>: <reason>" with its path and the detail values its localized
- * reason does not name as extra lines.
+ * catalog item: a one-line summary (imported, converted, needs input, ignored, warnings counts), the
+ * warnings expanded under it, and a details disclosure with the other non-empty groups (each a
+ * labelled region with its count, "Other" for a group a newer kernel added); an item reads
+ * "<component> <name>: <reason>" with its path and the detail values its localized reason does
+ * not name as extra lines.
  */
 export function TranslationReportView({ report }: { report: TranslationReport }) {
   const t = useTranslations("catalog.admin.review.translation");

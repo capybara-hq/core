@@ -1739,8 +1739,6 @@ export interface PluginReviewAgentTemplate {
   effort?: string;
   maxSteps?: number;
   skills?: string[];
-  /** The connectors it uses, by name (shown as the 需要 row when present). */
-  connectors?: string[];
 }
 
 /** Routes of the `http` group: member and admin (the kernel authenticates a person). */
