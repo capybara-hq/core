@@ -253,6 +253,28 @@ describe("plugin scope sync", () => {
     expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
   });
 
+  it("an org whose connector kind is unavailable fails the install once per failure: repeated syncs add no audit row while it stays the same", async () => {
+    const lacking = await createOrg(env.root, "No connector kind");
+    const itemId = await seedPlugin(env, { name: "tpl-lacking", skills: [] });
+    await setScope(env, itemId, "all");
+    for (let i = 0; i < 3; i++) {
+      expect(await sync().syncPair(itemId, lacking)).toBe("unchanged");
+    }
+    const failed = (await auditRows("plugin.scope_sync_failed")).filter(
+      (f) => f.org_id === lacking && f.target === itemId,
+    );
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.detail).toMatchObject({ code: "connector.kind_unavailable" });
+    const open = await env.db
+      .selectFrom("plugin_scope_sync_failures")
+      .select("code")
+      .where("item_id", "=", itemId)
+      .where("org_id", "=", lacking)
+      .execute();
+    expect(open).toEqual([{ code: "connector.kind_unavailable" }]);
+    expect(await liveOrgs(itemId)).not.toContain(lacking);
+  });
+
   it("all -> optional without switch rows removes the installs", async () => {
     const itemId = await skillsOnly("shrinking");
     await setScope(env, itemId, "all");

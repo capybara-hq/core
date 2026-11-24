@@ -919,7 +919,7 @@ describe("one more connector from a connector template (P4-7)", () => {
     expect(errCode(afterOff)).toBe("component.off");
   });
 
-  it("two concurrent creates from an OAuth template register one client each, distinct slugs", async () => {
+  it("two concurrent creates from a dcr template register nothing until the first connect, distinct slugs", async () => {
     const as = await startFakeOAuthServer();
     const mcp = await startFakeMcpServer({
       verifyBearer: (t) => as.verify(t),
@@ -956,8 +956,15 @@ describe("one more connector from a connector template (P4-7)", () => {
       ]);
       expect(a.statusCode, a.body).toBe(201);
       expect(b.statusCode, b.body).toBe(201);
-      // the slug is chosen under the org lock after the registration: no retry registers again
-      expect(as.registrations).toHaveLength(2);
+      // like an install's, each registers its client on its first connect (ruling R16); the slug
+      // is chosen under the org lock
+      expect(as.registrations).toHaveLength(0);
+      for (const r of [a, b]) {
+        expect(r.json().connector).toMatchObject({
+          setup: "ready",
+          credential: { ownership: "personal", status: "missing" },
+        });
+      }
       expect([a.json().connector.slug, b.json().connector.slug].sort()).toEqual([
         "github_2",
         "github_3",

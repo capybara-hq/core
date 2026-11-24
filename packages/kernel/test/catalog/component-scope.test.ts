@@ -9,7 +9,6 @@ import { createOrgWithProviders } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   install,
-  MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
   seedPlugin,
@@ -694,6 +693,8 @@ describe("fix round 1", () => {
     expect(on.statusCode, on.body).toBe(200);
     expect(on.json().component).toMatchObject({ switch: true, on: true });
     expect(await connectorTemplateState(env.db, env.orgId, tplId)).toBe("on");
+    // switched on where the plugin is installed: its connector now
+    expect(await liveConnectors()).toHaveLength(1);
     // another org that turns the plugin on still has it off
     const r2 = await env.root({
       method: "POST",
@@ -896,17 +897,15 @@ describe("fix round 1", () => {
     expect((await offered(env.mem))[0]?.icon).toBe(orgUrl);
     expect((await admin())[0]?.icon).toBe(`/api/v1/admin/catalog/items/${itemId}/icon?v=1.0.0`);
     // the connector made from it shows its plugin's icon in the list and the detail
+    // (the default-off template's connector is made when an org admin switches it on)
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
+    expect(await liveConnectors()).toEqual([]);
     expect((await tplSwitch(true)).statusCode).toBe(200);
-    const made = await env.boss({
-      method: "POST",
-      url: `/api/v1/orgs/${env.orgId}/connector-templates/${tplId}/connectors`,
-      payload: { config: { credential: { token: MCP_TOKEN } } },
-    });
-    expect(made.statusCode, made.body).toBe(201);
     const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
-    const [conn] = (list.json() as { connectors: { id: string; icon: string | null }[] })
+    const listed = (list.json() as { connectors: { id: string; icon: string | null }[] })
       .connectors;
+    expect(listed).toHaveLength(1);
+    const [conn] = listed;
     // on the connector's own route (guests load it too), sourced from the plugin icon
     const connUrl = `/api/v1/orgs/${env.orgId}/connectors/${conn?.id}/icon?v=p-1.0.0`;
     expect(conn?.icon).toBe(connUrl);

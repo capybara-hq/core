@@ -1181,7 +1181,7 @@ describe("org plugin install: one kind per component", () => {
     });
   });
 
-  it("a default-off template creates no connector; switching it on later is the connectors page's", async () => {
+  it("a default-off template creates no connector at install; switching it on creates it without an outbound call, off and on again reuses it", async () => {
     const id = await seedPlugin(env, {
       name: "github",
       skills: [],
@@ -1193,6 +1193,69 @@ describe("org plugin install: one kind per component", () => {
     expect((await templateConnectors(env, { itemId: id })).map((c) => c.templateId)).toEqual([
       "gh",
     ]);
+    const extra = (
+      await env.db
+        .selectFrom("platform_connector_templates")
+        .select("id")
+        .where("catalog_item_id", "=", id)
+        .where("template_id", "=", "extra")
+        .executeTakeFirstOrThrow()
+    ).id;
+    const sw = (body: Record<string, unknown>) =>
+      env.boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/components/connector_template/${extra}/switch`,
+        payload: body,
+      });
+    const before = env.mcp.requests.length;
+    const on = await sw({ enabled: true });
+    expect(on.statusCode, on.body).toBe(200);
+    const made = (await templateConnectors(env, { itemId: id })).filter(
+      (c) => c.templateId === "extra",
+    );
+    expect(made).toHaveLength(1);
+    expect(await connectorView(made[0]?.id as string)).toMatchObject({ setup: "needs_config" });
+    expect(env.mcp.requests.length).toBe(before);
+    // recorded on the install, so a switch-off of the plugin takes it along
+    const ledger = await env.db
+      .selectFrom("plugin_install_components")
+      .select(["ref", "template_id", "created"])
+      .where("kind", "=", "connector")
+      .where("template_id", "=", "extra")
+      .execute();
+    expect(ledger).toEqual([{ ref: made[0]?.id, template_id: "extra", created: true }]);
+    // off (confirming the preview) and on again: the same connector, no second one
+    const pre = await sw({ enabled: false });
+    expect(pre.statusCode, pre.body).toBe(200);
+    const off = await sw({ enabled: false, confirm: pre.json().confirm });
+    expect(off.statusCode, off.body).toBe(200);
+    expect((await sw({ enabled: true })).statusCode).toBe(200);
+    expect(
+      (await templateConnectors(env, { itemId: id })).filter((c) => c.templateId === "extra"),
+    ).toEqual(made);
+  });
+
+  it("switching a template on in an org without the plugin installed creates no connector", async () => {
+    const id = await seedPlugin(env, {
+      name: "github",
+      skills: [],
+      templates: { gh: {} },
+      defaultOff: ["gh"],
+    });
+    const gh = (
+      await env.db
+        .selectFrom("platform_connector_templates")
+        .select("id")
+        .where("catalog_item_id", "=", id)
+        .executeTakeFirstOrThrow()
+    ).id;
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/components/connector_template/${gh}/switch`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    expect(await templateConnectors(env, { itemId: id })).toEqual([]);
   });
 
   it("an org connector holding the template's slug does not block the install: the connector takes the next free slug", async () => {
@@ -1253,6 +1316,125 @@ describe("org plugin install: one kind per component", () => {
         dropped: false,
       },
     ]);
+  });
+});
+
+describe("a template connector's editable endpoint after install", () => {
+  const patch = (id: string, body: Record<string, unknown>, req = env.boss) =>
+    req({ method: "PATCH", url: `/api/v1/orgs/${env.orgId}/connectors/${id}`, payload: body });
+  const refreshes = async (id: string) =>
+    (
+      await env.db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "connector.tools_refreshed")
+        .where("target", "=", id)
+        .execute()
+    ).length;
+
+  it("an org admin changes an editable endpoint field: other paths and custom connectors are 400, the tools are listed again after the commit", async () => {
+    const id = await seedPlugin(env, {
+      name: "github",
+      skills: [],
+      templates: { gh: { endpoint: { url: `${env.mcp.url}?v=1` } } },
+    });
+    expect((await install(env.boss, env, id)).statusCode).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: id });
+    const cid = c?.id as string;
+    await configureConnector(env, cid);
+    const listedBefore = await refreshes(cid);
+    // a path the template does not let the org change
+    const fixed = await patch(cid, { endpoint: { headers: { "X-Tenant": "evil" } } });
+    expect(fixed.statusCode).toBe(400);
+    expect(fixed.json().error.details[0].path).toBe("endpoint.headers.X-Tenant");
+    // a member cannot
+    expect((await patch(cid, { endpoint: { url: env.mcp.url } }, env.mem)).statusCode).toBe(403);
+    // the listing waits for the commit: no request to the endpoint while the edit is written
+    const svc = env.k.app.get(ConnectorsService);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const original = svc.listToolsForJob.bind(svc);
+    const job = vi.spyOn(svc, "listToolsForJob").mockImplementation(async (d) => {
+      await gate;
+      return original(d);
+    });
+    const before = env.mcp.requests.length;
+    const ok = await patch(cid, { endpoint: { url: `${env.mcp.url}?v=2` } });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(env.mcp.requests.length).toBe(before);
+    const row = await env.db
+      .selectFrom("connectors")
+      .select("endpoint")
+      .where("id", "=", cid)
+      .executeTakeFirstOrThrow();
+    expect(row.endpoint).toMatchObject({ url: `${env.mcp.url}?v=2` });
+    release();
+    await waitFor(async () => (await refreshes(cid)) > listedBefore);
+    expect(job).toHaveBeenCalled();
+    // the audit names the changed paths only
+    const updated = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "connector.updated")
+      .where("target", "=", cid)
+      .executeTakeFirstOrThrow();
+    expect(updated.detail).toMatchObject({ endpoint: ["url"] });
+    expect(JSON.stringify(updated.detail)).not.toContain("v=2");
+    // a custom connector keeps its endpoint: 400
+    const own = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connectors`,
+      payload: {
+        name: "Mine",
+        connector: "fake",
+        endpoint: { url: env.mcp.url },
+        auth: { type: "bearer", ownership: "org" },
+        credential: { token: MCP_TOKEN },
+      },
+    });
+    expect(own.statusCode, own.body).toBe(201);
+    const custom = await patch(own.json().connector.id, { endpoint: { url: env.mcp.url } });
+    expect(custom.statusCode).toBe(400);
+    expect(custom.json().error.details[0].path).toBe("endpoint");
+  });
+
+  it("changing an OAuth connector's url clears its tokens and keeps a manual client", async () => {
+    const id = await seedPlugin(env, {
+      name: "code-mcp",
+      skills: [],
+      templates: {
+        gh: {
+          auth: {
+            type: "oauth_code",
+            ownership: "personal",
+            discovery: "manual",
+            authorizationUrl: "https://auth.example.com/authorize",
+            tokenUrl: "https://auth.example.com/token",
+            client: "manual",
+          },
+        },
+      },
+    });
+    expect((await install(env.boss, env, id)).statusCode).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: id });
+    const cid = c?.id as string;
+    await configureConnector(env, cid, { credential: { clientId: "c" }, tools: false });
+    const creds = env.k.app.get(Credentials);
+    const boss = { kind: "user", accountId: env.bossId } as const;
+    await creds.setOAuthTokens(env.orgId, cid, boss, {
+      access_token: MCP_TOKEN,
+      token_type: "bearer",
+      expires_at: null,
+    });
+    // the same url again changes nothing
+    expect((await patch(cid, { endpoint: { url: env.mcp.url } })).statusCode).toBe(200);
+    expect(await creds.oauthTokens(env.orgId, cid, boss)).not.toBeNull();
+    const r = await patch(cid, { endpoint: { url: `${env.mcp.url}?other=1` } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await creds.oauthTokens(env.orgId, cid, boss)).toBeNull();
+    expect(await creds.oauthClient(env.orgId, cid)).toMatchObject({ clientId: "c" });
   });
 });
 

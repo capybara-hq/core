@@ -272,10 +272,15 @@ export interface PluginReviewAgentTemplate {
   skills?: string[];
   /**
    * The connectors the agent needs, from its definition: a connector template id (`<id>` or
-   * `<plugin>:<id>`) or a described need's label; [] without any.
+   * `<plugin>:<id>`), or a described need with its label, endpoint and protocol; [] without any.
    */
-  connectors: string[];
+  connectors: PluginReviewAgentConnector[];
 }
+
+/** One connector an agent template needs, as its review shows it. */
+export type PluginReviewAgentConnector =
+  | { template: string }
+  | { needs: { label: string; endpoint: string; protocol: "mcp" | "openapi" } };
 
 /** One theme in a review (themes spec §6): what the super admin sees before confirming. */
 export interface PluginReviewTheme {
@@ -2301,7 +2306,18 @@ export class PluginImport {
         instructions,
         model: model ?? "inherit",
         ...rest,
-        connectors: (connectors ?? []).map((c) => ("template" in c ? c.template : c.needs.label)),
+        connectors: (connectors ?? []).map(
+          (c): PluginReviewAgentConnector =>
+            "template" in c
+              ? { template: c.template }
+              : {
+                  needs: {
+                    label: c.needs.label,
+                    endpoint: c.needs.endpoint,
+                    protocol: c.needs.protocol,
+                  },
+                },
+        ),
       };
     });
     // Themes: the file as written, the assets as sanitized by the reader (never the uploaded

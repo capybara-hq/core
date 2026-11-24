@@ -320,6 +320,25 @@ export class Credentials {
     await this.secrets().delete(orgId, keyOf(connectorId, owner));
   }
 
+  /**
+   * Deletes a connector's OAuth tokens (the org's and every member's), keeping its client: its
+   * endpoint changed, so tokens issued for the old one are not sent to the new one.
+   */
+  async clearOAuthTokens(orgId: string, connectorId: string): Promise<void> {
+    const users = userKey(connectorId, "x").slice(0, -1);
+    await this.db
+      .deleteFrom("secrets")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where((eb) => eb.or([eb("key", "=", orgKey(connectorId)), eb("key", "like", `${users}%`)]))
+      .execute();
+  }
+
+  /** Deletes a connector's OAuth client (a registered `dcr` one whose endpoint changed). */
+  async clearOAuthClient(orgId: string, connectorId: string): Promise<void> {
+    await this.secrets().delete(orgId, clientKey(connectorId));
+  }
+
   /** 删除某连接器的全部凭据（组织凭据与所有成员的个人凭据），连接器删除时调用。 */
   async clearConnector(orgId: string, connectorId: string): Promise<void> {
     const prefix = orgKey(connectorId).slice(0, -"org".length);

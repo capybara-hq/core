@@ -1741,9 +1741,14 @@ export interface PluginReviewAgentTemplate {
   effort?: string;
   maxSteps?: number;
   skills?: string[];
-  /** The connectors it needs: connector template ids (`<id>` / `<plugin>:<id>`) or need labels. */
-  connectors: string[];
+  /** The connectors it needs: a connector template id (`<id>` / `<plugin>:<id>`) or a described need. */
+  connectors: PluginReviewAgentConnector[];
 }
+
+/** One connector an agent template needs (kernel `PluginReviewAgentConnector`). */
+export type PluginReviewAgentConnector =
+  | { template: string }
+  | { needs: { label: string; endpoint: string; protocol: "mcp" | "openapi" } };
 
 /** Routes of the `http` group: member and admin (the kernel authenticates a person). */
 const signedIn = (access: string): boolean => access === "member" || access === "admin";

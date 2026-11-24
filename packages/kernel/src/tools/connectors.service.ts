@@ -61,6 +61,7 @@ import {
   type ToolIssue,
   toolIssue,
 } from "./drift.js";
+import { mergeEditableEndpoint } from "./editable-endpoint.js";
 import { endpointCredentialIssues, endpointView } from "./endpoint.js";
 import { deriveSlug, isValidSlug, SLUG_RULE } from "./naming.js";
 import {
@@ -344,6 +345,11 @@ export interface UpdateConnectorInput {
   useForGit?: boolean | undefined;
   /** The connector's own description; null or blank removes it. */
   description?: string | null | undefined;
+  /**
+   * Endpoint fields to change on a connector made from a connector template, only at the paths
+   * its current template lists in `editableEndpoint` (merged onto the stored endpoint).
+   */
+  endpoint?: Record<string, unknown> | undefined;
 }
 
 const notFound = () => new ApiError("connector.not_found", "Connector not found");
@@ -1606,7 +1612,11 @@ export class ConnectorsService {
     return this.detail(this.db, orgId, connectorId, viewerAccountId);
   }
 
-  /** 改名、启停连接器、工具启停与默认策略、批量把无注解工具改为 allow（`connectors.manage`）。 */
+  /**
+   * Renames, switches on or off, sets tool status and default policies, allows unannotated tools
+   * in bulk (`connectors.manage`), and changes the editable endpoint fields of a template connector
+   * ({@link endpointChange}).
+   */
   @Transactional()
   async update(
     orgId: string,
@@ -1683,6 +1693,8 @@ export class ConnectorsService {
     if (problems.length > 0) {
       throw new ApiError("validation_failed", "Request validation failed", problems);
     }
+    const ep =
+      patch.endpoint !== undefined ? await this.endpointChange(t, app, patch.endpoint) : undefined;
 
     const gitChanged = patch.useForGit !== undefined && patch.useForGit !== app.use_for_git;
     const description =
@@ -1692,7 +1704,8 @@ export class ConnectorsService {
       patch.name !== undefined ||
       patch.status !== undefined ||
       gitChanged ||
-      descriptionChanged
+      descriptionChanged ||
+      ep !== undefined
     ) {
       await t
         .updateTable("connectors")
@@ -1706,6 +1719,7 @@ export class ConnectorsService {
           }),
           ...(gitChanged && { use_for_git: patch.useForGit === true }),
           ...(descriptionChanged && { description }),
+          ...(ep !== undefined && { endpoint: JSON.stringify(ep.endpoint) }),
           updated_at: sql`now()`,
         })
         .where("id", "=", connectorId)
@@ -1762,9 +1776,77 @@ export class ConnectorsService {
         ...(descriptionChanged && { description: { from: app.description, to: description } }),
         ...(toolChanges.length > 0 && { tools: Object.fromEntries(toolChanges) }),
         ...(allowed.length > 0 && { allowedUnannotated: allowed }),
+        // the changed paths, never their values (a header may carry a tenant key)
+        ...(ep !== undefined && { endpoint: ep.changed }),
       },
     });
+    if (ep !== undefined) {
+      // tokens issued for another url are never sent to the new one; a client registered there
+      // (`dcr`) goes too, a manual client and static credentials stay
+      if (ep.urlChanged && isOAuth(appAuth)) {
+        await this.credentials.clearOAuthTokens(orgId, connectorId);
+        if (appAuth.type === "oauth_code" && appAuth.client === "dcr") {
+          await this.credentials.clearOAuthClient(orgId, connectorId);
+        }
+      }
+      // the tools of the new endpoint: listed after the commit (no outbound call here)
+      const personal = appAuth.type !== "none" && appAuth.ownership === "personal";
+      if (!personal && (await this.setupOf(orgId, app)) === "ready") {
+        await this.oweToolList(orgId, connectorId, "endpoint_changed");
+      }
+    }
     return this.detail(t, orgId, connectorId, actorAccountId);
+  }
+
+  /**
+   * The endpoint a PATCH makes (under the org lock, the row locked): only a connector made from a
+   * live platform connector template (else 400 at `endpoint`), only the paths that template's
+   * current `editableEndpoint` lists (`mergeEditableEndpoint`, onto the stored endpoint), checked
+   * again as at create (the connector's `endpointSchema`, no credential in the endpoint, a URL for
+   * MCP discovery). Its URL policy is the connection's (`net`), applied when the tools are listed.
+   * Undefined when nothing changes.
+   */
+  private async endpointChange(
+    t: KernelSchemaDb,
+    app: Awaited<ReturnType<ConnectorsService["row"]>>,
+    given: Record<string, unknown>,
+  ): Promise<{ endpoint: unknown; changed: string[]; urlChanged: boolean } | undefined> {
+    const template =
+      app.platform_template_id === null
+        ? undefined
+        : await t
+            .selectFrom("platform_connector_templates")
+            .select("file")
+            .where("id", "=", app.platform_template_id)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst();
+    if (template === undefined) {
+      throw fail(
+        "endpoint",
+        "Only a connector made from a connector template has editable endpoint fields; create a new connector for another endpoint",
+      );
+    }
+    const file = template.file as { template?: { editableEndpoint?: string[] } };
+    const merged = mergeEditableEndpoint(
+      app.endpoint,
+      file.template?.editableEndpoint ?? [],
+      given,
+      "",
+    );
+    const endpoint = this.parseEndpoint(app.connector, merged.endpoint);
+    const auth = app.auth as unknown as ConnectorAuth;
+    if (auth.type === "oauth_code" && auth.discovery === "mcp") {
+      if (!isObj(endpoint) || typeof endpoint.url !== "string") {
+        throw fail("endpoint.url", "MCP OAuth discovery needs an endpoint URL");
+      }
+    }
+    if (JSON.stringify(endpoint) === JSON.stringify(app.endpoint)) return undefined;
+    const urlOf = (e: unknown) => (isObj(e) ? e.url : undefined);
+    return {
+      endpoint,
+      changed: merged.changed,
+      urlChanged: urlOf(endpoint) !== urlOf(app.endpoint),
+    };
   }
 
   /**
@@ -2471,7 +2553,8 @@ export class ConnectorsService {
         const again = await this.credentials.oauthClient(orgId, connectorId);
         if (again) return again;
         const { client } = await this.prepareOAuth(auth, app.endpoint, undefined, publicUrl);
-        return this.storeRegisteredClientIn(orgId, connectorId, accountId, client);
+        const discovered = isObj(app.endpoint) ? app.endpoint.url : undefined;
+        return this.storeRegisteredClientIn(orgId, connectorId, accountId, client, discovered);
       },
     );
   }
@@ -2479,7 +2562,8 @@ export class ConnectorsService {
   /**
    * The org-locked write of {@link clientForConnect}: the first stored client wins. Re-checked
    * under the row lock: a connector whose auth stopped being `oauth_code` with `client: "dcr"`
-   * meanwhile (a template update) stores nothing and gets null.
+   * meanwhile (a template update), or whose endpoint URL is no longer the one `discoveredAt`
+   * registered with (an admin's edit), stores nothing and gets null.
    */
   @Transactional()
   private async storeRegisteredClientIn(
@@ -2487,6 +2571,7 @@ export class ConnectorsService {
     connectorId: string,
     accountId: string,
     client: OAuthClientRecord,
+    discoveredAt: unknown,
   ): Promise<OAuthClientRecord | null> {
     await this.orgLock.lock(orgId);
     const locked = await this.row(this.db, orgId, connectorId, true);
@@ -2494,6 +2579,7 @@ export class ConnectorsService {
     if (stored) return stored;
     const auth = locked.auth as unknown as ConnectorAuth;
     if (auth.type !== "oauth_code" || auth.client !== "dcr") return null;
+    if ((isObj(locked.endpoint) ? locked.endpoint.url : undefined) !== discoveredAt) return null;
     await this.credentials.setOAuthClient(orgId, connectorId, client);
     await audit(this.db, {
       actorAccountId: accountId,

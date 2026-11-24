@@ -533,6 +533,10 @@ const personalWithoutCredential = (ci: CreateConnectorInput): boolean =>
   ci.auth.ownership !== "org" &&
   ci.credential === undefined;
 
+/** An authorization-code connector whose client is registered dynamically. */
+const isDcr = (ci: CreateConnectorInput): boolean =>
+  ci.auth.type === "oauth_code" && ci.auth.client === "dcr";
+
 /** `e` with its validation paths under `at` (input errors of a template's connector). */
 export function under(e: unknown, at: string): unknown {
   if (!(e instanceof ApiError) || e.code !== "validation_failed" || !Array.isArray(e.details)) {
@@ -2258,8 +2262,9 @@ export class PluginInstaller {
    * by the create under the org lock after its outbound calls (`CreateConnectorInput.slugDefault`);
    * only a given slug answers 409 `connector.slug_taken`. As on the connectors page's own create,
    * the org credential or OAuth client the template needs is required; a personal static template
-   * given no credential is created ready without one (`createDeferredIn`, its members connect
-   * their own). Otherwise created by `ConnectorsService.create`, which lists the tools, checks the
+   * given no credential is created ready without one, and a `dcr` one without a client
+   * (`createDeferredIn`: its members connect their own, the client registers on the first
+   * connect). Otherwise created by `ConnectorsService.create`, which lists the tools, checks the
    * slug before any outbound call and re-checks it, `connectors.manage`, the item and the
    * template being on under the org lock. Linked to the
    * template, and recorded on the plugin's live install in the org when there is one. A template
@@ -2367,8 +2372,9 @@ export class PluginInstaller {
     };
     try {
       // a personal static template without the creator's own credential: created ready with no
-      // credential and no tool list, its members connect their own (plugin pages spec §5.2.1)
-      if (personalWithoutCredential(ci)) {
+      // credential and no tool list, its members connect their own (plugin pages spec §5.2.1); a
+      // dcr template registers its client on the first connect, as an install's (ruling R16)
+      if (personalWithoutCredential(ci) || isDcr(ci)) {
         const id = await this.connectors.createDeferredIn(orgId, actor, ci, opts);
         await this.recordOnLiveInstall(orgId, row.catalog_item_id, id, ct.id);
         return { connector: await this.connectors.get(orgId, id, actor), issues: [] };
@@ -2379,6 +2385,57 @@ export class PluginInstaller {
     } catch (e) {
       throw rebase(e);
     }
+  }
+
+  /**
+   * The connector of a platform connector template an org admin just switched on (plugin pages
+   * spec §5.2.2: a template switched on later creates its connector under the install rule), in
+   * the switch's transaction: only where the org has the template's plugin installed and no live
+   * connector from the template yet (one a switch-off kept is reused, left as it is). Created like
+   * an install's ({@link planConnector}, `createDeferredIn`: no outbound call, `needs_config` when
+   * it needs an org credential or OAuth client) and recorded on the install. Returns its id, or
+   * undefined when none was created.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async createSwitchedOnTemplateConnectorIn(
+    orgId: string,
+    actor: string,
+    platformTemplateId: string,
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail } = {},
+  ): Promise<string | undefined> {
+    const row = await this.db
+      .selectFrom("platform_connector_templates as t")
+      .innerJoin("plugin_installs as a", (j) =>
+        j
+          .onRef("a.item_id", "=", "t.catalog_item_id")
+          .on("a.org_id", "=", orgId)
+          .on("a.status", "=", "installed"),
+      )
+      .select(["t.template_id", "t.catalog_item_id", "t.file", "a.id as install_id", "a.version"])
+      .where("t.id", "=", platformTemplateId)
+      .where("t.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (row?.catalog_item_id == null) return undefined;
+    const itemId = row.catalog_item_id;
+    if ((await this.liveTemplateConnector(orgId, itemId, row.template_id)) !== undefined) {
+      return undefined;
+    }
+    const ct = { id: row.template_id, file: row.file as ConnectorTemplateFile };
+    const ci = this.planConnector(actor, { itemId, version: row.version }, ct, "", undefined);
+    const connectorId = await this.connectors.createDeferredIn(orgId, actor, ci, opts);
+    await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: row.install_id,
+        kind: "connector",
+        ref: connectorId,
+        created: true,
+        skill_version: null,
+        template_id: ct.id,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
+    return connectorId;
   }
 
   /**

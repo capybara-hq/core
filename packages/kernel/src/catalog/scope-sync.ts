@@ -49,10 +49,11 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * every scope (an org that switched an `all` item off stays off, also across a scope change away
  * and back, layering spec §4). Builtin items are left alone: they are on everywhere without an org
  * install, and their extension is enabled in every org by `enabled.ts` (required or not). A
- * failed install, uninstall or dependency install is logged, audited
- * `plugin.scope_sync_failed`, kept as the pair's open failure (`plugin_scope_sync_failures`, the
- * super admin's inbox, until a later sync of the pair does not fail) and not retried until the next
- * sync of the item. An error outside those steps (a read, the failure write itself) ends the attempt
+ * failed install, uninstall or dependency install is logged, audited `plugin.scope_sync_failed`
+ * (once while the same failure stays open), kept as the pair's open failure
+ * (`plugin_scope_sync_failures`, the super admin's inbox, until a later sync of the pair does not
+ * fail) and not retried until the next sync of the item (syncs follow owing transactions, never a
+ * timer). An error outside those steps (a read, the failure write itself) ends the attempt
  * without touching the pair's row, so an older failure stays open.
  *
  * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}), all owed through the outbox (transactional outbox spec
@@ -518,13 +519,24 @@ export class PluginScopeSync {
     code: string,
     message: string,
   ): Promise<void> {
-    await audit(this.db, {
-      actorAccountId: null,
-      orgId,
-      action: "plugin.scope_sync_failed",
-      target: itemId,
-      detail: { via: "scope", op, code, message },
-    });
+    // The same failure again (the pair's open one: an org whose connector kind stays unavailable,
+    // synced by every later owing of the item) refreshes its time without another audit row
+    const open = await this.db
+      .selectFrom("plugin_scope_sync_failures")
+      .select(["op", "code", "message"])
+      .where("item_id", "=", itemId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (open?.op !== op || open.code !== code || open.message !== message) {
+      await audit(this.db, {
+        actorAccountId: null,
+        orgId,
+        action: "plugin.scope_sync_failed",
+        target: itemId,
+        detail: { via: "scope", op, code, message },
+      });
+    }
     const failure = { op, code, message, failed_at: new Date() };
     await this.db
       .insertInto("plugin_scope_sync_failures")
