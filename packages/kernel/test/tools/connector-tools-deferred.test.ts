@@ -201,6 +201,13 @@ describe("createDeferredIn", () => {
     });
     expect(rows[0]?.job_id).toMatch(new RegExp(`^connector-tools-${id}-created-\\d+$`));
     expect(rows[0]?.job_id).not.toContain(":");
+    // the suffix is the owing transaction's id (an earlier one than a later transaction's)
+    const owing = BigInt(rows[0]?.job_id.split("-").at(-1) as string);
+    const { rows: later } = await sql<{
+      xact: string;
+    }>`SELECT pg_current_xact_id()::text AS xact`.execute(k.app.get(KernelDb).pool);
+    const now = BigInt(later[0]?.xact as string);
+    expect(owing < now && now - owing < 100_000n).toBe(true);
     expect(await queue().getJob(rows[0]?.job_id as string)).toBeUndefined();
 
     await deliver();

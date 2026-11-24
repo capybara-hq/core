@@ -61,7 +61,7 @@ import {
   type ToolIssue,
   toolIssue,
 } from "./drift.js";
-import { mergeEditableEndpoint } from "./editable-endpoint.js";
+import { destinationChanged, mergeEditableEndpoint } from "./editable-endpoint.js";
 import { endpointCredentialIssues, endpointView } from "./endpoint.js";
 import { deriveSlug, isValidSlug, SLUG_RULE } from "./naming.js";
 import {
@@ -1027,14 +1027,16 @@ export class ConnectorsService {
     trigger: ConnectorToolsTrigger,
     accountId?: string,
   ): Promise<void> {
-    // the transaction's start time: one id per owing transaction
+    // the owing transaction's id: one job per owing transaction
     const { rows } = await sql<{
-      seq: string;
-    }>`SELECT (extract(epoch FROM now()) * 1000)::bigint::text AS seq`.execute(this.db);
+      xact: string;
+    }>`SELECT pg_current_xact_id()::text AS xact`.execute(this.db);
+    const xact = rows[0]?.xact;
+    if (xact === undefined) throw new Error("no transaction id");
     await this.outbox.add<ConnectorToolsJobData>({
       queue: CONNECTOR_TOOLS_QUEUE,
       name: CONNECTOR_TOOLS_JOB,
-      jobId: connectorToolsJobId(connectorId, trigger, rows[0]?.seq ?? "0", accountId),
+      jobId: connectorToolsJobId(connectorId, trigger, xact, accountId),
       data: { orgId, connectorId, ...(accountId !== undefined && { accountId }) },
       orgId,
     });
@@ -1788,6 +1790,28 @@ export class ConnectorsService {
         .where("name", "=", name)
         .execute();
     }
+    // tokens issued for another destination, and members' own static credentials, are never sent
+    // to the new one (members connect again); a client registered there (`dcr`) or whose endpoints
+    // MCP discovery found there goes too (the admin saves a manual one again, discovered at the new
+    // url); a manual client with fixed endpoints and the org's static credential stay (the admin
+    // chose the new destination)
+    const cleared: ("tokens" | "member" | "client")[] = [];
+    if (ep?.destinationChanged) {
+      if (isOAuth(appAuth)) {
+        await this.credentials.clearOAuthTokens(orgId, connectorId);
+        cleared.push("tokens");
+        if (
+          appAuth.type === "oauth_code" &&
+          (appAuth.client === "dcr" || appAuth.discovery === "mcp")
+        ) {
+          await this.credentials.clearOAuthClient(orgId, connectorId);
+          cleared.push("client");
+        }
+      } else if (appAuth.type !== "none" && appAuth.ownership === "personal") {
+        await this.credentials.clearMemberCredentials(orgId, connectorId);
+        cleared.push("member");
+      }
+    }
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1804,20 +1828,11 @@ export class ConnectorsService {
         ...(allowed.length > 0 && { allowedUnannotated: allowed }),
         // the changed paths, never their values (a header may carry a tenant key)
         ...(ep !== undefined && { endpoint: ep.changed }),
+        // which credentials a destination change cleared, by name
+        ...(cleared.length > 0 && { credentialsCleared: cleared }),
       },
     });
     if (ep !== undefined) {
-      // tokens issued for another url, and members' own static credentials, are never sent to the
-      // new one (members connect again); a client registered there (`dcr`) goes too, a manual
-      // client and the org's static credential stay (the admin chose the new url)
-      if (ep.urlChanged && isOAuth(appAuth)) {
-        await this.credentials.clearOAuthTokens(orgId, connectorId);
-        if (appAuth.type === "oauth_code" && appAuth.client === "dcr") {
-          await this.credentials.clearOAuthClient(orgId, connectorId);
-        }
-      } else if (ep.urlChanged && appAuth.type !== "none" && appAuth.ownership === "personal") {
-        await this.credentials.clearMemberCredentials(orgId, connectorId);
-      }
       // the tools of the new endpoint: listed after the commit (no outbound call here)
       const personal = appAuth.type !== "none" && appAuth.ownership === "personal";
       if (!personal && (await this.setupOf(orgId, app)) === "ready") {
@@ -1839,7 +1854,7 @@ export class ConnectorsService {
     t: KernelSchemaDb,
     app: Awaited<ReturnType<ConnectorsService["row"]>>,
     given: Record<string, unknown>,
-  ): Promise<{ endpoint: unknown; changed: string[]; urlChanged: boolean } | undefined> {
+  ): Promise<{ endpoint: unknown; changed: string[]; destinationChanged: boolean } | undefined> {
     const template =
       app.platform_template_id === null
         ? undefined
@@ -1870,11 +1885,10 @@ export class ConnectorsService {
       }
     }
     if (JSON.stringify(endpoint) === JSON.stringify(app.endpoint)) return undefined;
-    const urlOf = (e: unknown) => (isObj(e) ? e.url : undefined);
     return {
       endpoint,
       changed: merged.changed,
-      urlChanged: urlOf(endpoint) !== urlOf(app.endpoint),
+      destinationChanged: destinationChanged(app.endpoint, endpoint),
     };
   }
 

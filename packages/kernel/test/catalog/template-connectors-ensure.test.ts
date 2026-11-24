@@ -186,6 +186,19 @@ describe("ensureTemplateConnectorsIn", () => {
     expect(await templateConnectors(itemId)).toHaveLength(1);
   });
 
+  it("a scope sync that installs no dependency runs no ensure", async () => {
+    const itemId = await seedPlugin(env, { name: "crm", skills: [] });
+    await seedInstalled(itemId);
+    await setScope(env, itemId, "all");
+    const spy = vi.spyOn(ensurer(), "ensureTemplateConnectorsIn");
+    try {
+      await syncItemNow(env, itemId);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("skips a template switched off in the org and one shipped default-off", async () => {
     const itemId = await seedPlugin(env, {
       name: "crm",

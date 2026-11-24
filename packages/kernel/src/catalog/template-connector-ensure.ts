@@ -107,7 +107,6 @@ export class TemplateConnectorEnsurer {
     const loaded = new Set(this.installer.loadedConnectors().map((c) => c.plugin));
     if (loaded.size === 0) return { orgs: 0, created: 0 };
     const rows = await this.missingQuery(undefined, undefined)
-      .innerJoin("catalog_items as i", "i.id", "a.item_id")
       .where(sql<string>`t.file->'template'->>'plugin'`, "in", [...loaded])
       .where("t.disabled", "=", false)
       .where(({ not, exists, selectFrom }) =>
@@ -125,7 +124,6 @@ export class TemplateConnectorEnsurer {
       .where(({ or, eb, exists, selectFrom }) =>
         or([
           eb(sql<string>`coalesce(t.file->>'defaultEnabled', 'true')`, "<>", "false"),
-          eb("i.builtin", "=", true),
           exists(
             selectFrom("component_org_switches as s")
               .select("s.component_id")

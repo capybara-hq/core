@@ -75,3 +75,25 @@ export function mergeEditableEndpoint(
   }
   return { endpoint, changed: leaves };
 }
+
+/**
+ * Endpoint fields whose change leaves requests going to the same place (top-level keys; their
+ * sub-paths too). Any other changed field may move the destination.
+ */
+const SAME_DESTINATION_FIELDS: ReadonlySet<string> = new Set(["headers"]);
+
+/**
+ * Whether going from endpoint `before` to `after` may send requests somewhere else: any leaf that
+ * differs outside {@link SAME_DESTINATION_FIELDS} (a URL, a base URL, a region, a tenant host, …).
+ * Credentials held for `before` are then never sent to `after`.
+ */
+export function destinationChanged(before: unknown, after: unknown): boolean {
+  const a = isObj(before) ? before : {};
+  const b = isObj(after) ? after : {};
+  const paths = new Set([...leafPaths(a), ...leafPaths(b)]);
+  for (const p of paths) {
+    if (SAME_DESTINATION_FIELDS.has(p.split(".")[0] as string)) continue;
+    if (JSON.stringify(getPath(a, p)) !== JSON.stringify(getPath(b, p))) return true;
+  }
+  return false;
+}

@@ -36,19 +36,19 @@ export interface ConnectorToolsJobData {
 }
 
 /**
- * `connector-tools-<connectorId>-<trigger>[-<accountId>]-<seq>`: `seq` is the owing transaction's
- * start time in milliseconds (`now()` in PG), so each owing has its own id and the same owing is
- * one job; a `connected` owing names the member, so two members connecting in the same
- * millisecond owe two jobs (one id with different data would be refused). Connector and account
- * ids are UUIDs: the id has no `:`.
+ * `connector-tools-<connectorId>-<trigger>[-<accountId>]-<xact>`: `xact` is the owing
+ * transaction's id (`pg_current_xact_id()`), so two owings in one transaction are one job and a
+ * later transaction's job is never swallowed by an earlier one; a `connected` owing names the
+ * member (one id with different data would be refused). Connector and account ids are UUIDs and
+ * `xact` is a number: the id has no `:`.
  */
 export const connectorToolsJobId = (
   connectorId: string,
   trigger: ConnectorToolsTrigger,
-  seq: string,
+  xact: string,
   accountId?: string,
 ): string =>
-  `connector-tools-${connectorId}-${trigger}${accountId === undefined ? "" : `-${accountId}`}-${seq}`;
+  `connector-tools-${connectorId}-${trigger}${accountId === undefined ? "" : `-${accountId}`}-${xact}`;
 
 const CONNECTOR_TOOLS_QUEUE_REGISTRATION = QueueModule.registerQueue(CONNECTOR_TOOLS_QUEUE);
 

@@ -15,6 +15,8 @@ replicas) catches what none of these re-trigger, such as a kind loaded after the
 up or an always-on connector extension. A connector an admin deleted is never made again. During a rolling
 upgrade, replicas of the previous version neither owe nor consume these jobs: the startup pass of
 the first upgraded replica covers what was waiting, and jobs owed meanwhile wait in the outbox until
-an upgraded worker takes them. The health overview lists the new queue ("Template connectors" /
+an upgraded worker takes them. The first start after this release runs that reconciliation pass inside
+the start sequence, before the replica reports ready: on a large deployment (many orgs with
+installed plugins that have connector templates) that first start takes longer. The health overview lists the new queue ("Template connectors" /
 连接器模板补建). The dual-replica harness takes `beforeStart` to seed the fresh database before the
 replicas start.

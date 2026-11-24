@@ -137,7 +137,7 @@ export class OAuthFlow {
     if (!client?.authorizationEndpoint) {
       throw new ApiError(
         "connector.connect_failed",
-        "The connector has no registered OAuth client; ask an administrator to reinstall it",
+        "This connector needs to be configured by an organization admin before members can connect it.",
       );
     }
     const state = b64url();

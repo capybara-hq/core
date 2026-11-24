@@ -46,6 +46,7 @@ import { z } from "zod";
  *   `_meta["fake/route"]` (the name of the remote tool that serves it) or else its name; `callTool`
  *   calls the route of `ctx.spec.connectorData` when the kernel passes it, so a route change
  *   without a rename is a definition drift and calls keep the reviewed route until approval;
+ * - the endpoint's optional `apiUrl` is a second URL the connector ignores;
  * - the endpoint's optional `notesText` is free-form text the connector ignores (a `*Text` field
  *   the kernel summarizes in connector views instead of echoing it);
  * - the URL-mode elicitation error `-32042` goes through `onElicit` (each step accepted -> one
@@ -113,6 +114,14 @@ export function fakeEndpointSchema() {
       }),
       /** Free-form text the connector ignores (large-endpoint tests). */
       notesText: z.string().optional(),
+      /**
+       * A second URL the connector ignores: a destination field other than `url` (as an OpenAPI
+       * base URL), for tests of endpoint edits that move where requests go.
+       */
+      apiUrl: z
+        .url()
+        .refine(urlAllowed, { message: "URL must use http or https" })
+        .optional(),
       headers: z
         .record(z.string(), z.string())
         .default({})

@@ -375,12 +375,13 @@ export class PluginScopeSync {
         // A platform update may have added dependencies: installed here (rule 9, Task 7)
         if (live.status === "installed") {
           try {
-            await this.installer.addMissingDependencies(orgId, live.id);
             // a dependency just installed may provide the connector kind of a template the org
-            // never got a connector from (ruling R27)
-            await this.templateConnectors.ensureTemplateConnectorsIn(orgId, undefined, {
-              via: "scope",
-            });
+            // never got a connector from (ruling R27); nothing installed, nothing new to provide
+            if ((await this.installer.addMissingDependencies(orgId, live.id)) > 0) {
+              await this.templateConnectors.ensureTemplateConnectorsIn(orgId, undefined, {
+                via: "scope",
+              });
+            }
           } catch (e) {
             await this.failed(orgId, itemId, "dependencies", e, attempt);
           }

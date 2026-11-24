@@ -1449,7 +1449,19 @@ describe("a template connector's editable endpoint after install", () => {
     expect(orgView.json().connector.credential).toEqual({ ownership: "org", status: "connected" });
   });
 
-  it("changing an OAuth connector's url clears its tokens and keeps a manual client", async () => {
+  /** The `credentialsCleared` of the latest `connector.updated` audit of a connector. */
+  const clearedAudit = async (id: string) => {
+    const rows = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "connector.updated")
+      .where("target", "=", id)
+      .orderBy("id", "desc")
+      .execute();
+    return (rows[0]?.detail as { credentialsCleared?: string[] } | undefined)?.credentialsCleared;
+  };
+
+  it("changing an OAuth connector's url clears its tokens; a manual client with fixed endpoints stays, one discovered at the old url goes (needs_config)", async () => {
     const id = await seedPlugin(env, {
       name: "code-mcp",
       skills: [],
@@ -1464,11 +1476,17 @@ describe("a template connector's editable endpoint after install", () => {
             client: "manual",
           },
         },
+        found: {
+          auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "manual" },
+        },
       },
     });
     expect((await install(env.boss, env, id)).statusCode).toBe(201);
-    const [c] = await templateConnectors(env, { itemId: id });
-    const cid = c?.id as string;
+    const made = new Map(
+      (await templateConnectors(env, { itemId: id })).map((c) => [c.templateId, c.id]),
+    );
+    const cid = made.get("gh") as string;
+    const found = made.get("found") as string;
     await configureConnector(env, cid, { credential: { clientId: "c" }, tools: false });
     const creds = env.k.app.get(Credentials);
     const boss = { kind: "user", accountId: env.bossId } as const;
@@ -1484,6 +1502,101 @@ describe("a template connector's editable endpoint after install", () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(await creds.oauthTokens(env.orgId, cid, boss)).toBeNull();
     expect(await creds.oauthClient(env.orgId, cid)).toMatchObject({ clientId: "c" });
+    expect(await clearedAudit(cid)).toEqual(["tokens"]);
+    // a manual client whose endpoints MCP discovery found at the old url: the admin saves it again
+    // (discovered at the new url)
+    await creds.setOAuthClient(env.orgId, found, {
+      clientId: "d",
+      authMethod: "none",
+      authorizationEndpoint: "https://old.example.com/authorize",
+      tokenEndpoint: "https://old.example.com/token",
+      resource: env.mcp.url,
+    });
+    await creds.setOAuthTokens(env.orgId, found, boss, {
+      access_token: MCP_TOKEN,
+      token_type: "bearer",
+      expires_at: null,
+    });
+    expect((await connectorView(found)).setup).toBe("ready");
+    const moved = await patch(found, { endpoint: { url: `${env.mcp.url}?moved=1` } });
+    expect(moved.statusCode, moved.body).toBe(200);
+    expect(await creds.oauthClient(env.orgId, found)).toBeNull();
+    expect(await creds.oauthTokens(env.orgId, found, boss)).toBeNull();
+    expect((await connectorView(found)).setup).toBe("needs_config");
+    expect(await clearedAudit(found)).toEqual(["tokens", "client"]);
+    // a member's connect says who can fix it
+    const connect = await env.mem({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${found}/connect`,
+      payload: {},
+    });
+    expect(connect.json().error).toMatchObject({ code: "connector.connect_failed" });
+    expect(connect.json().error.message).toContain("organization admin");
+  });
+
+  it("a change to any editable endpoint field but headers moves the destination: tokens and members' own credentials are cleared; a headers-only change keeps them", async () => {
+    const editable = { editableEndpoint: ["url", "apiUrl", "headers"] };
+    const endpoint = { url: env.mcp.url, apiUrl: "https://api.example.com/v1" };
+    const id = await seedPlugin(env, {
+      name: "github",
+      skills: [],
+      templates: {
+        pat: { ...editable, endpoint, auth: { type: "bearer", ownership: "personal" } },
+        oauth: {
+          ...editable,
+          endpoint,
+          auth: {
+            type: "oauth_code",
+            ownership: "personal",
+            discovery: "manual",
+            authorizationUrl: "https://auth.example.com/authorize",
+            tokenUrl: "https://auth.example.com/token",
+            client: "manual",
+          },
+        },
+      },
+    });
+    expect((await install(env.boss, env, id)).statusCode).toBe(201);
+    const made = new Map(
+      (await templateConnectors(env, { itemId: id })).map((c) => [c.templateId, c.id]),
+    );
+    const pat = made.get("pat") as string;
+    const oauth = made.get("oauth") as string;
+    const mine = await env.mem({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${pat}/credentials/me`,
+      payload: { token: MCP_TOKEN },
+    });
+    expect(mine.statusCode, mine.body).toBe(204);
+    await configureConnector(env, oauth, { credential: { clientId: "c" }, tools: false });
+    const creds = env.k.app.get(Credentials);
+    const member = { kind: "user", accountId: env.memId } as const;
+    await creds.setOAuthTokens(env.orgId, oauth, member, {
+      access_token: MCP_TOKEN,
+      token_type: "bearer",
+      expires_at: null,
+    });
+    const memberView = async () =>
+      (await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors/${pat}` })).json()
+        .connector;
+    // headers only: the same destination, nothing cleared
+    for (const c of [pat, oauth]) {
+      const h = await patch(c, { endpoint: { headers: { "X-Tenant": "acme" } } });
+      expect(h.statusCode, h.body).toBe(200);
+      expect(await clearedAudit(c)).toBeUndefined();
+    }
+    expect((await memberView()).credential).toEqual({ ownership: "personal", status: "connected" });
+    expect(await creds.oauthTokens(env.orgId, oauth, member)).not.toBeNull();
+    // another URL-valued field: the destination moved
+    for (const c of [pat, oauth]) {
+      const m = await patch(c, { endpoint: { apiUrl: "https://elsewhere.example.com/v1" } });
+      expect(m.statusCode, m.body).toBe(200);
+    }
+    expect((await memberView()).credential).toEqual({ ownership: "personal", status: "missing" });
+    expect(await creds.oauthTokens(env.orgId, oauth, member)).toBeNull();
+    expect(await creds.oauthClient(env.orgId, oauth)).toMatchObject({ clientId: "c" });
+    expect(await clearedAudit(pat)).toEqual(["member"]);
+    expect(await clearedAudit(oauth)).toEqual(["tokens"]);
   });
 });
 
