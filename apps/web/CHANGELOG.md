@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.111
+
+### Patch Changes
+
+- 029bf7c: Bundle the development web server with Turbopack again (first visits of a route compile in well
+  under a second instead of several seconds); `CAPYBARA_WEB_WEBPACK=1` falls back to webpack.
+
 ## 0.1.0-rc.110
 
 ### Patch Changes
