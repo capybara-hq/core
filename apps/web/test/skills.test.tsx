@@ -153,7 +153,7 @@ describe("技能库列表（ListPage）", () => {
     // 打开一行 → 详情页
   });
 
-  it("a plugin filter narrows the rows to one plugin's skills or the org's own", async () => {
+  it("the plugin filter is a scope Segmented up to 5 options and shows skills as cards", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(200, {
@@ -165,20 +165,42 @@ describe("技能库列表（ListPage）", () => {
           ],
         }),
     });
-    await renderSkills({ locale: "zh" });
+    const { container } = await renderSkills({ locale: "zh" });
     const list = await screen.findByRole("list", { name: zh.skills.listLabel });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(4);
-    const filter = screen.getByRole("combobox", { name: zh.skills.filters.plugin });
+    expect(list.getAttribute("data-part")).toBe("card-grid");
+    expect(container.querySelectorAll('[data-part="object-card"]')).toHaveLength(4);
+    expect(container.querySelector('[data-part="object-card-avatar"]')).not.toBeNull();
+    expect(container.querySelector('[data-part="object-card-foot"]')).not.toBeNull();
+    const filter = screen.getByRole("radiogroup", { name: zh.skills.filters.plugin });
+    expect(screen.queryByRole("combobox", { name: zh.skills.filters.plugin })).toBeNull();
     const user = userEvent.setup();
-    await pickOption(filter, "superpowers", user);
+    await user.click(within(filter).getByRole("radio", { name: "superpowers" }));
     expect(
       within(list)
         .getAllByRole("listitem")
         .map((r) => r.textContent),
     ).toEqual([expect.stringContaining("brainstorming"), expect.stringContaining("writing-plans")]);
-    await pickOption(filter, zh.skills.filters.noPlugin, user);
+    await user.click(within(filter).getByRole("radio", { name: zh.skills.filters.noPlugin }));
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
     expect(within(list).getByText("pdf-tools")).toBeTruthy();
+  });
+
+  it("with 6 plugins the filter is one searchable Select", async () => {
+    const names = ["a", "b", "c", "d", "e", "f"];
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(200, {
+          skills: names.map((n, i) => skill(`s${i}`, `skill-${n}`, { plugin: `plug-${n}` })),
+        }),
+    });
+    await renderSkills({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: zh.skills.listLabel });
+    expect(screen.queryByRole("radiogroup", { name: zh.skills.filters.plugin })).toBeNull();
+    const filter = screen.getByRole("combobox", { name: zh.skills.filters.plugin });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(6);
+    await pickOption(filter, "plug-c", userEvent.setup());
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText("skill-c")).toBeTruthy();
   });
 
   it("成员只能查看：没有上传入口", async () => {
