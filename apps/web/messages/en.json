@@ -283,7 +283,7 @@
       "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact a super admin.",
       "connector_removed": "The connector this install was going to take back was removed during the switch-on. Try again.",
       "icon_not_found": "No icon.",
-      "invalid_manifest": "The plugin package is invalid:",
+      "invalid_manifest": "The plugin package is invalid.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
       "dependency_unresolved": "A plugin this one depends on is not on the platform at a matching version. Ask the super admin to install it first.",
       "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",

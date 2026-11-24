@@ -1330,7 +1330,13 @@ describe("/admin/plugins/import (WizardPage)", () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
       "POST /api/v1/admin/catalog/import/file": () =>
-        json(422, { error: { code: "catalog.invalid_manifest", message: "x" } }),
+        json(422, {
+          error: {
+            code: "catalog.invalid_manifest",
+            message: "x",
+            details: ["missing .capybara-plugin/plugin.json"],
+          },
+        }),
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
@@ -1341,6 +1347,9 @@ describe("/admin/plugins/import (WizardPage)", () => {
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
     expect(await screen.findByText(`${en.errors.catalog.invalid_manifest}`)).toBeTruthy();
+    expect(screen.getByText("missing .capybara-plugin/plugin.json")).toBeTruthy();
+    // no detail follows, so the message is a full sentence rather than ending in a colon
+    expect(en.errors.catalog.invalid_manifest.endsWith(".")).toBe(true);
   });
 });
 
@@ -3852,6 +3861,33 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     );
     expect(await screen.findByText(`${en.errors.marketplace.redirect}`)).toBeTruthy();
     expect(screen.getByText(`${en.catalog.errorDetail.gitSuffix}`)).toBeTruthy();
+  });
+
+  it("an entry import of an invalid package lists each problem under the message", async () => {
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [gitEntry({})], truncated: false }),
+      "POST /api/v1/admin/marketplaces/g1/entries/x/import": () =>
+        json(422, {
+          error: {
+            code: "catalog.invalid_manifest",
+            message: "Invalid plugin package: no skill this platform can import",
+            details: ["no skill this platform can import", "bad field"],
+          },
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: en.catalog.admin.entries.title });
+    const user = userEvent.setup();
+    await user.click(
+      within(list).getByRole("button", {
+        name: fill(en.catalog.admin.entries.importVersion, { version: "v1.0.0" }),
+      }),
+    );
+    expect(await screen.findByText(en.errors.catalog.invalid_manifest)).toBeTruthy();
+    expect(screen.getByText("no skill this platform can import")).toBeTruthy();
+    expect(screen.getByText("bad field")).toBeTruthy();
   });
 
   it.each(LOCALES)(
