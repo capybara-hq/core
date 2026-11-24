@@ -11,7 +11,7 @@ import {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -243,6 +243,8 @@ describe("device services", () => {
       [{ env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } }, /may not be set/],
       [{ env: { SSL_CERT_FILE: "/tmp/ca.pem" } }, /SSL_CERT_FILE may not be set/],
       [{ env: { SSL_CERT_DIR: "/tmp/ca" } }, /SSL_CERT_DIR may not be set/],
+      [{ env: { OPENSSL_CONF: "/tmp/openssl.cnf" } }, /OPENSSL_CONF may not be set/],
+      [{ env: { openssl_engines: "/tmp/engines" } }, /openssl_engines may not be set/],
     ];
     for (const [over, message] of bad) {
       await expect(services.ensure(use(), { ...spec(), ...over }, signal())).rejects.toThrow(
@@ -265,6 +267,24 @@ describe("device services", () => {
     expect(await services.refresh(use(), "echo", signal())).toEqual(started);
     expect(await fakeServiceStarts(root)).toBe(1);
   });
+
+  it("every ifRunning ensure sends the provider the name-only spec", async () => {
+    const seen: { spec: DeviceServiceSpec; ifRunning: boolean }[] = [];
+    const ensure = provider.ensureService?.bind(provider);
+    if (!ensure) throw new Error("device-fake has services");
+    provider.ensureService = async (h, spec, sig, opts) => {
+      seen.push({ spec, ifRunning: opts?.ifRunning === true });
+      return ensure(h, spec, sig, opts);
+    };
+    const nameOnly = { name: "echo", runtime: "node", entry: "", args: [], files: {} };
+    await services.ensure(use(), spec(), signal(), { ifRunning: true });
+    await services.ensure(use(), spec(), signal());
+    await services.refresh(use(), "echo", signal());
+    expect(seen.map((c) => c.ifRunning)).toEqual([true, false, true]);
+    expect(seen[0]?.spec).toEqual(nameOnly);
+    expect(seen[1]?.spec).toEqual(spec());
+    expect(seen[2]?.spec).toEqual(nameOnly);
+  });
 });
 
 describe("stream holds", () => {
@@ -278,6 +298,26 @@ describe("stream holds", () => {
     expect(await svc.suspendIdle(idle())).toBe(0);
     expect(h.signal.aborted).toBe(false);
     await h.release();
+    expect(await svc.suspendIdle(idle())).toBe(1);
+  });
+
+  it("a hold taken while the sweep waits for the device is seen under its lease", async () => {
+    await services.ensure(use(), spec(), signal());
+    // the sweep reads no hold, then a viewer opens before the sweep takes the device's lease
+    const leases = (svc as unknown as { leases: { streamHolds(id: string): Promise<number> } })
+      .leases;
+    const real = leases.streamHolds.bind(leases);
+    let h: Awaited<ReturnType<typeof hold>> | undefined;
+    vi.spyOn(leases, "streamHolds").mockImplementationOnce(async (id) => {
+      const n = await real(id);
+      h = await hold();
+      return n;
+    });
+    expect(await svc.suspendIdle(idle())).toBe(0);
+    expect((await row())?.status).toBe("running");
+    expect(h?.signal.aborted).toBe(false);
+    await h?.release();
+    vi.restoreAllMocks();
     expect(await svc.suspendIdle(idle())).toBe(1);
   });
 

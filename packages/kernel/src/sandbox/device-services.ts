@@ -23,7 +23,8 @@ export class DeviceServices {
 
   /**
    * Starts the service in the device, or finds it running (the provider keeps a running one).
-   * With `ifRunning` it never starts one: a stopped service answers its `stopped` status. A spec
+   * With `ifRunning` it never starts one: a stopped service answers its `stopped` status, and the
+   * provider gets only the name ({@link nameOnlySpec}), as with every ifRunning ensure. A spec
    * breaking {@link serviceSpecIssue} is refused before the device is touched.
    */
   async ensure(
@@ -37,12 +38,16 @@ export class DeviceServices {
       use,
       requireServices,
       (h, p, sig) =>
-        (p.ensureService as NonNullable<typeof p.ensureService>)(
-          h,
-          spec,
-          sig,
-          opts.ifRunning === true ? { ifRunning: true } : undefined,
-        ),
+        opts.ifRunning === true
+          ? (p.ensureService as NonNullable<typeof p.ensureService>)(
+              h,
+              nameOnlySpec(spec.name),
+              sig,
+              {
+                ifRunning: true,
+              },
+            )
+          : (p.ensureService as NonNullable<typeof p.ensureService>)(h, spec, sig),
       signal,
     );
   }
@@ -66,11 +71,14 @@ export class DeviceServices {
       { createdAt: current.createdAt },
       async (p, h, sig) => {
         requireServices(p);
-        // with ifRunning the provider reads only the name
-        const named: DeviceServiceSpec = { name, runtime: "node", entry: "", args: [], files: {} };
-        return (p.ensureService as NonNullable<typeof p.ensureService>)(h, named, sig, {
-          ifRunning: true,
-        });
+        return (p.ensureService as NonNullable<typeof p.ensureService>)(
+          h,
+          nameOnlySpec(name),
+          sig,
+          {
+            ifRunning: true,
+          },
+        );
       },
       signal,
     );
@@ -143,9 +151,18 @@ export class DeviceServices {
   }
 }
 
+/**
+ * What every `ifRunning` ensure sends the provider: the service's name and nothing to run (the
+ * provider reads only the name there; a restart for a network change runs the spec the service
+ * was launched with, never a request's).
+ */
+export function nameOnlySpec(name: string): DeviceServiceSpec {
+  return { name, runtime: "node", entry: "", args: [], files: {} };
+}
+
 /** Environment variables a service spec may not set: they change what runs, or are the provider's. */
 const RESERVED_ENV =
-  /^(NODE_.*|PATH|SSL_CERT_FILE|SSL_CERT_DIR|LD_.*|DYLD_.*|CAPYBARA_.*|(HTTPS?|NO|ALL|FTP)_PROXY)$/i;
+  /^(NODE_.*|PATH|SSL_CERT_FILE|SSL_CERT_DIR|OPENSSL_CONF|OPENSSL_ENGINES|LD_.*|DYLD_.*|CAPYBARA_.*|(HTTPS?|NO|ALL|FTP)_PROXY)$/i;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Why a service file path is refused, or null: relative, plain segments only. */
@@ -165,8 +182,9 @@ function servicePathIssue(path: string): string | null {
  * Why a service spec is refused, or null (browser use spec §5): a valid name; `entry` and every
  * `files` key relative inside the state directory (no absolute path, no `.` / `..` / empty
  * segment, no backslash, no NUL); `entry` one of the files; no env variable that changes what
- * runs or that the provider sets (`NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `LD_*`,
- * `DYLD_*`, `CAPYBARA_*`, proxy variables), no NUL in a value. So the reviewed command is the one that runs.
+ * runs or that the provider sets (`NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+ * `OPENSSL_CONF`, `OPENSSL_ENGINES`, `LD_*`, `DYLD_*`, `CAPYBARA_*`, proxy variables), no NUL in
+ * a value. So the reviewed command is the one that runs.
  */
 export function serviceSpecIssue(spec: DeviceServiceSpec): string | null {
   if (typeof spec?.name !== "string" || !DEVICE_SERVICE_NAME_RE.test(spec.name))

@@ -323,7 +323,7 @@ export class SandboxLeases {
    */
   async tryExclusive(
     env: string,
-    o: { token?: string; intent?: boolean } = {},
+    o: { token?: string; intent?: boolean; unlessStreams?: boolean } = {},
   ): Promise<SandboxLease | null> {
     const h = await this.locks.tryExclusive(
       this.keys(env),
@@ -332,6 +332,12 @@ export class SandboxLeases {
       o.intent ? this.intentTtlMs : undefined,
     );
     if (!h) return null;
+    // `unlessStreams` (the idle sweep): refused while the device has a live stream hold. Counted
+    // once the lock is held, when no new hold can be taken (a hold refuses a held lock)
+    if (o.unlessStreams && (await this.streamHolds(env)) > 0) {
+      await h.release();
+      return null;
+    }
     // a lifecycle change: every stream hold of the device yields (its next renewal fails)
     await this.redis
       .eval("return redis.call('DEL', KEYS[1])", 1, `${STREAMS_PREFIX}${env}`)

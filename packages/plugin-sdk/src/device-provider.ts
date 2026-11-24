@@ -411,9 +411,10 @@ export interface DeviceServiceSpec {
   files: Record<string, Uint8Array>;
   /**
    * Extra environment of the process (shown to the command review as `env K=V …`). The kernel
-   * refuses `NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `LD_*`, `DYLD_*`, `CAPYBARA_*` and
-   * the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, `FTP_PROXY`), any
-   * case: they change what runs or what it trusts, or the provider sets them itself.
+   * refuses `NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `OPENSSL_CONF`, `OPENSSL_ENGINES`,
+   * `LD_*`, `DYLD_*`, `CAPYBARA_*` and the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`,
+   * `NO_PROXY`, `ALL_PROXY`, `FTP_PROXY`), any case: they change what runs or what it trusts, or
+   * the provider sets them itself.
    */
   env?: Record<string, string>;
 }

@@ -2800,6 +2800,9 @@ export class SandboxService {
           });
         },
         overdue,
+        // a hold taken since the first look (a viewer that opened meanwhile) refuses the lease:
+        // an open viewer exempts the device from idle suspension, never from the forced one
+        !overdue,
       );
       if (done) n++;
     });
@@ -3749,10 +3752,12 @@ export class SandboxService {
     deviceId: string,
     fn: (lease: SandboxLease) => Promise<boolean>,
     overdue = false,
+    /** Refused (false) while the device has a live stream hold ({@link holdForStream}). */
+    unlessStreams = false,
   ): Promise<boolean> {
     let lease: SandboxLease | null;
     try {
-      lease = await this.leases.tryExclusive(deviceId);
+      lease = await this.leases.tryExclusive(deviceId, unlessStreams ? { unlessStreams } : {});
       if (!lease && overdue) {
         lease = await this.leases
           .acquireExclusive(
