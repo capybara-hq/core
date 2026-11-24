@@ -11,7 +11,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { type FormEvent, type KeyboardEvent, useState } from "react";
 import { issueLines } from "../lib/api";
 import {
   addMarketplace,
@@ -149,6 +149,19 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
           }),
     );
 
+  const canSave = busy === undefined && dirty && valid;
+  // Enter in a text field saves, like the primary button (the footer sits outside the form)
+  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (canSave) void save();
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLFormElement>) => {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (!(e.target instanceof HTMLInputElement) || e.target.type === "radio") return;
+    e.preventDefault();
+    if (canSave) void save();
+  };
+
   return (
     <Dialog
       open
@@ -184,7 +197,7 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
           <Button
             variant="primary"
             loading={busy === "save"}
-            disabled={busy !== undefined || !dirty || !valid}
+            disabled={!canSave}
             onClick={() => void save()}
           >
             {editing ? t("save") : t("addConfirm")}
@@ -192,67 +205,69 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
         </>
       }
     >
-      <Stack gap={12}>
-        {!editing && (
-          <RadioGroup
-            label={t("form")}
-            value={form}
-            onChange={(v) => setForm(v as MarketplaceForm)}
-            options={[
-              { value: "http", label: t("formHttp") },
-              { value: "git", label: t("formGit") },
-            ]}
-          />
-        )}
-        <Field label={t("name")} required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label={t("url")} required {...(git && { help: t("gitUrlHelp") })}>
-          <Input
-            value={url}
-            placeholder={git ? "owner/repo" : "https://"}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              // Follow the host: fill an empty username or replace the last suggestion (never a typed value)
-              if (git && !usernameTouched && (username === "" || username === lastSuggested)) {
-                const next = suggestGitUsernameForUrl(e.target.value) ?? "";
-                setUsername(next);
-                setLastSuggested(next);
-              }
-            }}
-          />
-        </Field>
-        {git && (
-          <>
-            <Field label={t("ref")} help={t("refHelp")} optional>
-              <Input value={ref} onChange={(e) => setRef(e.target.value)} />
-            </Field>
-            <Field label={t("username")} help={t("usernameHelp")} optional>
-              <Input
-                value={username}
-                onChange={(e) => {
-                  setUsername(e.target.value);
-                  setUsernameTouched(true);
-                }}
-              />
-            </Field>
-          </>
-        )}
-        <Field label={t("token")} help={hasToken ? t("tokenSet") : t("tokenHelp")} optional>
-          <Input
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        </Field>
-        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
-        {!editing && (
-          <Text variant="small" tone="muted">
-            {t("customHint")}
-          </Text>
-        )}
-      </Stack>
+      <form method="post" onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
+        <Stack gap={12}>
+          {!editing && (
+            <RadioGroup
+              label={t("form")}
+              value={form}
+              onChange={(v) => setForm(v as MarketplaceForm)}
+              options={[
+                { value: "http", label: t("formHttp") },
+                { value: "git", label: t("formGit") },
+              ]}
+            />
+          )}
+          <Field label={t("name")} required>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label={t("url")} required {...(git && { help: t("gitUrlHelp") })}>
+            <Input
+              value={url}
+              placeholder={git ? "owner/repo" : "https://"}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                // Follow the host: fill an empty username or replace the last suggestion (never a typed value)
+                if (git && !usernameTouched && (username === "" || username === lastSuggested)) {
+                  const next = suggestGitUsernameForUrl(e.target.value) ?? "";
+                  setUsername(next);
+                  setLastSuggested(next);
+                }
+              }}
+            />
+          </Field>
+          {git && (
+            <>
+              <Field label={t("ref")} help={t("refHelp")} optional>
+                <Input value={ref} onChange={(e) => setRef(e.target.value)} />
+              </Field>
+              <Field label={t("username")} help={t("usernameHelp")} optional>
+                <Input
+                  value={username}
+                  onChange={(e) => {
+                    setUsername(e.target.value);
+                    setUsernameTouched(true);
+                  }}
+                />
+              </Field>
+            </>
+          )}
+          <Field label={t("token")} help={hasToken ? t("tokenSet") : t("tokenHelp")} optional>
+            <Input
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          </Field>
+          {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+          {!editing && (
+            <Text variant="small" tone="muted">
+              {t("customHint")}
+            </Text>
+          )}
+        </Stack>
+      </form>
     </Dialog>
   );
 }

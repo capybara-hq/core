@@ -43,14 +43,15 @@ import NotFound from "../../../not-found";
 type SourceList = { items: Marketplace[]; offline: boolean };
 
 /**
- * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards;
- * the 插件 market filter row leads here, its entries are the 插件 tab 市场). One card per source
- * with its kind, address, state, the 启用 / 停用 switch and "Refresh now"; 详情 (the raw error and
- * the skipped entries), 编辑 and 删除 are in the ⋯ menu. The official marketplace is read-only (its
- * address is in the deployment config), as is a config-managed one: only the switch and refresh.
- * Adding and editing a custom source is the {@link MarketplaceSourceDialog} (a marketplace.json
- * URL or a git repository). From the query cache (the layout prefetched it on a first load): each change
- * reads the list again and invalidates the entries and the catalog's marks.
+ * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards; the 插件 market
+ * filter row leads here, its entries are the 插件 tab 市场). One card per source with its kind,
+ * address, state, the 启用 / 停用 switch and "Refresh now"; 详情 (the raw error, the skipped
+ * entries, the official source's mirrors and a managed source's token note), 编辑 and 删除 are in
+ * the ⋯ menu. The official marketplace is read-only (its address is in the deployment config), as
+ * is a config-managed one: only the switch and refresh. Adding and editing a custom source is the
+ * {@link MarketplaceSourceDialog} (a marketplace.json URL or a git repository). From the query
+ * cache (the layout prefetched it on a first load): each change reads the list again and
+ * invalidates the entries and the catalog's marks.
  */
 export default function SourcesView() {
   const gate = useAdmin();
@@ -153,7 +154,7 @@ function hostPath(url: string): string {
 
 /**
  * One marketplace source (spec §5.5.3). The official source and a config-managed one are
- * read-only (no 编辑 / 删除). The switch is 启用 / 停用 in the ⋯ menu; 立即刷新 is the primary.
+ * read-only (no 编辑 / 删除). The card's switch is 启用 / 停用; 立即刷新 is the primary.
  */
 function SourceCard({
   source,
@@ -191,7 +192,6 @@ function SourceCard({
     fn: () => removeMarketplace(source.id),
     invalidates: () => [listKey, ...sourceChangeKeys()],
   });
-  const busy = update.isPending || refresh.isPending;
 
   const fail = (e: unknown) => {
     const p = problem(e);
@@ -221,8 +221,8 @@ function SourceCard({
   const errorSentence =
     source.lastStatus === "error" ? t(`statusValue.errors.${marketplaceErrorKind(raw)}`) : null;
   const note = builtin ? (offline ? t("offline") : t("officialNote")) : null;
-  // The error sentence leads, then the notes; the raw text and the skipped lines are in 详情
-  const description = [errorSentence, note, source.managed === "config" ? t("managed") : null]
+  // The state label carries the error sentence; the raw text and the skipped lines are in 详情
+  const description = [note, source.managed === "config" ? t("managed") : null]
     .filter((x): x is string => x !== null)
     .join(" ");
 
@@ -242,8 +242,13 @@ function SourceCard({
             tone: "ok" as const,
           };
 
+  const mirrors = source.mirrors;
+  const tokenNote =
+    source.managed === "config"
+      ? t(source.hasToken ? "managedTokenSet" : "managedTokenUnset")
+      : null;
   const menu: MenuItem[] = [
-    ...(errorSentence !== null || skipped.length > 0
+    ...(errorSentence !== null || skipped.length > 0 || mirrors.length > 0 || tokenNote !== null
       ? [{ label: t("details"), onSelect: () => setDetails(true) }]
       : []),
     ...(locked
@@ -272,7 +277,6 @@ function SourceCard({
             : []),
         ]}
         state={state}
-        busy={busy}
         toggle={{
           label: t("enabledLabel", { name: title }),
           checked: source.enabled,
@@ -303,6 +307,14 @@ function SourceCard({
         }
       >
         <Stack gap={12}>
+          {mirrors.length > 0 && (
+            <Text variant="small" tone="muted">{`${t("mirrors")}: ${mirrors.join(", ")}`}</Text>
+          )}
+          {tokenNote !== null && (
+            <Text variant="small" tone="muted">
+              {tokenNote}
+            </Text>
+          )}
           {errorSentence !== null && (
             <ErrorDetail summary={errorSentence} {...(raw !== "" ? { detail: raw } : {})} />
           )}

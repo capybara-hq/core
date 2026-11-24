@@ -1468,6 +1468,87 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     },
   );
 
+  /** Chooses an npm package on the source step (the package name box is replaced). */
+  const chooseNpm = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+    const r = en.catalog.admin.review;
+    const w = en.admin.extensions.wizard;
+    await user.click(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) }));
+    const box = screen.getByRole("textbox", { name: w.npmPackage });
+    await user.clear(box);
+    await user.type(box, name);
+    await user.click(screen.getByRole("button", { name: r.fetch }));
+  };
+
+  it("an update started, back, then a package that is not installed: the install flow, not the frozen update mode", async () => {
+    const r = en.catalog.admin.review;
+    const w = en.admin.extensions.wizard;
+    let n = 0;
+    stubApi(
+      updateRoutes({
+        "POST /api/v1/admin/catalog/import/npm": () => {
+          n += 1;
+          return json(200, {
+            stagingId: n === 1 ? "st7" : "st30",
+            review: n === 1 ? REVIEW2 : { ...REVIEW, name: "fresh", reviewHash: "h30" },
+          });
+        },
+        "GET /api/v1/admin/catalog/imports/st30": () =>
+          json(200, { stagingId: "st30", review: { ...REVIEW, name: "fresh", reviewHash: "h30" } }),
+      }),
+    );
+    window.history.replaceState(null, "", "/admin/plugins/import");
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await chooseNpm(user, "@acme/plugin-crm");
+    expect(
+      await screen.findByRole("heading", { name: fill(r.titleUpdate, { name: "crm" }) }),
+    ).toBeTruthy();
+    // into the update preview (freezes the update mode), then back to the source step
+    await user.click(await screen.findByRole("button", { name: w.next }));
+    await screen.findByRole("button", { name: r.confirmUpdate });
+    await user.click(screen.getByRole("button", { name: w.back }));
+    await user.click(await screen.findByRole("button", { name: w.back }));
+    await chooseNpm(user, "@acme/plugin-fresh");
+    expect(await screen.findByRole("button", { name: r.confirm })).toBeTruthy();
+    expect(screen.queryByText(r.steps.update)).toBeNull();
+    expect(screen.queryByRole("button", { name: r.confirmUpdate })).toBeNull();
+  });
+
+  it("a failed install, back, then an installed plugin: the update flow, not the frozen install mode", async () => {
+    const r = en.catalog.admin.review;
+    let n = 0;
+    stubApi(
+      updateRoutes({
+        "POST /api/v1/admin/catalog/import/npm": () => {
+          n += 1;
+          return json(200, {
+            stagingId: n === 1 ? "st31" : "st7",
+            review: n === 1 ? { ...REVIEW, name: "fresh", reviewHash: "h31" } : REVIEW2,
+          });
+        },
+        "POST /api/v1/admin/catalog/imports/st31/confirm": () =>
+          json(500, { error: { code: "internal", message: "boom" } }),
+      }),
+    );
+    window.history.replaceState(null, "", "/admin/plugins/import");
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await chooseNpm(user, "@acme/plugin-fresh");
+    await user.click(await screen.findByRole("checkbox", { name: r.ack }));
+    await user.click(screen.getByRole("button", { name: r.confirm }));
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.back }));
+    await chooseNpm(user, "@acme/plugin-crm");
+    expect(
+      await screen.findByRole("heading", { name: fill(r.titleUpdate, { name: "crm" }) }),
+    ).toBeTruthy();
+    expect(screen.getByText(r.steps.update)).toBeTruthy();
+  });
+
   it("cancel on the review step changes nothing: back to the plugin, no write, no preview read", async () => {
     window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
     const calls = stubApi(updateRoutes());
@@ -2481,12 +2562,13 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     },
   );
 
-  it("a failing source's description leads with the error sentence; 详情 shows the raw text", async () => {
+  it("a failing source says the error once, in its state; 详情 shows the raw text", async () => {
     stubApi(list([OFFICIAL, ACME]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const acme = card("Acme");
-    const desc = acme.querySelector('[data-part="object-card-description"]') as HTMLElement;
-    expect(desc.textContent?.startsWith(s.statusValue.errors.http_status)).toBe(true);
+    // The sentence is the state label only: the description does not repeat it
+    expect(within(acme).getAllByText(s.statusValue.errors.http_status)).toHaveLength(1);
+    expect(acme.querySelector('[data-part="object-card-description"]')).toBeNull();
     expect(within(acme).queryByText("HTTP 500")).toBeNull();
     await open("Acme");
     await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
@@ -2697,6 +2779,35 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
       form: "git",
       ref: "main",
     });
+  });
+
+  it("Enter in the add dialog saves, like the primary button", async () => {
+    const calls = stubApi({
+      ...list([OFFICIAL]),
+      "POST /api/v1/admin/marketplaces": () => json(201, { ...ACME, id: "h3" }),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.actions.addSource }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: s.name }), "Team");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: startsWith(s.url) }),
+      "https://m.example.com/index.json{Enter}",
+    );
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+  });
+
+  it("详情 holds the official source's mirrors and a managed source's token note", async () => {
+    stubApi(list([{ ...OFFICIAL, mirrors: ["https://mirror.example.com/m.json"] }, MANAGED]));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    // A menu of one item is that button on the card
+    await user.click(within(card(s.official)).getByRole("button", { name: s.details }));
+    expect(await screen.findByText(`${s.mirrors}: https://mirror.example.com/m.json`)).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await user.click(within(card("Managed")).getByRole("button", { name: s.details }));
+    expect(await screen.findByText(s.managedTokenSet)).toBeTruthy();
   });
 
   it("an http marketplace sends no form or ref; a typed username is never overwritten", async () => {
