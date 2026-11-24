@@ -18,7 +18,7 @@ import { createOrg, enableExtensions } from "../helpers/runs.js";
 // Setup guides v2, the connector-template place (spec 2026-11-09-setup-guides-v2-design.md §9.3,
 // §11): a template's guide renders for the org's connector made from it, the connector records the
 // guide it was set up with when an admin confirms it (an install records none), drift appears
-// when the guide's code blocks or checks change, and 「我已更新应用」 records the current guide.
+// when the guide's code blocks or checks change, and "I have updated the app" records the current guide.
 
 const PUBLIC_URL = "https://capybara.example.com";
 const TEMPLATE = "github-mcp";
@@ -137,7 +137,7 @@ async function installNamed(
 
 /**
  * Installs `gh-guide` (1.0.0) in the org with a connector from its template; returns the connector
- * id. `ack`: the admin also confirms the template's guide, as the connector's 配置 form does when
+ * id. `ack`: the admin also confirms the template's guide, as the connector's configure form does when
  * it saves (plugin pages spec §5.3; installs show no guide and record none).
  */
 async function installWithConnector(

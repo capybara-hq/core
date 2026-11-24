@@ -268,7 +268,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       .setup()
       .click(within(card).getByRole("button", { name: en.orgComponents.action.enable }));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true });
-    // the connector made from it, 待配置 with 配置; no page to enter input on
+    // the connector made from it, needs-configuration with configure; no page to enter input on
     const made = await screen.findByText(en.connectors.setup.needsConfig);
     expect(made).toBeTruthy();
     expect(router.push).not.toHaveBeenCalled();
@@ -311,7 +311,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
           .getByRole("link", { name: en.connectors.setup.configure })
           .getAttribute("href"),
       ).toBe("/connectors/c-drive?tab=credentials");
-      // never a member's 连接 on a connector nobody can call yet
+      // never a member's connect on a connector nobody can call yet
       expect(within(card).queryByRole("button", { name: en.connections.oauthConnect })).toBeNull();
     } else {
       expect(within(card).getByText(en.connectors.setup.needsAdmin)).toBeTruthy();

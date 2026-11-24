@@ -198,7 +198,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
   };
   /**
    * Saves the org credential of the connector an install made from item `itemId`'s template (as
-   * the admin does with 配置: installs take no input) on replica `i`, and waits for its tool list,
+   * the admin does on the connector's configure form: installs take no input) on replica `i`, and waits for its tool list,
    * which the outbox fetches after the save.
    */
   const configureOn = async (i: 0 | 1, itemId: string) => {

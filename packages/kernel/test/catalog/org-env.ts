@@ -683,7 +683,7 @@ export async function templateConnectors(
 
 /**
  * Saves the org credential of a connector an install left `needs_config` (what an org admin does
- * with 配置 on the connectors page; installs take no input, plugin pages spec §5.2.2) and, unless
+ * with the configure form on the connectors page; installs take no input, plugin pages spec §5.2.2) and, unless
  * `tools` is false, waits for the tool list the outbox fetches after the save.
  */
 export async function configureConnector(

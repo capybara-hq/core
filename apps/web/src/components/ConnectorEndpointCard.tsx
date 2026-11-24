@@ -42,10 +42,10 @@ export function useConnectorTemplate(
 }
 
 /**
- * 端点 (plugin pages spec §5.3): the endpoint fields a connector's template lets the org edit
+ * endpoint (plugin pages spec §5.3): the endpoint fields a connector's template lets the org edit
  * (`editableEndpoint`; every other part of the endpoint stays the template's), each showing the
  * connector's current value. Saving sends only the changed paths (`PATCH … endpoint`, merged by
- * the kernel); `onSaved` runs after (the 配置 form records the guide shown). Nothing for a
+ * the kernel); `onSaved` runs after (the configure form records the guide shown). Nothing for a
  * template without editable paths.
  */
 export function ConnectorEndpointCard({

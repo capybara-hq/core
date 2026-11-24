@@ -150,7 +150,7 @@ export function useOrgExtensionActions({
       : problem !== undefined
         ? { label: t(ext.enabled ? "disableFailed" : "enableFailed"), tone: "fail" }
         : needsConfig
-          ? // an org admin configures it (配置 on the row); everyone else waits for one
+          ? // an org admin configures it (configure on the row); everyone else waits for one
             { label: t(canEdit ? "needsConfig" : "needsAdmin"), tone: "warn" }
           : ext.enabled
             ? {

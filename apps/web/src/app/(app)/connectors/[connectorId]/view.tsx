@@ -581,9 +581,9 @@ function ToolsTab({
 }
 
 /**
- * The guide a 配置 form shows becomes the one the connector is set up with when the form saves
+ * The guide a configure form shows becomes the one the connector is set up with when the form saves
  * (plugin pages spec §5.3): records its admin hash (`guide-ack`, the same read as the guide shown).
- * Does nothing (and reads nothing) for a connector without a template guide or off the 配置 form.
+ * Does nothing (and reads nothing) for a connector without a template guide or off the configure form.
  */
 function useAckShownGuide(
   orgId: string,
@@ -622,8 +622,8 @@ function useAckShownGuide(
 }
 
 /**
- * 凭据. For org admins, a connector that lacks the org input its auth needs (`setup:
- * needs_config`) makes this tab its 配置 form (plugin pages spec §5.2.4, §5.3): its template's
+ * credentials. For org admins, a connector that lacks the org input its auth needs (`setup:
+ * needs_config`) makes this tab its configure form (plugin pages spec §5.2.4, §5.3): its template's
  * setup guide (the admin text, for this connector), the endpoint fields its template lets the org
  * edit, then the org credential or OAuth client; each save records the guide shown. Nobody connects
  * a personal credential to it meanwhile (it is never called).
@@ -675,7 +675,7 @@ function CredentialsTab({
     );
   }
   const auth = app.auth;
-  // The 配置 form's head: the guide above the input, the editable endpoint
+  // The configure form's head: the guide above the input, the editable endpoint
   const withForm = (input: ReactNode) =>
     configuring ? (
       <Stack gap={16}>
@@ -887,7 +887,7 @@ function SettingsTab({
   const [pending, setPending] = useState(false);
   // the template's description stands in while the connector has none of its own
   const fallback = templateDescriptionOf(app, locale);
-  // the endpoint fields its template lets the org edit (a 待配置 one edits them on its 配置 form)
+  // the endpoint fields its template lets the org edit (a needs-configuration one edits them on its configure form)
   const template = useConnectorTemplate(
     orgId,
     manage && app.setup !== "needs_config" ? app : { platformTemplateId: null },
@@ -1129,7 +1129,7 @@ function RotateClient({
 }: {
   orgId: string;
   app: ConnectorDetail;
-  /** The 配置 form (no client yet): the button saves the first client, then this runs. */
+  /** The configure form (no client yet): the button saves the first client, then this runs. */
   onSaved?: (() => Promise<void>) | undefined;
 }) {
   const t = useTranslations("connectors");
@@ -1142,7 +1142,7 @@ function RotateClient({
     invalidates: () => [keys.org(orgId).connector(app.id), keys.org(orgId).setupChecksAll()],
   });
   const clientFlow = app.auth.type === "oauth_client";
-  // The 配置 form enters the first client: nothing to replace yet
+  // The configure form enters the first client: nothing to replace yet
   const first = onSaved !== undefined;
   const value = buildOAuthClient(values);
   const ready = value !== undefined && (!clientFlow || values.clientSecret !== "");

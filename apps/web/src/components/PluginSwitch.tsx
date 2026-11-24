@@ -78,7 +78,7 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
 
 /**
  * Whether switching a plugin on goes through its review page first (`/plugins/<id>/enable`): it
- * brings connector templates, which become connectors (some 待配置); else it is a direct switch.
+ * brings connector templates, which become connectors (some needs-configuration); else it is a direct switch.
  */
 export function reviewsFirst(item: OrgCatalogItem): boolean {
   return item.componentCounts.connectorTemplates > 0;
@@ -329,7 +329,7 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
       ];
     }
-    // Installed and on, its extension's config waiting (it is configured on 扩展): as on
+    // Installed and on, its extension's config waiting (it is configured on extensions): as on
     if (i.state === "off" || (i.state === "needs_config" && i.installed === null)) {
       if (i.notDeployed) return [];
       return [

@@ -242,7 +242,7 @@ function ExtensionList({
       fit: true,
       // One trailing cell only: an org admin's is the switch, so the state drops to the meta line
       compact: canEdit ? "meta" : "trailing",
-      // 待配置 with 配置 for an org admin (plugin pages spec §5.2.4): it opens the extension's
+      // needs-configuration with configure for an org admin (plugin pages spec §5.2.4): it opens the extension's
       // Sheet, as the row does, so the cell stays part of the row (and of the compact meta line)
       cell: (r) =>
         canEdit && r.needsConfig ? (

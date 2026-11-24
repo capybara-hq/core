@@ -248,11 +248,11 @@ export interface WizardView {
 }
 
 /**
- * Enabling a plugin in the org (plugin pages spec §5.3): one review page, then 启用 (the page puts
+ * Enabling a plugin in the org (plugin pages spec §5.3): one review page, then enable (the page puts
  * `frame` into a WizardPage of one step). It asks for nothing: it lists what the org gets (the
  * extension, the connector templates switched on with it, each with what it needs and its icon,
  * the skills, the dependencies installed first). A template that needs an org credential or an
- * OAuth client becomes a 待配置 connector, set up on the connectors page. A failure shows the
+ * OAuth client becomes a needs-configuration connector, set up on the connectors page. A failure shows the
  * failed step (and the dependency it failed in) and says the components this install created were
  * rolled back.
  */

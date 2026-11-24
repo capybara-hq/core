@@ -113,7 +113,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
     )
     .toBe(200);
 
-  // 6. The org's 插件 page: crm is off and brings a connector template -> its review page
+  // 6. The org's plugins page: crm is off and brings a connector template -> its review page
   await page.goto("/plugins");
   const appRow = page.getByRole("listitem").filter({ hasText: "CRM 套件" });
   await expect(appRow.getByRole("link", { name: P.action.enable })).toBeVisible({

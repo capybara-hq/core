@@ -13,7 +13,7 @@ import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 // Setup guides on the connector template place (setup guides v2 spec §9.3, §11): the admin text
-// above a needs_config template connector's input (配置), the connector's 接入指南 with the drift notice and ack, the
+// above a needs_config template connector's input (configure), the connector's setup guide with the drift notice and ack, the
 // member's 如何连接 sheet (with the admin link for org admins) and the super admin's template page.
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));

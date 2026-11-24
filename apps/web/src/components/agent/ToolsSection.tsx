@@ -118,7 +118,7 @@ type Group = {
    * to 允许 for the agent (an org-credential connector's tools only tighten).
    */
   personal: boolean;
-  /** A connector that lacks the org input its auth needs: 待配置 (never called meanwhile). */
+  /** A connector that lacks the org input its auth needs: needs-configuration (never called meanwhile). */
   needsConfig: boolean;
   onCheck(names: string[], on: boolean): void;
 };

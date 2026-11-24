@@ -32,11 +32,11 @@ import NotFound from "../not-found";
  * `/connectors` (maintainer decision 2026-11-09): one card per connector of the org and per
  * connector template of a plugin on in the org that has no connector here yet, switched off or
  * not, each with its plugin's icon. Template cards: 未启用 with 启用 for org admins (the component
- * switch, which creates its connector: that connector's card follows), 已启用 while one on waits
+ * switch, which creates its connector: that connector's card follows), enabled while one on waits
  * for its connector. Connector cards (one button each, the rest in ⋯, maintainer decision
  * 2026-11-09): one that lacks the org input its auth needs (`setup: needs_config`, plugin pages
- * spec §5.2.4) is 待配置 with 配置 (its 凭据 tab: the template's guide, the editable endpoint, the
- * credential or client) for org admins, 待管理员配置 without a button for everyone else; a
+ * spec §5.2.4) is needs-configuration with configure (its credentials tab: the template's guide, the editable endpoint, the
+ * credential or client) for org admins, waiting for an admin without a button for everyone else; a
  * personal one shows the viewer's own state, 连接 (OAuth: the connect route, back here; a
  * credential: its sheet) and, once connected, 权限 (the viewer's own tool policies for their
  * connection), with 如何连接 / 重新连接 / 断开连接 in ⋯ (`usePersonalConnections`); org admins have
@@ -52,7 +52,7 @@ export default function ConnectorsView() {
   return <Connectors orgId={ws.orgId} me={ws.me} />;
 }
 
-/** 配置 on a 待配置 connector: its 凭据 tab, the form that takes the missing input. */
+/** configure on a needs-configuration connector: its credentials tab, the form that takes the missing input. */
 export const configureHref = (connectorId: string) =>
   `/connectors/${encodeURIComponent(connectorId)}?tab=credentials`;
 
@@ -187,7 +187,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
         <ObjectCard key={c.id} {...base} state={{ label: t("status.disabled"), tone: "muted" }} />
       );
     }
-    // Lacks the org input its auth needs: never called, so no member's 连接 either
+    // Lacks the org input its auth needs: never called, so no member's connect either
     if (c.setup === "needs_config") {
       return manage ? (
         <ObjectCard
@@ -207,7 +207,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     return <ObjectCard key={c.id} {...base} {...parts} />;
   };
 
-  /** A template's card: off (启用 for admins), or on while its connector is on the way. */
+  /** A template's card: off (enable for admins), or on while its connector is on the way. */
   const templateCard = (c: OrgComponent) => {
     const name = componentLabel(c, locale);
     const description = componentDescription(c, locale);

@@ -11,7 +11,7 @@ import { SetupGuideSection } from "./SetupGuideSection";
 
 /**
  * The connector template place of setup guides v2 (spec §9.3) on the org's pages: the member's
- * 如何连接 sheet (the admin guide is on the connector's page: 接入指南, and its 配置 form).
+ * how-to-connect sheet (the admin guide is on the connector's page: setup guide, and its configure form).
  */
 
 /**

@@ -138,7 +138,7 @@ function AdminExtensionsRead({
 
 /**
  * The table's columns (the loading shape draws the same headers). `onConfigure` opens an
- * extension's Sheet: a 待配置 row offers it as 配置 (plugin pages spec §5.2.4).
+ * extension's Sheet: a needs-configuration row offers it as configure (plugin pages spec §5.2.4).
  */
 function useColumns(
   tab: ExtensionTab = "all",
@@ -181,7 +181,7 @@ function useColumns(
       key: "status",
       header: t("columns.status"),
       fit: true,
-      // 配置 opens the Sheet, as the row does: the cell stays part of the row
+      // configure opens the Sheet, as the row does: the cell stays part of the row
       cell: (p) => (
         <Stack direction="row" gap={8} align="center">
           <ExtensionStatusMark status={p.status} orgsNeedingConfig={p.orgsNeedingConfig} />
