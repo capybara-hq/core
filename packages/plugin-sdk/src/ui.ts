@@ -659,7 +659,12 @@ export type EmbedChildMessage =
    * encoding), unchanged after normalization.
    */
   | { protocol: typeof EMBED_PROTOCOL; type: "navigate"; path: string }
-  | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string };
+  | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string }
+  /**
+   * Asks the host to maximise (`true`) or restore (`false`) the conversation's right panel; only an
+   * embed in the `conversation.panel` slot is honoured.
+   */
+  | { protocol: typeof EMBED_PROTOCOL; type: "panel-mode"; full: boolean };
 
 const NAV_MAX = 2000;
 const RESIZE_MAX = 10000;
@@ -728,6 +733,8 @@ export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null {
       return typeof m.text === "string" && m.text !== "" && m.text.length <= TOAST_MAX
         ? { protocol, type: "toast", text: m.text }
         : null;
+    case "panel-mode":
+      return typeof m.full === "boolean" ? { protocol, type: "panel-mode", full: m.full } : null;
     default:
       return null;
   }

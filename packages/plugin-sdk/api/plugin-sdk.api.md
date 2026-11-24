@@ -1398,6 +1398,15 @@ export type EmbedChildMessage =
     protocol: typeof EMBED_PROTOCOL;
     type: "toast";
     text: string;
+}
+/**
+* Asks the host to maximise (`true`) or restore (`false`) the conversation's right panel; only an
+* embed in the `conversation.panel` slot is honoured.
+*/
+| {
+    protocol: typeof EMBED_PROTOCOL;
+    type: "panel-mode";
+    full: boolean;
 };
 
 // @public

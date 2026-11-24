@@ -258,6 +258,17 @@ describe("parseEmbedChildMessage", () => {
       msg({ type: "toast", text: "Saved" }),
     );
   });
+  it("panel-mode: full must be a boolean, only known fields kept", () => {
+    expect(parseEmbedChildMessage(msg({ type: "panel-mode", full: true, extra: 1 }))).toEqual(
+      msg({ type: "panel-mode", full: true }),
+    );
+    expect(parseEmbedChildMessage(msg({ type: "panel-mode", full: false }))).toEqual(
+      msg({ type: "panel-mode", full: false }),
+    );
+    for (const full of ["true", 1, null, undefined]) {
+      expect(parseEmbedChildMessage(msg({ type: "panel-mode", full }))).toBeNull();
+    }
+  });
   it("拒绝协议不符", () => {
     expect(
       parseEmbedChildMessage({ protocol: "capybara-embed/2", type: "toast", text: "x" }),
