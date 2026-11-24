@@ -11,6 +11,7 @@ import {
   templateIdOf,
 } from "../../lib/catalog";
 import {
+  COMPONENT_ROUTES,
   componentDescription,
   componentName,
   type PlatformComponent,
@@ -27,6 +28,10 @@ import type {
   TemplateRow,
   ThemeRow,
 } from "./model";
+
+/** The page of a platform component (its name links to it). */
+const hrefOf = (c: PlatformComponent | undefined): { href?: string } =>
+  c === undefined ? {} : { href: `${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}` };
 
 /** What the surface draws in the contents' trailing slots (it owns the links and the copy). */
 export interface ManifestSlots {
@@ -78,7 +83,7 @@ function configOf(m: NonNullable<PluginManifest["extension"]>["manifest"]): Conf
 }
 
 /**
- * The contents of the version the platform runs (the platform plugin page's 组件 tab): the
+ * The contents of the version the platform runs (the platform plugin page's components tab): the
  * extension with its client code and client components as lines under it, the skills, connector
  * templates, agent templates and themes with their scope in the trailing slot, the dependencies
  * and the translation report. Names and descriptions come from the platform's components when it
@@ -125,6 +130,7 @@ export function fromManifest(
       name,
       description: c === undefined ? "" : (componentDescription(c, locale) ?? ""),
       trailing: slots.scope("skill", c),
+      ...hrefOf(c),
     };
   });
   const templates: TemplateRow[] = (m?.connectorTemplates ?? []).map((t) => {
@@ -138,6 +144,7 @@ export function fromManifest(
       icon: c?.icon ?? null,
       description: c === undefined ? "" : (componentDescription(c, locale) ?? ""),
       trailing: slots.scope("connector_template", c),
+      ...hrefOf(c),
     };
   });
   const agents: AgentRow[] = (m?.agents ?? []).map((a) => {
@@ -150,6 +157,7 @@ export function fromManifest(
       description: c === undefined ? "" : (componentDescription(c, locale) ?? ""),
       needs: [],
       trailing: slots.scope("agent_template", c),
+      ...hrefOf(c),
     };
   });
   // Themes are listed without a scope: this page reads no theme list

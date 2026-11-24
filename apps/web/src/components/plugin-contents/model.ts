@@ -25,6 +25,8 @@ interface RowBase {
   mark?: RowMark;
   /** Per-surface text or control at the end of the row's title line (a state, a scope link). */
   trailing?: ReactNode;
+  /** The row's own page: the name links to it. */
+  href?: string;
 }
 
 export interface SkillRow extends RowBase {

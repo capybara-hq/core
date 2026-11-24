@@ -4973,8 +4973,6 @@
       "dependenciesNone": "没有依赖。",
       "dependencyResolved": "{name} 将使用 {version}",
       "dependencyUnresolved": "{name} {range} 在平台上还没有符合的版本，装上之前组织无法启用这个插件。",
-      "dependencyInCatalog": "{name} {range}：已在平台目录（{versions}）",
-      "dependencyNotInCatalog": "{name} {range}：不在平台目录里",
       "errorDependency": "依赖：{dependency}",
       "errorCycle": "循环：{cycle}",
       "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或重命名后再试。",

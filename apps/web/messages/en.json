@@ -4985,8 +4985,6 @@
       "dependenciesNone": "No dependencies.",
       "dependencyResolved": "{name} will use {version}",
       "dependencyUnresolved": "{name} {range} has no matching version on the platform yet. Organizations cannot turn this plugin on until one is installed.",
-      "dependencyInCatalog": "{name} {range}: in the catalog ({versions})",
-      "dependencyNotInCatalog": "{name} {range}: not in the catalog",
       "errorDependency": "Dependency: {dependency}",
       "errorCycle": "Cycle: {cycle}",
       "skillConflictOrg": "Skill “{skill}” already exists in this organization (the organization's own skill). Remove or rename it, then try again.",

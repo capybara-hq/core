@@ -3691,7 +3691,7 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    await screen.findByRole("heading", { level: 1, name: "gh" });
+    await screen.findByRole("heading", { name: "gh" });
     const img = document.querySelector(
       '[data-part="page-header-avatar"] [data-part="object-mark"][data-size="40"] img',
     ) as HTMLImageElement;
@@ -4911,7 +4911,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     // the head's Claude Code chip
     expect(screen.getByText(en.catalog.admin.chips.claudeCode)).toBeTruthy();
     const user = userEvent.setup();
-    // the license is a fact whose 全文 opens a Dialog with the text
+    // the license is a fact whose full text opens a Dialog with the text
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.licenseText }));
     expect(within(await screen.findByRole("dialog")).getByText("MIT License")).toBeTruthy();
     await user.keyboard("{Escape}");
@@ -5384,7 +5384,7 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
     const user = userEvent.setup();
-    // the tabs 组件 / 组织 / 版本; the contents list the extension and the skill
+    // the tabs Components / Organizations / Versions; the contents list the extension and the skill
     expect(
       await screen.findByRole("tab", { name: new RegExp(P.detail.tabs.components) }),
     ).toBeTruthy();
