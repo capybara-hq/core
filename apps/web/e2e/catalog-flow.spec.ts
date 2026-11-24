@@ -126,7 +126,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
     page.getByRole("list", { name: D.components.templates }).getByText("GitHub", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("textbox")).toHaveCount(0);
-  await expect(page.getByText(D.org.install.summaryDependencies)).toBeVisible();
+  await expect(page.getByText(D.components.dependenciesWith)).toBeVisible();
   await page.getByRole("button", { name: D.org.install.submit }).click();
 
   // 7. The plugin's page: its install lists crm-core as a dependency that was there before (turning
