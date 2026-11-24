@@ -231,6 +231,8 @@ surface is small (amended 2026-11-23 after mapping the kernel):
   waits on it as for an exec. Only an ask, so trusting the plugin's report costs nothing.
 - `addNetworkHosts({ conversationId, accountId, hosts })`: owner-only, used from the panel during
   takeover (§7.1), through the same device write the device page uses (ceilings apply, audited).
+  The running instance gets the new limits at once, as a tool call's exclusive step applies them
+  (provider `update`, else a recreate that ends the services); a suspended one at its next use.
 - `answerHandoff({ conversationId, accountId, callId, done })`: answers the handoff question of that
   call from the panel (§9); the kernel's own question rules apply (only the run's starter answers).
 - Each call is refused when the conversation has no device, the device's provider is unavailable or

@@ -8,6 +8,9 @@ import { Inject, Injectable } from "@nestjs/common";
 import { type DeviceServiceMethods, SandboxService } from "./sandbox.service.js";
 import type { SandboxUseContext } from "./use-context.js";
 
+/** The budget of the `ifRunning` ensure after a refresh applied new limits (a service restart). */
+export const POST_APPLY_ENSURE_TIMEOUT_MS = 30_000;
+
 /**
  * Device services (browser use spec §5): one long-lived named process per device, started on an
  * extension's behalf in the device's own sandbox with its own state directory, reached by
@@ -53,10 +56,16 @@ export class DeviceServices {
   }
 
   /**
-   * Applies the device's current limits to the service again when it runs (an `ifRunning`
-   * ensure; the device's allowlist changed); nothing when the instance or the service is not
-   * running, and it never resumes or starts anything. The status, or null without a running
-   * instance.
+   * Applies the device's current limits to the service when it runs (the device's allowlist
+   * changed outside a tool call). An `ifRunning` ensure first: a stopped service needs nothing
+   * now (the next use applies the limits), so it answers that status and the instance is left as
+   * it is. A running one: the limits go to the running instance as a use's exclusive step applies
+   * them ({@link SandboxService.applyLimitsIfRunning}: the provider's `update`, or a recreate on
+   * the kept files, which ends the services with the old instance); once applied, a second
+   * `ifRunning` ensure on the instance as it is recorded now, on its own budget
+   * ({@link POST_APPLY_ENSURE_TIMEOUT_MS}, not `signal`: a provider that restarts a service on a
+   * network change does it there). It never resumes or starts anything. The status, or null
+   * without a running instance.
    */
   async refresh(
     use: SandboxUseContext,
@@ -64,6 +73,20 @@ export class DeviceServices {
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus | null> {
     assertServiceName(name);
+    const found = await this.ifRunningEnsure(use, name, signal);
+    if (found === null || found.state !== "running") return found;
+    if ((await this.sandbox.applyLimitsIfRunning(use, signal)) !== "applied") return found;
+    // its own budget, never what the wait left of the caller's: a provider restarts the service
+    // on the new network here (device-local), so a spent caller signal must not skip it
+    return this.ifRunningEnsure(use, name, AbortSignal.timeout(POST_APPLY_ENSURE_TIMEOUT_MS));
+  }
+
+  /** An `ifRunning` ensure on the instance recorded now; null without a running instance. */
+  private async ifRunningEnsure(
+    use: SandboxUseContext,
+    name: string,
+    signal: AbortSignal,
+  ): Promise<DeviceServiceStatus | null> {
     const current = await this.sandbox.currentInstance(use.deviceId);
     if (!current) return null;
     const r = await this.sandbox.ifRunning(
@@ -75,9 +98,7 @@ export class DeviceServices {
           h,
           nameOnlySpec(name),
           sig,
-          {
-            ifRunning: true,
-          },
+          { ifRunning: true },
         );
       },
       signal,

@@ -24,6 +24,7 @@ import { echoServiceSpec } from "../fixtures/extensions/fake-device-access/index
 import {
   FAKE_PERMISSION_SUPPORT,
   fakeServiceStarts,
+  readFakeSandboxLimits,
   readFakeSandboxOps,
 } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -89,7 +90,7 @@ beforeAll(async () => {
           fileURLToPath(new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url)),
           FAKE_DEVICE_ACCESS,
         ],
-        extensionConfig: { "device-fake": { root: sandboxRoot } },
+        extensionConfig: { "device-fake": { root: sandboxRoot, updateMode: "updated" } },
         http: { port: 0, publicUrl: "https://capybara.example.com" },
       },
     ),
@@ -685,14 +686,20 @@ describe("ctx.deviceAccess", () => {
     const starts = await fakeServiceStarts(sandboxRoot);
     await access.addNetworkHosts(CALLER, { ...scope, hosts: ["example.org"] });
     const after = await ifRunning();
-    expect(after.length).toBe(before + 1);
+    // one ifRunning ensure finds it running, one more after the limits were applied
+    expect(after.length).toBe(before + 2);
     expect(after.at(-1)?.[3]).toBe("running");
     expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
+    // the running instance got the new allowlist at once (the provider's update), not at the
+    // next tool call
+    const applied = (await readFakeSandboxLimits(sandboxRoot)).at(-1);
+    expect(applied?.op).toBe("update");
+    expect(applied?.limits.network.hosts).toContain("example.org");
     // stopped (the instance runs): the ifRunning ensure finds it stopped and starts nothing
     await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
     await access.addNetworkHosts(CALLER, { ...scope, hosts: ["cdn.example.org"] });
     const last = await ifRunning();
-    expect(last.length).toBe(before + 2);
+    expect(last.length).toBe(before + 3);
     expect(last.at(-1)?.[3]).toBe("stopped");
     expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
     expect((await status())?.state).toBe("stopped");
