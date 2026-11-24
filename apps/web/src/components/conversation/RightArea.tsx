@@ -457,6 +457,7 @@ export function useRightAreaSlot(p: {
             onClose: close,
             onFullscreen: fullscreen,
             onPanelMode: setFull,
+            full,
             onOpenTarget,
           }}
         />

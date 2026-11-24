@@ -227,7 +227,13 @@ describe("ClientComponentBlock", () => {
         slot="conversation.panel"
         args={{ orgId: "o1", conversationId: "c1" }}
         select={{ plugin: "fake-client", id: "board" }}
-        host={{ onClose, onFullscreen: () => {}, onPanelMode: () => {}, onOpenTarget: () => {} }}
+        host={{
+          onClose,
+          onFullscreen: () => {},
+          onPanelMode: () => {},
+          full: false,
+          onOpenTarget: () => {},
+        }}
       />,
     );
     await flush();
@@ -240,7 +246,13 @@ describe("ClientComponentBlock", () => {
       slot="conversation.panel"
       args={{ orgId: "o1", conversationId: "c1" }}
       select={{ plugin: "fake-client", id: "board" }}
-      host={{ onClose, onFullscreen: () => {}, onPanelMode: () => {}, onOpenTarget: () => {} }}
+      host={{
+        onClose,
+        onFullscreen: () => {},
+        onPanelMode: () => {},
+        full: false,
+        onOpenTarget: () => {},
+      }}
     />
   );
 
