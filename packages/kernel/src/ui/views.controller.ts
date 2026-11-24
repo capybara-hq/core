@@ -50,12 +50,12 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
  *   （`{ actionId, payload?, answer?, conversationId?, agentId?, locale? }`）→ `{ toast }` | `{ view }`；
  * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`），
  *   member and above；
- * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId?, agentId?, fileId? }`,
- *   or for a skill file's previewer `{ skillId, version?, path }`）
- *   → `{ token, src: "/plugin-ui/<plugin>/<path 去掉 /ui/>", expiresAt, expiresIn }`：嵌入令牌
- *   （300 秒，`expiresIn` 为秒数，见 `embed-token.ts`；`agentId` goes into the claims, a skill
- *   file as `skillFile` with its resolved version）。
- *   令牌只给插件路由用，内核鉴权守卫不认它（它不是 API 令牌）。
+ * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token` (`{ conversationId?, agentId?, fileId? }`,
+ *   or for a skill file's previewer `{ skillId, version?, path }`)
+ *   → `{ token, src: "/plugin-ui/<plugin>/<path without /ui/>", expiresAt, expiresIn }`: an embed
+ *   token (300 seconds, `expiresIn` in seconds, see `embed-token.ts`; `agentId` goes into the
+ *   claims, a skill file as `skillFile` with its resolved version). The token is only for the
+ *   extension's routes; the kernel's auth guard does not accept it (it is not an API token).
  * 对话视图的刷新走现有的会话流 `/conversations/:id/stream`。
  * Access (UI slots spec §7): every route checks the slot of the contribution it names, its
  * `minRole` (guest for conversation and agent slots, member for `org.page`, admin for
