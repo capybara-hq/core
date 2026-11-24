@@ -148,6 +148,8 @@ const summary = (c: ConnectorSummary) => ({
     ownership: "ownership" in c.auth ? (c.auth.ownership ?? null) : null,
   },
   status: c.status,
+  // needs_config: an org admin must configure it before it can be used (it is never called)
+  setup: c.setup,
   platformTemplateId: c.platformTemplateId,
   description: c.description,
   updatedAt: c.updatedAt,

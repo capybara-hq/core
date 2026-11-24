@@ -33,7 +33,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UUID_RE } from "../ui/registry.js";
-import { type ConnectorSetup, connectorSetup } from "./connector-setup.js";
+import { type ConnectorSetup, connectorSetup, setupNeed } from "./connector-setup.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -1458,7 +1458,15 @@ export class ConnectorsService {
       .orderBy("created_at")
       .orderBy("id")
       .execute();
-    return Promise.all(rows.map(async (r) => this.summary(r, await this.setupOf(orgId, r))));
+    const inputs = await this.credentials.orgInputs(
+      orgId,
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => {
+      const need = setupNeed(r.auth as unknown as ConnectorAuth);
+      const ready = need === undefined || inputs.get(r.id)?.[need] === true;
+      return this.summary(r, ready ? "ready" : "needs_config");
+    });
   }
 
   /**

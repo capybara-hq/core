@@ -155,11 +155,7 @@ beforeAll(async () => {
       db,
       eventLog,
       registry: noTools,
-      credentials: {
-        injection: async () => ({ headers: {} }),
-        onUnauthorized: async () => {},
-        hasOrgInput: async () => true,
-      },
+      credentials: { injection: async () => ({ headers: {} }), onUnauthorized: async () => {} },
       breaker: breakerFor(redis, config),
       outputs: outputsFor(db, config),
       approvals: approvalsFor(db, eventLog, config),

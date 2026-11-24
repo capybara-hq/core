@@ -11,7 +11,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import type { SetupNeed } from "./connector-setup.js";
+import { type SetupNeed, setupNeed } from "./connector-setup.js";
 import { oauthHttpOptions } from "./oauth/discovery.js";
 import {
   basicClientAuth,
@@ -475,6 +475,56 @@ export class Credentials {
     return this.hasKey(orgId, need === "client" ? clientKey(connectorId) : orgKey(connectorId));
   }
 
+  /**
+   * The org inputs stored for several connectors at once (one query, key presence only): per
+   * connector id, whether its OAuth client and its org credential exist.
+   */
+  async orgInputs(
+    orgId: string,
+    connectorIds: string[],
+  ): Promise<Map<string, Record<SetupNeed, boolean>>> {
+    const out = new Map<string, Record<SetupNeed, boolean>>(
+      connectorIds.map((id) => [id, { client: false, credential: false }]),
+    );
+    if (connectorIds.length === 0) return out;
+    const keys = new Map<string, [string, SetupNeed]>();
+    for (const id of connectorIds) {
+      keys.set(clientKey(id), [id, "client"]);
+      keys.set(orgKey(id), [id, "credential"]);
+    }
+    const rows = await this.db
+      .selectFrom("secrets")
+      .select("key")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "in", [...keys.keys()])
+      .execute();
+    for (const r of rows) {
+      const hit = keys.get(r.key);
+      const entry = hit && out.get(hit[0]);
+      if (hit && entry) entry[hit[1]] = true;
+    }
+    return out;
+  }
+
+  /**
+   * The gate that keeps a `needs_config` connector from being called on every path (tool calls,
+   * `/` prompts and `@` resources, drift checks, refresh, the git gateway; spec §5.2.1): a
+   * connector whose auth needs an OAuth client that is not stored gets an org `CredentialMissing`
+   * before any token is read or presented, even when a member still holds one. A missing org
+   * credential needs no extra read: reading it throws the same error.
+   */
+  private async requireClient(
+    orgId: string,
+    connectorId: string,
+    auth: ConnectorAuth,
+  ): Promise<void> {
+    if (setupNeed(auth) !== "client") return;
+    if (!(await this.hasOrgInput(orgId, connectorId, "client"))) {
+      throw new CredentialMissing(connectorId, "org");
+    }
+  }
+
   private async hasKey(orgId: string, key: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("secrets")
@@ -494,6 +544,7 @@ export class Credentials {
     accountId: string,
   ): Promise<AuthInjection> {
     if (auth.type === "none") return { headers: {} };
+    await this.requireClient(orgId, connectorId, auth);
     const owner = ownerOf(auth, accountId);
     if (isOAuth(auth)) {
       const token = await this.oauthCall(connectorId, auth, () =>
@@ -554,6 +605,7 @@ export class Credentials {
     if (auth.type === "none" || auth.type === "headers") {
       throw new Error(`credentials: auth type ${auth.type} cannot authenticate git`);
     }
+    await this.requireClient(orgId, connectorId, auth);
     const owner = ownerOf(auth, accountId);
     let user = username;
     let password: string;
