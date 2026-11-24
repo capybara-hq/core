@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,17 +17,21 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
+import { SandboxLockLostError } from "../../src/sandbox/leases.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import {
   createFakeSandbox,
+  fakeSandboxMeta,
   fakeSandboxState,
   fakeServiceRunning,
   fakeServiceStarts,
   fakeServiceStateDir,
   fakeWorkspaceDir,
+  holdNextFakeSandboxUpdate,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  releaseFakeSandboxUpdate,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -281,10 +285,12 @@ describe("device services", () => {
     await services.ensure(use(), spec(), signal(), { ifRunning: true });
     await services.ensure(use(), spec(), signal());
     await services.refresh(use(), "echo", signal());
-    expect(seen.map((c) => c.ifRunning)).toEqual([true, false, true]);
+    // refresh of a running service: one ifRunning ensure before the apply, one after
+    expect(seen.map((c) => c.ifRunning)).toEqual([true, false, true, true]);
     expect(seen[0]?.spec).toEqual(nameOnly);
     expect(seen[1]?.spec).toEqual(spec());
     expect(seen[2]?.spec).toEqual(nameOnly);
+    expect(seen[3]?.spec).toEqual(nameOnly);
   });
 });
 
@@ -401,6 +407,155 @@ describe("refresh after an allowlist change", () => {
     expect((await refreshed)?.state).toBe("running");
     expect(await updates()).toHaveLength(1);
     expect(await fakeServiceStarts(root)).toBe(1);
+  });
+
+  /** Another replica's use holding the device's shared lease until `letGo()`. */
+  const holdElsewhere = async () => {
+    const other = service();
+    const current = await other.currentInstance(deviceId);
+    if (!current) throw new Error("no instance");
+    let letGo = () => {};
+    const gate = new Promise<void>((resolve) => {
+      letGo = resolve;
+    });
+    let entered = () => {};
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const done = other.ifRunning(deviceId, { createdAt: current.createdAt }, async () => {
+      entered();
+      await gate;
+    });
+    await inside;
+    return { letGo, done };
+  };
+  const intentKey = () => `capk:sandbox-intent:${deviceId}`;
+  const intentSet = () =>
+    vi.waitFor(async () => expect(await redis.exists(intentKey())).toBe(1), {
+      timeout: 10_000,
+      interval: 20,
+    });
+
+  it("a stopped service needs nothing now: the instance is left as it is", async () => {
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    const id = await instanceId();
+    await services.stop(use(), "echo", signal());
+    const h = await hold();
+    await setHosts(["example.com"]);
+    expect((await services.refresh(use(), "echo", signal()))?.state).toBe("stopped");
+    expect(await updates()).toHaveLength(0);
+    expect(await instanceId()).toBe(id);
+    expect(h.signal.aborted).toBe(false);
+    await h.release();
+    // the next use applies them
+    await services.ensure(use(), spec(), signal());
+    expect(await updates()).toHaveLength(1);
+  });
+
+  it("a use outlasting sandbox.lockWaitSeconds keeps the device: busy, intent cleared, no update", async () => {
+    config = { ...config, sandbox: { ...config.sandbox, lockWaitSeconds: 0.3 } };
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    await setHosts(["example.com"]);
+    const held = await holdElsewhere();
+    await expect(services.refresh(use(), "echo", signal())).rejects.toMatchObject({
+      code: "sandbox.busy",
+    });
+    expect(await redis.exists(intentKey())).toBe(0);
+    expect(await updates()).toHaveLength(0);
+    held.letGo();
+    expect((await held.done).kind).toBe("ran");
+    expect((await row())?.status).toBe("running");
+  });
+
+  it("an abort during the wait reaches no provider", async () => {
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    await setHosts(["example.com"]);
+    const held = await holdElsewhere();
+    const ac = new AbortController();
+    const refreshed = services.refresh(use(), "echo", ac.signal);
+    await intentSet();
+    ac.abort(new Error("caller gave up"));
+    await expect(refreshed).rejects.toThrow(/caller gave up/);
+    expect(await redis.exists(intentKey())).toBe(0);
+    held.letGo();
+    await held.done;
+    expect(await updates()).toHaveLength(0);
+    expect((await readFakeSandboxLimits(root)).filter((e) => e.op === "update")).toHaveLength(0);
+    expect((await row())?.status).toBe("running");
+  });
+
+  it("the apply under the lease has its own budget: the caller's abort does not reach the update", async () => {
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    await setHosts(["example.com"]);
+    const signals: AbortSignal[] = [];
+    const update = provider.update?.bind(provider);
+    if (!update) throw new Error("device-fake updates");
+    provider.update = async (h, limits, sig, fence) => {
+      signals.push(sig);
+      return update(h, limits, sig, fence);
+    };
+    await holdNextFakeSandboxUpdate(root, "panel");
+    const ac = new AbortController();
+    const refreshed = services.refresh(use(), "echo", ac.signal);
+    await vi.waitFor(
+      async () =>
+        expect((await readFakeSandboxOps(root)).some((o) => o[0] === "update-held")).toBe(true),
+      { timeout: 10_000, interval: 20 },
+    );
+    ac.abort(new Error("caller gave up"));
+    expect(signals[0]?.aborted).toBe(false);
+    await releaseFakeSandboxUpdate(root, "panel");
+    // the update completes and is recorded; only the ifRunning ensure after it sees the abort
+    await expect(refreshed).rejects.toThrow(/caller gave up/);
+    expect(await updates()).toHaveLength(1);
+    expect((await row())?.status).toBe("running");
+    const id = await instanceId();
+    expect((await fakeSandboxMeta(root, id))?.limits.network.hosts).toContain("example.com");
+    expect(await fakeSandboxState(root, id)).toBe("running");
+  });
+
+  it("an update refused as stale loses the lease and recreates nothing", async () => {
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    const id = await instanceId();
+    // a newer holder's token at the provider, ahead of the device record
+    const meta = await fakeSandboxMeta(root, id);
+    await writeFile(
+      join(root, "instances", id, "meta.json"),
+      JSON.stringify({ ...meta, fence: 1_000_000 }),
+    );
+    await setHosts(["example.com"]);
+    await expect(services.refresh(use(), "echo", signal())).rejects.toBeInstanceOf(
+      SandboxLockLostError,
+    );
+    const ops = await readFakeSandboxOps(root);
+    expect(ops.some((o) => o[0] === "stale-fence" && o[2] === "update")).toBe(true);
+    expect(ops.some((o) => o[0] === "destroy")).toBe(false);
+    expect((await readFakeSandboxLimits(root)).filter((e) => e.op === "create")).toHaveLength(1);
+    expect(await instanceId()).toBe(id);
+    expect(await fakeServiceRunning(root, id, "echo")).toBe(true);
+  });
+
+  it("a device deleted while the refresh waited gets nothing applied or recreated", async () => {
+    provider = createFakeSandbox(root);
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    const id = await instanceId();
+    await setHosts(["example.com"]);
+    const held = await holdElsewhere();
+    const refreshed = services.refresh(use(), "echo", signal());
+    await intentSet();
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${deviceId}`.execute(raw);
+    held.letGo();
+    await held.done;
+    await refreshed;
+    expect(await instanceId()).toBe(id);
+    expect((await readFakeSandboxLimits(root)).filter((e) => e.op === "create")).toHaveLength(1);
+    expect((await readFakeSandboxOps(root)).some((o) => o[0] === "destroy")).toBe(false);
   });
 });
 

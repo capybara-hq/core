@@ -1587,10 +1587,13 @@ export class SandboxService {
    * the limits. Nothing is done when the limits already apply (no lease is taken, so open viewers
    * stay), or while the device carries a retirement obligation (only a use's gate settles it).
    *
-   * The exclusive lease is taken with intent and waited for up to `sandbox.lockWaitSeconds`
-   * (`sandbox.busy` after that: a tool call holding the device keeps it, and the next use applies
-   * the limits); taking it ends the device's stream holds (ruling R7), so viewers reconnect to the
-   * service as it runs afterwards. `applied` with the instance now recorded (a new one after a
+   * The exclusive lease is taken with intent. Only the wait is bounded by `signal` and by
+   * `sandbox.lockWaitSeconds` (`sandbox.busy` after that: a tool call holding the device keeps
+   * it, and the next use applies the limits); an abort there reaches no provider. The apply under
+   * the lease has its own budget ({@link MAINTENANCE_CALL_TIMEOUT_MS} and the lease's signal),
+   * never what is left of the caller's, so a long wait never cuts an `update` or a recreate
+   * short. Taking the lease ends the device's stream holds (ruling R7), so viewers reconnect to
+   * the service as it runs afterwards. A device deleted meanwhile is left alone. `applied` with the instance now recorded (a new one after a
    * recreate), `unchanged` when nothing had to be applied, `not_running` without a running
    * instance.
    */
@@ -1612,10 +1615,22 @@ export class SandboxService {
       { intent: true },
     );
     try {
-      const sig = AbortSignal.any([signal, lease.signal]);
+      // the apply's own budget: the caller's signal bounded only the wait (an abort mid-update
+      // would quarantine the instance, one mid-recreate would leave it `creating`)
+      const sig = AbortSignal.any([AbortSignal.timeout(MAINTENANCE_CALL_TIMEOUT_MS), lease.signal]);
       // under the lease the B1 snapshot writer needs: no limits change on a device carrying the
       // reconcile marker (B-11)
       await this.facts.assertCloudReconciled(use.orgId, env);
+      // under the lease, as `ensure` checks: a device deleted while this waited gets nothing
+      // recreated on it
+      const live = await this.db
+        .selectFrom("devices")
+        .select("id")
+        .where("id", "=", env)
+        .where("org_id", "=", use.orgId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (!live) return "not_running";
       // read again under the lease: another holder may have applied, suspended or replaced it
       const row = await this.readRow(use);
       if (!this.usable(row, p, null)) return "not_running";

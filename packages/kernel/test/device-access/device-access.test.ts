@@ -686,7 +686,8 @@ describe("ctx.deviceAccess", () => {
     const starts = await fakeServiceStarts(sandboxRoot);
     await access.addNetworkHosts(CALLER, { ...scope, hosts: ["example.org"] });
     const after = await ifRunning();
-    expect(after.length).toBe(before + 1);
+    // one ifRunning ensure finds it running, one more after the limits were applied
+    expect(after.length).toBe(before + 2);
     expect(after.at(-1)?.[3]).toBe("running");
     expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
     // the running instance got the new allowlist at once (the provider's update), not at the
@@ -698,7 +699,7 @@ describe("ctx.deviceAccess", () => {
     await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
     await access.addNetworkHosts(CALLER, { ...scope, hosts: ["cdn.example.org"] });
     const last = await ifRunning();
-    expect(last.length).toBe(before + 2);
+    expect(last.length).toBe(before + 3);
     expect(last.at(-1)?.[3]).toBe("stopped");
     expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
     expect((await status())?.state).toBe("stopped");
