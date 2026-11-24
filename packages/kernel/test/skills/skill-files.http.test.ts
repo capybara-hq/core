@@ -204,6 +204,20 @@ async function installPlugin(name: string): Promise<void> {
     .execute();
 }
 
+/** An org admin switches platform skill `skillId` off in the org. */
+async function switchOff(skillId: string): Promise<void> {
+  await db
+    .insertInto("component_org_switches")
+    .values({
+      kind: "skill",
+      component_id: skillId,
+      org_id: orgId,
+      enabled: false,
+      updated_by: ownerId,
+    })
+    .execute();
+}
+
 /** A platform skill of plugin `plugin` with one version per entry of `versions`. */
 async function seedPlatformSkill(
   name: string,
@@ -316,6 +330,22 @@ describe("skill file list", () => {
     const body = await member({ method: "GET", url: contentUrl(p.id, "ref.md") });
     expect(body.statusCode, body.body).toBe(200);
     expect(body.body).toBe("# ref");
+  });
+
+  it("a platform skill switched off in the org after it was read: list and content 404", async () => {
+    const p = await seedPlatformSkill("kit-skill", "kit", [
+      { "SKILL.md": skillMd("kit-skill", "one"), "ref.md": "# ref" },
+    ]);
+    await installPlugin("kit");
+    expect((await member({ method: "GET", url: filesUrl(p.id) })).statusCode).toBe(200);
+    expect((await member({ method: "GET", url: contentUrl(p.id, "ref.md") })).statusCode).toBe(200);
+
+    await switchOff(p.id);
+    for (const url of [filesUrl(p.id), contentUrl(p.id, "ref.md")]) {
+      const r = await member({ method: "GET", url });
+      expect(r.statusCode, url).toBe(404);
+      expect(r.json().error.code, url).toBe("skill.not_found");
+    }
   });
 
   it("an unknown version is skill.file_not_found; another org's skill is skill.not_found", async () => {

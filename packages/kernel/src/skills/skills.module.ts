@@ -43,7 +43,6 @@ import { SkillsService } from "./skills.service.js";
     AgentSkillsService,
     SkillsService,
     SkillFiles,
-    SkillFiles,
     SkillChangesService,
     SkillsCatalogService,
     SkillInvoker,

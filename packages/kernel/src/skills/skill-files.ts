@@ -112,7 +112,7 @@ export class SkillFiles {
   /**
    * The bytes of a skill file, verified against its manifest entry (409 `skill.file_changed` when
    * the object is missing or differs), cut to `limit` bytes when given (a text file is never cut
-   * inside a UTF-8 character).
+   * inside a UTF-8 character). The whole object is hashed; only `limit` bytes are kept in memory.
    */
   async read(
     orgId: string,
@@ -122,13 +122,28 @@ export class SkillFiles {
     limit?: number,
   ): Promise<SkillFileBytes> {
     const file = await this.resolve(orgId, skillId, version, path);
-    let bytes: Uint8Array;
+    const bytes = await this.bytes(file, limit !== undefined ? { keepBytes: limit } : {});
+    let body = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const truncated = body.byteLength < file.size;
+    if (truncated && isTextArtifactType(file.contentType)) body = trimUtf8(body);
+    return { file, body, truncated };
+  }
+
+  /**
+   * The verified bytes of a resolved file (the whole object hashed against the manifest; 409
+   * `skill.file_changed` when it is missing or differs), at most `keepBytes` of them.
+   */
+  async bytes(
+    file: ResolvedSkillFile,
+    opts: { keepBytes?: number; signal?: AbortSignal } = {},
+  ): Promise<Uint8Array> {
     try {
-      bytes = await readSkillFile(file.store, file.key, {
-        path: file.path,
-        size: file.size,
-        sha256: file.sha256,
-      });
+      return await readSkillFile(
+        file.store,
+        file.key,
+        { path: file.path, size: file.size, sha256: file.sha256 },
+        opts,
+      );
     } catch (err) {
       if (err instanceof SkillIntegrityError) {
         throw new ApiError(
@@ -138,13 +153,6 @@ export class SkillFiles {
       }
       throw err;
     }
-    let body = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const truncated = limit !== undefined && body.byteLength > limit;
-    if (truncated) {
-      body = body.subarray(0, limit);
-      if (isTextArtifactType(file.contentType)) body = trimUtf8(body);
-    }
-    return { file, body, truncated };
   }
 
   private async version(orgId: string, skillId: string, version: number | undefined) {

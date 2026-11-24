@@ -190,19 +190,24 @@ export class SkillIntegrityError extends Error {}
 /**
  * Reads one skill file and checks it against its manifest entry (size and sha256). A missing or
  * mismatching object throws {@link SkillIntegrityError}; a storage error is rethrown as is
- * (`storage.unavailable` from the store). Shared with a person's skill invocation (phase D).
+ * (`storage.unavailable` from the store). Shared with a person's skill invocation (phase D), the
+ * skill file routes and the previewers' read grant. `keepBytes`: the whole object is still read
+ * and hashed, but only its first `keepBytes` bytes are kept and returned (the result is shorter
+ * than `file.size` when the file is longer).
  */
 export async function readSkillFile(
   store: ObjectStore,
   key: string,
   file: SkillManifest["files"][number],
-  signal?: AbortSignal,
+  opts: { signal?: AbortSignal; keepBytes?: number } = {},
 ): Promise<Uint8Array> {
+  const { signal, keepBytes = Number.POSITIVE_INFINITY } = opts;
   const got = await store.get(key, signal && { signal });
   if (!got) throw new SkillIntegrityError(`${key} is missing`);
   const hash = createHash("sha256");
   const chunks: Uint8Array[] = [];
   let n = 0;
+  let kept = 0;
   const reader = got.body.getReader();
   try {
     for (;;) {
@@ -211,7 +216,12 @@ export async function readSkillFile(
       n += value.byteLength;
       if (n > file.size) throw new SkillIntegrityError(`${key} is larger than its manifest says`);
       hash.update(value);
-      chunks.push(value);
+      if (kept < keepBytes) {
+        const part =
+          kept + value.byteLength > keepBytes ? value.subarray(0, keepBytes - kept) : value;
+        chunks.push(part);
+        kept += part.byteLength;
+      }
     }
   } finally {
     await reader.cancel().catch(() => {});
@@ -231,7 +241,7 @@ async function readVerified(
   signal: AbortSignal,
 ): Promise<Uint8Array> {
   try {
-    return await readSkillFile(store, key, file, signal);
+    return await readSkillFile(store, key, file, { signal });
   } catch (e) {
     if (e instanceof SkillIntegrityError) throw new ToolError(integrityText(skill));
     throw storageError(e);
