@@ -373,6 +373,16 @@ describe("ListPage at 768 and 1440", () => {
     expect(box.closest('[data-part="list-scope"]')).not.toBeNull();
   });
 
+  it.each([768, 1440])("at %i the scope and the field filters share one row", (width) => {
+    renderAtClass(width, agents({ filters: <a href="/sources">市场源</a> }));
+    const row = screen
+      .getByRole("radiogroup", { name: "范围" })
+      .closest('[data-part="list-scope"]');
+    expect(row?.getAttribute("data-filters")).toBe("true");
+    expect(within(row as HTMLElement).getByRole("link", { name: "市场源" })).toBeTruthy();
+    expect(document.querySelectorAll(".cb-list-filters")).toHaveLength(1);
+  });
+
   it("5 options stay a segmented control", () => {
     renderAtClass(1440, agents({ scope: scopeWith(5) }));
     expect(screen.getByRole("radiogroup", { name: "范围" })).toBeTruthy();

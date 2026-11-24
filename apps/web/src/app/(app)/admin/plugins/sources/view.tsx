@@ -221,26 +221,32 @@ function SourceCard({
   const errorSentence =
     source.lastStatus === "error" ? t(`statusValue.errors.${marketplaceErrorKind(raw)}`) : null;
   const note = builtin ? (offline ? t("offline") : t("officialNote")) : null;
-  // The state label carries the error sentence; the raw text and the skipped lines are in the Details dialog
-  const description = [note, source.managed === "config" ? t("managed") : null]
+  // The state is a short label at the head's right; what it means (the entry count and the last
+  // refresh, or the error sentence) leads the description, so the name keeps the head's width.
+  // The raw text and the skipped lines are in the Details dialog.
+  const summary = !source.enabled
+    ? null
+    : errorSentence !== null
+      ? errorSentence
+      : source.lastStatus === "never"
+        ? null
+        : t("statusValue.summary", {
+            n: source.entryCount,
+            at: source.lastRefreshedAt
+              ? formatDateTime(source.lastRefreshedAt, "full", timeZone)
+              : "—",
+          });
+  const description = [summary, note, source.managed === "config" ? t("managed") : null]
     .filter((x): x is string => x !== null)
     .join(" ");
 
   const state = !source.enabled
     ? { label: t("disabled"), tone: "muted" as const }
     : source.lastStatus === "error"
-      ? { label: errorSentence ?? "", tone: "fail" as const }
+      ? { label: t("statusValue.failed"), tone: "fail" as const }
       : source.lastStatus === "never"
         ? { label: t("statusValue.never"), tone: "muted" as const }
-        : {
-            label: t("statusValue.ok", {
-              n: source.entryCount,
-              at: source.lastRefreshedAt
-                ? formatDateTime(source.lastRefreshedAt, "full", timeZone)
-                : "—",
-            }),
-            tone: "ok" as const,
-          };
+        : { label: t("statusValue.ok"), tone: "ok" as const };
 
   const mirrors = source.mirrors;
   const tokenNote =

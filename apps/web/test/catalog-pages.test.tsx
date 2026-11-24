@@ -2381,20 +2381,35 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
         .closest("li") as HTMLElement;
       expect(within(acme).getByText(/catalog\.acme\.com\/index\.json/)).toBeTruthy();
       expect(within(acme).getByText(m.formHttp, { exact: false })).toBeTruthy();
-      const okPrefix = fill(m.statusValue.ok, { n: 3, at: "@@" }).split("@@")[0] as string;
-      expect(within(acme).getByText((c) => c.startsWith(okPrefix))).toBeTruthy();
+      // A short state at the head; the count and the refresh time lead the description
+      expect(acme.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+        m.statusValue.ok,
+      );
+      const summaryPrefix = fill(m.statusValue.summary, { n: 3, at: "@@" }).split(
+        "@@",
+      )[0] as string;
+      expect(
+        acme
+          .querySelector('[data-part="object-card-description"]')
+          ?.textContent?.startsWith(summaryPrefix),
+      ).toBe(true);
       await userEvent.setup().click(within(acme).getByRole("button", { name: m.refresh }));
       await waitFor(() => expect(calls.some((c) => c.url.endsWith("/s2/refresh"))).toBe(true));
     },
   );
 
-  it("a failing source says the error once, in its state; 详情 shows the raw text", async () => {
+  it("a failing source says the error once, under its name; 详情 shows the raw text", async () => {
     stubApi(list([OFFICIAL, ACME]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const acme = card("Acme");
-    // The sentence is the state label only: the description does not repeat it
+    // The state is the short label; the sentence is the description, said once
+    expect(acme.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+      s.statusValue.failed,
+    );
     expect(within(acme).getAllByText(s.statusValue.errors.http_status)).toHaveLength(1);
-    expect(acme.querySelector('[data-part="object-card-description"]')).toBeNull();
+    expect(acme.querySelector('[data-part="object-card-description"]')?.textContent).toBe(
+      s.statusValue.errors.http_status,
+    );
     expect(within(acme).queryByText("HTTP 500")).toBeNull();
     await open("Acme");
     await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
@@ -2431,7 +2446,7 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
   it("a config-managed source has only its switch and refresh, and says it is managed", async () => {
     stubApi(list([MANAGED]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    expect(within(card("Managed")).getByText(s.managed)).toBeTruthy();
+    expect(within(card("Managed")).getByText(s.managed, { exact: false })).toBeTruthy();
     const managed = card("Managed");
     const sw = within(managed).getByRole("switch") as HTMLButtonElement;
     expect(sw.disabled).toBe(false);

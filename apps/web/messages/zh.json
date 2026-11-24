@@ -5331,7 +5331,9 @@
         "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
         "url": "地址",
         "statusValue": {
-          "ok": "正常（{n} 个条目，{at}）",
+          "ok": "正常",
+          "summary": "{n} 个条目，{at} 刷新。",
+          "failed": "出错",
           "never": "还没有拉取过",
           "errors": {
             "private_address": "市场地址解析到内网或保留地址，已被网络规则拦截。",

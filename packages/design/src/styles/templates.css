@@ -782,6 +782,13 @@ a.cb-item-list-title:hover {
 .cb-list-filters .cb-tabs {
   border-bottom: 0;
 }
+/* A scope with field filters (ListPage `scope` + `filters`): one row, the filters after the scope. */
+.cb-list-scope[data-filters="true"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-3);
+}
 .cb-object-list {
   margin: 0;
   padding: 0;
