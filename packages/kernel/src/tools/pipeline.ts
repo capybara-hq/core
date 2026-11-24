@@ -924,12 +924,15 @@ function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOu
 
 /**
  * The attempt of a device service's call whose network ask was approved (the person added its
- * hosts to the device's list, browser use spec §7.1): the call runs again in the next attempt.
- * Null for any other ask, or none.
+ * hosts to the device's list, browser use spec §7.1) with hosts in force from the next command:
+ * the call runs again in the next attempt. Null for any other ask, or none.
  */
 function serviceRerunAfter(ask: ApprovalRecord | null): number | null {
   const d = ask?.detail;
   if (ask?.status !== "approved" || ask.scope !== "always" || d?.kind !== "service") return null;
+  // hosts that apply only at the device's next use or after a files reset are not in force for
+  // a re-run now: the kept result is written with the outcome's note instead, as for a command
+  if (d.appliesAt !== "next-command") return null;
   return d.attempt;
 }
 
@@ -1923,9 +1926,11 @@ export class ToolPipeline {
         : undefined;
     // a device service's refusals reported in the call scope (browser use spec §7.1), any source:
     // asked as "always" only, the call runs again once approved
+    // a report about another device than the conversation's is ignored: only the device the call
+    // works in may be asked about, and only its owner
     const scoped =
       commandReport === undefined && (outcome.kind === "result" || outcome.kind === "error")
-        ? outcome.blocked
+        ? await this.ownDeviceReport(ctx, outKey, outcome.blocked)
         : undefined;
     const report =
       commandReport ??
@@ -2907,13 +2912,6 @@ export class ToolPipeline {
     };
     const network = this.deps.network;
     if (network === undefined) return { kind: "write", event, notes: [] };
-    // one ask per call: a service call that ran again after its ask is not asked again
-    if (
-      service !== undefined &&
-      (await this.deps.approvals.networkForCall(ctx.runId, callId)) !== null
-    ) {
-      return { kind: "write", event, notes: [serviceAskedNote(hosts.map((h) => h.host))] };
-    }
     const run = hosts.some((h) => h.layer === "device")
       ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
@@ -2947,6 +2945,18 @@ export class ToolPipeline {
     const offer = plan.offer;
     if (plan.ask.length === 0 || offer === undefined)
       return { kind: "write", event, notes: plan.notes };
+    // one ask per call: a service call that ran again after its ask is not asked again; only a
+    // would-be ask is replaced, the plan's other notes (a host on the list, not yet applied) stay
+    if (
+      service !== undefined &&
+      (await this.deps.approvals.networkForCall(ctx.runId, callId)) !== null
+    ) {
+      return {
+        kind: "write",
+        event,
+        notes: [...plan.notes, serviceAskedNote(plan.ask.map((h) => h.host))],
+      };
+    }
     // the device's owner is the only person who may decide (spec §5.2)
     const owner = await this.deps.db
       .selectFrom("devices")
@@ -3025,6 +3035,32 @@ export class ToolPipeline {
       scopes: offer.scopes,
     });
     return { kind: "wait", wait: approvalWait(ask), content: kept.content };
+  }
+
+  /**
+   * A device service's report (the call scope, browser use spec §7.1) when it names the device the
+   * call's conversation works in (the root conversation's for a sub-agent, as the sandbox tools
+   * resolve it); any other device id is ignored with a warning, never asked about.
+   */
+  private async ownDeviceReport(
+    ctx: ToolStepContext,
+    toolKey: string,
+    blocked: ServiceBlocked | undefined,
+  ): Promise<ServiceBlocked | undefined> {
+    if (blocked === undefined) return undefined;
+    const conv = await this.deps.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", ctx.parent?.rootConversationId ?? ctx.conversationId)
+      .where("org_id", "=", ctx.orgId)
+      .executeTakeFirst();
+    if (conv?.device_id === blocked.deviceId) return blocked;
+    this.deps.log.warn("ignored refused hosts reported for another device than the call's", {
+      runId: ctx.runId,
+      toolKey,
+      deviceId: blocked.deviceId,
+    });
+    return undefined;
   }
 
   /** Appends a sub-agent's connect card to its root conversation ({@link rootSurfaceOf}). */

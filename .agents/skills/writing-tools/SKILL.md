@@ -216,8 +216,10 @@ fails closed.
 - **Service network asks** (browser use spec §7.1): a handler's kernel services report hosts a
   device service saw refused into the call scope (`tools/call-scope.ts`, a symbol on the call's own
   context object, never a module map); after the handler the pipeline asks the device owner under
-  the call's tool key (`detail.kind: "service"`), offering only `always`. Approved, the call runs
-  again in the next attempt; one ask per call (a re-run refused more hosts gets a note).
+  the call's tool key (`detail.kind: "service"`), offering only `always`. A report naming another
+  device than the conversation's is ignored (warn). Approved with hosts in force from the next
+  command, the call runs again in the next attempt; otherwise (`next-use` / `files-reset`) the kept
+  result gets the outcome's note. One ask per call: a re-run's would-be ask becomes a note.
 - **Code it cannot read.** Inline interpreter code, stdin or URL scripts, fetched packages and files
   the conversation wrote are `unsure.interpreter`; `review-guarantees.test.ts` (acts × spellings that
   must never be `allow`) is the authority over the ordered-hit corpus.

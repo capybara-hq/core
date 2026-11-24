@@ -8,9 +8,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { onListNote, serviceAskedNote } from "../../src/tools/network-asks.js";
+import { addedToDeviceNote, onListNote, serviceAskedNote } from "../../src/tools/network-asks.js";
 import { fakeDeviceAccessCalls } from "../fixtures/extensions/fake-device-access/index.js";
-import { FAKE_INSTANCE_PERMISSION_SUPPORT } from "../fixtures/plugins/device-fake/index.js";
+import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
+  FAKE_PERMISSION_SUPPORT,
+} from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -79,11 +82,11 @@ beforeAll(async () => {
   const owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
   await enableExtensions(raw, orgId, "fake-device-access");
-  // the org's effective hosts take a.dev and example.org; evil.dev stays outside them
+  // the org's effective hosts take a.dev, example.org and cdn.example.org; evil.dev stays outside
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { deviceNetwork: { extraHosts: ["a.dev", "example.org"] } },
+    payload: { deviceNetwork: { extraHosts: ["a.dev", "example.org", "cdn.example.org"] } },
   });
   expect(res.statusCode, res.body).toBe(200);
 });
@@ -105,8 +108,9 @@ interface Setup {
 let s: Setup;
 
 /**
- * A member with a session, a `device-fake` device of their own with a host list of its own
- * (a.dev, list-only: an instance boundary) and a conversation on it.
+ * A member with a session, a `device-fake` device of their own with a host list of its own (a.dev)
+ * and per-operation hosts (a host added to its list applies from the next command), and a
+ * conversation on it.
  */
 beforeEach(async () => {
   const login = `m-${randomUUID().slice(0, 8)}`;
@@ -127,7 +131,7 @@ beforeEach(async () => {
       provider: "device-fake",
       network_mode: "allowlist",
       network_hosts: JSON.stringify(["a.dev"]),
-      report: JSON.stringify({ support: FAKE_INSTANCE_PERMISSION_SUPPORT }),
+      report: JSON.stringify({ support: FAKE_PERMISSION_SUPPORT }),
     })
     .execute();
   const agentId = await createAgent(req, orgId);
@@ -140,15 +144,26 @@ beforeEach(async () => {
   s = { accountId, req, deviceId, conversationId };
 });
 
+/**
+ * The setup's device becomes list-only (an instance boundary): a host added to its list applies
+ * the next time the device is used, not to a re-run now.
+ */
+const listOnly = () =>
+  db
+    .updateTable("devices")
+    .set({ report: JSON.stringify({ support: FAKE_INSTANCE_PERMISSION_SUPPORT }) })
+    .where("id", "=", s.deviceId)
+    .execute();
+
 /** The model calls `navigate` once, its service refused `blocked` (and `blockedAgain` on a re-run). */
-const navigate = (blocked: string[], blockedAgain?: string[]) =>
+const navigate = (blocked: string[], blockedAgain?: string[], deviceId = s.deviceId) =>
   postMessage(
     s.req,
     orgId,
     s.conversationId,
     `tool:${NAVIGATE}:${JSON.stringify({
       url: "https://example.org/",
-      deviceId: s.deviceId,
+      deviceId,
       blocked,
       ...(blockedAgain !== undefined && { blockedAgain }),
     })}`,
@@ -213,6 +228,7 @@ describe("network asks for extension service calls", () => {
       deviceId: s.deviceId,
       hosts: ["example.org"],
       url: null,
+      appliesAt: "next-command",
     });
     await waitFor(async () => (await runStatus()) === "waiting", 10_000, "run waiting");
     const evs = await eventsOf(db, s.conversationId);
@@ -282,12 +298,53 @@ describe("network asks for extension service calls", () => {
     expect(r?.content).toContain(serviceAskedNote(["cdn.example.org"]));
   });
 
+  it("a re-run refused a host no ask could offer gets that host's own note, not the already-asked one", async () => {
+    await navigate(["example.org"], ["evil.dev"]);
+    const ask = await nextAsk();
+    expect((await decide(ask.id, { decision: "approve", scope: "always" })).statusCode).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    expect(await invocations()).toEqual({ keys: 1, counts: [2] });
+    const [r] = await results();
+    expect(r?.content).toContain("an organization admin adds evil.dev");
+    expect(r?.content).not.toContain("already asked for network access");
+  });
+
   it("a host the device's list already holds, not yet applied, is not asked about", async () => {
     // a.dev is on the device's own list; the list-only device applies it at its next use
+    await listOnly();
     await navigate(["a.dev"]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     expect(await networkAsks()).toEqual([]);
     const [r] = await results();
     expect(r?.content).toContain(onListNote(["a.dev"], "next-use"));
+  });
+
+  it("on a list-only device approving adds the host but does not re-run the call: the note says when it applies", async () => {
+    await listOnly();
+    await navigate(["example.org"]);
+    const ask = await nextAsk();
+    expect(ask.scopes).toEqual(["always"]);
+    expect(ask.detail).toMatchObject({ kind: "service", appliesAt: "next-use" });
+    expect((await decide(ask.id, { decision: "approve", scope: "always" })).statusCode).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const device = await db
+      .selectFrom("devices")
+      .select("network_hosts")
+      .where("id", "=", s.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(device.network_hosts).toContain("example.org");
+    expect(await invocations()).toEqual({ keys: 1, counts: [1] });
+    const [r] = await results();
+    expect(r?.content).toContain("Could not load https://example.org/.");
+    expect(r?.content).toContain(addedToDeviceNote(["example.org"], "next-use"));
+  });
+
+  it("a report naming another device than the conversation's is ignored: no ask, no note", async () => {
+    await navigate(["example.org"], undefined, randomUUID());
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    expect(await networkAsks()).toEqual([]);
+    expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toEqual([]);
+    const [r] = await results();
+    expect(r?.content).toBe("Could not load https://example.org/.");
   });
 });
