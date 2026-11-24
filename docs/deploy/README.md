@@ -765,7 +765,9 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   role (a single process with every role); set it only when gateway replicas run apart, as compose does.
   Alternatively, your reverse proxy or load balancer may route `/device/connect` on the public
   origin (`CAPYBARA_PUBLIC_URL`) to the gateway replicas directly; then the upgrade never reaches
-  `web`. The gateway serves only a real WebSocket upgrade; a plain request gets 404.
+  `web`. Route `/device/stream` (the browser live view, authenticated by a `?ticket=` query) the same
+  way, and keep that query out of your access logs. The gateway serves only a real WebSocket upgrade;
+  a plain request gets 404.
 - **WebSocket upgrade.** The proxy must pass `Upgrade` and `Connection: upgrade` and not buffer the
   stream (nginx: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`,
   `proxy_set_header Connection "upgrade"`).

@@ -13,7 +13,8 @@
 // (/<bucket>/**) so browsers upload and download attachments on the web origin; that path never
 // reaches Next. Details: src/lib/object-store-proxy.ts.
 //
-// WebSocket upgrades on exactly /device/connect (connected machines, `capybara-device`) are piped to
+// WebSocket upgrades on exactly /device/connect (connected machines, `capybara-device`) and
+// /device/stream (browser live view, `?ticket=` never logged) are piped to
 // the gateway (CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL); any other upgrade
 // path is refused
 // (dev: handed to Next's HMR). Details: src/lib/device-connect-proxy.ts.
@@ -101,7 +102,7 @@ server.on(
 applyKeepAlive(server, keepAliveMs);
 server.listen(port, hostname, () => {
   console.log(
-    `> web listening on http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})${objectStore ? `; object storage /${objectStore.bucket}/ -> ${objectStore.upstream.origin}` : ""}${gateway ? `; /device/connect -> ${gateway.upstream.origin}` : ""}`,
+    `> web listening on http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})${objectStore ? `; object storage /${objectStore.bucket}/ -> ${objectStore.upstream.origin}` : ""}${gateway ? `; /device/connect, /device/stream -> ${gateway.upstream.origin}` : ""}`,
   );
 });
 

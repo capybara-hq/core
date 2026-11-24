@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, request, type Server } from "node:h
 import type { AddressInfo, Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEVICE_STREAM_PATH,
   handleUpgrade,
   isDeviceConnectPath,
   parseGatewayProxy,
@@ -130,7 +131,45 @@ describe("isDeviceConnectPath", () => {
   });
 });
 
+describe("DEVICE_STREAM_PATH", () => {
+  it("is /device/stream and matches with a query string", () => {
+    expect(DEVICE_STREAM_PATH).toBe("/device/stream");
+    expect(isDeviceConnectPath("/device/stream")).toBe(true);
+    expect(isDeviceConnectPath("/device/stream?ticket=x")).toBe(true);
+    expect(isDeviceConnectPath("/device/stream/")).toBe(false);
+  });
+});
+
 describe("handleUpgrade", () => {
+  it("forwards /device/stream?ticket=x upgrades to the gateway with the query intact", async () => {
+    const seen: Seen[] = [];
+    const gw = await startGateway(seen);
+    const web = await startWeb(`http://127.0.0.1:${gw}`);
+    const res = await upgrade(web, "/device/stream?ticket=x", {});
+    expect(res.kind).toBe("upgraded");
+    if (res.kind !== "upgraded") return;
+    expect(res.status).toBe(101);
+    expect(seen[0]?.url).toBe("/device/stream?ticket=x");
+    const reply = nextData(res.socket);
+    res.socket.write("frame-1");
+    expect(await reply).toBe("echo:frame-1");
+    res.socket.destroy();
+  });
+
+  it("drops cookies on /device/stream", async () => {
+    const seen: Seen[] = [];
+    const gw = await startGateway(seen);
+    const web = await startWeb(`http://127.0.0.1:${gw}`);
+    const res = await upgrade(web, "/device/stream?ticket=x", {
+      cookie: "session=browser",
+      "x-forwarded-for": "6.6.6.6",
+    });
+    expect(res.kind).toBe("upgraded");
+    if (res.kind === "upgraded") res.socket.destroy();
+    expect(seen[0]?.headers.cookie).toBeUndefined();
+    expect(seen[0]?.headers["x-forwarded-for"]).toBeUndefined();
+  });
+
   it("forwards /device/connect with its headers and streams frames both ways", async () => {
     const seen: Seen[] = [];
     const gw = await startGateway(seen);
@@ -163,7 +202,13 @@ describe("handleUpgrade", () => {
     const seen: Seen[] = [];
     const gw = await startGateway(seen);
     const web = await startWeb(`http://127.0.0.1:${gw}`);
-    for (const path of ["/_next/hmr", "/device", "/device/connect/x", "/api/v1/stream"]) {
+    for (const path of [
+      "/_next/hmr",
+      "/device",
+      "/device/connect/x",
+      "/device/stream/x",
+      "/api/v1/stream",
+    ]) {
       expect(await upgrade(web, path, {})).toEqual({ kind: "response", status: 404 });
     }
     expect(seen).toHaveLength(0);

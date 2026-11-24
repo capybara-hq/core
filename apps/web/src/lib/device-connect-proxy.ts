@@ -4,7 +4,7 @@
  *
  * `capybara-device` opens its WebSocket at `<http.publicUrl>/device/connect`, and the public URL is
  * the web origin. The kernel serves that route only on the `gateway` role, which compose does not
- * publish, so this server forwards WebSocket upgrades whose path is exactly `/device/connect` to a
+ * publish, so this server forwards WebSocket upgrades whose path is exactly `/device/connect` (or `/device/stream`) to a
  * gateway replica (CAPYBARA_WEB_GATEWAY_URL, an http(s) URL):
  *
  * - The raw socket is piped: the original request line and headers (Authorization,
@@ -16,8 +16,11 @@
  * - An error on either side destroys both sockets; a gateway that can't be reached gets 502.
  * - The gateway is CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL.
  *
- * An external proxy may route `/device/connect` to the gateway replicas directly instead; then
- * these upgrades never reach this server.
+ * `/device/stream?ticket=…` (the browser live view) is forwarded the same way, query intact; the
+ * ticket is a credential and this module never logs it.
+ *
+ * An external proxy may route `/device/connect` and `/device/stream` to the gateway replicas directly
+ * instead; then these upgrades never reach this server.
  */
 
 import type { IncomingMessage } from "node:http";
@@ -27,6 +30,8 @@ import { connect as tlsConnect } from "node:tls";
 
 export const GATEWAY_URL_ENV = "CAPYBARA_WEB_GATEWAY_URL";
 export const DEVICE_CONNECT_PATH = "/device/connect";
+/** Browser live-view stream; authenticated by a `?ticket=` query, which is a credential: never log it. */
+export const DEVICE_STREAM_PATH = "/device/stream";
 
 export interface GatewayProxy {
   /** Gateway origin, e.g. http://gateway:8080. */
@@ -71,9 +76,10 @@ export function parseGatewayProxy(env: Record<string, string | undefined>): Gate
   return { upstream };
 }
 
-/** Whether a request target's path (query ignored) is exactly `/device/connect`. */
+/** Whether a request target's path (query ignored) is exactly `/device/connect` or `/device/stream`. */
 export function isDeviceConnectPath(target: string | undefined): boolean {
-  return (target ?? "").split("?")[0] === DEVICE_CONNECT_PATH;
+  const path = (target ?? "").split("?")[0];
+  return path === DEVICE_CONNECT_PATH || path === DEVICE_STREAM_PATH;
 }
 
 /** Answers an upgrade request with a bodyless status and closes the socket. */
@@ -131,7 +137,7 @@ export function proxyDeviceConnect(
 export type UpgradeListener = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
 /**
- * The server's one `upgrade` listener: `/device/connect` goes to the gateway; any other path goes
+ * The server's one `upgrade` listener: `/device/connect` and `/device/stream` go to the gateway; any other path goes
  * to `other` when given (dev: Next's HMR socket) and is refused with 404 otherwise.
  */
 export function handleUpgrade(cfg: GatewayProxy, other?: UpgradeListener): UpgradeListener {
