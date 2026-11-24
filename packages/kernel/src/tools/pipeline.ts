@@ -1318,9 +1318,13 @@ export class ToolPipeline {
 
     const tool = resolved.tools.find((t) => t.key === call.name);
     if (!tool) {
+      // a hidden `<prefix>__*` ref covers every tool of that source (a disabled or needs_config
+      // connector), so a call of one of them gets the reason, not "unknown tool"
+      const covers = (ref: string) =>
+        ref === call.name || (ref.endsWith("__*") && call.name.startsWith(ref.slice(0, -1)));
       const why =
         resolved.unavailable.find((u) => u.ref === call.name) ??
-        resolved.hidden?.find((u) => u.ref === call.name);
+        resolved.hidden?.find((u) => covers(u.ref));
       if (why) return fail(unavailableText(call.name, why.reason));
       let keys = resolved.tools.map((t) => t.key);
       // ToolSearch 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具

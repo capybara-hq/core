@@ -6079,6 +6079,7 @@
       "emptyHint": "组织添加或安装的连接器会列在这里。",
       "noMatch": "没有符合条件的连接器",
       "never": "从未",
+      "system": "系统",
       "fromPlatform": "平台模板",
       "fromCatalog": "插件目录",
       "detail": {

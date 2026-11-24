@@ -24,6 +24,7 @@ import {
   type CreateConnectorInput,
 } from "../../src/tools/connectors.service.js";
 import { Credentials } from "../../src/tools/credentials.js";
+import { ToolDrift } from "../../src/tools/drift.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -71,6 +72,8 @@ beforeAll(async () => {
   mcp = await startFakeMcpServer({
     // the static org token, or a token the fake authorization server issued
     verifyBearer: (t) => t === TOKEN || as.verify(t),
+    // MCP discovery of the authorization server (the dcr connector)
+    protectedResource: { authorizationServers: [as.issuer], advertise: "header" },
     tools: [{ name: "search", description: "Search documents", inputSchema: { type: "object" } }],
   });
   k = await startKernel(
@@ -81,6 +84,8 @@ beforeAll(async () => {
         extensionConfig: { "fake-connector": {} },
         // the fake authorization server is on loopback http
         tools: { oauthAllowInsecureLoopback: true },
+        // the OAuth callback a dcr registration names
+        http: { port: 0, publicUrl: "https://capybara.test" },
       },
     ),
     {
@@ -214,8 +219,8 @@ describe("createDeferredIn", () => {
       .select("created_by")
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
-    // a connector row needs a creator: the org's owner stands in for the kernel
-    expect(row.created_by).toBe(ownerId);
+    // created as no person: no creator (ruling R17); its org token still lists the tools
+    expect(row.created_by).toBeNull();
     const audit = await k.app
       .get(KernelDb)
       .selectFrom("audit_events")
@@ -329,7 +334,7 @@ describe("createDeferredIn", () => {
     const rows = await owed(id);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.data).toEqual({ orgId, connectorId: id, accountId: bob.id });
-    expect(rows[0]?.job_id).toMatch(new RegExp(`^connector-tools-${id}-connected-\\d+$`));
+    expect(rows[0]?.job_id).toMatch(new RegExp(`^connector-tools-${id}-connected-${bob.id}-\\d+$`));
     await deliver();
     await waitFor(async () => (await toolsOf(id)).length > 0, 20_000, "the tools listed");
     expect(await toolsOf(id)).toEqual(["search"]);
@@ -366,5 +371,70 @@ describe("agents get no tools from a needs_config connector", () => {
     await deliver();
     await waitFor(async () => (await owed(id)).length === 0, 20_000, "the job delivered");
     expect(await agentKeys()).toEqual(["mcp__docs__search"]);
+  });
+});
+
+describe("the drift scan writing the first snapshot", () => {
+  it("applies the template's default policies; the tools job afterwards does not apply them again", async () => {
+    failTools = true;
+    const id = await service().createDeferredIn(orgId, ownerId, input());
+    const db = k.app.get(KernelDb);
+    await db
+      .updateTable("connectors")
+      .set({ template_tool_policies: JSON.stringify({ search: "allow" }) })
+      .where("id", "=", id)
+      .execute();
+    const policy = () =>
+      db
+        .selectFrom("connector_tools")
+        .select(["default_policy", "policy_source"])
+        .where("connector_id", "=", id)
+        .where("name", "=", "search")
+        .executeTakeFirstOrThrow();
+    // a scan tick between the commit and the job lists first
+    expect((await k.app.get(ToolDrift).check(orgId, id, "schedule")).status).toBe("checked");
+    expect(await policy()).toEqual({ default_policy: "allow", policy_source: "template" });
+    // an admin changes it; the job's listing is not a first snapshot any more
+    await db
+      .updateTable("connector_tools")
+      .set({ default_policy: "deny", policy_source: "admin" })
+      .where("connector_id", "=", id)
+      .execute();
+    expect(await service().listToolsForJob({ orgId, connectorId: id })).toBe("listed");
+    expect(await policy()).toEqual({ default_policy: "deny", policy_source: "admin" });
+  });
+});
+
+describe("a dcr connector created without a client (ruling R16)", () => {
+  const dcrInput = () =>
+    input({
+      slug: "dcr",
+      auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
+      credential: undefined,
+    });
+  const connect = (r: Req, id: string) =>
+    r({ method: "POST", url: `/api/v1/orgs/${orgId}/connectors/${id}/connect`, payload: {} });
+
+  it("is ready, owes no listing, and registers its client once on concurrent first connects", async () => {
+    const id = await service().createDeferredIn(orgId, null, dcrInput());
+    expect(await setupOf(id)).toBe("ready");
+    expect(await owed(id)).toEqual([]);
+    expect(await k.app.get(Credentials).oauthClient(orgId, id)).toBeNull();
+    const before = as.registrations.length;
+    const [a, b] = await Promise.all([connect(req, id), connect(req, id)]);
+    for (const res of [a, b]) {
+      expect(res.statusCode, res.body).toBe(200);
+      expect((res.json() as { authorizationUrl: string }).authorizationUrl).toContain(as.issuer);
+    }
+    expect(as.registrations.length - before).toBe(1);
+    const client = await k.app.get(Credentials).oauthClient(orgId, id);
+    expect(client?.clientId).toBeDefined();
+    for (const res of [a, b]) {
+      const url = new URL((res.json() as { authorizationUrl: string }).authorizationUrl);
+      expect(url.searchParams.get("client_id")).toBe(client?.clientId);
+    }
+    // a later connect reuses it
+    expect((await connect(req, id)).statusCode).toBe(200);
+    expect(as.registrations.length - before).toBe(1);
   });
 });

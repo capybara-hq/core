@@ -6091,6 +6091,7 @@
       "emptyHint": "Connectors that organizations add or install are listed here.",
       "noMatch": "No connectors match",
       "never": "Never",
+      "system": "System",
       "fromPlatform": "Platform template",
       "fromCatalog": "Plugin catalog",
       "detail": {

@@ -106,7 +106,12 @@ const connectorColumns = (t: T): Column<AdminConnectorRow>[] => [
     key: "createdBy",
     header: t("columns.createdBy"),
     tone: "muted",
-    cell: (c) => <PersonName name={c.createdByName} avatarUrl={c.createdByAvatarUrl} size={16} />,
+    cell: (c) =>
+      c.createdByName === null ? (
+        t("system")
+      ) : (
+        <PersonName name={c.createdByName} avatarUrl={c.createdByAvatarUrl} size={16} />
+      ),
   },
 ];
 

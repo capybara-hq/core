@@ -1079,9 +1079,10 @@ describe("a member's own tool policies (the card's 权限, decision 2026-11-09)"
 });
 
 describe("the derived setup state (plugin pages spec §5.2.1): needs_config is never called", () => {
-  // a needs_config connector offers no tools, so a call of one of them is an unknown tool (the
+  // a needs_config connector offers no tools; a call of one of them gets the hidden reason (the
   // pipeline's configure text covers a call resolved before the input went away: pipeline.test.ts)
-  const NOT_OFFERED = 'Unknown tool "mcp__docs__search".';
+  const NOT_OFFERED =
+    'Tool "mcp__docs__search" is unavailable: Connector docs needs to be configured by an organization admin.';
   let req: Req;
   let orgId: string;
 
@@ -1146,7 +1147,7 @@ describe("the derived setup state (plugin pages spec §5.2.1): needs_config is n
     const before = mcp.requests.length;
     const r = await callSearch();
     expect(r).toMatchObject({ toolKey: "mcp__docs__search", isError: true });
-    expect(r.content.startsWith(NOT_OFFERED)).toBe(true);
+    expect(r.content).toBe(NOT_OFFERED);
     expect(mcp.requests.length).toBe(before);
   });
 
@@ -1162,7 +1163,7 @@ describe("the derived setup state (plugin pages spec §5.2.1): needs_config is n
     const before = mcp.requests.length;
     const r = await callSearch();
     expect(r).toMatchObject({ toolKey: "mcp__docs__search", isError: true });
-    expect(r.content.startsWith(NOT_OFFERED)).toBe(true);
+    expect(r.content).toBe(NOT_OFFERED);
     expect(mcp.requests.length).toBe(before);
     // storing the client is the input it lacked
     await k.app.get(Credentials).setOAuthClient(orgId, id, {
@@ -1221,7 +1222,7 @@ describe("a needs_config manual-client OAuth connector whose member still holds 
     expect(JSON.stringify(mcp.requests)).not.toContain(MEMBER_TOKEN);
   }
 
-  it("tool call: not offered, no connect card", async () => {
+  it("tool call: not offered, the configure reason, no connect card", async () => {
     await noRequest(async () => {
       const conv = await createConv(req, orgId, await createAgent(req, orgId));
       await postMessage(req, orgId, conv, 'tool:mcp__docs__search:{"q":"x"}');
@@ -1234,7 +1235,9 @@ describe("a needs_config manual-client OAuth connector whose member still holds 
       };
       expect(result.isError).toBe(true);
       // a needs_config connector offers no tools (the pipeline's configure text: pipeline.test.ts)
-      expect(result.content.startsWith('Unknown tool "mcp__docs__search".')).toBe(true);
+      expect(result.content).toBe(
+        'Tool "mcp__docs__search" is unavailable: Connector docs needs to be configured by an organization admin.',
+      );
     });
   });
 

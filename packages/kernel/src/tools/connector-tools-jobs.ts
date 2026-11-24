@@ -29,15 +29,19 @@ export interface ConnectorToolsJobData {
 }
 
 /**
- * `connector-tools-<connectorId>-<trigger>-<seq>`: `seq` is the owing transaction's start time in
- * milliseconds (`now()` in PG), so each owing has its own id and the same owing is one job. The
- * connector id is a UUID: the id has no `:`.
+ * `connector-tools-<connectorId>-<trigger>[-<accountId>]-<seq>`: `seq` is the owing transaction's
+ * start time in milliseconds (`now()` in PG), so each owing has its own id and the same owing is
+ * one job; a `connected` owing names the member, so two members connecting in the same
+ * millisecond owe two jobs (one id with different data would be refused). Connector and account
+ * ids are UUIDs: the id has no `:`.
  */
 export const connectorToolsJobId = (
   connectorId: string,
   trigger: ConnectorToolsTrigger,
   seq: string,
-): string => `connector-tools-${connectorId}-${trigger}-${seq}`;
+  accountId?: string,
+): string =>
+  `connector-tools-${connectorId}-${trigger}${accountId === undefined ? "" : `-${accountId}`}-${seq}`;
 
 const CONNECTOR_TOOLS_QUEUE_REGISTRATION = QueueModule.registerQueue(CONNECTOR_TOOLS_QUEUE);
 

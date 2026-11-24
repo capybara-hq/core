@@ -30,8 +30,10 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
+import { firstOrgOwner } from "../orgs/org-owner.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UUID_RE } from "../ui/registry.js";
 import { type ConnectorSetup, connectorSetup, connectorSetups } from "./connector-setup.js";
@@ -177,7 +179,8 @@ export interface ConnectorSummary {
    * then show its template's, `templateDescription` on the connector routes).
    */
   description: string | null;
-  createdBy: string;
+  /** Null: the kernel created it as no person (a plugin scope sync, ruling R17). */
+  createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -463,6 +466,8 @@ export class ConnectorsService {
     private readonly orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">,
     /** Owed work: the tool listings that follow a deferred create or a setup (§5.2.1). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The cross-replica lock of a deferred connector's lazy client registration (R16). */
+    @Inject(LockService) private readonly locks: Pick<LockService, "run">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Setup guides of connector templates (spec 2026-11-09-setup-guides-v2-design.md §11). */
     @Inject(PluginGuides)
@@ -837,9 +842,10 @@ export class ConnectorsService {
    * OAuth connector takes no client (an org admin saves it, which turns the connector ready).
    * When the connector is `ready` and its credential is not personal, the listing is owed in the
    * same transaction (`connector-tools-list`, trigger `created`); a personal one is listed on its
-   * first member credential. `actorAccountId` null: the kernel itself (a scope sync); the org's
-   * owner is then recorded as the creator (`created_by` names an account) and the audit has no
-   * actor. With an actor, `connectors.manage` is checked under the org lock. Returns the id.
+   * first member credential. `actorAccountId` null: the kernel itself (a scope sync); the
+   * connector then has no creator (`created_by` null, ruling R17) and the audit no actor. With an
+   * actor, `connectors.manage` is checked under the org lock. A `client: "dcr"` connector
+   * registers its client on the first connect ({@link clientForConnect}). Returns the id.
    */
   @Transactional()
   async createDeferredIn(
@@ -951,7 +957,8 @@ export class ConnectorsService {
         auth: JSON.stringify(auth),
         git_hosts: input.git !== undefined ? JSON.stringify(input.git.hosts) : null,
         description: ownDescription(input.description),
-        created_by: actorAccountId ?? (await this.ownerOf(t, orgId)),
+        // null: created by the kernel as no person (ruling R17)
+        created_by: actorAccountId,
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
         platform_template_id: platformTemplate?.id ?? null,
@@ -1002,20 +1009,6 @@ export class ConnectorsService {
     return issues;
   }
 
-  /** The org's first owner: the creator recorded for a connector the kernel creates itself. */
-  private async ownerOf(db: KernelSchemaDb, orgId: string): Promise<string> {
-    const row = await db
-      .selectFrom("memberships")
-      .select("account_id")
-      .where("org_id", "=", orgId)
-      .where("role", "=", "owner")
-      .orderBy("created_at")
-      .orderBy("account_id")
-      .executeTakeFirst();
-    if (!row) throw new Error(`org ${orgId} has no owner to record as a connector's creator`);
-    return row.account_id;
-  }
-
   /**
    * Owes a listing of the connector's tools in the caller's transaction (`connector-tools-list`,
    * processed by `ConnectorToolsProcessor` after the commit). `accountId`: the member whose
@@ -1035,7 +1028,7 @@ export class ConnectorsService {
     await this.outbox.add<ConnectorToolsJobData>({
       queue: CONNECTOR_TOOLS_QUEUE,
       name: CONNECTOR_TOOLS_JOB,
-      jobId: connectorToolsJobId(connectorId, trigger, rows[0]?.seq ?? "0"),
+      jobId: connectorToolsJobId(connectorId, trigger, rows[0]?.seq ?? "0", accountId),
       data: { orgId, connectorId, ...(accountId !== undefined && { accountId }) },
       orgId,
     });
@@ -1378,7 +1371,7 @@ export class ConnectorsService {
       slug: r.slug,
       name: r.name,
       connector: r.connector,
-      // 大段文本（如 OpenAPI 文档）不回显全文，见 endpoint.ts
+      // a large text (such as an OpenAPI document) is not echoed in full: see endpoint.ts
       endpoint: endpointView(r.endpoint),
       auth: r.auth as unknown as ConnectorAuth,
       status: r.status,
@@ -2062,7 +2055,7 @@ export class ConnectorsService {
       actorAccountId,
       opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
     );
-    const changes = await this.applySnapshotIn(await this.row(t, orgId, connectorId, true), rows);
+    const changes = await this.drift.apply(await this.row(t, orgId, connectorId, true), rows);
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -2076,33 +2069,6 @@ export class ConnectorsService {
       issues,
       changes,
     };
-  }
-
-  /**
-   * Writes a listed snapshot over the connector's tool rows (the caller holds the row locked):
-   * the drift compare-and-write, then on the first snapshot (an authorization-code connector's
-   * first member connection, or a deferred create's first listing) the template's default
-   * policies (`policy_source 'template'`).
-   */
-  @Transactional({ propagation: "mandatory" })
-  private async applySnapshotIn(
-    locked: Awaited<ReturnType<ConnectorsService["row"]>>,
-    rows: SnapshotRow[],
-  ): Promise<DriftChanges> {
-    const changes = await this.drift.apply(locked, rows);
-    const templatePolicies = locked.template_tool_policies;
-    if (locked.tools_synced_at === null && templatePolicies) {
-      for (const [name, policy] of Object.entries(templatePolicies)) {
-        await this.db
-          .updateTable("connector_tools")
-          .set({ default_policy: policy, policy_source: "template" })
-          .where("connector_id", "=", locked.id)
-          .where("name", "=", name)
-          .where("policy_source", "=", "derived")
-          .execute();
-      }
-    }
-    return changes;
   }
 
   /**
@@ -2129,8 +2095,10 @@ export class ConnectorsService {
     const personal = auth.type !== "none" && auth.ownership === "personal";
     if (personal && accountId === undefined) return "skipped";
     if ((await this.setupOf(orgId, app)) === "needs_config") return "skipped";
-    // an org credential ignores the account; a personal one is that member's
-    const as = accountId ?? app.created_by;
+    // a personal credential is that member's; an org credential needs an account id only
+    // nominally: the creator, else the org's owner
+    const as = accountId ?? app.created_by ?? (await firstOrgOwner(this.db, orgId));
+    if (as === undefined) return "skipped";
     let listed: { specs: unknown; resources: boolean };
     try {
       listed = await this.drift.listTools(
@@ -2149,7 +2117,10 @@ export class ConnectorsService {
     return (await this.storeListedIn(orgId, connectorId, rows, accountId)) ? "listed" : "skipped";
   }
 
-  /** The org-locked write of {@link listToolsForJob}; false when the org or connector is gone. */
+  /**
+   * The org-locked write of {@link listToolsForJob}; false (nothing written) when the org or the
+   * connector is gone, disabled or `needs_config` by now.
+   */
   @Transactional()
   private async storeListedIn(
     orgId: string,
@@ -2167,8 +2138,10 @@ export class ConnectorsService {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
-    if (!locked) return false;
-    const changes = await this.applySnapshotIn(locked, rows);
+    // switched off or lost its input since the listing: write nothing (a later save owes a job)
+    if (locked?.status !== "active") return false;
+    if ((await this.setupOf(orgId, locked)) !== "ready") return false;
+    const changes = await this.drift.apply(locked, rows);
     await audit(t, {
       orgId,
       action: "connector.tools_refreshed",
@@ -2179,11 +2152,16 @@ export class ConnectorsService {
   }
 
   /**
-   * 复核一个待复核的工具（`connectors.manage`，spec 7.3）。`approve`：采用待复核的新定义（若有）并启用，
-   * `reviewed_at` 记为现在；默认策略按新定义的注解重新推导，除非管理员设过（`policy_source = admin`）且来源没变。
-   * `reject`：停用，丢弃待复核的新定义、保留旧定义；从未复核过的工具被拒后 `reviewed_at` 仍为空（仍可再批准）。
-   * 工具不存在 → 404 `connector.tool_not_found`；不可复核（已复核且无待复核定义，或已消失）→ 409 `connector.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
-   * 采用新定义即换了指纹：旧的「以后都允许」/「本会话都允许」授权按指纹比对自然失效（D8）。审计 `connector.tool_reviewed`。
+   * Reviews a tool pending review (`connectors.manage`, spec 7.3). `approve`: adopts the pending
+   * definition (if any) and enables it, `reviewed_at` set to now; the default policy is derived
+   * again from the new definition's annotations unless an admin set it (`policy_source = admin`)
+   * and the source did not change. `reject`: disables it, drops the pending definition and keeps
+   * the old one; a never-reviewed tool keeps `reviewed_at` empty after a rejection (it can still
+   * be approved). A missing tool -> 404 `connector.tool_not_found`; not reviewable (reviewed with
+   * nothing pending, or gone) -> 409 `connector.tool_not_pending`; a non-compliant new definition
+   * (such as an invalid key) cannot pass -> `validation_failed`. Adopting a new definition changes
+   * the fingerprint: earlier "always allow" / "allow for this conversation" grants stop matching
+   * (D8). Audits `connector.tool_reviewed`.
    */
   @Transactional()
   async reviewTool(
@@ -2352,10 +2330,12 @@ export class ConnectorsService {
   }
 
   /**
-   * 轮换 OAuth 客户端（Ruling A18，组织凭据接口，`connectors.manage`）：值为 `{ clientId, clientSecret }`。
-   * 客户端凭据连接器先用新客户端取一次 token 验证（失败 → 502 `connector.connect_failed`，什么都不改），再替换客户端并以
-   * 新 token 替换缓存的组织 token；授权码连接器只限手填 client，只替换客户端（成员的 token 保留，之后刷新若得到
-   * invalid_client 会作废）。审计只记类型与归属。
+   * Rotates the OAuth client (Ruling A18, the org credential route, `connectors.manage`): the
+   * value is `{ clientId, clientSecret }`. A client credentials connector first fetches a token
+   * with the new client to check it (failure -> 502 `connector.connect_failed`, nothing changed),
+   * then replaces the client and the cached org token with the new one; an authorization-code
+   * connector (manual client only) replaces only the client (members' tokens stay, and a later
+   * refresh answered `invalid_client` drops them). The audit records the type and ownership only.
    * A connector with no client yet (`needs_config`, plugin pages spec §5.2.1) gets its first one
    * set up as a create does (the client credentials token, or the authorization-code endpoints
    * from discovery or the auth's URLs), outside any transaction.
@@ -2459,6 +2439,65 @@ export class ConnectorsService {
       target: connectorId,
       detail: { ...auditDetail, type: auth.type, ownership: "org" },
     });
+  }
+
+  /**
+   * The OAuth client a member's connect starts with (`OAuthFlow.start`): the stored one, else, for
+   * an authorization-code connector with `client: "dcr"` created without one
+   * ({@link createDeferredIn}, plugin pages spec §5.2.1, ruling R16), one registered now: discovery
+   * and dynamic registration run once across replicas under the lock
+   * `connector-dcr:<connectorId>` (re-read inside it, never inside a transaction), and the client
+   * is stored unless another registration stored one first. Null: no client and none to register
+   * (a manual client an org admin has not saved). An outbound failure is 502
+   * `connector.connect_failed`.
+   */
+  async clientForConnect(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+  ): Promise<OAuthClientRecord | null> {
+    const existing = await this.credentials.oauthClient(orgId, connectorId);
+    if (existing) return existing;
+    const app = await this.row(this.db, orgId, connectorId);
+    const auth = app.auth as unknown as ConnectorAuth;
+    if (auth.type !== "oauth_code" || auth.client !== "dcr") return null;
+    const publicUrl = this.config.get().http.publicUrl;
+    if (!publicUrl) throw publicUrlRequired();
+    return this.locks.run(
+      `connector-dcr:${connectorId}`,
+      // one registration (discovery + DCR, each bounded by the 30 s OAuth timeout) per holder
+      { ttlMs: 90_000, waitMs: 90_000 },
+      async () => {
+        const again = await this.credentials.oauthClient(orgId, connectorId);
+        if (again) return again;
+        const { client } = await this.prepareOAuth(auth, app.endpoint, undefined, publicUrl);
+        return this.storeRegisteredClientIn(orgId, connectorId, accountId, client);
+      },
+    );
+  }
+
+  /** The org-locked write of {@link clientForConnect}: the first stored client wins. */
+  @Transactional()
+  private async storeRegisteredClientIn(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+    client: OAuthClientRecord,
+  ): Promise<OAuthClientRecord> {
+    await this.orgLock.lock(orgId);
+    await this.row(this.db, orgId, connectorId, true);
+    const stored = await this.credentials.oauthClient(orgId, connectorId);
+    if (stored) return stored;
+    await this.credentials.setOAuthClient(orgId, connectorId, client);
+    await audit(this.db, {
+      actorAccountId: accountId,
+      orgId,
+      // the registered client is the connector's org-level input
+      action: "connector.credential.set",
+      target: connectorId,
+      detail: { type: "oauth_code", ownership: "org", registered: "dcr" },
+    });
+    return client;
   }
 
   /** 删除发起人自己的个人凭据（`connectors.use`）；本来就没有也成功。 */
