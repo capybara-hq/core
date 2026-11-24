@@ -1,5 +1,14 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- 624a7a3: A `service.ensure` with `ifRunning` accepts the name-only spec device-local sends; the browser no
+  longer fails on a local device with "spec.args must be a string array".
+- 0f35a13: Service files of several megabytes (the browser daemon) no longer fail the base64 check with
+  "Maximum call stack size exceeded".
+
 ## 0.1.0-rc.35
 
 ### Patch Changes
