@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
   FAKE_DIAL_IN_PROTOCOL,
@@ -34,6 +35,10 @@ import { enableExtensions, PW, waitFor } from "../helpers/runs.js";
  */
 
 const PLUGIN = "fake-dial-in";
+/** The extension whose approved manifest declares the `echo` service. */
+const FAKE_DEVICE_ACCESS = fileURLToPath(
+  new URL("../fixtures/extensions/fake-device-access/index.ts", import.meta.url),
+);
 const HELLO = { revision: "r1", outsideSandbox: false };
 
 let h: Harness;
@@ -70,7 +75,7 @@ beforeAll(async () => {
   bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
   extensionsDir = await mkdtemp(join(tmpdir(), "cap-viewer-dual-"));
   h = await createDualReplicaHarness({
-    extensions: [MODEL_FAKE],
+    extensions: [MODEL_FAKE, FAKE_DEVICE_ACCESS],
     bootstrap: { dir: bootstrap.dir, manifest: bootstrap.manifest },
     roles: [["gateway"], ["api", "worker", "gateway"]],
     config: {
@@ -94,7 +99,7 @@ beforeAll(async () => {
   const org = await callTo(1, "POST", "/api/v1/orgs", { name: "Acme" });
   expect(org.status, JSON.stringify(org.json)).toBe(201);
   orgId = (org.json.org as { id: string }).id;
-  await enableExtensions(raw, orgId, PLUGIN);
+  await enableExtensions(raw, orgId, PLUGIN, "fake-device-access");
 });
 
 afterAll(async () => {
@@ -137,12 +142,13 @@ const wsBase = (replica: 0 | 1) => `ws://127.0.0.1:${h.replicas[replica].port}`;
  * a conversation of the owner bound to it; returns a viewer ticket written as the kernel mints
  * one (`DeviceAccessService.mintTicket`, which runs in the replicas' processes).
  */
-async function heldDevice() {
+async function heldDevice(opts: { maxFrameBytes?: number } = {}) {
   const { credential, deviceId } = await signIn();
   const machine = await FakeDialInMachine.connect({
     url: `${wsBase(0)}/device/connect`,
     credential,
     hello: HELLO,
+    ...(opts.maxFrameBytes !== undefined && { maxFrameBytes: opts.maxFrameBytes }),
   });
   open.push(machine);
   const opens: unknown[] = [];
@@ -171,7 +177,7 @@ async function heldDevice() {
       deviceId,
       providerName: PLUGIN,
       service: "echo",
-      extension: PLUGIN,
+      extension: "fake-device-access",
     };
     await redis.set(`${DEVICE_STREAM_TICKET_PREFIX}${id}`, JSON.stringify(record), "EX", 60);
     return id;
@@ -229,6 +235,24 @@ describe("device stream viewer across replicas (dual replica)", () => {
     expect(await late.roundTrip("x")).toBe("x");
     await d.machine.close();
     expect((await late.closed).code).toBe(4409);
+  });
+
+  it("a message the machine's frames cannot carry ends the hopped viewer with 1009", async () => {
+    // 100 KiB is under the viewer limit, but base64-encoded over the machine's 64 KiB frames
+    const d = await heldDevice({ maxFrameBytes: 64 * 1024 });
+    const v = viewer(`${wsBase(1)}/device/stream?ticket=${await d.ticket()}`);
+    expect(await v.roundTrip("fits")).toBe("fits");
+    v.ws.send(Buffer.alloc(100 * 1024, 3));
+    expect((await v.closed).code).toBe(1009);
+    // the holder released the hold and audited the close
+    await waitFor(
+      async () =>
+        (
+          await sql<{ n: number }>`SELECT count(*)::int AS n FROM capybara.audit_events
+            WHERE action = 'browser.view_closed' AND target = ${d.deviceId}`.execute(raw)
+        ).rows[0]?.n === 1,
+    );
+    await waitFor(async () => (await redis.zcard(`capk:sandbox-streams:${d.deviceId}`)) === 0);
   });
 
   it("hop with a bad HMAC is refused", async () => {

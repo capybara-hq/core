@@ -8,6 +8,7 @@ import { DialInGateway } from "../dial-in/gateway.js";
 import { ExtensionHost } from "../extensions/host.js";
 import type { GatewayRoutes } from "../http/gateway-routes.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { KERNEL_BUS } from "../infra/tokens.js";
 
 /**
@@ -36,6 +37,7 @@ export class GatewayRole {
     @Inject(ChannelWebhooks) private readonly webhooks: ChannelWebhooks,
     @Inject(DialInGateway) private readonly devices: DialInGateway,
     @Inject(DeviceStreamViewers) private readonly viewers: DeviceStreamViewers,
+    @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
   ) {}
 
   /**
@@ -50,7 +52,7 @@ export class GatewayRole {
       devices: {
         gateway: this.devices,
         maxFrameBytes: config.devices.dialIn.maxFrameBytes,
-        streams: { viewers: this.viewers },
+        streams: { viewers: this.viewers, throttler: this.throttler },
       },
     };
   }

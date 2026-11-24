@@ -10,3 +10,6 @@ device's viewer that reaches another gateway replica hops once to the replica ho
 (`/internal/device-stream/<ticketId>`, authenticated with an HMAC under the master key). Opens and
 closes are audited (`browser.view`, `browser.view_closed`). Stream holds move the device's last use
 when taken, and a hold ending for a lifecycle change logs at debug.
+Viewer messages over 256 KiB, or ones the device stream cannot carry, close the viewer (1009);
+sockets are pinged and a socket paused for 30 s closes (1013); viewer upgrades are limited per
+client address (`device-stream-ip`, 120 a minute).

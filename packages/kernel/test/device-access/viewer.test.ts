@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import WebSocket from "ws";
+import WebSocket, { WebSocketServer } from "ws";
+import { createKeyring } from "../../src/ctx/secrets.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -14,7 +15,14 @@ import {
   type DeviceAccessCaller,
   DeviceAccessService,
 } from "../../src/device-access/device-access.service.js";
-import { DeviceStreamViewers } from "../../src/device-access/viewer.js";
+import {
+  DeviceStreamViewers,
+  hopHeaders,
+  RECEIVE_HIGH_WATER_BYTES,
+  VIEWER_MAX_MESSAGE_BYTES,
+  verifyHopHeaders,
+  WsEnd,
+} from "../../src/device-access/viewer.js";
 import { redactPath } from "../../src/http/error.filter.js";
 import { createLogger } from "../../src/log.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
@@ -204,6 +212,15 @@ async function roundTrip(v: Viewer, text: string): Promise<string> {
   return answer;
 }
 
+const instanceStatus = async (): Promise<string | undefined> =>
+  (
+    await db
+      .selectFrom("device_instances")
+      .select("status")
+      .where("device_id", "=", s.deviceId)
+      .executeTakeFirst()
+  )?.status;
+
 const auditsOf = (action: string, deviceId: string) =>
   db
     .selectFrom("audit_events")
@@ -268,6 +285,12 @@ describe("device stream viewer", () => {
     await redis.set(key2, JSON.stringify({ ...rec2, deviceId: b.deviceId }), "EX", 60);
     expect((await viewer(t2).closed).code).toBe(4401);
     expect(await auditsOf("browser.view", b.deviceId)).toHaveLength(0);
+    // a record naming a service the extension's manifest does not declare
+    const t3 = await mint();
+    const key3 = `${DEVICE_STREAM_TICKET_PREFIX}${t3}`;
+    const rec3 = JSON.parse((await redis.get(key3)) as string) as Record<string, unknown>;
+    await redis.set(key3, JSON.stringify({ ...rec3, service: "other" }), "EX", 60);
+    expect((await viewer(t3).closed).code).toBe(4401);
     // B's own ticket reaches B's service
     const vb = viewer(await mint(b));
     expect(await roundTrip(vb, "b")).toBe("b");
@@ -332,6 +355,132 @@ describe("device stream viewer", () => {
     await waitFor(async () => lines.some((l) => l.includes("/internal/device-stream/:ticket")));
     expect(lines.filter((l) => l.includes(ticket))).toEqual([]);
     expect(redactPath(`/internal/device-stream/${ticket}`)).toBe("/internal/device-stream/:ticket");
+  });
+
+  it("a viewer message over the limit closes it (1009), releases the hold and audits the close", async () => {
+    const v = viewer(await mint());
+    expect(await roundTrip(v, "small")).toBe("small");
+    v.ws.send(Buffer.alloc(VIEWER_MAX_MESSAGE_BYTES + 1, 1));
+    expect((await v.closed).code).toBe(1009);
+    await waitFor(async () => (await auditsOf("browser.view_closed", s.deviceId)).length === 1);
+    await waitFor(async () => {
+      await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 30 * MIN));
+      return (await instanceStatus()) === "suspended";
+    });
+  });
+
+  it("a viewer that stops answering pings is closed and releases the hold", async () => {
+    const viewers = k.app.get(DeviceStreamViewers);
+    viewers.pingIntervalMs = 50;
+    try {
+      const v = viewer(await mint());
+      expect(await roundTrip(v, "ping")).toBe("ping");
+      // the tab goes away without a close: its socket reads nothing, so no pong comes back
+      v.ws.pause();
+      await waitFor(async () => (await auditsOf("browser.view_closed", s.deviceId)).length === 1);
+      const row = (await auditsOf("browser.view_closed", s.deviceId))[0];
+      expect((row?.detail as { code?: unknown } | undefined)?.code).toBe(1006);
+      await waitFor(async () => {
+        await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 30 * MIN));
+        return (await instanceStatus()) === "suspended";
+      });
+      v.ws.terminate();
+    } finally {
+      viewers.pingIntervalMs = 20_000;
+    }
+  });
+
+  it("a socket pauses at the byte high-water, resumes at half, and closes 1013 when paused too long", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const port = (wss.address() as { port: number }).port;
+    const ends: WsEnd[] = [];
+    wss.on("connection", (ws) => {
+      ends.push(new WsEnd(ws as never, { pingIntervalMs: 20, pausedLimitMs: 300 }));
+    });
+    try {
+      const client = new WebSocket(`ws://127.0.0.1:${port}`);
+      const closed = new Promise<number>((resolve) => client.on("close", (c) => resolve(c)));
+      await new Promise<void>((resolve) => client.once("open", () => resolve()));
+      const end = await waitFor(async () => ends[0]);
+      const chunk = Buffer.alloc(256 * 1024, 2);
+      // 1.75 MiB queued: still reading
+      for (let i = 0; i < 7; i++) client.send(chunk);
+      await waitFor(async () => end.pending === 7 * chunk.length);
+      expect(end.paused).toBe(false);
+      // the eighth reaches 2 MiB: paused
+      client.send(chunk);
+      await waitFor(async () => end.paused);
+      expect(end.pending).toBe(RECEIVE_HIGH_WATER_BYTES);
+      // taking half resumes it
+      for (let i = 0; i < 4; i++) await end.next();
+      expect(end.paused).toBe(false);
+      // paused again and left alone: closed with 1013
+      for (let i = 0; i < 4; i++) client.send(chunk);
+      await waitFor(async () => end.paused);
+      expect(await closed).toBe(1013);
+    } finally {
+      for (const c of wss.clients) c.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+    }
+  });
+
+  it("hop headers verify under the current and the previous master key", async () => {
+    const a = Buffer.alloc(32, 1);
+    const b = Buffer.alloc(32, 2);
+    const old = createKeyring(a, []);
+    const rotated = createKeyring(b, [a]);
+    const other = createKeyring(b, []);
+    const now = Date.now();
+    const ticket = "t".repeat(32);
+    const fromOld = hopHeaders(old, ticket, now);
+    const fromNew = hopHeaders(rotated, ticket, now);
+    const check = (k: typeof old, h: Record<string, string>) =>
+      verifyHopHeaders(k, ticket, h["x-capybara-hop"], h["x-capybara-hop-at"], now);
+    // a replica still on the old key and one already rotated accept each other only one way
+    expect(check(rotated, fromOld)).toBe(true);
+    expect(check(rotated, fromNew)).toBe(true);
+    expect(check(other, fromOld)).toBe(false);
+    // stale or for another ticket: refused
+    expect(
+      verifyHopHeaders(
+        rotated,
+        ticket,
+        fromNew["x-capybara-hop"],
+        fromNew["x-capybara-hop-at"],
+        now + 61_000,
+      ),
+    ).toBe(false);
+    expect(
+      verifyHopHeaders(
+        rotated,
+        "u".repeat(32),
+        fromNew["x-capybara-hop"],
+        fromNew["x-capybara-hop-at"],
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  // near the end: the per-address limit fills; its counters are cleared after
+  it("viewer upgrades are limited per client address", async () => {
+    const status = () =>
+      new Promise<number>((resolve) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=nope`);
+        ws.on("unexpected-response", (_req, res) => {
+          resolve(res.statusCode ?? 0);
+          ws.terminate();
+        });
+        ws.on("close", () => resolve(101));
+        ws.on("error", () => {});
+      });
+    try {
+      let limited = false;
+      for (let i = 0; i < 130 && !limited; i++) limited = (await status()) === 429;
+      expect(limited).toBe(true);
+    } finally {
+      const keys = await redis.keys("throttler:*device-stream*");
+      if (keys.length > 0) await redis.del(...keys);
+    }
   });
 
   // last: the viewers stop as on a replica shutdown

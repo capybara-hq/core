@@ -17,6 +17,7 @@ import { ConversationDevices } from "../devices/conversation-devices.js";
 import { DevicesService } from "../devices/devices.service.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -114,6 +115,7 @@ export class DeviceAccessService {
     @Inject(QuestionsService) private readonly questions: Pick<QuestionsService, "answer">,
     @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "current">,
   ) {}
 
   private get db() {
@@ -325,10 +327,14 @@ export class DeviceAccessService {
    * Whether a taken viewer ticket's record still stands when its viewer opens (the checks of
    * {@link mintTicket} again, binding nothing): the conversation live and owned by the record's
    * account, its device still the record's device on the record's provider and the account's
-   * own, the record's extension still enabled in the org. False when any of that no longer
-   * holds; other failures (the database) are thrown.
+   * own, the record's extension still enabled in the org and its approved manifest as loaded now
+   * (not the record's copy) still declaring the service in `permissions.deviceAccess.services`.
+   * False when any of that no longer holds; other failures (the database) are thrown.
    */
   async ticketStands(t: DeviceStreamTicket): Promise<boolean> {
+    const declared =
+      this.registry.current(t.extension)?.permissions.permissions.deviceAccess?.services ?? [];
+    if (!declared.includes(t.service)) return false;
     try {
       const d = await this.scopedDevice(
         { extension: t.extension, services: [t.service] },

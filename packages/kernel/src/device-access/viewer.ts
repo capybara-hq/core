@@ -10,6 +10,7 @@ import type { Keyring } from "../ctx/secrets.js";
 import { DialInGateway } from "../dial-in/gateway.js";
 import { DialInHandlers } from "../dial-in/handlers.js";
 import { audit } from "../identity/audit.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
@@ -25,6 +26,11 @@ export const VIEWER_CLOSE = {
   normal: 1000,
   /** The replica is shutting down: reconnect with a new ticket (another replica serves it). */
   shutdown: 1001,
+  /**
+   * A viewer message over {@link VIEWER_MAX_MESSAGE_BYTES}, or one the device stream refused as
+   * too big for its frame capacity.
+   */
+  tooBig: 1009,
   /** The kernel failed (the database, a hop that could not connect). */
   internal: 1011,
   /**
@@ -32,6 +38,8 @@ export const VIEWER_CLOSE = {
    * a rebuild in place): reconnect with a new ticket.
    */
   restart: 1012,
+  /** A socket paused longer than {@link VIEWER_PAUSED_LIMIT_MS}: the peer took nothing. */
+  stalled: 1013,
   /** No ticket, an unknown or used one, or its record no longer stands (owner, device, extension). */
   badTicket: 4401,
   /** The device, its running instance or the service is gone, or the provider cannot stream. */
@@ -62,10 +70,23 @@ export const TICKET_ID_RE = /^[A-Za-z0-9_-]{16,128}$/;
  */
 const SEND_HIGH_WATER_BYTES = 1024 * 1024;
 /**
- * Incoming backpressure: a socket with this many received messages not yet forwarded is paused
- * (`ws.pause()`, no more reads) until the queue is half empty.
+ * Incoming backpressure: a socket with this many bytes received and not yet forwarded is paused
+ * (`ws.pause()`, no more reads) until half of them are forwarded.
  */
-const RECEIVE_HIGH_WATER = 64;
+export const RECEIVE_HIGH_WATER_BYTES = 2 * 1024 * 1024;
+/**
+ * The largest message a viewer sends towards the service (input events are small). The shared
+ * WebSocket scope's `maxPayload` is the dial-in frame limit, so the viewer routes enforce this
+ * themselves: a larger message closes the socket with 1009.
+ */
+export const VIEWER_MAX_MESSAGE_BYTES = 256 * 1024;
+/** How often viewer and hop sockets are pinged; two pings without a pong end the socket. */
+export const VIEWER_PING_INTERVAL_MS = 20_000;
+/**
+ * How long a socket may stay paused (its peer not taking what it sends) before it is closed
+ * with 1013: a paused socket reads nothing, so neither a pong nor a closed tab would be seen.
+ */
+export const VIEWER_PAUSED_LIMIT_MS = 30_000;
 
 /** A WebSocket close reason is at most 123 UTF-8 bytes. */
 const closeReason = (text: string): string => {
@@ -92,39 +113,75 @@ interface PipeEnd {
   readonly messages: AsyncIterable<Uint8Array>;
 }
 
+/** How a {@link WsEnd} watches its socket. */
+export interface WsEndOptions {
+  /** A received message larger than this closes the socket with 1009 (unset: no own limit). */
+  maxMessageBytes?: number;
+  /** {@link VIEWER_PING_INTERVAL_MS}. */
+  pingIntervalMs: number;
+  /** {@link VIEWER_PAUSED_LIMIT_MS}. */
+  pausedLimitMs: number;
+}
+
 /**
  * A WebSocket (the browser's, a hop in either direction) as a {@link PipeEnd}. Received messages
- * are queued from the moment it is wrapped (nothing is lost while the other end opens); a full
- * queue pauses the socket's reads. A send waits for its flush while the socket's buffer is over
- * {@link SEND_HIGH_WATER_BYTES}, and is dropped once the socket is no longer open (the pipe is
- * ending).
+ * are queued from the moment it is wrapped (nothing is lost while the other end opens); once
+ * {@link RECEIVE_HIGH_WATER_BYTES} are queued the socket's reads pause, and a socket paused
+ * longer than `pausedLimitMs` is closed (1013). A message over `maxMessageBytes` closes it (1009).
+ * The socket is pinged every `pingIntervalMs` (its own timer, cleared with the socket); two
+ * pings without a pong while it is reading terminate it, so a closed tab is noticed. A send waits
+ * for its flush while the socket's buffer is over {@link SEND_HIGH_WATER_BYTES}, and is dropped
+ * once the socket is no longer open (the pipe is ending).
  */
-class WsEnd implements PipeEnd {
+export class WsEnd implements PipeEnd {
   private readonly queue: Uint8Array[] = [];
+  private queuedBytes = 0;
   private wake: (() => void) | null = null;
-  private paused = false;
+  private pausedAt: number | null = null;
+  private missedPongs = 0;
   private ended = false;
+  private timer: NodeJS.Timeout | undefined;
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly messages: AsyncIterable<Uint8Array>;
 
-  constructor(readonly ws: WebSocket) {
+  constructor(
+    readonly ws: WebSocket,
+    private readonly opts: WsEndOptions,
+  ) {
     ws.on("message", (data: RawData) => {
-      this.queue.push(toBytes(data));
-      if (!this.paused && this.queue.length >= RECEIVE_HIGH_WATER) {
-        this.paused = true;
+      const m = toBytes(data);
+      if (opts.maxMessageBytes !== undefined && m.byteLength > opts.maxMessageBytes) {
+        this.close(1009, "message too big");
+        return;
+      }
+      this.queue.push(m);
+      this.queuedBytes += m.byteLength;
+      if (this.pausedAt === null && this.queuedBytes >= RECEIVE_HIGH_WATER_BYTES) {
+        this.pausedAt = Date.now();
         ws.pause();
       }
       this.notify();
+    });
+    ws.on("pong", () => {
+      this.missedPongs = 0;
     });
     // an error is followed by close; without a listener it would be thrown
     ws.on("error", () => {});
     this.closed = new Promise((resolve) => {
       ws.once("close", (code: number, reason: Buffer) => {
         this.ended = true;
+        clearInterval(this.timer);
         this.notify();
         resolve({ code, reason: reason.toString("utf8") });
       });
     });
+    const watch = () => {
+      if (this.timer !== undefined || this.ended) return;
+      this.timer = setInterval(() => this.tick(), opts.pingIntervalMs);
+      this.timer.unref();
+    };
+    if (ws.readyState === WebSocket.OPEN) watch();
+    else ws.once("open", watch);
     this.messages = {
       [Symbol.asyncIterator]: () => ({
         next: () => this.next(),
@@ -134,6 +191,32 @@ class WsEnd implements PipeEnd {
 
   get isOpen(): boolean {
     return this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /** Whether the socket's reads are paused (a test seam). */
+  get paused(): boolean {
+    return this.pausedAt !== null;
+  }
+
+  /** The bytes received and not yet taken (a test seam). */
+  get pending(): number {
+    return this.queuedBytes;
+  }
+
+  private tick(): void {
+    if (!this.isOpen) return;
+    if (this.pausedAt !== null) {
+      // a paused socket reads no pong: it gets a bounded time instead
+      if (Date.now() - this.pausedAt >= this.opts.pausedLimitMs)
+        this.close(1013, "the peer is not taking messages");
+      return;
+    }
+    if (this.missedPongs >= 2) {
+      this.ws.terminate();
+      return;
+    }
+    this.missedPongs++;
+    this.ws.ping();
   }
 
   private notify(): void {
@@ -147,8 +230,10 @@ class WsEnd implements PipeEnd {
     for (;;) {
       const m = this.queue.shift();
       if (m !== undefined) {
-        if (this.paused && this.queue.length <= RECEIVE_HIGH_WATER / 2) {
-          this.paused = false;
+        this.queuedBytes -= m.byteLength;
+        if (this.pausedAt !== null && this.queuedBytes <= RECEIVE_HIGH_WATER_BYTES / 2) {
+          this.pausedAt = null;
+          this.missedPongs = 0;
           this.ws.resume();
         }
         return { value: m, done: false };
@@ -177,14 +262,23 @@ class WsEnd implements PipeEnd {
   }
 }
 
-/** Forwards every message of `from` to `to`, in order, awaiting each send (backpressure). */
-async function pump(from: AsyncIterable<Uint8Array>, to: PipeEnd): Promise<void> {
+/**
+ * Forwards every message of `from` to `to`, in order, awaiting each send (backpressure).
+ * Resolves with the send error that stopped it, or `undefined` once `from` ended; the caller
+ * ends the whole pipe on a failure (a pipe never runs one way only).
+ */
+async function pump(from: AsyncIterable<Uint8Array>, to: PipeEnd): Promise<{ failed?: unknown }> {
   try {
     for await (const m of from) await to.send(m);
-  } catch {
-    // a send on a closing stream: the pipe ends with the close that caused it
+    return {};
+  } catch (failed) {
+    return { failed: failed ?? new Error("send failed") };
   }
 }
+
+/** The stream's close when it already happened (one turn of the event loop), else null. */
+const closedNow = (stream: DeviceStream): Promise<{ reason: string } | null> =>
+  Promise.race([stream.closed, new Promise<null>((resolve) => setImmediate(() => resolve(null)))]);
 
 /** Resolves once `s` aborts. */
 const abortedOf = (s: AbortSignal): Promise<void> =>
@@ -192,6 +286,61 @@ const abortedOf = (s: AbortSignal): Promise<void> =>
     if (s.aborted) resolve();
     else s.addEventListener("abort", () => resolve(), { once: true });
   });
+
+/**
+ * The hop keys: the one derived from the current master key first (it signs), then those of the
+ * previous master keys (they still verify, so replicas mid key rotation accept each other's hops).
+ */
+function hopKeys(keyring: Keyring): Buffer[] {
+  const derived = keyring.deriveKey(HOP_KEY_INFO);
+  const out = [derived.current];
+  for (const id of keyring.toJSON().previousIds) {
+    const k = id === derived.currentId ? undefined : derived.byId(id);
+    if (k !== undefined) out.push(k);
+  }
+  return out;
+}
+
+const macWith = (key: Buffer, parts: string[]): Buffer =>
+  createHmac("sha256", key).update(parts.join("\n")).digest();
+
+/** The hex MAC over `parts` under the current hop key. */
+export function signHop(keyring: Keyring, parts: string[]): string {
+  return macWith(hopKeys(keyring)[0] as Buffer, parts).toString("hex");
+}
+
+/** Whether `mac` (64 hex) is the MAC over `parts` under any hop key (constant-time compare). */
+export function verifyHopMac(keyring: Keyring, parts: string[], mac: unknown): boolean {
+  if (typeof mac !== "string" || !/^[0-9a-f]{64}$/.test(mac)) return false;
+  const got = Buffer.from(mac, "hex");
+  let ok = false;
+  for (const key of hopKeys(keyring)) if (timingSafeEqual(got, macWith(key, parts))) ok = true;
+  return ok;
+}
+
+/** The headers of a hop for `ticketId` issued at `at` (signed with the current key). */
+export function hopHeaders(keyring: Keyring, ticketId: string, at: number): Record<string, string> {
+  return {
+    [HOP_HEADER]: signHop(keyring, ["hop", ticketId, String(at)]),
+    [HOP_AT_HEADER]: String(at),
+  };
+}
+
+/**
+ * Whether a hop's headers are valid for `ticketId`: the MAC over the ticket id and the issue time
+ * under any hop key, issued at most {@link HOP_MAX_AGE_MS} away from `now`. Reads nothing else.
+ */
+export function verifyHopHeaders(
+  keyring: Keyring,
+  ticketId: string,
+  mac: unknown,
+  at: unknown,
+  now: number,
+): boolean {
+  if (typeof at !== "string" || !/^[0-9]{1,16}$/.test(at)) return false;
+  if (Math.abs(now - Number(at)) > HOP_MAX_AGE_MS) return false;
+  return verifyHopMac(keyring, ["hop", ticketId, at], mac);
+}
 
 /** A ticket record taken from Redis, checked field by field; null for anything else. */
 export function parseTicketRecord(raw: unknown): DeviceStreamTicket | null {
@@ -252,7 +401,11 @@ interface OpenViewer {
  * Backpressure pauses, never drops, in both directions: service to browser, the next message
  * waits while the browser socket has over 1 MiB queued (the provider stream's credit then holds
  * the service back); browser to service, each message waits for `DeviceStream.send` (the
- * service's credit), and a browser socket with 64 messages waiting is paused until half are sent.
+ * service's credit), and a socket with 2 MiB received and not yet forwarded is paused until half
+ * is. A socket paused for 30 s is closed (1013), a socket that misses two pings is terminated, a
+ * viewer message over 256 KiB closes it (1009), and a send the stream refuses ends the whole pipe
+ * (1009 when the stream lives on: the message did not fit its frames; else 4404 / 4409). Every end
+ * releases the hold and audits the close.
  */
 @Injectable()
 export class DeviceStreamViewers {
@@ -260,6 +413,10 @@ export class DeviceStreamViewers {
   private stopping = false;
   /** How long the holder waits for a hop's first message (a test seam). */
   firstMessageMs = HOP_FIRST_MESSAGE_MS;
+  /** {@link VIEWER_PING_INTERVAL_MS} (a test seam). */
+  pingIntervalMs = VIEWER_PING_INTERVAL_MS;
+  /** {@link VIEWER_PAUSED_LIMIT_MS} (a test seam). */
+  pausedLimitMs = VIEWER_PAUSED_LIMIT_MS;
 
   constructor(
     @Inject(DeviceAccessService)
@@ -271,35 +428,22 @@ export class DeviceStreamViewers {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
     @Inject(KEYRING) private readonly keyring: Keyring,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "debug" | "warn">,
   ) {}
 
-  private hopKey(): Buffer {
-    return this.keyring.deriveKey(HOP_KEY_INFO).current;
+  /** {@link verifyHopHeaders} under this kernel's keys, now. */
+  verifyHop(ticketId: string, mac: unknown, at: unknown): boolean {
+    return verifyHopHeaders(this.keyring, ticketId, mac, at, Date.now());
   }
 
-  private mac(parts: string[]): Buffer {
-    return createHmac("sha256", this.hopKey()).update(parts.join("\n")).digest();
-  }
-
-  /** The headers of a hop for `ticketId` issued at `at`. */
-  hopHeaders(ticketId: string, at: number = Date.now()): Record<string, string> {
+  /** How a viewer or hop socket is watched (`maxMessageBytes` for sockets carrying input). */
+  private socketOptions(maxMessageBytes?: number): WsEndOptions {
     return {
-      [HOP_HEADER]: this.mac(["hop", ticketId, String(at)]).toString("hex"),
-      [HOP_AT_HEADER]: String(at),
+      pingIntervalMs: this.pingIntervalMs,
+      pausedLimitMs: this.pausedLimitMs,
+      ...(maxMessageBytes !== undefined && { maxMessageBytes }),
     };
-  }
-
-  /**
-   * Whether a hop's headers are valid for `ticketId`: a 64-hex MAC equal (constant time) to the
-   * one over the ticket id and the issue time, issued at most {@link HOP_MAX_AGE_MS} away from
-   * now. Reads nothing else.
-   */
-  verifyHop(ticketId: string, mac: unknown, at: unknown, now: number = Date.now()): boolean {
-    if (typeof mac !== "string" || !/^[0-9a-f]{64}$/.test(mac)) return false;
-    if (typeof at !== "string" || !/^[0-9]{1,16}$/.test(at)) return false;
-    if (Math.abs(now - Number(at)) > HOP_MAX_AGE_MS) return false;
-    return timingSafeEqual(Buffer.from(mac, "hex"), this.mac(["hop", ticketId, at]));
   }
 
   /** Accepts the hop of `ticketId` once (a replay of a captured hop is refused). */
@@ -332,7 +476,8 @@ export class DeviceStreamViewers {
   }
 
   private track(socket: WebSocket, fn: (end: WsEnd) => Promise<void>): Promise<void> {
-    const end = new WsEnd(socket);
+    // both carry the browser's messages towards the service (a hop's first message is small)
+    const end = new WsEnd(socket, this.socketOptions(VIEWER_MAX_MESSAGE_BYTES));
     if (this.stopping) {
       end.close(VIEWER_CLOSE.shutdown, "shutting down");
       return Promise.resolve();
@@ -399,10 +544,8 @@ export class DeviceStreamViewers {
       return null;
     }
     const { record, mac } = (msg ?? {}) as { record?: unknown; mac?: unknown };
-    if (typeof record !== "string" || typeof mac !== "string" || !/^[0-9a-f]{64}$/.test(mac))
-      return null;
-    const want = this.mac(["record", ticketId, at, record]);
-    if (!timingSafeEqual(Buffer.from(mac, "hex"), want)) return null;
+    if (typeof record !== "string") return null;
+    if (!verifyHopMac(this.keyring, ["record", ticketId, at, record], mac)) return null;
     try {
       return parseTicketRecord(JSON.parse(record));
     } catch {
@@ -424,11 +567,14 @@ export class DeviceStreamViewers {
     if (!end.isOpen) return;
     const at = Date.now();
     const url = `${address.replace(/^http/, "ws")}/internal/device-stream/${ticketId}`;
+    // the holder's messages are the service's: bounded by the dial-in frame limit
     const up = new WsEnd(
       new WebSocket(url, {
-        headers: this.hopHeaders(ticketId, at),
+        headers: hopHeaders(this.keyring, ticketId, at),
         handshakeTimeout: HOP_CONNECT_MS,
+        maxPayload: this.config.get().devices.dialIn.maxFrameBytes,
       }),
+      this.socketOptions(),
     );
     const recordJson = JSON.stringify(record);
     const opened = new Promise<boolean>((resolve) => {
@@ -436,7 +582,7 @@ export class DeviceStreamViewers {
         up.ws.send(
           JSON.stringify({
             record: recordJson,
-            mac: this.mac(["record", ticketId, String(at), recordJson]).toString("hex"),
+            mac: signHop(this.keyring, ["record", ticketId, String(at), recordJson]),
           }),
         );
         resolve(true);
@@ -464,6 +610,8 @@ export class DeviceStreamViewers {
     const forwarded: ReadonlySet<number> = new Set([
       VIEWER_CLOSE.normal,
       VIEWER_CLOSE.shutdown,
+      VIEWER_CLOSE.tooBig,
+      VIEWER_CLOSE.stalled,
       VIEWER_CLOSE.restart,
       VIEWER_CLOSE.badTicket,
       VIEWER_CLOSE.gone,
@@ -550,13 +698,29 @@ export class DeviceStreamViewers {
       });
       viewed = true;
       void pump(stream.messages, end);
-      void pump(end.messages, stream);
+      const inbound = pump(end.messages, stream);
       const settled = await Promise.race([
         end.closed.then(() => ({ side: "viewer" as const })),
         stream.closed.then((c) => ({ side: "stream" as const, reason: c.reason })),
         abortedOf(hold.signal).then(() => ({ side: "hold" as const })),
+        // the browser's messages end only with the socket: a failed send is the one news here
+        inbound.then((r) => ({ side: "send" as const, failed: r.failed })),
       ]);
-      if (settled.side === "viewer" || life.signal.aborted) {
+      if (settled.side === "send" && settled.failed !== undefined && !life.signal.aborted) {
+        // a send refused while the stream lives (too big for its frames) ends the whole pipe
+        const gone = await closedNow(stream);
+        if (gone === null) {
+          closeCode = VIEWER_CLOSE.tooBig;
+          stream.close("message too big");
+          end.close(closeCode, "message too big for the device stream");
+        } else {
+          closeCode = gone.reason === "device-offline" ? VIEWER_CLOSE.offline : VIEWER_CLOSE.gone;
+          end.close(
+            closeCode,
+            gone.reason === "device-offline" ? "device-offline" : "stream closed",
+          );
+        }
+      } else if (settled.side === "viewer" || settled.side === "send" || life.signal.aborted) {
         stream.close("viewer closed");
         closeCode = (await end.closed).code;
       } else if (settled.side === "stream") {

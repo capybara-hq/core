@@ -67,6 +67,9 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * `app-auth-token-ip` the same way (the one-time code is 32 random bytes).
  * `POST …/guides/:guideId/checks/:checkId/run` opts in to `setup-check` (setup guides v2 §10.3: each run may call a third party).
  *
+ * `device-stream-ip` is not a Nest route limit either: the gateway's raw viewer route
+ * `GET /device/stream` reserves it before the upgrade (429 `rate_limited`).
+ *
  * `plugin-public-write` is not a Nest route limit: the plugin dispatch counts it for unsafe
  * methods on `public` extension routes (`PluginRouteAccess`).
  */
@@ -176,6 +179,19 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     limit: 600,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many device sign-in polls; try again later",
+    getTracker: ip,
+  },
+  // device stream viewer upgrades per client address (`GET /device/stream`, a raw gateway route
+  // reserving through CredentialThrottler before the upgrade): every attempt costs a ticket
+  // GETDEL, so an unauthenticated flood is bounded; a panel reconnects a few times a minute
+  {
+    name: "device-stream-ip",
+    group: "device-stream",
+    onSuccess: "refund",
+    limit: 120,
+    ttl: 60_000,
+    code: "rate_limited",
+    message: "Too many device stream connections; try again later",
     getTracker: ip,
   },
   // native-app sign-in code exchanges per client address (@Throttled like device-token-ip): 60.

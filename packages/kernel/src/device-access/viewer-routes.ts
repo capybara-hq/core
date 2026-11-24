@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type WebSocket from "ws";
-import { errorBody } from "../errors.js";
+import { ApiError, errorBody } from "../errors.js";
+import type { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { type DeviceStreamViewers, HOP_AT_HEADER, HOP_HEADER, TICKET_ID_RE } from "./viewer.js";
 
 /** The viewer route the panel opens (browser use spec §6.2). */
@@ -11,7 +12,12 @@ export const DEVICE_STREAM_HOP_ROUTE = "/internal/device-stream/:ticketId";
 /** What the viewer routes need ({@link DeviceStreamViewers}). */
 export interface DeviceStreamRoutesOptions {
   viewers: Pick<DeviceStreamViewers, "serve" | "serveHop" | "verifyHop" | "claimHop">;
+  /** Counts each viewer upgrade per client address (`device-stream-ip`) before the upgrade. */
+  throttler: Pick<CredentialThrottler, "reserve">;
 }
+
+/** The named throttler of the viewer route. */
+const VIEWER_THROTTLER = ["device-stream-ip"] as const;
 
 const hopRefused = () =>
   errorBody("device.stream_hop_refused", "This hop is not authenticated; it is refused.");
@@ -22,8 +28,10 @@ const hopRefused = () =>
  * neither the API's `AuthGuard` nor its CSRF check applies; each route checks its own credential.
  *
  * - `GET /device/stream?ticket=`: the ticket is the only credential (cookies do not reach the
- *   gateway). The upgrade is always accepted and the socket closed with the viewer close codes
- *   (`VIEWER_CLOSE`), since a browser sees no HTTP status of a refused upgrade.
+ *   gateway). Each upgrade counts against `device-stream-ip` (120 a minute per client address;
+ *   429 `rate_limited` before the upgrade); otherwise the upgrade is accepted and the socket
+ *   closed with the viewer close codes (`VIEWER_CLOSE`), since a browser sees no HTTP status of
+ *   a refused upgrade.
  * - `GET /internal/device-stream/:ticketId`: another gateway replica's hop. Before the upgrade,
  *   and before anything else is read, the `X-Capybara-Hop` MAC and its issue time are checked
  *   (401 `device.stream_hop_refused` otherwise), then the hop is accepted once per ticket.
@@ -35,10 +43,25 @@ export async function registerDeviceStreamRoutes(
   scope: FastifyInstance,
   opts: DeviceStreamRoutesOptions,
 ): Promise<void> {
-  scope.get(DEVICE_STREAM_ROUTE, { websocket: true }, (socket: WebSocket, req) => {
-    const t = (req.query as Record<string, unknown> | undefined)?.ticket;
-    void opts.viewers.serve(socket, typeof t === "string" ? t : "");
-  });
+  scope.get(
+    DEVICE_STREAM_ROUTE,
+    {
+      websocket: true,
+      preValidation: async (req, reply) => {
+        try {
+          await opts.throttler.reserve(VIEWER_THROTTLER, req, reply);
+        } catch (e) {
+          if (e instanceof ApiError && e.code === "rate_limited")
+            return reply.code(429).send(errorBody(e.code, e.message));
+          throw e;
+        }
+      },
+    },
+    (socket: WebSocket, req) => {
+      const t = (req.query as Record<string, unknown> | undefined)?.ticket;
+      void opts.viewers.serve(socket, typeof t === "string" ? t : "");
+    },
+  );
   const verified = new WeakSet<object>();
   scope.get(
     DEVICE_STREAM_HOP_ROUTE,
