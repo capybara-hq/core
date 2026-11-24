@@ -8,6 +8,7 @@ import {
   type SandboxHandle,
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
+import { runDeviceServiceConformance } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import deviceFake, {
   createFakeSandbox,
@@ -50,6 +51,16 @@ async function mk(p: DeviceProvider, name: string): Promise<SandboxHandle> {
 }
 
 describe("device-fake", () => {
+  it("passes the device service conformance", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "service-conformance");
+    await runDeviceServiceConformance({
+      provider: p,
+      handle: h,
+      dispose: () => p.destroy(h, sig()),
+    });
+  });
+
   it("device-fake and device-fake-b report their own description and declare networkAllowlist", async () => {
     const rootB = await mkdtemp(join(tmpdir(), "cap-device-fake-b-"));
     try {

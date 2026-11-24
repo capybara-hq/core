@@ -203,7 +203,14 @@ export class DeviceAccessService {
       throw new ToolError(
         `The device service ${spec.name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
       );
+    // another call may have started it since the first look (that call audits its own start):
+    // found running now, this call started nothing and audits nothing
+    const raced = await ensure(true);
+    if (raced.state === "running") return raced;
     const started = await ensure(false);
+    // audited only when this ensure started it: the service was stopped (no startedAt) just
+    // before, and runs with a startedAt now
+    if (started.state !== "running" || started.startedAt === raced.startedAt) return started;
     await audit(this.db, {
       actorAccountId: call.accountId,
       orgId: call.orgId,

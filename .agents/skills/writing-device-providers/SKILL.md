@@ -508,9 +508,16 @@ treats a dial-in device like any other (its provider, report and permission supp
   kernel calls it before every launch review, race-free, and after the device allowlist
   changes). The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
   file keys relative with plain segments (no absolute path, `..`, `.`, empty segment, backslash,
-  NUL), entry one of the files, no `NODE_OPTIONS` / `NODE_PATH` / `LD_*` / `DYLD_*` /
-  `CAPYBARA_*` / proxy variables in `env`. The review sees `env K=V … node <stateDir>/<entry> …`
-  in the state directory, so run exactly that.
+  NUL), entry one of the files, no `NODE_*` / `PATH` / `SSL_CERT_FILE` / `SSL_CERT_DIR` /
+  `LD_*` / `DYLD_*` / `CAPYBARA_*` / proxy variables in `env`. The review sees
+  `env K=V … node <stateDir>/<entry> …` in the state directory, so run exactly that.
+- **Conformance.** A provider with services must pass `runDeviceServiceConformance`
+  (`@capybara-hq/testing`) against one running instance: an `ifRunning` ensure of a stopped
+  service starts nothing and answers `stopped` with an absolute `stateDir`, `stateDir` is stable,
+  a normal ensure starts once, requests round-trip its echo service, `stopService` stops it. A
+  provider that starts a service on `ifRunning` would let a launch run unreviewed. The kernel runs
+  it on device-fake (`sandbox/device-fake.test.ts`); every provider plugin runs it in its own
+  tests.
 - **Stream holds.** `SandboxService.holdForStream(deviceId, orgId, signal)` returns
   `{ h, p, signal, release }` for an open viewer: a token in the sorted set
   `capk:sandbox-streams:<device>` (scored by expiry, renewed while held) that exempts the device

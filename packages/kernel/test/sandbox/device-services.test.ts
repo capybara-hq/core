@@ -238,6 +238,11 @@ describe("device services", () => {
       [{ env: { DYLD_INSERT_LIBRARIES: "/tmp/x" } }, /may not be set/],
       [{ env: { CAPYBARA_SERVICE_SOCKET: "/tmp/s" } }, /may not be set/],
       [{ env: { https_proxy: "http://evil" } }, /may not be set/],
+      [{ env: { PATH: "/tmp/evil:/usr/bin" } }, /PATH may not be set/],
+      [{ env: { NODE_EXTRA_CA_CERTS: "/tmp/ca.pem" } }, /NODE_EXTRA_CA_CERTS may not be set/],
+      [{ env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } }, /may not be set/],
+      [{ env: { SSL_CERT_FILE: "/tmp/ca.pem" } }, /SSL_CERT_FILE may not be set/],
+      [{ env: { SSL_CERT_DIR: "/tmp/ca" } }, /SSL_CERT_DIR may not be set/],
     ];
     for (const [over, message] of bad) {
       await expect(services.ensure(use(), { ...spec(), ...over }, signal())).rejects.toThrow(

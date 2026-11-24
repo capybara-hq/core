@@ -30,6 +30,11 @@ export {
   type TestS3,
 } from "./containers.js";
 export {
+  DEVICE_SERVICE_ECHO_SCRIPT,
+  type DeviceServiceFixture,
+  runDeviceServiceConformance,
+} from "./device-service-conformance.js";
+export {
   createDualReplicaHarness,
   type DualReplicaOptions,
   type ExtraReplicaHandle,

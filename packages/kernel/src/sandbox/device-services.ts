@@ -145,7 +145,7 @@ export class DeviceServices {
 
 /** Environment variables a service spec may not set: they change what runs, or are the provider's. */
 const RESERVED_ENV =
-  /^(NODE_OPTIONS|NODE_PATH|LD_.*|DYLD_.*|CAPYBARA_.*|(HTTPS?|NO|ALL|FTP)_PROXY)$/i;
+  /^(NODE_.*|PATH|SSL_CERT_FILE|SSL_CERT_DIR|LD_.*|DYLD_.*|CAPYBARA_.*|(HTTPS?|NO|ALL|FTP)_PROXY)$/i;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Why a service file path is refused, or null: relative, plain segments only. */
@@ -165,8 +165,8 @@ function servicePathIssue(path: string): string | null {
  * Why a service spec is refused, or null (browser use spec §5): a valid name; `entry` and every
  * `files` key relative inside the state directory (no absolute path, no `.` / `..` / empty
  * segment, no backslash, no NUL); `entry` one of the files; no env variable that changes what
- * runs or that the provider sets (`NODE_OPTIONS`, `NODE_PATH`, `LD_*`, `DYLD_*`, `CAPYBARA_*`,
- * proxy variables), no NUL in a value. So the reviewed command is the one that runs.
+ * runs or that the provider sets (`NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `LD_*`,
+ * `DYLD_*`, `CAPYBARA_*`, proxy variables), no NUL in a value. So the reviewed command is the one that runs.
  */
 export function serviceSpecIssue(spec: DeviceServiceSpec): string | null {
   if (typeof spec?.name !== "string" || !DEVICE_SERVICE_NAME_RE.test(spec.name))

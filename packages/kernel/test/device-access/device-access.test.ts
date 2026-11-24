@@ -304,14 +304,72 @@ describe("ctx.deviceAccess", () => {
     for (const decision of ["ask", "deny"] as const) {
       const review = vi
         .spyOn(k.app.get(CommandReviewService), "review")
-        .mockResolvedValue({ decision, by: "rule", reason: "not this", rule: null });
-      await expect(access.ensureService(CALLER, callOf(), echoServiceSpec())).rejects.toThrow(
+        .mockResolvedValue({ decision, by: "rule", reason: "not this", rule: "ask.test" });
+      const call = callOf();
+      await expect(access.ensureService(CALLER, call, echoServiceSpec())).rejects.toThrow(
         /command review did not allow/,
       );
       expect(review).toHaveBeenCalledTimes(1);
       expect((await status())?.state).toBe("stopped");
+      // the refusal is the call's review record (an ask nobody can answer here is a deny)
+      expect(callScopeOf(call)?.review).toEqual({
+        decision: "deny",
+        by: "rule",
+        rule: "ask.test",
+        reason: "not this",
+      });
       review.mockRestore();
     }
+    // and it reaches the tool_result's review record through the extension's own ctx
+    vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+      decision: "deny",
+      by: "rule",
+      reason: "not this",
+      rule: "deny.test",
+    });
+    await postMessage(
+      s.req,
+      orgId,
+      s.conversationId,
+      `tool:${ECHO_TOOL}:${JSON.stringify({ text: "hello" })}`,
+    );
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    const [r] = ofType(await eventsOf(db, s.conversationId), "tool_result").map((e) => e.payload);
+    expect(r?.isError).toBe(true);
+    expect(r?.content).toMatch(/command review did not allow/);
+    expect(r?.review).toEqual({
+      decision: "deny",
+      by: "rule",
+      rule: "deny.test",
+      reason: "not this",
+    });
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "device.service_started")
+        .where("target", "=", s.deviceId)
+        .execute(),
+    ).toEqual([]);
+  });
+
+  it("a launch another call started during the review is not audited as this call's start", async () => {
+    const services = k.app.get(DeviceServices);
+    // while this call is being reviewed, another call starts the service
+    vi.spyOn(k.app.get(CommandReviewService), "review").mockImplementation(async () => {
+      await services.ensure(use(), echoServiceSpec(), AbortSignal.timeout(30_000));
+      return { decision: "allow", by: "rule", reason: "test", rule: null };
+    });
+    const status = await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    expect(status.state).toBe("running");
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "device.service_started")
+        .where("target", "=", s.deviceId)
+        .execute(),
+    ).toEqual([]);
   });
 
   it("non-owner trigger is refused", async () => {
