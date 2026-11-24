@@ -101,4 +101,41 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
       expect(isFull()).toBe(false);
     });
   });
+
+  it("the embed keeps its own height in the normal panel and fills the panel when maximised", async () => {
+    api();
+    await renderChatRoute();
+    const current = () =>
+      document.querySelector('iframe[title="Live"]') as HTMLIFrameElement | null;
+    await vi.waitFor(() => {
+      if (!current()) throw new Error("no iframe yet");
+    });
+    expect(current()?.getAttribute("data-fill")).toBeNull();
+    expect(current()?.getAttribute("height")).toBe("360");
+    const msg = (full: boolean) => ({ protocol: "capybara-embed/1", type: "panel-mode", full });
+    const fromFrame = (data: unknown) => {
+      const f = current();
+      if (!f) throw new Error("no iframe yet");
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", { data, source: f.contentWindow as Window }),
+        );
+      });
+    };
+    await vi.waitFor(() => {
+      fromFrame(msg(true));
+      expect(isFull()).toBe(true);
+    });
+    await vi.waitFor(() => {
+      expect(current()?.getAttribute("data-fill")).toBe("true");
+    });
+    expect(current()?.hasAttribute("height")).toBe(false);
+    await vi.waitFor(() => {
+      fromFrame(msg(false));
+      expect(isFull()).toBe(false);
+    });
+    await vi.waitFor(() => {
+      expect(current()?.getAttribute("data-fill")).toBeNull();
+    });
+  });
 });

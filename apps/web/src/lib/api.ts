@@ -187,11 +187,18 @@ export const clientError = (code: string): ApiClientError => new ApiClientError(
 export const ensureSession = (): Promise<void> =>
   apiFetch<unknown>("/api/v1/me").then(() => undefined);
 
-/** Per-item error details (e.g. `{ path, message }` for `extension.config_invalid`) as `path: message` lines. */
+/**
+ * Per-item error details as lines: `{ path, message }` objects (e.g. `extension.config_invalid`)
+ * as `path: message`, and plain-string entries (e.g. the problems of `catalog.invalid_manifest`)
+ * as is.
+ */
 export function issueLines(e: unknown): string[] {
-  return e instanceof ApiClientError
-    ? e.details.map((d) => (d.path === "" ? d.message : `${d.path}: ${d.message}`))
-    : [];
+  if (!(e instanceof ApiClientError)) return [];
+  const strings = e.rawDetails.filter((d): d is string => typeof d === "string" && d !== "");
+  return [
+    ...e.details.map((d) => (d.path === "" ? d.message : `${d.path}: ${d.message}`)),
+    ...strings,
+  ];
 }
 
 /**

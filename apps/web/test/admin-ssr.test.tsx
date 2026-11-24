@@ -232,6 +232,19 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/marketplaces": () => json(200, { items: [MARKETPLACE], offline: false }),
   "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [ENTRY] }),
   "GET /api/v1/admin/catalog/imports/st1": () => json(200, PREPARED),
+  // the staged crm is installed: its review is the update's, prefetched with its preview
+  "GET /api/v1/admin/catalog/imports/st1/update-preview": () =>
+    json(200, {
+      itemId: ITEM_ID,
+      name: "crm",
+      from: "1.0.0",
+      to: "1.1.0",
+      components: [],
+      extension: null,
+      connectorOrgs: [],
+      scopeInstalls: [],
+      diffHash: "d".repeat(64),
+    }),
   "GET /api/v1/admin/extensions": () => json(200, { extensions: [ext()], drainSeconds: 45 }),
   "GET /api/v1/admin/extensions/demo/config": () => json(200, CONFIG),
   "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),

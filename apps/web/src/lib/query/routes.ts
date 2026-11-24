@@ -3,6 +3,12 @@ import type { AdminExtension } from "../admin-extensions";
 import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
+import {
+  type CatalogItem,
+  ownerOrgOf,
+  type PlatformUpdatePreview,
+  type PluginPrepared,
+} from "../catalog";
 import type { ChannelConnection } from "../channels";
 import {
   maybeOwnTemplate,
@@ -49,6 +55,7 @@ import {
   platformAuditQuery,
   platformIconsQuery,
   stagedImportQuery,
+  stagedUpdatePreviewQuery,
 } from "./admin";
 import {
   adminAgentQuery,
@@ -516,8 +523,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/admin/plugins/[itemId]",
     // The item, the marketplaces (its source), the catalog (its dependencies, the head's count),
-    // the orgs (its named scope, the scope dialog) and the platform components (the components
-    // table's scope column and links).
+    // the orgs (its named scope, the scope dialog) and the platform components (the contents'
+    // names, descriptions, scopes and links).
     queries: ({ me, params }) =>
       superAdmin(me) && params.itemId !== undefined
         ? [
@@ -546,6 +553,25 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             q(catalogItemsQuery()),
           ]
         : [];
+    },
+    // An installed plugin's review is the update's: its preview marks the rows and fills the
+    // impact section.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, search }, qc) => {
+      const staging = search.get("staging") ?? "";
+      if (!superAdmin(me) || staging === "") return;
+      const name = qc.getQueryData<PluginPrepared>(stagedImportQuery(staging).queryKey)?.review
+        .name;
+      const items = qc.getQueryData<{ items: CatalogItem[] }>(catalogItemsQuery().queryKey)?.items;
+      if (name === undefined || !items?.some((i) => i.name === name && ownerOrgOf(i) === null))
+        return;
+      await qc.prefetchQuery({ ...stagedUpdatePreviewQuery(staging), retry: false });
+      // the themes it removes are named from the platform's themes
+      const preview = qc.getQueryData<PlatformUpdatePreview>(
+        stagedUpdatePreviewQuery(staging).queryKey,
+      );
+      if (preview?.themes !== undefined && preview.themes.length > 0)
+        await qc.prefetchQuery({ ...adminComponentsQuery("theme"), retry: false });
     },
   },
   {
@@ -934,7 +960,11 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       if (orgId === null || !atLeast(me, "admin")) return [];
       return itemId === ""
         ? [q(connectorKindsQuery(orgId))]
-        : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
+        : [
+            q(orgCatalogItemQuery(orgId, itemId)),
+            q(orgExtensionsQuery(orgId)),
+            q(orgComponentsQuery(orgId, { itemId })),
+          ];
     },
   },
   {
@@ -1093,26 +1123,53 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/plugins/[itemId]",
-    // Members up; org admins also read the installs (the installed section) and the extensions.
+    // Members up: the item, its components and the org's connectors (the connectors made from its
+    // templates); org admins also read the installs (the installed section) and the extensions.
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "member")
         ? []
         : [
             q(orgCatalogItemQuery(orgId, params.itemId)),
             q(orgComponentsQuery(orgId, { itemId: params.itemId })),
-            ...(atLeast(me, "admin")
-              ? [q(pluginInstallsQuery(orgId)), q(orgExtensionsQuery(orgId))]
-              : []),
+            q(connectorsQuery(orgId)),
+            q(orgExtensionsQuery(orgId)),
+            ...(atLeast(me, "admin") ? [q(pluginInstallsQuery(orgId))] : []),
           ],
+    // The personal connectors made from its templates show the viewer's own connection: their
+    // details (this person's credential status)
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      if (orgId === null || params.itemId === undefined || !atLeast(me, "member")) return;
+      const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
+        connectorsQuery(orgId).queryKey,
+      );
+      const components = qc.getQueryData<{ components: OrgComponent[] }>(
+        orgComponentsQuery(orgId, { itemId: params.itemId }).queryKey,
+      );
+      if (list === undefined || components === undefined) return;
+      const templates = new Set(
+        components.components.filter((c) => c.kind === "connector_template").map((c) => c.id),
+      );
+      await Promise.all(
+        personalConnectors(list.connectors)
+          .filter((a) => a.platformTemplateId != null && templates.has(a.platformTemplateId))
+          .map((a) => qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false })),
+      );
+    },
   },
   {
     pattern: "/plugins/[itemId]/enable",
-    // Org admins: the item and the org's extensions (an extension that needs config goes on to
-    // its Sheet after the review).
+    // Org admins: the item, the org's extensions (an extension that needs config goes on to its
+    // Sheet after the review) and the item's components (the descriptions of its skills and agent
+    // templates).
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "admin")
         ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
+        : [
+            q(orgCatalogItemQuery(orgId, params.itemId)),
+            q(orgExtensionsQuery(orgId)),
+            q(orgComponentsQuery(orgId, { itemId: params.itemId })),
+          ],
   },
   {
     pattern: "/s/[code]",

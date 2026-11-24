@@ -487,6 +487,26 @@ describe("WizardPage", () => {
       "step",
     );
   });
+
+  it("draws no step bar for one step", () => {
+    zh(
+      <WizardPage header={header} steps={["一"]} current={0} actionRow={row}>
+        x
+      </WizardPage>,
+    );
+    expect(document.querySelector(".cb-steps")).toBeNull();
+    expect(document.querySelector('[data-part="step-count"]')).toBeNull();
+  });
+
+  it("draws the step bar for two steps", () => {
+    zh(
+      <WizardPage header={header} steps={["一", "二"]} current={0} actionRow={row}>
+        x
+      </WizardPage>,
+    );
+    expect(document.querySelector(".cb-steps")).toBeTruthy();
+    expect(document.querySelector('[data-part="step-count"]')).toBeTruthy();
+  });
 });
 
 describe("其他模板行为", () => {

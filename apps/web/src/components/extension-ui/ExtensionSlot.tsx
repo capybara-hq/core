@@ -86,6 +86,8 @@ export type SlotHost = {
     onFullscreen(): void;
     /** The panel's embed asked to maximise (`true`) or restore (`false`) it. */
     onPanelMode(full: boolean): void;
+    /** The panel is maximised: an embed then fills it instead of keeping its own height. */
+    full: boolean;
     onOpenTarget: OnOpenTarget;
   };
   "conversation.properties.section": { onOpenTarget: OnOpenTarget };
@@ -377,6 +379,7 @@ function PanelSlot({
         onClose={host.onClose}
         onFullscreen={host.onFullscreen}
         onPanelMode={host.onPanelMode}
+        full={host.full}
       />
     </CompactGate>
   );

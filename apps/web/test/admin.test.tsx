@@ -2142,7 +2142,7 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
       [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(listed)),
     });
     await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
-    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "acme-crm" })).toBeTruthy();
     expect(screen.getAllByText("Acme").length).toBeGreaterThan(0);
     expect(screen.getByText(P.detail.notShareableNote)).toBeTruthy();
     expect(screen.getByRole("button", { name: P.detail.actions.disable })).toBeTruthy();
@@ -2172,7 +2172,7 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
       [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(listed)),
     });
     await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
-    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "acme-crm" })).toBeTruthy();
     // one Callout in the head (above the tabs) listing every note, each said once
     const callouts = document.querySelectorAll('[data-part="callout"]');
     expect(callouts).toHaveLength(1);
@@ -2209,7 +2209,7 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
       [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(shared)),
     });
     await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
-    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "acme-crm" })).toBeTruthy();
     expect(screen.queryByText(P.detail.notShareableNote)).toBeNull();
     // the owner uploads versions; the waiting one is confirmed in 待确认
     expect(

@@ -1531,6 +1531,14 @@ a.cb-attachment:hover {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+/* ExpandableProse: the summary and its toggle (a DisclosureLinks look) on one line of prose */
+.cb-expandable-prose {
+  margin: 0;
+  white-space: pre-line;
+}
+.cb-expandable-prose-toggle {
+  display: inline-flex;
+  vertical-align: baseline;
   white-space: nowrap;
 }
 

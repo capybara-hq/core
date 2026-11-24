@@ -28,7 +28,7 @@ export const MAX_SERVICE_REQUEST_TIMEOUT_MS = 600_000;
  *   answers the `DeviceServiceStatus`; `files` values are standard base64; `network` is the
  *   device's network as the provider holds it (its limits), absent = no network; a running service
  *   started with another network is restarted with this one; `ifRunning: true` reads only
- *   `spec.name` (the kernel sends `{ name, entry: "", args: [], files: {} }`), starts nothing when
+ *   `spec.name` (device-local sends `{ name }`; `entry` and `args` may then be left out), starts nothing when
  *   the service is stopped (it answers the stopped status) and restarts a running one whose
  *   network changed from the spec it was launched with and its stored code. `files` may be left
  *   out when `filesDigest` (the provider's opaque name for the files, {@link FILES_DIGEST_RE}) is
@@ -73,7 +73,9 @@ export function isServiceOpBody(body: unknown): boolean {
   );
 }
 
-const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+// One flat character class with the padding at the end, plus a length check: a repeated group
+// (`(?:[…]{4})*`) overflows the regex stack on the megabytes of a service's files.
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 
 function invalid(message: string): never {
   throw new ServiceSpecError(message);
@@ -95,7 +97,7 @@ function str(v: unknown, what: string, max = 4096): string {
 
 function base64(v: unknown, what: string): Uint8Array {
   const s = str(v, what, Number.MAX_SAFE_INTEGER);
-  if (!BASE64_RE.test(s)) invalid(`${what} must be standard padded base64`);
+  if (s.length % 4 !== 0 || !BASE64_RE.test(s)) invalid(`${what} must be standard padded base64`);
   return new Uint8Array(Buffer.from(s, "base64"));
 }
 
@@ -116,7 +118,12 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
     keys(s, ["name", "runtime", "entry", "args", "files", "env"], "service.ensure spec");
     if (s.runtime !== undefined && s.runtime !== "node")
       invalid('service.ensure spec runtime must be "node"');
-    if (!Array.isArray(s.args) || s.args.length > 256) invalid("spec.args must be a string array");
+    // ifRunning reads only the name: device-local sends `{ name }` there, the kernel's fuller
+    // `{ name, entry: "", args: [], files: {} }` passes too
+    const nameOnly = o.ifRunning === true;
+    const entry = nameOnly && s.entry === undefined ? "" : s.entry;
+    const args = nameOnly && s.args === undefined ? [] : s.args;
+    if (!Array.isArray(args) || args.length > 256) invalid("spec.args must be a string array");
     let files: Record<string, Uint8Array> | undefined;
     if (s.files !== undefined) {
       files = {};
@@ -148,8 +155,8 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
       op,
       spec: {
         name: str(s.name, "spec.name", 64),
-        entry: str(s.entry, "spec.entry", 512),
-        args: s.args.map((a, i) => str(a, `spec.args[${i}]`, 65536)),
+        entry: str(entry, "spec.entry", 512),
+        args: args.map((a, i) => str(a, `spec.args[${i}]`, 65536)),
         ...(files && { files }),
         ...(env && { env }),
       },

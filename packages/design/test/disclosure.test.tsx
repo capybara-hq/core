@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, Disclosure, DisclosureLinks } from "../src/index";
+import { DesignProvider, Disclosure, DisclosureLink, DisclosureLinks } from "../src/index";
 
 afterEach(cleanup);
 
@@ -115,5 +115,18 @@ describe("DisclosureLinks", () => {
     expect(screen.getByText("MIT License")).toBeTruthy();
     await userEvent.click(lic);
     expect(screen.queryByText("MIT License")).toBeNull();
+  });
+});
+
+describe("DisclosureLink", () => {
+  it("is one inline muted button with a chevron that calls its owner (no inline body)", async () => {
+    let opened = 0;
+    wrap(<DisclosureLink onSelect={() => opened++}>Full text</DisclosureLink>);
+    const button = screen.getByRole("button", { name: "Full text" });
+    expect(button.className).toContain("cb-disclosure-link");
+    expect(button.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(button.querySelector("svg")).not.toBeNull();
+    await userEvent.click(button);
+    expect(opened).toBe(1);
   });
 });
