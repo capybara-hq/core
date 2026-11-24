@@ -1,5 +1,29 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.111
+
+### Patch Changes
+
+- 684ec6e: Pin the device-docker bootstrap plugin to 0.1.0-rc.29 and device-local to 0.1.0-rc.9 (device services and
+  streams for browser use), and the plugins marketplace commit (with the compose sandbox image build context)
+  to 5aaf638, the release that also carries the browser plugin 0.1.0-rc.1.
+- 4cd8780: The workspace skills page shows skills as cards with the plugin filter as a list scope, like the plugin market.
+- 142ec7e: A marketplace source card shows a short state (OK, Failed) beside its name and the entry count and
+  last refresh, or the error sentence, under it, so the name is no longer cut off. A list page that has
+  both a source filter and field filters draws them on one row (the plugin market's 市场源 button sits
+  after its source filter).
+  An update through the import page shows the installed → staged versions in the review's chip for a
+  plugin without an extension too (it read 安装 v<new>).
+  The plugin market's card state names the installed version only (the 更新到 button carries the
+  newer one), and a card's state takes at most half its head, cut with an ellipsis, so a long state
+  never squeezes the name away.
+  The plugin review follows the approved mockup: 完整说明 and 许可证全文 are one row of small links
+  under the facts, a connector template is one row whose host line opens its description and full
+  endpoint (no 端点详情 line), skills and agent templates open their texts from an inline link, and
+  the dependencies lose their explanatory sentence. The design system gains `DisclosureLinks`.
+- Updated dependencies [684ec6e]
+  - @capybara-hq/kernel@0.1.0-rc.87
+
 ## 0.1.0-rc.110
 
 ### Patch Changes
