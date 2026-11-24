@@ -5,14 +5,17 @@ import type { PermissionGroup, PermissionItem } from "../../lib/extensions";
 
 /**
  * One contents view of a plugin package (plugin contents spec): every surface that shows what a
- * package holds builds a {@link PluginContentsModel} with an adapter (`fromReview`, …) and draws it
- * with `PluginContents`, passing its stage and audience and filling the rows' trailing slot.
+ * package holds builds a {@link PluginContentsModel} with an adapter (`fromReview`, …) and draws
+ * it with `PluginContents`, passing its stage and audience and filling the rows' trailing slot.
  */
 
 /** Where the contents are shown: the version chip and the extension's note line follow it. */
 export type Stage = "install" | "update" | "enable" | "detail";
 
-/** Who reads them: an org admin sees the publisher only (no source, build, license, translation). */
+/**
+ * Who reads them: an org admin sees the publisher only (no source, build or license); the
+ * translation report shows whenever the model has one.
+ */
 export type Audience = "platform" | "org";
 
 /** A change an update makes to a row, drawn as a badge with its change word. */
@@ -53,8 +56,6 @@ export interface TemplateRow extends RowBase {
   need?: "client" | "credential";
   /** false: the connector extension did not check the endpoint. */
   endpointChecked?: boolean;
-  /** An org gets no connector from it until someone creates one. */
-  defaultOff?: boolean;
 }
 
 export type AgentTier = "inherit" | "fast" | "standard" | "capable";
@@ -69,10 +70,12 @@ export interface AgentRow extends RowBase {
   kind: "agentTemplate";
   description: string;
   model?: AgentTier;
-  /** undefined: the tools of the agent that dispatches it. */
-  tools?: string[];
-  /** The surface has no tool data (an org's view): the tools row is left out. */
-  toolsUnknown?: boolean;
+  /**
+   * The tools it may use: `"inherit"` only when the surface knows it takes the tools of the agent
+   * that dispatches it (a package review); undefined when the surface has no tool data, which
+   * draws no tools row.
+   */
+  tools?: string[] | "inherit";
   disallowedTools?: string[];
   needs: AgentNeed[];
   instructions?: string;
@@ -80,7 +83,6 @@ export interface AgentRow extends RowBase {
 
 export interface ThemeRow extends RowBase {
   kind: "theme";
-  description?: string;
 }
 
 export type ContentsRow = SkillRow | TemplateRow | AgentRow | ThemeRow;
@@ -118,8 +120,6 @@ export interface ContentsExtension {
     clientFiles?: { path: string; bytes: number }[];
   };
   mark?: RowMark;
-  /** Per-surface state on the extension's title line (like a row's trailing slot). */
-  state?: ReactNode;
   /** Per-surface lines under the block (client code, UI components). */
   trailing?: ReactNode;
 }
@@ -131,7 +131,6 @@ export interface ContentsDependency {
   resolved: string | null;
   /** The dependency's page. */
   href?: string;
-  mark?: RowMark;
   trailing?: ReactNode;
 }
 
@@ -182,6 +181,24 @@ export interface PluginContentsModel {
   themes: ThemeRow[];
   dependencies: ContentsDependency[];
   translation?: TranslationReport;
+}
+
+/**
+ * The license fact of a package: its SPDX name, else "LICENSE", with the text when it was kept, or
+ * the note that it was too large to keep; the name alone without a text; nothing without either.
+ */
+export function licenseFrom(p: {
+  license?: string | undefined;
+  licenseText?: string | null | undefined;
+  licenseTruncated?: boolean | undefined;
+}): ContentsLicense | undefined {
+  const declared = p.license !== undefined && p.license !== "" ? p.license : undefined;
+  const name = declared ?? "LICENSE";
+  if (typeof p.licenseText === "string" && p.licenseText !== "") {
+    return { name, text: p.licenseText };
+  }
+  if (p.licenseTruncated === true) return { name, truncated: true };
+  return declared !== undefined ? { name } : undefined;
 }
 
 /** A localized name in the reader's language. */

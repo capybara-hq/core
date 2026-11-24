@@ -163,7 +163,7 @@ export function ExtensionBlock({
   // A subsection, not a card (spec §6.32): the contents sit on pages and in Dialogs, and the
   // permission rows already group with hairlines.
   return (
-    <Subsection title={extension.name} {...rowEnd(extension.mark, extension.state)}>
+    <Subsection title={extension.name} {...rowEnd(extension.mark, undefined)}>
       <Stack gap={8}>
         {extension.keptVersion !== undefined && (
           <Text>{t("action.keep", { version: versionLabel(extension.keptVersion) })}</Text>
@@ -269,11 +269,6 @@ export function TemplateRows({ rows }: { rows: TemplateRow[] }) {
                   </Badge>
                 )}
                 {c.endpointChecked === false && <Badge tone="warn">{t("endpointUnchecked")}</Badge>}
-                {c.defaultOff === true && (
-                  <Text variant="small" tone="muted">
-                    {t("defaultOff")}
-                  </Text>
-                )}
               </>
             }
             {...rowEnd(c.mark, c.trailing)}
@@ -324,7 +319,7 @@ export function TemplateRows({ rows }: { rows: TemplateRow[] }) {
   );
 }
 
-/** Agent templates: name, model tier, description, needs and tools rows, the instructions inline. */
+/** Agent templates: name, model tier, description, needs and tools rows, instructions inline. */
 export function AgentRows({ rows }: { rows: AgentRow[] }) {
   const t = useTranslations("catalog.admin.review");
   const tc = useTranslations("catalog.components");
@@ -332,7 +327,18 @@ export function AgentRows({ rows }: { rows: AgentRow[] }) {
   return (
     <ItemList label={tc("agentTemplates")}>
       {rows.map((a) => {
-        const inherit = a.tools === undefined && (a.disallowedTools ?? []).length === 0;
+        // Tools: the inherit line only when the surface knows it; chips for a list or what is taken
+        // away; nothing when the surface has no tool data
+        const toolChips = [
+          ...(Array.isArray(a.tools) ? a.tools : []),
+          ...(a.disallowedTools ?? []).map((x) => tc("agentToolsRemoved", { tools: x })),
+        ];
+        const tools =
+          a.tools === "inherit" ? (
+            tc("agentToolsInherit")
+          ) : toolChips.length > 0 ? (
+            <Chips items={toolChips} />
+          ) : null;
         return (
           <ItemListItem
             key={a.key}
@@ -356,7 +362,7 @@ export function AgentRows({ rows }: { rows: AgentRow[] }) {
             }
           >
             <Stack gap={8}>
-              {(a.needs.length > 0 || a.toolsUnknown !== true) && (
+              {(a.needs.length > 0 || tools !== null) && (
                 <KeyValue
                   keyWidth="6ch"
                   rows={[
@@ -376,25 +382,7 @@ export function AgentRows({ rows }: { rows: AgentRow[] }) {
                           },
                         ]
                       : []),
-                    ...(a.toolsUnknown === true
-                      ? []
-                      : [
-                          {
-                            k: t("tools"),
-                            v: inherit ? (
-                              tc("agentToolsInherit")
-                            ) : (
-                              <Chips
-                                items={[
-                                  ...(a.tools ?? []),
-                                  ...(a.disallowedTools ?? []).map((x) =>
-                                    tc("agentToolsRemoved", { tools: x }),
-                                  ),
-                                ]}
-                              />
-                            ),
-                          },
-                        ]),
+                    ...(tools !== null ? [{ k: t("tools"), v: tools }] : []),
                   ]}
                 />
               )}
@@ -422,7 +410,7 @@ export function AgentRows({ rows }: { rows: AgentRow[] }) {
   );
 }
 
-/** Themes: name and description. */
+/** Themes: their names. */
 export function ThemeRows({ rows }: { rows: ThemeRow[] }) {
   const tc = useTranslations("catalog.components");
   return (
@@ -433,13 +421,6 @@ export function ThemeRows({ rows }: { rows: ThemeRow[] }) {
           title={th.name}
           {...(th.href !== undefined && { href: th.href })}
           {...rowEnd(th.mark, th.trailing)}
-          meta={
-            th.description !== undefined && th.description !== "" ? (
-              <Text variant="small" tone="muted">
-                {th.description}
-              </Text>
-            ) : undefined
-          }
         />
       ))}
     </ItemList>
@@ -462,7 +443,7 @@ export function DependencyLines({ rows, stage }: { rows: ContentsDependency[]; s
             <>
               <Text>{name(d)}</Text>
               <Text variant="small" tone="muted">
-                {d.resolved !== null && stage === "enable" ? versionLabel(d.resolved) : d.range}
+                {d.range}
               </Text>
             </>
           ) : d.resolved !== null ? (
@@ -472,7 +453,7 @@ export function DependencyLines({ rows, stage }: { rows: ContentsDependency[]; s
           ) : (
             <Text tone="warn">{tc("dependencyUnresolved", { name: d.name, range: d.range })}</Text>
           )}
-          {rowEnd(d.mark, d.trailing).actions}
+          {d.trailing}
         </Stack>
       ))}
     </Stack>

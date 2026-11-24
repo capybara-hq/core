@@ -10,6 +10,7 @@ import {
   ItemList,
   type ItemListRow,
   KeyValue,
+  LinkButton,
   ObjectMark,
   Stack,
   SwitchField,
@@ -17,7 +18,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ComponentSection, useOwnerLabel } from "../../../../components/CatalogParts";
@@ -42,13 +43,14 @@ import {
   setOwnedShareable,
 } from "../../../../lib/catalog";
 import { componentLabel } from "../../../../lib/components";
+import { personalConnectors } from "../../../../lib/connectors";
 import { lockWhileRunning } from "../../../../lib/header-actions";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { orgComponentsQuery } from "../../../../lib/query/components";
-import { connectorsQuery } from "../../../../lib/query/conversation";
+import { connectorQuery, connectorsQuery } from "../../../../lib/query/conversation";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -261,8 +263,8 @@ function OrgComponentsSection({
 /**
  * The latest version's contents (the shared contents view, detail stage, org audience): the
  * extension, skills, agent templates, connector templates and dependencies. The descriptions of
- * the skills and agent templates come from the org's components, the extension's state from the
- * org's extensions (org admins read them; for members it is left out).
+ * the skills and agent templates come from the org's components, the extension's name, what it
+ * provides and whether it needs config from the org's extensions (read by members too).
  */
 function OrgContents({ orgId, detail }: { orgId: string; detail: OrgCatalogDetail }) {
   const locale = useLocale();
@@ -271,20 +273,18 @@ function OrgContents({ orgId, detail }: { orgId: string; detail: OrgCatalogDetai
   const eq = orgExtensionsQuery(orgId);
   const extensions = useQuery({ ...eq, retryOnMount: retryOnMountOf(eq.queryKey) });
   const own = extensions.data?.extensions.find((e) => e.plugin === detail.extension);
-  // The page's facts already show the full description
-  const model = {
-    ...fromOrgDetail(detail, components.data?.components ?? [], own, locale),
-    description: "",
-  };
+  const model = fromOrgDetail(detail, components.data?.components ?? [], own, locale);
   return <PluginContents model={model} audience="org" stage="detail" />;
 }
 
 /**
- * This organization's connectors: the connectors made from this plugin's connector templates (matched by
- * `platformTemplateId` to the template's platform component), each with its state and a link to
- * its page. Org admins also get a Create button on a template with no connector (the connectors page's
- * create-from-template action: the switch-on, which makes it as an install would). Nothing to
- * show: the section is left out.
+ * This organization's connectors: the connectors made from this plugin's connector templates
+ * (matched by `platformTemplateId` to the template's platform component), each with its state and
+ * a link to its page. A connector that needs each person's own credential shows the viewer's own
+ * connection (connected or not, from its detail as the connectors page reads it); a member not
+ * yet connected gets Connect, a link to the connector's page. Org admins also get a Create button on a
+ * template with no connector (the connectors page's create-from-template action: the switch-on,
+ * which makes it as an install would). Nothing to show: the section is left out.
  */
 function OrgConnectorsSection({
   orgId,
@@ -297,6 +297,7 @@ function OrgConnectorsSection({
 }) {
   const t = useTranslations("catalog.org.detail.connectors");
   const tco = useTranslations("connectors");
+  const tn = useTranslations("connections");
   const locale = useLocale();
   const cq = orgComponentsQuery(orgId, { itemId });
   const components = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
@@ -306,24 +307,52 @@ function OrgConnectorsSection({
   const templates = (components.data?.components ?? []).filter(
     (c) => c.kind === "connector_template" && c.itemId === itemId,
   );
-  const made = connectors.data?.connectors ?? [];
+  const ids = new Set(templates.map((c) => c.id));
+  const made = (connectors.data?.connectors ?? []).filter(
+    (m) => m.platformTemplateId != null && ids.has(m.platformTemplateId),
+  );
+  // The personal ones: their details carry the viewer's own credential status
+  const personal = personalConnectors(made);
+  const details = useQueries({
+    queries: personal.map((a) => {
+      const q = connectorQuery(orgId, a.id);
+      return { ...q, retryOnMount: retryOnMountOf(q.queryKey) };
+    }),
+  });
+  const credentialOf = new Map(
+    details.flatMap((d) =>
+      d.data === undefined ? [] : [[d.data.id, d.data.credential.status] as const],
+    ),
+  );
   const rows = templates.flatMap((c): ItemListRow[] => {
     const own = made.filter((m) => m.platformTemplateId === c.id);
     if (own.length > 0) {
-      return own.map((m) => ({
-        id: m.id,
-        mark: { text: m.name, image: m.icon ?? null },
-        title: m.name,
-        href: `/connectors/${encodeURIComponent(m.id)}`,
-        status: {
-          label:
+      return own.map((m) => {
+        const href = `/connectors/${encodeURIComponent(m.id)}`;
+        const usable = m.status !== "disabled" && m.setup !== "needs_config";
+        const mine = usable ? credentialOf.get(m.id) : undefined;
+        return {
+          id: m.id,
+          mark: { text: m.name, image: m.icon ?? null },
+          title: m.name,
+          href,
+          status:
             m.status === "disabled"
-              ? tco("status.disabled")
+              ? { label: tco("status.disabled") }
               : m.setup === "needs_config"
-                ? tco("setup.needsConfig")
-                : t("available"),
-        },
-      }));
+                ? { label: tco("setup.needsConfig") }
+                : mine === "connected"
+                  ? { label: tn("connected") }
+                  : mine === "missing"
+                    ? { label: tn("missing"), tone: "accent" as const }
+                    : { label: t("available") },
+          // A member connects on the connector's page (its connect flow and credential sheet)
+          ...(mine === "missing" &&
+            !admin && {
+              actions: <LinkButton href={href}>{tn("oauthConnect")}</LinkButton>,
+            }),
+        };
+      });
     }
     // No connector yet: an org admin creates it (on: the create action; off: the switch-on)
     const create = createConnectorOf(c) ?? actionsOf(c).find((a) => a.id === "enable");

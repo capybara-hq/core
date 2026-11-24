@@ -188,8 +188,9 @@ export const ensureSession = (): Promise<void> =>
   apiFetch<unknown>("/api/v1/me").then(() => undefined);
 
 /**
- * Per-item error details as lines: `{ path, message }` objects (e.g. `extension.config_invalid`) as
- * `path: message`, and plain-string entries (e.g. the problems of `catalog.invalid_manifest`) as is.
+ * Per-item error details as lines: `{ path, message }` objects (e.g. `extension.config_invalid`)
+ * as `path: message`, and plain-string entries (e.g. the problems of `catalog.invalid_manifest`)
+ * as is.
  */
 export function issueLines(e: unknown): string[] {
   if (!(e instanceof ApiClientError)) return [];

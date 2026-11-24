@@ -12,7 +12,7 @@ import type {
   PluginContentsModel,
   TemplateRow,
 } from "./model";
-import { hostOf, nameIn } from "./model";
+import { hostOf, licenseFrom, nameIn } from "./model";
 
 /** The top-level name of a config field path (`deployment:sandbox.apiKey` -> `sandbox`). */
 const topLevelField = (item: string): string =>
@@ -117,16 +117,7 @@ function factsOf(review: PluginReview): ContentsFacts {
   // Provenance exists only for npm packages: an npm import or a marketplace entry from the registry
   const fromNpm = review.source.kind === "npm" || (detail !== undefined && "registry" in detail);
   const fromGit = review.source.kind === "git" || (detail !== undefined && "repo" in detail);
-  const licenseText = typeof review.licenseText === "string" ? review.licenseText : "";
-  const licenseName = review.license !== undefined && review.license !== "" ? review.license : "";
-  const license =
-    licenseText !== ""
-      ? { name: licenseName || "LICENSE", text: licenseText }
-      : review.licenseTruncated === true
-        ? { name: licenseName || "LICENSE", truncated: true }
-        : licenseName !== ""
-          ? { name: licenseName }
-          : undefined;
+  const license = licenseFrom(review);
   return {
     ...(review.publisher !== "" && { publisher: review.publisher }),
     ...((review.packageName !== null || detail !== undefined) && {
@@ -233,7 +224,10 @@ export function fromReview(
       name: a.name,
       description: a.description,
       model: a.model,
-      ...(a.tools !== undefined && { tools: a.tools }),
+      // No tool list and nothing taken away: the template takes the dispatching agent's tools
+      ...(a.tools !== undefined
+        ? { tools: a.tools }
+        : (a.disallowedTools ?? []).length === 0 && { tools: "inherit" as const }),
       ...(a.disallowedTools !== undefined && { disallowedTools: a.disallowedTools }),
       needs: a.connectors.map(needOf),
       instructions: a.instructions,

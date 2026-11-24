@@ -799,7 +799,7 @@ describe("/plugins/[itemId]: components and 补充配置", () => {
     ).toBe(false);
   });
 
-  describe("本组织的连接器", () => {
+  describe("this organization's connectors", () => {
     const D = en.catalog.org.detail.connectors;
     const connector = (id: string, over: Record<string, unknown> = {}) => ({
       id,
@@ -847,6 +847,44 @@ describe("/plugins/[itemId]: components and 补充配置", () => {
       expect(
         screen.queryByText(en.catalog.admin.review.auth.replace("{type}", "bearer")),
       ).toBeNull();
+    });
+
+    it("a personal connector shows the viewer's own connection; a member not connected gets Connect", async () => {
+      const personal = { type: "bearer", ownership: "personal" };
+      const mine = connector("c1", { auth: personal });
+      const theirs = connector("c2", { auth: personal, platformTemplateId: "t-jira" });
+      const r: Routes = {
+        ...withConnectors([mine, theirs], [tplComponent("t-gh"), tplComponent("t-jira")]),
+        [`GET ${ORG}/connectors/c1`]: () =>
+          json(200, {
+            connector: { ...mine, credential: { ownership: "personal", status: "missing" } },
+          }),
+        [`GET ${ORG}/connectors/c2`]: () =>
+          json(200, {
+            connector: { ...theirs, credential: { ownership: "personal", status: "connected" } },
+          }),
+      };
+      stubApi(r);
+      await renderRouteWithCache(`/plugins/${ITEM}`, r, { me: MEMBER });
+      const s = await region();
+      const row = (name: string) => within(s).getByText(name).closest("li") as HTMLElement;
+      expect(await within(row("Conn c1")).findByText(en.connections.missing)).toBeTruthy();
+      expect(
+        within(row("Conn c1"))
+          .getByRole("link", { name: en.connections.oauthConnect })
+          .getAttribute("href"),
+      ).toBe("/connectors/c1");
+      expect(within(row("Conn c2")).getByText(en.connections.connected)).toBeTruthy();
+      expect(
+        within(row("Conn c2")).queryByRole("link", { name: en.connections.oauthConnect }),
+      ).toBeNull();
+      // an org admin sees the same own state, without the member's Connect link
+      cleanup();
+      stubApi(r);
+      await renderRouteWithCache(`/plugins/${ITEM}`, r);
+      const admin = await region();
+      expect(await within(admin).findByText(en.connections.missing)).toBeTruthy();
+      expect(within(admin).queryByRole("link", { name: en.connections.oauthConnect })).toBeNull();
     });
 
     it("an org admin creates the connector of a default-off template that has none; members see no action", async () => {

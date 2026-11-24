@@ -88,7 +88,7 @@ AI-flavoured. One view, cut by stage and role, makes them read the same and keep
 - 技能: name, file count, description; SKILL.md › opens inline (`DisclosureLinks`).
 - 连接器模板: icon, name, need badge, and the host line (· 组织可改) as the toggle that opens the
   description, full address and auth (as #820). Default-off templates say 默认关闭.
-- 智能体模板: name, model tier, description, 需要 and 工具 rows, 说明全文 ›.
+- 智能体模板: name, model tier, description, 需要 and 工具 rows, 指令全文 › (ruling R10: 指令 is the app's word for an agent's instructions; 说明 is a description, as in 完整说明).
 - 依赖: `name 将使用 v…` (platform), 同时安装 (org enable).
 - Trailing slot per surface: update `升级` / `新增` / `移除` / `降级`; platform page the component's
   scope (跟随插件 or its own, linked); org enable the state after enabling (可用 / 待配置 · 需要 OAuth

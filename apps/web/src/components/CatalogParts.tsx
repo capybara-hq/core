@@ -40,7 +40,8 @@ export function useOwnerLabel(orgId: string): (owner: Owner | undefined) => stri
 
 /**
  * One kind of a plugin's components (extension, skills, connector templates, dependencies) as a
- * labelled region: the title, then the items, or `empty` when there are none (`count` 0).
+ * labelled region: the title, then the items, or `empty` when there are none (`count` 0; a caller
+ * that draws the section only with items passes none).
  */
 export function ComponentSection({
   title,
@@ -50,12 +51,12 @@ export function ComponentSection({
 }: {
   title: string;
   count: number;
-  empty: string;
+  empty?: string;
   children?: ReactNode;
 }) {
   // The design ContentSection (spec §6.31): the title a heading, the empty line muted and small
   return (
-    <ContentSection title={title} {...(count === 0 ? { empty } : {})}>
+    <ContentSection title={title} {...(count === 0 && empty !== undefined ? { empty } : {})}>
       {children}
     </ContentSection>
   );

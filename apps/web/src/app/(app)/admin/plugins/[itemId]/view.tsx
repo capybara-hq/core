@@ -96,15 +96,17 @@ const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation ===
  * row menu moves the platform to any other imported version (更新到 / 回退到, the same dialog). A
  * built-in plugin has neither 设置范围 nor 停用. An org's upload (phase 3) names its owner org, takes no
  * 更新到 or version moves (its org uploads its versions), only narrows when its org does not share
- * it, and takes no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
- * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
- * component's own, linking to the component); its dependencies; the translation report), 组织
- * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
- * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
- * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
- * license as a fact (its full text opens a Dialog); Delete is the head's ⋯ menu item. Apply this plugin's appearance (a plugin with a
- * suggested appearance, client extensions spec §6.5) previews the platform changes in a confirm
- * dialog, then applies them. From the query cache (the layout
+ * it, and takes no scope change while its first version waits. Tabs: components (the plugin
+ * contents view of the platform version: its extension, skills, connector templates, agent
+ * templates and themes, each with its scope (follow the plugin or the component's own, linking to
+ * the component); its dependencies; the translation report), orgs (the scope and the orgs it
+ * names, or how many turned it on), versions (each version's source, origin and import time). One centred column (no
+ * inspector): the full description first, the notes and the facts (the icon is the head's 40 px
+ * mark) (package, source, publisher, owner, scope, orgs using it, the permissions with their
+ * state, updated, the license, whose full text opens a Dialog) as a KeyValue, then the tab; Delete
+ * is the head's ⋯ menu item. Apply this plugin's appearance (a plugin with a suggested
+ * appearance, client extensions spec §6.5) previews the platform changes in a confirm dialog,
+ * then applies them. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
  * the catalog and the orgs are sections.
  */
@@ -134,8 +136,7 @@ function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | n
           value: "components",
           onChange: () => {},
         }}
-        // The facts (the description over a KeyValue of nine), then the components table and the
-        // dependencies
+        // The facts (the description over a KeyValue of nine), then the contents' sections
         loading={{
           facts: { rows: 9, keyWidth: "10ch", lead: true },
           content: [{ kind: "list" }, { kind: "list" }],
@@ -529,7 +530,10 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   );
 }
 
-/** The platform's skills, connector templates and agent templates (sections: empty while they load or failed). */
+/**
+ * The platform's skills, connector templates and agent templates (sections: empty while they load
+ * or failed).
+ */
 function usePluginComponents(): PlatformComponent[] {
   const sq = adminComponentsQuery("skill");
   const cq = adminComponentsQuery("connector_template");
@@ -547,8 +551,8 @@ function usePluginComponents(): PlatformComponent[] {
 /**
  * Components: the contents of the version the platform runs (the one plugin contents view): the
  * extension with its client code and client components under it, skills, connector templates,
- * agent templates and themes, each with its scope (follow the plugin, or its own, linking to the component),
- * the dependencies and the translation report. The license is the page's fact.
+ * agent templates and themes, each with its scope (follow the plugin, or its own, linking to the
+ * component), the dependencies and the translation report. The license is the page's fact.
  */
 function ComponentsTab({
   detail,

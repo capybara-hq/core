@@ -24,7 +24,7 @@ export function PluginReviewBody({
   installedVersion?: string | null;
   /** A marketplace import's permission summary that differs from the package. */
   mismatch?: PermissionsMismatch;
-  /** `org`: an org admin's view: the publisher only, no source, build, license or translation. */
+  /** `org`: an org admin's view: the publisher only, no source, build or license. */
   audience?: "platform" | "org";
 }) {
   const locale = useLocale();

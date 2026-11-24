@@ -36,7 +36,7 @@ export interface FromOrgOptions {
   template?: (t: OrgCatalogTemplate) => ReactNode;
 }
 
-/** The extension block of an org's catalog detail: what it provides, and whether it needs config. */
+/** The extension block of an org's catalog detail: what it provides, whether it needs config. */
 function extensionOf(
   detail: OrgCatalogDetail,
   extension: OrgExtension | undefined,
@@ -106,7 +106,6 @@ export function fromOrgDetail(
         name,
         description: describe("agent_template", name),
         needs: [],
-        toolsUnknown: true,
       };
     }),
     themes: [],

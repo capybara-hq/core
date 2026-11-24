@@ -58,7 +58,7 @@ const ADMIN_DEFAULTS: Routes = {
   "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
   // The org plugin detail's components in the org (their switches)
   "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
-  // The org plugin detail's the org's connectors (the org's connectors)
+  // The org plugin detail's connectors section (the connectors made from its templates)
   "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
   // The plugin `INSTALL` is an install of (its detail page shows the installs)
   "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
@@ -377,7 +377,11 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     const list = await screen.findByRole("list", { name: p.title });
     const user = userEvent.setup();
     await user.click(within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable }));
-    expect(await screen.findByText("已启用「notes」，加入了 4 个技能。")).toBeTruthy();
+    expect(
+      await screen.findByText(
+        fill(p.toast.enabledWith, { name: "notes", what: fill(p.toast.part.skills, { n: 4 }) }),
+      ),
+    ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: p.toast.undo }));
     await waitFor(() =>
       expect(calls.filter((c) => c.method === "PUT").map(bodyOf)).toEqual([
@@ -386,7 +390,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
       ]),
     );
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(await screen.findByText("已停用「notes」。")).toBeTruthy();
+    expect(await screen.findByText(fill(p.toast.disabled, { name: "notes" }))).toBeTruthy();
   });
 
   it("turning off with nothing to lose is one sentence and the two buttons", async () => {
@@ -2164,12 +2168,17 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
     expect(screen.getByText("Acme")).toBeTruthy();
     expect(screen.getByRole("button", { name: r.fullDescription })).toBeTruthy();
     // skills and agent templates with their descriptions, from the org's components
-    const named = (label: string) =>
-      within(screen.getByRole("list", { name: label }))
-        .getAllByRole("listitem")
-        .map((li) => li.textContent);
-    expect(named(c.skills)).toEqual(["triageTriage the queue."]);
-    expect(named(c.agentTemplates)[0]).toContain("reviewerReviews pull requests.");
+    const [triage, ...otherSkills] = within(
+      screen.getByRole("list", { name: c.skills }),
+    ).getAllByRole("listitem");
+    expect(otherSkills).toEqual([]);
+    expect(within(triage as HTMLElement).getByText("triage")).toBeTruthy();
+    expect(within(triage as HTMLElement).getByText("Triage the queue.")).toBeTruthy();
+    const [reviewer] = within(screen.getByRole("list", { name: c.agentTemplates })).getAllByRole(
+      "listitem",
+    );
+    expect(within(reviewer as HTMLElement).getByText("reviewer")).toBeTruthy();
+    expect(within(reviewer as HTMLElement).getByText("Reviews pull requests.")).toBeTruthy();
     // the org has no tool data: the agent template claims nothing about its tools
     expect(screen.queryByText(c.agentToolsInherit)).toBeNull();
     // the extension: what it provides and, since it needs config, the note
@@ -4417,6 +4426,25 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
     await screen.findByText(en.catalog.components.skills);
     await settle();
     expect(calls.some((c) => c.url.endsWith("/plugin-installs"))).toBe(false);
+  });
+
+  it("plugin page: the description and the publisher are the page's facts, once", async () => {
+    params.current = { itemId: ID };
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          ...DETAIL,
+          item: { ...DETAIL.item, description: "Takes notes. Keeps them tidy." },
+        }),
+    });
+    await renderItem({ me: MEMBER });
+    await screen.findByText(en.catalog.components.skills);
+    expect(screen.getAllByText(en.catalog.org.detail.fields.publisher)).toHaveLength(1);
+    expect(screen.getAllByText("Acme")).toHaveLength(1);
+    expect(screen.getAllByText("Takes notes. Keeps them tidy.")).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: en.catalog.admin.review.fullDescription }),
+    ).toBeNull();
   });
 
   it("plugin page: the plugin's agent templates are listed", async () => {

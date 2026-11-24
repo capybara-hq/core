@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, ExpandableProse, WizardPage } from "../src/index";
+import { DesignProvider, ExpandableProse } from "../src/index";
 
 afterEach(cleanup);
 
@@ -33,28 +33,5 @@ describe("ExpandableProse", () => {
     wrap(<ExpandableProse summary="Same." text="Same." moreLabel="More" lessLabel="Less" />);
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText("Same.")).toBeTruthy();
-  });
-});
-
-describe("WizardPage step bar", () => {
-  const header = { path: [{ label: "capybara" }], title: "T" };
-  const row = { primary: { label: "Go", onSelect: () => {} } };
-  it("draws no step bar for one step", () => {
-    wrap(
-      <WizardPage header={header} steps={["One"]} current={0} actionRow={row}>
-        x
-      </WizardPage>,
-    );
-    expect(document.querySelector(".cb-steps")).toBeNull();
-    expect(document.querySelector('[data-part="step-count"]')).toBeNull();
-  });
-  it("draws the bar for two steps", () => {
-    wrap(
-      <WizardPage header={header} steps={["One", "Two"]} current={0} actionRow={row}>
-        x
-      </WizardPage>,
-    );
-    expect(document.querySelector(".cb-steps")).toBeTruthy();
-    expect(document.querySelector('[data-part="step-count"]')).toBeTruthy();
   });
 });

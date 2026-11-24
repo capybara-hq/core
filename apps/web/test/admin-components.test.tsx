@@ -882,7 +882,7 @@ describe("admin plugin detail: components and the platform update", () => {
     ...over,
   });
 
-  it("each row's trailing text is its scope, 跟随插件 or the component's own, linking the component", async () => {
+  it("each row's trailing text is its scope, follow the plugin or the component's own, linking the component", async () => {
     await open(`/admin/plugins/${ITEM}`, routes());
     const R = en.catalog.components;
     const skills = await screen.findByRole("list", { name: R.skills });
@@ -914,6 +914,13 @@ describe("admin plugin detail: components and the platform update", () => {
     expect(within(agents).getByRole("link", { name: C.follow }).getAttribute("href")).toBe(
       "/admin/agents/templates/a1",
     );
+    // the manifest carries no tool data: the agent template claims nothing about its tools
+    expect(within(agents).queryByText(R.agentToolsInherit)).toBeNull();
+    expect(within(agents).queryByText(en.catalog.admin.review.tools)).toBeNull();
+    // the page's facts carry the description and the publisher: the contents repeat neither
+    expect(
+      screen.queryByRole("button", { name: en.catalog.admin.review.fullDescription }),
+    ).toBeNull();
     // the components are not a table, and the license is not a folded section
     expect(
       screen.queryByRole("table", { name: en.catalog.admin.detail.tabs.components }),
@@ -953,7 +960,8 @@ describe("admin plugin detail: components and the platform update", () => {
     );
     const D = en.catalog.admin.detail;
     const R = en.catalog.components;
-    // client code and the client components are lines under the extension
+    // client code and the client components are lines under the extension (D.clientFiles is an
+    // ICU plural, which `fill` does not render: the English text is spelled out)
     expect(await screen.findByText("Ships client code, 2 files.")).toBeTruthy();
     expect(screen.getByText(fill(D.uiComponents, { ids: "brand, hud" }))).toBeTruthy();
     expect(screen.getByText("jina-web")).toBeTruthy();

@@ -43,10 +43,10 @@ import { useAdminThemeName, useThemeImpactGroup } from "./ThemeImpact";
 const optVersion = (v: string | null) => (v === null ? "—" : versionLabel(v));
 
 /**
- * "Update to x" of a platform plugin (spec §7.1, ruling F2: one version per deployment): the preview
- * lists every component with its change (added / removed / upgrade / downgrade / same) and marks those updated
- * on their own, those with their own scope and removed ones kept because agents use them; the
- * orgs whose copies are pinned, the extension's move with the orgs using it (and whether the new
+ * "Update to x" of a platform plugin (spec §7.1, ruling F2: one version per platform): the
+ * preview lists every component with its change (added / removed / upgrade / downgrade / same)
+ * and marks those updated on their own, those with their own scope and removed ones kept because
+ * agents use them; the orgs pinned to their own version of a component, the extension's move with the orgs using it (and whether the new
  * version waits for a permission confirmation), and per org the connectors updated, those whose
  * credentials are cleared and the added templates needing input. Confirmed with `diffHash`; 409
  * `plugin.upgrade_stale` previews again.
@@ -183,8 +183,8 @@ interface OrgNaming {
  * with the orgs using it, per org the connectors updated, those whose credentials are cleared,
  * those the update creates (and how many wait for configuration), those deferred until their
  * connector plugin is on and turned off, and the orgs where the scope sync will try to install
- * the plugin (warned with the last failure there), then the pinned copies, the components kept
- * for agents and the removed themes still on in some org.
+ * the plugin (warned with the last failure there), then the pinned components, the components
+ * kept for agents and the removed themes still on in some org.
  */
 function useImpactGroups({
   preview,

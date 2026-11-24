@@ -12,6 +12,7 @@ import { PluginReviewBody } from "../src/components/PluginReviewBody";
 import { fromReview } from "../src/components/plugin-contents/from-review";
 import { firstSentence } from "../src/components/plugin-contents/model";
 import { PluginContents } from "../src/components/plugin-contents/PluginContents";
+import { withUpdateMarks } from "../src/components/plugin-contents/update-marks";
 import type { PlatformUpdatePreview, PluginReview } from "../src/lib/catalog";
 import { renderPage } from "./support/render";
 
@@ -41,6 +42,16 @@ const review: PluginReview = {
 
 const R = zhMessages.catalog.admin.review;
 const C = zhMessages.catalog.components;
+const fill = (s: string, vars: Record<string, string | number>) =>
+  s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
+/** The translation summary of `claudeSessionDriver`: one imported, five ignored, one warning. */
+const DRIVER_SUMMARY = fill(R.translationSummary, {
+  imported: 1,
+  converted: 0,
+  needsInput: 0,
+  ignored: 5,
+  warnings: 1,
+});
 
 describe("PluginReviewBody provenance", () => {
   for (const [locale, msgs] of [
@@ -161,7 +172,7 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText("2 项敏感")).toBeTruthy();
   });
 
-  it("the description shows its first sentence and 完整说明; opening shows all of it in place", async () => {
+  it("the description shows its first sentence and the full-description toggle; opening shows all of it in place", async () => {
     renderPage(<PluginReviewBody review={deviceE2b} />, zh);
     expect(screen.getByText("Runs devices in E2B sandboxes.")).toBeTruthy();
     expect(screen.queryByText(/E2B account/)).toBeNull();
@@ -173,7 +184,7 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByRole("button", { name: R.collapse })).toBeTruthy();
   });
 
-  it("a one-sentence description has no 完整说明", () => {
+  it("a one-sentence description has no full-description toggle", () => {
     renderPage(<PluginReviewBody review={review} />, zh);
     expect(screen.getByText("Demo")).toBeTruthy();
     expect(screen.queryByRole("button", { name: R.fullDescription })).toBeNull();
@@ -197,7 +208,7 @@ describe("PluginReviewBody contents", () => {
     expect(within(screen.getByText("domain")).queryByRole("img")).toBeNull();
     expect(screen.queryByText(/deployment:/)).toBeNull();
     expect(screen.queryByRole("heading", { name: "密钥" })).toBeNull();
-    expect(screen.getByText("安装后在「扩展」页填写")).toBeTruthy();
+    expect(screen.getByText(R.configAfterInstall)).toBeTruthy();
     expect(screen.getByText("device-provider@1")).toBeTruthy();
   });
 
@@ -359,7 +370,7 @@ describe("PluginReviewBody contents", () => {
 
   it("the translation report is a one-line summary with warnings shown", () => {
     renderPage(<PluginReviewBody review={claudeSessionDriver} />, zh);
-    expect(screen.getByText("导入 1 · 转换 0 · 需要填写 0 · 忽略 5 · 警告 1")).toBeTruthy();
+    expect(screen.getByText(DRIVER_SUMMARY)).toBeTruthy();
     expect(screen.getByText(/SessionStart/)).toBeTruthy();
     // the ignored group is in the details, closed
     expect(screen.queryByText(/other_harness|其他工具的文件/)).toBeNull();
@@ -461,7 +472,7 @@ describe("PluginReviewBody rows", () => {
 });
 
 describe("PluginReviewBody license fact", () => {
-  it("许可证 is a fact with the SPDX name; 全文 opens a Dialog with the text, one box", async () => {
+  it("the license is a fact with the SPDX name; its full-text link opens a Dialog with the text, one box", async () => {
     renderPage(
       <PluginReviewBody review={{ ...review, license: "MIT", licenseText: "MIT License\u202e" }} />,
       zh,
@@ -485,7 +496,7 @@ describe("PluginReviewBody license fact", () => {
     expect(within(row).getByRole("button", { name: R.licenseText })).toBeTruthy();
   });
 
-  it("a license too large to keep says so, with no 全文", () => {
+  it("a license too large to keep says so, with no full-text link", () => {
     renderPage(<PluginReviewBody review={{ ...review, licenseTruncated: true }} />, zh);
     const row = screen.getByText(R.facts.license).parentElement as HTMLElement;
     expect(within(row).getByText("LICENSE")).toBeTruthy();
@@ -493,7 +504,7 @@ describe("PluginReviewBody license fact", () => {
     expect(within(row).queryByRole("button")).toBeNull();
   });
 
-  it("no license: no 许可证 fact", () => {
+  it("no license: no license fact", () => {
     renderPage(<PluginReviewBody review={review} />, zh);
     expect(screen.queryByText(R.facts.license)).toBeNull();
   });
@@ -527,7 +538,7 @@ describe("PluginReviewBody extension note and inline texts", () => {
     expect(within(pdf).getByText("# PDF body")).toBeTruthy();
   });
 
-  it("dependencies read 「{name} 将使用 {version}」 on the platform", () => {
+  it('dependencies read "{name} will use {version}" on the platform', () => {
     const deps: PluginReview = {
       ...review,
       dependencies: [{ name: "crm-core", range: "^1.0.0", resolved: "1.2.0" }],
@@ -544,7 +555,7 @@ describe("PluginReviewBody extension note and inline texts", () => {
 describe("PluginContents stages, audiences and the row slots", () => {
   const model = (r: PluginReview) => fromReview(r, { locale: "zh" });
 
-  it("enable: the plain version, the after-enabling note, 同时安装, no source facts for an org", () => {
+  it("enable: the plain version, the after-enabling note, the installed-with title, no source facts for an org", () => {
     const deps: PluginReview = {
       ...deviceE2b,
       dependencies: [{ name: "crm-core", range: "^1.0.0", resolved: "1.2.0" }],
@@ -560,9 +571,13 @@ describe("PluginContents stages, audiences and the row slots", () => {
     expect(screen.queryByText(R.build)).toBeNull();
   });
 
-  it("detail: no head (the page has its own) and no note line", () => {
+  it("detail: no head, description or facts (the page has its own) and no note line", () => {
     renderPage(<PluginContents model={model(deviceE2b)} audience="platform" stage="detail" />, zh);
     expect(screen.queryByText("v0.1.0-rc.28")).toBeNull();
+    expect(screen.queryByText(firstSentence(deviceE2b.description))).toBeNull();
+    expect(screen.queryByRole("button", { name: R.fullDescription })).toBeNull();
+    expect(screen.queryByText(R.facts.publisher)).toBeNull();
+    expect(screen.queryByText(R.facts.origin)).toBeNull();
     expect(screen.queryByText(R.configAfterInstall)).toBeNull();
     expect(screen.queryByText(R.configAfterEnable)).toBeNull();
   });
@@ -570,31 +585,76 @@ describe("PluginContents stages, audiences and the row slots", () => {
   it("an org's own upload of a Claude Code package shows the translation summary", () => {
     renderPage(<PluginReviewBody review={claudeSessionDriver} audience="org" />, zh);
     expect(screen.getByRole("region", { name: R.translation.title })).toBeTruthy();
-    expect(screen.getByText("导入 1 · 转换 0 · 需要填写 0 · 忽略 5 · 警告 1")).toBeTruthy();
+    expect(screen.getByText(DRIVER_SUMMARY)).toBeTruthy();
   });
 
-  it("an org reading a plugin page or its enable page gets no translation summary", () => {
+  it("an org's upload of a new version of its own Claude Code plugin keeps the summary", () => {
+    renderPage(
+      <PluginReviewBody review={claudeSessionDriver} audience="org" installedVersion="0.0.1" />,
+      zh,
+    );
+    expect(screen.getByRole("region", { name: R.translation.title })).toBeTruthy();
+    expect(screen.getByText(DRIVER_SUMMARY)).toBeTruthy();
+  });
+
+  it("a model without a translation report (an org's catalog read) draws no summary", () => {
+    const { translation: _, ...withoutReport } = model(claudeSessionDriver);
     for (const stage of ["enable", "detail"] as const) {
-      renderPage(
-        <PluginContents model={model(claudeSessionDriver)} audience="org" stage={stage} />,
-        zh,
-      );
+      renderPage(<PluginContents model={withoutReport} audience="org" stage={stage} />, zh);
       expect(screen.queryByRole("region", { name: R.translation.title })).toBeNull();
       cleanup();
     }
   });
 
-  it("the extension's state slot is drawn on its title line", () => {
-    const m = model(deviceE2b);
-    const withState = {
-      ...m,
-      ...(m.extension && { extension: { ...m.extension, state: <span>待配置</span> } }),
+  it("an update's removed agent template is a bare row with no claim about its tools", () => {
+    const withAgent: PluginReview = {
+      ...review,
+      agentTemplates: [
+        {
+          name: "planner",
+          path: "agents/planner.md",
+          description: "Plans.",
+          instructions: "Plan.",
+          model: "inherit",
+          connectors: [],
+        },
+      ],
     };
-    renderPage(<PluginContents model={withState} audience="org" stage="enable" />, zh);
-    const head = screen
-      .getByRole("region", { name: "device-e2b" })
-      .querySelector('[data-part="subsection-head"]');
-    expect(head?.textContent).toContain("待配置");
+    const preview = {
+      itemId: "i1",
+      name: "demo",
+      from: "0.9.0",
+      to: "1.0.0",
+      components: [
+        {
+          kind: "agent_template",
+          name: "old",
+          change: "removed",
+          from: "1",
+          to: null,
+          pinnedOrgs: [],
+        },
+      ],
+      extension: null,
+      connectorOrgs: [],
+      scopeInstalls: [],
+      diffHash: "h",
+    } as unknown as PlatformUpdatePreview;
+    renderPage(
+      <PluginContents
+        model={withUpdateMarks(model(withAgent), preview)}
+        audience="platform"
+        stage="update"
+      />,
+      zh,
+    );
+    // the staged package's own template inherits; the removed one has no tool data
+    const planner = screen.getByRole("group", { name: "planner" });
+    expect(within(planner).getByText(C.agentToolsInherit)).toBeTruthy();
+    const old = screen.getByRole("group", { name: "old" });
+    expect(within(old).getByText(zhMessages.catalog.update.change.removed)).toBeTruthy();
+    expect(within(old).queryByText(C.agentToolsInherit)).toBeNull();
+    expect(within(old).queryByText(R.tools)).toBeNull();
   });
 
   it("each row draws its change mark and the surface's trailing slot; themes have a section", () => {

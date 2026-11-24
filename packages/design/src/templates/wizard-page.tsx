@@ -65,7 +65,7 @@ export function WizardPage({
                 const state = i < current ? "done" : i === current ? "current" : "todo";
                 return (
                   <li
-                    // biome-ignore lint/suspicious/noArrayIndexKey: a static step list whose labels may repeat
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static steps; labels may repeat
                     key={`${i}-${label}`}
                     className="cb-step"
                     data-step={i + 1}

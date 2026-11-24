@@ -96,16 +96,16 @@ type Staged = PluginPrepared | null | { problem: Problem };
  * (`GET imports/:stagingId/update-preview`), then what the update does beyond them (the
  * extension's move, the orgs and connectors affected, the templates needing config), and its one
  * confirm imports the version and updates the platform together (`POST imports/:stagingId/update`
- * with `reviewHash` and `diffHash`). Nothing is written before that confirm, so cancelling at any step changes nothing;
- * an update failing after the import says plainly that the version was imported and the platform
- * stayed on its version (409 `plugin.imported_not_updated`), and the plugin's page offers the
- * update again. The steps of a new plugin:
+ * with `reviewHash` and `diffHash`). Nothing is written before that confirm, so cancelling at
+ * any step changes nothing; an update failing after the import says plainly that the version was
+ * imported and the platform stayed on its version (409 `plugin.imported_not_updated`), and the
+ * plugin's page offers the update again. The steps of a new plugin:
  * 1. choose the plugin package: upload a tgz, give an npm package name, or read it straight from git
  *    (a one-off import: an https git URL or `owner/repo`, an optional branch / tag / commit and
  *    directory; no marketplace is added) (prepare stages it for 24 hours) and the address becomes
- *    `?staging=<id>`. A marketplace entry is prepared on the
- *    Marketplace tab (or by approving an org's `import` request), which opens this page with `?staging=<id>`; the page loads that staged review
- *    (and a marketplace import's permission mismatch) from the kernel
+ *    `?staging=<id>`. A marketplace entry is prepared on the Marketplace tab (or by approving an
+ *    org's `import` request), which opens this page with `?staging=<id>`; the page loads that
+ *    staged review (and a marketplace import's permission mismatch) from the kernel
  *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
  *    says so and offers a new import;
  * 2. review: the extension (its action on the deployment and its permissions, sensitive items
@@ -254,6 +254,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     code: string;
   } | null>(null);
   const tu = useTranslations("catalog.update");
+  const tcm = useTranslations("common");
   const locale = useLocale();
   const leftDisabledLine = useLeftDisabledLine();
   const capabilityLabel = useCapabilityLabel();
@@ -313,6 +314,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     mode.current = null;
     setPrepared(p);
     setAck(false);
+    setUpdateNotice(undefined);
     setStep(1);
   };
 
@@ -324,6 +326,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     setSubmitError(undefined);
     setFetchError(undefined);
     setStagedConsumed(false);
+    setUpdateNotice(undefined);
     mode.current = null;
     setStep(0);
     router.replace("/admin/plugins/import");
@@ -377,6 +380,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const updating = installedItem !== null;
   /** What the review step shows: install or update, fixed when its confirm was pressed. */
   const shownUpdating = mode.current ?? updating;
+  /** Install or update is known (until the catalog is read the review step shows it loading). */
+  const modeKnown = mode.current !== null || !modePending;
   const installedName = installedItem === null ? "" : displayNameOf(installedItem, locale);
   // The update preview of the staged version (the marks and the impact on an update's review)
   const upq = stagedUpdatePreviewQuery(prepared?.stagingId ?? "");
@@ -652,9 +657,13 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
             {fetchError !== undefined && <ProminentError problem={fetchError} />}
           </Stack>
         ))}
-      {step === 1 && review !== null && shownUpdating && (
+      {step === 1 && review !== null && !modeKnown && (
+        <Text variant="prose" tone="muted">
+          {tcm("loading")}
+        </Text>
+      )}
+      {step === 1 && review !== null && modeKnown && shownUpdating && (
         <Stack gap={16}>
-          {updateNotice !== undefined && <Callout tone="warn">{updateNotice}</Callout>}
           <UpdateContents
             review={review}
             installedVersion={installedItem?.latestVersion ?? null}
@@ -675,6 +684,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           <Text variant="small" tone="muted">
             {tu("hint", { version: versionLabel(review.version) })}
           </Text>
+          {/* A stale confirm read the preview again: said next to the confirm it concerns */}
+          {updateNotice !== undefined && <Callout tone="warn">{updateNotice}</Callout>}
           {updateSensitive && importedNotUpdated === null && (
             <Stack gap={8}>
               <Text variant="prose" tone="warn">
@@ -709,7 +720,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           {submitError !== undefined && <ProminentError problem={submitError} />}
         </Stack>
       )}
-      {step === 1 && review !== null && !shownUpdating && (
+      {step === 1 && review !== null && modeKnown && !shownUpdating && (
         <Stack gap={16}>
           <PluginReviewBody
             review={review}

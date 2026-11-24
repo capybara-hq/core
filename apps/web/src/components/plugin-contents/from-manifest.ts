@@ -5,6 +5,7 @@ import {
   type CatalogItemDetail,
   type CatalogItemVersion,
   clientFilesOf,
+  descriptionOf,
   displayNameOf,
   type PluginManifest,
   skillNameOf,
@@ -28,6 +29,7 @@ import type {
   TemplateRow,
   ThemeRow,
 } from "./model";
+import { licenseFrom } from "./model";
 
 /** The page of a platform component (its name links to it). */
 const hrefOf = (c: PlatformComponent | undefined): { href?: string } =>
@@ -35,7 +37,10 @@ const hrefOf = (c: PlatformComponent | undefined): { href?: string } =>
 
 /** What the surface draws in the contents' trailing slots (it owns the links and the copy). */
 export interface ManifestSlots {
-  /** A row's scope (follow or its own, linking to the component page); `c` is absent when unlisted. */
+  /**
+   * A row's scope (follow or its own, linking to the component page); `c` is absent when the
+   * platform does not list the component.
+   */
   scope: (kind: PlatformComponentKind, c: PlatformComponent | undefined) => ReactNode;
   /** The lines under the extension: its client code (a file count) and client components. */
   extensionLines: (client: { files: number } | null, uiComponents: string[]) => ReactNode;
@@ -60,16 +65,14 @@ export const manifestCount = (m: PluginManifest): number =>
   (m.agents?.length ?? 0) +
   (m.themes?.length ?? 0);
 
-/** The license fact of a version: its SPDX name, else "LICENSE", with the text when it was kept. */
+/** The license fact of a version (see {@link licenseFrom}). */
 export function licenseOf(v: CatalogItemVersion | undefined): ContentsLicense | undefined {
   if (v === undefined) return undefined;
-  const name =
-    v.manifest.license !== undefined && v.manifest.license !== "" ? v.manifest.license : "LICENSE";
-  const text =
-    typeof v.licenseText === "string" && v.licenseText !== "" ? v.licenseText : undefined;
-  if (text !== undefined) return { name, text };
-  if (v.licenseTruncated === true) return { name, truncated: true };
-  return v.manifest.license !== undefined && v.manifest.license !== "" ? { name } : undefined;
+  return licenseFrom({
+    license: v.manifest.license,
+    licenseText: v.licenseText,
+    licenseTruncated: v.licenseTruncated,
+  });
 }
 
 /** The top-level config fields of an extension's manifest, a secret one marked. */
@@ -182,8 +185,7 @@ export function fromManifest(
       version: version?.version ?? item.platformVersion ?? item.latestVersion,
       sensitive: 0,
     },
-    // the page's own facts carry the description
-    description: "",
+    description: descriptionOf(item, locale),
     facts: {},
     ...(extension !== undefined && { extension }),
     skills,

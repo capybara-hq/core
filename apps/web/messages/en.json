@@ -4973,16 +4973,14 @@
     "newer": "New version",
     "components": {
       "extension": "Extension",
-      "extensionNone": "No extension.",
       "extensionVersion": "{name} {version}",
-      "declaredHint": "Permissions as declared in the package (reviewed when the platform installed or updated to this version; approved on the deployment in the extension admin).",
+      "declaredHint": "Permissions as declared in the package (reviewed when the platform installed or updated to this version; approved on the platform in the extension admin).",
       "skills": "Skills",
       "skillsNone": "No skills.",
       "skillFiles": "{n} files",
       "templates": "Connector templates",
       "templatesNone": "No connector templates.",
       "dependencies": "Dependencies",
-      "dependenciesNone": "No dependencies.",
       "dependencyResolved": "{name} will use {version}",
       "dependencyUnresolved": "{name} {range} has no matching version on the platform yet. Organizations cannot turn this plugin on until one is installed.",
       "errorDependency": "Dependency: {dependency}",
@@ -4990,7 +4988,6 @@
       "skillConflictOrg": "Skill “{skill}” already exists in this organization (the organization's own skill). Remove or rename it, then try again.",
       "skillConflictPlugin": "Skill “{skill}” already exists in this organization (from plugin {plugin}). Remove or rename it, then try again.",
       "agentTemplates": "Agent templates",
-      "agentTemplatesNone": "No agent templates.",
       "agentTools": "Tools: {tools}",
       "agentToolsInherit": "Those of the agent that dispatches it",
       "agentToolsRemoved": "Without {tools}",
@@ -5037,7 +5034,7 @@
           "title": "Delete plugin {name}",
           "hint": "Organizations will no longer see this plugin; installed components are not affected. You can install it again later.",
           "confirm": "Delete",
-          "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
+          "extensionNote": "A plugin whose extension is enabled on the platform cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
           "openExtension": "Disable it on the Extensions page"
         },
         "deleteExtensionEnabled": "Disable \"{name}\" on the Extensions page first, then delete the plugin.",
@@ -5082,14 +5079,14 @@
         "orgsEmpty": "No organizations yet.",
         "enabledToast": "Enabled \"{name}\".",
         "disabledToast": "Disabled \"{name}\".",
-        "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again once it is enabled.",
+        "disabledNote": "Disabled on the whole platform; its scope is kept and applies again once it is enabled.",
         "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
         "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
         "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab.",
         "ownerValue": "{org} (new versions come from it)",
         "uiComponents": "Contributes interface components: {ids}.",
-        "dependencyVersions": "In the catalog: {versions}.",
-        "dependencyMissing": "Not in the catalog."
+        "dependencyVersions": "The platform has {versions}.",
+        "dependencyMissing": "Not on the platform yet."
       },
       "review": {
         "title": "Install plugin",
@@ -5116,8 +5113,8 @@
         "deployOn": "Confirming installs and enables the extension.",
         "noExtension": "This plugin has no extension. Confirming adds it to the platform.",
         "keepExtension": "The extension {name} {version} is already on the platform.",
-        "ackHint": "It has sensitive permissions. Look them over before confirming.",
-        "ack": "I have looked over the sensitive permissions",
+        "ackHint": "It has sensitive permissions or migration warnings. Look them over before confirming.",
+        "ack": "I have looked over the sensitive permissions and warnings",
         "confirm": "Install",
         "done": "Installed plugin \"{name}\".",
         "deployResult": "Install result",
@@ -5198,7 +5195,7 @@
             "agent_tools_inherited": "tools \"*\" means the tools of the agent that dispatches it",
             "mcp_header_variable": "header {header} uses {variable}: organizations fill it in when they install the template",
             "mcp_url_variable": "the URL uses {variable}: organizations fill it in when they install the template",
-            "dependency_not_imported": "the dependency (version {version}) is not in the catalog yet: import it before organizations install this plugin",
+            "dependency_not_imported": "the dependency (version {version}) is not on the platform yet: import it before organizations install this plugin",
             "skill_manual_invocation": "manual-only skills were not supported when this version was imported",
             "command_manual_invocation": "commands were not supported when this version was imported",
             "skill_needs_subagents": "skills that run as a sub-agent were not supported when this version was imported",
@@ -5219,7 +5216,7 @@
             "session_start_hook": "In Claude Code this plugin runs a SessionStart hook, which usually adds instructions (often one of its skills) at the start of every session. {product} does not run hooks. The plugin's skills are in every agent's catalog; if an agent must always follow what the hook adds, put its gist in the agent's instructions.",
             "mcp_auth_none": "no authentication declared, so none is used (Claude Code would start OAuth when the server asks for it)",
             "mcp_type_assumed": "no type declared; http is assumed",
-            "connector_not_loaded": "the {connector} connector is not loaded on this replica: the template was only checked statically",
+            "connector_not_loaded": "the {connector} connector is not loaded on the server instance that handled this import: the template was only checked statically",
             "agent_tools_unmapped": "tools with no {product} equivalent are left out: {tools}",
             "agent_tools_narrowed": "a pattern in disallowedTools disallows the whole tool: {tools}",
             "agent_skills_truncated": "preloaded skills left out (at most 3 skill names of this plugin): {skills}"
@@ -5246,7 +5243,7 @@
         "unverified": "not verified",
         "noneOf": "No {kinds}.",
         "newMark": "New",
-        "configAfterInstall": "Fill in on the Extensions page after installing",
+        "configAfterInstall": "Set up on the Extensions page after installing",
         "needsOAuthClient": "Needs an OAuth client",
         "needsOrgCredential": "Needs an organization credential",
         "endpointUnchecked": "Address not checked",
@@ -5263,7 +5260,6 @@
         "orgCanChange": "Org can change",
         "collapse": "Less",
         "configAfterEnable": "Set up on the Extensions page after enabling",
-        "defaultOff": "Off by default",
         "licenseText": "Full text",
         "close": "Close",
         "skillBody": "SKILL.md"
@@ -5461,7 +5457,7 @@
       },
       "disableDialog": {
         "title": "Disable {name}",
-        "hint": "Once disabled, nobody on the deployment can use it; its scope is kept and you can enable it again later.",
+        "hint": "Once disabled, nobody on the platform can use it; its scope is kept and you can enable it again later.",
         "confirm": "Disable"
       },
       "pending": {
@@ -5473,7 +5469,7 @@
         "waiting": "Waiting",
         "review": "Review permissions",
         "confirmTitle": "Confirm the permissions of {name}",
-        "confirmHint": "The extension's code runs in the kernel process for the whole deployment, whatever its scope.",
+        "confirmHint": "The extension's code runs in the kernel process for the whole platform, whatever its scope.",
         "confirm": "Confirm permissions",
         "confirmed": "Permissions of \"{name}\" confirmed.",
         "noHash": "The plugin's extension package cannot be read, so it cannot be confirmed yet.",
@@ -5494,9 +5490,9 @@
           "by": "Uploaded by {org}",
           "newPlugin": "New plugin",
           "update": "Update {from} → {to}",
-          "extension": "It carries an extension: once confirmed, its code runs in the kernel process for the whole deployment.",
+          "extension": "It carries an extension: once confirmed, its code runs in the kernel process for the whole platform.",
           "confirm": "Confirm",
-          "confirmHint": "{org} uploaded this version. The extension's code runs in the kernel process for the whole deployment, whatever its scope.",
+          "confirmHint": "{org} uploaded this version. The extension's code runs in the kernel process for the whole platform, whatever its scope.",
           "rejectTitle": "Reject {name} uploaded by {org}",
           "reasonHelp": "Optional; the uploading organization sees it.",
           "rejected": "Rejected \"{name}\"."
@@ -5529,9 +5525,9 @@
         "backToPlugin": "Back to the plugin",
         "confirmStep": "Review and turn on",
         "name": "Connector name",
-        "slug": "Slug",
-        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
-        "endpoint": "Endpoint",
+        "slug": "Identifier",
+        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name. A shorter identifier leaves room for longer tool names; a tool key is at most 64 characters.",
+        "endpoint": "Address",
         "endpointHint": "Read-only fields are set by the template and cannot be changed.",
         "credential": "Credentials",
         "credentialHint": "You can leave this empty and set it later on the connector's credentials page.",
@@ -5609,7 +5605,7 @@
       },
       "inProgress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up here after the timeout.",
       "dropped": "no longer in the plugin; kept while still in use",
-      "deploymentPending": "The deployment updated this plugin's extension. Upgrade this organization's plugin to match."
+      "deploymentPending": "The platform updated this plugin's extension. Upgrade this organization's plugin to match."
     },
     "inbox": {
       "label": "Catalog request",
@@ -5669,22 +5665,22 @@
       "confirm": "Update",
       "cancel": "Cancel",
       "done": "Updated \"{name}\" to {version}.",
-      "leftDisabled": "The extension of \"{name}\" is installed but left disabled: only one {point} provider can be enabled, and {other} is. Disable it first, then enable this extension.",
-      "leftDisabledRequired": "The extension of \"{name}\" is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+      "leftDisabled": "The extension of \"{name}\" is installed but not enabled, since only one {point} provider can be enabled. Disable {other} first, then enable it.",
+      "leftDisabledRequired": "The extension of \"{name}\" is installed but not enabled, since {point} comes from \"{other}\", a plugin the platform requires, and cannot be replaced.",
       "stale": "What the update does has changed. Review it again, then confirm.",
       "orgCount": "{count, plural, one {# organization} other {# organizations}}",
       "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
       "otherOrg": "another organization",
       "groups": {
-        "pinned": "Copies moving to the new version",
+        "pinned": "Components pinned to their own version",
         "kept": "Components kept",
         "extension": "Extension",
         "orgs": "Organizations affected",
         "own": "Components with their own settings"
       },
-      "pinnedNote": "Pinned to their own version in {orgs}",
+      "pinnedNote": "{orgs} stay on their own version",
       "keptNote": "Not in the new version, still used by: {agents}",
-      "extensionInstall": "Installs {to} on the deployment",
+      "extensionInstall": "Installs {to} on the platform",
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
@@ -5700,7 +5696,7 @@
       "impactNone": "Nothing else changes.",
       "ack": "I have looked over the new sensitive permissions and warnings",
       "ackHint": "This update adds sensitive permissions or migration warnings. Look them over before confirming.",
-      "importedNotUpdated": "{version} was added to the plugin's versions, but the platform could not update to it ({code}): it stays on {from}, and the extension and its permissions are unchanged. Retry \"Update to {version}\" on the plugin's page."
+      "importedNotUpdated": "{version} was added to the plugin's versions, but the platform could not update to it, error code {code}. The platform stays on {from}, the extension and its permissions are unchanged, and you can retry \"Update to {version}\" on the plugin's page."
     },
     "errorDetail": {
       "host": "Host: {host}",
@@ -5713,9 +5709,9 @@
       "sameVersion": "The platform already runs {version}.",
       "dependentRange": "The plugin {dependent} depends on {range}, which {version} does not satisfy.",
       "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and install the new version as a new plugin instead.",
-      "configExtension": "This plugin's extension is declared in the startup config (the deployment runs {version}); an update cannot move it. Change the startup config first.",
+      "configExtension": "This plugin's extension is declared in the startup config (the platform runs {version}); an update cannot move it. Change the startup config first.",
       "configExtensionUnloaded": "This plugin's extension is declared in the startup config; an update cannot move it. Change the startup config first.",
-      "extensionRemoved": "{version} has no extension, but the deployment runs it; uninstall the extension first.",
+      "extensionRemoved": "{version} has no extension, but the platform runs it; uninstall the extension first.",
       "extensionPackage": "The extension package of {version} is missing from the platform; update to that version again from the marketplace or a plugin package."
     },
     "owner": {
@@ -5958,7 +5954,7 @@
       "not_offered": "Not offered, can be requested",
       "requested": "Requested, waiting",
       "unavailable": "Stopped by the platform",
-      "notDeployed": "Extension not deployed",
+      "notDeployed": "Extension not on the platform",
       "awaiting": "Waiting for the super admin's confirmation"
     },
     "action": {
@@ -5995,7 +5991,7 @@
     },
     "switchOff": {
       "title": "Turn off {name}",
-      "plain": "Turn off \"{name}\"? Nothing in this organization is removed by it.",
+      "plain": "Nothing in this organization is removed.",
       "skills": "{n, plural, one {Its skill goes} other {Its # skills go}} away from every agent.",
       "agents": "Agents affected",
       "removed": "Removed",

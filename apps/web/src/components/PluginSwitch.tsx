@@ -503,7 +503,7 @@ export function SwitchOffDialog({
     >
       <Stack gap={16}>
         {notice !== undefined && <FormError message={notice} />}
-        {nothingToLose && <Text variant="prose">{t("plain", { name })}</Text>}
+        {nothingToLose && <Text variant="prose">{t("plain")}</Text>}
         {skills > 0 && (
           <Text variant="prose" tone="warn">
             {t("skills", { n: skills })}

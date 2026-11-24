@@ -517,8 +517,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/admin/plugins/[itemId]",
     // The item, the marketplaces (its source), the catalog (its dependencies, the head's count),
-    // the orgs (its named scope, the scope dialog) and the platform components (the components
-    // table's scope column and links).
+    // the orgs (its named scope, the scope dialog) and the platform components (the contents'
+    // names, descriptions, scopes and links).
     queries: ({ me, params }) =>
       superAdmin(me) && params.itemId !== undefined
         ? [
@@ -1117,8 +1117,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/plugins/[itemId]",
-    // Members up: the item, its components and the org's connectors (the org's connectors); org admins
-    // also read the installs (the installed section) and the extensions.
+    // Members up: the item, its components and the org's connectors (the connectors made from its
+    // templates); org admins also read the installs (the installed section) and the extensions.
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "member")
         ? []
@@ -1129,6 +1129,27 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             q(orgExtensionsQuery(orgId)),
             ...(atLeast(me, "admin") ? [q(pluginInstallsQuery(orgId))] : []),
           ],
+    // The personal connectors made from its templates show the viewer's own connection: their
+    // details (this person's credential status)
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      if (orgId === null || params.itemId === undefined || !atLeast(me, "member")) return;
+      const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
+        connectorsQuery(orgId).queryKey,
+      );
+      const components = qc.getQueryData<{ components: OrgComponent[] }>(
+        orgComponentsQuery(orgId, { itemId: params.itemId }).queryKey,
+      );
+      if (list === undefined || components === undefined) return;
+      const templates = new Set(
+        components.components.filter((c) => c.kind === "connector_template").map((c) => c.id),
+      );
+      await Promise.all(
+        personalConnectors(list.connectors)
+          .filter((a) => a.platformTemplateId != null && templates.has(a.platformTemplateId))
+          .map((a) => qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false })),
+      );
+    },
   },
   {
     pattern: "/plugins/[itemId]/enable",
