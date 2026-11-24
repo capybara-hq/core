@@ -1781,13 +1781,16 @@ export class ConnectorsService {
       },
     });
     if (ep !== undefined) {
-      // tokens issued for another url are never sent to the new one; a client registered there
-      // (`dcr`) goes too, a manual client and static credentials stay
+      // tokens issued for another url, and members' own static credentials, are never sent to the
+      // new one (members connect again); a client registered there (`dcr`) goes too, a manual
+      // client and the org's static credential stay (the admin chose the new url)
       if (ep.urlChanged && isOAuth(appAuth)) {
         await this.credentials.clearOAuthTokens(orgId, connectorId);
         if (appAuth.type === "oauth_code" && appAuth.client === "dcr") {
           await this.credentials.clearOAuthClient(orgId, connectorId);
         }
+      } else if (ep.urlChanged && appAuth.type !== "none" && appAuth.ownership === "personal") {
+        await this.credentials.clearMemberCredentials(orgId, connectorId);
       }
       // the tools of the new endpoint: listed after the commit (no outbound call here)
       const personal = appAuth.type !== "none" && appAuth.ownership === "personal";

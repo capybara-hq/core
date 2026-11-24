@@ -334,6 +334,20 @@ export class Credentials {
       .execute();
   }
 
+  /**
+   * Deletes every member's own credential of a connector (static or OAuth), keeping the org's and
+   * the client: its endpoint URL changed, so members' secrets are never sent to the new one.
+   */
+  async clearMemberCredentials(orgId: string, connectorId: string): Promise<void> {
+    const users = userKey(connectorId, "x").slice(0, -1);
+    await this.db
+      .deleteFrom("secrets")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "like", `${users}%`)
+      .execute();
+  }
+
   /** Deletes a connector's OAuth client (a registered `dcr` one whose endpoint changed). */
   async clearOAuthClient(orgId: string, connectorId: string): Promise<void> {
     await this.secrets().delete(orgId, clientKey(connectorId));

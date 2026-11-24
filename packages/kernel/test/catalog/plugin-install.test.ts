@@ -1400,6 +1400,55 @@ describe("a template connector's editable endpoint after install", () => {
     expect(custom.json().error.details[0].path).toBe("endpoint");
   });
 
+  it("changing a personal static connector's url clears the members' own credentials; an org credential stays", async () => {
+    const id = await seedPlugin(env, {
+      name: "github",
+      skills: [],
+      templates: {
+        pat: { auth: { type: "bearer", ownership: "personal" } },
+        org: { endpoint: { url: `${env.mcp.url}?org=1` } },
+      },
+    });
+    expect((await install(env.boss, env, id)).statusCode).toBe(201);
+    const made = new Map(
+      (await templateConnectors(env, { itemId: id })).map((c) => [c.templateId, c.id]),
+    );
+    const pat = made.get("pat") as string;
+    const org = made.get("org") as string;
+    const mine = await env.mem({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${pat}/credentials/me`,
+      payload: { token: MCP_TOKEN },
+    });
+    expect(mine.statusCode, mine.body).toBe(204);
+    await configureConnector(env, org);
+    const memberView = async () =>
+      (await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors/${pat}` })).json()
+        .connector;
+    expect((await memberView()).credential).toEqual({ ownership: "personal", status: "connected" });
+    const before = env.mcp.requests.length;
+    const r = await patch(pat, { endpoint: { url: `${env.mcp.url}?moved=1` } });
+    expect(r.statusCode, r.body).toBe(200);
+    // the member's token is never sent to the new url: they connect again (the connect card)
+    expect((await memberView()).credential).toEqual({ ownership: "personal", status: "missing" });
+    const injected = await env.k.app
+      .get(Credentials)
+      .injection(env.orgId, pat, { type: "bearer", ownership: "personal" }, env.memId)
+      .then(
+        () => "sent",
+        (e: unknown) => (e as Error).name,
+      );
+    expect(injected).toBe("CredentialMissing");
+    expect(env.mcp.requests.length).toBe(before);
+    // an org static credential is the org's own choice for the new url: kept
+    expect((await patch(org, { endpoint: { url: `${env.mcp.url}?org=2` } })).statusCode).toBe(200);
+    const orgView = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${org}`,
+    });
+    expect(orgView.json().connector.credential).toEqual({ ownership: "org", status: "connected" });
+  });
+
   it("changing an OAuth connector's url clears its tokens and keeps a manual client", async () => {
     const id = await seedPlugin(env, {
       name: "code-mcp",
