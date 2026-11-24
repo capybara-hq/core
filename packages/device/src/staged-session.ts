@@ -436,6 +436,8 @@ export function serveStagedSession(
         state.running.get(envelope.id)?.ctl.abort();
         return;
       }
+      // this program opens no streams yet: a stream frame is a protocol error like an unknown one
+      if (envelope.type !== "req") throw new Error(`Unexpected ${envelope.type} frame`);
       // a body this protocol does not define (a removed or unknown operation, an unscoped read)
       // is a protocol error like a malformed envelope: the socket closes with 4400
       const body = parseDeviceFrame(envelope.body, "req");

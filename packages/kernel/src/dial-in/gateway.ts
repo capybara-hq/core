@@ -308,6 +308,11 @@ class DeviceConnection {
       this.close(DEVICE_CLOSE.protocol, "hello expected");
       return;
     }
+    // stream frames are refused like an unknown frame until the stream relay serves them
+    if (frame.type !== "res") {
+      this.close(DEVICE_CLOSE.protocol, `unexpected ${frame.type} frame`);
+      return;
+    }
     // results are stored in any state after ready: the program sends those it kept while
     // disconnected right after its ready
     await this.store(frame);

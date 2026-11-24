@@ -24,6 +24,7 @@ export function readMachineFrame(raw: string, maxBytes: number): MachineFrame {
       type: "res",
       res: { type: "res", id: frame.id, ...parseDeviceFrame(frame.body, "res") },
     };
+  if (frame.type !== "event") throw new Error(`unexpected ${frame.type} frame`);
   return { type: "event", event: parseDeviceFrame(frame.body, "event") };
 }
 

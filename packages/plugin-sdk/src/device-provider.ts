@@ -338,6 +338,53 @@ export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedEr
   );
 }
 
+/** A device service name: 1 to 32 characters, a lower-case letter then letters, digits and `-`. */
+export const DEVICE_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * A long-lived service process in a device ({@link DeviceProvider.ensureService}), started on an
+ * extension's behalf. It runs under the device's own sandbox (not under any one conversation's
+ * operation scope), writes only in its own state directory (where `files` are written before
+ * start, outside every project root), reaches the network through the device's network setting,
+ * and is killed with the instance on suspend and destroy. It speaks the service socket protocol
+ * (`device-service.ts`).
+ */
+export interface DeviceServiceSpec {
+  /** One service per name per device; matches {@link DEVICE_SERVICE_NAME_RE}. */
+  name: string;
+  /** The provider supplies Node 22 or later. */
+  runtime: "node";
+  /** The script to run: a relative path inside `files`. */
+  entry: string;
+  args: string[];
+  /** Written into the service's state directory before start, keyed by relative path. */
+  files: Record<string, Uint8Array>;
+  env?: Record<string, string>;
+}
+
+/** A device service's state ({@link DeviceProvider.ensureService}). */
+export interface DeviceServiceStatus {
+  name: string;
+  state: "running" | "stopped";
+  /** ISO 8601 time the running process started; null when stopped. */
+  startedAt: string | null;
+}
+
+/**
+ * A message stream to a device service ({@link DeviceProvider.openStream},
+ * `DialInChannel.openStream`): whole messages both ways, flow-controlled by credit.
+ */
+export interface DeviceStream {
+  /** Sends one message; resolves when the peer has credit for it (backpressure). */
+  send(message: Uint8Array): Promise<void>;
+  /** The peer's messages, in order; ends when the stream closes. */
+  readonly messages: AsyncIterable<Uint8Array>;
+  /** Closes the stream (idempotent); `reason` reaches the peer. */
+  close(reason?: string): void;
+  /** Resolves once the stream is closed, by either side, with the reason. */
+  readonly closed: Promise<{ reason: string }>;
+}
+
 /**
  * The `device-provider@1` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
@@ -593,6 +640,41 @@ export interface DeviceProvider {
     base: string,
     opts: { signal: AbortSignal },
   ): Promise<{ path: string; suggestedName: string }[]>;
+  /**
+   * Starts the named service in the instance, or finds it running (optional, with
+   * {@link DeviceProvider.stopService} and {@link DeviceProvider.serviceRequest}): writes
+   * `spec.files` into the service's state directory, then runs `spec.entry` with Node, the
+   * service socket and state directory named in its environment (`DEVICE_SERVICE_SOCKET_ENV`,
+   * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
+   * kernel has passed the launch through the command review before it calls this.
+   */
+  ensureService?(
+    h: SandboxHandle,
+    spec: DeviceServiceSpec,
+    signal: AbortSignal,
+  ): Promise<DeviceServiceStatus>;
+  /** Stops the named service; succeeds when it is not running. */
+  stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
+  /**
+   * One `request` connection to the named service's socket: sends `body`, resolves the service's
+   * one answer. Throws when the service is not running, on timeout and on abort.
+   */
+  serviceRequest?(
+    h: SandboxHandle,
+    name: string,
+    body: Uint8Array,
+    opts: { timeoutMs: number; signal: AbortSignal },
+  ): Promise<Uint8Array>;
+  /**
+   * Opens a `stream` connection to the named service's socket (optional; the browser's live view
+   * needs it). The target is always a service of the device, never a general port forward.
+   * `signal` bounds the opening only; the stream lives until either side closes it.
+   */
+  openStream?(
+    h: SandboxHandle,
+    target: { service: string },
+    signal: AbortSignal,
+  ): Promise<DeviceStream>;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be blocked

@@ -1,6 +1,8 @@
 import {
   type AvailableHook,
   DEVICE_PROVIDER_EXTENSION_POINT,
+  type DeviceAccessCtx,
+  DeviceAccessError,
   type DevicesCtx,
   type DialInChannel,
   type EmbedClaims,
@@ -408,7 +410,7 @@ export class LiveConfig {
 }
 
 /** The ctx members that are a plain property when allowed and a denying getter otherwise. */
-type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices";
+type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices" | "deviceAccess";
 
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
@@ -577,6 +579,11 @@ export function createExtensionContext(
               throw new TypeError(`plugin ${name}: ctx.dialIn.stop reason must be drain or stop`);
             await (access as NonNullable<typeof access>).stop(await served(deviceId), reason);
           },
+          // the gateway-local stream path lands with the dial-in stream relay
+          openStream: async (deviceId) => {
+            await served(deviceId);
+            throw new Error(`plugin ${name}: ctx.dialIn.openStream is not implemented yet`);
+          },
         } satisfies DialInChannel;
       })()
     : undefined;
@@ -607,6 +614,26 @@ export function createExtensionContext(
           }
         },
       }
+    : undefined;
+  // ctx.deviceAccess: only with permissions.deviceAccess. A placeholder until the kernel side of
+  // device services lands: every call is refused as if no provider had the capability.
+  const deviceAccessApi: DeviceAccessCtx | undefined = perms.deviceAccess
+    ? (() => {
+        const missing = (): never => {
+          throw new DeviceAccessError(
+            "capability_missing",
+            "Device services are not available on this deployment yet.",
+          );
+        };
+        return {
+          ensureService: async () => missing(),
+          request: async () => missing(),
+          reportBlockedHosts: () => missing(),
+          streamTicket: async () => missing(),
+          addNetworkHosts: async () => missing(),
+          answerHandoff: async () => missing(),
+        } satisfies DeviceAccessCtx;
+      })()
     : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
   const declaredRoutes = new Map<string, HttpAccess>(
@@ -1072,7 +1099,7 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models / dialIn / devices: a plain property when declared; otherwise a
+  // secrets / storage / models / dialIn / devices / deviceAccess: a plain property when declared; otherwise a
   // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
   const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
@@ -1090,6 +1117,7 @@ export function createExtensionContext(
   gated("models", modelsApi);
   gated("dialIn", dialInApi);
   gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
+  gated("deviceAccess", deviceAccessApi);
   return ctx as KernelExtensionContext;
 }
 
