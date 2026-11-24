@@ -2261,7 +2261,9 @@
       "needsConfig": "待配置",
       "needsAdmin": "待管理员配置",
       "configure": "配置",
-      "guideNotRecorded": "接入指南没有记录为已确认，下次保存时会再记录。"
+      "guideNotRecorded": "接入指南没有记录为已确认，下次保存时会再记录。",
+      "noConnector": "没有连接器",
+      "noConnectorHint": "已启用，但本组织还没有它的连接器。"
     },
     "auth": {
       "none": "无需认证",
@@ -5529,9 +5531,6 @@
         "dcrHint": "客户端会自动注册，不需要填写。",
         "connectorKept": "{name}：本组织已有它的连接器，将保留现有连接器，无需填写。",
         "summary": "启用后本组织会得到：",
-        "summaryExtension": "扩展 {name}",
-        "summaryTemplates": "{n} 个连接器",
-        "summarySkills": "{n} 个技能",
         "summaryDependencies": "先一并安装（本组织已有的不重装）：",
         "summaryNeedsConfig": "需要组织凭据或 OAuth 客户端的连接器启用后为「待配置」，由组织管理员在「连接器」页配置。",
         "summaryDefaultOff": "{n} 个默认关闭的连接器不会创建，之后可在「连接器」页启用。",
@@ -5933,7 +5932,6 @@
     "state": {
       "on": "已启用",
       "off": "未启用",
-      "needs_config": "需要配置",
       "platform": "已启用 · 平台统一",
       "platformDefault": "平台默认启用",
       "not_offered": "未开放，可申请",
@@ -6378,11 +6376,13 @@
     "action": {
       "enable": "启用",
       "disable": "停用",
-      "plugin": "查看插件"
+      "plugin": "查看插件",
+      "createConnector": "创建连接器"
     },
     "toast": {
       "enabled": "已启用「{name}」。",
-      "disabled": "已停用「{name}」。"
+      "disabled": "已停用「{name}」。",
+      "connectorCreated": "已创建「{name}」的连接器。"
     },
     "error": {
       "conflict": {

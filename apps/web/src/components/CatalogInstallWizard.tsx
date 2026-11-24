@@ -19,6 +19,7 @@ import { type ReactNode, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { ApiClientError, issueLines } from "../lib/api";
 import {
+  agentTemplateNameOf,
   chosenByDefault,
   descriptionOf,
   displayNameOf,
@@ -30,6 +31,7 @@ import {
   setOrgPluginSwitch,
   setPath,
   showValue,
+  skillNameOf,
   templateNeed,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
@@ -422,15 +424,25 @@ function Review({
       <Stack gap={12}>
         {!installable && <FormError message={t("notInstallable")} />}
         <Text variant="prose">{t("summary")}</Text>
-        <Text variant="small" tone="muted">
-          {[
-            detail.extension !== null ? t("summaryExtension", { name: detail.extension }) : null,
-            templates.length > 0 ? t("summaryTemplates", { n: templates.length }) : null,
-            detail.skills.length > 0 ? t("summarySkills", { n: detail.skills.length }) : null,
-          ]
-            .filter((s) => s !== null)
-            .join(" · ")}
-        </Text>
+        {/* What the package brings, from the org catalog detail (ruling R33): the full
+            permission review stayed at the platform import the super admin approved */}
+        {detail.extension !== null && (
+          <ComponentSection title={tc("extension")} count={1} empty={tc("extensionNone")}>
+            <ItemList label={tc("extension")} rows={[{ id: "ext", title: detail.extension }]} />
+          </ComponentSection>
+        )}
+        {detail.skills.length > 0 && (
+          <ComponentSection
+            title={tc("skills")}
+            count={detail.skills.length}
+            empty={tc("skillsNone")}
+          >
+            <ItemList
+              label={tc("skills")}
+              rows={detail.skills.map((s) => ({ id: s, title: skillNameOf(s) }))}
+            />
+          </ComponentSection>
+        )}
         {/* The connector templates switched on with it: icon, name, what it needs; one the org
             already has a connector for keeps it */}
         {templates.length > 0 && (
@@ -482,15 +494,32 @@ function Review({
             {t("summaryDefaultOff", { n: defaultOff })}
           </Text>
         )}
+        {(detail.agents ?? []).length > 0 && (
+          <ComponentSection
+            title={tc("agentTemplates")}
+            count={detail.agents.length}
+            empty={tc("agentTemplatesNone")}
+          >
+            <ItemList
+              label={tc("agentTemplates")}
+              rows={detail.agents.map((a) => ({ id: a, title: agentTemplateNameOf(a) }))}
+            />
+          </ComponentSection>
+        )}
         {detail.dependencies.length > 0 && (
-          <Stack gap={4}>
+          <ComponentSection
+            title={tc("dependencies")}
+            count={detail.dependencies.length}
+            empty={tc("dependenciesNone")}
+          >
             <Text variant="small" tone="muted">
               {t("summaryDependencies")}
             </Text>
-            {detail.dependencies.map((d) => (
-              <Text key={d.name} variant="small">{`· ${d.name} ${d.range}`}</Text>
-            ))}
-          </Stack>
+            <ItemList
+              label={tc("dependencies")}
+              rows={detail.dependencies.map((d) => ({ id: d.name, title: d.name, meta: d.range }))}
+            />
+          </ComponentSection>
         )}
         {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       </Stack>

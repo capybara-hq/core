@@ -26,11 +26,11 @@ import NotFound from "../../not-found";
  * endpoint and docs -> auth -> tools and default policies -> done. The type step offers only the
  * connector kinds whose extension is enabled in the org (from the query cache; with none it points
  * to Plugins).
- * `?template=<catalog item id>`: prefilled from a connector template in the catalog (the template
- * decides the endpoint; only the fields the template allows and the credentials can change),
- * installed through the catalog (the plugin's switch), the same wizard as
- * `/plugins/<id>/enable`. The template's item comes from the query cache (the layout prefetched it
- * on a first load); a missing one is the not-found state.
+ * `?template=<catalog item id>`: the enable page of the plugin that ships a connector template,
+ * the same review as `/plugins/<id>/enable` with no input (its connectors are created as they
+ * are; one that needs org input is configured afterwards with 配置 on the connectors page). The
+ * template's item comes from the query cache (the layout prefetched it on a first load); a
+ * missing one is the not-found state.
  */
 export default function InstallConnectorView({
   template,

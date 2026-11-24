@@ -28,7 +28,7 @@ import { useThemeImpactGroup } from "./ThemeImpact";
 
 /** One action on a component: 启用, 停用 (`danger`, a row's menu) or 查看插件 (a link). */
 export interface ComponentAction extends Omit<PluginAction, "id"> {
-  id: "enable" | "disable" | "plugin";
+  id: "enable" | "disable" | "plugin" | "createConnector";
 }
 
 /**
@@ -80,6 +80,12 @@ const keyOf = (c: OrgComponent) => `${c.kind}:${c.id}`;
  */
 export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boolean }): {
   actionsOf(c: OrgComponent): ComponentAction[];
+  /**
+   * Makes the connector of a connector template that is on but has none in the org (one an admin
+   * deleted is never made again by the kernel, ruling R31): the switch-on again, which creates it
+   * as an install would. Undefined for members and for anything else.
+   */
+  createConnectorOf(c: OrgComponent): ComponentAction | undefined;
   dialog: ReactNode;
   error: { message: string; extra: string[] } | undefined;
   busy: boolean;
@@ -117,14 +123,14 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
     return errorMessage(e);
   };
 
-  const enable = async (c: OrgComponent) => {
+  const enable = async (c: OrgComponent, done: "enabled" | "connectorCreated" = "enabled") => {
     if (busy) return;
     setBusy(true);
     setRunning(keyOf(c));
     setError(undefined);
     try {
       await sw.mutateAsync({ c, enabled: true });
-      toast.success(t("toast.enabled", { name: nameOf(c) }));
+      toast.success(t(`toast.${done}`, { name: nameOf(c) }));
     } catch (e) {
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -215,6 +221,16 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
       : [{ id: "enable", label: t("action.enable"), onSelect: () => void enable(c) }];
   };
 
+  const createConnectorOf = (c: OrgComponent): ComponentAction | undefined =>
+    admin && c.kind === "connector_template" && c.on && c.pluginOn
+      ? {
+          id: "createConnector",
+          label: t("action.createConnector"),
+          onSelect: () => void enable(c, "connectorCreated"),
+          ...(running === keyOf(c) && { loading: true }),
+        }
+      : undefined;
+
   const dialog =
     off === null ? null : (
       <ComponentSwitchOffDialog
@@ -227,7 +243,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
         onCancel={() => setOff(null)}
       />
     );
-  return { actionsOf, dialog, error, busy };
+  return { actionsOf, createConnectorOf, dialog, error, busy };
 }
 
 /**

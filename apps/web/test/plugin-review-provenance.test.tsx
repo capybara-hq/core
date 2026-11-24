@@ -193,6 +193,46 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText("domain").getAttribute("data-tone")).toBe("default");
   });
 
+  it("each migration warning counts as one sensitive item and is drawn in warn", () => {
+    const warned = {
+      ...deviceE2b,
+      extension: {
+        ...deviceE2b.extension,
+        warnings: [
+          {
+            kind: "destructive_migration",
+            sensitive: true,
+            file: "migrations/0002_drop.sql",
+            line: 3,
+            statement: "DROP TABLE notes",
+          },
+          {
+            kind: "dynamic_sql",
+            sensitive: true,
+            file: "migrations/0003_do.sql",
+            line: 1,
+            statement: "DO $$ BEGIN END $$",
+          },
+        ],
+      },
+    } as PluginReview;
+    renderPage(<PluginReviewBody review={warned} />, zh);
+    // two permission entries plus two warnings
+    expect(screen.getByText("4 项敏感")).toBeTruthy();
+    const w = zhMessages.extensions.review;
+    for (const [kind, file, line] of [
+      ["destructive_migration", "migrations/0002_drop.sql", 3],
+      ["dynamic_sql", "migrations/0003_do.sql", 1],
+    ] as const) {
+      const place = w.at.replace("{file}", file).replace("{line}", String(line));
+      const row = screen.getByText(`${w.warning[kind]} · ${place}`);
+      expect(row.closest('[data-tone="warn"]')).not.toBeNull();
+    }
+    // the warnings block carries the sensitive mark
+    const block = screen.getByText(w.warnings).closest("li") as HTMLElement;
+    expect(within(block).getByText(zhMessages.extensions.sensitive)).toBeTruthy();
+  });
+
   it("a kept extension's header chip shows the plugin version, not the extension's", () => {
     const kept = {
       ...deviceE2b,

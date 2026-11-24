@@ -32,9 +32,9 @@ import NotFound from "../not-found";
  * `/connectors` (maintainer decision 2026-11-09): one card per connector of the org and per
  * connector template of a plugin on in the org that has no connector here yet, switched off or
  * not, each with its plugin's icon. Template cards: 未启用 with 启用 for org admins (the component
- * switch, which creates its connector: that connector's card follows), enabled while one on waits
- * for its connector. Connector cards (one button each, the rest in ⋯, maintainer decision
- * 2026-11-09): one that lacks the org input its auth needs (`setup: needs_config`, plugin pages
+ * switch, which creates its connector: that connector's card follows); one on without a connector
+ * (its connector deleted, ruling R31) says so, with create connector for org admins (the
+ * switch-on again). Connector cards (one button each, the rest in ⋯, maintainer decision 2026-11-09): one that lacks the org input its auth needs (`setup: needs_config`, plugin pages
  * spec §5.2.4) is needs-configuration with configure (its credentials tab: the template's guide, the editable endpoint, the
  * credential or client) for org admins, waiting for an admin without a button for everyone else; a
  * personal one shows the viewer's own state, 连接 (OAuth: the connect route, back here; a
@@ -89,7 +89,10 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     guides: memberGuides,
   });
   const ownerLabel = useOwnerLabel(orgId);
-  const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin: manage });
+  const { actionsOf, createConnectorOf, dialog, error } = useComponentSwitch({
+    orgId,
+    admin: manage,
+  });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const all = list.kind === "ready" ? list.data.connectors : [];
@@ -207,7 +210,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     return <ObjectCard key={c.id} {...base} {...parts} />;
   };
 
-  /** A template's card: off (enable for admins), or on while its connector is on the way. */
+  /** A template's card: off (enable for admins), or on without a connector (create for admins). */
   const templateCard = (c: OrgComponent) => {
     const name = componentLabel(c, locale);
     const description = componentDescription(c, locale);
@@ -229,11 +232,27 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
         ? [{ label: off.label, danger: true, onSelect: off.onSelect }]
         : [];
     if (c.on) {
+      // On without a connector here (one an admin deleted is not made again, ruling R31): org
+      // admins create it, everyone else waits for them
+      const create = createConnectorOf(c);
       return (
         <ObjectCard
           key={`template:${c.id}`}
           {...base}
-          state={{ label: tc("state.on"), tone: "muted" }}
+          description={t("setup.noConnectorHint")}
+          state={{
+            label: manage ? t("setup.noConnector") : t("setup.needsAdmin"),
+            tone: "warn",
+          }}
+          {...(create?.onSelect !== undefined
+            ? {
+                primary: {
+                  label: create.label,
+                  onSelect: create.onSelect,
+                  ...(create.loading === true ? { loading: true } : {}),
+                },
+              }
+            : {})}
           {...(menu.length > 0 ? { menu } : {})}
         />
       );

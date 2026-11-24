@@ -337,12 +337,24 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(within(card).getByRole("link", { name: m.connectors.setup.configure })).toBeTruthy();
   });
 
-  it("a template on without a connector has no 配置; a template with a connector is that connector's card", async () => {
-    stubApi({
+  it("a template on without a connector says so, with 创建连接器 for org admins; a template with a connector is that connector's card", async () => {
+    let made = false;
+    const calls = stubApi({
       "GET /api/v1/orgs/o1/connectors": () =>
         json(200, {
           connectors: [
             summary({ id: "c-gh", name: "GitHub", platformTemplateId: "t-gh", icon: ICON }),
+            ...(made
+              ? [
+                  summary({
+                    id: "c-slack",
+                    name: "Slack connector",
+                    platformTemplateId: "t-slack",
+                    setup: "needs_config",
+                    auth: { type: "bearer", ownership: "org" },
+                  }),
+                ]
+              : []),
           ],
         }),
       [COMPONENTS]: () =>
@@ -359,14 +371,27 @@ describe("/connectors: a card per connector and per template of a plugin on in t
             }),
           ],
         }),
+      "PUT /api/v1/orgs/o1/components/connector_template/t-slack/switch": () => {
+        made = true;
+        return json(200, { component: { ...template(), on: true, switch: true } });
+      },
     });
     await renderList();
     const slack = await cardOf("Slack workspace");
-    expect(within(slack).getByText(en.orgComponents.state.on)).toBeTruthy();
+    // not a dead 已启用: what is missing, and the way to make it
+    expect(within(slack).queryByText(en.orgComponents.state.on)).toBeNull();
+    expect(within(slack).getByText(en.connectors.setup.noConnector)).toBeTruthy();
+    expect(within(slack).getByText(en.connectors.setup.noConnectorHint)).toBeTruthy();
     expect(within(slack).queryByRole("link", { name: en.connectors.setup.configure })).toBeNull();
     expect(
       within(slack).queryByRole("button", { name: en.orgComponents.action.enable }),
     ).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(slack).getByRole("button", { name: en.orgComponents.action.createConnector }));
+    // the switch-on again, which makes the connector; its card replaces the template's
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true });
+    expect(await cardOf("Slack connector")).toBeTruthy();
     const list = screen.getByRole("list", { name: en.connectors.title });
     expect(within(list).getAllByText("GitHub")).toHaveLength(1);
     expect(within(list).queryByText("CRM")).toBeNull();
@@ -398,7 +423,8 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(within(slack).getByText(en.orgComponents.state.off)).toBeTruthy();
     expect(within(slack).queryByRole("button")).toBeNull();
     const gh = await cardOf("GitHub");
-    expect(within(gh).getByText(en.orgComponents.state.on)).toBeTruthy();
+    // on without a connector: waiting for an admin, nothing to press
+    expect(within(gh).getByText(en.connectors.setup.needsAdmin)).toBeTruthy();
     expect(within(gh).queryByRole("button")).toBeNull();
   });
 

@@ -179,9 +179,18 @@ describe("ItemListItem (rows that hold more than a line, spec §6.12)", () => {
     const [jira, confluence] = screen.getAllByRole("listitem");
     const head = (li: HTMLElement | undefined) =>
       li?.querySelector('[data-part="item-list-head"]') as HTMLElement;
-    expect(head(jira).querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AA==");
-    expect(head(confluence).querySelector("img")).toBeNull();
-    expect(head(confluence).textContent).toContain("C");
+    const mark = (li: HTMLElement | undefined) =>
+      head(li).querySelector('[data-part="object-mark"]') as HTMLElement | null;
+    // the icon in the mark tile, before the title, decorative
+    expect(mark(jira)?.getAttribute("data-kind")).toBe("image");
+    expect(mark(jira)?.getAttribute("aria-hidden")).toBe("true");
+    expect(mark(jira)?.querySelector("img")?.getAttribute("src")).toBe(
+      "data:image/png;base64,AA==",
+    );
+    // without an icon: the tile holds the initial, nothing else
+    expect(mark(confluence)?.getAttribute("data-kind")).toBe("initial");
+    expect(mark(confluence)?.querySelector("img")).toBeNull();
+    expect(mark(confluence)?.textContent).toBe("C");
   });
 
   it("empty meta and empty children draw no lines and no body", () => {

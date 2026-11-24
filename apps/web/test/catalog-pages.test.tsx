@@ -267,6 +267,18 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
         state: "needs_config",
         componentCounts: { extension: 0, skills: 0, connectorTemplates: 1, agentTemplates: 0 },
       }),
+      orgItem({
+        id: "h",
+        name: "broken",
+        state: "needs_config",
+        installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: null },
+        componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
+      }),
+      orgItem({
+        id: "k",
+        name: "worker",
+        componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
+      }),
     ];
     stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
     await renderPlugins({ locale });
@@ -291,11 +303,22 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(actionsOf(row("offered"), "offered")).toEqual([p.action.request]);
     expect(within(row("asked")).getByText(p.state.requested)).toBeTruthy();
     expect(actionsOf(row("asked"), "asked")).toEqual([]);
-    expect(within(row("needs")).getByText(p.state.needs_config)).toBeTruthy();
-    // A plugin with connector templates goes through its review page first
+    const needsConfig = { zh: "需要配置", en: "Needs configuration" }[locale];
+    // A plugin's state never reads 需要配置 (spec §5.6): not installed it is off, and a plugin with
+    // connector templates goes through its review page first
+    expect(within(row("needs")).getByText(p.state.off)).toBeTruthy();
+    expect(within(row("needs")).queryByText(needsConfig)).toBeNull();
     expect(
       within(row("needs")).getByRole("link", { name: p.action.enable }).getAttribute("href"),
     ).toBe("/plugins/g/enable");
+    // installed with an invalid extension config it is on (the extensions page shows 待配置)
+    expect(within(row("broken")).getByText(p.state.on)).toBeTruthy();
+    expect(within(row("broken")).queryByText(needsConfig)).toBeNull();
+    expect(within(row("broken")).getByRole("button", { name: RAW_MORE[locale] })).toBeTruthy();
+    // a plugin with an extension is reviewed before it comes on
+    expect(
+      within(row("worker")).getByRole("link", { name: p.action.enable }).getAttribute("href"),
+    ).toBe("/plugins/k/enable");
   });
 
   it("启用 an optional plugin without input sends the switch { enabled: true }", async () => {
@@ -1893,10 +1916,26 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         reviewTpl("pat", { connected: true }),
         reviewTpl("bigquery", { defaultOff: true, on: false }),
       ],
-      { dependencies: [{ name: "crm-core", range: "^1.0.0" }] },
+      {
+        dependencies: [{ name: "crm-core", range: "^1.0.0" }],
+        extension: "github",
+        skills: ["skills/triage"],
+        agents: ["agents/reviewer.md"],
+      },
     );
     await renderInstall();
     const list = await screen.findByRole("list", { name: en.catalog.components.templates });
+    // the package contents, from the org catalog detail (ruling R33): extension, skills, agent
+    // templates and dependencies by name, each as a list
+    const c = en.catalog.components;
+    const named = (label: string) =>
+      within(screen.getByRole("list", { name: label }))
+        .getAllByRole("listitem")
+        .map((li) => li.textContent);
+    expect(named(c.extension)).toEqual(["github"]);
+    expect(named(c.skills)).toEqual(["triage"]);
+    expect(named(c.agentTemplates)).toEqual(["reviewer"]);
+    expect(named(c.dependencies)).toEqual(["crm-core^1.0.0"]);
     expect(template("WizardPage")).not.toBeNull();
     // one step only, and nothing to fill in or pick
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -1917,7 +1956,6 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         "1 connector is off by default and is not created; turn it on later on the Connectors page.",
       ),
     ).toBeTruthy();
-    expect(screen.getByText("· crm-core ^1.0.0")).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
@@ -4676,7 +4714,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
   it("a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache(path, routes, { readiness: NOT_READY });
-    expect(screen.getByText(en.catalog.org.install.summarySkills.replace("{n}", "1"))).toBeTruthy();
+    expect(screen.getByText("notes")).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
@@ -4689,9 +4727,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     await release();
-    expect(
-      await screen.findByText(en.catalog.org.install.summarySkills.replace("{n}", "1")),
-    ).toBeTruthy();
+    expect(await screen.findByText("notes")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 

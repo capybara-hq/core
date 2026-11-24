@@ -2273,7 +2273,9 @@
       "needsConfig": "Needs setup",
       "needsAdmin": "Waiting for an admin",
       "configure": "Set up",
-      "guideNotRecorded": "The setup guide was not recorded as confirmed; the next save records it again."
+      "guideNotRecorded": "The setup guide was not recorded as confirmed; the next save records it again.",
+      "noConnector": "No connector",
+      "noConnectorHint": "On, but this organization has no connector from it yet."
     },
     "auth": {
       "none": "None",
@@ -5541,9 +5543,6 @@
         "dcrHint": "The client is registered automatically; nothing to fill in.",
         "connectorKept": "{name}: this organization already has its connector, which is kept as it is; nothing to fill in.",
         "summary": "Turning it on gives this organization:",
-        "summaryExtension": "extension {name}",
-        "summaryTemplates": "{n} connectors",
-        "summarySkills": "{n} skills",
         "summaryDependencies": "Installed with it first (unless this organization already has them):",
         "summaryNeedsConfig": "Connectors that need an organization credential or an OAuth client start as Needs setup; an org admin sets them up on the Connectors page.",
         "summaryDefaultOff": "{n, plural, one {# connector is off by default and is not created; turn it on} other {# connectors are off by default and are not created; turn them on}} later on the Connectors page.",
@@ -5945,7 +5944,6 @@
     "state": {
       "on": "On",
       "off": "Off",
-      "needs_config": "Needs configuration",
       "platform": "On · set by the platform",
       "platformDefault": "On by default for all orgs",
       "not_offered": "Not offered, can be requested",
@@ -6390,11 +6388,13 @@
     "action": {
       "enable": "Turn on",
       "disable": "Turn off",
-      "plugin": "View plugin"
+      "plugin": "View plugin",
+      "createConnector": "Create connector"
     },
     "toast": {
       "enabled": "\"{name}\" is on.",
-      "disabled": "\"{name}\" is off."
+      "disabled": "\"{name}\" is off.",
+      "connectorCreated": "Created the connector for \"{name}\"."
     },
     "error": {
       "conflict": {
