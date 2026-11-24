@@ -10,6 +10,7 @@ import zhMessages from "../messages/zh.json";
 import { PlatformUpdatePreviewBody } from "../src/components/PlatformUpdateDialog";
 import { PluginReviewBody } from "../src/components/PluginReviewBody";
 import { fromReview } from "../src/components/plugin-contents/from-review";
+import { firstSentence } from "../src/components/plugin-contents/model";
 import { PluginContents } from "../src/components/plugin-contents/PluginContents";
 import type { PlatformUpdatePreview, PluginReview } from "../src/lib/catalog";
 import { renderPage } from "./support/render";
@@ -467,7 +468,7 @@ describe("PluginReviewBody license fact", () => {
     );
     const row = screen.getByText(R.facts.license).parentElement as HTMLElement;
     expect(within(row).getByText("MIT")).toBeTruthy();
-    // the text is not on the page until 全文 opens it
+    // the text is not on the page until the full-text link opens it
     expect(screen.queryByText(/MIT License/)).toBeNull();
     expect(within(row).getByText(R.hiddenCharacters)).toBeTruthy();
     await userEvent.setup().click(within(row).getByRole("button", { name: R.licenseText }));
@@ -566,12 +567,34 @@ describe("PluginContents stages, audiences and the row slots", () => {
     expect(screen.queryByText(R.configAfterEnable)).toBeNull();
   });
 
-  it("an org audience gets no translation summary", () => {
-    renderPage(
-      <PluginContents model={model(claudeSessionDriver)} audience="org" stage="install" />,
-      zh,
-    );
-    expect(screen.queryByText(R.translation.title)).toBeNull();
+  it("an org's own upload of a Claude Code package shows the translation summary", () => {
+    renderPage(<PluginReviewBody review={claudeSessionDriver} audience="org" />, zh);
+    expect(screen.getByRole("region", { name: R.translation.title })).toBeTruthy();
+    expect(screen.getByText("导入 1 · 转换 0 · 需要填写 0 · 忽略 5 · 警告 1")).toBeTruthy();
+  });
+
+  it("an org reading a plugin page or its enable page gets no translation summary", () => {
+    for (const stage of ["enable", "detail"] as const) {
+      renderPage(
+        <PluginContents model={model(claudeSessionDriver)} audience="org" stage={stage} />,
+        zh,
+      );
+      expect(screen.queryByRole("region", { name: R.translation.title })).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("the extension's state slot is drawn on its title line", () => {
+    const m = model(deviceE2b);
+    const withState = {
+      ...m,
+      ...(m.extension && { extension: { ...m.extension, state: <span>待配置</span> } }),
+    };
+    renderPage(<PluginContents model={withState} audience="org" stage="enable" />, zh);
+    const head = screen
+      .getByRole("region", { name: "device-e2b" })
+      .querySelector('[data-part="subsection-head"]');
+    expect(head?.textContent).toContain("待配置");
   });
 
   it("each row draws its change mark and the surface's trailing slot; themes have a section", () => {
@@ -597,6 +620,18 @@ describe("PluginContents stages, audiences and the row slots", () => {
     const themes = screen.getByRole("list", { name: C.themes });
     expect(within(themes).getByText("Neon")).toBeTruthy();
     expect(within(themes).getByText(U.upgrade)).toBeTruthy();
+  });
+});
+
+describe("firstSentence", () => {
+  it("cuts at a CJK full stop or a period before a new sentence, not at an abbreviation", () => {
+    expect(firstSentence("运行设备。需要账号。")).toBe("运行设备。");
+    expect(firstSentence("Runs devices. It needs a key.")).toBe("Runs devices.");
+    expect(firstSentence("Tools, e.g. linters, for v1. builds. Then more.")).toBe(
+      "Tools, e.g. linters, for v1. builds.",
+    );
+    expect(firstSentence("One sentence.")).toBe("One sentence.");
+    expect(firstSentence("No stop")).toBe("No stop");
   });
 });
 

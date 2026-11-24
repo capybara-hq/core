@@ -68,7 +68,7 @@ function rowEnd(mark: RowMark | undefined, trailing: ReactNode): { actions?: Rea
   };
 }
 
-/** Short values as a row of chips; the ones in `added` carry the 新增 mark. */
+/** Short values as a row of chips; the ones in `added` carry the "new" mark. */
 export function Chips({ items, added = new Set() }: { items: string[]; added?: Set<string> }) {
   const t = useTranslations("catalog.admin.review");
   return (
@@ -163,7 +163,7 @@ export function ExtensionBlock({
   // A subsection, not a card (spec §6.32): the contents sit on pages and in Dialogs, and the
   // permission rows already group with hairlines.
   return (
-    <Subsection title={extension.name} {...rowEnd(extension.mark, undefined)}>
+    <Subsection title={extension.name} {...rowEnd(extension.mark, extension.state)}>
       <Stack gap={8}>
         {extension.keptVersion !== undefined && (
           <Text>{t("action.keep", { version: versionLabel(extension.keptVersion) })}</Text>
@@ -322,7 +322,7 @@ export function TemplateRows({ rows }: { rows: TemplateRow[] }) {
   );
 }
 
-/** Agent templates: name, model tier, description, 需要 and 工具 rows, the instructions inline. */
+/** Agent templates: name, model tier, description, needs and tools rows, the instructions inline. */
 export function AgentRows({ rows }: { rows: AgentRow[] }) {
   const t = useTranslations("catalog.admin.review");
   const tc = useTranslations("catalog.components");
@@ -437,7 +437,7 @@ export function ThemeRows({ rows }: { rows: ThemeRow[] }) {
 }
 
 /**
- * Dependencies: on the platform "{name} 将使用 {version}" (a warn line when none matches yet);
+ * Dependencies: on the platform "{name} will use {version}" (a warn line when none matches yet);
  * on an org's enable the plugins installed with it; on a plugin page each name and its range.
  */
 export function DependencyLines({ rows, stage }: { rows: ContentsDependency[]; stage: Stage }) {

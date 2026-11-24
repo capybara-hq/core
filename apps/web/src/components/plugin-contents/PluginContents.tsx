@@ -43,10 +43,11 @@ export type { Audience, Stage } from "./model";
 /**
  * A plugin package's contents, the one view behind the platform's install and update, an org's
  * upload and enable and both plugin pages (plugin contents spec): the head (name, a version chip
- * by stage, one sensitive total, the description's first sentence with 完整说明), the facts
- * (publisher; on the platform also source, build and license, whose 全文 opens a Dialog), a
- * marketplace permission mismatch, the Claude Code translation summary (platform), then the
- * sections that hold something (扩展, 技能, 连接器模板, 智能体模板, 主题, 依赖); the empty ones are one
+ * by stage, one sensitive total, the description's first sentence with a "full description"
+ * toggle), the facts (publisher; on the platform also source, build and license, whose "full
+ * text" opens a Dialog), a marketplace permission mismatch, the Claude Code translation summary
+ * (platform; an org's own upload too), then the sections that hold something (extension, skills,
+ * connector templates, agent templates, themes, dependencies); the empty ones are one
  * closing line. Each row draws its change mark and the surface's trailing slot.
  */
 export function PluginContents({
@@ -201,7 +202,7 @@ export function PluginContents({
           </Stack>
         </Callout>
       )}
-      {platform && model.translation !== undefined && (
+      {(platform || stage === "install") && model.translation !== undefined && (
         <TranslationReportView report={model.translation} />
       )}
       {ext !== undefined && (
@@ -260,7 +261,7 @@ export function PluginContents({
 }
 
 /**
- * The 许可证 fact: the license's name, then 全文 › opening a Dialog with the text (a long license
+ * The license fact: the license's name, then a "full text" link opening a Dialog with the text (a long license
  * never stretches the page); a license too large to keep says so; a name alone without a text.
  */
 function LicenseFact({ license }: { license: ContentsLicense }) {

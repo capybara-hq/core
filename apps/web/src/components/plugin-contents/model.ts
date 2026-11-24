@@ -86,7 +86,7 @@ export interface ProvidesEntry {
   sensitive: boolean;
   /** The sensitive reason code (`extensions.review.reason.*`). */
   reason?: string;
-  /** New in this update (the 新增 mark). */
+  /** New in this update (the "new" mark). */
   added?: boolean;
 }
 
@@ -105,7 +105,7 @@ export interface ContentsExtension {
   config: ConfigField[];
   /** Whether the extension has config to fill in (the note line under it). */
   needsConfig: boolean;
-  /** The rest of the permission review (the groups not drawn as 提供 / 配置). */
+  /** The rest of the permission review (the groups not drawn as provides / config). */
   permissions?: {
     groups: PermissionGroup[];
     added?: PermissionItem[];
@@ -114,6 +114,8 @@ export interface ContentsExtension {
     clientFiles?: { path: string; bytes: number }[];
   };
   mark?: RowMark;
+  /** Per-surface state on the extension's title line (like a row's trailing slot). */
+  state?: ReactNode;
   /** Per-surface lines under the block (client code, UI components). */
   trailing?: ReactNode;
 }
@@ -154,7 +156,7 @@ export interface PluginContentsModel {
     version: string;
     /** The version the platform has now, when this is an update. */
     fromVersion?: string | null;
-    /** The installed extension already satisfies the package: the chip says 保持. */
+    /** The installed extension already satisfies the package: the chip says "keep". */
     keep?: boolean;
     claudeCode?: boolean;
     /** The number of sensitive items (0: no warn chip). */
@@ -181,9 +183,14 @@ export interface PluginContentsModel {
 /** A localized name in the reader's language. */
 export const nameIn = (n: LocalizedName, locale: string): string => (locale === "zh" ? n.zh : n.en);
 
-/** The first sentence of a description (up to the first CJK full stop or `. `). */
+/**
+ * The first sentence of a description: up to the first CJK full stop, or a `.` followed by
+ * whitespace and then an uppercase letter or a CJK character ("e.g. " and "v1. " do not end it).
+ */
 export function firstSentence(text: string): string {
-  const cuts = [text.indexOf("。"), text.indexOf(". ")].filter((n) => n >= 0);
+  const cjk = text.indexOf("。");
+  const latin = /\.(?=\s+[\p{Lu}\p{Script=Han}])/u.exec(text)?.index ?? -1;
+  const cuts = [cjk, latin].filter((n) => n >= 0);
   if (cuts.length === 0) return text.trim();
   return text.slice(0, Math.min(...cuts) + 1).trim();
 }

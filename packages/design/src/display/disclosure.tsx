@@ -108,7 +108,7 @@ export function DisclosureLinks({ items }: { items: DisclosureLinkItem[] }) {
 
 /**
  * One DisclosureLinks-look button (spec §6.5) for a secondary text that opens elsewhere, in
- * a Dialog (a license's 全文): `small` `muted` words and a `chevron-right` 12, inline after a
+ * a Dialog (a license's full text): `small` `muted` words and a `chevron-right` 12, inline after a
  * value.
  */
 export function DisclosureLink({ onSelect, children }: { onSelect(): void; children: ReactNode }) {

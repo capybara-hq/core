@@ -5128,10 +5128,10 @@
         "editable": "Organizations can change: {paths}",
         "auth": "Authentication: {type}",
         "mismatch": "The marketplace lists other permissions than the package. The package counts.",
-        "mismatchMissing": "Not listed in the marketplace: {keys}",
+        "mismatchMissing": "Not listed in the marketplace: {keys}.",
         "mismatchExtra": "The marketplace lists {keys}, which the package does not request.",
         "deployOn": "Confirming installs and enables the extension.",
-        "noExtension": "This plugin carries no code. Confirming adds it to the platform.",
+        "noExtension": "This plugin has no extension. Confirming adds it to the platform.",
         "keepExtension": "The extension {name} {version} is already on the platform.",
         "ackHint": "It has sensitive permissions. Look them over before confirming.",
         "ack": "I have looked over the sensitive permissions",
@@ -5243,7 +5243,7 @@
           },
           "license": "License text",
           "licenseTruncated": "The text is over 64 KiB or not UTF-8, so it was not kept.",
-          "bidiWarning": "This text contains bidirectional or control characters: what is shown may differ from what the model reads."
+          "bidiWarning": "This text contains bidirectional or control characters. What is shown may differ from what the model reads."
         },
         "scopeTitle": "Which organizations",
         "olderThanDeployed": "This is older than the installed version. It is only added to the versions and the extension stays as it is.",

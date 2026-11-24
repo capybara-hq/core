@@ -5116,10 +5116,10 @@
         "editable": "组织可改：{paths}",
         "auth": "认证方式：{type}",
         "mismatch": "市场列出的权限与包里的不一致，以包为准。",
-        "mismatchMissing": "市场没列出 {keys}",
+        "mismatchMissing": "市场没列出 {keys}。",
         "mismatchExtra": "市场列了，但包里没有 {keys}。",
         "deployOn": "确认后安装并启用扩展。",
-        "noExtension": "这个插件不带代码，确认后直接加入平台。",
+        "noExtension": "这个插件没有扩展，确认后直接加入平台。",
         "keepExtension": "扩展 {name} {version} 已在平台上。",
         "ackHint": "含敏感权限，确认前请看一下。",
         "ack": "我已看过敏感权限",
@@ -5231,7 +5231,7 @@
           },
           "license": "许可证全文",
           "licenseTruncated": "全文超过 64 KiB 或不是 UTF-8，没有保存。",
-          "bidiWarning": "这段文字含有双向控制字符或控制字符：显示的顺序可能与模型读到的不同。"
+          "bidiWarning": "这段文字含有双向控制字符或控制字符。显示的顺序可能与模型读到的不同。"
         },
         "scopeTitle": "给哪些组织",
         "olderThanDeployed": "低于平台上已安装的版本，只加入版本列表，扩展保持不变。",
