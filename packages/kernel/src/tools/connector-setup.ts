@@ -28,6 +28,28 @@ export function setupNeed(auth: ConnectorAuth): SetupNeed | undefined {
   return undefined;
 }
 
+/**
+ * The setup states of several connectors of `orgId` at once (one query, key presence only), by
+ * connector id.
+ */
+export async function connectorSetups(
+  credentials: Pick<Credentials, "orgInputs">,
+  orgId: string,
+  connectors: readonly { id: string; auth: ConnectorAuth }[],
+): Promise<Map<string, ConnectorSetup>> {
+  const inputs = await credentials.orgInputs(
+    orgId,
+    connectors.filter((c) => setupNeed(c.auth) !== undefined).map((c) => c.id),
+  );
+  return new Map(
+    connectors.map((c) => {
+      const need = setupNeed(c.auth);
+      const ready = need === undefined || inputs.get(c.id)?.[need] === true;
+      return [c.id, ready ? "ready" : "needs_config"];
+    }),
+  );
+}
+
 /** The setup state of a connector of `orgId` with `auth`, read from key presence only. */
 export async function connectorSetup(
   credentials: Pick<Credentials, "hasOrgInput">,

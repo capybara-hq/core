@@ -36,6 +36,7 @@ import {
   PermissionConfigPublication,
   permissionConfigFingerprint,
 } from "../../src/sandbox/permission-config-publication.js";
+import { CONNECTOR_TOOLS_QUEUE } from "../../src/tools/connector-tools-jobs.js";
 import { ToolDrift } from "../../src/tools/drift.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
@@ -60,6 +61,7 @@ const KERNEL_QUEUES = [
   PLUGIN_SCOPE_QUEUE,
   LIFECYCLE_QUEUE,
   PUSH_QUEUE,
+  CONNECTOR_TOOLS_QUEUE,
 ];
 
 let pgc: TestContainer;

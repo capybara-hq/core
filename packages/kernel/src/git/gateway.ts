@@ -178,6 +178,9 @@ const BYTES_EXCEEDED = "this task reached its git transfer limit (tools.git.maxB
 const NOT_AN_ENDPOINT = "not a git smart-HTTP endpoint.";
 const reconnect = (host: string) =>
   `${host} refused the connection's credential. Reconnect it under Settings → Connectors, then run the command again.`;
+/** An org-owned input is missing (the connector is needs_config): not the member's to reconnect. */
+const orgUnconfigured = (host: string) =>
+  `the connector that serves ${host} needs to be configured by an organization admin under Settings → Connectors before it can be used.`;
 const repoRefused = (repo: string) => `this task may not use the repository ${repo}.`;
 const upstreamFailed = (host: string, detail: string) =>
   `the request to ${host} failed (${detail}).`;
@@ -724,7 +727,7 @@ export class GitGateway {
     } catch (e) {
       if (e instanceof CredentialMissing) {
         pushResult("refused:credential");
-        text(403, reconnect(target.host));
+        text(403, e.ownership === "org" ? orgUnconfigured(target.host) : reconnect(target.host));
         return;
       }
       if (e instanceof NetDeniedError) {

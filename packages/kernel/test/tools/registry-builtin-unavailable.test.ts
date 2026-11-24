@@ -25,6 +25,7 @@ const registryOf = (tool: BuiltinTool): ToolRegistry =>
     { list: () => [tool] },
     { get: async () => ({ ok: true, config: {}, source: "platform" }) },
     { offKeys: async () => new Set() },
+    { orgInputs: async () => new Map() },
   );
 
 const def = { disabledTools: [] };

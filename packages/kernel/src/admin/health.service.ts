@@ -18,6 +18,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../runtime/run-jobs.js";
 import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
 import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
+import { CONNECTOR_TOOLS_QUEUE } from "../tools/connector-tools-jobs.js";
 import { KERNEL_VERSION } from "../version.js";
 
 /** The kernel's own queues, in the order the overview lists them (extension queues are not read). */
@@ -33,6 +34,7 @@ export const KERNEL_QUEUE_NAMES = [
   EVAL_QUEUE_NAME,
   LIFECYCLE_QUEUE,
   PUSH_QUEUE,
+  CONNECTOR_TOOLS_QUEUE,
 ] as const;
 
 /** How long each source's reads may take before the answer marks it unavailable. */
@@ -164,6 +166,7 @@ export class AdminHealthService {
     @Inject(getQueueToken(EVAL_QUEUE_NAME)) evals: Queue,
     @Inject(getQueueToken(LIFECYCLE_QUEUE)) lifecycle: Queue,
     @Inject(getQueueToken(PUSH_QUEUE)) push: Queue,
+    @Inject(getQueueToken(CONNECTOR_TOOLS_QUEUE)) connectorTools: Queue,
   ) {
     // the order of KERNEL_QUEUE_NAMES
     this.queues = [
@@ -178,6 +181,7 @@ export class AdminHealthService {
       evals,
       lifecycle,
       push,
+      connectorTools,
     ];
   }
 

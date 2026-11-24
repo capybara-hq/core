@@ -369,6 +369,23 @@ export const OUTBOX_JOBS = {
       removeOnFail: 1000,
     },
   },
+  // `tools/connector-tools-jobs.ts` CONNECTOR_TOOLS_JOB: owed by a deferred connector create, an
+  // org admin's save that turns a connector ready, and a personal connector's first member
+  // credential, under `connectorToolsJobId` (plugin pages spec §5.2.1)
+  "connector-tools-list": {
+    queue: "cap-connector-tools",
+    idempotent:
+      "Lists the connector's current tools and stores them with the drift compare-and-write under the connector's row lock; a second listing finds the same snapshot and changes nothing",
+    processedIn: "packages/kernel/src/tools/connector-tools.processor.ts",
+    // 5 attempts, 10 s doubling (an endpoint briefly down); finished and failed jobs removed (each
+    // owing has its own id); a connector still without tools is picked up by the drift scan
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `push/jobs.ts` PUSH_FANOUT_JOB: one per trigger event, owed in the event's transaction by
   // `PushOwed` under `pushFanoutJobId` (`push-fanout-<eventId>`, mobile app spec §9.4)
   "push-fanout": {

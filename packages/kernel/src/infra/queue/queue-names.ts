@@ -16,6 +16,7 @@ export const KERNEL_QUEUES = [
   "cap-kernel-evals",
   "cap-kernel-lifecycle",
   "cap-push-deliver",
+  "cap-connector-tools",
 ] as const;
 
 export type KernelQueueName = (typeof KERNEL_QUEUES)[number];

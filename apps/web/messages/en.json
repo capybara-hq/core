@@ -4030,7 +4030,8 @@
           "usageReport": "Usage reports",
           "evals": "Evals",
           "lifecycle": "Lifecycle notices",
-          "pushDeliver": "Push delivery"
+          "pushDeliver": "Push delivery",
+          "connectorTools": "Connector tool lists"
         },
         "connections": {
           "channels": "Channels",

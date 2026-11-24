@@ -30,10 +30,18 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UUID_RE } from "../ui/registry.js";
-import { type ConnectorSetup, connectorSetup, setupNeed } from "./connector-setup.js";
+import { type ConnectorSetup, connectorSetup, connectorSetups } from "./connector-setup.js";
+import {
+  CONNECTOR_TOOLS_JOB,
+  CONNECTOR_TOOLS_QUEUE,
+  type ConnectorToolsJobData,
+  type ConnectorToolsTrigger,
+  connectorToolsJobId,
+} from "./connector-tools-jobs.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -211,6 +219,20 @@ export interface CreateConnectorInput {
    * plugins' names. Chosen after the outbound calls, so a race never repeats them.
    */
   slugDefault?: { display: string; name?: string | undefined } | undefined;
+}
+
+/** What {@link ConnectorsService}'s shared insert writes besides the request's input. */
+interface ConnectorWrite {
+  id: string;
+  slug: string;
+  endpoint: unknown;
+  owner: CredentialOwner | undefined;
+  secret: StaticSecret | undefined;
+  oauth: OAuthSetup | undefined;
+  /** The tool listing (none for an authorization-code connector or a deferred create). */
+  listed: { specs: unknown; resources: boolean } | undefined;
+  /** The template's setup guide it is set up with (null: none, or a custom connector). */
+  guideAck: GuideAck | null;
 }
 
 /** 连接器来自哪个目录条目的哪个模板。 */
@@ -437,7 +459,10 @@ export class ConnectorsService {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ToolDrift) private readonly drift: ToolDrift,
     /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
-    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lock" | "lockAndAuthorize">,
+    @Inject(OrgLock)
+    private readonly orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">,
+    /** Owed work: the tool listings that follow a deferred create or a setup (§5.2.1). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Setup guides of connector templates (spec 2026-11-09-setup-guides-v2-design.md §11). */
     @Inject(PluginGuides)
@@ -655,10 +680,13 @@ export class ConnectorsService {
    * endpoint against the connector's schema, the credential shape, the OAuth client and the OAuth
    * URL policy. `create` runs them first; a plugin install runs them for every template before it
    * creates anything, so bad input is a 400 rather than a failed install. Returns what they parsed.
+   * `deferred` ({@link createDeferredIn}): an OAuth connector takes no client (an org admin saves
+   * it on the connector later) and needs no `http.publicUrl` yet (the connect flow requires it).
    */
   checkCreateInput(
-    actorAccountId: string,
+    actorAccountId: string | null,
     input: CreateConnectorInput,
+    opts: { deferred?: boolean } = {},
   ): { slug: string; endpoint: unknown; owner?: CredentialOwner; secret?: StaticSecret } {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
@@ -677,7 +705,10 @@ export class ConnectorsService {
       this.credentials.validate(auth, owner, credential);
       return { slug, endpoint, owner, secret: credential };
     }
-    if (!this.config.get().http.publicUrl) throw publicUrlRequired();
+    if (opts.deferred && credential !== undefined && credential !== null) {
+      throw fail("credential", "The OAuth client is saved on the connector once it exists");
+    }
+    if (!opts.deferred && !this.config.get().http.publicUrl) throw publicUrlRequired();
     const http = oauthHttpOptions(this.config.get());
     const checked = (path: string, url: string) => {
       try {
@@ -687,12 +718,13 @@ export class ConnectorsService {
       }
     };
     if (auth.type === "oauth_client") {
-      parseOAuthClient(credential, true);
+      if (!opts.deferred) parseOAuthClient(credential, true);
       checked("auth.tokenUrl", auth.tokenUrl);
       return { slug, endpoint };
     }
-    if (auth.client === "manual") parseOAuthClient(credential, false);
-    else if (credential !== undefined) {
+    if (auth.client === "manual") {
+      if (!opts.deferred) parseOAuthClient(credential, false);
+    } else if (credential !== undefined) {
       throw fail(
         "credential",
         "With client dcr the client is registered automatically; omit credential or use client manual",
@@ -783,23 +815,81 @@ export class ConnectorsService {
     input: CreateConnectorInput,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
-    c: {
-      id: string;
-      slug: string;
-      endpoint: unknown;
-      owner: CredentialOwner | undefined;
-      secret: StaticSecret | undefined;
-      oauth: OAuthSetup | undefined;
-      /** The tool listing (none for an authorization-code connector). */
-      listed: { specs: unknown; resources: boolean } | undefined;
-      /** The template's setup guide it is set up with (null: none, or a custom connector). */
-      guideAck: GuideAck | null;
-    },
+    c: ConnectorWrite,
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
+    const issues = await this.writeConnectorIn(
+      orgId,
+      actorAccountId,
+      input,
+      actorTokenId,
+      auditDetail,
+      c,
+    );
+    return { connector: await this.detail(this.db, orgId, c.id, actorAccountId), issues };
+  }
+
+  /**
+   * Creates a connector without listing its tools (plugin pages spec §5.2.1 "Tool lists without
+   * a network call in a transaction"): for plugin installs, scope syncs and upgrades, which create
+   * connectors inside their own transaction. It makes no outbound call: the row is written with an
+   * empty tool list (`tools_synced_at` null, so the first listing counts as the install's and
+   * applies the template's default policies), a static credential in `input` is stored, and an
+   * OAuth connector takes no client (an org admin saves it, which turns the connector ready).
+   * When the connector is `ready` and its credential is not personal, the listing is owed in the
+   * same transaction (`connector-tools-list`, trigger `created`); a personal one is listed on its
+   * first member credential. `actorAccountId` null: the kernel itself (a scope sync); the org's
+   * owner is then recorded as the creator (`created_by` names an account) and the audit has no
+   * actor. With an actor, `connectors.manage` is checked under the org lock. Returns the id.
+   */
+  @Transactional()
+  async createDeferredIn(
+    orgId: string,
+    actorAccountId: string | null,
+    input: CreateConnectorInput,
+    opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> } = {},
+  ): Promise<string> {
+    await this.assertKindAvailable(orgId, input.connector);
+    const { slug, endpoint, owner, secret } = this.checkCreateInput(actorAccountId, input, {
+      deferred: true,
+    });
+    const id = randomUUID();
+    await this.writeConnectorIn(orgId, actorAccountId, input, opts.actorTokenId, opts.auditDetail, {
+      id,
+      slug,
+      endpoint,
+      owner,
+      secret,
+      oauth: undefined,
+      listed: undefined,
+      // nobody was shown the template's guide
+      guideAck: null,
+    });
+    const auth = input.auth;
+    const personal = auth.type !== "none" && auth.ownership === "personal";
+    if (!personal && (await connectorSetup(this.credentials, orgId, id, auth)) === "ready") {
+      await this.oweToolList(orgId, id, "created");
+    }
+    return id;
+  }
+
+  /**
+   * The org-locked, re-checked insert shared by {@link createIn} and {@link createDeferredIn}
+   * (joins their transaction); returns the snapshot's issues.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async writeConnectorIn(
+    orgId: string,
+    actorAccountId: string | null,
+    input: CreateConnectorInput,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
+    c: ConnectorWrite,
+  ): Promise<ToolIssue[]> {
     const { id, endpoint, owner, secret, oauth } = c;
     const auth = input.auth;
     const t = this.db;
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    if (actorAccountId === null) await this.orgLock.lock(orgId);
+    else await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
     if (input.template) {
       await assertItemInstallable(
         t,
@@ -861,7 +951,7 @@ export class ConnectorsService {
         auth: JSON.stringify(auth),
         git_hosts: input.git !== undefined ? JSON.stringify(input.git.hosts) : null,
         description: ownDescription(input.description),
-        created_by: actorAccountId,
+        created_by: actorAccountId ?? (await this.ownerOf(t, orgId)),
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
         platform_template_id: platformTemplate?.id ?? null,
@@ -872,8 +962,9 @@ export class ConnectorsService {
         template_tool_policies: input.template?.defaultToolPolicies
           ? JSON.stringify(input.template.defaultToolPolicies)
           : null,
-        // 授权码连接器安装时不拍快照（A16）：留空，首个快照按安装处理
-        ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
+        // no listing (an authorization-code connector, A16, or a deferred create): left empty,
+        // the first snapshot counts as the install's
+        ...(c.listed !== undefined && { tools_synced_at: sql<Date>`now()` }),
       })
       .execute();
     await this.insertTools(id, rows, input.template?.defaultToolPolicies);
@@ -908,7 +999,46 @@ export class ConnectorsService {
         }),
       },
     });
-    return { connector: await this.detail(t, orgId, id, actorAccountId), issues };
+    return issues;
+  }
+
+  /** The org's first owner: the creator recorded for a connector the kernel creates itself. */
+  private async ownerOf(db: KernelSchemaDb, orgId: string): Promise<string> {
+    const row = await db
+      .selectFrom("memberships")
+      .select("account_id")
+      .where("org_id", "=", orgId)
+      .where("role", "=", "owner")
+      .orderBy("created_at")
+      .orderBy("account_id")
+      .executeTakeFirst();
+    if (!row) throw new Error(`org ${orgId} has no owner to record as a connector's creator`);
+    return row.account_id;
+  }
+
+  /**
+   * Owes a listing of the connector's tools in the caller's transaction (`connector-tools-list`,
+   * processed by `ConnectorToolsProcessor` after the commit). `accountId`: the member whose
+   * credential lists a personal connector.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async oweToolList(
+    orgId: string,
+    connectorId: string,
+    trigger: ConnectorToolsTrigger,
+    accountId?: string,
+  ): Promise<void> {
+    // the transaction's start time: one id per owing transaction
+    const { rows } = await sql<{
+      seq: string;
+    }>`SELECT (extract(epoch FROM now()) * 1000)::bigint::text AS seq`.execute(this.db);
+    await this.outbox.add<ConnectorToolsJobData>({
+      queue: CONNECTOR_TOOLS_QUEUE,
+      name: CONNECTOR_TOOLS_JOB,
+      jobId: connectorToolsJobId(connectorId, trigger, rows[0]?.seq ?? "0"),
+      data: { orgId, connectorId, ...(accountId !== undefined && { accountId }) },
+      orgId,
+    });
   }
 
   /**
@@ -1103,7 +1233,7 @@ export class ConnectorsService {
       slug = deriveSlug(input.name) ?? PREVIEW_SLUG;
     }
 
-    // 先校验凭据形状，再做任何外连
+    // check the credential shape before any outbound call
     const auth = input.auth;
     const credential = input.credential ?? undefined;
     let inject: (() => Promise<AuthInjection>) | undefined;
@@ -1458,15 +1588,12 @@ export class ConnectorsService {
       .orderBy("created_at")
       .orderBy("id")
       .execute();
-    const inputs = await this.credentials.orgInputs(
+    const setups = await connectorSetups(
+      this.credentials,
       orgId,
-      rows.map((r) => r.id),
+      rows.map((r) => ({ id: r.id, auth: r.auth as unknown as ConnectorAuth })),
     );
-    return rows.map((r) => {
-      const need = setupNeed(r.auth as unknown as ConnectorAuth);
-      const ready = need === undefined || inputs.get(r.id)?.[need] === true;
-      return this.summary(r, ready ? "ready" : "needs_config");
-    });
+    return rows.map((r) => this.summary(r, setups.get(r.id) ?? "needs_config"));
   }
 
   /**
@@ -1935,21 +2062,7 @@ export class ConnectorsService {
       actorAccountId,
       opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
     );
-    const locked = await this.row(t, orgId, connectorId, true);
-    const changes = await this.drift.apply(locked, rows);
-    // 首个快照（授权码连接器首个成员连接后）：按目录模板的 defaultToolPolicies 设默认策略（policy_source 'template'）
-    const templatePolicies = locked.template_tool_policies;
-    if (locked.tools_synced_at === null && templatePolicies) {
-      for (const [name, policy] of Object.entries(templatePolicies)) {
-        await t
-          .updateTable("connector_tools")
-          .set({ default_policy: policy, policy_source: "template" })
-          .where("connector_id", "=", connectorId)
-          .where("name", "=", name)
-          .where("policy_source", "=", "derived")
-          .execute();
-      }
-    }
+    const changes = await this.applySnapshotIn(await this.row(t, orgId, connectorId, true), rows);
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1963,6 +2076,106 @@ export class ConnectorsService {
       issues,
       changes,
     };
+  }
+
+  /**
+   * Writes a listed snapshot over the connector's tool rows (the caller holds the row locked):
+   * the drift compare-and-write, then on the first snapshot (an authorization-code connector's
+   * first member connection, or a deferred create's first listing) the template's default
+   * policies (`policy_source 'template'`).
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async applySnapshotIn(
+    locked: Awaited<ReturnType<ConnectorsService["row"]>>,
+    rows: SnapshotRow[],
+  ): Promise<DriftChanges> {
+    const changes = await this.drift.apply(locked, rows);
+    const templatePolicies = locked.template_tool_policies;
+    if (locked.tools_synced_at === null && templatePolicies) {
+      for (const [name, policy] of Object.entries(templatePolicies)) {
+        await this.db
+          .updateTable("connector_tools")
+          .set({ default_policy: policy, policy_source: "template" })
+          .where("connector_id", "=", locked.id)
+          .where("name", "=", name)
+          .where("policy_source", "=", "derived")
+          .execute();
+      }
+    }
+    return changes;
+  }
+
+  /**
+   * The consumer of a `connector-tools-list` job (`ConnectorToolsProcessor`, after the commit
+   * that owed it): lists the connector's tools as {@link refresh} does and stores them with the
+   * same compare-and-write, as the kernel itself (audit `connector.tools_refreshed` without an
+   * actor). Idempotent: listing again compares against the stored snapshot and changes nothing.
+   * Skipped (nothing written) when the connector is gone, disabled or `needs_config`, or the
+   * credential to list with is missing (a later save owes a new job); an outbound failure throws,
+   * so the queue retries it, and leaves the connector `ready` without tools (the drift scan
+   * lists a connector without a snapshot too).
+   */
+  async listToolsForJob(data: ConnectorToolsJobData): Promise<"listed" | "skipped"> {
+    const { orgId, connectorId, accountId } = data;
+    const app = await this.db
+      .selectFrom("connectors")
+      .selectAll()
+      .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (app?.status !== "active") return "skipped";
+    const auth = app.auth as unknown as ConnectorAuth;
+    const personal = auth.type !== "none" && auth.ownership === "personal";
+    if (personal && accountId === undefined) return "skipped";
+    if ((await this.setupOf(orgId, app)) === "needs_config") return "skipped";
+    // an org credential ignores the account; a personal one is that member's
+    const as = accountId ?? app.created_by;
+    let listed: { specs: unknown; resources: boolean };
+    try {
+      listed = await this.drift.listTools(
+        orgId,
+        app.connector,
+        app.endpoint,
+        () => this.credentials.injection(orgId, connectorId, auth, as),
+        { connectorId, job: CONNECTOR_TOOLS_JOB },
+        (last) => this.credentials.onUnauthorized(orgId, connectorId, auth, as, last),
+      );
+    } catch (e) {
+      if (e instanceof CredentialMissing) return "skipped";
+      throw e;
+    }
+    const { rows } = snapshot(app.slug, listed.specs, listed.resources);
+    return (await this.storeListedIn(orgId, connectorId, rows, accountId)) ? "listed" : "skipped";
+  }
+
+  /** The org-locked write of {@link listToolsForJob}; false when the org or connector is gone. */
+  @Transactional()
+  private async storeListedIn(
+    orgId: string,
+    connectorId: string,
+    rows: SnapshotRow[],
+    accountId: string | undefined,
+  ): Promise<boolean> {
+    const t = this.db;
+    if (!(await this.orgLock.tryLock(orgId))) return false;
+    const locked = await t
+      .selectFrom("connectors")
+      .selectAll()
+      .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!locked) return false;
+    const changes = await this.applySnapshotIn(locked, rows);
+    await audit(t, {
+      orgId,
+      action: "connector.tools_refreshed",
+      target: connectorId,
+      detail: { ...changes, trigger: "job", ...(accountId !== undefined && { accountId }) },
+    });
+    return true;
   }
 
   /**
@@ -2078,6 +2291,7 @@ export class ConnectorsService {
           connectorId,
           actorAccountId,
           auth,
+          app.endpoint,
           value,
           actorTokenId,
           auditDetail,
@@ -2113,12 +2327,20 @@ export class ConnectorsService {
       actorAccountId,
       ownership === "org" ? "connectors.manage" : "connectors.use",
     );
-    const app = await this.row(t, orgId, connectorId);
+    const app = await this.row(t, orgId, connectorId, true);
     const auth = app.auth as unknown as ConnectorAuth;
     const owner: CredentialOwner =
       ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
     this.credentials.validate(auth, owner, value);
+    const before = await this.setupOf(orgId, app);
     await this.credentials.setStatic(orgId, connectorId, auth, owner, value);
+    if (ownership === "org" && before === "needs_config") {
+      // the org credential it lacked: now ready, its tools follow (§5.2.1)
+      await this.oweToolList(orgId, connectorId, "configured");
+    } else if (ownership === "personal" && app.tools_synced_at === null) {
+      // a personal connector with no tool list yet: the member's credential lists it
+      await this.oweToolList(orgId, connectorId, "connected", actorAccountId);
+    }
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -2134,12 +2356,16 @@ export class ConnectorsService {
    * 客户端凭据连接器先用新客户端取一次 token 验证（失败 → 502 `connector.connect_failed`，什么都不改），再替换客户端并以
    * 新 token 替换缓存的组织 token；授权码连接器只限手填 client，只替换客户端（成员的 token 保留，之后刷新若得到
    * invalid_client 会作废）。审计只记类型与归属。
+   * A connector with no client yet (`needs_config`, plugin pages spec §5.2.1) gets its first one
+   * set up as a create does (the client credentials token, or the authorization-code endpoints
+   * from discovery or the auth's URLs), outside any transaction.
    */
   private async rotateOAuthClient(
     orgId: string,
     connectorId: string,
     actorAccountId: string,
     auth: OAuthAuth,
+    endpoint: unknown,
     value: unknown,
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
@@ -2153,10 +2379,19 @@ export class ConnectorsService {
     const next = parseOAuthClient(value, auth.type === "oauth_client", "");
     const current = await this.credentials.oauthClient(orgId, connectorId);
     if (!current) {
-      throw new ApiError(
-        "connector.connect_failed",
-        "The connector has no registered OAuth client; reinstall it",
+      // a dynamic registration is refused above, so the public URL is never used here
+      const first = await this.prepareOAuth(auth, endpoint, next, "");
+      await this.storeOAuthClient(
+        orgId,
+        connectorId,
+        actorAccountId,
+        auth,
+        first.client,
+        first.tokens,
+        actorTokenId,
+        auditDetail,
       );
+      return;
     }
     const client: OAuthClientRecord = { ...current, clientId: next.clientId };
     delete client.clientSecret;
@@ -2207,9 +2442,15 @@ export class ConnectorsService {
   ): Promise<void> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-    await this.row(t, orgId, connectorId, true);
+    const app = await this.row(t, orgId, connectorId, true);
+    const before = await this.setupOf(orgId, app);
     await this.credentials.setOAuthClient(orgId, connectorId, client);
     if (tokens) await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "org" }, tokens);
+    // the client it lacked: now ready; a client credentials connector lists its tools with the
+    // org token (an authorization-code one waits for a member's first connection, A16)
+    if (before === "needs_config" && auth.ownership === "org") {
+      await this.oweToolList(orgId, connectorId, "configured");
+    }
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

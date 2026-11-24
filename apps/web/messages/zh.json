@@ -4018,7 +4018,8 @@
           "usageReport": "用量上报",
           "evals": "评测",
           "lifecycle": "生命周期通知",
-          "pushDeliver": "推送发送"
+          "pushDeliver": "推送发送",
+          "connectorTools": "连接器工具清单"
         },
         "connections": {
           "channels": "渠道",
