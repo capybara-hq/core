@@ -168,8 +168,11 @@ export interface ExtensionModels {
   describe(req: { orgId: string; purpose: string }): Promise<ExtensionModelTarget | null>;
 }
 
-/** The conversation and the account a {@link DeviceAccessCtx} call from outside a tool call is for. */
-export type DeviceAccessScope = { conversationId: string; accountId: string };
+/**
+ * The org, conversation and account a {@link DeviceAccessCtx} call from outside a tool call is for
+ * (`orgId` must be the conversation's org).
+ */
+export type DeviceAccessScope = { orgId: string; conversationId: string; accountId: string };
 
 /**
  * `ctx.deviceAccess` (requires `permissions.deviceAccess`): the extension's services in the
@@ -204,9 +207,12 @@ export interface DeviceAccessCtx {
   streamTicket(
     scope: DeviceAccessScope & { service: string },
   ): Promise<{ url: string; expiresAt: string }>;
-  /** Adds hosts to the device's network allowlist (owner only, platform and org ceilings apply). */
+  /**
+   * Adds hosts to the device's network allowlist (owner only, platform and org ceilings apply);
+   * the extension's running services get the device's new limits applied.
+   */
   addNetworkHosts(scope: DeviceAccessScope & { hosts: string[] }): Promise<void>;
-  /** Answers the handoff question of the tool call `callId` from the panel. */
+  /** Answers the handoff question of this extension's tool call `callId` from the panel. */
   answerHandoff(scope: DeviceAccessScope & { callId: string; done: boolean }): Promise<void>;
 }
 

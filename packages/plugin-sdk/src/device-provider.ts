@@ -354,11 +354,24 @@ export interface DeviceServiceSpec {
   name: string;
   /** The provider supplies Node 22 or later. */
   runtime: "node";
-  /** The script to run: a relative path inside `files`. */
+  /**
+   * The script to run: one of the `files` keys. The process runs `node <stateDir>/<entry>` with the
+   * state directory as its working directory; that exact command passes the command review.
+   */
   entry: string;
   args: string[];
-  /** Written into the service's state directory before start, keyed by relative path. */
+  /**
+   * Written into the service's state directory before start, keyed by relative path: no absolute
+   * path, no `..` or `.` segment, no empty segment, no backslash, no NUL (the kernel refuses a
+   * spec that breaks this before any provider call).
+   */
   files: Record<string, Uint8Array>;
+  /**
+   * Extra environment of the process (shown to the command review as `env K=V …`). The kernel
+   * refuses `NODE_OPTIONS`, `NODE_PATH`, `LD_*`, `DYLD_*`, `CAPYBARA_*` and the proxy variables
+   * (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, `FTP_PROXY`, any case): the provider sets
+   * those it needs itself.
+   */
   env?: Record<string, string>;
 }
 
@@ -368,6 +381,11 @@ export interface DeviceServiceStatus {
   state: "running" | "stopped";
   /** ISO 8601 time the running process started; null when stopped. */
   startedAt: string | null;
+  /**
+   * The service's state directory in the device (absolute), also when it is stopped: where its
+   * `files` are written and its working directory. The kernel reviews the launch against it.
+   */
+  stateDir: string;
 }
 
 /**
@@ -647,18 +665,24 @@ export interface DeviceProvider {
    * service socket and state directory named in its environment (`DEVICE_SERVICE_SOCKET_ENV`,
    * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
    * kernel has passed the launch through the command review before it calls this.
+   *
+   * With `opts.ifRunning` it never starts anything and reads only `spec.name`: a running service is
+   * kept and the device's current network limits are applied to it again (the kernel calls this
+   * after the device's allowlist changed, and before reviewing a launch); a stopped one answers
+   * its `stopped` status (with `stateDir`) and stays stopped.
    */
   ensureService?(
     h: SandboxHandle,
     spec: DeviceServiceSpec,
     signal: AbortSignal,
+    opts?: { ifRunning?: boolean },
   ): Promise<DeviceServiceStatus>;
   /** Stops the named service; succeeds when it is not running. */
   stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
   /**
-   * The named service's state in the instance, without starting it (optional): the kernel runs
-   * the command review of a launch only when this says `stopped`, and on every
-   * {@link DeviceProvider.ensureService} when the provider lacks it.
+   * The named service's state in the instance, without starting it (optional; the kernel's
+   * status reads). Whether a launch is reviewed is decided by `ensureService` with
+   * `ifRunning`, which is race-free.
    */
   serviceStatus?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<DeviceServiceStatus>;
   /**

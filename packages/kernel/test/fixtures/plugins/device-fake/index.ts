@@ -107,7 +107,8 @@ import { z } from "zod";
  *   {@link fakeServiceStateDir}), its socket a short hashed path under the OS temp directory
  *   (a unix socket path must stay within 104 bytes on macOS, and test roots are long), its
  *   running record `root/instances/<id>/services/<name>.json` (`{ pid, startedAt }`). Each start
- *   logs `service-start <id> <name> <pid>` ({@link fakeServiceStarts}), each stop
+ *   logs `service-start <id> <name> <pid>` ({@link fakeServiceStarts}), each `ifRunning` ensure
+ *   `service-if-running <id> <name> <running|stopped>`, each stop
  *   `service-stop <id> <name>`; {@link fakeServiceRunning} tells whether the process lives.
  * - limits (sandbox dev tiers spec §7.1): `updateMode` (deployment config or
  *   {@link FakeSandboxOptions}) gives the provider an `update` that answers `updated` (and records
@@ -369,7 +370,12 @@ function serviceSurface(
   ): Promise<DeviceServiceStatus> => {
     const rec = await readServiceRecord(root, h.id, spec.name);
     if (rec !== null && alive(rec.pid))
-      return { name: spec.name, state: "running", startedAt: rec.startedAt };
+      return {
+        name: spec.name,
+        state: "running",
+        startedAt: rec.startedAt,
+        stateDir: fakeServiceStateDir(root, h.id, spec.name),
+      };
     const state = fakeServiceStateDir(root, h.id, spec.name);
     const inside = (rel: string) => {
       const n = posix.normalize(rel);
@@ -438,14 +444,28 @@ function serviceSurface(
       JSON.stringify({ pid, startedAt } satisfies ServiceRecord),
     );
     await log(`service-start ${h.id} ${spec.name} ${pid}`);
-    return { name: spec.name, state: "running", startedAt };
+    return { name: spec.name, state: "running", startedAt, stateDir: state };
+  };
+  /** The service's status now, without starting it. */
+  const statusOf = async (h: SandboxHandle, name: string): Promise<DeviceServiceStatus> => {
+    const rec = await readServiceRecord(root, h.id, name);
+    const stateDir = fakeServiceStateDir(root, h.id, name);
+    return rec !== null && alive(rec.pid)
+      ? { name, state: "running", startedAt: rec.startedAt, stateDir }
+      : { name, state: "stopped", startedAt: null, stateDir };
   };
   return {
-    async ensureService(h, spec, signal) {
+    async ensureService(h, spec, signal, opts) {
       signal.throwIfAborted();
       if (!DEVICE_SERVICE_NAME_RE.test(spec.name))
         throw new Error(`invalid device service name ${spec.name}`);
       await requireRunning(h);
+      if (opts?.ifRunning === true) {
+        // never starts one; a running one would get the device's current limits again
+        const status = await statusOf(h, spec.name);
+        await log(`service-if-running ${h.id} ${spec.name} ${status.state}`);
+        return status;
+      }
       const key = `${h.id}/${spec.name}`;
       const inFlight = starting.get(key);
       if (inFlight) return inFlight;
@@ -462,10 +482,7 @@ function serviceSurface(
 
     async serviceStatus(h, name, signal) {
       signal.throwIfAborted();
-      const rec = await readServiceRecord(root, h.id, name);
-      return rec !== null && alive(rec.pid)
-        ? { name, state: "running", startedAt: rec.startedAt }
-        : { name, state: "stopped", startedAt: null };
+      return statusOf(h, name);
     },
 
     async serviceRequest(h, name, body, opts) {

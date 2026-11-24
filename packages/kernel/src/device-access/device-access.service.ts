@@ -4,21 +4,25 @@ import {
   type DeviceAccessScope,
   type DeviceServiceSpec,
   type DeviceServiceStatus,
+  type Logger,
+  parseToolKey,
   type ToolCallContext,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import type { ReviewRecord } from "../conversations/events.js";
 import { DeviceAccess } from "../devices/access.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
 import { DevicesService } from "../devices/devices.service.js";
 import { ApiError } from "../errors.js";
-import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { isExtensionEnabled } from "../extensions/enabled.js";
+import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { REDIS } from "../infra/tokens.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
-import { DeviceServices } from "../sandbox/device-services.js";
+import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js";
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
@@ -71,6 +75,16 @@ function refusal(e: unknown): unknown {
   return e;
 }
 
+/** How long the refresh of one service after an allowlist change may take. */
+const REFRESH_TIMEOUT_MS = 30_000;
+
+/** The launch as it runs: `env K=V … node <stateDir>/<entry> <args…>` (no `env` without env). */
+function launchArgv(spec: DeviceServiceSpec, stateDir: string): string[] {
+  const env = Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`);
+  const entry = `${stateDir.replace(/\/+$/, "")}/${spec.entry}`;
+  return [...(env.length > 0 ? ["env", ...env] : []), "node", entry, ...spec.args];
+}
+
 /** A POSIX shell word for the review's command text (bare when it needs no quoting). */
 const shellWord = (s: string): string =>
   /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
@@ -99,6 +113,7 @@ export class DeviceAccessService {
     private readonly deviceWrites: Pick<DevicesService, "addNetworkHostsIn">,
     @Inject(QuestionsService) private readonly questions: Pick<QuestionsService, "answer">,
     @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
   ) {}
 
   private get db() {
@@ -106,9 +121,12 @@ export class DeviceAccessService {
   }
 
   /**
-   * Starts the service in the call's device, or finds it running. The command review sees the
-   * launch (`node <entry> <args…>`) only when the service is not running (or the provider cannot
-   * tell); anything but `allow` refuses it.
+   * Starts the service in the call's device, or finds it running. An `ifRunning` ensure first
+   * (never starts anything): a running service is kept with no review. A stopped one is
+   * launched only after the command review saw the command as it runs
+   * (`env K=V … node <stateDir>/<entry> <args…>`, the state directory as its working
+   * directory) and allowed it; anything else refuses it (fail closed). The verdict is recorded
+   * on the call (the call scope) and a start is audited `device.service_started`.
    */
   async ensureService(
     caller: DeviceAccessCaller,
@@ -117,62 +135,90 @@ export class DeviceAccessService {
   ): Promise<DeviceServiceStatus> {
     assertDeclared(caller, spec.name);
     assertCallOwner(call);
+    assertServiceSpec(spec);
     const scope = callScopeOf(call);
     const facts = scope?.facts;
-    if (facts === undefined)
+    if (scope === null || facts === undefined)
       throw new Error(
         `plugin ${caller.extension}: ctx.deviceAccess.ensureService needs the tool call context the kernel passed to the handler`,
       );
-    const use = await this.callUse(call, facts.rootConversationId, scope as CallScope);
-    const status = await this.services.status(use, spec.name, call.signal);
-    if (status === null || status.state === "stopped") {
-      const reviewFacts = await this.devices.reviewFacts(
-        call.orgId,
-        facts.rootConversationId,
-        call.conversationId,
+    const use = await this.callUse(call, facts.rootConversationId, scope);
+    const ensure = async (ifRunning: boolean): Promise<DeviceServiceStatus> => {
+      try {
+        return await this.services.ensure(use, spec, call.signal, { ifRunning });
+      } catch (e) {
+        throw refusal(e);
+      }
+    };
+    // race-free: the provider keeps a running service and never starts a stopped one here
+    const found = await ensure(true);
+    if (found.state === "running") return found;
+    const reviewFacts = await this.devices.reviewFacts(
+      call.orgId,
+      facts.rootConversationId,
+      call.conversationId,
+    );
+    if (reviewFacts === null || reviewFacts.deviceId !== use.deviceId)
+      throw new DeviceAccessError("no_device", "The conversation has no device to run in.");
+    const argv = launchArgv(spec, found.stateDir);
+    const verdict = await this.review.review({
+      orgId: call.orgId,
+      conversationId: facts.rootConversationId,
+      runId: facts.runId,
+      accountId: call.accountId,
+      toolKey: "Bash",
+      input: { command: argv.map(shellWord).join(" ") },
+      mode: reviewFacts.mode,
+      // the command runs in the service's state directory
+      workspace: found.stateDir,
+      home: reviewFacts.home,
+      deviceHome: reviewFacts.deviceHome,
+      attended: !facts.unattended && call.accountId === reviewFacts.ownerAccountId,
+      step: facts.step,
+      callId: call.callId,
+      signal: call.signal,
+      agentId: call.agentId,
+      agentVersion: facts.agentVersion,
+      ...(facts.conversationKind !== undefined && { conversationKind: facts.conversationKind }),
+      ...(facts.parent !== undefined && {
+        parentRunId: facts.parent.runId,
+        ...(facts.parent.budgetRunId !== undefined && { budgetRunId: facts.parent.budgetRunId }),
+        parent: {
+          conversationId: facts.parent.conversationId,
+          runId: facts.parent.runId,
+          callId: facts.parent.callId,
+        },
+      }),
+    });
+    const allowed = verdict.decision === "allow";
+    const record: ReviewRecord = {
+      decision: allowed ? "allow" : "deny",
+      by: verdict.by,
+      rule: verdict.rule,
+      reason: verdict.reason,
+    };
+    scope.review = record;
+    // fail closed: an ask has nobody to answer it here, and a deny is a deny
+    if (!allowed)
+      throw new ToolError(
+        `The device service ${spec.name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
       );
-      if (reviewFacts === null || reviewFacts.deviceId !== use.deviceId)
-        throw new DeviceAccessError("no_device", "The conversation has no device to run in.");
-      const command = ["node", spec.entry, ...spec.args].map(shellWord).join(" ");
-      const verdict = await this.review.review({
-        orgId: call.orgId,
-        conversationId: facts.rootConversationId,
-        runId: facts.runId,
-        accountId: call.accountId,
-        toolKey: "Bash",
-        input: { command },
-        mode: reviewFacts.mode,
-        workspace: reviewFacts.workingRoot,
-        home: reviewFacts.home,
-        deviceHome: reviewFacts.deviceHome,
-        attended: !facts.unattended && call.accountId === reviewFacts.ownerAccountId,
-        step: facts.step,
-        callId: call.callId,
-        signal: call.signal,
-        agentId: call.agentId,
-        agentVersion: facts.agentVersion,
-        ...(facts.conversationKind !== undefined && { conversationKind: facts.conversationKind }),
-        ...(facts.parent !== undefined && {
-          parentRunId: facts.parent.runId,
-          ...(facts.parent.budgetRunId !== undefined && { budgetRunId: facts.parent.budgetRunId }),
-          parent: {
-            conversationId: facts.parent.conversationId,
-            runId: facts.parent.runId,
-            callId: facts.parent.callId,
-          },
-        }),
-      });
-      // fail closed: an ask has nobody to answer it here, and a deny is a deny
-      if (verdict.decision !== "allow")
-        throw new ToolError(
-          `The device service ${spec.name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
-        );
-    }
-    try {
-      return await this.services.ensure(use, spec, call.signal);
-    } catch (e) {
-      throw refusal(e);
-    }
+    const started = await ensure(false);
+    await audit(this.db, {
+      actorAccountId: call.accountId,
+      orgId: call.orgId,
+      action: "device.service_started",
+      target: use.deviceId,
+      detail: {
+        extension: caller.extension,
+        service: spec.name,
+        deviceId: use.deviceId,
+        argv,
+        decision: record.decision,
+        rule: record.rule,
+      },
+    });
+    return started;
   }
 
   /** One request to the service's socket in the call's device. */
@@ -284,11 +330,31 @@ export class DeviceAccessService {
       scope.hosts,
       "web",
     );
+    // the extension's running services get the device's new limits (an ifRunning ensure: it
+    // never starts or resumes anything); the allowlist is written either way
+    const use: SandboxUseContext = {
+      orgId: d.orgId,
+      deviceId: d.deviceId,
+      holderConversationId: d.conversationId,
+      actor: { accountId: scope.accountId, conversationId: d.conversationId },
+    };
+    for (const name of caller.services) {
+      try {
+        await this.services.refresh(use, name, AbortSignal.timeout(REFRESH_TIMEOUT_MS));
+      } catch (err) {
+        this.log.warn("device service not refreshed after an allowlist change", {
+          deviceId: d.deviceId,
+          service: name,
+          err,
+        });
+      }
+    }
   }
 
   /**
    * Answers the pending question of tool call `callId` in the conversation with `{ done }`, under
-   * the questions' own rules (only the run's starter answers, the form validates the answer).
+   * the questions' own rules (only the run's starter answers, the form validates the answer); only
+   * a question one of this extension's tools raised.
    */
   async answerHandoff(
     caller: DeviceAccessCaller,
@@ -297,7 +363,7 @@ export class DeviceAccessService {
     const d = await this.scopedDevice(caller, scope);
     const q = await this.db
       .selectFrom("questions")
-      .select("id")
+      .select(["id", "spec"])
       .where("org_id", "=", d.orgId)
       .where("conversation_id", "=", d.conversationId)
       .where("call_id", "=", scope.callId)
@@ -308,6 +374,13 @@ export class DeviceAccessService {
       throw new ApiError(
         "question.not_found",
         `No pending question of tool call ${scope.callId} in this conversation`,
+      );
+    const key = (q.spec as { toolKey?: unknown } | null)?.toolKey;
+    const parsed = typeof key === "string" ? parseToolKey(key) : null;
+    if (parsed?.kind !== "extension" || parsed.plugin !== caller.extension)
+      throw new ApiError(
+        "question.not_found",
+        `No pending question of tool call ${scope.callId} of ${caller.extension} in this conversation`,
       );
     await this.questions.answer(q.id, scope.accountId, { done: scope.done }, d.orgId);
   }
@@ -323,6 +396,7 @@ export class DeviceAccessService {
       .select("account_id")
       .where("id", "=", rootConversationId)
       .where("org_id", "=", call.orgId)
+      .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (conv === undefined)
       throw new DeviceAccessError("no_device", "The conversation has no device to run in.");
@@ -357,16 +431,15 @@ export class DeviceAccessService {
       .selectFrom("conversations")
       .select(["org_id", "account_id"])
       .where("id", "=", scope.conversationId)
+      .where("org_id", "=", scope.orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
+    // another org's conversation reads as missing (no probing across orgs)
     if (conv === undefined)
       throw new DeviceAccessError("no_device", "The conversation does not exist.");
     if (conv.account_id !== scope.accountId)
       throw new DeviceAccessError("not_owner", DEVICE_ACCESS_NOT_OWNER_TEXT);
-    const enabled = await enabledExtensionsQuery(this.db, conv.org_id)
-      .execute()
-      .then((rows) => rows.some((r) => r.plugin === caller.extension));
-    if (!enabled)
+    if (!(await isExtensionEnabled(this.db, conv.org_id, caller.extension)))
       throw new DeviceAccessError(
         "capability_missing",
         `The extension ${caller.extension} is not enabled in the conversation's organization.`,

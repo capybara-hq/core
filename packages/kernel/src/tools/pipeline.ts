@@ -607,11 +607,11 @@ export interface ServiceBlocked {
 
 export type ExecOutcome =
   /** 工具返回了结果（可能是工具自己报告的错误，或畸形结果，由渲染阶段处理）。 */
-  | { kind: "result"; result: unknown; blocked?: ServiceBlocked }
+  | { kind: "result"; result: unknown; blocked?: ServiceBlocked; review?: ReviewRecord }
   /** 处理函数需要用户输入（表单尚未校验）。 */
   | { kind: "input_required"; form: InputForm; state: unknown }
   /** 执行失败（超时、抛错、熔断、中止等），message 给模型看。 */
-  | { kind: "error"; message: string; blocked?: ServiceBlocked }
+  | { kind: "error"; message: string; blocked?: ServiceBlocked; review?: ReviewRecord }
   /** 发起人未连接个人凭据：除错误结果外再写 `connection_required`。 */
   | {
       kind: "connection_required";
@@ -911,8 +911,8 @@ const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
 });
 
 /**
- * The outcome with the hosts the call's scope collected (a device service's refusals); unchanged
- * when nothing was reported.
+ * The outcome with what the call's scope collected: the hosts a device service reported refused
+ * and the review record of a device service launch; unchanged when nothing was reported.
  */
 function withBlocked<O extends Extract<ExecOutcome, { kind: "result" | "error" }>>(
   outcome: O,
@@ -920,12 +920,17 @@ function withBlocked<O extends Extract<ExecOutcome, { kind: "result" | "error" }
 ): O;
 function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOutcome;
 function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOutcome {
-  const blocked = scope?.blocked;
-  if (blocked == null || blocked.hosts.size === 0) return outcome;
   if (outcome.kind !== "result" && outcome.kind !== "error") return outcome;
+  const blocked = scope?.blocked;
+  const review = scope?.review ?? null;
   return {
     ...outcome,
-    blocked: { deviceId: blocked.deviceId, hosts: [...blocked.hosts], url: blocked.url },
+    ...(blocked != null &&
+      blocked.hosts.size > 0 && {
+        blocked: { deviceId: blocked.deviceId, hosts: [...blocked.hosts], url: blocked.url },
+      }),
+    // a device service launch's review (ctx.deviceAccess), recorded with the call's result
+    ...(review !== null && { review }),
   };
 }
 
@@ -1813,6 +1818,9 @@ export class ToolPipeline {
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
+    // a device service launch's review during the call (ctx.deviceAccess, the call scope)
+    if (review === undefined && (outcome.kind === "result" || outcome.kind === "error"))
+      review = outcome.review;
     // the record says a call ran outside the sandbox only when admission gave it that scope
     if (review !== undefined && isEscalatedCall(tool.key, input)) {
       const { sandbox: _asked, ...rest } = review;

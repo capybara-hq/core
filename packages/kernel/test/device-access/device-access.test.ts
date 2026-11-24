@@ -21,7 +21,11 @@ import { CommandReviewService } from "../../src/sandbox/review/review.service.js
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import { attachCallScope, callScopeOf } from "../../src/tools/call-scope.js";
 import { echoServiceSpec } from "../fixtures/extensions/fake-device-access/index.js";
-import { FAKE_PERMISSION_SUPPORT } from "../fixtures/plugins/device-fake/index.js";
+import {
+  FAKE_PERMISSION_SUPPORT,
+  fakeServiceStarts,
+  readFakeSandboxOps,
+} from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -100,7 +104,7 @@ beforeAll(async () => {
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { deviceNetwork: { extraHosts: ["a.dev", "example.org"] } },
+    payload: { deviceNetwork: { extraHosts: ["a.dev", "example.org", "cdn.example.org"] } },
   });
   expect(res.statusCode, res.body).toBe(200);
 });
@@ -123,7 +127,7 @@ interface Setup {
 
 let s: Setup;
 /** Another member of the org (no device of theirs on the conversation). */
-let other: { accountId: string };
+let other: { accountId: string; login: string };
 
 const newMember = async (): Promise<{ accountId: string; login: string }> => {
   const login = `m-${randomUUID().slice(0, 8)}`;
@@ -225,22 +229,75 @@ describe("ctx.deviceAccess", () => {
   it("ensureService runs the command review once per start and starts the service", async () => {
     const review = allowReview();
     const spec = { ...echoServiceSpec(), args: ["--title", "a b"] };
-    const first = await access.ensureService(CALLER, callOf(), spec);
+    const call = callOf();
+    const first = await access.ensureService(CALLER, call, spec);
     expect(first.state).toBe("running");
     expect(review).toHaveBeenCalledTimes(1);
-    // the launch argv ["node", entry, ...args] as the review's command text
+    // the command as it runs: node <stateDir>/<entry> <args…>, in the state directory
+    expect(first.stateDir).toMatch(/\/\.svc\/echo$/);
     expect(review.mock.calls[0]?.[0]).toMatchObject({
       toolKey: "Bash",
-      input: { command: "node echo.mjs --title 'a b'" },
+      input: { command: `node ${first.stateDir}/echo.mjs --title 'a b'` },
+      workspace: first.stateDir,
       orgId,
       conversationId: s.conversationId,
       accountId: s.accountId,
       attended: true,
     });
+    // the verdict is recorded on the call, the start audited
+    expect(callScopeOf(call)?.review).toEqual({
+      decision: "allow",
+      by: "rule",
+      rule: null,
+      reason: "test",
+    });
+    const audits = await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "org_id", "detail"])
+      .where("action", "=", "device.service_started")
+      .where("target", "=", s.deviceId)
+      .execute();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ actor_account_id: s.accountId, org_id: orgId });
+    expect(audits[0]?.detail).toEqual({
+      extension: "fake-device-access",
+      service: "echo",
+      deviceId: s.deviceId,
+      argv: ["node", `${first.stateDir}/echo.mjs`, "--title", "a b"],
+      decision: "allow",
+      rule: null,
+    });
     // running: found, not reviewed again
     const second = await access.ensureService(CALLER, callOf(), spec);
     expect(second).toEqual(first);
     expect(review).toHaveBeenCalledTimes(1);
+    // the service died since: the ifRunning ensure finds it stopped, so it is reviewed again
+    await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
+    const third = await access.ensureService(CALLER, callOf(), spec);
+    expect(third.state).toBe("running");
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it("the env reaches the review as `env K=V`, and a spec that would change what runs is refused", async () => {
+    const review = allowReview();
+    const withEnv = { ...echoServiceSpec(), env: { MODE: "a b" } };
+    const status = await access.ensureService(CALLER, callOf(), withEnv);
+    expect(review.mock.calls[0]?.[0]).toMatchObject({
+      input: { command: `env 'MODE=a b' node ${status.stateDir}/echo.mjs` },
+    });
+    review.mockClear();
+    for (const bad of [
+      {
+        ...echoServiceSpec(),
+        files: { ...echoServiceSpec().files, "../x.mjs": new Uint8Array(1) },
+      },
+      { ...echoServiceSpec(), env: { NODE_OPTIONS: "--require /tmp/x.js" } },
+    ]) {
+      await expect(access.ensureService(CALLER, callOf(), bad)).rejects.toThrow(
+        /Invalid device service spec/,
+      );
+    }
+    expect(review).not.toHaveBeenCalled();
   });
 
   it("review refusal fails closed", async () => {
@@ -279,6 +336,49 @@ describe("ctx.deviceAccess", () => {
     expect(callScopeOf(call)?.blocked).toBeNull();
   });
 
+  it("a call whose root conversation belongs to someone else is refused", async () => {
+    const review = allowReview();
+    // a sub-agent tree rooted in another member's conversation (a group's), trigger == owner field
+    const otherReq = await session(k, other.login);
+    const otherConv = await createConv(otherReq, orgId, await createAgent(otherReq, orgId));
+    const call: ToolCallContext = {
+      orgId,
+      accountId: s.accountId,
+      ownerAccountId: s.accountId,
+      agentId: s.agentId,
+      conversationId: s.conversationId,
+      callId: "group-call",
+      signal: AbortSignal.timeout(30_000),
+    };
+    attachCallScope(call, {
+      runId: randomUUID(),
+      step: 0,
+      rootConversationId: otherConv,
+      unattended: false,
+      agentVersion: 1,
+    });
+    expect(await refusal(access.ensureService(CALLER, call, echoServiceSpec()))).toEqual({
+      code: "not_owner",
+      message: DEVICE_ACCESS_NOT_OWNER_TEXT,
+    });
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it("a scope naming another org than the conversation's is refused", async () => {
+    expect(
+      (
+        await refusal(
+          access.streamTicket(CALLER, {
+            orgId: randomUUID(),
+            conversationId: s.conversationId,
+            accountId: s.accountId,
+            service: "echo",
+          }),
+        )
+      ).code,
+    ).toBe("no_device");
+  });
+
   it("undeclared service name is refused", async () => {
     const review = allowReview();
     const spec = { ...echoServiceSpec(), name: "other" };
@@ -300,6 +400,7 @@ describe("ctx.deviceAccess", () => {
       (
         await refusal(
           access.streamTicket(CALLER, {
+            orgId,
             conversationId: s.conversationId,
             accountId: s.accountId,
             service: "other",
@@ -323,6 +424,8 @@ describe("ctx.deviceAccess", () => {
     const [r] = ofType(await eventsOf(db, s.conversationId), "tool_result").map((e) => e.payload);
     expect(r?.isError).toBeFalsy();
     expect(r?.content).toBe("hello device");
+    // the launch's review is recorded with the call's result, as a reviewed Bash call's is
+    expect(r?.review).toEqual({ decision: "allow", by: "rule", rule: null, reason: "test" });
     // and directly, once running
     const answer = await access.request(CALLER, callOf(), {
       service: "echo",
@@ -387,13 +490,13 @@ describe("ctx.deviceAccess", () => {
   });
 
   it("streamTicket refuses a non-owner and mints a single-use 60 s ticket", async () => {
-    const scope = { conversationId: s.conversationId, service: "echo" };
+    const scope = { orgId, conversationId: s.conversationId, service: "echo" };
     expect(
       await refusal(access.streamTicket(CALLER, { ...scope, accountId: other.accountId })),
     ).toEqual({ code: "not_owner", message: DEVICE_ACCESS_NOT_OWNER_TEXT });
     const before = Date.now();
     const minted = await access.mintTicket(
-      { conversationId: s.conversationId, accountId: s.accountId },
+      { orgId, conversationId: s.conversationId, accountId: s.accountId },
       "echo",
       CALLER,
     );
@@ -427,6 +530,7 @@ describe("ctx.deviceAccess", () => {
     expect(
       await refusal(
         access.addNetworkHosts(CALLER, {
+          orgId,
           conversationId: s.conversationId,
           accountId: other.accountId,
           hosts: ["example.org"],
@@ -434,6 +538,7 @@ describe("ctx.deviceAccess", () => {
       ),
     ).toEqual({ code: "not_owner", message: DEVICE_ACCESS_NOT_OWNER_TEXT });
     await access.addNetworkHosts(CALLER, {
+      orgId,
       conversationId: s.conversationId,
       accountId: s.accountId,
       hosts: ["example.org"],
@@ -454,6 +559,32 @@ describe("ctx.deviceAccess", () => {
     expect(audits[0]?.actor_account_id).toBe(s.accountId);
   });
 
+  it("addNetworkHosts re-applies the limits to a running service and starts nothing when it is stopped", async () => {
+    allowReview();
+    const ifRunning = async () =>
+      (await readFakeSandboxOps(sandboxRoot)).filter(
+        (l) => l[0] === "service-if-running" && l[2] === "echo",
+      );
+    const scope = { orgId, conversationId: s.conversationId, accountId: s.accountId };
+    // running: an ifRunning ensure after the write
+    await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    const before = (await ifRunning()).length;
+    const starts = await fakeServiceStarts(sandboxRoot);
+    await access.addNetworkHosts(CALLER, { ...scope, hosts: ["example.org"] });
+    const after = await ifRunning();
+    expect(after.length).toBe(before + 1);
+    expect(after.at(-1)?.[3]).toBe("running");
+    expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
+    // stopped (the instance runs): the ifRunning ensure finds it stopped and starts nothing
+    await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
+    await access.addNetworkHosts(CALLER, { ...scope, hosts: ["cdn.example.org"] });
+    const last = await ifRunning();
+    expect(last.length).toBe(before + 2);
+    expect(last.at(-1)?.[3]).toBe("stopped");
+    expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
+    expect((await status())?.state).toBe("stopped");
+  });
+
   it("answerHandoff answers the call's question with done=true", async () => {
     await postMessage(s.req, orgId, s.conversationId, `tool:${HANDOFF_TOOL}:{}`);
     const q = await waitFor(
@@ -467,10 +598,28 @@ describe("ctx.deviceAccess", () => {
       15_000,
       "a pending question",
     );
-    const scope = { conversationId: s.conversationId, callId: q.call_id, done: true };
+    const scope = { orgId, conversationId: s.conversationId, callId: q.call_id, done: true };
     expect(
       await refusal(access.answerHandoff(CALLER, { ...scope, accountId: other.accountId })),
     ).toEqual({ code: "not_owner", message: DEVICE_ACCESS_NOT_OWNER_TEXT });
+    // a question another extension's tool raised is not this extension's to answer
+    const raw = await db
+      .selectFrom("questions")
+      .select("spec")
+      .where("id", "=", q.id)
+      .executeTakeFirstOrThrow();
+    const spec = raw.spec as Record<string, unknown>;
+    const setKey = (toolKey: unknown) =>
+      db
+        .updateTable("questions")
+        .set({ spec: JSON.stringify({ ...spec, toolKey }) })
+        .where("id", "=", q.id)
+        .execute();
+    await setKey("plugin__other-ext__handoff");
+    await expect(
+      access.answerHandoff(CALLER, { ...scope, accountId: s.accountId }),
+    ).rejects.toMatchObject({ code: "question.not_found" });
+    await setKey(spec.toolKey);
     await access.answerHandoff(CALLER, { ...scope, accountId: s.accountId });
     const after = await db
       .selectFrom("questions")

@@ -21,19 +21,60 @@ import type { SandboxUseContext } from "./use-context.js";
 export class DeviceServices {
   constructor(@Inject(SandboxService) private readonly sandbox: SandboxService) {}
 
-  /** Starts the service in the device, or finds it running (the provider keeps a running one). */
+  /**
+   * Starts the service in the device, or finds it running (the provider keeps a running one).
+   * With `ifRunning` it never starts one: a stopped service answers its `stopped` status. A spec
+   * breaking {@link serviceSpecIssue} is refused before the device is touched.
+   */
   async ensure(
     use: SandboxUseContext,
     spec: DeviceServiceSpec,
     signal: AbortSignal,
+    opts: { ifRunning?: boolean } = {},
   ): Promise<DeviceServiceStatus> {
-    assertServiceName(spec.name);
+    assertServiceSpec(spec);
     return this.sandbox.withDeviceServices(
       use,
       requireServices,
-      (h, p, sig) => (p.ensureService as NonNullable<typeof p.ensureService>)(h, spec, sig),
+      (h, p, sig) =>
+        (p.ensureService as NonNullable<typeof p.ensureService>)(
+          h,
+          spec,
+          sig,
+          opts.ifRunning === true ? { ifRunning: true } : undefined,
+        ),
       signal,
     );
+  }
+
+  /**
+   * Applies the device's current limits to the service again when it runs (an `ifRunning`
+   * ensure; the device's allowlist changed); nothing when the instance or the service is not
+   * running, and it never resumes or starts anything. The status, or null without a running
+   * instance.
+   */
+  async refresh(
+    use: SandboxUseContext,
+    name: string,
+    signal: AbortSignal,
+  ): Promise<DeviceServiceStatus | null> {
+    assertServiceName(name);
+    const current = await this.sandbox.currentInstance(use.deviceId);
+    if (!current) return null;
+    const r = await this.sandbox.ifRunning(
+      use.deviceId,
+      { createdAt: current.createdAt },
+      async (p, h, sig) => {
+        requireServices(p);
+        // with ifRunning the provider reads only the name
+        const named: DeviceServiceSpec = { name, runtime: "node", entry: "", args: [], files: {} };
+        return (p.ensureService as NonNullable<typeof p.ensureService>)(h, named, sig, {
+          ifRunning: true,
+        });
+      },
+      signal,
+    );
+    return r.kind === "ran" ? r.value : null;
   }
 
   /** One request to the service's socket; resolves its answer (throws when it is not running). */
@@ -58,9 +99,9 @@ export class DeviceServices {
   }
 
   /**
-   * The service's state without starting or resuming anything: `stopped` when the device has no
-   * running instance; null when the provider cannot tell (it lacks `serviceStatus`), so the
-   * caller treats the service as possibly stopped.
+   * The service's state without starting or resuming anything (the provider's `serviceStatus`);
+   * null when the device has no running instance (so no service runs) or the provider cannot
+   * tell (it lacks `serviceStatus`).
    */
   async status(
     use: SandboxUseContext,
@@ -68,9 +109,8 @@ export class DeviceServices {
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus | null> {
     assertServiceName(name);
-    const stopped: DeviceServiceStatus = { name, state: "stopped", startedAt: null };
     const current = await this.sandbox.currentInstance(use.deviceId);
-    if (!current) return stopped;
+    if (!current) return null;
     const r = await this.sandbox.ifRunning(
       use.deviceId,
       { createdAt: current.createdAt },
@@ -80,7 +120,7 @@ export class DeviceServices {
       },
       signal,
     );
-    return r.kind === "ran" ? r.value : stopped;
+    return r.kind === "ran" ? r.value : null;
   }
 
   /**
@@ -101,6 +141,62 @@ export class DeviceServices {
       signal,
     );
   }
+}
+
+/** Environment variables a service spec may not set: they change what runs, or are the provider's. */
+const RESERVED_ENV =
+  /^(NODE_OPTIONS|NODE_PATH|LD_.*|DYLD_.*|CAPYBARA_.*|(HTTPS?|NO|ALL|FTP)_PROXY)$/i;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Why a service file path is refused, or null: relative, plain segments only. */
+function servicePathIssue(path: string): string | null {
+  if (path === "") return "is empty";
+  if (path.includes("\0")) return "contains NUL";
+  if (path.includes("\\")) return "contains a backslash";
+  if (path.startsWith("/")) return "is absolute";
+  for (const seg of path.split("/")) {
+    if (seg === "") return "has an empty segment";
+    if (seg === "." || seg === "..") return `has a "${seg}" segment`;
+  }
+  return null;
+}
+
+/**
+ * Why a service spec is refused, or null (browser use spec §5): a valid name; `entry` and every
+ * `files` key relative inside the state directory (no absolute path, no `.` / `..` / empty
+ * segment, no backslash, no NUL); `entry` one of the files; no env variable that changes what
+ * runs or that the provider sets (`NODE_OPTIONS`, `NODE_PATH`, `LD_*`, `DYLD_*`, `CAPYBARA_*`,
+ * proxy variables), no NUL in a value. So the reviewed command is the one that runs.
+ */
+export function serviceSpecIssue(spec: DeviceServiceSpec): string | null {
+  if (typeof spec?.name !== "string" || !DEVICE_SERVICE_NAME_RE.test(spec.name))
+    return `the service name ${JSON.stringify(spec?.name)} must be 1 to 32 characters, a lower-case letter then lower-case letters, digits and "-"`;
+  if (typeof spec.entry !== "string") return "entry must be a string";
+  const files = spec.files ?? {};
+  for (const key of Object.keys(files)) {
+    const why = servicePathIssue(key);
+    if (why !== null) return `the file path ${JSON.stringify(key)} ${why}`;
+  }
+  const entryWhy = servicePathIssue(spec.entry);
+  if (entryWhy !== null) return `the entry ${JSON.stringify(spec.entry)} ${entryWhy}`;
+  if (!Object.hasOwn(files, spec.entry))
+    return `the entry ${JSON.stringify(spec.entry)} is not one of the files`;
+  if (!Array.isArray(spec.args) || spec.args.some((a) => typeof a !== "string" || a.includes("\0")))
+    return "args must be strings without NUL";
+  for (const [k, v] of Object.entries(spec.env ?? {})) {
+    if (!ENV_NAME.test(k)) return `the env variable name ${JSON.stringify(k)} is not valid`;
+    if (RESERVED_ENV.test(k))
+      return `the env variable ${k} may not be set: it changes what runs, or the provider sets it`;
+    if (typeof v !== "string" || v.includes("\0"))
+      return `the env variable ${k} must be a string without NUL`;
+  }
+  return null;
+}
+
+/** Throws a TypeError naming what breaks {@link serviceSpecIssue}. */
+export function assertServiceSpec(spec: DeviceServiceSpec): void {
+  const why = serviceSpecIssue(spec);
+  if (why !== null) throw new TypeError(`Invalid device service spec: ${why}.`);
 }
 
 function assertServiceName(name: string): void {

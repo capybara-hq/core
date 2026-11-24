@@ -1,4 +1,5 @@
 import type { ToolCallContext } from "@capybara-hq/plugin-sdk";
+import type { ReviewRecord } from "../conversations/events.js";
 import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
 
 /**
@@ -33,6 +34,12 @@ export interface CallScope {
    */
   device: string | null;
   /**
+   * The command review's record of a device service launch during this call
+   * (`ctx.deviceAccess.ensureService`), written with the call's result as a reviewed `Bash`
+   * call's is; null when nothing was reviewed. The last review wins.
+   */
+  review: ReviewRecord | null;
+  /**
    * Hosts a device service (`ctx.deviceAccess.reportBlockedHosts`) saw refused by the device's
    * network allowlist during this call; null when nothing was reported. `deviceId` is the device
    * this call's own `ctx.deviceAccess` calls resolved, or null when the call made none (the
@@ -46,7 +53,12 @@ type Scoped = ToolCallContext & { [CALL_SCOPE]?: CallScope };
 
 /** Attaches a fresh scope to the call's context (the pipeline, before the handler runs). */
 export function attachCallScope(ctx: ToolCallContext, facts?: CallFacts): CallScope {
-  const scope: CallScope = { device: null, blocked: null, ...(facts !== undefined && { facts }) };
+  const scope: CallScope = {
+    device: null,
+    review: null,
+    blocked: null,
+    ...(facts !== undefined && { facts }),
+  };
   (ctx as Scoped)[CALL_SCOPE] = scope;
   return scope;
 }

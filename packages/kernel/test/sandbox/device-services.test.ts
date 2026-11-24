@@ -224,6 +224,42 @@ describe("device services", () => {
     );
     expect(await row()).toBeUndefined();
   });
+
+  it("a spec whose files or env would change what runs is refused before the device is used", async () => {
+    const bad: [Partial<DeviceServiceSpec>, RegExp][] = [
+      [{ files: { ...spec().files, "../escape.mjs": text("x") } }, /"\.\." segment/],
+      [{ files: { ...spec().files, "/abs.mjs": text("x") } }, /is absolute/],
+      [{ files: { ...spec().files, "a\\b.mjs": text("x") } }, /backslash/],
+      [{ files: { ...spec().files, "a\0b": text("x") } }, /NUL/],
+      [{ entry: "../echo.mjs" }, /"\.\." segment/],
+      [{ entry: "missing.mjs" }, /not one of the files/],
+      [{ env: { NODE_OPTIONS: "--require /tmp/x.js" } }, /NODE_OPTIONS may not be set/],
+      [{ env: { LD_PRELOAD: "/tmp/x.so" } }, /LD_PRELOAD may not be set/],
+      [{ env: { DYLD_INSERT_LIBRARIES: "/tmp/x" } }, /may not be set/],
+      [{ env: { CAPYBARA_SERVICE_SOCKET: "/tmp/s" } }, /may not be set/],
+      [{ env: { https_proxy: "http://evil" } }, /may not be set/],
+    ];
+    for (const [over, message] of bad) {
+      await expect(services.ensure(use(), { ...spec(), ...over }, signal())).rejects.toThrow(
+        message,
+      );
+    }
+    expect(await row()).toBeUndefined();
+  });
+
+  it("an ifRunning ensure never starts a stopped service and keeps a running one", async () => {
+    const stopped = await services.ensure(use(), spec(), signal(), { ifRunning: true });
+    expect(stopped).toMatchObject({ name: "echo", state: "stopped", startedAt: null });
+    // the provider's state directory (the fake's sits in the device's files: `.svc/<name>`)
+    expect(stopped.stateDir).toMatch(/\/\.svc\/echo$/);
+    const want = fakeServiceStateDir(root, await instanceId(), "echo");
+    expect(stopped.stateDir.endsWith(want.slice(root.length))).toBe(true);
+    expect(await fakeServiceStarts(root)).toBe(0);
+    const started = await services.ensure(use(), spec(), signal());
+    expect(await services.ensure(use(), spec(), signal(), { ifRunning: true })).toEqual(started);
+    expect(await services.refresh(use(), "echo", signal())).toEqual(started);
+    expect(await fakeServiceStarts(root)).toBe(1);
+  });
 });
 
 describe("stream holds", () => {

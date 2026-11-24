@@ -500,10 +500,17 @@ treats a dial-in device like any other (its provider, report and permission supp
   one named long-lived Node process per device in its own state directory, under the device's
   sandbox and network, killed with the instance on suspend and destroy. The kernel reaches them
   only through `DeviceServices` (`sandbox/device-services.ts`: `ensure`, `request`, `status`,
-  `stop`; a use like any tool call, so a suspended instance resumes; `status` and `stop` never
-  resume one). `serviceStatus(h, name, signal)` answers without starting anything: `ctx.deviceAccess`
-  runs the command review of a launch only when it says `stopped`, and on every ensure when the
-  provider lacks it, so implement it.
+  `refresh`, `stop`; `ensure` and `request` are uses like any tool call, so a suspended instance
+  resumes; `status`, `refresh` and `stop` never resume one). Every status carries `stateDir`, the
+  service's absolute state directory, also when stopped. `ensureService(h, spec, signal,
+  { ifRunning: true })` reads only `spec.name`, never starts anything, re-applies the device's
+  current limits to a running service and answers a stopped one's status (implement it: the
+  kernel calls it before every launch review, race-free, and after the device allowlist
+  changes). The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
+  file keys relative with plain segments (no absolute path, `..`, `.`, empty segment, backslash,
+  NUL), entry one of the files, no `NODE_OPTIONS` / `NODE_PATH` / `LD_*` / `DYLD_*` /
+  `CAPYBARA_*` / proxy variables in `env`. The review sees `env K=V … node <stateDir>/<entry> …`
+  in the state directory, so run exactly that.
 - **Stream holds.** `SandboxService.holdForStream(deviceId, orgId, signal)` returns
   `{ h, p, signal, release }` for an open viewer: a token in the sorted set
   `capk:sandbox-streams:<device>` (scored by expiry, renewed while held) that exempts the device

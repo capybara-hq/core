@@ -993,6 +993,7 @@ export type DeviceAccessErrorCode = "no_device" | "provider_unavailable" | "capa
 
 // @public
 export type DeviceAccessScope = {
+    orgId: string;
     conversationId: string;
     accountId: string;
 };
@@ -1027,7 +1028,9 @@ export interface DeviceProvider {
     destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
     destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
     readonly dialIn?: DialInHandler;
-    ensureService?(h: SandboxHandle, spec: DeviceServiceSpec, signal: AbortSignal): Promise<DeviceServiceStatus>;
+    ensureService?(h: SandboxHandle, spec: DeviceServiceSpec, signal: AbortSignal, opts?: {
+        ifRunning?: boolean;
+    }): Promise<DeviceServiceStatus>;
     exec(h: SandboxHandle, args: {
         command: string;
         cwd?: string;
@@ -1138,6 +1141,7 @@ export interface DeviceServiceStatus {
     name: string;
     startedAt: string | null;
     state: "running" | "stopped";
+    stateDir: string;
 }
 
 // @public
