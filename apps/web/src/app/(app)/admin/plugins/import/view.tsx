@@ -157,11 +157,11 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
         title: t("title"),
       }}
-      steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
+      steps={[t("steps.source"), t("steps.reviewConfirm")]}
       current={1}
       actionRow={{
         cancel: { label: tw("cancel"), onSelect: () => {} },
-        primary: { label: tw("next"), onSelect: () => {} },
+        primary: { label: t("confirm"), onSelect: () => {}, disabled: true },
       }}
       // The review stack: the plugin line over its facts (package, origin, provenance), then the
       // five component sections (extension, skills, connector templates, agent templates,
@@ -507,22 +507,43 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
                   : gitUrl.trim() === ""),
           },
         }
-      : step === 1
+      : step === 1 && !shownUpdating
         ? {
             cancel,
-            ...(!fromElsewhere && { secondary: { label: tw("back"), onSelect: back } }),
+            ...(!fromElsewhere && {
+              secondary: { label: tw("back"), onSelect: back, disabled: submitting },
+            }),
             primary: {
-              label: tw("next"),
+              label: t("confirm"),
               onSelect: () => {
-                mode.current = updating;
-                setStep(2);
+                mode.current = false;
+                void submit();
               },
-              loading: modePending,
-              disabled: modePending,
+              loading: submitting,
+              disabled:
+                submitting ||
+                modePending ||
+                result !== null ||
+                requestsPending ||
+                scopeInvalid ||
+                (sensitive && !ack),
             },
           }
-        : shownUpdating
+        : step === 1
           ? {
+              cancel,
+              ...(!fromElsewhere && { secondary: { label: tw("back"), onSelect: back } }),
+              primary: {
+                label: tw("next"),
+                onSelect: () => {
+                  mode.current = updating;
+                  setStep(2);
+                },
+                loading: modePending,
+                disabled: modePending,
+              },
+            }
+          : {
               cancel,
               secondary: {
                 label: tw("back"),
@@ -539,21 +560,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
                   importedNotUpdated !== null ||
                   (sensitive && !ack),
               },
-            }
-          : {
-              cancel,
-              secondary: { label: tw("back"), onSelect: back, disabled: submitting },
-              primary: {
-                label: t("confirm"),
-                onSelect: () => void submit(),
-                loading: submitting,
-                disabled:
-                  submitting ||
-                  result !== null ||
-                  requestsPending ||
-                  scopeInvalid ||
-                  (sensitive && !ack),
-              },
             };
 
   return (
@@ -562,11 +568,11 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
         title: shownUpdating ? t("titleUpdate", { name: installedName }) : t("title"),
       }}
-      steps={[
-        t("steps.source"),
-        t("steps.review"),
-        shownUpdating ? t("steps.update") : t("steps.confirm"),
-      ]}
+      steps={
+        shownUpdating
+          ? [t("steps.source"), t("steps.review"), t("steps.update")]
+          : [t("steps.source"), t("steps.reviewConfirm")]
+      }
       current={step}
       actionRow={actionRow}
     >
@@ -649,7 +655,125 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           </Stack>
         ))}
       {step === 1 && review !== null && (
-        <PluginReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
+        <Stack gap={16}>
+          <PluginReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
+          {/* An install ends here: the scope, the sensitive ack and the result sit under the review */}
+          {!modePending && !shownUpdating && (
+            <Stack gap={16}>
+              {review.extension === undefined ? (
+                <Text tone="muted">{t("noExtension")}</Text>
+              ) : review.extension.olderThanDeployed === true ? (
+                <Text variant="prose" tone="warn">
+                  {t("olderThanDeployed")}
+                </Text>
+              ) : !deployable ? (
+                <Text tone="muted">
+                  {t("keepExtension", {
+                    name: review.extension.name,
+                    version: versionLabel(
+                      review.extension.currentVersion ?? review.extension.version,
+                    ),
+                  })}
+                </Text>
+              ) : (
+                <Text variant="small" tone="muted">
+                  {t("deployOn")}
+                </Text>
+              )}
+              <Card title={t("scopeTitle")}>
+                <Stack gap={8}>
+                  {linked !== undefined && (
+                    <Text variant="small" tone="muted">
+                      {t("requestDefault", { org: linked.orgName })}
+                    </Text>
+                  )}
+                  <ScopeFields
+                    scope={target.scope}
+                    orgs={target.orgs}
+                    onScope={(next) =>
+                      setScopeChoice({ scope: next, orgs: next === "named" ? target.orgs : [] })
+                    }
+                    onOrgs={(next) => setScopeChoice({ scope: "named", orgs: next })}
+                    disabled={submitting || result !== null}
+                  />
+                  {scopeInvalid && (
+                    <Text variant="small" tone="muted">
+                      {t("namedNeedsOrg")}
+                    </Text>
+                  )}
+                </Stack>
+              </Card>
+              {sensitive && (
+                <Stack gap={8}>
+                  <Text variant="prose" tone="warn">
+                    {t("ackHint")}
+                  </Text>
+                  <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
+                </Stack>
+              )}
+              {submitError !== undefined && <ProminentError problem={submitError} />}
+              {result?.deploy?.singleProvider && (
+                <Card title={t("deployResult")}>
+                  <Stack gap={4}>
+                    <Text tone="warn">
+                      {t(
+                        result.deploy.singleProvider.required === true
+                          ? "deployLeftDisabledRequired"
+                          : "deployLeftDisabled",
+                        {
+                          name: result.deploy.name,
+                          version: versionLabel(result.deploy.version),
+                          point: capabilityLabel(
+                            capabilityOfPoint(result.deploy.singleProvider.extensionPoint),
+                          ),
+                          other: extensionLabel(result.deploy.singleProvider.enabled, lang),
+                        },
+                      )}
+                    </Text>
+                    <Text>
+                      <Link
+                        href={`/admin/extensions/${encodeURIComponent(result.deploy.singleProvider.enabled.name)}`}
+                      >
+                        {t("openEnabled", {
+                          name: extensionLabel(result.deploy.singleProvider.enabled, lang),
+                        })}
+                      </Link>
+                    </Text>
+                    <Text>
+                      <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
+                    </Text>
+                  </Stack>
+                </Card>
+              )}
+              {result?.deploy && result.deploy.result === "failed" && (
+                <Card title={t("deployResult")}>
+                  <Stack gap={4}>
+                    <Text tone="fail">
+                      {t("deployFailed", {
+                        name: result.deploy.name,
+                        version: versionLabel(result.deploy.version),
+                        code: result.deploy.code ?? "",
+                      })}
+                    </Text>
+                    {result.deploy.message !== undefined && (
+                      <Text variant="small" tone="muted">
+                        {result.deploy.message}
+                      </Text>
+                    )}
+                    {result.deploy.note !== undefined && (
+                      <Text variant="small" tone="warn">
+                        {result.deploy.note}
+                      </Text>
+                    )}
+                    <Text>
+                      <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
+                    </Text>
+                  </Stack>
+                </Card>
+              )}
+            </Stack>
+          )}
+        </Stack>
       )}
       {step === 2 && review !== null && shownUpdating && (
         <Stack gap={16}>
@@ -698,120 +822,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
             </Stack>
           )}
           {submitError !== undefined && <ProminentError problem={submitError} />}
-        </Stack>
-      )}
-      {step === 2 && review !== null && !shownUpdating && (
-        <Stack gap={16}>
-          <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
-          {review.extension === undefined ? (
-            <Text tone="muted">{t("noExtension")}</Text>
-          ) : review.extension.olderThanDeployed === true ? (
-            <Text variant="prose" tone="warn">
-              {t("olderThanDeployed")}
-            </Text>
-          ) : !deployable ? (
-            <Text tone="muted">
-              {t("keepExtension", {
-                name: review.extension.name,
-                version: versionLabel(review.extension.currentVersion ?? review.extension.version),
-              })}
-            </Text>
-          ) : (
-            <Text variant="small" tone="muted">
-              {t("deployOn")}
-            </Text>
-          )}
-          <Card title={t("scopeTitle")}>
-            <Stack gap={8}>
-              {linked !== undefined && (
-                <Text variant="small" tone="muted">
-                  {t("requestDefault", { org: linked.orgName })}
-                </Text>
-              )}
-              <ScopeFields
-                scope={target.scope}
-                orgs={target.orgs}
-                onScope={(next) =>
-                  setScopeChoice({ scope: next, orgs: next === "named" ? target.orgs : [] })
-                }
-                onOrgs={(next) => setScopeChoice({ scope: "named", orgs: next })}
-                disabled={submitting || result !== null}
-              />
-              {scopeInvalid && (
-                <Text variant="small" tone="muted">
-                  {t("namedNeedsOrg")}
-                </Text>
-              )}
-            </Stack>
-          </Card>
-          {sensitive && (
-            <Stack gap={8}>
-              <Text variant="prose" tone="warn">
-                {t("ackHint")}
-              </Text>
-              <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
-            </Stack>
-          )}
-          {submitError !== undefined && <ProminentError problem={submitError} />}
-          {result?.deploy?.singleProvider && (
-            <Card title={t("deployResult")}>
-              <Stack gap={4}>
-                <Text tone="warn">
-                  {t(
-                    result.deploy.singleProvider.required === true
-                      ? "deployLeftDisabledRequired"
-                      : "deployLeftDisabled",
-                    {
-                      name: result.deploy.name,
-                      version: versionLabel(result.deploy.version),
-                      point: capabilityLabel(
-                        capabilityOfPoint(result.deploy.singleProvider.extensionPoint),
-                      ),
-                      other: extensionLabel(result.deploy.singleProvider.enabled, lang),
-                    },
-                  )}
-                </Text>
-                <Text>
-                  <Link
-                    href={`/admin/extensions/${encodeURIComponent(result.deploy.singleProvider.enabled.name)}`}
-                  >
-                    {t("openEnabled", {
-                      name: extensionLabel(result.deploy.singleProvider.enabled, lang),
-                    })}
-                  </Link>
-                </Text>
-                <Text>
-                  <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
-                </Text>
-              </Stack>
-            </Card>
-          )}
-          {result?.deploy && result.deploy.result === "failed" && (
-            <Card title={t("deployResult")}>
-              <Stack gap={4}>
-                <Text tone="fail">
-                  {t("deployFailed", {
-                    name: result.deploy.name,
-                    version: versionLabel(result.deploy.version),
-                    code: result.deploy.code ?? "",
-                  })}
-                </Text>
-                {result.deploy.message !== undefined && (
-                  <Text variant="small" tone="muted">
-                    {result.deploy.message}
-                  </Text>
-                )}
-                {result.deploy.note !== undefined && (
-                  <Text variant="small" tone="warn">
-                    {result.deploy.note}
-                  </Text>
-                )}
-                <Text>
-                  <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
-                </Text>
-              </Stack>
-            </Card>
-          )}
         </Stack>
       )}
     </WizardPage>

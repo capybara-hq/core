@@ -142,9 +142,9 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
 /**
  * The actions on the org's plugins (spec §5.1, §9) and the switch-off dialog they open. Org admins:
  * 启用 (straight to the switch, or to the input wizard when it asks for input), 完成设置 (a
- * plugin whose connector template misses its connector), 停用 (previewed: what it takes away and the agents that use it;
- * confirmed with the preview's hash; never on `all` / builtin plugins), 申请 (`access`, a plugin
- * not offered to the org). Members: 申请启用 (`enable`) on an `optional` plugin that is off.
+ * plugin whose connector template misses its connector), 停用 (previewed: what it takes away and
+ * the agents that use it; confirmed with the preview's hash; never on `all` / builtin plugins),
+ * 申请 (`access`, a plugin not offered to the org). Members: 申请启用 (`enable`) on an `optional` plugin that is off.
  * Nothing while a request is pending, or on a plugin the platform stopped. Each call invalidates
  * what a plugin change touches; failures land in `error`.
  */

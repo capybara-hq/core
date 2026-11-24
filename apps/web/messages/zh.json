@@ -5073,7 +5073,7 @@
         "steps": {
           "source": "选择插件包",
           "review": "审阅",
-          "confirm": "确认",
+          "reviewConfirm": "审阅并确认",
           "update": "更新预览"
         },
         "sourceLabel": "来源",
@@ -5099,7 +5099,7 @@
         "keepExtension": "扩展 {name} {version} 已安装在部署上。",
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
-        "confirm": "确认安装",
+        "confirm": "安装",
         "done": "已安装插件「{name}」。",
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），插件已保留在平台上。可在扩展后台重试。",

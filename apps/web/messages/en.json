@@ -5085,7 +5085,7 @@
         "steps": {
           "source": "Choose package",
           "review": "Review",
-          "confirm": "Confirm",
+          "reviewConfirm": "Review and confirm",
           "update": "Update preview"
         },
         "sourceLabel": "Source",
@@ -5111,7 +5111,7 @@
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
-        "confirm": "Confirm install",
+        "confirm": "Install",
         "done": "Installed plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the plugin is kept on the platform. Retry in the extension admin.",

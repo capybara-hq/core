@@ -47,9 +47,9 @@ type SourceList = { items: Marketplace[]; offline: boolean };
  * the 插件 market filter row leads here, its entries are the 插件 tab 市场). One card per source
  * with its kind, address, state, the 启用 / 停用 switch and "Refresh now"; 详情 (the raw error and
  * the skipped entries), 编辑 and 删除 are in the ⋯ menu. The official marketplace is read-only (its
- * address is in the deployment config), as is a config-managed one: only the switch and refresh. Adding and editing a
- * custom source is the {@link MarketplaceSourceDialog} (a marketplace.json URL or a git
- * repository). From the query cache (the layout prefetched it on a first load): each change
+ * address is in the deployment config), as is a config-managed one: only the switch and refresh.
+ * Adding and editing a custom source is the {@link MarketplaceSourceDialog} (a marketplace.json
+ * URL or a git repository). From the query cache (the layout prefetched it on a first load): each change
  * reads the list again and invalidates the entries and the catalog's marks.
  */
 export default function SourcesView() {

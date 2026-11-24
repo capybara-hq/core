@@ -1130,7 +1130,8 @@ describe("/admin/plugins/import (WizardPage)", () => {
         ).getByRole("list", { name: msgs[locale].extensions.permissions }),
       ).toBeTruthy();
       expect(within(templates).getByRole("list", { name: c.templates })).toBeTruthy();
-      expect(document.querySelector('[data-part="card"]')).toBeNull();
+      // the review is not inside a card (the scope card below it is the only box on the page)
+      expect(sub.closest('[data-part="card"]')).toBeNull();
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
       // The address names the staged import (a reload comes back to this review), written in place:
       // no router navigation, which would remount the wizard under a step taken meanwhile
@@ -1138,7 +1139,6 @@ describe("/admin/plugins/import (WizardPage)", () => {
         "/admin/plugins/import?staging=st1",
       );
       expect(router.replace).not.toHaveBeenCalled();
-      await user.click(screen.getByRole("button", { name: w.next }));
 
       const confirm = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(true);
@@ -1156,6 +1156,36 @@ describe("/admin/plugins/import (WizardPage)", () => {
       });
     },
   );
+
+  it("install has two steps; scope and the sensitive ack sit under the review", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st20");
+    const calls = stubApi({
+      "GET /api/v1/admin/catalog/imports/st20": () =>
+        json(200, { stagingId: "st20", review: REVIEW }),
+      "POST /api/v1/admin/catalog/imports/st20/confirm": () =>
+        json(201, { item: { id: ID, name: "crm" }, deploy: null }),
+    });
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    // the steps: choose, then review and confirm (no third step)
+    expect(await screen.findByText(r.steps.reviewConfirm)).toBeTruthy();
+    expect(screen.queryByText(r.steps.update)).toBeNull();
+    // the scope fields sit under the review body, the sensitive ack with them
+    expect(
+      screen.getByRole("radiogroup", { name: en.catalog.admin.scopeDialog.scopeLabel }),
+    ).toBeTruthy();
+    const install = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
+    expect(install.disabled).toBe(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: r.ack }));
+    expect(install.disabled).toBe(false);
+    await user.click(install);
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
+    expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
+      reviewHash: "h1",
+      scope: "optional",
+    });
+  });
 
   it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with the review hash only", async () => {
     const r = en.catalog.admin.review;
@@ -1186,8 +1216,6 @@ describe("/admin/plugins/import (WizardPage)", () => {
     // Prepared elsewhere: no way back to the source step
     expect(screen.queryByRole("button", { name: en.admin.extensions.wizard.back })).toBeNull();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
-    expect(screen.getByText(r.noExtension)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: r.confirm }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
@@ -1239,8 +1267,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
-    await user.click(screen.getByRole("button", { name: r.confirm }));
+    await user.click(await screen.findByRole("button", { name: r.confirm }));
     expect(
       await screen.findByText(
         fill(r.deployFailed, {
@@ -1405,7 +1432,6 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       ).toBeTruthy();
       // the steps: the review, then the update preview (no scope: the plugin keeps its own)
       expect(screen.getByText(r.steps.update)).toBeTruthy();
-      expect(screen.queryByText(r.steps.confirm)).toBeNull();
       expect(
         await screen.findByRole("region", { name: msgs[locale].catalog.components.skills }),
       ).toBeTruthy();
@@ -1559,7 +1585,7 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
   });
 
   it.each(LOCALES)(
-    "a new plugin: 安装插件, the scope on the last step; cancel at the review or the confirm step writes nothing (%s)",
+    "a new plugin: 安装插件, the scope under the review; cancel writes nothing (%s)",
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
       const w = msgs[locale].admin.extensions.wizard;
@@ -1570,11 +1596,8 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       });
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
       expect(await screen.findByRole("heading", { name: r.title })).toBeTruthy();
-      expect(screen.getByText(r.steps.confirm)).toBeTruthy();
+      expect(screen.getByText(r.steps.reviewConfirm)).toBeTruthy();
       const user = userEvent.setup();
-      await user.click(screen.getByRole("button", { name: w.cancel }));
-      expect(router.push).toHaveBeenLastCalledWith("/admin/plugins");
-      await user.click(screen.getByRole("button", { name: w.next }));
       expect(await screen.findByRole("radiogroup")).toBeTruthy();
       expect(screen.getByRole("button", { name: r.confirm })).toBeTruthy();
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
@@ -1667,14 +1690,13 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
-    await user.click(screen.getByRole("button", { name: r.confirm }));
+    await user.click(await screen.findByRole("button", { name: r.confirm }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     expect(previewReads(calls)).toEqual([]);
     expect(screen.queryByText(`${en.errors.plugin.staging_not_found}`)).toBeNull();
     // the wizard stays the install wizard while the navigation lands
     expect(screen.queryByText(r.steps.update)).toBeNull();
-    expect(screen.getByText(r.steps.confirm)).toBeTruthy();
+    expect(screen.getByText(r.steps.reviewConfirm)).toBeTruthy();
   });
 });
 
@@ -2622,6 +2644,8 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     await user.click(within(dialog).getByRole("button", { name: s.clearToken }));
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ token: null });
+    // clearing the token saves in place: the dialog stays open
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
   it("删除 asks to type the name, then deletes", async () => {
@@ -4539,7 +4563,6 @@ describe("phase B: Claude Code plugins on the import review", () => {
     const user = userEvent.setup();
     await screen.findByRole("region", { name: en.catalog.components.skills });
     expect(screen.queryByRole("checkbox", { name: /using-superpowers|brainstorming/ })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
@@ -5452,7 +5475,7 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
       queryFn: () => ({ items: [], nextOffset: null }),
     });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await screen.findByRole("button", { name: P.review.confirm });
     expect(screen.getByText(P.review.olderThanDeployed)).toBeTruthy();
     expect(screen.getByText(fill(P.review.requestDefault, { org: "Beta" }))).toBeTruthy();
     const named = screen.getByRole("radio", { name: new RegExp(en.catalog.scope.named) });
