@@ -70,6 +70,7 @@ export {
   FAKE_DIAL_IN_PROTOCOL,
   FakeDialInMachine,
   type FakeDialInMachineOptions,
+  FakeMachineStream,
   signInFakeMachine,
 } from "./fake-dial-in-machine.js";
 export {

@@ -6,6 +6,14 @@
 /** The lease of the replica holding the machine's connection: `capk:device-lease:<deviceId>`. */
 export const deviceLeaseKey = (deviceId: string): string => `capk:device-lease:${deviceId}`;
 
+/**
+ * The internal address (`gateway.internalUrl`, or `http://<hostname>:<port>`) of the gateway
+ * replica holding the machine's connection: `capk:device-holder-addr:<deviceId>`. Written by the
+ * holder next to its lease, with a TTL; another replica hops a device stream there.
+ */
+export const deviceHolderAddrKey = (deviceId: string): string =>
+  `capk:device-holder-addr:${deviceId}`;
+
 /** The list of requests waiting for the machine: `capk:device-req:<deviceId>`. */
 export const deviceReqKey = (deviceId: string): string => `capk:device-req:${deviceId}`;
 

@@ -13,7 +13,12 @@ export interface DeviceRoutesGateway {
   /** Who the credential stands for and the provider serving its device; null when unknown. */
   admit(credential: string): Promise<DialInAdmission>;
   /** Serves the upgraded socket (re-checks the credential with the socket paused). */
-  accept(socket: WebSocket, credential: string, protocol: string): Promise<void>;
+  accept(
+    socket: WebSocket,
+    credential: string,
+    protocol: string,
+    localPort?: number,
+  ): Promise<void>;
 }
 
 export interface DeviceRoutesOptions {
@@ -160,7 +165,7 @@ export async function registerDeviceConnectRoute(
           socket.close(4400, "not authenticated");
           return;
         }
-        void opts.gateway.accept(socket, a.credential, a.protocol);
+        void opts.gateway.accept(socket, a.credential, a.protocol, req.socket.localPort);
       },
     );
   });

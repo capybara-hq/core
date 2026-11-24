@@ -125,7 +125,7 @@ export interface KernelDeps {
    * served by the calling extension. Absent (a ctx built alone in a test): `ctx.dialIn` calls
    * reject.
    */
-  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "capacity" | "stop">;
+  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "capacity" | "stop" | "openStream">;
   /**
    * What `ctx.devices` is built from (`DeviceReports`): `changed` reads a device's report again
    * from the calling provider and refuses (`not-served`) a device bound to another one. Absent
@@ -579,10 +579,25 @@ export function createExtensionContext(
               throw new TypeError(`plugin ${name}: ctx.dialIn.stop reason must be drain or stop`);
             await (access as NonNullable<typeof access>).stop(await served(deviceId), reason);
           },
-          // the gateway-local stream path lands with the dial-in stream relay
-          openStream: async (deviceId) => {
-            await served(deviceId);
-            throw new Error(`plugin ${name}: ctx.dialIn.openStream is not implemented yet`);
+          // only on the gateway replica holding the machine's socket (DialInGateway); elsewhere
+          // DialInStreamElsewhereError. The extension's end closes its streams.
+          openStream: async (deviceId, body, opts) => {
+            const id = await served(deviceId);
+            const signal = opts?.signal
+              ? AbortSignal.any([lifecycle.signal, opts.signal])
+              : lifecycle.signal;
+            const stream = await (access as NonNullable<typeof access>).openStream(
+              id,
+              body,
+              signal,
+            );
+            const onEnd = () => stream.close("extension stopped");
+            if (lifecycle.signal.aborted) onEnd();
+            else {
+              lifecycle.signal.addEventListener("abort", onEnd, { once: true });
+              void stream.closed.then(() => lifecycle.signal.removeEventListener("abort", onEnd));
+            }
+            return stream;
           },
         } satisfies DialInChannel;
       })()

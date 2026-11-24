@@ -1,0 +1,298 @@
+import { randomUUID } from "node:crypto";
+import type { DeviceStream } from "@capybara-hq/plugin-sdk";
+import {
+  FakeDialInMachine,
+  type FakeMachineStream,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
+import { Redis } from "ioredis";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { createDb } from "../../src/db/pool.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
+import { deviceHolderAddrKey, deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
+import { legacyDbFor } from "../helpers/conversations.js";
+import { accountsFor } from "../helpers/identity.js";
+import { testMembers } from "../helpers/members.js";
+import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
+import {
+  createOrg,
+  enableExtensions,
+  PW,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
+
+/**
+ * Direct device streams on the dial-in connection (browser use spec §6.1): the gateway replica
+ * holding the machine's socket opens a stream to the machine and relays its frames over that
+ * socket only, with per-stream credit. Driven with the `fake-dial-in` fixture provider and
+ * `FakeDialInMachine`.
+ */
+
+const MAX_FRAME_BYTES = 64 * 1024;
+const INTERNAL_URL = "http://10.0.0.5:8080";
+const HELLO = { revision: "r1", outsideSandbox: false };
+
+let pgc: TestContainer;
+let rd: TestContainer;
+let raw: ReturnType<typeof createDb>;
+let db: KernelSchemaDb;
+let redis: Redis;
+let k: TestKernel;
+let gateway: DialInGateway;
+let machines: DialInMachines;
+let devices: DevicesService;
+let txHost: TransactionHost;
+let ownerId: string;
+let orgId: string;
+let url: string;
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
+const open: FakeDialInMachine[] = [];
+
+beforeAll(async () => {
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  raw = createDb(pgc.url, 3);
+  db = legacyDbFor(raw);
+  redis = new Redis(rd.url);
+  bootstrap = await bootstrapFixture([{ bytes: await fakeDialInPkg(), required: false }]);
+  k = await startKernel(
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      {
+        roles: ["api", "worker", "gateway"],
+        gateway: { internalUrl: INTERNAL_URL },
+        devices: {
+          dialIn: { reconnectGraceSeconds: 5, leaseTtlMs: 6000, maxFrameBytes: MAX_FRAME_BYTES },
+        },
+      },
+    ),
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
+  );
+  gateway = k.app.get(DialInGateway);
+  machines = k.app.get(DialInMachines);
+  devices = k.app.get(DevicesService);
+  txHost = k.app.get(TransactionHost);
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
+  orgId = await createOrg(await session(k, "owner"));
+  await enableExtensions(raw, orgId, "fake-dial-in");
+  await waitFor(async () => k.app.get(DeviceProviders).forDevice("fake-dial-in") ?? null);
+  url = `ws://127.0.0.1:${k.port}/device/connect`;
+});
+
+afterAll(async () => {
+  for (const m of open.splice(0)) await m.close().catch(() => {});
+  await k?.close();
+  redis?.disconnect();
+  await raw?.destroy();
+  await bootstrap?.cleanup();
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+});
+
+/** A member's `fake-dial-in` device with a signed-in machine credential (not connected). */
+async function signedIn() {
+  const login = `m-${randomUUID().slice(0, 8)}`;
+  const accountId = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
+    .id;
+  await testMembers(db).add(orgId, accountId, "member", ownerId);
+  return txHost.run(async () => {
+    const { id: deviceId } = await devices.createDialIn(orgId, accountId, "fake-dial-in", "Box");
+    const issued = await machines.issue({
+      orgId,
+      deviceId,
+      accountId,
+      name: "box",
+      os: "linux",
+      arch: "x64",
+      programVersion: "0.1.0",
+    });
+    return { deviceId, ...issued };
+  });
+}
+
+/** A connected machine whose streams go to `onStream`; resolves once this replica holds it. */
+async function connected(onStream?: (open: unknown, s: FakeMachineStream) => void) {
+  const m = await signedIn();
+  const machine = await FakeDialInMachine.connect({ url, credential: m.credential, hello: HELLO });
+  open.push(machine);
+  if (onStream) machine.onStream(onStream);
+  await waitFor(async () => gateway.holdsLocally(m.deviceId), 10_000, "holding");
+  return { ...m, machine };
+}
+
+/** Opens a stream on the holding replica and resolves the kernel's end and the machine's. */
+async function openPair(): Promise<{
+  deviceId: string;
+  machine: FakeDialInMachine;
+  stream: DeviceStream;
+  peer: FakeMachineStream;
+}> {
+  let peer: FakeMachineStream | undefined;
+  const c = await connected((_open, s) => {
+    peer = s;
+  });
+  const stream = await gateway.openStream(
+    c.deviceId,
+    { target: "echo" },
+    AbortSignal.timeout(10_000),
+  );
+  return { deviceId: c.deviceId, machine: c.machine, stream, peer: peer as FakeMachineStream };
+}
+
+const bytes = (i: number) => new TextEncoder().encode(`message ${i}`);
+
+describe("dial-in streams", () => {
+  it("stream echoes 100 messages in order", async () => {
+    let target: unknown;
+    const c = await connected((o, s) => {
+      target = o;
+      s.onMessage((m) => void s.send(m));
+    });
+    const stream = await gateway.openStream(
+      c.deviceId,
+      { target: "echo" },
+      AbortSignal.timeout(10_000),
+    );
+    expect(target).toEqual({ target: "echo" });
+    const got: Uint8Array[] = [];
+    const collected = (async () => {
+      for await (const m of stream.messages) {
+        got.push(m);
+        if (got.length === 100) break;
+      }
+    })();
+    for (let i = 0; i < 100; i++) await stream.send(bytes(i));
+    await collected;
+    expect(got.map((m) => new TextDecoder().decode(m))).toEqual(
+      Array.from({ length: 100 }, (_, i) => `message ${i}`),
+    );
+    stream.close("done");
+    expect(await stream.closed).toEqual({ reason: "done" });
+  });
+
+  it("sender waits for credit", async () => {
+    const { stream, peer } = await openPair();
+    peer.autoCredit = false;
+    for (let i = 0; i < 8; i++) await stream.send(bytes(i));
+    let ninthSent = false;
+    const ninth = stream.send(bytes(8)).then(() => {
+      ninthSent = true;
+    });
+    await peer.receivedCount(8);
+    expect(ninthSent).toBe(false);
+    await peer.grant(1);
+    await ninth;
+    expect(ninthSent).toBe(true);
+    await peer.receivedCount(9);
+    expect(new TextDecoder().decode(peer.received[8])).toBe("message 8");
+    stream.close();
+  });
+
+  it("message above the connection's maxFrameBytes is refused", async () => {
+    const { stream, peer } = await openPair();
+    await expect(stream.send(new Uint8Array(MAX_FRAME_BYTES))).rejects.toThrow(/frame capacity/);
+    // the stream stays usable for messages that fit
+    await stream.send(bytes(1));
+    await peer.receivedCount(1);
+    stream.close();
+  });
+
+  it("stream closes when the machine socket drops", async () => {
+    const { stream, machine } = await openPair();
+    await machine.close();
+    expect(await stream.closed).toEqual({ reason: "device-offline" });
+    await expect(stream.send(bytes(1))).rejects.toThrow(/closed/);
+  });
+
+  it("the machine's close reaches the kernel's end", async () => {
+    const { stream, peer } = await openPair();
+    await peer.close("target gone");
+    expect(await stream.closed).toEqual({ reason: "target gone" });
+  });
+
+  it("a stream the machine refuses fails to open", async () => {
+    const c = await connected(() => {
+      throw new Error("no such target");
+    });
+    await expect(
+      gateway.openStream(c.deviceId, { target: "x" }, AbortSignal.timeout(10_000)),
+    ).rejects.toThrow(/no such target/);
+  });
+
+  it("requests still flow while a stream is saturated", async () => {
+    const { deviceId, machine, stream, peer } = await openPair();
+    peer.autoCredit = false;
+    for (let i = 0; i < 8; i++) await stream.send(bytes(i));
+    const pending = stream.send(bytes(8));
+    machine.onRequest((body) => ({ echoed: body }));
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/plugins/fake-dial-in/request",
+      headers: { "content-type": "application/json" },
+      payload: { deviceId, body: { ping: 1 }, timeoutMs: 5000 },
+    });
+    expect(JSON.parse(res.body)).toEqual({ ok: true, body: { echoed: { ping: 1 } } });
+    stream.close();
+    await expect(pending).rejects.toThrow(/closed/);
+  });
+
+  it("ctx.dialIn.openStream opens a stream on the holding replica", async () => {
+    const c = await connected((_o, s) => s.onMessage((m) => void s.send(m)));
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/plugins/fake-dial-in/stream",
+      headers: { "content-type": "application/json" },
+      payload: { deviceId: c.deviceId, body: { target: "echo" }, message: "hello" },
+    });
+    expect(JSON.parse(res.body)).toEqual({ ok: true, echo: "hello" });
+  });
+
+  it("holder address is written with the lease", async () => {
+    const c = await connected();
+    const key = deviceHolderAddrKey(c.deviceId);
+    expect(key).toBe(`capk:device-holder-addr:${c.deviceId}`);
+    expect(await redis.get(key)).toBe(INTERNAL_URL);
+    expect(await redis.pttl(key)).toBeGreaterThan(0);
+    expect(await gateway.holderAddress(c.deviceId)).toBe(INTERNAL_URL);
+    await c.machine.close();
+    await waitFor(async () => (await redis.get(key)) === null, 10_000, "address removed");
+  });
+
+  it("openStream on a replica without the socket throws DialInStreamElsewhereError", async () => {
+    const m = await signedIn();
+    // another replica's connection holds the lease
+    await redis.set(deviceLeaseKey(m.deviceId), randomUUID(), "PX", 30_000);
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/plugins/fake-dial-in/stream",
+      headers: { "content-type": "application/json" },
+      payload: { deviceId: m.deviceId, body: { target: "echo" } },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({
+      ok: false,
+      error: { name: "DialInStreamElsewhereError", code: "device.stream_elsewhere" },
+    });
+    await redis.del(deviceLeaseKey(m.deviceId));
+    // nobody holds it: offline
+    const offline = await k.http.inject({
+      method: "POST",
+      url: "/plugins/fake-dial-in/stream",
+      headers: { "content-type": "application/json" },
+      payload: { deviceId: m.deviceId, body: { target: "echo" } },
+    });
+    expect(JSON.parse(offline.body)).toMatchObject({
+      ok: false,
+      error: { code: "device.offline" },
+    });
+  });
+});

@@ -461,6 +461,21 @@ treats a dial-in device like any other (its provider, report and permission supp
   connection's negotiated `maxFrameBytes` (the value of `ready`, read from the holder's
   `capk:device-transport:*` record under its lease, never config) to size its frames by; null
   with no holder.
+- **Streams.** `ctx.dialIn.openStream(deviceId, body, { signal })` (`DialInGateway.openStream`,
+  `dial-in/streams.ts`) opens a byte stream to the machine straight over its socket: `stream-open`
+  / `stream-opened`, then `stream-data` (one whole message in base64 per frame; a message that does
+  not fit the connection's `maxFrameBytes` is refused, never split), `stream-credit` and
+  `stream-close`. Each side starts with `DIAL_IN_STREAM_INITIAL_CREDIT` messages of credit and
+  grants one more per message it consumed, so a stream never starves the connection's requests.
+  Frames never touch Redis or PG, so only the gateway replica holding the socket opens a stream;
+  any other replica throws `DialInStreamElsewhereError` (no holder: `DeviceOfflineError`). The
+  holder writes its internal address (`gateway.internalUrl`, default
+  `http://<hostname>:<http.port>`) under `capk:device-holder-addr:<deviceId>` next to its lease
+  (written only while it holds the lease, refreshed on ping, removed on release unless a
+  successor holds it): `DialInGateway.holderAddress` is where another replica hops. The stream
+  table is the connection's own state: the socket's close ends every stream with
+  `device-offline`; the extension's end closes its streams. Tests: `FakeDialInMachine.onStream`
+  (honours credit; `autoCredit = false` withholds it) and the fixture's `POST /stream` seam.
 - **Reports.** A provider stores what its machine says (in `ctx.kv` / `ctx.db`) and calls
   `ctx.devices.reportChanged(deviceId)`; the kernel reads `report()` again and moves the device's
   authority epoch when the revision changed. Online state is `DialInRelay.online` (a replica holds

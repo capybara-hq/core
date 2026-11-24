@@ -1406,6 +1406,19 @@ export const KernelConfigSchema = z.strictObject({
       fileMaxBytes: 20_971_520,
       fileConcurrency: 4,
     }),
+  gateway: z
+    .strictObject({
+      internalUrl: z
+        .url()
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Origin other gateway replicas use to reach this replica for device stream hops, e.g. http://10.0.0.5:8080; default http://<hostname>:<http.port>",
+          }),
+        ),
+    })
+    .prefault({} as never),
   storage: z
     .strictObject({
       purgeDeletedOrgsAfterDays: z

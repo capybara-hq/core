@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import {
+  DeviceOfflineError,
+  type DeviceStream,
   DIAL_IN_PROTOCOL_RE,
   type DialInConnectionInfo,
   type DialInKernelFrame,
   type DialInMachineFrame,
+  DialInStreamElsewhereError,
   type ExtensionContext,
   parseDialInMachineFrame,
 } from "@capybara-hq/plugin-sdk";
@@ -14,10 +18,12 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { DialInAccess } from "./access.js";
 import { storedResult, wireFrameOf } from "./envelope.js";
 import { DialInHandlers, type DialInServing, type DialInUnavailable } from "./handlers.js";
 import {
   DEVICE_TAKEN_PREFIX,
+  deviceHolderAddrKey,
   deviceLeaseKey,
   deviceReqKey,
   deviceReqTopic,
@@ -30,6 +36,7 @@ import {
 } from "./keys.js";
 import { DialInMachines, type MachineIdentity, type MachineRevokedMessage } from "./machines.js";
 import { LIST_TTL_MARGIN_MS } from "./relay.js";
+import { DialInStreams, isStreamFrame } from "./streams.js";
 
 /** WebSocket close codes the gateway uses (the program reads 4002 and 4003). */
 export const DEVICE_CLOSE = {
@@ -125,6 +132,27 @@ redis.call('DEL', KEYS[1])
 return 1
 `;
 
+/**
+ * Writes the holder's address `ARGV[2]` under `KEYS[2]` for `ARGV[3]` ms, only while the lease
+ * `KEYS[1]` is held by the token `ARGV[1]` (a connection that lost its lease never overwrites its
+ * successor's address). Returns 1 when written.
+ */
+const WRITE_ADDR = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+return 1
+`;
+
+/**
+ * Deletes the holder's address `KEYS[2]` once the lease `KEYS[1]` is free or still the token
+ * `ARGV[1]`'s: a successor that already claimed the lease keeps the address it writes.
+ */
+const DELETE_ADDR = `
+local holder = redis.call('GET', KEYS[1])
+if holder and holder ~= ARGV[1] then return 0 end
+return redis.call('DEL', KEYS[2])
+`;
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** A WebSocket close reason is at most 123 UTF-8 bytes. */
@@ -175,7 +203,21 @@ class DeviceConnection {
     private readonly credential: string,
     /** The protocol the route admitted (the serving provider's `permissions.dialIn.protocol`). */
     private readonly protocol: string,
-  ) {}
+    /** The local port the socket arrived on (the holder address's default port when unset). */
+    private readonly localPort: number | undefined,
+  ) {
+    this.streams = new DialInStreams(identity.deviceId, {
+      send: (text) => {
+        if (this.state === "closed" || this.socket.readyState !== this.socket.OPEN) return false;
+        this.socket.send(text);
+        return true;
+      },
+      maxFrameBytes: () => this.effectiveCap ?? 0,
+    });
+  }
+
+  /** This connection's streams (the socket's own state, ended with it). */
+  private readonly streams: DialInStreams;
 
   /**
    * The id a connection fences requests and results with (sent to the machine in `ready`).
@@ -195,6 +237,7 @@ class DeviceConnection {
       await this.close(DEVICE_CLOSE.protocol, "Frame capacity changed; reconnect");
       return;
     }
+    const ttl = Math.max(this.gw.leaseTtlMs(), this.gw.pingIntervalMs * 3);
     await this.gw.redis.set(
       deviceTransportKey(this.deviceId, this.token),
       JSON.stringify({
@@ -203,8 +246,29 @@ class DeviceConnection {
         ...(this.programRunId !== undefined && { programRunId: this.programRunId }),
       }),
       "PX",
-      Math.max(this.gw.leaseTtlMs(), this.gw.pingIntervalMs * 3),
+      ttl,
     );
+    // where other replicas hop a device stream to: next to the lease, refreshed with it
+    await this.gw.redis.eval(
+      WRITE_ADDR,
+      2,
+      deviceLeaseKey(this.deviceId),
+      deviceHolderAddrKey(this.deviceId),
+      this.token,
+      this.gw.internalAddress(this.localPort),
+      String(ttl),
+    );
+  }
+
+  /** Whether this connection holds its device and sent `ready` (streams may open). */
+  get serving(): boolean {
+    return this.state === "holding" && this.ready;
+  }
+
+  /** Opens a stream to the machine on this socket ({@link DialInStreams.openStream}). */
+  openStream(body: unknown, signal: AbortSignal): Promise<DeviceStream> {
+    if (!this.serving) return Promise.reject(new DeviceOfflineError(this.deviceId));
+    return this.streams.openStream(body, signal);
   }
 
   get deviceId(): string {
@@ -308,9 +372,9 @@ class DeviceConnection {
       this.close(DEVICE_CLOSE.protocol, "hello expected");
       return;
     }
-    // stream frames are refused like an unknown frame until the stream relay serves them
-    if (frame.type !== "res") {
-      this.close(DEVICE_CLOSE.protocol, `unexpected ${frame.type} frame`);
+    // stream frames go to this socket's stream table, never through shared state
+    if (isStreamFrame(frame)) {
+      this.streams.onFrame(frame);
       return;
     }
     // results are stored in any state after ready: the program sends those it kept while
@@ -736,6 +800,7 @@ class DeviceConnection {
     this.state = "closed";
     this.ready = false;
     this.ended.abort();
+    this.streams.closeAll();
     clearTimeout(this.helloTimer);
     clearTimeout(this.pingTimer);
     const lease = this.lease;
@@ -745,6 +810,13 @@ class DeviceConnection {
         if (lease) {
           if (lease.lost.aborted) lease.abandon();
           else await lease.release();
+          await this.gw.redis.eval(
+            DELETE_ADDR,
+            2,
+            deviceLeaseKey(this.deviceId),
+            deviceHolderAddrKey(this.deviceId),
+            this.token,
+          );
         }
       } catch (e) {
         this.gw.log.warn("could not release a device lease", {
@@ -812,8 +884,11 @@ export type DialInAdmission =
  * request's deadline plus a margin). A `res` is accepted only for a request taken for the socket's
  * device: it is stored under `capk:device-res:<id>` for the rest of that TTL and published on
  * `device.res.<id>`. An `event` goes to the provider's `onFrame`; the close to its `onClose`.
- * `device.revoked.<deviceId>` closes the connection of that machine only (ruling R16). The
- * sockets are this process's own; everything other replicas need is in Redis.
+ * `device.revoked.<deviceId>` closes the connection of that machine only (ruling R16). Device
+ * streams ({@link DialInStreams}) run straight over the socket, so only the holder opens them; it
+ * writes its internal address under `capk:device-holder-addr:<deviceId>` next to the lease for
+ * the other replicas to hop to. The sockets are this process's own; everything other replicas
+ * need is in Redis.
  */
 @Injectable()
 export class DialInGateway {
@@ -837,7 +912,56 @@ export class DialInGateway {
     @Inject(REDIS) readonly redis: Redis,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KERNEL_LOGGER) readonly log: Pick<KernelLogger, "info" | "warn">,
-  ) {}
+    @Inject(DialInAccess) access: Pick<DialInAccess, "serveStreams">,
+  ) {
+    // ctx.dialIn.openStream on this process reaches the sockets this gateway holds
+    access.serveStreams(this);
+  }
+
+  /**
+   * This replica's internal origin for device stream hops: `gateway.internalUrl`, else
+   * `http://<hostname>:<http.port>` (with `http.port` 0, the port the connection arrived on).
+   */
+  internalAddress(localPort?: number): string {
+    const c = this.config.get();
+    if (c.gateway.internalUrl !== undefined) return c.gateway.internalUrl.replace(/\/+$/, "");
+    const port = c.http.port !== 0 ? c.http.port : (localPort ?? 0);
+    return `http://${hostname()}:${port}`;
+  }
+
+  /** The connection of `deviceId` this replica holds and serves, if any. */
+  private serving(deviceId: string): DeviceConnection | undefined {
+    for (const c of this.connections) if (c.deviceId === deviceId && c.serving) return c;
+    return undefined;
+  }
+
+  /** Whether this replica holds `deviceId`'s machine socket (past `ready`). */
+  holdsLocally(deviceId: string): boolean {
+    return this.serving(deviceId) !== undefined;
+  }
+
+  /**
+   * The internal address of the gateway replica holding `deviceId`'s machine
+   * (`capk:device-holder-addr:<deviceId>`), or null when no replica holds it.
+   */
+  holderAddress(deviceId: string): Promise<string | null> {
+    return this.redis.get(deviceHolderAddrKey(deviceId));
+  }
+
+  /**
+   * Opens a stream to `deviceId`'s machine over the socket this replica holds
+   * ({@link DialInStreams}). Throws `DialInStreamElsewhereError` when another replica holds it
+   * (hop to {@link holderAddress}), `DeviceOfflineError` when none does.
+   */
+  async openStream(deviceId: string, body: unknown, signal: AbortSignal): Promise<DeviceStream> {
+    const conn = this.serving(deviceId);
+    if (conn !== undefined) return conn.openStream(body, signal);
+    const holder = await this.redis.get(deviceLeaseKey(deviceId));
+    // a connection of this replica still claiming or before ready is not elsewhere
+    const mine = [...this.connections].some((c) => c.token === holder);
+    if (holder !== null && !mine) throw new DialInStreamElsewhereError(deviceId);
+    throw new DeviceOfflineError(deviceId);
+  }
 
   graceMs(): number {
     return this.config.get().devices.dialIn.reconnectGraceSeconds * 1000;
@@ -870,7 +994,12 @@ export class DialInGateway {
    * so a credential revoked or a provider switched off since the upgrade check never gets a
    * connection.
    */
-  async accept(socket: WebSocket, credential: string, protocol: string): Promise<void> {
+  async accept(
+    socket: WebSocket,
+    credential: string,
+    protocol: string,
+    localPort?: number,
+  ): Promise<void> {
     socket.pause();
     try {
       if (this.stopping) {
@@ -895,7 +1024,14 @@ export class DialInGateway {
         socket.close(DEVICE_CLOSE.protocol, "the device's provider is unavailable");
         return;
       }
-      const conn = new DeviceConnection(this, socket, admission.identity, credential, protocol);
+      const conn = new DeviceConnection(
+        this,
+        socket,
+        admission.identity,
+        credential,
+        protocol,
+        localPort,
+      );
       this.connections.add(conn);
       conn.start();
     } catch (error) {
