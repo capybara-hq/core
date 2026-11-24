@@ -1465,6 +1465,17 @@ a.cb-attachment:hover {
   outline-offset: 2px;
 }
 
+/* ExpandableProse: the summary and its toggle (a DisclosureLinks look) on one line of prose */
+.cb-expandable-prose {
+  margin: 0;
+  white-space: pre-line;
+}
+.cb-expandable-prose-toggle {
+  display: inline-flex;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
 /* TextLink / LinkCard (spec §6.5): theme colors only, never the browser's link colors. */
 .cb-text-link {
   display: inline-flex;
