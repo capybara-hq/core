@@ -16,14 +16,15 @@ import {
 } from "./frame";
 
 /**
- * T9 向导：Centered + 步骤条 + 始终存在的 ActionRow (one step draws no step bar). `loading` draws the frame while the wizard's
- * data is on the way (spec §5.5): the header keeps its rows, the step bar is real (the steps are
- * static), the ActionRow stays with its buttons disabled, and the step's body is one card (a
- * title slot, `fields` field placeholders) in place of `children`; a step whose body is no card
- * (a review stack) passes `content` (`BlockShape[]`) instead, drawn in a gap-16 stack as the loaded
- * step stacks its parts. A step that is its own sections (each `FormSection` saying for itself
- * whether it is loading, so static titles and ready parts render for real) passes `keep`: its
- * `children` render as they are inside the page's one busy region. One busy announcement.
+ * T9 wizard: Centered + a step bar + an ActionRow that is always there (one step draws no step
+ * bar). `loading` draws the frame while the wizard's data is on the way (spec §5.5): the header
+ * keeps its rows, the step bar is real (the steps are static), the ActionRow stays with its buttons
+ * disabled, and the step's body is one card (a title slot, `fields` field placeholders) in place of
+ * `children`; a step whose body is no card (a review stack) passes `content` (`BlockShape[]`)
+ * instead, drawn in a gap-16 stack as the loaded step stacks its parts. A step that is its own
+ * sections (each `FormSection` saying for itself whether it is loading, so static titles and ready
+ * parts render for real) passes `keep`: its `children` render as they are inside the page's one
+ * busy region. One busy announcement.
  */
 export function WizardPage({
   header,
@@ -64,7 +65,7 @@ export function WizardPage({
                 const state = i < current ? "done" : i === current ? "current" : "todo";
                 return (
                   <li
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 静态步骤列表，标签可能重复，需带序号
+                    // biome-ignore lint/suspicious/noArrayIndexKey: a static step list whose labels may repeat
                     key={`${i}-${label}`}
                     className="cb-step"
                     data-step={i + 1}

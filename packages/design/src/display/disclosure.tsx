@@ -105,3 +105,17 @@ export function DisclosureLinks({ items }: { items: DisclosureLinkItem[] }) {
     </div>
   );
 }
+
+/**
+ * One DisclosureLinks-look button (spec §6.5) for a secondary text that opens elsewhere, in
+ * a Dialog (a license's 全文): `small` `muted` words and a `chevron-right` 12, inline after a
+ * value.
+ */
+export function DisclosureLink({ onSelect, children }: { onSelect(): void; children: ReactNode }) {
+  return (
+    <button type="button" className="cb-disclosure-link" aria-haspopup="dialog" onClick={onSelect}>
+      {children}
+      <Icon name="chevron-right" size={12} />
+    </button>
+  );
+}

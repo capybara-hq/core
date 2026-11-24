@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Icon } from "../icons/icon";
 
 export type ExpandableProseProps = {
@@ -19,10 +19,9 @@ export type ExpandableProseProps = {
  */
 export function ExpandableProse({ summary, text, moreLabel, lessLabel }: ExpandableProseProps) {
   const [open, setOpen] = useState(false);
-  const id = useId();
   const expandable = summary !== text;
   return (
-    <p id={id} className="cb-expandable-prose">
+    <p className="cb-expandable-prose">
       {expandable && open ? text : summary}
       {expandable ? (
         <>
@@ -31,7 +30,6 @@ export function ExpandableProse({ summary, text, moreLabel, lessLabel }: Expanda
             type="button"
             className="cb-disclosure-link cb-expandable-prose-toggle"
             aria-expanded={open}
-            aria-controls={id}
             onClick={() => setOpen(!open)}
           >
             {open ? lessLabel : moreLabel}

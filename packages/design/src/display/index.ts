@@ -84,6 +84,7 @@ export {
 } from "./device-nameplate";
 export {
   Disclosure,
+  DisclosureLink,
   type DisclosureLinkItem,
   DisclosureLinks,
   type DisclosureProps,
