@@ -82,7 +82,12 @@ export {
   type DeviceNameplateProps,
   type DeviceNameplateState,
 } from "./device-nameplate";
-export { Disclosure, type DisclosureProps } from "./disclosure";
+export {
+  Disclosure,
+  type DisclosureLinkItem,
+  DisclosureLinks,
+  type DisclosureProps,
+} from "./disclosure";
 export { type DurationOptions, formatDuration } from "./duration";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";

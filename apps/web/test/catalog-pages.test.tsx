@@ -1129,7 +1129,8 @@ describe("/admin/plugins/import (WizardPage)", () => {
       expect(within(skill).getByText(fill(c.skillFiles, { n: 2 }))).toBeTruthy();
       const templates = screen.getByRole("region", { name: c.templates });
       expect(within(templates).getByText(r.needsOrgCredential)).toBeTruthy();
-      await user.click(within(templates).getByRole("button", { name: r.endpointDetails }));
+      // the host line (with 组织可改) opens the full endpoint under the row
+      await user.click(within(templates).getByRole("button", { name: new RegExp(r.orgCanChange) }));
       expect(within(templates).getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
       const deps = screen.getByRole("region", { name: c.dependencies });
       expect(

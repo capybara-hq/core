@@ -4,7 +4,7 @@ import {
   Badge,
   Callout,
   CodeBlock,
-  Disclosure,
+  DisclosureLinks,
   Icon,
   ItemList,
   ItemListItem,
@@ -32,7 +32,6 @@ import type { PermissionGroup } from "../lib/extensions";
 import {
   ComponentSection,
   HiddenCharactersWarning,
-  LicenseView,
   TranslationReportView,
   useOrigin,
 } from "./CatalogParts";
@@ -126,6 +125,7 @@ export function PluginReviewBody({
           ? t("action.keep", { version: versionLabel(review.version) })
           : t("action.install", { version: versionLabel(review.version) });
   const sensitive = sensitiveTotal(review);
+  const license = typeof review.licenseText === "string" ? review.licenseText : "";
   const facts: { k: string; v: ReactNode }[] = [
     ...(review.publisher !== "" ? [{ k: t("facts.publisher"), v: review.publisher }] : []),
     ...(platform && (review.packageName !== null || detail !== undefined)
@@ -215,13 +215,6 @@ export function PluginReviewBody({
           {sensitive > 0 && <Badge tone="warn">{t("sensitiveCount", { n: sensitive })}</Badge>}
         </Stack>
         {description.first !== "" && <Text variant="prose">{description.first}</Text>}
-        {description.rest !== "" && (
-          <Disclosure summary={t("fullDescription")}>
-            <Text variant="prose" pre>
-              {description.rest}
-            </Text>
-          </Disclosure>
-        )}
       </Stack>
       {platform &&
         (review.pluginVersion !== undefined ||
@@ -248,8 +241,32 @@ export function PluginReviewBody({
           {tt("claudeManifestIgnored")}
         </Text>
       )}
-      {platform && (
-        <LicenseView text={review.licenseText} truncated={review.licenseTruncated === true} />
+      {/* The secondary texts as one row of small links under the facts (approved mockup) */}
+      {platform && license !== "" && <HiddenCharactersWarning texts={[license]} />}
+      <DisclosureLinks
+        items={[
+          ...(description.rest !== ""
+            ? [
+                {
+                  key: "description",
+                  summary: t("fullDescription"),
+                  children: (
+                    <Text variant="prose" pre>
+                      {description.rest}
+                    </Text>
+                  ),
+                },
+              ]
+            : []),
+          ...(platform && license !== ""
+            ? [{ key: "license", summary: tt("license"), children: <CodeBlock text={license} /> }]
+            : []),
+        ]}
+      />
+      {platform && license === "" && review.licenseTruncated === true && (
+        <Text variant="small" tone="muted">
+          {tt("licenseTruncated")}
+        </Text>
       )}
       {/* A warn Callout: the tinted bar on the import page, the warn line in the org's upload
           Dialog (it reads the box it sits in, spec §6.19) */}
@@ -301,12 +318,20 @@ export function PluginReviewBody({
                   </Text>
                 }
               >
-                <Disclosure summary={tt("skillBody", { name: s.name })}>
-                  <Stack gap={8}>
-                    <HiddenCharactersWarning texts={[s.description, s.body]} />
-                    <CodeBlock text={s.body} />
-                  </Stack>
-                </Disclosure>
+                <DisclosureLinks
+                  items={[
+                    {
+                      key: "body",
+                      summary: tt("skillBody", { name: s.name }),
+                      children: (
+                        <Stack gap={8}>
+                          <HiddenCharactersWarning texts={[s.description, s.body]} />
+                          <CodeBlock text={s.body} />
+                        </Stack>
+                      ),
+                    },
+                  ]}
+                />
               </ItemListItem>
             ))}
           </ItemList>
@@ -318,7 +343,7 @@ export function PluginReviewBody({
           count={templates.length}
           empty={tc("templatesNone")}
         >
-          {/* One row per template: name, what it needs, the address; the details are folded */}
+          {/* One row per template: name, what it needs, the address; the details open under it */}
           <ItemList label={tc("templates")}>
             {templates.map((c) => {
               const need = templateNeed(c);
@@ -344,37 +369,42 @@ export function PluginReviewBody({
                     </>
                   }
                   meta={
-                    <>
-                      {desc !== "" && (
-                        <Text variant="small" tone="muted" truncate>
-                          {desc}
-                        </Text>
-                      )}
-                      {meta.length > 0 && (
-                        <Text variant="small" tone="muted">
-                          {meta.join(" · ")}
-                        </Text>
-                      )}
-                    </>
+                    // One line: the host (and 组织可改) is the toggle; the description, the full
+                    // endpoint and the auth open under it (approved mockup)
+                    <DisclosureLinks
+                      items={[
+                        {
+                          key: "endpoint",
+                          summary: meta.length > 0 ? meta.join(" · ") : t("endpointDetails"),
+                          children: (
+                            <Stack gap={4}>
+                              {desc !== "" && (
+                                <Text variant="small" tone="muted">
+                                  {desc}
+                                </Text>
+                              )}
+                              <KeyValue
+                                keyWidth="14ch"
+                                rows={endpointLeaves(c.endpoint).map(([k, v]) => ({
+                                  k,
+                                  v: showValue(v),
+                                }))}
+                              />
+                              {c.editableEndpoint.length > 0 && (
+                                <Text variant="small" tone="muted">
+                                  {t("editable", { paths: c.editableEndpoint.join(", ") })}
+                                </Text>
+                              )}
+                              <Text variant="small">
+                                {t("auth", { type: String(c.auth.type ?? "none") })}
+                              </Text>
+                            </Stack>
+                          ),
+                        },
+                      ]}
+                    />
                   }
-                >
-                  <Disclosure summary={t("endpointDetails")}>
-                    <Stack gap={4}>
-                      <KeyValue
-                        keyWidth="14ch"
-                        rows={endpointLeaves(c.endpoint).map(([k, v]) => ({ k, v: showValue(v) }))}
-                      />
-                      {c.editableEndpoint.length > 0 && (
-                        <Text variant="small" tone="muted">
-                          {t("editable", { paths: c.editableEndpoint.join(", ") })}
-                        </Text>
-                      )}
-                      <Text variant="small">
-                        {t("auth", { type: String(c.auth.type ?? "none") })}
-                      </Text>
-                    </Stack>
-                  </Disclosure>
-                </ItemListItem>
+                />
               );
             })}
           </ItemList>
@@ -430,12 +460,20 @@ export function PluginReviewBody({
                       },
                     ]}
                   />
-                  <Disclosure summary={tc("agentInstructions", { name: a.name })}>
-                    <Stack gap={8}>
-                      <HiddenCharactersWarning texts={[a.description, a.instructions]} />
-                      <CodeBlock text={a.instructions} />
-                    </Stack>
-                  </Disclosure>
+                  <DisclosureLinks
+                    items={[
+                      {
+                        key: "instructions",
+                        summary: tc("agentInstructions", { name: a.name }),
+                        children: (
+                          <Stack gap={8}>
+                            <HiddenCharactersWarning texts={[a.description, a.instructions]} />
+                            <CodeBlock text={a.instructions} />
+                          </Stack>
+                        ),
+                      },
+                    ]}
+                  />
                 </Stack>
               </ItemListItem>
             ))}
@@ -448,9 +486,6 @@ export function PluginReviewBody({
           count={review.dependencies.length}
           empty={tc("dependenciesNone")}
         >
-          <Text variant="small" tone="muted">
-            {tc("dependenciesHint")}
-          </Text>
           {review.dependencies.map((d) =>
             d.resolved !== null ? (
               <Text key={d.name}>

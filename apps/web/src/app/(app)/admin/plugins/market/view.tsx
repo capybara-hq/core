@@ -59,7 +59,7 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * marketplace, its source: npm package, archive URL, a git URL pinned to a commit or following a
  * branch, a path in the marketplace's repository; the version only when incompatible or unnamed;
  * the permission summary with the sensitive count in warn), the state (未安装 / 已安装 <version> /
- * 已安装 <version> · 可更新到 <latest>, or why it cannot be installed: a host outside
+ * 已安装 <version> (the 更新到 button carries the newer one), or why it cannot be installed: a host outside
  * `marketplaces.allowedHosts`, a path entry of an http marketplace), a chip for changed content,
  * one action and a menu. The action 安装 <latest> (更新到 <latest> when an older version is
  * installed; when the content changed, 更新到 <version> 的新内容) downloads, verifies and stages the
@@ -298,7 +298,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
     if (entryDeprecated(e)) return { label: deprecatedLabel(e), tone: "warn" as const };
     const top = importedTop(e);
     if (e.adopted === null) return { label: t("notAdopted"), tone: "muted" as const };
-    // An update's target is on the card's 更新到 button: the state names the installed version only
+    // An update's target is on the card's update button: the state names the installed version only
     const older = updatable(e);
     const installed = older !== undefined && e.version !== null ? older : top;
     return {
@@ -378,7 +378,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
             title={name}
             mono={e.displayName === null}
             chips={[
-              // 有新版本 is the card's 更新到 button; the changed content is said only here
+              // The newer version is on the card's update button; the changed content is said only here
               ...(e.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
             description={summaryOf(e)}
