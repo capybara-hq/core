@@ -3,7 +3,6 @@ import type { AdminExtension } from "../admin-extensions";
 import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
-import { hasChooseStep, installTemplates, type OrgCatalogDetail } from "../catalog";
 import type { ChannelConnection } from "../channels";
 import {
   maybeOwnTemplate,
@@ -202,40 +201,6 @@ const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery()
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
  * Patterns are string literals: the query checks read them statically.
  */
-/**
- * The admin text of the setup guide of the first connector template the install wizard asks about
- * (setup guides v2 spec §9.3): the install wizards (`templates`, filtered by the same
- * `installTemplates` the wizard uses) and 补充配置 (`missingTemplates`) open on that template's
- * step, with the guide above its input.
- */
-async function prefetchFirstTemplateGuide(
-  qc: QueryClient,
-  orgId: string,
-  itemId: string,
-  locale: UiLocale,
-  from: "templates" | "missingTemplates",
-): Promise<void> {
-  const detail = qc.getQueryData<OrgCatalogDetail>(orgCatalogItemQuery(orgId, itemId).queryKey);
-  if (detail === undefined) return;
-  // an install that is on asks nothing; one that opens on its choose step shows no guide first
-  if (from === "templates" && (detail.item.state === "on" || hasChooseStep(detail.templates))) {
-    return;
-  }
-  const first =
-    from === "templates" ? installTemplates(detail.templates)[0] : detail.missingTemplates[0];
-  const guide = first?.guide;
-  if (!guide) return;
-  await qc.prefetchQuery({
-    // the wizard's TemplateGuideSection: the guide shown for this template
-    ...setupGuideQuery(orgId, guide, {
-      audience: "admin",
-      templateId: first.id,
-      locale: labelLocale(locale),
-    }),
-    retry: false,
-  });
-}
-
 const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/account/connections",
@@ -965,13 +930,6 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
         ? [q(connectorKindsQuery(orgId))]
         : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
     },
-    // A template's first step names its setup guide, shown above its input.
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId, me, search, locale }, qc) => {
-      const itemId = search.get("template") ?? "";
-      if (orgId === null || itemId === "" || !atLeast(me, "admin")) return;
-      await prefetchFirstTemplateGuide(qc, orgId, itemId, locale, "templates");
-    },
   },
   {
     pattern: "/evals",
@@ -1142,32 +1100,13 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
           ],
   },
   {
-    pattern: "/plugins/[itemId]/connectors",
-    // Org admins: the item (the templates that miss a connector).
-    queries: ({ orgId, me, params }) =>
-      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
-        ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId))],
-    // The first step's template names its setup guide, shown above its input.
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId, me, params, locale }, qc) => {
-      if (orgId === null || params.itemId === undefined || !atLeast(me, "admin")) return;
-      await prefetchFirstTemplateGuide(qc, orgId, params.itemId, locale, "missingTemplates");
-    },
-  },
-  {
     pattern: "/plugins/[itemId]/enable",
-    // Org admins: the item and the org's extensions (the wizard's extension step).
+    // Org admins: the item and the org's extensions (an extension that needs config goes on to
+    // its Sheet after the review).
     queries: ({ orgId, me, params }) =>
       orgId === null || params.itemId === undefined || !atLeast(me, "admin")
         ? []
         : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
-    // The first step's template names its setup guide, shown above its input.
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId, me, params, locale }, qc) => {
-      if (orgId === null || params.itemId === undefined || !atLeast(me, "admin")) return;
-      await prefetchFirstTemplateGuide(qc, orgId, params.itemId, locale, "templates");
-    },
   },
   {
     pattern: "/s/[code]",

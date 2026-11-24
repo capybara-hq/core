@@ -263,6 +263,21 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText("transport")).toBeTruthy();
   });
 
+  it("a template row leads with the template's icon, else its initial", () => {
+    const icons = {
+      ...atlassian,
+      connectorTemplates: [
+        { ...template("jira", "Jira"), icon: "data:image/png;base64,AA==" },
+        template("confluence", "Confluence"),
+      ],
+    };
+    renderPage(<PluginReviewBody review={icons} />, zh);
+    const list = screen.getByRole("list", { name: "连接器模板" });
+    const [jira, confluence] = within(list).getAllByRole("listitem");
+    expect(jira?.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AA==");
+    expect(confluence?.querySelector("img")).toBeNull();
+  });
+
   it("an unchecked endpoint is a warning tag; an org credential is its own tag", () => {
     const unchecked = {
       ...atlassian,
@@ -327,6 +342,36 @@ describe("PluginReviewBody rows", () => {
     const planner = screen.getByRole("group", { name: "planner" });
     expect(within(planner).getByText("工具：沿用派发它的智能体的工具")).toBeTruthy();
     expect(screen.queryByText("需要")).toBeNull();
+  });
+
+  it("an agent template's 需要 row names the templates it uses and a described need's label and host", () => {
+    const agents: PluginReview = {
+      ...atlassian,
+      agentTemplates: [
+        {
+          name: "triager",
+          path: "agents/triager.md",
+          description: "Triages issues.",
+          instructions: "Triage.",
+          model: "standard",
+          connectors: [
+            { template: "jira" },
+            { template: "atlassian:confluence" },
+            { template: "other:wiki" },
+            {
+              needs: { label: "Docs", endpoint: "https://docs.example.com/mcp", protocol: "mcp" },
+            },
+          ],
+        },
+      ],
+    };
+    renderPage(<PluginReviewBody review={agents} />, zh);
+    const triager = screen.getByRole("group", { name: "triager" });
+    expect(within(triager).getByText("需要")).toBeTruthy();
+    expect(within(triager).getByText("Jira")).toBeTruthy();
+    expect(within(triager).getByText("Confluence")).toBeTruthy();
+    expect(within(triager).getByText("other:wiki")).toBeTruthy();
+    expect(within(triager).getByText("Docs（docs.example.com）")).toBeTruthy();
   });
 
   it("skills: name, file count, description and a hidden-characters tag", () => {

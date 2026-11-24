@@ -118,6 +118,8 @@ type Group = {
    * to 允许 for the agent (an org-credential connector's tools only tighten).
    */
   personal: boolean;
+  /** A connector that lacks the org input its auth needs: 待配置 (never called meanwhile). */
+  needsConfig: boolean;
   onCheck(names: string[], on: boolean): void;
 };
 
@@ -143,6 +145,7 @@ export function ToolsSection() {
 
 function ToolsEdit({ data }: { data: AgentFormData }) {
   const t = useTranslations("agents");
+  const tc = useTranslations("connectors");
   const locale = useLocale();
   const { orgId, agent } = useAgentPage();
   const save = useDefinitionSave();
@@ -267,6 +270,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
           note: checked && tool.switchedOff ? t("form.extensionToolOffInOrg") : null,
         };
       }),
+      needsConfig: false,
       onCheck: (names, on) => setGroup("extensions", ext.plugin, listed, names, on),
     };
   });
@@ -294,6 +298,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
         : null,
       readError: detailFailed.has(a.id),
       personal: a.auth.type !== "none" && a.auth.ownership === "personal",
+      needsConfig: a.setup === "needs_config",
       onCheck: (names, on) => setGroup("connectors", a.id, listed, names, on),
     };
   });
@@ -359,6 +364,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     tag: { label: t(`form.groupKind.${g.kind}`) },
     title: g.name,
     meta: summaryOf(g),
+    ...(g.needsConfig ? { status: { label: tc("setup.needsConfig") } } : {}),
     actions: (
       <Button
         density="dense"

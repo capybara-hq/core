@@ -80,7 +80,6 @@ const detailOf = (item: Record<string, unknown>) => ({
   dependencies: [],
   skills: ["skills/notes"],
   agents: [],
-  missingTemplates: [],
 });
 
 const REVIEW = {

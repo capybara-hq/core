@@ -169,6 +169,21 @@ describe("ItemListItem (rows that hold more than a line, spec §6.12)", () => {
     expect(within(second as HTMLElement).queryByRole("group")).toBeNull();
   });
 
+  it("a mark before the title: the plugin's icon, else the initial (spec §6.17)", () => {
+    render(
+      <ItemList label="模板">
+        <ItemListItem title="Jira" mark={{ text: "Jira", image: "data:image/png;base64,AA==" }} />
+        <ItemListItem title="Confluence" mark={{ text: "Confluence" }} />
+      </ItemList>,
+    );
+    const [jira, confluence] = screen.getAllByRole("listitem");
+    const head = (li: HTMLElement | undefined) =>
+      li?.querySelector('[data-part="item-list-head"]') as HTMLElement;
+    expect(head(jira).querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AA==");
+    expect(head(confluence).querySelector("img")).toBeNull();
+    expect(head(confluence).textContent).toContain("C");
+  });
+
   it("empty meta and empty children draw no lines and no body", () => {
     zh(
       <ItemList label="用途">

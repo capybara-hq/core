@@ -2269,6 +2269,11 @@
       "active": "Active",
       "disabled": "Disabled"
     },
+    "setup": {
+      "needsConfig": "Needs setup",
+      "needsAdmin": "Waiting for an admin",
+      "configure": "Set up"
+    },
     "auth": {
       "none": "None",
       "bearer": "Bearer token",
@@ -2376,6 +2381,8 @@
       "openConnections": "Open My connections",
       "save": "Save credential",
       "saved": "Credential saved.",
+      "saveClient": "Save client",
+      "clientSaved": "OAuth client saved.",
       "oauthOrgHint": "This connector signs in with an OAuth client; the organization token is obtained automatically.",
       "clientTitle": "OAuth client",
       "clientDcr": "This connector's client was registered automatically and cannot be replaced; reinstall the connector to change it.",
@@ -2385,6 +2392,12 @@
       "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect.",
       "callbackTitle": "Redirect URL",
       "callbackHint": "Register this exact URL at the authorization server (e.g. the Slack app's OAuth settings)."
+    },
+    "endpointEdit": {
+      "title": "Endpoint",
+      "hint": "The fields the template lets the organization change.",
+      "save": "Save endpoint",
+      "saved": "Endpoint saved."
     },
     "settings": {
       "title": "General",
@@ -2561,10 +2574,6 @@
         "undo": "Keep",
         "clearing": "Cleared on save"
       }
-    },
-    "templates": {
-      "needsConfig": "Needs setup",
-      "configure": "Set up"
     },
     "gitPush": {
       "title": "Git push",
@@ -3094,6 +3103,8 @@
     "platformHint": "Enabled for every organization by the platform · cannot be turned off here",
     "openPlugins": "Open Plugins to view or request it",
     "needsConfig": "Needs config",
+    "needsAdmin": "Waiting for an admin",
+    "configure": "Set up",
     "enableFailed": "Enable failed",
     "disableFailed": "Disable failed",
     "search": "Search extensions",
@@ -5255,6 +5266,8 @@
         "hiddenCharacters": "Hidden characters",
         "secret": "Secret",
         "tools": "Tools",
+        "agentNeeds": "Needs",
+        "agentNeedsDescribed": "{label} ({host})",
         "endpointDetails": "Endpoint details",
         "orgCanChange": "Org can change",
         "titleUpdate": "Update plugin \"{name}\"",
@@ -5514,10 +5527,7 @@
         "title": "Turn on {name}",
         "alreadyOn": "{name} is already on; nothing to fill in.",
         "backToPlugin": "Back to the plugin",
-        "chooseStep": "Choose connectors",
-        "chooseHint": "Check the connectors to create with the plugin; the next steps ask for each one. Unchecked ones are not created and stay available as templates on the Connectors page.",
-        "connectorStep": "Connector: {name}",
-        "confirmStep": "Confirm",
+        "confirmStep": "Review and turn on",
         "name": "Connector name",
         "slug": "Slug",
         "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name. A shorter slug leaves room for longer tool names; a tool key is at most 64 characters.",
@@ -5526,27 +5536,17 @@
         "credential": "Credentials",
         "credentialHint": "You can leave this empty and set it later on the connector's credentials page.",
         "personalHint": "This connector uses each member's own credential: give yours now (it lists the tools when installing and is stored as your personal credential). Other members add theirs later under My settings → My connections.",
-        "personalMembersHint": "This connector uses personal credentials: each member connects later.",
         "noneHint": "This connector needs no credentials.",
         "dcrHint": "The client is registered automatically; nothing to fill in.",
-        "need": {
-          "kept": "Keeps its connector",
-          "client": "Needs an OAuth client",
-          "endpoint": "Needs an address",
-          "personal": "Needs your credential",
-          "credential": "Credential can wait",
-          "none": "Nothing to fill in"
-        },
         "connectorKept": "{name}: this organization already has its connector, which is kept as it is; nothing to fill in.",
         "summary": "Turning it on gives this organization:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
         "summarySkills": "{n} skills",
         "summaryDependencies": "Installed with it first (unless this organization already has them):",
-        "summaryNotChosen": "{n, plural, one {# unchecked connector is} other {# unchecked connectors are}} not created; add them later from their templates on the Connectors page.",
+        "summaryNeedsConfig": "Connectors that need an organization credential or an OAuth client start as Needs setup; an org admin sets them up on the Connectors page.",
+        "summaryDefaultOff": "{n, plural, one {# connector is off by default and is not created; turn it on} other {# connectors are off by default and are not created; turn them on}} later on the Connectors page.",
         "submit": "Turn on",
-        "next": "Next",
-        "back": "Back",
         "cancel": "Cancel",
         "failed": "Turning it on failed at the “{step}” step ({code}); the components it created were rolled back.",
         "failedNoRollback": "Turning it on failed at the “{step}” step ({code}) and some components could not be rolled back; clean it up on the plugin's page.",
@@ -5559,16 +5559,6 @@
           "finish": "finish"
         },
         "notInstallable": "This plugin cannot be turned on right now."
-      },
-      "connectors": {
-        "title": "Complete setup of {name}",
-        "confirmStep": "Confirm",
-        "next": "Next",
-        "backToPlugin": "Back to the plugin",
-        "nothing": "{name} misses no connector.",
-        "submit": "Create connectors",
-        "done": "Connectors created for \"{name}\".",
-        "summary": "{n} connectors will be created for this organization."
       }
     },
     "plugins": {
@@ -5969,7 +5959,6 @@
       "request": "Request",
       "requestEnable": "Ask to turn on",
       "requestImport": "Request install",
-      "connectors": "Complete setup",
       "withdraw": "Withdraw",
       "delete": "Delete"
     },

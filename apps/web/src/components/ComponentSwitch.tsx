@@ -78,19 +78,7 @@ const keyOf = (c: OrgComponent) => `${c.kind}:${c.id}`;
  * it is `all` (previewed with the agents that use it, confirmed with the preview's hash), 查看插件
  * on one whose plugin is off here. Members get no action (the pages are read-only for them).
  */
-export function useComponentSwitch({
-  orgId,
-  admin,
-  onEnabled,
-}: {
-  orgId: string;
-  admin: boolean;
-  /**
-   * After a switch-on (once its lists were invalidated): `/connectors` takes a connector template
-   * that is on now straight to entering its input (补充配置).
-   */
-  onEnabled?(c: OrgComponent): void;
-}): {
+export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boolean }): {
   actionsOf(c: OrgComponent): ComponentAction[];
   dialog: ReactNode;
   error: { message: string; extra: string[] } | undefined;
@@ -137,7 +125,6 @@ export function useComponentSwitch({
     try {
       await sw.mutateAsync({ c, enabled: true });
       toast.success(t("toast.enabled", { name: nameOf(c) }));
-      onEnabled?.(c);
     } catch (e) {
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {

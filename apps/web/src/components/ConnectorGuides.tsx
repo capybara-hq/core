@@ -1,9 +1,8 @@
 "use client";
 
-import { Button, FormSection, LinkButton, Sheet } from "@capybara-hq/design";
+import { Button, LinkButton, Sheet } from "@capybara-hq/design";
 import { useQueries } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import type { OrgCatalogTemplate } from "../lib/catalog";
 import type { ConnectorSummary } from "../lib/connectors";
 import { labelLocale } from "../lib/extension-label";
 import { retryOnMountOf } from "../lib/query/client";
@@ -11,42 +10,9 @@ import { memberGuideQuery } from "../lib/query/setup";
 import { SetupGuideSection } from "./SetupGuideSection";
 
 /**
- * The connector template place of setup guides v2 (spec §9.3) on the org's pages: the admin guide
- * above a template's input in the wizards, and the member's 如何连接 sheet.
+ * The connector template place of setup guides v2 (spec §9.3) on the org's pages: the member's
+ * 如何连接 sheet (the admin guide is on the connector's page: 接入指南, and its 配置 form).
  */
-
-/**
- * 接入指南 above a connector template's input (the install wizard's template step, 补充配置): the
- * admin text, read before the client fields because the admin registers `{{oauthCallbackUrl}}` at
- * the third party before they have a client id. Live checks, but no target while the wizard is open
- * (its connectors are created on submit), so the rows say 保存后检查. Nothing without a guide.
- */
-export function TemplateGuideSection({
-  orgId,
-  template,
-}: {
-  orgId: string;
-  template: Pick<OrgCatalogTemplate, "id" | "guide">;
-}) {
-  const t = useTranslations("setupGuide");
-  if (!template.guide) return null;
-  return (
-    <FormSection
-      id={`guide-${template.id}`}
-      layout="stacked"
-      title={t("title")}
-      description={t("templateHint")}
-    >
-      <SetupGuideSection
-        key={template.id}
-        orgId={orgId}
-        guide={template.guide}
-        query={{ audience: "admin", templateId: template.id }}
-        checks="live"
-      />
-    </FormSection>
-  );
-}
 
 /**
  * Which of `connectors` have a member section in their template's guide (spec §9.3: the 如何连接

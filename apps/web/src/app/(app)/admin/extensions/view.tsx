@@ -2,6 +2,7 @@
 
 import {
   Badge,
+  Button,
   CellTitle,
   type Column,
   DataTable,
@@ -135,8 +136,14 @@ function AdminExtensionsRead({
   );
 }
 
-/** The table's columns (the loading shape draws the same headers). */
-function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
+/**
+ * The table's columns (the loading shape draws the same headers). `onConfigure` opens an
+ * extension's Sheet: a 待配置 row offers it as 配置 (plugin pages spec §5.2.4).
+ */
+function useColumns(
+  tab: ExtensionTab = "all",
+  onConfigure?: (name: string) => void,
+): Column<AdminExtension>[] {
   const t = useTranslations("admin.extensions");
   const tScope = useTranslations("catalog.scope");
   const lang = labelLocale(useLocale());
@@ -174,10 +181,16 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       key: "status",
       header: t("columns.status"),
       fit: true,
+      // 配置 opens the Sheet, as the row does: the cell stays part of the row
       cell: (p) => (
         <Stack direction="row" gap={8} align="center">
           <ExtensionStatusMark status={p.status} orgsNeedingConfig={p.orgsNeedingConfig} />
           {p.sensitive && <Badge tone="warn">{t("sensitive")}</Badge>}
+          {p.status === "pending_config" && onConfigure !== undefined && (
+            <Button density="dense" onClick={() => onConfigure(p.name)}>
+              {t("configure")}
+            </Button>
+          )}
         </Stack>
       ),
     },
@@ -252,7 +265,7 @@ function AdminExtensions({
   const lang = labelLocale(locale);
   const capabilityLabel = useCapabilityLabel();
   const [open, setOpen] = useState<string | null>(null);
-  const columns = useColumns(tab);
+  const columns = useColumns(tab, setOpen);
   const sorted = sortExtensions(all, rankOf, (p) => extensionLabel(p, lang), locale);
   const rows = inTab(sorted, tab, (p) => p.permissions).filter((p) =>
     matchesSearch(search, extensionLabel(p, lang), p.name),

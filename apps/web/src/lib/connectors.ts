@@ -225,6 +225,11 @@ export interface UpdateConnectorInput {
   tools?: Record<string, { status?: "enabled" | "disabled"; defaultPolicy?: ToolPolicy }>;
   /** The connector's own description; null clears it. */
   description?: string | null;
+  /**
+   * Endpoint fields of a connector made from a template, only at the paths its template lets the
+   * org edit (`editableEndpoint`); merged onto the stored endpoint (400 at any other path).
+   */
+  endpoint?: Record<string, unknown>;
 }
 
 /**

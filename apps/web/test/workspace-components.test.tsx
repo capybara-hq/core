@@ -741,7 +741,6 @@ describe("/plugins/[itemId]: components and 补充配置", () => {
     dependencies: [],
     skills: ["skills/pdf", "skills/web"],
     agents: [],
-    missingTemplates: over.state === "needs_config" ? [tpl] : [],
   });
   const routes = (over: Record<string, unknown> = {}): Routes => ({
     [`GET ${ORG}/catalog/${ITEM}`]: () => json(200, detail(over)),
@@ -787,32 +786,15 @@ describe("/plugins/[itemId]: components and 补充配置", () => {
     expect(within(s).queryByRole("button")).toBeNull();
   });
 
-  it("an installed needs_config plugin offers 补充配置; the wizard creates the missing connector", async () => {
-    const r = {
-      ...routes({ state: "needs_config" }),
-      [`POST ${ORG}/catalog/${ITEM}/connectors`]: () =>
-        json(201, { connectors: [{ templateId: "gh", connectorId: "c9" }] }),
-    };
+  it("an installed needs_config plugin (its extension's config waits) has no 补充配置 page link", async () => {
+    const r = routes({ state: "needs_config" });
     stubApi(r);
     await renderRouteWithCache(`/plugins/${ITEM}`, r);
-    const link = await screen.findByRole("link", { name: en.plugins.action.connectors });
-    expect(link.getAttribute("href")).toBe(`/plugins/${ITEM}/connectors`);
-    cleanup();
-    resetNavigation(`/plugins/${ITEM}/connectors`);
-    const calls = stubApi(r);
-    const { container } = await renderRouteWithCache(`/plugins/${ITEM}/connectors`, r);
-    expect(container.querySelector('[data-template="WizardPage"]')).not.toBeNull();
-    const user = userEvent.setup();
-    const token = await screen.findByLabelText(/token/i);
-    await user.type(token, "secret-token");
-    await user.click(screen.getByRole("button", { name: en.catalog.org.install.next }));
-    await user.click(await screen.findByRole("button", { name: en.catalog.org.connectors.submit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-      inputs: { connectors: Record<string, { credential?: unknown }> };
-    };
-    expect(Object.keys(body.inputs.connectors)).toEqual(["gh"]);
-    expect(body.inputs.connectors.gh?.credential).toBeDefined();
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ITEM}`));
+    await section();
+    expect(
+      screen
+        .queryAllByRole("link")
+        .some((l) => l.getAttribute("href") === `/plugins/${ITEM}/connectors`),
+    ).toBe(false);
   });
 });

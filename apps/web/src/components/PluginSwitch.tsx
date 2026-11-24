@@ -77,16 +77,16 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
 }
 
 /**
- * Whether switching a plugin on asks for input first (the wizard at `/plugins/<id>/enable`): its
- * connector templates (the only input the wizard collects).
+ * Whether switching a plugin on goes through its review page first (`/plugins/<id>/enable`): it
+ * brings connector templates, which become connectors (some 待配置); else it is a direct switch.
  */
-export function needsInput(item: OrgCatalogItem): boolean {
+export function reviewsFirst(item: OrgCatalogItem): boolean {
   return item.componentCounts.connectorTemplates > 0;
 }
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
 export interface PluginAction {
-  id: "enable" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
+  id: "enable" | "disable" | "request" | "requestEnable" | "withdraw";
   label: string;
   href?: string;
   onSelect?(): void;
@@ -329,30 +329,11 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
       ];
     }
-    // Installed but a connector template on here misses its connector (P2-10): Complete setup
-    if (i.state === "needs_config" && i.installed !== null) {
-      return [
-        {
-          id: "connectors",
-          label: t("action.connectors"),
-          href: `/plugins/${encodeURIComponent(i.id)}/connectors`,
-        },
-        ...(i.switchable
-          ? [
-              {
-                id: "disable" as const,
-                label: t("action.disable"),
-                danger: true,
-                onSelect: () => void disable(i),
-              },
-            ]
-          : []),
-      ];
-    }
-    if (i.state === "off" || i.state === "needs_config") {
+    // Installed and on, its extension's config waiting (it is configured on 扩展): as on
+    if (i.state === "off" || (i.state === "needs_config" && i.installed === null)) {
       if (i.notDeployed) return [];
       return [
-        needsInput(i)
+        reviewsFirst(i)
           ? {
               id: "enable",
               label: t("action.enable"),

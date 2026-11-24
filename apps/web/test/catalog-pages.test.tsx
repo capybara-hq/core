@@ -5,10 +5,9 @@ import { createTranslator } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import enCatalog from "../messages/en.json";
 import zhCatalog from "../messages/zh.json";
-import { defaultSlug, installTemplates, slugOf } from "../src/components/CatalogInstallWizard";
+import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import { withProductName } from "../src/i18n/product";
 import {
-  keptTemplates,
   MARKETPLACE_ERROR_KINDS,
   MARKETPLACE_SKIP_REASONS,
   marketplaceErrorKind,
@@ -73,7 +72,6 @@ const ADMIN_DEFAULTS: Routes = {
       dependencies: [],
       skills: [],
       agents: [],
-      missingTemplates: [],
     }),
 };
 const stubApi = (routes: Routes) =>
@@ -1045,6 +1043,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
                 description: "Reviews work.",
                 instructions: "Review it carefully.",
                 model: "fast",
+                connectors: [],
                 tools: ["Read", "Bash"],
               },
               {
@@ -1053,6 +1052,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
                 description: "Plans.",
                 instructions: "Plan.",
                 model: "inherit",
+                connectors: [],
               },
             ],
           },
@@ -1833,7 +1833,6 @@ describe("descriptions in the UI language (descriptionZh)", () => {
             dependencies: [],
             skills: [],
             agents: [],
-            missingTemplates: [],
           }),
         [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
@@ -1844,129 +1843,9 @@ describe("descriptions in the UI language (descriptionZh)", () => {
   );
 });
 
-describe("/plugins/[itemId]/enable (WizardPage)", () => {
-  it("read-only endpoint fields stay read-only, editable ones change; the body has only the changed editable fields and credentials; a dependency failure names it and says it was rolled back", async () => {
-    params.current = { itemId: ID };
-    const t = en.catalog.org.install;
-    const detail = {
-      item: orgItem({ name: "crm" }),
-      hasIcon: false,
-      extension: "crm",
-      templates: [
-        {
-          id: "gh",
-          displayName: { zh: "GitHub", en: "GitHub" },
-          description: "",
-          plugin: "connector-mcp",
-          connector: "mcp",
-          endpoint: { url: "https://mcp.example.com", headers: { "X-Org": "acme" } },
-          editableEndpoint: ["url"],
-          auth: { type: "bearer", ownership: "org" },
-          ownership: "org",
-        },
-      ],
-      dependencies: [{ name: "crm-core", range: "^1.0.0" }],
-      skills: ["skills/pdf-tools"],
-    };
-    const calls = stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
-        json(502, {
-          error: {
-            code: "plugin.install_failed",
-            message: "x",
-            details: [
-              { step: "skills", code: "internal", dependency: "crm-core", rolledBack: true },
-            ],
-          },
-        }),
-    });
-    await renderInstall();
-    expect(template("WizardPage")).not.toBeNull();
-    const fixed = (await screen.findByLabelText("headers.X-Org")) as HTMLInputElement;
-    expect(fixed.readOnly).toBe(true);
-    expect(fixed.value).toBe("acme");
-    const url = screen.getByLabelText("url") as HTMLInputElement;
-    expect(url.readOnly).toBe(false);
-    const user = userEvent.setup();
-    await user.clear(url);
-    await user.type(url, "https://mcp.acme.internal");
-    await user.type(screen.getByLabelText(en.connectors.form.tokenLabel), "tok");
-    await user.click(screen.getByRole("button", { name: t.next }));
-    // Confirm lists the dependencies installed with it
-    expect(screen.getByText(t.summaryDependencies)).toBeTruthy();
-    expect(screen.getByText("· crm-core ^1.0.0")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: t.submit }));
-    expect(
-      await screen.findByText(
-        `${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
-      ),
-    ).toBeTruthy();
-    expect(switchInputs(calls)).toEqual({
-      connectors: {
-        gh: {
-          name: "GitHub",
-          slug: "gh",
-          endpoint: { url: "https://mcp.acme.internal" },
-          credential: { token: "tok" },
-        },
-      },
-    });
-  });
-
-  it("a personal static-auth template asks the installer for their own credential (required, posted) with the hint about other members (final review I2)", async () => {
-    params.current = { itemId: ID };
-    for (const locale of LOCALES) {
-      const t = msgs[locale].catalog.org.install;
-      const calls = stubApi({
-        [`GET ${ORG}/catalog/${ID}`]: () =>
-          json(200, {
-            item: orgItem({ name: "docs" }),
-            hasIcon: false,
-            extension: null,
-            templates: [
-              {
-                id: "docs",
-                displayName: null,
-                description: "",
-                plugin: "connector-mcp",
-                connector: "mcp",
-                endpoint: { url: "https://mcp.example.com" },
-                editableEndpoint: [],
-                auth: { type: "bearer", ownership: "personal" },
-                ownership: "personal",
-              },
-            ],
-            dependencies: [],
-            skills: [],
-            agents: [],
-            missingTemplates: [],
-          }),
-        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
-          json(200, { item: orgItem({ name: "docs", state: "on" }) }),
-      });
-      await renderInstall({ locale });
-      expect(await screen.findByText(t.personalHint)).toBeTruthy();
-      const next = screen.getByRole("button", { name: t.next }) as HTMLButtonElement;
-      expect(next.disabled).toBe(true);
-      const user = userEvent.setup();
-      await user.type(screen.getByLabelText(msgs[locale].connectors.form.tokenLabel), "mine");
-      expect(next.disabled).toBe(false);
-      await user.click(next);
-      await user.click(screen.getByRole("button", { name: t.submit }));
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-      expect(switchInputs(calls)).toEqual({
-        connectors: { docs: { slug: "docs", credential: { token: "mine" } } },
-      });
-      cleanup();
-      vi.unstubAllGlobals();
-    }
-  });
-
-  /** A connector template of the choose-step tests (an MCP endpoint, no editable fields). */
-  const chooseTpl = (id: string, extra: Record<string, unknown>) => ({
+describe("/plugins/[itemId]/enable (one review page)", () => {
+  /** A connector template of the review tests (an MCP endpoint, no editable fields). */
+  const reviewTpl = (id: string, extra: Record<string, unknown> = {}) => ({
     id,
     displayName: { zh: `${id}-zh`, en: id },
     description: "",
@@ -1974,10 +1853,18 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     connector: "mcp",
     endpoint: { url: "https://mcp.example.com" },
     editableEndpoint: [],
+    auth: { type: "none" },
+    ownership: "org",
+    defaultOff: false,
+    connected: false,
     ...extra,
   });
-  /** An uninstalled plugin with these templates, its switch answering on. */
-  const stubChoose = (templates: unknown[]) =>
+  /** An uninstalled plugin with these templates, its switch answering `answer`. */
+  const stubReview = (
+    templates: unknown[],
+    over: Record<string, unknown> = {},
+    answer: () => Response = () => json(200, { item: orgItem({ name: "github", state: "on" }) }),
+  ) =>
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
@@ -1988,203 +1875,94 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           dependencies: [],
           skills: [],
           agents: [],
-          missingTemplates: [],
+          ...over,
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
-        json(200, { item: orgItem({ name: "github", state: "on" }) }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: answer,
     });
-  const chooseList = (label: string) => screen.findByRole("list", { name: label });
-  const box = (name: string) => screen.getByRole("checkbox", { name }) as HTMLInputElement;
 
-  it("the choose step checks default-on templates and not default-off ones; as it is, only the default set is created", async () => {
+  it("enabling is one review page: the templates it creates with their needs and icons, 启用 and no input", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
-    const calls = stubChoose([
-      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
-      chooseTpl("bigquery", {
-        auth: { type: "oauth_code", client: "manual" },
-        ownership: "org",
-        defaultOff: true,
-        on: false,
-        description: "Query BigQuery datasets.",
-      }),
-    ]);
+    const r = en.catalog.admin.review;
+    const GH_ICON = `/api/v1/orgs/o1/connector-templates/tpl-gh/icon?v=1.0.0`;
+    const calls = stubReview(
+      [
+        reviewTpl("gh", { auth: { type: "bearer", ownership: "org" }, icon: GH_ICON }),
+        reviewTpl("drive", { auth: { type: "oauth_code", client: "manual" } }),
+        reviewTpl("pat", { connected: true }),
+        reviewTpl("bigquery", { defaultOff: true, on: false }),
+      ],
+      { dependencies: [{ name: "crm-core", range: "^1.0.0" }] },
+    );
     await renderInstall();
-    const list = await chooseList(t.chooseStep);
-    expect(template("WizardPage")).toBeTruthy();
-    expect(box("gh").checked).toBe(true);
-    expect(box("bigquery").checked).toBe(false);
-    // each row says what its step asks for, with its description and the hint on unchosen ones
-    expect(within(list).getByText(t.need.none)).toBeTruthy();
-    expect(within(list).getByText(t.need.client)).toBeTruthy();
-    expect(within(list).getByText("Query BigQuery datasets.")).toBeTruthy();
-    expect(screen.getByText(t.chooseHint)).toBeTruthy();
-    // the template's step follows; the default-off one has none
-    expect(screen.getByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
-    expect(screen.queryByText(fill(t.connectorStep, { name: "bigquery" }))).toBeNull();
+    const list = await screen.findByRole("list", { name: en.catalog.components.templates });
+    expect(template("WizardPage")).not.toBeNull();
+    // one step only, and nothing to fill in or pick
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+    // the templates switched on with it: their needs, the kept one, their icons
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(within(list).getByText(r.needsOrgCredential)).toBeTruthy();
+    expect(within(list).getByText(r.needsOAuthClient)).toBeTruthy();
+    expect(within(list).getByText(fill(t.connectorKept, { name: "pat" }))).toBeTruthy();
+    expect(rows[0]?.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
+    // input is entered on the connectors page afterwards; a default-off one is not created
+    expect(screen.getByText(t.summaryNeedsConfig)).toBeTruthy();
+    expect(
+      screen.getByText(
+        "1 connector is off by default and is not created; turn it on later on the Connectors page.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("· crm-core ^1.0.0")).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: t.next }));
-    await user.click(screen.getByRole("button", { name: t.next }));
-    expect(screen.getByText(fill(t.summaryTemplates, { n: 1 }))).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: t.submit }));
+    await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-    expect(switchInputs(calls)).toEqual({
-      connectors: { gh: { name: "gh", slug: "gh" } },
-      templatesOn: ["gh"],
-    });
+    const put = bodyOf(calls.find((c) => c.method === "PUT") as Parameters<typeof bodyOf>[0]);
+    expect(put).toEqual({ enabled: true });
   });
 
-  it("checking a default-off template adds its step and creates it; unchecking a default-on one drops its step", async () => {
-    params.current = { itemId: ID };
-    const t = en.catalog.org.install;
-    const calls = stubChoose([
-      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
-      chooseTpl("bigquery", {
-        auth: { type: "none" },
-        ownership: "org",
-        defaultOff: true,
-        on: false,
-      }),
-    ]);
-    await renderInstall();
-    await chooseList(t.chooseStep);
-    const user = userEvent.setup();
-    await user.click(box("bigquery"));
-    expect(screen.getByText(fill(t.connectorStep, { name: "bigquery" }))).toBeTruthy();
-    await user.click(box("gh"));
-    expect(screen.queryByText(fill(t.connectorStep, { name: "gh" }))).toBeNull();
-    // choose -> bigquery -> confirm
-    await user.click(screen.getByRole("button", { name: t.next }));
-    expect(screen.getByRole("textbox", { name: t.name })).toHaveProperty("value", "bigquery");
-    await user.click(screen.getByRole("button", { name: t.next }));
-    expect(screen.getByText(fill(t.summaryTemplates, { n: 1 }))).toBeTruthy();
-    expect(screen.getByText(/1 unchecked connector is not created/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-    expect(switchInputs(calls)).toEqual({
-      connectors: { bigquery: { name: "bigquery", slug: "bigquery" } },
-      templatesOn: ["bigquery"],
-    });
-  });
-
-  it("with nothing checked the plugin is still switched on, creating no connector", async () => {
-    params.current = { itemId: ID };
-    const t = en.catalog.org.install;
-    const calls = stubChoose([
-      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
-      chooseTpl("bigquery", { auth: { type: "none" }, ownership: "org", defaultOff: true }),
-    ]);
-    await renderInstall();
-    await chooseList(t.chooseStep);
-    const user = userEvent.setup();
-    await user.click(box("gh"));
-    await user.click(screen.getByRole("button", { name: t.next }));
-    await user.click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-    expect(switchInputs(calls)).toEqual({ templatesOn: [] });
-  });
-
-  it("a single default-on template opens on its own step, without the choose step", async () => {
-    params.current = { itemId: ID };
-    const t = en.catalog.org.install;
-    const calls = stubChoose([
-      chooseTpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false, on: true }),
-    ]);
-    await renderInstall();
-    expect(await screen.findByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
-    expect(screen.queryByText(t.chooseStep)).toBeNull();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: t.next }));
-    await user.click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-    // no choice made: the kernel takes the templates on in the org
-    expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });
-  });
-
-  it("the choose step speaks Chinese: the step, the hint, the marks and the zh names and descriptions", async () => {
+  it("the review speaks Chinese: 启用, the zh names and the needs", async () => {
     params.current = { itemId: ID };
     const t = zh.catalog.org.install;
-    stubChoose([
-      chooseTpl("gh", {
-        auth: { type: "none" },
-        ownership: "org",
-        defaultOff: false,
-        on: true,
+    stubReview([
+      reviewTpl("gh", {
+        auth: { type: "bearer", ownership: "org" },
         description: "GitHub tools.",
         descriptionZh: "GitHub 工具。",
       }),
-      chooseTpl("pg", {
-        auth: { type: "none" },
-        ownership: "org",
-        defaultOff: true,
-        editableEndpoint: ["url"],
-        endpoint: {},
-      }),
     ]);
     await renderInstall({ locale: "zh" });
-    const list = await chooseList(t.chooseStep);
-    expect(box("gh-zh").checked).toBe(true);
+    const list = await screen.findByRole("list", { name: zh.catalog.components.templates });
+    expect(within(list).getByText("gh-zh")).toBeTruthy();
     expect(within(list).getByText("GitHub 工具。")).toBeTruthy();
-    expect(within(list).getByText(t.need.none)).toBeTruthy();
-    expect(within(list).getByText(t.need.endpoint)).toBeTruthy();
-    expect(screen.getByText(t.chooseHint)).toBeTruthy();
+    expect(within(list).getByText(zh.catalog.admin.review.needsOrgCredential)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "启用" })).toBeTruthy();
+    expect(t.submit).toBe("启用");
   });
 
-  it("a template the org already has a connector for is kept on the choose step, has no step and is not submitted", async () => {
+  it("a dependency failure names it and says it was rolled back", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
-    const GH_ICON = `/api/v1/orgs/o1/connector-templates/tpl-gh/icon?v=1.0.0`;
-    const calls = stubChoose([
-      chooseTpl("gh", {
-        auth: { type: "none" },
-        ownership: "org",
-        defaultOff: false,
-        connected: false,
-        icon: GH_ICON,
+    stubReview([], { dependencies: [{ name: "crm-core", range: "^1.0.0" }] }, () =>
+      json(502, {
+        error: {
+          code: "plugin.install_failed",
+          message: "x",
+          details: [{ step: "skills", code: "internal", dependency: "crm-core", rolledBack: true }],
+        },
       }),
-      chooseTpl("github-pat", {
-        auth: { type: "bearer", ownership: "personal" },
-        ownership: "personal",
-        defaultOff: false,
-        connected: true,
-        icon: null,
-      }),
-    ]);
+    );
     await renderInstall();
-    const list = await chooseList(t.chooseStep);
-    // the kept one is locked on, and says so; the rows carry the template icons
-    expect(box("github-pat").checked).toBe(true);
-    expect(box("github-pat").disabled).toBe(true);
-    expect(within(list).getByText(t.need.kept)).toBeTruthy();
-    expect(list.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
-    // Only the template without a connector has a step; the kept one asks for nothing
-    expect(screen.getByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
-    expect(screen.queryByText(fill(t.connectorStep, { name: "github-pat" }))).toBeNull();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: t.next }));
-    expect(screen.queryByText(t.personalHint)).toBeNull();
-    await user.click(screen.getByRole("button", { name: t.next }));
-    // The confirm step says the existing connector is kept; both connectors count in the summary
-    expect(screen.getByText(fill(t.connectorKept, { name: "github-pat" }))).toBeTruthy();
-    expect(screen.getByText(fill(t.summaryTemplates, { n: 2 }))).toBeTruthy();
-    // Both templates are rows with their icon (the template's icon route), else the initial
-    const rows = within(
-      screen.getByRole("list", { name: en.catalog.components.templates }),
-    ).getAllByRole("listitem");
-    expect(rows).toHaveLength(2);
-    expect(rows[0]?.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
-    expect(rows[1]?.querySelector("img")).toBeNull();
-    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
-    await user.click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
-    expect(switchInputs(calls)).toEqual({
-      connectors: { gh: { name: "gh", slug: "gh" } },
-      templatesOn: ["gh", "github-pat"],
-    });
+    await userEvent.setup().click(await screen.findByRole("button", { name: t.submit }));
+    expect(
+      await screen.findByText(
+        `${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
+      ),
+    ).toBeTruthy();
   });
-
   it("a 409 catalog.dependency_unresolved names the dependency and its range", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
@@ -2239,7 +2017,6 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           dependencies: [],
           skills: [],
           agents: [],
-          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () =>
         json(200, {
@@ -2272,7 +2049,7 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
         new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`, `${ORG}/readiness`]),
       ),
     );
-    expect(switchInputs(calls)).toEqual({});
+    expect(switchInputs(calls)).toBeUndefined();
   });
 
   it("an installed extension that still needs config sends the person on to its Sheet", async () => {
@@ -2290,7 +2067,6 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           dependencies: [],
           skills: [],
           agents: [],
-          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () =>
         json(200, {
@@ -3808,32 +3584,6 @@ describe("/extensions: switching on refused by the plugin", () => {
   );
 });
 
-describe("安装向导会问哪些连接器模板", () => {
-  const tpl = (id: string, defaultOff: boolean, on?: boolean, connected?: boolean) =>
-    ({
-      id,
-      defaultOff,
-      ...(on !== undefined && { on }),
-      ...(connected !== undefined && { connected }),
-    }) as never;
-  it("默认开着的模板问；默认关的模板只有在组织里被打开后才问", () => {
-    expect(
-      installTemplates([tpl("gh", false), tpl("pat", true), tpl("slack", true)]).map((t) => t.id),
-    ).toEqual(["gh"]);
-    expect(installTemplates([tpl("slack", true, true)]).map((t) => t.id)).toEqual(["slack"]);
-    // a default-off template that is not on is not asked for
-    expect(installTemplates([tpl("pat", true)]).map((t) => t.id)).toEqual([]);
-  });
-
-  it("the template whose connector this org already has (connected) is not asked for, and is listed as kept", () => {
-    const templates = [tpl("gh", false, false, true), tpl("pat", false)];
-    expect(installTemplates(templates).map((t) => t.id)).toEqual(["pat"]);
-    expect(keptTemplates(templates).map((t) => t.id)).toEqual(["gh"]);
-    // a default-off template that was not switched on here is neither asked for nor kept
-    expect(keptTemplates([tpl("slack", true, false, true)]).map((t) => t.id)).toEqual([]);
-  });
-});
-
 describe("安装向导的默认 slug", () => {
   it("连接器模板条目按条目名推导（不是连接器种类）；应用里的模板按模板 id", () => {
     expect(defaultSlug({ id: "connector" }, "github-mcp")).toBe("github_mcp");
@@ -3841,41 +3591,6 @@ describe("安装向导的默认 slug", () => {
     expect(defaultSlug({ id: "crm-mcp" }, "crm")).toBe("crm_mcp");
     expect(slugOf("中文")).toBe("");
     expect(slugOf("a".repeat(30))).toHaveLength(24);
-  });
-
-  it("单模板条目：向导里预填的 slug 来自条目名", async () => {
-    params.current = { itemId: ID };
-    stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () =>
-        json(200, {
-          item: orgItem({ name: "github-mcp" }),
-          hasIcon: false,
-          extension: null,
-          templates: [
-            {
-              id: "connector",
-              displayName: null,
-              description: "",
-              plugin: "connector-mcp",
-              connector: "mcp",
-              endpoint: { url: "https://mcp.example.com" },
-              editableEndpoint: [],
-              auth: { type: "none" },
-              ownership: null,
-            },
-          ],
-          dependencies: [],
-          skills: [],
-          agents: [],
-          missingTemplates: [],
-        }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-    });
-    await renderInstall();
-    const slug = (await screen.findByLabelText(en.catalog.org.install.slug, {
-      exact: false,
-    })) as HTMLInputElement;
-    expect(slug.value).toBe("github_mcp");
   });
 });
 
@@ -4365,7 +4080,6 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
     dependencies: [],
     skills: ["skills/notes", "skills/extra"],
     agents: [],
-    missingTemplates: [],
   };
 
   it("plugin page: members read no installs", async () => {
@@ -4945,7 +4659,6 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
     dependencies: [],
     skills: ["skills/notes"],
     agents: [],
-    missingTemplates: [],
   };
   const routes = {
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
@@ -5020,7 +4733,6 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     dependencies: [],
     skills: [],
     agents: [],
-    missingTemplates: [],
   };
   const routes = {
     [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
@@ -5651,7 +5363,7 @@ const cardName = (name: string) =>
   ) ?? null;
 
 describe("/plugins: cards without a configure action, market source filter", () => {
-  it("an on plugin with overridable config shows no 配置 and no 组织配置, a needs-config one keeps 完成设置", async () => {
+  it("an on plugin with overridable config shows no 配置 and no 组织配置, nor does a needs-config one (it is configured on 扩展)", async () => {
     const p = en.plugins;
     const ext = (itemId: string, name: string) => ({
       plugin: name,
@@ -5703,7 +5415,7 @@ describe("/plugins: cards without a configure action, market source filter", () 
     const on = rowOf(list, "cfg-on");
     expect(actionsOf(on, "cfg-on")).toEqual([]);
     expect(within(on).queryByRole("link", { name: /config/i })).toBeNull();
-    expect(actionsOf(rowOf(list, "needs"), "needs")).toEqual([p.action.connectors]);
+    expect(actionsOf(rowOf(list, "needs"), "needs")).toEqual([]);
   });
 
   it("the org market filters by source derived from the entries", async () => {

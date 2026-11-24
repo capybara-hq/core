@@ -30,8 +30,12 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { usePersonalConnections } from "../../../../components/ConnectionActions";
+import {
+  ConnectorEndpointCard,
+  useConnectorTemplate,
+} from "../../../../components/ConnectorEndpointCard";
 import {
   buildCredential,
   buildOAuthClient,
@@ -250,7 +254,7 @@ function Connector({
       ) : tab === "review" ? (
         <ReviewTab orgId={orgId} app={app} manage={manage} onSaved={saved} />
       ) : tab === "credentials" ? (
-        <CredentialsTab orgId={orgId} app={app} manage={manage} />
+        <CredentialsTab orgId={orgId} app={app} manage={manage} update={update} onSaved={saved} />
       ) : (
         <SettingsTab orgId={orgId} app={app} manage={manage} update={update} onSaved={saved} />
       )}
@@ -576,19 +580,78 @@ function ToolsTab({
   );
 }
 
+/**
+ * The guide a 配置 form shows becomes the one the connector is set up with when the form saves
+ * (plugin pages spec §5.3): records its admin hash (`guide-ack`, the same read as the guide shown).
+ * Does nothing (and reads nothing) for a connector without a template guide or off the 配置 form.
+ */
+function useAckShownGuide(
+  orgId: string,
+  app: ConnectorDetail,
+  configuring: boolean,
+  onSaved: (next: ConnectorDetail) => void,
+): () => Promise<void> {
+  const locale = labelLocale(useLocale());
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const guide = configuring ? (app.setupGuide ?? null) : null;
+  const gq = setupGuideQuery(orgId, guide ?? { itemId: "", guideId: "" }, {
+    connectorId: app.id,
+    audience: "admin",
+    locale,
+  });
+  const shown = useQuery({
+    ...gq,
+    enabled: guide !== null,
+    retryOnMount: retryOnMountOf(gq.queryKey),
+  });
+  const ack = useAppMutation({
+    fn: (hash: string) => ackConnectorGuide(orgId, app.id, hash),
+    invalidates: () => [keys.org(orgId).connectors()],
+    onSuccess: (r) => onSaved(r.connector),
+  });
+  return async () => {
+    const hash = shown.data?.hash;
+    if (guide === null || hash === undefined) return;
+    try {
+      await ack.mutateAsync(hash);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+}
+
+/**
+ * 凭据. For org admins, a connector that lacks the org input its auth needs (`setup:
+ * needs_config`) makes this tab its 配置 form (plugin pages spec §5.2.4, §5.3): its template's
+ * setup guide (the admin text, for this connector), the endpoint fields its template lets the org
+ * edit, then the org credential or OAuth client; each save records the guide shown. Nobody connects
+ * a personal credential to it meanwhile (it is never called).
+ */
 function CredentialsTab({
   orgId,
   app,
   manage,
+  update,
+  onSaved,
 }: {
   orgId: string;
   app: ConnectorDetail;
   manage: boolean;
+  update: Update;
+  onSaved(next: ConnectorDetail): void;
 }) {
   const t = useTranslations("connectors");
+  const tg = useTranslations("setupGuide");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const needsConfig = app.setup === "needs_config";
+  const configuring = manage && needsConfig;
+  const template = useConnectorTemplate(orgId, configuring ? app : { platformTemplateId: null });
+  const ackShown = useAckShownGuide(orgId, app, configuring, onSaved);
+  const configured = configuring ? ackShown : undefined;
+  const guide = configuring ? (app.setupGuide ?? null) : null;
   const [values, setValues] = useState(EMPTY_CREDENTIAL);
   const [pending, setPending] = useState(false);
   // A credential change is not answered with the connector: its status is read again.
@@ -612,6 +675,43 @@ function CredentialsTab({
     );
   }
   const auth = app.auth;
+  // The 配置 form's head: the guide above the input, the editable endpoint
+  const withForm = (input: ReactNode) =>
+    configuring ? (
+      <Stack gap={16}>
+        {guide !== null && (
+          <Card title={tg("title")}>
+            <Stack gap={16}>
+              <Text variant="prose" tone="muted">
+                {tg("connectorHint")}
+              </Text>
+              <SetupGuideSection
+                key={guide.version}
+                orgId={orgId}
+                guide={guide}
+                query={{ connectorId: app.id, audience: "admin" }}
+                targetLabel={app.name}
+                checks="live"
+              />
+            </Stack>
+          </Card>
+        )}
+        {template !== undefined && (
+          <ConnectorEndpointCard app={app} template={template} update={update} onSaved={ackShown} />
+        )}
+        {input}
+      </Stack>
+    ) : (
+      input
+    );
+  // Members wait for an org admin; nobody connects to a connector that is never called
+  if (needsConfig && !manage) {
+    return (
+      <Card title={t("credential.title")}>
+        <Text tone="muted">{t("setup.needsAdmin")}</Text>
+      </Card>
+    );
+  }
 
   const personalCard = (
     <Card title={t("credential.personalTitle")} actions={status}>
@@ -630,23 +730,24 @@ function CredentialsTab({
   );
 
   if (auth.type === "oauth_client") {
-    // 客户端凭据流：组织 token 由客户端换取，不在界面手填；管理员可轮换客户端（内核先验证再替换）
-    return (
+    // Client credentials flow: the org token comes from the client, never typed in; an admin may
+    // replace the client (the kernel verifies the new one first)
+    return withForm(
       <Card title={t("credential.orgTitle")} actions={status}>
         <Stack gap={12}>
           <Text variant="prose" tone="muted">
             {t("credential.oauthOrgHint")}
           </Text>
-          {manage && <RotateClient orgId={orgId} app={app} />}
+          {manage && <RotateClient orgId={orgId} app={app} onSaved={configured} />}
         </Stack>
-      </Card>
+      </Card>,
     );
   }
 
   if (auth.type === "oauth_code") {
-    return (
+    return withForm(
       <Stack gap={16}>
-        {personalCard}
+        {!needsConfig && personalCard}
         {manage && (
           <Card title={t("credential.clientTitle")}>
             <Stack gap={16}>
@@ -660,14 +761,14 @@ function CredentialsTab({
                 </Stack>
               )}
               {auth.client === "manual" ? (
-                <RotateClient orgId={orgId} app={app} />
+                <RotateClient orgId={orgId} app={app} onSaved={configured} />
               ) : (
                 <Text tone="muted">{t("credential.clientDcr")}</Text>
               )}
             </Stack>
           </Card>
         )}
-      </Stack>
+      </Stack>,
     );
   }
 
@@ -683,6 +784,7 @@ function CredentialsTab({
       await setCredential.mutateAsync(credential);
       setValues(EMPTY_CREDENTIAL);
       toast.success(t("credential.saved"));
+      await configured?.();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -690,7 +792,7 @@ function CredentialsTab({
     }
   }
 
-  return (
+  return withForm(
     <Card title={t("credential.orgTitle")} actions={status}>
       <Stack gap={12}>
         <Text tone="muted">{t(manage ? "credential.orgHint" : "credential.orgReadonly")}</Text>
@@ -710,7 +812,7 @@ function CredentialsTab({
           </>
         )}
       </Stack>
-    </Card>
+    </Card>,
   );
 }
 
@@ -785,6 +887,11 @@ function SettingsTab({
   const [pending, setPending] = useState(false);
   // the template's description stands in while the connector has none of its own
   const fallback = templateDescriptionOf(app, locale);
+  // the endpoint fields its template lets the org edit (a 待配置 one edits them on its 配置 form)
+  const template = useConnectorTemplate(
+    orgId,
+    manage && app.setup !== "needs_config" ? app : { platformTemplateId: null },
+  );
   const [confirm, setConfirm] = useState(false);
   // A delete invalidates the org's connectors (the list this page goes back to) and forgets the
   // connector once this page is left.
@@ -868,6 +975,9 @@ function SettingsTab({
           )}
         </Stack>
       </Card>
+      {template !== undefined && (
+        <ConnectorEndpointCard key={app.updatedAt} app={app} template={template} update={update} />
+      )}
       {app.git !== null && (
         <GitPushCard orgId={orgId} app={app} git={app.git} manage={manage} onSaved={onSaved} />
       )}
@@ -1012,7 +1122,16 @@ const reviewCount = (app: ConnectorDetail) =>
  * OAuth 客户端轮换（Ruling A18，`PUT credentials/org`）：客户端凭据流在内核先用新客户端取 token 验证；
  * 手填客户端的授权码流不验证，填错会让所有成员重新连接（提示）。
  */
-function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
+function RotateClient({
+  orgId,
+  app,
+  onSaved,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  /** The 配置 form (no client yet): the button saves the first client, then this runs. */
+  onSaved?: (() => Promise<void>) | undefined;
+}) {
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -1023,6 +1142,8 @@ function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
     invalidates: () => [keys.org(orgId).connector(app.id), keys.org(orgId).setupChecksAll()],
   });
   const clientFlow = app.auth.type === "oauth_client";
+  // The 配置 form enters the first client: nothing to replace yet
+  const first = onSaved !== undefined;
   const value = buildOAuthClient(values);
   const ready = value !== undefined && (!clientFlow || values.clientSecret !== "");
 
@@ -1032,7 +1153,8 @@ function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
     try {
       await setClient.mutateAsync(value);
       setValues(EMPTY_OAUTH_CLIENT);
-      toast.success(t("credential.rotated"));
+      toast.success(t(first ? "credential.clientSaved" : "credential.rotated"));
+      await onSaved?.();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -1048,7 +1170,7 @@ function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
       <OAuthClientFields values={values} onChange={setValues} secretRequired={clientFlow} />
       <Stack direction="row">
         <Button variant="primary" loading={pending} disabled={!ready} onClick={() => void rotate()}>
-          {t("credential.rotate")}
+          {t(first ? "credential.saveClient" : "credential.rotate")}
         </Button>
       </Stack>
     </Stack>
