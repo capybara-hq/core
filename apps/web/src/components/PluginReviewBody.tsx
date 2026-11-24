@@ -111,7 +111,7 @@ export function PluginReviewBody({
           to: versionLabel(ext.version),
         })
       : ext?.action === "keep"
-        ? t("action.keep", { version: versionLabel(ext.currentVersion ?? ext.version) })
+        ? t("action.keep", { version: versionLabel(review.version) })
         : t("action.install", { version: versionLabel(review.version) });
   const sensitive = sensitiveTotal(review);
   const facts: { k: string; v: ReactNode }[] = [
@@ -461,12 +461,16 @@ function hostOf(endpoint: Record<string, unknown>): string {
 }
 
 /** Short values as a row of chips. */
-function Chips({ items }: { items: string[] }) {
+function Chips({ items, added = new Set() }: { items: string[]; added?: Set<string> }) {
+  const t = useTranslations("catalog.admin.review");
   return (
     <Stack direction="row" gap={4} wrap>
       {items.map((x, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: names may repeat; the order is fixed
-        <Badge key={`${i}:${x}`}>{x}</Badge>
+        <Stack key={`${i}:${x}`} direction="row" gap={4} align="center">
+          <Badge>{x}</Badge>
+          {added.has(x) && <Badge tone="accent">{t("newMark")}</Badge>}
+        </Stack>
       ))}
     </Stack>
   );
@@ -504,6 +508,16 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
         : g,
     )
     .filter((g) => g.entries.length > 0);
+  // On an update, what the new version added to the provides and config rows is marked
+  const addedKeys = extension.action === "upgrade" ? extension.addedItems.map((a) => a.value) : [];
+  const addedProvides = new Set(
+    addedKeys.filter((k) => k.startsWith("provides:")).map((k) => k.slice("provides:".length)),
+  );
+  const addedConfig = new Set(
+    addedKeys
+      .filter((k) => /^config\.(deployment|org)(\.secret)?:/.test(k))
+      .map((k) => topLevelField(k.slice(k.indexOf(":") + 1))),
+  );
   const reasons = [
     ...new Set(
       (provides?.entries ?? []).flatMap((e) => {
@@ -526,7 +540,7 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
             v: (
               <Stack gap={4}>
                 <Stack direction="row" gap={4} wrap align="center">
-                  <Chips items={provides.entries.map((e) => e.value)} />
+                  <Chips items={provides.entries.map((e) => e.value)} added={addedProvides} />
                   {provides.entries.some((e) => e.sensitive) && (
                     <Badge tone="warn">{tp("sensitive")}</Badge>
                   )}
@@ -549,10 +563,14 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
               <Stack gap={4}>
                 <Stack direction="row" gap={4} wrap>
                   {config.map((f) => (
-                    <Badge key={f}>
-                      {secrets.has(f) && <Icon name="lock" size={12} label={t("secret")} />}
-                      {f}
-                    </Badge>
+                    <Stack key={f} direction="row" gap={4} align="center">
+                      {/* A secret field is counted among the sensitive items: drawn in warn */}
+                      <Badge {...(secrets.has(f) && { tone: "warn" as const })}>
+                        {secrets.has(f) && <Icon name="lock" size={12} label={t("secret")} />}
+                        {f}
+                      </Badge>
+                      {addedConfig.has(f) && <Badge tone="accent">{t("newMark")}</Badge>}
+                    </Stack>
                   ))}
                 </Stack>
                 <Text variant="small" tone="muted">

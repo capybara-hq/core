@@ -180,6 +180,50 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText("device-provider@1")).toBeTruthy();
   });
 
+  it("every counted sensitive item is drawn in warn: the total equals the warn marks", () => {
+    const { container } = renderPage(<PluginReviewBody review={deviceE2b} />, zh);
+    expect(screen.getByText("2 项敏感")).toBeTruthy();
+    // the sensitive provides row (one mark) and the secret config chip (warn, with its lock)
+    const marks = [...container.querySelectorAll('.cb-badge[data-tone="warn"]')].filter(
+      (b) => !/项敏感$/.test(b.textContent ?? ""),
+    );
+    expect(marks).toHaveLength(2);
+    expect(screen.getByText("apiKey").getAttribute("data-tone")).toBe("warn");
+    expect(screen.getByText("domain").getAttribute("data-tone")).toBe("default");
+  });
+
+  it("a kept extension's header chip shows the plugin version, not the extension's", () => {
+    const kept = {
+      ...deviceE2b,
+      extension: { ...deviceE2b.extension, action: "keep", currentVersion: "0.0.9" },
+    } as PluginReview;
+    renderPage(<PluginReviewBody review={kept} />, zh);
+    // the head chip names the plugin version, the extension's own line its kept version
+    expect(screen.getByText("保持 v0.1.0-rc.28（已满足范围）")).toBeTruthy();
+    expect(screen.getByText("保持 v0.0.9（已满足范围）")).toBeTruthy();
+  });
+
+  it("on an update, a provides or config permission added gets the 新增 mark", () => {
+    const upgrade = {
+      ...deviceE2b,
+      extension: {
+        ...deviceE2b.extension,
+        action: "upgrade",
+        currentVersion: "0.1.0-rc.2",
+        addedItems: [
+          { value: "provides:device-provider@1", sensitive: true, reason: "device_provider" },
+          { value: "config.deployment:domain", sensitive: false },
+        ],
+        added: ["provides:device-provider@1", "config.deployment:domain"],
+      },
+    } as PluginReview;
+    renderPage(<PluginReviewBody review={upgrade} />, zh);
+    expect(screen.getAllByText("新增")).toHaveLength(2);
+    expect(screen.getByText("device-provider@1").parentElement?.textContent).toContain("新增");
+    expect(screen.getByText("domain").parentElement?.textContent).toContain("新增");
+    expect(screen.getByText("apiKey").parentElement?.textContent).not.toContain("新增");
+  });
+
   it("empty sections collapse into one line", () => {
     renderPage(<PluginReviewBody review={deviceE2b} />, zh);
     expect(screen.queryByRole("heading", { name: "技能" })).toBeNull();
