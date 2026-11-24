@@ -4985,7 +4985,7 @@
         "allSources": "All sources"
       },
       "actions": {
-        "addSource": "Add marketplace source",
+        "sources": "Sources",
         "upload": "Upload plugin package"
       },
       "detail": {
@@ -5260,7 +5260,7 @@
       },
       "entries": {
         "title": "Browse marketplaces",
-        "empty": "No marketplace entries. Add or refresh a marketplace with Add marketplace source.",
+        "empty": "No marketplace entries. Add or refresh a marketplace with Sources.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",

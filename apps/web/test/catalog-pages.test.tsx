@@ -2643,7 +2643,7 @@ describe("marketplaces: the two tabs share one head", () => {
   it.each(LOCALES)("the empty entries list points to 添加市场源 (%s)", (locale) => {
     const m = msgs[locale].catalog.admin;
     expect(m.entries.empty).toContain(
-      locale === "zh" ? `「${m.actions.addSource}」` : m.actions.addSource,
+      locale === "zh" ? `「${m.actions.sources}」` : m.actions.sources,
     );
   });
 });
@@ -3365,6 +3365,19 @@ describe("/admin/plugins and marketplace entries", () => {
     expect(screen.getByText(en.catalog.admin.detail.permissions.none)).toBeTruthy();
   });
 
+  it("the market head has no 添加市场源; the filter row links 市场源", async () => {
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [entry()], truncated: false }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const link = await screen.findByRole("link", { name: en.catalog.admin.actions.sources });
+    expect(link.getAttribute("href")).toBe("/admin/plugins/sources");
+    expect(screen.queryByRole("link", { name: "Add marketplace source" })).toBeNull();
+    expect(link.closest('[data-part="page-header"]')).toBeNull();
+  });
+
   it("entries: the marketplaces are a scope (a Segmented here) only when there is more than one", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
@@ -3758,7 +3771,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const list = await screen.findByRole("list", { name: c.title });
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    const meta = (name: string) => row(name).querySelector(".cb-object-meta")?.textContent ?? "";
+    const meta = (name: string) => row(name).querySelector(".cb-object-card-meta")?.textContent ?? "";
     expect(meta("pinned")).toContain(fill(c.gitPinned, { commit: "89abcde" }));
     expect(meta("follows")).toContain(fill(c.gitFollows, { ref: "main" }));
     expect(meta("in-repo")).toContain(fill(c.pathSource, { path: "./plugins/x" }));
@@ -5119,9 +5132,7 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     // pending items + pending requests
     expect(tab(P.tabs.pending).getAttribute("href")).toBe("/admin/plugins/pending");
     expect(tab(P.tabs.pending).textContent).toMatch(/2/);
-    expect(screen.getByRole("link", { name: P.actions.addSource }).getAttribute("href")).toBe(
-      "/admin/plugins/sources",
-    );
+    expect(screen.queryByRole("link", { name: P.actions.sources })).toBeNull();
     expect(screen.getByRole("link", { name: P.actions.upload }).getAttribute("href")).toBe(
       "/admin/plugins/import",
     );
@@ -5143,6 +5154,16 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     expect(
       within(row("object-store-s3")).getByRole("link", { name: P.rowConfirm }).getAttribute("href"),
     ).toBe("/admin/plugins/pending");
+  });
+
+  it("installed plugins render as cards with the same facts", async () => {
+    stubApi(listRoutes);
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.title });
+    expect(list.getAttribute("data-part")).toBe("card-grid");
+    const card = within(list).getByText("openai-compatible").closest("li") as HTMLElement;
+    expect(within(card).getByText(P.chips.builtin)).toBeTruthy();
+    expect(within(card).getByText(P.state.running)).toBeTruthy();
   });
 
   it("detail: 设置范围 previews the affected orgs and agents, then confirms with the scopeHash", async () => {
