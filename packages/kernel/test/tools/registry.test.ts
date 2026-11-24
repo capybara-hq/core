@@ -11,6 +11,7 @@ import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { parseOrgSettings } from "../../src/orgs/settings.service.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
+import { Credentials } from "../../src/tools/credentials.js";
 import { OrgToolSwitches } from "../../src/tools/org-tool-switches.js";
 import {
   canonicalJson,
@@ -84,6 +85,7 @@ beforeAll(async () => {
     { list: () => [askUser] },
     k.app.get(EffectiveConfigs),
     k.app.get(OrgToolSwitches),
+    k.app.get(Credentials),
   );
 });
 afterAll(async () => {
@@ -424,6 +426,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       { list: () => [askUser, toolSearchTool()] },
       k.app.get(EffectiveConfigs),
       k.app.get(OrgToolSwitches),
+      k.app.get(Credentials),
       { get: cfg },
     );
   const settingsUrl = () => `/api/v1/orgs/${orgId}/settings`;

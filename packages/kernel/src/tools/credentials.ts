@@ -11,6 +11,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { type SetupNeed, setupNeed } from "./connector-setup.js";
 import { oauthHttpOptions } from "./oauth/discovery.js";
 import {
   basicClientAuth,
@@ -319,6 +320,42 @@ export class Credentials {
     await this.secrets().delete(orgId, keyOf(connectorId, owner));
   }
 
+  /**
+   * Deletes a connector's OAuth tokens (the org's and every member's), keeping its client: its
+   * endpoint changed, so tokens issued for the old one are not sent to the new one.
+   */
+  async clearOAuthTokens(orgId: string, connectorId: string): Promise<void> {
+    const users = userKey(connectorId, "x").slice(0, -1);
+    await this.db
+      .deleteFrom("secrets")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where((eb) => eb.or([eb("key", "=", orgKey(connectorId)), eb("key", "like", `${users}%`)]))
+      .execute();
+  }
+
+  /**
+   * Deletes every member's own credential of a connector (static or OAuth), keeping the org's and
+   * the client: its endpoint's destination changed, so members' secrets never go to the new one.
+   */
+  async clearMemberCredentials(orgId: string, connectorId: string): Promise<void> {
+    const users = userKey(connectorId, "x").slice(0, -1);
+    await this.db
+      .deleteFrom("secrets")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "like", `${users}%`)
+      .execute();
+  }
+
+  /**
+   * Deletes a connector's OAuth client (one registered (`dcr`) or discovered at an endpoint that
+   * moved).
+   */
+  async clearOAuthClient(orgId: string, connectorId: string): Promise<void> {
+    await this.secrets().delete(orgId, clientKey(connectorId));
+  }
+
   /** 删除某连接器的全部凭据（组织凭据与所有成员的个人凭据），连接器删除时调用。 */
   async clearConnector(orgId: string, connectorId: string): Promise<void> {
     const prefix = orgKey(connectorId).slice(0, -"org".length);
@@ -463,6 +500,68 @@ export class Credentials {
         : auth.ownership === "personal"
           ? userKey(connectorId, accountId)
           : orgKey(connectorId);
+    return (await this.hasKey(orgId, key)) ? "connected" : "missing";
+  }
+
+  /**
+   * Whether the org input a connector needs (`setupNeed`) is stored: its OAuth client for
+   * `client`, its org credential for `credential`. Reads the key's presence only, never decrypts.
+   */
+  async hasOrgInput(orgId: string, connectorId: string, need: SetupNeed): Promise<boolean> {
+    return this.hasKey(orgId, need === "client" ? clientKey(connectorId) : orgKey(connectorId));
+  }
+
+  /**
+   * The org inputs stored for several connectors at once (one query, key presence only): per
+   * connector id, whether its OAuth client and its org credential exist.
+   */
+  async orgInputs(
+    orgId: string,
+    connectorIds: string[],
+  ): Promise<Map<string, Record<SetupNeed, boolean>>> {
+    const out = new Map<string, Record<SetupNeed, boolean>>(
+      connectorIds.map((id) => [id, { client: false, credential: false }]),
+    );
+    if (connectorIds.length === 0) return out;
+    const keys = new Map<string, [string, SetupNeed]>();
+    for (const id of connectorIds) {
+      keys.set(clientKey(id), [id, "client"]);
+      keys.set(orgKey(id), [id, "credential"]);
+    }
+    const rows = await this.db
+      .selectFrom("secrets")
+      .select("key")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "in", [...keys.keys()])
+      .execute();
+    for (const r of rows) {
+      const hit = keys.get(r.key);
+      const entry = hit && out.get(hit[0]);
+      if (hit && entry) entry[hit[1]] = true;
+    }
+    return out;
+  }
+
+  /**
+   * The gate that keeps a `needs_config` connector from being called on every path (tool calls,
+   * `/` prompts and `@` resources, drift checks, refresh, the git gateway; spec §5.2.1): a
+   * connector whose auth needs an OAuth client that is not stored gets an org `CredentialMissing`
+   * before any token is read or presented, even when a member still holds one. A missing org
+   * credential needs no extra read: reading it throws the same error.
+   */
+  private async requireClient(
+    orgId: string,
+    connectorId: string,
+    auth: ConnectorAuth,
+  ): Promise<void> {
+    if (setupNeed(auth) !== "client") return;
+    if (!(await this.hasOrgInput(orgId, connectorId, "client"))) {
+      throw new CredentialMissing(connectorId, "org");
+    }
+  }
+
+  private async hasKey(orgId: string, key: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("secrets")
       .select("key")
@@ -470,7 +569,7 @@ export class Credentials {
       .where("org_id", "=", orgId)
       .where("key", "=", key)
       .executeTakeFirst();
-    return row ? "connected" : "missing";
+    return row !== undefined;
   }
 
   /** 返回本次请求要注入的头 / 查询参数；缺凭据抛 CredentialMissing。 */
@@ -481,6 +580,7 @@ export class Credentials {
     accountId: string,
   ): Promise<AuthInjection> {
     if (auth.type === "none") return { headers: {} };
+    await this.requireClient(orgId, connectorId, auth);
     const owner = ownerOf(auth, accountId);
     if (isOAuth(auth)) {
       const token = await this.oauthCall(connectorId, auth, () =>
@@ -541,6 +641,7 @@ export class Credentials {
     if (auth.type === "none" || auth.type === "headers") {
       throw new Error(`credentials: auth type ${auth.type} cannot authenticate git`);
     }
+    await this.requireClient(orgId, connectorId, auth);
     const owner = ownerOf(auth, accountId);
     let user = username;
     let password: string;

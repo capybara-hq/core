@@ -541,3 +541,36 @@ describe("the 待配置 notice (P4-7)", () => {
     await settle();
   });
 });
+
+describe("the agent's connector list: a needs_config connector", () => {
+  it.each([
+    ["admin", en.connectors.setup.needsConfig],
+    ["member", en.connectors.setup.needsAdmin],
+  ] as const)(
+    "an org %s reads its setup state, and the existing connector is not a pending entry",
+    async (role, label) => {
+      stubApi(
+        routes(agent({}, { pendingConnectors: [] }), {
+          [`GET ${ORG}/connectors`]: ok({
+            connectors: [
+              connector("drive", {
+                name: "Google Drive",
+                platformTemplateId: CT,
+                auth: { type: "bearer", ownership: "org" },
+                setup: "needs_config",
+              }),
+              connector("custom_one", { name: "Custom", setup: "ready" }),
+            ],
+          }),
+        }),
+      );
+      await renderEditAgent({ me: as(role), section: "tools" });
+      const list = await screen.findByRole("list", { name: en.agents.form.groupsLabel });
+      const row = within(list).getByText("Google Drive").closest("li") as HTMLElement;
+      expect(within(row).getByText(label)).toBeTruthy();
+      const custom = within(list).getByText("Custom").closest("li") as HTMLElement;
+      expect(within(custom).queryByText(label)).toBeNull();
+      expect(screen.queryByRole("list", { name: P.listLabel })).toBeNull();
+    },
+  );
+});

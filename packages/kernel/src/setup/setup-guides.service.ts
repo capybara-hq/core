@@ -88,20 +88,26 @@ export const setupWebPath = {
   connector: (id: string) => `/connectors/${enc(id)}?tab=guide`,
   /** A member's connector section: the connector's row on their connections page (§9.3). */
   memberConnections: () => "/account/connections",
-  template: (itemId: string) => `/connectors/install?template=${enc(itemId)}`,
+  /** A connector's configure page: its credentials tab (the guide, editable endpoint fields, credential). */
+  configure: (id: string) => `/connectors/${enc(id)}?tab=credentials`,
+  /** The connectors page: a template on in the org without a connector shows its card there. */
+  connectors: () => "/connectors",
 };
 
 /**
  * The page a rendered guide belongs on: a member's connections page for the member audience, else
- * its target's, else where a target is created.
+ * its target's, else where a target is created; a connector template's guide without a target goes
+ * to the configure page of `templateConnector` (a connector of the org made from the template) when there is
+ * one, else to the connectors page.
  */
-function webPathOf(g: RenderedSetupGuide): string {
+function webPathOf(g: RenderedSetupGuide, templateConnector: string | undefined): string {
   if (g.audience === "member") return setupWebPath.memberConnections();
   if (g.target?.kind === "channel-connection") return setupWebPath.connection(g.target.id);
   if (g.target?.kind === "connector") return setupWebPath.connector(g.target.id);
-  return g.place === "channel-connection"
-    ? setupWebPath.newConnection()
-    : setupWebPath.template(g.itemId);
+  if (g.place === "channel-connection") return setupWebPath.newConnection();
+  return templateConnector !== undefined
+    ? setupWebPath.configure(templateConnector)
+    : setupWebPath.connectors();
 }
 
 /** A fence longer than any run of backticks in the text. */
@@ -334,12 +340,37 @@ export class SetupGuidesService {
           id: t.name,
           name: t.displayName?.en ?? t.name,
           drift: null,
-          webPath: setupWebPath.template(t.itemId),
+          webPath: setupWebPath.connectors(),
           checked: false,
         },
       });
     }
     return out;
+  }
+
+  /**
+   * The oldest live connector of the org made from one of the item's platform connector templates
+   * `templates` (a template id, or the ids a guide covers), if any.
+   */
+  private async templateConnector(
+    orgId: string,
+    itemId: string,
+    templates: string | readonly string[],
+  ): Promise<string | undefined> {
+    const ids = typeof templates === "string" ? [templates] : [...templates];
+    if (ids.length === 0) return undefined;
+    const row = await this.db
+      .selectFrom("connectors as c")
+      .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+      .select("c.id")
+      .where("c.org_id", "=", orgId)
+      .where("c.deleted_at", "is", null)
+      .where("t.catalog_item_id", "=", itemId)
+      .where("t.template_id", "in", ids)
+      .orderBy("c.created_at")
+      .orderBy("c.id")
+      .executeTakeFirst();
+    return row?.id;
   }
 
   /**
@@ -359,7 +390,12 @@ export class SetupGuidesService {
       guideId,
       q,
     );
-    const webPath = webPathOf(g);
+    const webPath = webPathOf(
+      g,
+      g.audience !== "member" && g.target === null && g.place === "connector-template"
+        ? await this.templateConnector(caller.orgId, g.itemId, g.template ?? g.templates)
+        : undefined,
+    );
     return {
       itemId: g.itemId,
       plugin: g.plugin,

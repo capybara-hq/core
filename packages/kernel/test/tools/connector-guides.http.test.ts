@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { setupGuideHash } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  configureConnector,
   importPlugin,
-  install,
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
   setScope,
   startOrgEnv,
+  templateConnectors,
 } from "../catalog/org-env.js";
 import { mcpTemplate, templateFiles } from "../catalog/packages.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
@@ -16,8 +17,8 @@ import { createOrg, enableExtensions } from "../helpers/runs.js";
 
 // Setup guides v2, the connector-template place (spec 2026-11-09-setup-guides-v2-design.md §9.3,
 // §11): a template's guide renders for the org's connector made from it, the connector records the
-// guide it was set up with when it is created from the template, drift appears when the guide's
-// code blocks or checks change, and 「我已更新应用」 records the current guide.
+// guide it was set up with when an admin confirms it (an install records none), drift appears
+// when the guide's code blocks or checks change, and "I have updated the app" records the current guide.
 
 const PUBLIC_URL = "https://capybara.example.com";
 const TEMPLATE = "github-mcp";
@@ -104,34 +105,51 @@ beforeEach(async () => {
 
 const connectorsUrl = (orgId = env.orgId) => `/api/v1/orgs/${orgId}/connectors`;
 
-/** Installs `gh-guide` in the org with a connector from its template; returns the connector id. */
-async function installWithConnector(itemId: string, orgId = env.orgId): Promise<string> {
+/**
+ * Installs a plugin in the org (no input: plugin pages spec §5.2.2), then names and configures the
+ * connector of each template in `names` as an org admin would (the name, the org credential).
+ */
+async function installNamed(
+  itemId: string,
+  names: Record<string, string>,
+  orgId = env.orgId,
+): Promise<void> {
   const req = orgId === env.orgId ? env.boss : env.root;
-  const r =
-    orgId === env.orgId
-      ? await install(req, env, itemId, {
-          connectors: {
-            [TEMPLATE]: {
-              name: "Team GitHub",
-              endpoint: { url: env.mcp.url },
-              credential: { token: MCP_TOKEN },
-            },
-          },
-        })
-      : await env.root({
-          method: "POST",
-          url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
-          payload: {
-            connectors: {
-              [TEMPLATE]: {
-                name: "Other GitHub",
-                endpoint: { url: env.mcp.url },
-                credential: { token: MCP_TOKEN },
-              },
-            },
-          },
-        });
+  const r = await req({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
+    payload: {},
+  });
   expect(r.statusCode, r.body).toBe(201);
+  for (const c of await templateConnectors(env, { orgId, itemId })) {
+    const name = names[c.templateId];
+    if (name === undefined) continue;
+    const renamed = await req({
+      method: "PATCH",
+      url: `${connectorsUrl(orgId)}/${c.id}`,
+      payload: { name },
+    });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    // (the templates preset an endpoint nothing serves: no tool list follows)
+    await configureConnector(env, c.id, { orgId, req, tools: false });
+  }
+}
+
+/**
+ * Installs `gh-guide` (1.0.0) in the org with a connector from its template; returns the connector
+ * id. `ack`: the admin also confirms the template's guide, as the connector's configure form does when
+ * it saves (plugin pages spec §5.3; installs show no guide and record none).
+ */
+async function installWithConnector(
+  itemId: string,
+  orgId = env.orgId,
+  o: { ack?: boolean } = {},
+): Promise<string> {
+  await installNamed(
+    itemId,
+    { [TEMPLATE]: orgId === env.orgId ? "Team GitHub" : "Other GitHub" },
+    orgId,
+  );
   const c = await env.db
     .selectFrom("connectors")
     .select("id")
@@ -139,6 +157,14 @@ async function installWithConnector(itemId: string, orgId = env.orgId): Promise<
     .where("catalog_item_id", "=", itemId)
     .where("deleted_at", "is", null)
     .executeTakeFirstOrThrow();
+  if (o.ack) {
+    const acked = await (orgId === env.orgId ? env.boss : env.root)({
+      method: "POST",
+      url: `${connectorsUrl(orgId)}/${c.id}/guide-ack`,
+      payload: { hash: adminHash(doc()) },
+    });
+    expect(acked.statusCode, acked.body).toBe(200);
+  }
   return c.id;
 }
 
@@ -246,15 +272,7 @@ describe("setup guides v2: connector templates", () => {
         },
       }),
     );
-    const conn = (name: string) => ({
-      name,
-      endpoint: { url: env.mcp.url },
-      credential: { token: MCP_TOKEN },
-    });
-    const r = await install(env.boss, env, itemId, {
-      connectors: { [TEMPLATE]: conn("GitHub"), "jira-mcp": conn("Jira") },
-    });
-    expect(r.statusCode, r.body).toBe(201);
+    await installNamed(itemId, { [TEMPLATE]: "GitHub", "jira-mcp": "Jira" });
     const jira = await env.db
       .selectFrom("connectors")
       .select("id")
@@ -295,19 +313,7 @@ describe("setup guides v2: connector templates", () => {
         },
       }),
     );
-    const conn = (name: string) => ({
-      name,
-      endpoint: { url: env.mcp.url },
-      credential: { token: MCP_TOKEN },
-    });
-    const r = await install(env.boss, env, itemId, {
-      connectors: {
-        [TEMPLATE]: conn("GitHub"),
-        "jira-mcp": conn("Jira"),
-        "wiki-mcp": conn("Wiki"),
-      },
-    });
-    expect(r.statusCode, r.body).toBe(201);
+    await installNamed(itemId, { [TEMPLATE]: "GitHub", "jira-mcp": "Jira", "wiki-mcp": "Wiki" });
     const idOf = async (name: string) =>
       (
         await env.db
@@ -353,7 +359,15 @@ describe("setup guides v2: connector templates", () => {
   it("ack route refuses another org's connector (404 connector.not_found)", async () => {
     const itemId = await importPlugin(env, await ghPlugin());
     await installWithConnector(itemId);
-    const foreign = await installWithConnector(itemId, otherOrgId);
+    const foreign = await installWithConnector(itemId, otherOrgId, { ack: true });
+    const audits = () =>
+      env.db
+        .selectFrom("audit_events")
+        .select("action")
+        .where("target", "=", foreign)
+        .where("action", "=", "connector.guide_confirmed")
+        .execute();
+    const before = await audits();
     const r = await ack(foreign, adminHash(doc()));
     expect(r.statusCode).toBe(404);
     expect(r.json().error.code).toBe("connector.not_found");
@@ -362,20 +376,22 @@ describe("setup guides v2: connector templates", () => {
       .select("guide_ack")
       .where("id", "=", foreign)
       .executeTakeFirstOrThrow();
-    // the other org's ack is untouched and no audit names the foreign connector
+    // the other org's ack is untouched and no new audit names the foreign connector
     expect(row.guide_ack?.version).toBe("1.0.0");
-    const audits = await env.db
-      .selectFrom("audit_events")
-      .select("action")
-      .where("target", "=", foreign)
-      .where("action", "=", "connector.guide_confirmed")
-      .execute();
-    expect(audits).toEqual([]);
+    expect(await audits()).toEqual(before);
   });
 
-  it("create from template records the ack", async () => {
+  it("an install records no ack; the admin's confirmation records the guide the connector was set up with", async () => {
     const itemId = await importPlugin(env, await ghPlugin());
-    const connectorId = await installWithConnector(itemId);
+    const bare = await installWithConnector(itemId);
+    const unacked = await env.db
+      .selectFrom("connectors")
+      .select("guide_ack")
+      .where("id", "=", bare)
+      .executeTakeFirstOrThrow();
+    expect(unacked.guide_ack).toBeNull();
+    expect((await ack(bare, adminHash(doc()))).statusCode).toBe(200);
+    const connectorId = bare;
     const row = await env.db
       .selectFrom("connectors")
       .select("guide_ack")
@@ -422,7 +438,7 @@ describe("setup guides v2: connector templates", () => {
 
   it("drift appears when the template guide's code changes and not when only prose changes", async () => {
     const itemId = await importPlugin(env, await ghPlugin());
-    const connectorId = await installWithConnector(itemId);
+    const connectorId = await installWithConnector(itemId, env.orgId, { ack: true });
     // 1.1.0 edits only prose: no notice
     await importPlugin(
       env,
@@ -527,8 +543,8 @@ describe("setup guides v2: connector templates", () => {
 
   it("upgrade preview reports a changed template guide with counts, never org names", async () => {
     const itemId = await importPlugin(env, await ghPlugin());
-    await installWithConnector(itemId);
-    await installWithConnector(itemId, otherOrgId);
+    await installWithConnector(itemId, env.orgId, { ack: true });
+    await installWithConnector(itemId, otherOrgId, { ack: true });
     await importPlugin(env, await ghPlugin({ version: "1.1.0", prose: "Prose only." }));
     await importPlugin(env, await ghPlugin({ version: "1.2.0", manifest: "scopes: [repo, org]" }));
     const preview = async (version: string) => {

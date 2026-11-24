@@ -11,6 +11,7 @@ import { buildKernelApp, closeKernelApp, createKernelApp } from "../../src/app.j
 import { BACKGROUND_PRUNE_JOB, BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
+import { TEMPLATE_CONNECTORS_QUEUE } from "../../src/catalog/template-connector-jobs.js";
 import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
@@ -36,6 +37,7 @@ import {
   PermissionConfigPublication,
   permissionConfigFingerprint,
 } from "../../src/sandbox/permission-config-publication.js";
+import { CONNECTOR_TOOLS_QUEUE } from "../../src/tools/connector-tools-jobs.js";
 import { ToolDrift } from "../../src/tools/drift.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
@@ -60,6 +62,8 @@ const KERNEL_QUEUES = [
   PLUGIN_SCOPE_QUEUE,
   LIFECYCLE_QUEUE,
   PUSH_QUEUE,
+  CONNECTOR_TOOLS_QUEUE,
+  TEMPLATE_CONNECTORS_QUEUE,
 ];
 
 let pgc: TestContainer;

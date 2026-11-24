@@ -224,7 +224,13 @@ interface Review {
     sensitive: boolean;
   };
   skills: { name: string; description: string; body: string; path: string; files: number }[];
-  connectorTemplates: { id: string; plugin: string; connector: string; endpoint: unknown }[];
+  connectorTemplates: {
+    id: string;
+    plugin: string;
+    connector: string;
+    endpoint: unknown;
+    icon: string | null;
+  }[];
   dependencies: { name: string; range: string; resolved: string | null }[];
   sensitive: boolean;
   reviewHash: string;
@@ -351,8 +357,12 @@ describe("one import flow for every plugin", () => {
         connector: "fake",
         endpoint: { url: "https://mcp.example.com/mcp" },
         endpointChecked: true,
+        // the template's own icon from the package (nothing serves a staged package's files)
+        icon: expect.stringMatching(/^data:image\/svg\+xml;base64,/),
       }),
     ]);
+    const icon = s.review.connectorTemplates[0]?.icon ?? "";
+    expect(Buffer.from(icon.split(",")[1] as string, "base64").toString()).toContain("<svg");
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
     });

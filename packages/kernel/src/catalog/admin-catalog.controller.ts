@@ -539,7 +539,8 @@ export class AdminCatalogController {
    * What updating the platform plugin to `version` would do (spec §7.1, `PlatformPluginUpdater`):
    * `{ itemId, name, from, to, components: [{ kind, id, name, change: added | removed | upgrade |
    * downgrade | same, from, to, updatedOnOwn, ownScope, pinnedOrgs, kept? }], extension,
-   * connectorOrgs: [{ orgId, connectors, needsConfig }], diffHash }`. Nothing written. The same
+   * connectorOrgs: [{ orgId, connectors, created, turnedOff? }], scopeInstalls, diffHash }`.
+   * Nothing written. The same
    * version, a target the deployment's extension or a dependent plugin cannot take -> 409
    * `plugin.upgrade_target_invalid`; an added skill named like one in use where the plugin is on
    * -> 409 `plugin.skill_conflict`; disabled -> 403 `catalog.item_disabled`.

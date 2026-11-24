@@ -24,7 +24,7 @@ import {
   IMAGE_TOOL_PURPOSE,
   WEB_TOOL_POINTS,
 } from "../../lib/agents";
-import type { ConnectorDetail } from "../../lib/connectors";
+import { type ConnectorDetail, canManageConnectors } from "../../lib/connectors";
 import type { ExtensionToolsOffer } from "../../lib/extensions";
 import { availableExtensionPointsQuery, extensionToolsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -36,6 +36,7 @@ import {
   toolDisplayName,
   toolTooltip,
 } from "../../lib/tool-key";
+import { useSession } from "../shell/session";
 import { BUILTIN_SET, replaceDisabled, sameJson, savedDefinition } from "./definition-parts";
 import {
   SaveFeedback,
@@ -118,6 +119,8 @@ type Group = {
    * to 允许 for the agent (an org-credential connector's tools only tighten).
    */
   personal: boolean;
+  /** A connector that lacks the org input its auth needs: needs-configuration (never called meanwhile). */
+  needsConfig: boolean;
   onCheck(names: string[], on: boolean): void;
 };
 
@@ -143,6 +146,9 @@ export function ToolsSection() {
 
 function ToolsEdit({ data }: { data: AgentFormData }) {
   const t = useTranslations("agents");
+  const tc = useTranslations("connectors");
+  // an org admin sets up a needs_config connector; everyone else waits for one
+  const manager = canManageConnectors(useSession().me);
   const locale = useLocale();
   const { orgId, agent } = useAgentPage();
   const save = useDefinitionSave();
@@ -267,6 +273,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
           note: checked && tool.switchedOff ? t("form.extensionToolOffInOrg") : null,
         };
       }),
+      needsConfig: false,
       onCheck: (names, on) => setGroup("extensions", ext.plugin, listed, names, on),
     };
   });
@@ -294,6 +301,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
         : null,
       readError: detailFailed.has(a.id),
       personal: a.auth.type !== "none" && a.auth.ownership === "personal",
+      needsConfig: a.setup === "needs_config",
       onCheck: (names, on) => setGroup("connectors", a.id, listed, names, on),
     };
   });
@@ -359,6 +367,9 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     tag: { label: t(`form.groupKind.${g.kind}`) },
     title: g.name,
     meta: summaryOf(g),
+    ...(g.needsConfig
+      ? { status: { label: tc(manager ? "setup.needsConfig" : "setup.needsAdmin") } }
+      : {}),
     actions: (
       <Button
         density="dense"

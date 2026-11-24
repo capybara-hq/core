@@ -3,8 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { createOrg, enableConnectorExtensions, waitFor } from "../helpers/runs.js";
 import {
+  configureConnector,
   importSkill,
-  MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
   scopeQueueIdle,
@@ -344,17 +344,12 @@ describe("disable", () => {
     await waitFor(async () => (await liveOrgs(itemId)).length === 1, 30_000, "reinstalled");
   });
 
-  it("disabling keeps the connectors an org's install created, with their credentials; re-enabling makes no second one", async () => {
+  it("disabling keeps the connectors an org's install created, with their credentials; re-enabling reuses them, no second one", async () => {
     const itemId = await seedPlugin(env, { name: "with-gh", skills: ["with-gh-skill"] });
     const on = await env.boss({
       method: "PUT",
       url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
-      payload: {
-        enabled: true,
-        inputs: {
-          connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
-        },
-      },
+      payload: { enabled: true },
     });
     expect(on.statusCode, on.body).toBe(200);
     const connectors = () =>
@@ -367,6 +362,7 @@ describe("disable", () => {
         .execute();
     const [connector] = await connectors();
     if (connector === undefined) throw new Error("no connector installed");
+    await configureConnector(env, connector.id);
     const secrets = () =>
       env.db
         .selectFrom("secrets")
@@ -397,20 +393,20 @@ describe("disable", () => {
       via: "scope",
       kept: [{ kind: "connector", ref: connector.id, reason: "disabled_with_plugin" }],
     });
-    // re-enabling: the switch is still on, but the install needs the template's input again, so
-    // the sync leaves it `needs_config` and creates no second connector; the connector stays
-    // switched off until the organization installs again (which reuses and re-enables it)
+    // re-enabling: the switch is still on, so the sync installs it again (no install asks for
+    // input), reusing the kept connector and switching it back on with its credentials
     const back = await putDisabled(itemId, { disabled: false });
     expect(back.statusCode, back.body).toBe(200);
     await idle();
-    expect(await liveOrgs(itemId)).toEqual([]);
+    await waitFor(async () => (await liveOrgs(itemId)).length === 1, 30_000, "reinstalled");
     expect(await connectors()).toEqual([
-      { id: connector.id, status: "disabled", disabled_by_plugin_id: itemId },
+      { id: connector.id, status: "active", disabled_by_plugin_id: null },
     ]);
+    expect((await secrets()).length).toBeGreaterThan(0);
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
     const item = (list.json() as { items: { id: string; state: string }[] }).items.find(
       (i) => i.id === itemId,
     );
-    expect(item?.state).toBe("needs_config");
+    expect(item?.state).toBe("on");
   });
 });

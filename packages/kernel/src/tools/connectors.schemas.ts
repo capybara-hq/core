@@ -98,6 +98,11 @@ export const ConnectorUpdateSchema = z
     useForGit: z.boolean().optional(),
     /** The connector's own description; null or blank removes it. */
     description: ConnectorDescription.nullable().optional(),
+    /**
+     * Endpoint fields of a connector made from a connector template, only at the paths its
+     * template lets the org edit (`editableEndpoint`); merged onto the stored endpoint.
+     */
+    endpoint: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 

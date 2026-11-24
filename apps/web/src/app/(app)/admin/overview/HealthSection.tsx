@@ -45,7 +45,9 @@ type QueueLabel =
   | "usageReport"
   | "evals"
   | "lifecycle"
-  | "pushDeliver";
+  | "pushDeliver"
+  | "connectorTools"
+  | "templateConnectors";
 
 /** The readable name of each kernel queue (spec §6.2); an unknown queue shows its own name. */
 const QUEUE_LABELS: Record<string, QueueLabel> = {
@@ -60,6 +62,8 @@ const QUEUE_LABELS: Record<string, QueueLabel> = {
   "cap-kernel-evals": "evals",
   "cap-kernel-lifecycle": "lifecycle",
   "cap-push-deliver": "pushDeliver",
+  "cap-connector-tools": "connectorTools",
+  "cap-template-connectors": "templateConnectors",
 };
 
 /** Counts as the overview formats them (grouped digits in both locales, spec §8.2). */

@@ -1,6 +1,6 @@
 import type { Agent, PendingConnector } from "./agents";
 import { ApiClientError, apiFetch } from "./api";
-import type { CatalogRequest, ConnectorInstallInput, LocalizedName } from "./catalog";
+import type { CatalogRequest, LocalizedName } from "./catalog";
 import type { ConnectorDetail, ConnectorSummary, ToolIssue } from "./connectors";
 
 /**
@@ -35,6 +35,15 @@ export const requestPendingConnectors = (orgId: string, agentId: string) =>
     method: "POST",
   });
 
+/** The input of one more connector from a template (kernel `CatalogConnectorInput`). */
+export interface TemplateConnectorInput {
+  name?: string;
+  slug?: string;
+  endpoint?: Record<string, unknown>;
+  credential?: Record<string, unknown>;
+  client?: { clientId: string; clientSecret?: string };
+}
+
 /**
  * One more connector from a platform connector template on in the org (`connectors.manage`):
  * without `config.slug` the kernel picks the first free name and slug.
@@ -42,7 +51,7 @@ export const requestPendingConnectors = (orgId: string, agentId: string) =>
 export const addTemplateConnector = (
   orgId: string,
   templateId: string,
-  input: { name?: string; config: Omit<ConnectorInstallInput, "name"> },
+  input: { name?: string; config: Omit<TemplateConnectorInput, "name"> },
 ) =>
   apiFetch<{ connector: ConnectorDetail; issues: ToolIssue[] }>(
     `${org(orgId)}/connector-templates/${encodeURIComponent(templateId)}/connectors`,

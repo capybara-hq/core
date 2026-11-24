@@ -70,9 +70,9 @@ import { narrowComponentOnUnshare, narrowItemOnUnshare } from "./unshare.js";
  * What a scope change or a deployment-level disable would take away (spec §5 rule 8): the orgs
  * that have the plugin on now (a live install) and would no longer want it, each with its agents
  * that use the plugin's skills, connectors or agent templates and the number of connectors it
- * created there, which stay as the org's own; and the orgs that would newly want
- * it but need inputs first (connector templates, a required org config), which the sync leaves as
- * `needs_config`. `scopeHash` is confirmed with the change.
+ * created there, which stay as the org's own; and the orgs that would newly want it where its
+ * extension has no valid config for the org: the sync installs it there too and it shows
+ * `needs_config` until the org's config is set. `scopeHash` is confirmed with the change.
  */
 export interface ScopePreview {
   affected: {
@@ -1262,14 +1262,16 @@ export class CatalogScopeService {
       if (!wanted || wantedOn(item, listedNow.has(org.id), s)) continue;
       let needs = false;
       try {
-        needs = await this.sync.needsInput(org.id, item.id, item.latest_version);
+        needs = await this.sync.needsConfig(org.id, item.id, item.latest_version);
       } catch (e) {
         // Not installable as it is (a dependency unresolved): the sync reports it. Anything else
         // (a database error) propagates: inside the write's transaction it is not recoverable
         if (!(e instanceof ApiError)) throw e;
       }
+      // the sync installs it either way (no install asks for input, plugin pages spec §5.2.2);
+      // `needsConfig` names the orgs where its extension waits for the org's config
       if (needs) needsConfig.push(org.id);
-      else onAfter.add(org.id);
+      onAfter.add(org.id);
     }
     const { replaced, conflicts, themesLost } = await this.componentChanges(
       item,

@@ -16,7 +16,7 @@ import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import {
-  MCP_TOKEN,
+  configureConnector,
   type OrgEnv,
   resetOrgCatalog,
   seedPlugin,
@@ -24,6 +24,7 @@ import {
   setScope,
   settleScope,
   startOrgEnv,
+  templateConnectors,
 } from "../catalog/org-env.js";
 import { skillPlugin } from "../catalog/packages.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
@@ -398,11 +399,11 @@ describe("org deletion and what the org owns", () => {
     const ins = await env.root({
       method: "POST",
       url: `/api/v1/orgs/${orgX}/catalog/${itemId}/install`,
-      payload: {
-        connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
-      },
+      payload: {},
     });
     expect(ins.statusCode, ins.body).toBe(201);
+    const [made] = await templateConnectors(env, { orgId: orgX, itemId });
+    await configureConnector(env, made?.id as string, { orgId: orgX, req: env.root });
     // org X owns it, at its applied version 2.0.0 (the super admin's generic update reaches it)
     await env.db
       .updateTable("catalog_items")

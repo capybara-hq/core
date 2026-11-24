@@ -85,7 +85,8 @@ export class OAuthFlow {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
     /** A member's first connection without a tool snapshot refreshes the tools (A16). */
-    @Inject(ConnectorsService) private readonly connectors: Pick<ConnectorsService, "refresh">,
+    @Inject(ConnectorsService)
+    private readonly connectors: Pick<ConnectorsService, "refresh" | "clientForConnect">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -131,11 +132,12 @@ export class OAuthFlow {
         { path: "status", message: "The connector is disabled; ask an administrator to enable it" },
       ]);
     }
-    const client = await this.credentials.oauthClient(orgId, connectorId);
+    // a dcr connector created without a client registers it now (once across replicas, R16)
+    const client = await this.connectors.clientForConnect(orgId, connectorId, accountId);
     if (!client?.authorizationEndpoint) {
       throw new ApiError(
         "connector.connect_failed",
-        "The connector has no registered OAuth client; ask an administrator to reinstall it",
+        "This connector needs to be configured by an organization admin before members can connect it.",
       );
     }
     const state = b64url();

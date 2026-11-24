@@ -77,8 +77,9 @@ export interface AdminConnectorRow {
   catalogItemId: string | null;
   toolCount: number;
   toolsSyncedAt: string | null;
-  createdBy: string;
-  createdByName: string;
+  /** Null: the kernel created it as no person (a plugin scope sync). */
+  createdBy: string | null;
+  createdByName: string | null;
   createdByAvatarUrl: string | null;
   createdAt: string;
   updatedAt: string;

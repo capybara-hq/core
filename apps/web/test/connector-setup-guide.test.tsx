@@ -13,8 +13,9 @@ import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 // Setup guides on the connector template place (setup guides v2 spec §9.3, §11): the admin text
-// above a template's input in 补充配置, the connector's 接入指南 with the drift notice and ack, the
-// member's 如何连接 sheet (with the admin link for org admins) and the super admin's template page.
+// above a needs_config template connector's input (its configure form), the connector's setup
+// guide tab with the drift notice and ack, the member's "How to connect" sheet (with the admin link
+// for org admins) and the super admin's template page.
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -162,7 +163,6 @@ const orgDetail = (template: Record<string, unknown> = TEMPLATE) => ({
   dependencies: [],
   skills: [],
   agents: [],
-  missingTemplates: [template],
 });
 
 beforeEach(() => resetNavigation("/connectors"));
@@ -171,69 +171,206 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("补充配置: the template's admin guide above its input", () => {
-  const routes = (template?: Record<string, unknown>): Routes => ({
+describe("配置: a needs_config template connector's form shows the admin guide above its input", () => {
+  /** The template the connector was made from, as the org's components list offers it. */
+  const component = {
+    kind: "connector_template",
+    id: "t-slack",
+    name: "slack",
+    displayName: TEMPLATE.displayName,
+    description: null,
+    plugin: "slack",
+    itemId: ITEM,
+    version: "0.2.0",
+    scopeMode: "follow",
+    switch: null,
+    on: true,
+    locked: false,
+    pluginOn: true,
+    switchable: true,
+    owner: { kind: "platform" },
+    guide: { itemId: ITEM, guideId: "slack-connector" },
+  };
+  const routes = (
+    over: Record<string, unknown> = {},
+    template: Record<string, unknown> = TEMPLATE,
+  ): Routes => ({
+    [`GET ${ORG}/connectors/app1`]: () =>
+      json(200, { connector: connector({ setup: "needs_config", ...over }) }),
+    [`GET ${ORG}/components?kind=connector_template`]: () => json(200, { components: [component] }),
     [`GET ${ORG}/catalog/${ITEM}`]: () => json(200, orgDetail(template)),
     [`GET ${GUIDE_URL}`]: guideRoute(),
+    [`GET ${GUIDE_URL}/checks`]: () => json(200, { results: {} }),
+    [`PUT ${ORG}/connectors/app1/credentials/org`]: () => new Response(null, { status: 204 }),
+    [`PATCH ${ORG}/connectors/app1`]: () =>
+      json(200, { connector: connector({ setup: "needs_config", ...over }) }),
+    [`POST ${ORG}/connectors/app1/guide-ack`]: () =>
+      json(200, { connector: connector({ setup: "ready", ...over }) }),
   });
 
-  it("wizard step shows the admin guide before client fields", async () => {
-    resetNavigation(`/plugins/${ITEM}/connectors`);
-    const browser = expectNoFirstPaintFetch();
+  it("配置 opens the 凭据 tab: the admin guide, then the client fields; saving records the guide", async () => {
+    resetNavigation("/connectors/app1");
+    const calls = stubApi(routes());
     const { container } = await renderRouteWithCache(
-      `/plugins/${ITEM}/connectors?from=connectors`,
-      routes(),
+      "/connectors/app1?tab=credentials",
+      lastStubRoutes(),
       { locale: "en" },
     );
-    const section = await screen.findByRole("region", { name: G.title });
-    expect(within(section).getByText("Create the Slack OAuth app")).toBeTruthy();
-    expect(within(section).getByText(G.templateHint)).toBeTruthy();
-    // the redirect URL as a copyable titled block
-    expect(within(section).getByText("Redirect URL")).toBeTruthy();
-    expect(within(section).getByRole("button", { name: "Copy" })).toBeTruthy();
-    // no connector yet: the checks wait for the save, as one line instead of rows
-    expect(within(section).queryByRole("group", { name: "OAuth client works" })).toBeNull();
-    expect(within(section).getByText(G.checksAfterSave)).toBeTruthy();
-    // above the template's input (the OAuth client fields)
+    // the guide card: the hint and the admin text, read for this connector
+    const section = (await screen.findByText(G.connectorHint)).closest("section") as HTMLElement;
+    expect(await within(section).findByText("Create the Slack OAuth app")).toBeTruthy();
     const clientField = await screen.findByLabelText(/client id/i);
     expect(
       section.compareDocumentPosition(clientField) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    const user = userEvent.setup();
+    await user.type(clientField, "cid");
+    await user.click(screen.getByRole("button", { name: en.connectors.credential.saveClient }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ clientId: "cid" }),
+    );
+    // the guide shown is the one the connector is now set up with
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/guide-ack")))).toEqual({
+        hash: "a".repeat(64),
+      }),
+    );
     expect(findNestedBoxes(container)).toEqual([]);
-    // the layout read the admin text in the UI language
-    await settle();
-    expect(browser).toEqual([]);
   });
 
-  it("install from a template: the wizard's first step shows the admin guide first", async () => {
-    resetNavigation("/connectors/install");
-    const browser = expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache(
-      `/connectors/install?template=${ITEM}`,
-      { ...routes(), [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }) },
-      { locale: "zh" },
+  it("only the template's editable endpoint fields; saving PATCHes the endpoint and records the guide", async () => {
+    resetNavigation("/connectors/app1");
+    const calls = stubApi(
+      routes(
+        {
+          endpoint: { url: "https://slack.example.test/mcp", headers: { "X-Team": "t1" } },
+          auth: { type: "bearer", ownership: "org" },
+          credential: { ownership: "org", status: "missing" },
+        },
+        {
+          ...TEMPLATE,
+          endpoint: { url: "https://slack.example.test/mcp", headers: { "X-Team": "t1" } },
+          editableEndpoint: ["url"],
+          auth: { type: "bearer", ownership: "org" },
+          ownership: "org",
+        },
+      ),
     );
-    const section = await screen.findByRole("region", { name: zh.setupGuide.title });
-    expect(within(section).getByText("Create the Slack OAuth app")).toBeTruthy();
-    expect(within(section).queryByRole("group", { name: "OAuth client works" })).toBeNull();
-    expect(within(section).getByText(zh.setupGuide.checksAfterSave)).toBeTruthy();
-    const clientField = await screen.findByLabelText(/client id/i);
-    expect(
-      section.compareDocumentPosition(clientField) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(findNestedBoxes(container)).toEqual([]);
-    // the layout read the first template's admin text
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const url = (await screen.findByRole("textbox", { name: "url" })) as HTMLInputElement;
+    expect(url.value).toBe("https://slack.example.test/mcp");
+    // a path the template does not open to the org is not offered
+    expect(screen.queryByRole("textbox", { name: "headers.X-Team" })).toBeNull();
+    const user = userEvent.setup();
+    await user.clear(url);
+    await user.type(url, "https://slack.acme.test/mcp");
+    await user.click(screen.getByRole("button", { name: zh.connectors.endpointEdit.save }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        endpoint: { url: "https://slack.acme.test/mcp" },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/guide-ack")))).toEqual({
+        hash: "a".repeat(64),
+      }),
+    );
+  });
+
+  it("an endpoint the kernel refuses (400) shows why and records no guide", async () => {
+    resetNavigation("/connectors/app1");
+    const calls = stubApi({
+      ...routes(
+        {
+          auth: { type: "bearer", ownership: "org" },
+          credential: { ownership: "org", status: "missing" },
+        },
+        { ...TEMPLATE, editableEndpoint: ["url"], auth: { type: "bearer", ownership: "org" } },
+      ),
+      [`PATCH ${ORG}/connectors/app1`]: () =>
+        json(400, {
+          error: {
+            code: "validation_failed",
+            message: "x",
+            details: [{ path: "endpoint.url", message: "bad" }],
+          },
+        }),
+    });
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "en",
+    });
+    await screen.findByText("Create the Slack OAuth app");
+    const url = (await screen.findByRole("textbox", { name: "url" })) as HTMLInputElement;
+    const user = userEvent.setup();
+    await user.clear(url);
+    await user.type(url, "https://bad.test/mcp");
+    await user.click(screen.getByRole("button", { name: en.connectors.endpointEdit.save }));
+    expect(await screen.findByText(en.errors.validation_failed, { exact: false })).toBeTruthy();
     await settle();
-    expect(browser).toEqual([]);
+    expect(calls.some((c) => c.url.endsWith("/guide-ack"))).toBe(false);
+  });
+
+  it("a refused guide ack after a saved client says the guide was not recorded", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({
+      ...routes(),
+      [`POST ${ORG}/connectors/app1/guide-ack`]: () =>
+        json(409, { error: { code: "connector.guide_changed", message: "x" } }),
+    });
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "zh",
+    });
+    await screen.findByText("Create the Slack OAuth app");
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/client id/i), "cid");
+    await user.click(screen.getByRole("button", { name: zh.connectors.credential.saveClient }));
+    expect(
+      await screen.findByText(zh.connectors.setup.guideNotRecorded, { exact: false }),
+    ).toBeTruthy();
+  });
+
+  it("saving waits until the guide shown has been read (its hash is what gets recorded)", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({ ...routes(), [`GET ${GUIDE_URL}`]: () => new Promise<Response>(() => {}) });
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "en",
+    });
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/client id/i), "cid");
+    expect(
+      screen.getByRole("button", { name: en.connectors.credential.saveClient }),
+    ).toHaveProperty("disabled", true);
   });
 
   it("a template without a guide shows its input alone", async () => {
-    resetNavigation(`/plugins/${ITEM}/connectors`);
-    stubApi(routes({ ...TEMPLATE, guide: null }));
-    await renderRouteWithCache(`/plugins/${ITEM}/connectors`, lastStubRoutes(), { locale: "en" });
+    resetNavigation("/connectors/app1");
+    stubApi(routes({ setupGuide: null }, { ...TEMPLATE, guide: null }));
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "en",
+    });
     await screen.findByLabelText(/client id/i);
     await settle();
-    expect(screen.queryByRole("region", { name: G.title })).toBeNull();
+    expect(screen.queryByText(G.connectorHint)).toBeNull();
+  });
+
+  it("install from a template is a review: no guide and no input (the guide waits for 配置)", async () => {
+    resetNavigation("/connectors/install");
+    await renderRouteWithCache(
+      `/connectors/install?template=${ITEM}`,
+      {
+        [`GET ${ORG}/catalog/${ITEM}`]: () =>
+          json(200, orgDetail({ ...TEMPLATE, defaultOff: false, connected: false })),
+        [`GET ${GUIDE_URL}`]: guideRoute(),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      },
+      { locale: "zh" },
+    );
+    expect(await screen.findByRole("button", { name: "启用" })).toBeTruthy();
+    await settle();
+    expect(screen.queryByRole("region", { name: zh.setupGuide.title })).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 });
 

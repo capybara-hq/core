@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   CellTitle,
   type Column,
   DataTable,
@@ -241,7 +242,19 @@ function ExtensionList({
       fit: true,
       // One trailing cell only: an org admin's is the switch, so the state drops to the meta line
       compact: canEdit ? "meta" : "trailing",
-      cell: (r) => <Text tone={r.state.tone}>{r.state.label}</Text>,
+      // needs-configuration with configure for an org admin (plugin pages spec §5.2.4): it opens the extension's
+      // Sheet, as the row does, so the cell stays part of the row (and of the compact meta line)
+      cell: (r) =>
+        canEdit && r.needsConfig ? (
+          <Stack direction="row" gap={8} align="center">
+            <Text tone={r.state.tone}>{r.state.label}</Text>
+            <Button density="dense" onClick={() => setOpen(r.ext.plugin)}>
+              {t("configure")}
+            </Button>
+          </Stack>
+        ) : (
+          <Text tone={r.state.tone}>{r.state.label}</Text>
+        ),
     },
     ...(canEdit
       ? [

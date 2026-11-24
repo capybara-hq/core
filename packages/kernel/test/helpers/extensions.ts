@@ -218,5 +218,7 @@ export function orgConfigsFor(
       unavailable: async (names: readonly string[]) =>
         new Map(names.map((n) => [n, { status: "disabled", reason: "deployment_disabled" }])),
     } as unknown as ExtensionAvailability,
+    // no queue here: the template connector ensure an enable owes is dropped
+    { add: async () => true },
   );
 }

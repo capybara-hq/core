@@ -302,6 +302,7 @@ describe("registry without a sandbox provider", () => {
         get: async () => ({ ok: true, config: {}, source: "platform" }),
       },
       { offKeys: async () => new Set() },
+      { orgInputs: async () => new Map() },
     );
     const got = await registry.forAgent("org", {
       source: "web",

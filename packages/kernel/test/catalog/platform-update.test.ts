@@ -4,7 +4,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { connectorTemplateState } from "../../src/catalog/component-state.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
-import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
+import {
+  PlatformPluginUpdater,
+  type PlatformUpdatePreview,
+} from "../../src/catalog/plugin-upgrade.js";
+import { TEMPLATE_CONNECTORS_QUEUE } from "../../src/catalog/template-connector-jobs.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -13,20 +17,26 @@ import { SkillsService } from "../../src/skills/skills.service.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
+import { ToolDrift } from "../../src/tools/drift.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrgWithProviders, enableExtensions, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
+  configureConnector,
   importPlugin,
-  install,
   legacyCopies,
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
   seedPlugin,
+  setBuiltin,
   setPolicy,
+  setScope,
   startOrgEnv,
+  templateConnectors,
 } from "./org-env.js";
 
 /**
@@ -88,21 +98,30 @@ async function updateTo(itemId: string, version: string): Promise<PlatformUpdate
   return p;
 }
 
-/** Installs the item in `orgId` (org1 through its admin, org2 through root). */
+/**
+ * Installs the item in `orgId` (org1 through its admin, org2 through root). Installs take no
+ * connector input (plugin pages spec §5.2.2): a credential given under `connectors.<templateId>`
+ * is saved on that template's connector afterwards, as an org admin configures it.
+ */
 async function installIn(
   orgId: string,
   itemId: string,
-  body: Record<string, unknown> = {},
+  body: { connectors?: Record<string, { credential?: Record<string, string> }> } = {},
 ): Promise<string> {
-  const r =
-    orgId === env.orgId
-      ? await install(env.boss, env, itemId, body)
-      : await env.root({
-          method: "POST",
-          url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
-          payload: body,
-        });
+  const { connectors, ...rest } = body;
+  const req = orgId === env.orgId ? env.boss : env.root;
+  const r = await req({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
+    payload: rest,
+  });
   expect(r.statusCode, r.body).toBe(201);
+  const made = await templateConnectors(env, { orgId, itemId });
+  for (const [templateId, input] of Object.entries(connectors ?? {})) {
+    const c = made.find((m) => m.templateId === templateId);
+    if (c === undefined || input.credential === undefined) continue;
+    await configureConnector(env, c.id, { orgId, req, credential: input.credential });
+  }
   return r.json().installed.pluginInstallId as string;
 }
 
@@ -150,6 +169,20 @@ async function connectorFrom(orgId: string, templateId: string) {
     .where("c.deleted_at", "is", null)
     .executeTakeFirstOrThrow();
 }
+
+/** A connector's derived setup state, as the org's connectors API reports it. */
+async function setupOf(orgId: string, connectorId: string): Promise<string> {
+  const req = orgId === env.orgId ? env.boss : env.root;
+  const r = await req({
+    method: "GET",
+    url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
+  });
+  expect(r.statusCode, r.body).toBe(200);
+  return (r.json() as { connector: { setup: string } }).connector.setup;
+}
+
+/** The display name {@link seedPlugin} gives template `id`. */
+const dn = (id: string) => (id === "gh" ? { zh: "GitHub", en: "GitHub" } : { zh: id, en: id });
 
 const toolPolicies = async (connectorId: string) =>
   Object.fromEntries(
@@ -362,8 +395,10 @@ describe("platform plugin update (spec §7)", () => {
           credentialsReset: false,
         },
       ],
-      // the added template is on in both orgs; its connector needs the org's input
-      needsConfig: ["docs"],
+      // the added template is on in both orgs: the update creates its connector there, waiting
+      // for the org's credential (plugin pages spec §5.2.3)
+      created: [{ templateId: "docs", displayName: dn("docs"), setup: "needs_config" }],
+      deferred: [],
     });
     expect(p.connectorOrgs).toEqual(orgs.map(conn));
 
@@ -484,7 +519,8 @@ describe("platform plugin update (spec §7)", () => {
       {
         orgId: env.orgId,
         connectors: [{ id: gh.id, name: gh.name, templateId: "gh", credentialsReset: true }],
-        needsConfig: [],
+        created: [],
+        deferred: [],
       },
     ]);
     const now = await connectorFrom(env.orgId, "gh");
@@ -1066,7 +1102,7 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
     expect((await usableSkills(env.db, env.orgId)).map((s) => s.name)).toContain("dep-skill");
   });
 
-  it("an added connector template makes the installed plugin needs_config; the org admin creates the connector (P2-10)", async () => {
+  it("an added connector template leaves the plugin on; the update creates its connector, recorded on the install", async () => {
     const item = await seedCrm();
     await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
     const state = async () =>
@@ -1076,41 +1112,9 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
       ).find((i) => i.id === item)?.state;
     expect(await state()).toBe("on");
     await updateTo(item, "2.0.0");
-    expect(await state()).toBe("needs_config");
-    // the detail names the templates that miss a connector, for the 补充配置 wizard (Task 10)
-    const missing = async () =>
-      (await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${item}` })).json()
-        .missingTemplates as { id: string }[];
-    expect((await missing()).map((t) => t.id)).toEqual(["docs"]);
-    const url = `/api/v1/orgs/${env.orgId}/catalog/${item}/connectors`;
-    const member = await env.mem({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { docs: tokenInput() } } },
-    });
-    expect(member.statusCode).toBe(403);
-    const notMissing = await env.boss({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { gh: tokenInput() } } },
-    });
-    expect(notMissing.statusCode).toBe(400);
-    expect(notMissing.json().error.details[0].path).toBe("connectors.gh");
-    const noCredential = await env.boss({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { docs: { endpoint: { url: env.mcp.url } } } } },
-    });
-    expect(noCredential.statusCode).toBe(400);
-    const r = await env.boss({
-      method: "POST",
-      url,
-      payload: { inputs: { connectors: { docs: tokenInput() } } },
-    });
-    expect(r.statusCode, r.body).toBe(201);
-    expect(r.json().connectors).toEqual([{ templateId: "docs", connectorId: expect.any(String) }]);
+    // the plugin's own state comes only from its extension's config (plugin pages spec §5.2.3)
+    expect(await state()).toBe("on");
     const docs = await connectorFrom(env.orgId, "docs");
-    expect(docs.id).toBe(r.json().connectors[0].connectorId);
     const recorded = await env.db
       .selectFrom("plugin_install_components")
       .select(["ref", "template_id", "created"])
@@ -1118,8 +1122,11 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
       .where("template_id", "=", "docs")
       .execute();
     expect(recorded).toEqual([{ ref: docs.id, template_id: "docs", created: true }]);
+    // it waits for the org's credential; an org admin configures it
+    expect(await setupOf(env.orgId, docs.id)).toBe("needs_config");
+    await configureConnector(env, docs.id);
+    expect(await setupOf(env.orgId, docs.id)).toBe("ready");
     expect(await state()).toBe("on");
-    expect(await missing()).toEqual([]);
   });
 });
 
@@ -1183,7 +1190,8 @@ describe("platform plugin update: templates shipped defaultEnabled false", () =>
     const entry = (orgId: string, c: { id: string; name: string }) => ({
       orgId,
       connectors: [{ id: c.id, name: c.name, templateId: "gh", credentialsReset: false }],
-      needsConfig: [],
+      created: [],
+      deferred: [],
     });
     expect(p.connectorOrgs).toEqual(
       [
@@ -1200,7 +1208,7 @@ describe("platform plugin update: templates shipped defaultEnabled false", () =>
     expect(await connectorTemplateState(env.db, org2, tpl)).toBe("on");
   });
 
-  it("a template the update ships on: it needs the input of the orgs it turns on in", async () => {
+  it("a template the update ships on: its connector is created in the orgs it turns on in", async () => {
     const item = await seedPlugin(env, {
       name: "crm",
       skills: [],
@@ -1221,10 +1229,360 @@ describe("platform plugin update: templates shipped defaultEnabled false", () =>
     // org2 switched it off itself: it stays off there
     await setSwitch(org2, tpl, false);
     const p = await previewOk(item, "1.1.0");
-    expect(p.connectorOrgs).toEqual([{ orgId: env.orgId, connectors: [], needsConfig: ["gh"] }]);
+    expect(p.connectorOrgs).toEqual([
+      {
+        orgId: env.orgId,
+        connectors: [],
+        created: [{ templateId: "gh", displayName: dn("gh"), setup: "needs_config" }],
+        deferred: [],
+      },
+    ]);
     const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
     expect(r.statusCode, r.body).toBe(200);
     expect(await connectorTemplateState(env.db, env.orgId, tpl)).toBe("on");
     expect(await connectorTemplateState(env.db, org2, tpl)).toBe("off");
+    expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
+    expect(await templateConnectors(env, { orgId: org2, itemId: item })).toEqual([]);
+  });
+});
+
+describe("platform plugin update: template connectors (plugin pages spec §5.2.3)", () => {
+  /**
+   * Fails the test when a connector is asked for its tools inside a transaction; returns the
+   * connector ids whose tools a job listed (after a commit).
+   */
+  function watchListings(): string[] {
+    const listed: string[] = [];
+    const realList = ToolDrift.prototype.listTools;
+    vi.spyOn(ToolDrift.prototype, "listTools").mockImplementation(function (
+      this: ToolDrift,
+      ...args: Parameters<ToolDrift["listTools"]>
+    ) {
+      if (currentStore()) throw new Error("a connector was called inside a transaction");
+      return realList.apply(this, args);
+    });
+    const realJob = ConnectorsService.prototype.listToolsForJob;
+    vi.spyOn(ConnectorsService.prototype, "listToolsForJob").mockImplementation(function (
+      this: ConnectorsService,
+      ...args: Parameters<ConnectorsService["listToolsForJob"]>
+    ) {
+      if (currentStore()) throw new Error("a tools job ran inside a transaction");
+      listed.push(args[0].connectorId);
+      return realJob.apply(this, args);
+    });
+    return listed;
+  }
+
+  it("an upgrade that adds templates creates one connector per org with the plugin on, listed only after the commit", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      // docs needs the org's credential; open needs nothing
+      templates: { gh: {}, docs: {}, open: { auth: { type: "none" } } },
+    });
+    await installIn(env.orgId, item);
+    await installIn(org2, item);
+    const listed = watchListings();
+    const p = await previewOk(item, "1.1.0");
+    const created = [
+      { templateId: "docs", displayName: dn("docs"), setup: "needs_config" },
+      { templateId: "open", displayName: dn("open"), setup: "ready" },
+    ];
+    expect(p.connectorOrgs.map((o) => [o.orgId, o.created])).toEqual(
+      [env.orgId, org2].sort().map((orgId) => [orgId, created]),
+    );
+    expect(p.scopeInstalls).toEqual([]);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    for (const orgId of [env.orgId, org2]) {
+      const made = await templateConnectors(env, { orgId, itemId: item });
+      expect(made.map((m) => m.templateId).sort()).toEqual(["docs", "gh", "open"]);
+      const docs = made.find((m) => m.templateId === "docs")?.id as string;
+      const open = made.find((m) => m.templateId === "open")?.id as string;
+      expect(await setupOf(orgId, docs)).toBe("needs_config");
+      expect(await setupOf(orgId, open)).toBe("ready");
+      // the ready one's tool list follows through the outbox, after the commit
+      await waitFor(async () => listed.includes(open), 20_000, "the tools job of open");
+      expect(listed).not.toContain(docs);
+      const recorded = await env.db
+        .selectFrom("plugin_install_components as c")
+        .innerJoin("plugin_installs as a", "a.id", "c.install_id")
+        .select("c.ref")
+        .where("a.org_id", "=", orgId)
+        .where("c.kind", "=", "connector")
+        .where("c.created", "=", true)
+        .execute();
+      expect(recorded.map((x) => x.ref)).toEqual(expect.arrayContaining([docs, open]));
+    }
+    // the preview of the next version sees the connectors: nothing more to create
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.2.0",
+      skills: ["extra"],
+      templates: { gh: {}, docs: {}, open: { auth: { type: "none" } } },
+    });
+    const next = await previewOk(item, "1.2.0");
+    expect(next.connectorOrgs.flatMap((o) => o.created)).toEqual([]);
+  });
+
+  it("a credential-shape change leaves the connectors needs_config; one whose new shape needs no org input is listed again", async () => {
+    const item = await seedPlugin(env, {
+      name: "crm",
+      skills: [],
+      templates: { gh: {}, docs: {} },
+    });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: {
+        gh: { auth: { type: "headers", ownership: "org", names: ["X-Key"] } },
+        docs: { auth: { type: "none" } },
+      },
+    });
+    await installIn(env.orgId, item, {
+      connectors: { gh: tokenInput(), docs: tokenInput() },
+    });
+    const gh = await connectorFrom(env.orgId, "gh");
+    const docs = await connectorFrom(env.orgId, "docs");
+    expect(await setupOf(env.orgId, gh.id)).toBe("ready");
+    const listed = watchListings();
+    const p = await updateTo(item, "1.1.0");
+    expect(p.connectorOrgs[0]?.connectors.map((c) => [c.templateId, c.credentialsReset])).toEqual([
+      ["docs", true],
+      ["gh", true],
+    ]);
+    expect(await secretsOf(gh.id)).toEqual([]);
+    expect(await setupOf(env.orgId, gh.id)).toBe("needs_config");
+    expect(await setupOf(env.orgId, docs.id)).toBe("ready");
+    // docs ended ready under its new shape: its tools are listed again (ruling R19); gh waits
+    await waitFor(async () => listed.includes(docs.id), 20_000, "the tools job of docs");
+    expect(listed).not.toContain(gh.id);
+  });
+
+  it("the preview names the orgs where scope sync will now install the plugin", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {} },
+    });
+    await installIn(env.orgId, item);
+    // org2 is on the list but has no install yet (it waited for its connector input before)
+    await setScope(env, item, "named", [env.orgId, org2]);
+    const first = await previewOk(item, "1.1.0");
+    expect(first.scopeInstalls).toEqual([{ orgId: org2, orgName: "Beta" }]);
+    // the scope sync's last attempt there failed: listed as failing, with its message
+    await env.db
+      .insertInto("plugin_scope_sync_failures")
+      .values({
+        item_id: item,
+        org_id: org2,
+        op: "install",
+        code: "internal",
+        message: "boom",
+        failed_at: new Date(),
+      })
+      .execute();
+    const p = await previewOk(item, "1.1.0");
+    expect(p.scopeInstalls).toEqual([
+      { orgId: org2, orgName: "Beta", failing: true, lastFailure: "boom" },
+    ]);
+    expect(p.diffHash).not.toBe(first.diffHash);
+    // the message is shown only: another one leaves the hash as it was
+    await env.db
+      .updateTable("plugin_scope_sync_failures")
+      .set({ message: "bang" })
+      .where("item_id", "=", item)
+      .execute();
+    expect((await previewOk(item, "1.1.0")).diffHash).toBe(p.diffHash);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    // the scope sync owed with the update installs it there, its template connector needs_config
+    await waitFor(
+      async () => (await templateConnectors(env, { orgId: org2, itemId: item })).length === 1,
+      20_000,
+      "the scope sync's install in org2",
+    );
+    const [c] = await templateConnectors(env, { orgId: org2, itemId: item });
+    expect(await setupOf(org2, c?.id as string)).toBe("needs_config");
+  });
+
+  /** crm 1.0.0 without templates; 1.1.0 adds template docs (bearer org). Returns the item. */
+  async function seedAddingDocs(): Promise<string> {
+    const item = await seedPlugin(env, { name: "crm", skills: ["a"], templates: false });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: ["a"],
+      templates: { docs: {} },
+    });
+    return item;
+  }
+
+  it("a template whose connector plugin is off in one org is deferred there: the others get their connector, the deferred org once it switches the plugin on", async () => {
+    const item = await seedAddingDocs();
+    await installIn(env.orgId, item);
+    await installIn(org2, item);
+    // org2 switched the template's connector extension off
+    await env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", org2)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+    const p = await previewOk(item, "1.1.0");
+    const byOrg = new Map(p.connectorOrgs.map((o) => [o.orgId, o]));
+    expect(byOrg.get(env.orgId)).toMatchObject({
+      created: [{ templateId: "docs", displayName: dn("docs"), setup: "needs_config" }],
+      deferred: [],
+    });
+    expect(byOrg.get(org2)).toMatchObject({
+      created: [],
+      deferred: [{ templateId: "docs", displayName: dn("docs"), kind: expect.any(String) }],
+    });
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
+    expect(await templateConnectors(env, { orgId: org2, itemId: item })).toEqual([]);
+    const audited = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.platform_updated")
+      .where("target", "=", item)
+      .executeTakeFirstOrThrow();
+    expect((audited.detail as { deferredConnectors?: unknown }).deferredConnectors).toEqual([
+      { orgId: org2, templateId: "docs", kind: expect.any(String) },
+    ]);
+    // the ensure the update owed for org2 finds the kind still off there and creates nothing
+    await drainOutbox(env.k.app, { queue: TEMPLATE_CONNECTORS_QUEUE });
+    expect(await templateConnectors(env, { orgId: org2, itemId: item })).toEqual([]);
+    // org2 switches the connector plugin on: its queued ensure creates the connector
+    const on = await env.root({
+      method: "PUT",
+      url: `/api/v1/orgs/${org2}/extensions/fake-connector`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    await drainOutbox(env.k.app, { queue: TEMPLATE_CONNECTORS_QUEUE });
+    await waitFor(
+      async () => (await templateConnectors(env, { orgId: org2, itemId: item })).length === 1,
+      20_000,
+      "the deferred connector in org2",
+    );
+  });
+
+  it("a builtin plugin's update creates no connectors (ruling R28)", async () => {
+    const item = await seedAddingDocs();
+    await setBuiltin(env, item);
+    const p = await previewOk(item, "1.1.0");
+    expect(p.connectorOrgs.flatMap((o) => [...o.created, ...o.deferred])).toEqual([]);
+    expect(p.scopeInstalls).toEqual([]);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    for (const orgId of [env.orgId, org2]) {
+      expect(await templateConnectors(env, { orgId, itemId: item })).toEqual([]);
+    }
+  });
+
+  it("a named plugin still on in an org it no longer lists gets no connector there", async () => {
+    const item = await seedAddingDocs();
+    await installIn(env.orgId, item);
+    await installIn(org2, item);
+    await setScope(env, item, "named", [env.orgId]);
+    const p = await previewOk(item, "1.1.0");
+    expect(p.connectorOrgs.map((o) => o.orgId)).toEqual([env.orgId]);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
+    expect(await templateConnectors(env, { orgId: org2, itemId: item })).toEqual([]);
+  });
+
+  it("an org deleted between the preview and the confirm: stale; the new preview leaves it out", async () => {
+    const item = await seedAddingDocs();
+    const gamma = await createOrgWithProviders(env.k, env.root, "Gamma");
+    await enableExtensions(env.db, gamma, "fake-connector");
+    await installIn(env.orgId, item);
+    await installIn(gamma, item);
+    const p = await previewOk(item, "1.1.0");
+    expect(p.connectorOrgs.map((o) => o.orgId).sort()).toEqual([env.orgId, gamma].sort());
+    await env.db
+      .updateTable("orgs")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", gamma)
+      .execute();
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe("plugin.upgrade_stale");
+    expect(await templateConnectors(env, { orgId: env.orgId, itemId: item })).toEqual([]);
+    const again = await previewOk(item, "1.1.0");
+    expect(again.connectorOrgs.map((o) => o.orgId)).toEqual([env.orgId]);
+    const ok = await confirm(item, { version: "1.1.0", diffHash: again.diffHash });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
+    expect(await templateConnectors(env, { orgId: gamma, itemId: item })).toEqual([]);
+  });
+
+  it("an owner's preview names another org the scope sync will install in, never its failure", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: ["a"], templates: false });
+    await seedPlugin(env, { name: "crm", addTo: item, version: "1.1.0", skills: ["a", "b"] });
+    await installIn(env.orgId, item);
+    // org1's own shareable plugin, scoped to org2 too, whose install there keeps failing
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: env.orgId, shareable: true })
+      .where("id", "=", item)
+      .execute();
+    await setScope(env, item, "named", [env.orgId, org2]);
+    await env.db
+      .insertInto("plugin_scope_sync_failures")
+      .values({
+        item_id: item,
+        org_id: org2,
+        op: "install",
+        code: "internal",
+        message: "secret detail of Beta",
+        failed_at: new Date(),
+      })
+      .execute();
+    const updater = env.k.app.get(PlatformPluginUpdater);
+    const p = await updater.previewForOwner(env.orgId, item, "1.1.0");
+    expect(p.scopeInstalls).toEqual([{ orgId: org2, orgName: "Beta" }]);
+    expect(p.orgNames?.[org2]).toBe("Beta");
+    expect(JSON.stringify(p)).not.toContain("secret detail");
+    // display only: the owner's confirm checks the full diff's hash, which this one is
+    const r = await updater.updateAsOwner(env.orgId, env.bossId, item, "1.1.0", p.diffHash);
+    expect(r.version).toBe("1.1.0");
+  });
+
+  it("a template whose kind the create would refuse in an org is deferred there, not created", async () => {
+    const item = await seedAddingDocs();
+    await installIn(env.orgId, item);
+    await installIn(org2, item);
+    // fake-connector is on in org2's database rows, but the kind check the create runs (another
+    // provider of the kind, say) refuses it there: the preview must say deferred, not created
+    const real = ToolRegistry.prototype.connectorKindAvailable;
+    vi.spyOn(ToolRegistry.prototype, "connectorKindAvailable").mockImplementation(function (
+      this: ToolRegistry,
+      orgId: string,
+      kind: string,
+    ) {
+      return orgId === org2 ? Promise.resolve(false) : real.call(this, orgId, kind);
+    });
+    const p = await previewOk(item, "1.1.0");
+    const byOrg = new Map(p.connectorOrgs.map((o) => [o.orgId, o]));
+    expect(byOrg.get(org2)?.created).toEqual([]);
+    expect(byOrg.get(org2)?.deferred.map((d) => d.templateId)).toEqual(["docs"]);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
+    expect(await templateConnectors(env, { orgId: org2, itemId: item })).toEqual([]);
   });
 });

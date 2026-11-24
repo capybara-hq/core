@@ -275,4 +275,22 @@ describe("gitAuthorization", () => {
     expect(err).toBeInstanceOf(CredentialMissing);
     expect(await creds.status(ORG, "c_oauth_gone", OAUTH, ALICE)).toBe("missing");
   });
+
+  it("a needs_config manual-client connector (no client) presents no token, though a member holds one", async () => {
+    const as = await startFakeOAuthServer({ clients: [pub] });
+    stops.push(() => as.stop());
+    await seedOAuth(as, "c_oauth_noclient", Date.now() + 3_600_000);
+    await pool
+      .deleteFrom("capybara.secrets")
+      .where("key", "=", "credentials:app:c_oauth_noclient:client")
+      .execute();
+    const err = await creds
+      .gitAuthorization(ORG, "c_oauth_noclient", OAUTH, ALICE, "x-access-token")
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(CredentialMissing);
+    expect((err as CredentialMissing).ownership).toBe("org");
+    // the member's token is kept, only refused: no refresh, nothing sent to the token endpoint
+    expect(as.tokenRequests.filter((r) => r.grantType === "refresh_token")).toHaveLength(0);
+    expect(await creds.status(ORG, "c_oauth_noclient", OAUTH, ALICE)).toBe("connected");
+  });
 });

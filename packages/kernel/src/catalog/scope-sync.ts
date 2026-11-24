@@ -12,7 +12,6 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
 import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { isUsable } from "./ownership.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
@@ -29,15 +28,18 @@ import {
   scopeOrgJobId,
 } from "./scope-jobs.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
+import { TemplateConnectorEnsurer } from "./template-connector-ensure.js";
 
 /**
  * The plugin scope sync (plugin and component management spec §5, phase 1): converges every org
  * to each platform plugin's scope. In phase 1 "on in an org" is the org's plugin install, so for
  * each (item, org) the sync:
  * - wanted on (`wantedOn`, or a live install in the org depends on it: rule 9) and no live install
- *   -> installs it as the kernel itself (actor null, audits `via: "scope"`), unless the install
- *   needs the org's input (connector templates, or a required org config of its extension not set):
- *   that is `needs_config`, derived by the org catalog, never attempted here;
+ *   -> installs it as the kernel itself (actor null, audits `via: "scope"`). An install asks for
+ *   no input (plugin pages spec §5.2.2): its connector templates become connectors, those lacking
+ *   an org credential or OAuth client `needs_config`, and an extension whose effective config is
+ *   not valid in the org is switched on all the same (it gets no call until it is, and the org
+ *   catalog shows the plugin `needs_config`);
  * - wanted off and a live install -> uninstalls it (`via: "scope"`; the person who changed the
  *   scope or the switch confirmed the preview); the connectors the install created stay as the
  *   org's own (spec §5 rule 8); a dependency install it took along that its own scope still wants
@@ -48,10 +50,11 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * every scope (an org that switched an `all` item off stays off, also across a scope change away
  * and back, layering spec §4). Builtin items are left alone: they are on everywhere without an org
  * install, and their extension is enabled in every org by `enabled.ts` (required or not). A
- * failed install, uninstall or dependency install is logged, audited
- * `plugin.scope_sync_failed`, kept as the pair's open failure (`plugin_scope_sync_failures`, the
- * super admin's inbox, until a later sync of the pair does not fail) and not retried until the next
- * sync of the item. An error outside those steps (a read, the failure write itself) ends the attempt
+ * failed install, uninstall or dependency install is logged, audited `plugin.scope_sync_failed`
+ * (once while the same failure stays open), kept as the pair's open failure
+ * (`plugin_scope_sync_failures`, the super admin's inbox, until a later sync of the pair does not
+ * fail) and not retried until the next sync of the item (syncs follow owing transactions, never a
+ * timer). An error outside those steps (a read, the failure write itself) ends the attempt
  * without touching the pair's row, so an older failure stays open.
  *
  * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}), all owed through the outbox (transactional outbox spec
@@ -89,7 +92,7 @@ export {
  * What a sync of one (item, org) did. `deferred`: the plugin's extension is enabled on the
  * deployment but not loaded on this replica yet (P3-38); the job fails for a BullMQ retry.
  */
-export type ScopeSyncResult = "installed" | "removed" | "needs_config" | "unchanged" | "deferred";
+export type ScopeSyncResult = "installed" | "removed" | "unchanged" | "deferred";
 
 /**
  * A chunk or org job with a pair whose extension this replica has not loaded yet (P3-38): thrown
@@ -134,6 +137,11 @@ export class PluginScopeSync {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add" | "addMany">,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
+    @Inject(TemplateConnectorEnsurer)
+    private readonly templateConnectors: Pick<
+      TemplateConnectorEnsurer,
+      "ensureTemplateConnectorsIn"
+    >,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     @Inject(LockService) private readonly locks: LockService,
@@ -367,7 +375,13 @@ export class PluginScopeSync {
         // A platform update may have added dependencies: installed here (rule 9, Task 7)
         if (live.status === "installed") {
           try {
-            await this.installer.addMissingDependencies(orgId, live.id);
+            // a dependency just installed may provide the connector kind of a template the org
+            // never got a connector from (ruling R27); nothing installed, nothing new to provide
+            if ((await this.installer.addMissingDependencies(orgId, live.id)) > 0) {
+              await this.templateConnectors.ensureTemplateConnectorsIn(orgId, undefined, {
+                via: "scope",
+              });
+            }
           } catch (e) {
             await this.failed(orgId, itemId, "dependencies", e, attempt);
           }
@@ -381,7 +395,6 @@ export class PluginScopeSync {
       const version = item.platform_synced_version ?? item.latest_version;
       try {
         if (!(await this.extensionReady(itemId, version, attempt.finalTry))) return "deferred";
-        if (await this.needsInput(orgId, itemId, version)) return "needs_config";
         await this.installer.install(orgId, null, itemId, version, {}, { via: "scope" });
         return "installed";
       } catch (e) {
@@ -458,11 +471,13 @@ export class PluginScopeSync {
   }
 
   /**
-   * Whether installing the item (with the dependencies the org lacks) needs the org's input: a
-   * connector template, or an extension whose effective config for the org is not valid. The same
-   * rule as the org catalog's `needs_config`, applied to the whole tree.
+   * Whether installing the item (with the dependencies the org lacks) leaves an extension whose
+   * effective config for the org is not valid (a required overridable field the platform leaves
+   * empty and the org has no copy of): the plugin then comes on `needs_config` (the scope preview
+   * lists such orgs). Connector templates never count: they become connectors (plugin pages spec
+   * §5.2.2).
    */
-  async needsInput(orgId: string, itemId: string, version: string): Promise<boolean> {
+  async needsConfig(orgId: string, itemId: string, version: string): Promise<boolean> {
     const v = await this.db
       .selectFrom("catalog_item_versions")
       .select("manifest")
@@ -471,30 +486,19 @@ export class PluginScopeSync {
       .executeTakeFirst();
     const root = v?.manifest as PluginManifest | undefined;
     if (root === undefined) return false;
-    if (await this.manifestNeedsInput(orgId, root, itemId)) return true;
+    if (await this.extensionConfigInvalid(orgId, root)) return true;
     // the dependencies the install would bring (planning reads no input of the org)
     const plan = await this.installer.plan(orgId, null, itemId, version, null, "", undefined);
     const visit = async (p: InstallPlan): Promise<boolean> => {
-      if (await this.manifestNeedsInput(orgId, p.manifest, p.itemId)) return true;
+      if (await this.extensionConfigInvalid(orgId, p.manifest)) return true;
       for (const d of p.dependencies) if (d.plan && (await visit(d.plan))) return true;
       return false;
     };
     return visit(plan);
   }
 
-  /**
-   * Whether installing plugin `itemId` (manifest `m`) needs the org's input: a connector template
-   * on in the org (ruling P2-6: templates switched off there, outside their own scope or disabled
-   * make no connector), or its extension's effective config for the org is not valid (a required
-   * overridable field the platform leaves empty and the org has no copy of).
-   */
-  private async manifestNeedsInput(
-    orgId: string,
-    m: PluginManifest,
-    itemId: string,
-  ): Promise<boolean> {
-    const ids = (m.connectorTemplates ?? []).map((t) => templateIdOfPath(t.path));
-    if ((await connectorTemplatesOn(this.db, orgId, itemId, ids)).size > 0) return true;
+  /** Whether the plugin's extension (manifest `m`), loaded here, has no valid config for the org. */
+  private async extensionConfigInvalid(orgId: string, m: PluginManifest): Promise<boolean> {
     if (!m.extension) return false;
     // not loaded here: `extensionReady` decides; an extension without overridable fields is ok
     if (!this.registry.manifests().some((x) => x.name === m.name)) return false;
@@ -527,13 +531,24 @@ export class PluginScopeSync {
     code: string,
     message: string,
   ): Promise<void> {
-    await audit(this.db, {
-      actorAccountId: null,
-      orgId,
-      action: "plugin.scope_sync_failed",
-      target: itemId,
-      detail: { via: "scope", op, code, message },
-    });
+    // The same failure again (the pair's open one: an org whose connector kind stays unavailable,
+    // synced by every later owing of the item) refreshes its time without another audit row
+    const open = await this.db
+      .selectFrom("plugin_scope_sync_failures")
+      .select(["op", "code", "message"])
+      .where("item_id", "=", itemId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (open?.op !== op || open.code !== code || open.message !== message) {
+      await audit(this.db, {
+        actorAccountId: null,
+        orgId,
+        action: "plugin.scope_sync_failed",
+        target: itemId,
+        detail: { via: "scope", op, code, message },
+      });
+    }
     const failure = { op, code, message, failed_at: new Date() };
     await this.db
       .insertInto("plugin_scope_sync_failures")

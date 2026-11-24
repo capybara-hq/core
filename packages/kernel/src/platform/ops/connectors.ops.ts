@@ -148,6 +148,8 @@ const summary = (c: ConnectorSummary) => ({
     ownership: "ownership" in c.auth ? (c.auth.ownership ?? null) : null,
   },
   status: c.status,
+  // needs_config: an org admin must configure it before it can be used (it is never called)
+  setup: c.setup,
   platformTemplateId: c.platformTemplateId,
   description: c.description,
   updatedAt: c.updatedAt,
@@ -566,7 +568,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof UpdateInput>>({
         id: "connectors.update",
         description:
-          "Edit a connector (org admins): rename it, set or clear its own description (description; null clears it), switch it off or on (status), or use an org-credential connector that declares git hosts for git in sandboxes (useForGit; pushes are then the bot's). Its endpoint and credential are not edited here (credentials: connectors.set-org-credential); per-tool state and default policies stay on the connector's web page.",
+          "Edit a connector (org admins): rename it, set or clear its own description (description; null clears it), switch it off or on (status), or use an org-credential connector that declares git hosts for git in sandboxes (useForGit; pushes are then the bot's). For a connector made from a connector template, endpoint changes the fields its template lets the org edit (e.g. { url } for a self-hosted server; other fields are refused); its tools are listed again afterwards, and a change to any field but headers (the url, a base URL, ...) moves the destination: OAuth tokens and members' own credentials are cleared (members connect again), and an OAuth client discovered at the old url too (the connector then needs an org admin's configuration). Credentials are not edited here (connectors.set-org-credential); per-tool state and default policies stay on the connector's web page.",
         input: UpdateInput,
         example: { connectorId: EXAMPLE_ID, name: "Docs (staging)" },
         authz: { orgAction: "connectors.manage" },
@@ -605,6 +607,11 @@ export class ConnectorsOperations implements OnModuleInit {
           if (i.useForGit !== undefined) {
             zh.push(i.useForGit ? "用于沙箱中的 git" : "不再用于沙箱中的 git");
             en.push(i.useForGit ? "use it for git in sandboxes" : "stop using it for git");
+          }
+          if (i.endpoint !== undefined) {
+            const fields = Object.keys(i.endpoint).map(named).join(", ");
+            zh.push(`修改端点字段 ${fields}`);
+            en.push(`change its endpoint fields ${fields}`);
           }
           return {
             zh: `修改连接器「${n}」：${zh.join("，") || "不改动"}`,

@@ -80,7 +80,6 @@ const detailOf = (item: Record<string, unknown>) => ({
   dependencies: [],
   skills: ["skills/notes"],
   agents: [],
-  missingTemplates: [],
 });
 
 const REVIEW = {
@@ -287,6 +286,7 @@ describe("/plugins: 上传插件包", () => {
             components: [],
             extension: null,
             connectorOrgs: [],
+            scopeInstalls: [],
             diffHash: "d2",
           },
         }),
@@ -364,6 +364,7 @@ describe("/plugins: 上传插件包", () => {
       components: [],
       extension: { from: "1.0.0", to: null, orgs: ["o1", "o7", "o8"], needsApproval: false },
       connectorOrgs: [],
+      scopeInstalls: [],
       diffHash: "d4",
       ...(orgNames !== undefined && { orgNames }),
     });

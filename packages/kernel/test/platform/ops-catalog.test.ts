@@ -13,10 +13,11 @@ import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
-import { NEEDS_INPUT, OTHER_ORG } from "../../src/platform/ops/plugins.ops.js";
+import { OTHER_ORG } from "../../src/platform/ops/plugins.ops.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { platformTool } from "../../src/tools/builtins/platform.js";
 import {
+  configureConnector,
   importPlugin,
   importSkill,
   importTemplate,
@@ -113,8 +114,6 @@ const failure = async (p: Promise<unknown>): Promise<ToolError> => {
 const audits = (action: string) =>
   env.db.selectFrom("audit_events").selectAll().where("action", "=", action).execute();
 
-const tokenInput = () => ({ endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } });
-
 describe("registration", () => {
   it("registers every operation of the five domains", () => {
     expect(
@@ -181,7 +180,6 @@ describe("registration", () => {
       "plugins.component-scope-preview",
       "plugins.component-versions",
       "plugins.components",
-      "plugins.configure-connectors",
       "plugins.delete",
       "plugins.disable-preview",
       "plugins.get",
@@ -249,7 +247,7 @@ describe("super admin operations (Review Focus 4)", () => {
     const installed = await env.root({
       method: "POST",
       url: `/api/v1/orgs/${org2}/catalog/${item}/install`,
-      payload: { connectors: { gh: tokenInput() } },
+      payload: {},
     });
     expect(installed.statusCode, installed.body).toBe(201);
     const connector = await env.db
@@ -376,32 +374,32 @@ describe("marketplaces", () => {
 });
 
 describe("plugins in the org", () => {
-  it("a needs_config plugin missing its connector gets the connector input text (plugins.install), never the org config ops", async () => {
-    const item = await seedPlugin(env, { name: "tpl-needs", skills: [] });
+  it("enabling a plugin with connector templates switches it on directly: no input asked, its connector waits needs_config", async () => {
+    const item = await importTemplate(env);
     await setScope(env, item, "all");
     const rows = (await run("plugins.list", {}, ctxOf(env.bossId))) as {
       items: { id: string; state: string }[];
     };
-    expect(rows.items.find((r) => r.id === item)?.state).toBe("needs_config");
-    const pre = await precheck(
+    // wanted by its scope, not installed by the sync yet: off, never needs_config for templates
+    expect(rows.items.find((r) => r.id === item)?.state).toBe("off");
+    expect(
+      await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
+    ).toEqual({ ok: true });
+    const out = (await run(
       "plugins.set-enabled",
       { itemId: item, enabled: true },
       ctxOf(env.bossId),
-    );
-    expect(pre).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
-  });
-
-  it("enabling a plugin that needs connector inputs is refused with the plugins.install pointer", async () => {
-    const item = await importTemplate(env);
-    const e = await failure(
-      run("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
-    );
-    expect(e.message).toBe(NEEDS_INPUT);
-    expect(e.message).toContain("plugins.install");
-    // known before the card
-    expect(
-      await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
-    ).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
+    )) as { item: { state: string } };
+    expect(out.item.state).toBe("on");
+    const c = await env.db
+      .selectFrom("connectors")
+      .select("id")
+      .where("catalog_item_id", "=", item)
+      .executeTakeFirstOrThrow();
+    const got = (await run("connectors.get", { connectorId: c.id }, ctxOf(env.bossId))) as {
+      connector: { setup: string };
+    };
+    expect(got.connector.setup).toBe("needs_config");
     expect(
       await precheck(
         "plugins.set-enabled",
@@ -409,12 +407,6 @@ describe("plugins in the org", () => {
         ctxOf(env.bossId),
       ),
     ).toMatchObject({ ok: false, code: "catalog.item_not_found" });
-    const [got] = await env.db
-      .selectFrom("plugin_installs")
-      .select("id")
-      .where("item_id", "=", item)
-      .execute();
-    expect(got).toBeUndefined();
   });
 
   it("an org admin enables a no-input optional plugin and it is on; disabling takes the preview's confirm", async () => {
@@ -543,17 +535,24 @@ describe("requests", () => {
 
 describe("connectors and extensions", () => {
   it("connectors.get carries no credential, and only the public endpoint whatever the role", async () => {
-    const item = await seedPlugin(env, { name: "with-gh", skills: [] });
     const url = `${env.mcp.url}?tenant=acme-4711`;
+    const item = await seedPlugin(env, {
+      name: "with-gh",
+      skills: [],
+      templates: { gh: { endpoint: { url } } },
+    });
     const on = await env.boss({
       method: "PUT",
       url: `/api/v1/orgs/${env.orgId}/catalog/${item}/switch`,
-      payload: {
-        enabled: true,
-        inputs: { connectors: { gh: { ...tokenInput(), endpoint: { url } } } },
-      },
+      payload: { enabled: true },
     });
     expect(on.statusCode, on.body).toBe(200);
+    const made = await env.db
+      .selectFrom("connectors")
+      .select("id")
+      .where("catalog_item_id", "=", item)
+      .executeTakeFirstOrThrow();
+    await configureConnector(env, made.id);
     const list = (await run("connectors.list", {}, ctxOf(env.memId))) as {
       items: { id: string; auth: unknown }[];
     };

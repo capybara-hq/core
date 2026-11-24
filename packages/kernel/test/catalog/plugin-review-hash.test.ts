@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { item } from "../../src/catalog/claude/report.js";
-import { pluginReviewHash } from "../../src/catalog/plugin-import.js";
+import {
+  type PluginReviewAgentConnector,
+  pluginReviewHash,
+} from "../../src/catalog/plugin-import.js";
 
 /**
  * The review digest covers the phase B fields on their own (review I1, M9): a change of only the
@@ -79,11 +82,16 @@ describe("pluginReviewHash", () => {
       description: "Reviews.",
       instructions: "Review.",
       model: "inherit" as const,
+      connectors: [] as PluginReviewAgentConnector[],
     };
     const one = hash({ agentTemplates: [reviewer] });
     expect(one).not.toBe(base);
     expect(hash({ agentTemplates: [{ ...reviewer, model: "fast" }] })).not.toBe(one);
     expect(hash({ agentTemplates: [{ ...reviewer, tools: ["Read"] }] })).not.toBe(one);
+    // the connectors it needs are part of what the super admin confirms
+    expect(hash({ agentTemplates: [{ ...reviewer, connectors: [{ template: "gh" }] }] })).not.toBe(
+      one,
+    );
   });
 
   it("covers themes and leaves the digest of a plugin without any unchanged", () => {
@@ -109,6 +117,7 @@ describe("pluginReviewHash", () => {
       description: "Reviews.",
       instructions: "Review.",
       model: "inherit" as const,
+      connectors: [] as PluginReviewAgentConnector[],
     };
     expect(hash({ agentTemplates: [reviewer], themes: [night] })).not.toBe(
       hash({ agentTemplates: [reviewer] }),
