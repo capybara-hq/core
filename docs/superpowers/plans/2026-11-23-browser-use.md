@@ -555,3 +555,28 @@ type ViewerOut = { t: "frame"; seq: number; jpeg: string; width: number; height:
 - [ ] **Step 5:** Second account sends a message in the owner's group conversation → browser tool fails with the owner message.
 - [ ] **Step 6:** Two gateway replicas (compose scale) + local device: open the viewer repeatedly until it lands on the non-holding replica; frames flow (hop); Redis `MONITOR` shows no frame traffic.
 - [ ] **Step 7:** Record results in the PR; open follow-up issues for phase 2 (viewport switch, touch takeover, auto-open panel on handoff).
+
+## Spike results
+
+Task 1, run 2026-11-24 with `playwright-core` 1.65.1, Chromium/headless-shell 159.0.8154.6, over a pipe. By controller ruling the script ran directly on this Mac and in a plain container, not through a conversation or `capybara-device`. Setup: viewport 1280×800, `launchPersistentContext` with a scratch profile, `Page.startScreencast` JPEG quality 60, every frame acked.
+
+| | macOS headless-shell, `--single-process --use-mock-keychain` | docker (Playwright image, linux headless-shell, default flags) |
+|---|---|---|
+| 20 frames written, acked | pass | pass |
+| mouse click via `Input.dispatchMouseEvent` navigates (example.com to iana.org) | pass | pass |
+| `Target.createTarget` + second page, `Target.getTargets` lists pages | pass (3 pages) | pass (3 pages) |
+| median frame, maxWidth 480×300 (example.com) | 7.1 KB | 6.2 KB |
+| median frame, 1280×800 (colorful tall page, scrolling) | 169 KB | 162 KB |
+| fps while wheel-scrolling, 480×300 (wheel event every 16 ms) | 60 | 60 |
+| fps while wheel-scrolling, 1280×800 | 60 | 60 |
+| median frame while scrolling, 480×300 / 1280×800 | 39 KB / 170 KB | 38 KB / 163 KB |
+| RSS, 3 tabs (sum of `ps`) | 304 MB | 634 MB (multi-process, shared pages counted per process) |
+
+Result: pass on both platforms.
+
+Gotchas:
+- Screencast emits frames only when the page changes; a static page gives 1 or 2 frames and then nothing. The viewer must not treat a quiet stream as a dead one (keep the last frame; use a keepalive or `Page.captureScreenshot` on connect).
+- `--user-data-dir` cannot be passed as an arg through Playwright's `launch()`; use `launchPersistentContext(dir)`, which is also what the profile persistence needs.
+- Wheel scrolling at full 1280×800 produces about 10 MB/s of frames at 60 fps (170 KB each), far over the ~200 KB/s target. The viewer needs a frame-rate cap (a few fps, ack-paced) and a small `maxWidth`; at 480×300 and 5 fps scrolling is about 200 KB/s, so the target holds only with that cap.
+- `--single-process` ran stably on macOS for the whole script, including navigation, a click and tab creation. Docker ran without it and without `--no-sandbox` problems under the Playwright image (root user, Playwright adds `--no-sandbox`).
+- The chromium build resolved by playwright-core 1.65 for `headless: true` is `chromium-headless-shell` on both platforms; a full Chromium "new headless" build was not exercised.
