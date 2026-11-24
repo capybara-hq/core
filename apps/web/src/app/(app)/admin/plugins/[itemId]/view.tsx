@@ -102,7 +102,7 @@ const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation ===
  * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
  * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
  * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
- * license as a fact (its full text opens a Dialog); 删除 is the head's ⋯ menu item. 应用此插件的外观 (a plugin with a
+ * license as a fact (its full text opens a Dialog); Delete is the head's ⋯ menu item. Apply this plugin's appearance (a plugin with a
  * suggested appearance, client extensions spec §6.5) previews the platform changes in a confirm
  * dialog, then applies them. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
