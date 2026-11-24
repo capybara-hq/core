@@ -1,5 +1,18 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.83
+
+### Patch Changes
+
+- 0591382: A manual directory sync that cannot read the extension's state for the org (a transient failure
+  such as a database error) now answers 503 `directory.unavailable` instead of 400
+  `extension.config_invalid`; real configuration problems keep their 4xx (`extension.needs_config`,
+  `directory.not_configured`). The skip reason of a scheduled sync is renamed from `config_invalid`
+  to `state_unreadable`.
+- c3475c6: The Platform tool's new `extensions.set-enabled` switches an extension that is not a catalog
+  plugin's (config-declared, or brought by several plugins) on or off in an org. The Extensions page
+  and Model services switch an extension that needs config on, then let the org configure it.
+
 ## 0.1.0-rc.82
 
 ### Patch Changes

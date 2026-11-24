@@ -1,5 +1,13 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.107
+
+### Patch Changes
+
+- c3475c6: The Platform tool's new `extensions.set-enabled` switches an extension that is not a catalog
+  plugin's (config-declared, or brought by several plugins) on or off in an org. The Extensions page
+  and Model services switch an extension that needs config on, then let the org configure it.
+
 ## 0.1.0-rc.106
 
 No changes in this release.
