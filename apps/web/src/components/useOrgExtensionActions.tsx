@@ -29,7 +29,11 @@ export interface OrgExtensionRow {
   label: string;
   /** Platform-wide (`all` / builtin): on in every org, the switch is the platform's. */
   platform: boolean;
-  /** The switch cannot be used (platform, unavailable, not switchable or waiting for config). */
+  /**
+   * The switch cannot be used (platform, unavailable or not switchable). Needing config never
+   * locks it: an extension is switched on first and configured after, as on the Plugins page (it
+   * gets no org-bound call until its effective config is valid, the kernel's `needsConfig`).
+   */
   locked: boolean;
   unavailable: boolean;
   /** The deployment form is shown (an admin, an available extension with overridable fields). */
@@ -167,7 +171,7 @@ export function useOrgExtensionActions({
       ext,
       label,
       platform,
-      locked: platform || ext.switchable === false || unavailable || (needsConfig && !ext.enabled),
+      locked: platform || ext.switchable === false || unavailable,
       unavailable,
       overrides,
       needsConfig,

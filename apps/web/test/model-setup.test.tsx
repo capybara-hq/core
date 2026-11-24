@@ -425,12 +425,12 @@ describe("/settings/models: 模型服务", () => {
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
     expect(within(row).getByText(en.extensions.needsConfig)).toBeTruthy();
-    // the switch shows it off and stays disabled while it waits for config: configuring comes first
-    const locked = within(row).getByRole("switch", {
+    // the switch shows it off and is on offer: switch on, then configure (as on the Plugins page)
+    const toggle = within(row).getByRole("switch", {
       name: en.models.org.providers.enableLabel.replace("{plugin}", "Anthropic models"),
     }) as HTMLButtonElement;
-    expect(locked.disabled).toBe(true);
-    expect(locked.getAttribute("aria-checked")).toBe("false");
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
     const user = userEvent.setup();
     await user.click(
       within(row).getByRole("button", {

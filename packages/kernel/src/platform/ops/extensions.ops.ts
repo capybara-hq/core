@@ -1,13 +1,15 @@
-import { EXTENSION_POINTS, parseExtensionPoint } from "@capybara-hq/plugin-sdk";
+import { EXTENSION_POINTS, parseExtensionPoint, ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import {
   OrgExtensionParams,
+  OrgExtensionPut,
   OrgExtensionToolParams,
   OrgOverridesPut,
   OrgOverridesTake,
   OrgToolSwitchPut,
 } from "../../catalog/org-extension.schemas.js";
+import { OrgExtensionSwitch } from "../../catalog/org-extension-switch.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import {
@@ -40,6 +42,14 @@ const NoInput = z.object({}).strict();
 const Extension = OrgExtensionParams.shape.extension;
 const Tool = OrgExtensionToolParams.shape.tool;
 const SwitchConfirm = OrgToolSwitchPut.shape.confirm.unwrap();
+const Force = OrgExtensionPut.shape.force;
+
+/**
+ * Why `extensions.set-enabled` does not switch an extension that ships in one catalog plugin: that
+ * switch is the plugin's (with its uninstall preview), `plugins.set-enabled`.
+ */
+const viaPlugin = (extension: string, itemId: string): string =>
+  `Extension ${extension} ships in a catalog plugin, whose switch it is: switch the plugin with plugins.set-enabled (itemId ${itemId}; switching off takes the confirm value of plugins.disable-preview).`;
 
 /** The next step of an extension that needs its org config. */
 const NEEDS_ORG_CONFIG = {
@@ -47,6 +57,9 @@ const NEEDS_ORG_CONFIG = {
     "Read what is missing with extensions.org-config, then fill in the org's own copy of the overridable fields with extensions.save-org-config; the person enters secrets in a secure input request.",
   member: "Ask an org admin to fill in its org config on the Extensions page.",
 };
+
+/** What `extensions.set-enabled` adds when the extension is on but its org config is not valid. */
+const CONFIG_NEEDED = `The extension is on, but has no valid config for this org yet and gets no calls until it does: ${NEEDS_ORG_CONFIG.orgAdmin} If only platform-only fields are missing, the super admin must set them.`;
 
 /**
  * Secret fields of a target the schema walk cannot address (no form schema, a record): web only,
@@ -110,7 +123,38 @@ export class ExtensionsOperations implements OnModuleInit {
     @Inject(OrgToolSwitches) private readonly switches: OrgToolSwitches,
     @Inject(ExtensionPointDefaults) private readonly pointDefaults: ExtensionPointDefaults,
     @Inject(OrgOverrides) private readonly overrides: OrgOverrides,
+    @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
   ) {}
+
+  /**
+   * Why `extensions.set-enabled` refuses the switch before writing, or null: an extension of one
+   * catalog plugin is switched through its plugin; a required or builtin one cannot go off. The
+   * write itself repeats every rule ({@link OrgExtensionSwitch.put}).
+   */
+  private async switchRefusal(
+    orgId: string,
+    extension: string,
+    enabled: boolean,
+  ): Promise<{ code: string; message: string } | null> {
+    const v = await this.viewOf(orgId, extension);
+    const plan = await this.configs.switchPlan(extension, enabled);
+    if (plan.kind === "item") {
+      return { code: "extension.switch_via_plugin", message: viaPlugin(extension, plan.itemId) };
+    }
+    if (!enabled && v.required) {
+      return {
+        code: "extension.required",
+        message: `Extension ${extension} is required: it is on in every organization`,
+      };
+    }
+    if (!enabled && plan.kind === "locked") {
+      return {
+        code: "plugin.scope_locked",
+        message: `Extension ${extension} is built in: it is on in every organization`,
+      };
+    }
+    return null;
+  }
 
   /** The org view of one extension, or `extension.not_found` (not installed or not offered). */
   private async viewOf(orgId: string, name: string): Promise<OrgExtensionView> {
@@ -167,6 +211,103 @@ export class ExtensionsOperations implements OnModuleInit {
             startOf(input.cursor),
             50,
           );
+        },
+      }),
+      defineOperation({
+        id: "extensions.set-enabled",
+        description:
+          "Switch an extension that is not a catalog plugin's on or off in this org (org admins): one declared in the deployment config, or one several catalog plugins bring. An extension shipped in one catalog plugin is switched with plugins.set-enabled; extensions.list shows its catalogItemId. Switching on never waits for config: an extension with no valid config for the org is switched on anyway and the result's configNeeded says how to fill in the org's copy (extensions.save-org-config). Switching off is refused while other enabled extensions depend on it, unless force is true (they lose what they depend on).",
+        input: z.object({ extension: Extension, enabled: z.boolean(), force: Force }).strict(),
+        example: { extension: "web-search-tavily", enabled: true },
+        authz: { orgAction: "org.extensions.manage" },
+        mirrors: ["PUT /api/v1/orgs/:orgId/extensions/:extension"],
+        // the confirm of a catalog plugin's switch-off: that switch is plugins.set-enabled's
+        omits: ["confirm"],
+        confirm: "org",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "The extension is not running or not visible to this org; check the name with extensions.list.",
+          },
+          {
+            code: "extension.switch_via_plugin",
+            next: "Switch its plugin with plugins.set-enabled (the itemId is extensions.list's catalogItemId).",
+          },
+          {
+            code: "extension.required",
+            next: "The extension is required on the platform and stays on in every org.",
+          },
+          {
+            code: "plugin.scope_locked",
+            next: "The extension's plugin is built in: it is on in every org and cannot be switched off in one org.",
+          },
+          {
+            code: "extension.dependency_missing",
+            next: "The extension needs an extension point no enabled extension provides in this org (the details name it); switch on a provider first (extensions.points, extensions.list).",
+          },
+          {
+            code: "extension.has_dependents",
+            next: "Other enabled extensions depend on it (the details name them): switch those off first, or call again with force: true after the person agreed that they lose it.",
+          },
+          {
+            code: "plugin.disabled",
+            next: {
+              superAdmin:
+                "The plugin is stopped on the platform: turn it back on in the admin console under Plugins, then call again.",
+              orgAdmin: "The super admin stopped this plugin on the platform; ask them.",
+              member:
+                "The super admin stopped this plugin on the platform; tell your org admin, who can ask the super admin.",
+            },
+          },
+          {
+            code: "catalog.approval_required",
+            next: "A plugin that brings the extension is not offered to this org: create an access request with requests.create.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const found: { refusal: { code: string; message: string } | null } = { refusal: null };
+          const r = await precheckBy(async () => {
+            found.refusal = await this.switchRefusal(ctx.orgId, i.extension, i.enabled);
+          });
+          if (!r.ok) return r;
+          return found.refusal === null ? { ok: true } : { ok: false, ...found.refusal };
+        },
+        summary: async (i) => {
+          const x = await this.nameOf(i.extension);
+          if (i.enabled) {
+            return {
+              zh: `在本组织启用扩展「${x.zh}」`,
+              en: `Enable extension "${x.en}" in the org`,
+            };
+          }
+          return i.force === true
+            ? {
+                zh: `在本组织强制停用扩展「${x.zh}」：依赖它的扩展将失去依赖`,
+                en: `Force-disable extension "${x.en}" in the org: extensions that depend on it lose it`,
+              }
+            : { zh: `在本组织停用扩展「${x.zh}」`, en: `Disable extension "${x.en}" in the org` };
+        },
+        run: async (input, ctx) => {
+          const refusal = await this.switchRefusal(ctx.orgId, input.extension, input.enabled);
+          if (refusal?.code === "extension.switch_via_plugin") throw new ToolError(refusal.message);
+          const r = await this.extSwitch.put(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.extension,
+            { enabled: input.enabled, ...(input.force === true && { force: true }) },
+            undefined,
+            viaAgent("extensions.set-enabled", ctx),
+          );
+          // unreachable: only a catalog plugin's switch-off answers a preview, refused above
+          if (r.kind === "preview") throw new Error("extensions.set-enabled: unexpected preview");
+          const v = r.view;
+          return {
+            extension: v.plugin,
+            state: stateOf(v),
+            enabled: v.enabled,
+            needsConfig: v.needsConfig,
+            ...(v.enabled && v.needsConfig && { configNeeded: CONFIG_NEEDED }),
+          };
         },
       }),
       defineOperation({

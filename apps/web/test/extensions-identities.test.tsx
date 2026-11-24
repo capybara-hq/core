@@ -539,19 +539,27 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
   });
 
   it.each(["zh", "en"] as const)(
-    "off with the effective config invalid: 待配置, the switch waits, the Sheet says to configure first (%s)",
+    "off with the effective config invalid: 待配置, the switch is on offer and stays 待配置 once on; the Sheet says to configure (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
       const calls = api({
         [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
+        [`PUT ${BASE}/extensions/fake-im`]: () =>
+          json(200, { extension: { ...FAKE_IM, enabled: true } }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", { name: fill(m.enableLabel) });
-      expect(isDisabled(toggle)).toBe(true);
+      // switch on, then configure: as on the Plugins page and the kernel route
+      expect(isDisabled(toggle)).toBe(false);
       expect(screen.getByText(m.needsConfig)).toBeTruthy();
       const user = userEvent.setup();
       await user.click(toggle);
-      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
+      );
+      await vi.waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+      // on, but still waiting for its config: the state says so
+      expect(screen.getByText(m.needsConfig)).toBeTruthy();
       const sheet = await openSheet(user, "fake-im");
       const notice = within(sheet).getByText(m.configFirstHint);
       expect(notice.closest('[data-part="callout"]')?.getAttribute("data-tone")).toBe("warn");
