@@ -5059,23 +5059,7 @@
           "applyAppearance": "应用此插件的外观",
           "rollback": "回退到 {version}"
         },
-        "componentColumns": {
-          "name": "组件",
-          "kind": "类型",
-          "version": "版本",
-          "scope": "范围"
-        },
-        "kind": {
-          "extension": "扩展",
-          "skill": "技能",
-          "connectorTemplate": "连接器模板",
-          "agentTemplate": "智能体模板",
-          "component": "界面组件",
-          "clientCode": "客户端代码",
-          "theme": "主题"
-        },
-        "clientFiles": "{files} 个文件",
-        "componentsEmpty": "这个版本没有组件。",
+        "clientFiles": "带客户端代码，共 {files} 个文件。",
         "orgsHint": {
           "all": "全部组织：每个组织默认启用；组织管理员可以在本组织关掉。",
           "optional": "组织自选：{n} 个组织已启用。",
@@ -5092,7 +5076,10 @@
         "notShareableNote": "该组织未开放共享：可以缩小范围或停用，不能向其他组织显示或关联给其他组织。",
         "awaitingNote": "它的第一个版本在待确认中等待超级管理员确认，确认前什么都不能用。",
         "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。",
-        "ownerValue": "{org}（新版本由该组织上传）"
+        "ownerValue": "{org}（新版本由该组织上传）",
+        "uiComponents": "提供界面组件：{ids}。",
+        "dependencyVersions": "平台目录里有：{versions}。",
+        "dependencyMissing": "不在平台目录里。"
       },
       "review": {
         "title": "安装插件",

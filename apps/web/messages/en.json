@@ -5071,23 +5071,7 @@
           "applyAppearance": "Apply this plugin's appearance",
           "rollback": "Roll back to {version}"
         },
-        "componentColumns": {
-          "name": "Component",
-          "kind": "Kind",
-          "version": "Version",
-          "scope": "Scope"
-        },
-        "kind": {
-          "extension": "Extension",
-          "skill": "Skill",
-          "connectorTemplate": "Connector template",
-          "agentTemplate": "Agent template",
-          "component": "Interface component",
-          "clientCode": "Client code",
-          "theme": "Theme"
-        },
-        "clientFiles": "{files, plural, one {# file} other {# files}}",
-        "componentsEmpty": "This version has no components.",
+        "clientFiles": "Ships client code, {files, plural, one {# file} other {# files}}.",
         "orgsHint": {
           "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",
           "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
@@ -5104,7 +5088,10 @@
         "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
         "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
         "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab.",
-        "ownerValue": "{org} (new versions come from it)"
+        "ownerValue": "{org} (new versions come from it)",
+        "uiComponents": "Contributes interface components: {ids}.",
+        "dependencyVersions": "In the catalog: {versions}.",
+        "dependencyMissing": "Not in the catalog."
       },
       "review": {
         "title": "Install plugin",

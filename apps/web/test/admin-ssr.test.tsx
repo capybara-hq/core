@@ -877,7 +877,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/admin/plugins/[itemId]: a first render from the hydrated cache makes no browser read (dependencies, sources)", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache(`/admin/plugins/${ITEM_ID}`, ROUTES);
-    expect(screen.getByRole("heading", { name: "crm" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     expect(screen.getByText(/crm-core/)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
