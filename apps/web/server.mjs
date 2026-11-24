@@ -65,7 +65,9 @@ process.env[PEER_TOKEN_ENV] = token;
 const nextUpgrades = new EventEmitter();
 const app = next({
   dev,
-  ...(dev && { webpack: true }),
+  // Dev bundles with Turbopack (Next's default). CAPYBARA_WEB_WEBPACK=1 falls back to webpack, kept
+  // for a Turbopack HMR regression: the login page once reloaded on hash mismatches (#318).
+  ...(dev && process.env.CAPYBARA_WEB_WEBPACK === "1" && { webpack: true }),
   dir: import.meta.dirname,
   port,
   httpServer: nextUpgrades,
