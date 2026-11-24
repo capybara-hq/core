@@ -1,5 +1,6 @@
 import type { ConnectorTemplateFile } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -8,6 +9,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
+import { ConnectorsService } from "../tools/connectors.service.js";
 import { connectorTemplatesOn } from "./component-state.js";
 import { PluginInstaller } from "./plugin-install.js";
 
@@ -59,6 +61,8 @@ export class TemplateConnectorEnsurer {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
+    /** The connector kinds each org can create connectors of (the sweep's availability check). */
+    @Inject(ConnectorsService) private readonly connectors: Pick<ConnectorsService, "kinds">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -71,6 +75,85 @@ export class TemplateConnectorEnsurer {
   async orgsMissing(): Promise<string[]> {
     const rows = await this.missingQuery(undefined, undefined).execute();
     return [...new Set(rows.map((r) => r.org_id))];
+  }
+
+  /**
+   * The backstop sweep (ruling R30, `CatalogJobs.sweepTemplateConnectors`): runs
+   * {@link ensureTemplateConnectorsIn} for at most `limit` orgs that have a template connector
+   * they never had whose connector kind is available there now (loaded on this replica and its
+   * extension enabled in the org). It catches what no event re-triggers: a kind that loaded only
+   * after the queued ensure gave up, or an always-on connector extension (it writes no org switch,
+   * so it owes no ensure). One query lists the candidates; it already leaves out templates of
+   * connector extensions not loaded here and templates plainly off in the org (switched off, or
+   * shipped default-off and not switched on). Then one kinds read per candidate org, in org id
+   * order, until `limit` orgs are found. Templates off by their scope are left to the ensure's
+   * exact check.
+   */
+  async sweep(opts: { limit: number; signal?: AbortSignal }): Promise<{
+    orgs: number;
+    created: number;
+  }> {
+    const loaded = new Set(this.installer.loadedConnectors().map((c) => c.plugin));
+    if (loaded.size === 0) return { orgs: 0, created: 0 };
+    const rows = await this.missingQuery(undefined, undefined)
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
+      .where(sql<string>`t.file->'template'->>'plugin'`, "in", [...loaded])
+      .where("t.disabled", "=", false)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("component_org_switches as s")
+              .select("s.component_id")
+              .where("s.kind", "=", "connector_template")
+              .whereRef("s.component_id", "=", "t.id")
+              .whereRef("s.org_id", "=", "a.org_id")
+              .where("s.enabled", "=", false),
+          ),
+        ),
+      )
+      .where(({ or, eb, exists, selectFrom }) =>
+        or([
+          eb(sql<string>`coalesce(t.file->>'defaultEnabled', 'true')`, "<>", "false"),
+          eb("i.builtin", "=", true),
+          exists(
+            selectFrom("component_org_switches as s")
+              .select("s.component_id")
+              .where("s.kind", "=", "connector_template")
+              .whereRef("s.component_id", "=", "t.id")
+              .whereRef("s.org_id", "=", "a.org_id")
+              .where("s.enabled", "=", true),
+          ),
+        ]),
+      )
+      .execute();
+    const kindsByOrg = new Map<string, { plugin: string; connector: string }[]>();
+    for (const r of rows) {
+      const t = (r.file as ConnectorTemplateFile).template;
+      kindsByOrg.set(r.org_id, [
+        ...(kindsByOrg.get(r.org_id) ?? []),
+        { plugin: t.plugin, connector: t.connector },
+      ]);
+    }
+    const orgs: string[] = [];
+    for (const [orgId, wanted] of kindsByOrg) {
+      if (orgs.length >= opts.limit) break;
+      opts.signal?.throwIfAborted();
+      const available = await this.connectors.kinds(orgId);
+      if (
+        wanted.some((w) => available.some((k) => k.kind === w.connector && k.plugin === w.plugin))
+      )
+        orgs.push(orgId);
+    }
+    let created = 0;
+    for (const orgId of orgs) {
+      opts.signal?.throwIfAborted();
+      const r = await this.ensureTemplateConnectorsIn(orgId, undefined, {
+        ...(opts.signal !== undefined && { signal: opts.signal }),
+        via: "sweep",
+      });
+      created += r.created;
+    }
+    return { orgs: orgs.length, created };
   }
 
   /**

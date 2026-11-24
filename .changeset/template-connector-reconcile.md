@@ -10,7 +10,9 @@ install commits and after an org switches an extension on (a `template-connector
 the new queue `cap-template-connectors`, retried while the connector extension is not loaded on
 the replica yet), when the scope sync adds a plugin's dependencies, and once at the first start
 after this release (under `lock:bootstrap`, skipped by a replica that does not get it, marked done
-in `deployment_settings`). A connector an admin deleted is never made again. During a rolling
+in `deployment_settings`); a five-minute sweep (`template-connectors-sweep`, once per tick across
+replicas) catches what none of these re-trigger, such as a kind loaded after the queued ensure gave
+up or an always-on connector extension. A connector an admin deleted is never made again. During a rolling
 upgrade, replicas of the previous version neither owe nor consume these jobs: the startup pass of
 the first upgraded replica covers what was waiting, and jobs owed meanwhile wait in the outbox until
 an upgraded worker takes them. The health overview lists the new queue ("Template connectors" /

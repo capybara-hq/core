@@ -2487,6 +2487,14 @@ export class PluginInstaller {
     await this.recordTemplateConnectorIn(orgId, itemId, connectorId, templateId, ["installed"]);
   }
 
+  /** The `connector@1` implementations loaded on this replica, by extension and kind. */
+  loadedConnectors(): { plugin: string; kind: string }[] {
+    return this.registry
+      .list("connector")
+      .map((e) => ({ plugin: e.plugin, kind: (e.impl as Connector | undefined)?.kind }))
+      .filter((c): c is { plugin: string; kind: string } => typeof c.kind === "string");
+  }
+
   /** The connector kinds an extension provides (the `connector@1` implementations loaded on this replica). */
   connectorKindsOf(plugin: string): string[] {
     return this.registry

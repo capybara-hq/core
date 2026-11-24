@@ -5,21 +5,30 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { LockedInterval } from "../infra/schedule/locked-interval.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { MARKETPLACES_REFRESH_JOB, PLUGIN_STAGING_CLEANUP_JOB } from "./job-ids.js";
+import {
+  MARKETPLACES_REFRESH_JOB,
+  PLUGIN_STAGING_CLEANUP_JOB,
+  TEMPLATE_CONNECTORS_SWEEP_BATCH,
+  TEMPLATE_CONNECTORS_SWEEP_JOB,
+  TEMPLATE_CONNECTORS_SWEEP_PERIOD_MS,
+} from "./job-ids.js";
 import { MARKETPLACES_REFRESH_DEADLINE_MS, MarketplacesService } from "./marketplaces.service.js";
 import { PluginImport } from "./plugin-import.js";
+import { TemplateConnectorEnsurer } from "./template-connector-ensure.js";
 
 /**
  * The catalog's periodic jobs, each run once per tick across replicas: the marketplace refresh
  * (`catalogs-refresh`, every `marketplaces.refreshIntervalMinutes` and once after the start:
- * `@LockedInterval` with `runOnStart`) and the
- * hourly cleanup of expired plugin import staging (`app-staging-cleanup`: `@LockedCron`).
+ * `@LockedInterval` with `runOnStart`), the
+ * hourly cleanup of expired plugin import staging (`app-staging-cleanup`: `@LockedCron`) and the
+ * template connector sweep (`template-connectors-sweep`, every five minutes: `@LockedInterval`).
  */
 @Injectable()
 export class CatalogJobs {
   constructor(
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly imports: PluginImport,
+    @Inject(TemplateConnectorEnsurer) private readonly templateConnectors: TemplateConnectorEnsurer,
     @Inject(KernelConfigService) readonly config: KernelConfigService,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -39,6 +48,20 @@ export class CatalogJobs {
   async refreshMarketplaces(stop?: AbortSignal): Promise<void> {
     const deadline = AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS);
     await this.marketplaces.refreshAll(stop ? AbortSignal.any([deadline, stop]) : deadline);
+  }
+
+  /**
+   * The backstop for template connectors no event re-triggers (ruling R30): a bounded batch of
+   * orgs whose missing template connector's kind is available now. Runs outside any transaction;
+   * each connector is created in its own (`TemplateConnectorEnsurer`).
+   */
+  @LockedInterval(TEMPLATE_CONNECTORS_SWEEP_JOB, () => TEMPLATE_CONNECTORS_SWEEP_PERIOD_MS)
+  async sweepTemplateConnectors(stop?: AbortSignal): Promise<void> {
+    const r = await this.templateConnectors.sweep({
+      limit: TEMPLATE_CONNECTORS_SWEEP_BATCH,
+      ...(stop !== undefined && { signal: stop }),
+    });
+    if (r.created > 0) this.log.info("template connector sweep created connectors", r);
   }
 
   /** Deletes expired staging rows and their objects. */

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { TEMPLATE_CONNECTORS_SWEEP_JOB } from "../../src/catalog/job-ids.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { TemplateConnectorEnsurer } from "../../src/catalog/template-connector-ensure.js";
 import { TEMPLATE_CONNECTORS_QUEUE } from "../../src/catalog/template-connector-jobs.js";
@@ -11,6 +12,7 @@ import {
 } from "../../src/catalog/template-connector-reconcile.js";
 import { BOOTSTRAP_LOCK_KEY } from "../../src/extensions/bootstrap.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import { waitFor } from "../helpers/runs.js";
 import {
@@ -34,6 +36,10 @@ let env: OrgEnv;
 
 beforeAll(async () => {
   env = await startOrgEnv();
+  // the sweep's own timer never fires into a test: each test calls it when it wants it
+  const scheduler = env.k.app.get(LockedIntervalScheduler);
+  expect(scheduler.periodOf(TEMPLATE_CONNECTORS_SWEEP_JOB)).toBe(5 * 60_000);
+  scheduler.stop(TEMPLATE_CONNECTORS_SWEEP_JOB);
 });
 
 afterAll(async () => {
@@ -202,6 +208,56 @@ describe("ensureTemplateConnectorsIn", () => {
     expect(await templateConnectors(itemId, "gh")).toHaveLength(1);
     expect(await templateConnectors(itemId, "jira")).toEqual([]);
     expect(await templateConnectors(itemId, "wiki")).toEqual([]);
+  });
+});
+
+describe("the template connector sweep", () => {
+  it("creates a connector whose kind was not loaded while the queued ensure retried, once the kind is available", async () => {
+    const itemId = await seedPlugin(env, { name: "crm", skills: [] });
+    await seedInstalled(itemId);
+    const installer = env.k.app.get(PluginInstaller);
+    const deps = installer.templateDeps();
+    // the connector extension not loaded on this replica: every attempt of the queued ensure
+    // finds it missing until the job gives up, and the sweep finds nothing to do
+    const notLoaded = [
+      vi
+        .spyOn(installer, "templateDeps")
+        .mockReturnValue({ ...deps, findConnector: () => undefined }),
+      vi.spyOn(installer, "loadedConnectors").mockReturnValue([]),
+    ];
+    try {
+      expect(await ensurer().ensureTemplateConnectorsIn(env.orgId)).toEqual({
+        created: 0,
+        skipped: 0,
+        notLoaded: 1,
+      });
+      expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 0, created: 0 });
+    } finally {
+      for (const s of notLoaded) s.mockRestore();
+    }
+    expect(await templateConnectors(itemId)).toEqual([]);
+
+    // loaded now: the next sweep creates it, and one after that has nothing to do
+    expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 1, created: 1 });
+    expect(await templateConnectors(itemId)).toHaveLength(1);
+    expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 0, created: 0 });
+  });
+
+  it("leaves out orgs whose missing template is off there or whose kind is off there", async () => {
+    const itemId = await seedPlugin(env, {
+      name: "crm",
+      skills: [],
+      templates: { gh: {} },
+      defaultOff: ["gh"],
+    });
+    await seedInstalled(itemId);
+    expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 0, created: 0 });
+
+    const other = await seedPlugin(env, { name: "wiki", skills: [] });
+    await seedInstalled(other);
+    await connectorExtensionOff();
+    expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 0, created: 0 });
+    expect(await templateConnectors(other)).toEqual([]);
   });
 });
 
