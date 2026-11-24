@@ -280,9 +280,9 @@ function OrgContents({ orgId, detail }: { orgId: string; detail: OrgCatalogDetai
 }
 
 /**
- * the org's connectors: the org's connectors made from this plugin's connector templates (matched by
+ * This organization's connectors: the connectors made from this plugin's connector templates (matched by
  * `platformTemplateId` to the template's platform component), each with its state and a link to
- * its page. Org admins also get 创建 on a template with no connector (the connectors page's
+ * its page. Org admins also get a Create button on a template with no connector (the connectors page's
  * create-from-template action: the switch-on, which makes it as an install would). Nothing to
  * show: the section is left out.
  */
