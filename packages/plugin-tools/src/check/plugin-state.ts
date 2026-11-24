@@ -23,6 +23,10 @@ const STATE_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 // in one sandboxed iframe document, never in the kernel process. Such a file is skipped only when
 // the server bundle does not reach it.
 const EMBED_UI_DIRS = new Set(["ui", "ui-src"]);
+// The plugin-root directory of device service code: it runs inside the device as a device service,
+// never in a kernel replica. Skipped like the embed directories, unless the server bundle reaches it.
+const DEVICE_SERVICE_DIRS = new Set(["daemon"]);
+const NOT_SERVER_DIRS = new Set([...EMBED_UI_DIRS, ...DEVICE_SERVICE_DIRS]);
 const MARKER = "capybara:allow-module-state";
 
 const FIX = "改用 ctx.kv（带 TTL 的共享状态）/ ctx.queue（延迟任务）/ ctx.bus（跨副本通知）";
@@ -173,6 +177,8 @@ function timerFindings(f: ParsedFile): Finding[] {
  * its source) are browser code and are neither parsed nor scanned, unless the server bundle (the
  * packer's esbuild metafile of `src/index.ts`) reaches them; then they are checked like any server
  * file. When that build cannot run, every file is checked. A deeper `src/ui/` is always server code.
+ * Device services: the plugin-root `daemon/` directory runs in the device, not in kernel replicas,
+ * and is treated the same way (skipped unless the server bundle reaches it).
  * 扫描范围：插件目录下所有源码，node_modules 任何深度都跳过；dist 与 test/tests/__tests__ 只在插件根跳过
  * （更深处同名目录照常扫描，否则 `src/test/impl.ts` 就能绕过）；*.test.* / *.spec.* 不扫。
  *
@@ -187,13 +193,13 @@ export async function checkPluginState(pluginDirs: string[]): Promise<Finding[]>
     const browser = await browserOnlyModules(dir);
     // The server bundle only decides which embed UI files to skip, so build it only when the
     // plugin has such a directory.
-    const hasEmbedUi = [...EMBED_UI_DIRS].some((d) => existsSync(join(dir, d)));
+    const hasEmbedUi = [...NOT_SERVER_DIRS].some((d) => existsSync(join(dir, d)));
     const server = hasEmbedUi ? await serverBundleInputs(dir) : undefined;
     for (const { file, isTest } of listSourceFiles(dir)) {
       if (isTest) continue;
       if (
         server !== undefined &&
-        EMBED_UI_DIRS.has(relative(dir, file).split(sep)[0] ?? "") &&
+        NOT_SERVER_DIRS.has(relative(dir, file).split(sep)[0] ?? "") &&
         !server.has(realpathSync(file))
       ) {
         continue;
