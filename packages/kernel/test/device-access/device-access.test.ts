@@ -278,6 +278,29 @@ describe("ctx.deviceAccess", () => {
     expect(review).toHaveBeenCalledTimes(2);
   });
 
+  it("the launch is reviewed at the service's code directory when the provider reports one", async () => {
+    const review = allowReview();
+    const services = k.app.get(DeviceServices);
+    const original = services.ensure.bind(services);
+    const codeDir = "/opt/device/svc-files/echo";
+    // a provider keeping code apart from state reports codeDir on every status
+    const spy = vi
+      .spyOn(services, "ensure")
+      .mockImplementation(async (...args) => ({ ...(await original(...args)), codeDir }));
+    try {
+      const status = await access.ensureService(CALLER, callOf(), echoServiceSpec());
+      expect(status.codeDir).toBe(codeDir);
+      expect(review.mock.calls[0]?.[0]).toMatchObject({
+        input: { command: `node ${codeDir}/echo.mjs` },
+        // the working directory stays the state directory
+        workspace: status.stateDir,
+      });
+    } finally {
+      spy.mockRestore();
+      await services.stop(use(), "echo", AbortSignal.timeout(30_000));
+    }
+  });
+
   it("the env reaches the review as `env K=V`, and a spec that would change what runs is refused", async () => {
     const review = allowReview();
     const withEnv = { ...echoServiceSpec(), env: { MODE: "a b" } };

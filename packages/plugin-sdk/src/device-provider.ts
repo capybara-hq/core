@@ -429,6 +429,13 @@ export interface DeviceServiceStatus {
    * reviews the launch against it.
    */
   stateDir: string;
+  /**
+   * The directory the entry runs from (absolute), when the provider keeps the service's code
+   * apart from its state (read only for the service); absent: the state directory. Known before
+   * the first start like `stateDir`. The kernel's launch review shows
+   * `node <codeDir ?? stateDir>/<entry>`, so a provider runs exactly that.
+   */
+  codeDir?: string;
 }
 
 /**

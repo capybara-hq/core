@@ -352,17 +352,20 @@ export class ServiceSupervisor {
   }
 
   /**
-   * The service's status with its state directory (`<device dir>/svc/<name>`), known before its
-   * first start and the same for every start of the name on this device.
+   * The service's status with its state directory (`<device dir>/svc/<name>`) and code directory
+   * (`<device dir>/svc-files/<name>`), known before its first start and the same for every start
+   * of the name on this device.
    */
   status(name: string): DeviceServiceStatus {
     if (!DEVICE_SERVICE_NAME_RE.test(name))
       throw new ServiceSpecError(`Invalid device service name: ${name}`);
     const stateDir = join(serviceRoot(this.o.deviceDir), name);
+    // the entry runs from the read-only code directory (R30), which the kernel reviews (R31)
+    const codeDir = join(serviceCodeRoot(this.o.deviceDir), name);
     const r = this.running.get(name);
     return r
-      ? { name, state: "running", startedAt: r.startedAt, stateDir }
-      : { name, state: "stopped", startedAt: null, stateDir };
+      ? { name, state: "running", startedAt: r.startedAt, stateDir, codeDir }
+      : { name, state: "stopped", startedAt: null, stateDir, codeDir };
   }
 
   /** Resolves once the service's current process is gone (now, when none runs). */
@@ -600,7 +603,9 @@ export class ServiceSupervisor {
     const proc = await launcher.launch(
       {
         name: spec.name,
-        argv: [process.execPath, join(realCode, spec.entry), ...spec.args],
+        // the code directory exactly as the status reports it (the kernel reviews that path); it
+        // was checked link-free above and resolves inside the code root
+        argv: [process.execPath, join(codeDir, spec.entry), ...spec.args],
         cwd: stateDir,
         env,
         stateDir,

@@ -73,7 +73,10 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
   const stateDir = join(deviceDir, "svc", "browser");
   // the code lives apart from the state, in a directory the service only reads (R30)
   const codeDir = join(deviceDir, "svc-files", "browser");
-  expect(res).toMatchObject({ ok: true, result: { name: "browser", state: "running", stateDir } });
+  expect(res).toMatchObject({
+    ok: true,
+    result: { name: "browser", state: "running", stateDir, codeDir },
+  });
   expect(await readFile(join(codeDir, "main.js"), "utf8")).toBe("// main");
   expect(await readFile(join(codeDir, "lib", "x.js"), "utf8")).toBe("// x");
   expect(echo.calls).toHaveLength(1);
@@ -130,6 +133,7 @@ it("service.status and service.stop report and end the service", async () => {
       state: "stopped",
       startedAt: null,
       stateDir: join(deviceDir, "svc", "browser"),
+      codeDir: join(deviceDir, "svc-files", "browser"),
     },
   });
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
@@ -164,6 +168,7 @@ it("a service that exits is reported stopped and is never restarted", async () =
     state: "stopped",
     startedAt: null,
     stateDir: join(deviceDir, "svc", "browser"),
+    codeDir: join(deviceDir, "svc-files", "browser"),
   });
   expect(echo.calls).toHaveLength(1);
 });
@@ -375,6 +380,7 @@ it("ifRunning starts nothing for a stopped service", async () => {
       state: "stopped",
       startedAt: null,
       stateDir: join(deviceDir, "svc", "browser"),
+      codeDir: join(deviceDir, "svc-files", "browser"),
     },
   });
   expect(echo.calls).toHaveLength(0);

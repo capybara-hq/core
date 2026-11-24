@@ -79,10 +79,14 @@ function refusal(e: unknown): unknown {
 /** How long the refresh of one service after an allowlist change may take. */
 const REFRESH_TIMEOUT_MS = 30_000;
 
-/** The launch as it runs: `env K=V … node <stateDir>/<entry> <args…>` (no `env` without env). */
-function launchArgv(spec: DeviceServiceSpec, stateDir: string): string[] {
+/**
+ * The launch as it runs: `env K=V … node <codeDir ?? stateDir>/<entry> <args…>` (no `env` without
+ * env): the entry runs from the service's code directory when the provider keeps code apart.
+ */
+function launchArgv(spec: DeviceServiceSpec, status: DeviceServiceStatus): string[] {
   const env = Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`);
-  const entry = `${stateDir.replace(/\/+$/, "")}/${spec.entry}`;
+  const dir = status.codeDir ?? status.stateDir;
+  const entry = `${dir.replace(/\/+$/, "")}/${spec.entry}`;
   return [...(env.length > 0 ? ["env", ...env] : []), "node", entry, ...spec.args];
 }
 
@@ -126,7 +130,7 @@ export class DeviceAccessService {
    * Starts the service in the call's device, or finds it running. An `ifRunning` ensure first
    * (never starts anything): a running service is kept with no review. A stopped one is
    * launched only after the command review saw the command as it runs
-   * (`env K=V … node <stateDir>/<entry> <args…>`, the state directory as its working
+   * (`env K=V … node <codeDir ?? stateDir>/<entry> <args…>`, the state directory as its working
    * directory) and allowed it; anything else refuses it (fail closed). The verdict is recorded
    * on the call (the call scope) and a start is audited `device.service_started`.
    */
@@ -162,7 +166,7 @@ export class DeviceAccessService {
     );
     if (reviewFacts === null || reviewFacts.deviceId !== use.deviceId)
       throw new DeviceAccessError("no_device", "The conversation has no device to run in.");
-    const argv = launchArgv(spec, found.stateDir);
+    const argv = launchArgv(spec, found);
     const verdict = await this.review.review({
       orgId: call.orgId,
       conversationId: facts.rootConversationId,

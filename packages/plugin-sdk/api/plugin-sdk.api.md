@@ -1155,6 +1155,7 @@ export interface DeviceServiceSpec {
 
 // @public
 export interface DeviceServiceStatus {
+    codeDir?: string;
     name: string;
     startedAt: string | null;
     state: "running" | "stopped";
