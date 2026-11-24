@@ -266,6 +266,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
               device.binder,
               device.owner,
               machine,
+              device.services,
             );
           } catch (error) {
             err(`Cannot report this device: ${(error as Error).message}`);
