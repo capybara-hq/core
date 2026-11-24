@@ -73,7 +73,9 @@ export function isServiceOpBody(body: unknown): boolean {
   );
 }
 
-const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+// One flat character class with the padding at the end, plus a length check: a repeated group
+// (`(?:[…]{4})*`) overflows the regex stack on the megabytes of a service's files.
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 
 function invalid(message: string): never {
   throw new ServiceSpecError(message);
@@ -95,7 +97,7 @@ function str(v: unknown, what: string, max = 4096): string {
 
 function base64(v: unknown, what: string): Uint8Array {
   const s = str(v, what, Number.MAX_SAFE_INTEGER);
-  if (!BASE64_RE.test(s)) invalid(`${what} must be standard padded base64`);
+  if (s.length % 4 !== 0 || !BASE64_RE.test(s)) invalid(`${what} must be standard padded base64`);
   return new Uint8Array(Buffer.from(s, "base64"));
 }
 
