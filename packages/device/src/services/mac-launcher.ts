@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type ExecResult,
+  type SandboxLimits,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
@@ -11,7 +12,7 @@ import {
 } from "../exec/operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "../exec/operation-worker.js";
 import { shellQuote } from "../exec/shared.js";
-import { effectiveEgress } from "../policy.js";
+import { effectiveEgress, type SandboxEgress } from "../policy.js";
 import type { ServiceLaunch, ServiceLauncher, ServiceProcess } from "./supervisor.js";
 
 /**
@@ -46,7 +47,29 @@ export interface MacServiceLauncherOptions {
  * worker, which also ends it when this program ends (the worker stops on disconnect).
  */
 export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLauncher {
+  /** The device's network intersected with the owner's ceiling now; undefined = none. */
+  const egressOf = (
+    ceiling: DeviceOwnerCeiling,
+    network: SandboxLimits["network"] | undefined,
+  ): SandboxEgress | undefined =>
+    network
+      ? effectiveEgress(
+          {
+            ownerCeiling: { network: ceiling.network },
+            allowedDomains: [...ceiling.allowedDomains],
+          },
+          network,
+        )
+      : undefined;
   return {
+    // the key of the effective egress, so a narrowed (or widened) owner ceiling restarts the
+    // service at the next ensure, as a changed device network does
+    async networkKey(network) {
+      const egress = egressOf(await o.readOwnerCeiling(), network);
+      if (!egress) return "none";
+      if (egress.kind === "open-public") return "open-public";
+      return `allowlist:${[...new Set(egress.hosts.map((h) => h.toLowerCase()))].sort().join(",")}`;
+    },
     async launch(req: ServiceLaunch, signal: AbortSignal): Promise<ServiceProcess> {
       signal.throwIfAborted();
       const runtimeHash = o.runtimeHash();
@@ -60,15 +83,7 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
       // the owner's denies as preparation roots are: none may be or pass through a link into a
       // denied path or another connection, or sit in a system socket directory
       checkRoots(req.readRoots, req.writeRoots, ceiling, true);
-      const egress = req.network
-        ? effectiveEgress(
-            {
-              ownerCeiling: { network: ceiling.network },
-              allowedDomains: [...ceiling.allowedDomains],
-            },
-            req.network,
-          )
-        : undefined;
+      const egress = egressOf(ceiling, req.network);
       const open = egress?.kind === "open-public";
       const hosts = egress?.kind === "allowlist" ? egress.hosts : [];
       const grant: LocalOperationGrant = {

@@ -389,12 +389,18 @@ it("service.request waits no longer than the envelope deadline and answers", asy
   });
 });
 
-function ceiling(roots: { workspace: string }, denies: string[] = []): DeviceOwnerCeiling {
+function ceiling(
+  roots: { workspace: string },
+  denies: string[] = [],
+  net: { network: "open" | "allowlist"; allowedDomains: string[] } = {
+    network: "open",
+    allowedDomains: [],
+  },
+): DeviceOwnerCeiling {
   return {
     revision: "r",
     outsideSandbox: false,
-    network: "open",
-    allowedDomains: [],
+    ...net,
     roots: { workspace: roots.workspace, skills: "/nonexistent/skills", tmp: "/nonexistent/tmp" },
     projectReach: "workspace",
     projectPaths: [],
@@ -409,7 +415,10 @@ function ceiling(roots: { workspace: string }, denies: string[] = []): DeviceOwn
 }
 
 /** A supervisor on the macOS launcher with a fake worker that runs the echo service in-process. */
-async function macFixture(denies: (deviceDir: string) => string[] = () => []) {
+async function macFixture(
+  denies: (deviceDir: string) => string[] = () => [],
+  net?: () => { network: "open" | "allowlist"; allowedDomains: string[] },
+) {
   const f = await fixture();
   const requests: MacWorkerRequest[] = [];
   const launcher = macServiceLauncher({
@@ -417,7 +426,7 @@ async function macFixture(denies: (deviceDir: string) => string[] = () => []) {
     stateDir: f.root,
     pythonPath: "/usr/bin/python3",
     runtimeHash: () => "hash",
-    readOwnerCeiling: async () => ceiling({ workspace: f.workspace }, denies(f.deviceDir)),
+    readOwnerCeiling: async () => ceiling({ workspace: f.workspace }, denies(f.deviceDir), net?.()),
     startWorker: async (request) => {
       requests.push(request);
       if (request.kind !== "exec") throw new Error("exec only");
@@ -490,4 +499,59 @@ it("ensure with a widened host list restarts the running service with the new gr
     signal: signal(),
   });
   expect(text(reply)).toBe("echo:x");
+});
+
+it("a downloads directory swapped for a link right before the launch is refused", async () => {
+  const f = await fixture();
+  const outside = join(f.root, "outside");
+  await mkdir(outside);
+  const supervisor = new ServiceSupervisor({
+    deviceDir: f.deviceDir,
+    workspace: f.workspace,
+    launcher: () => f.echo.launcher,
+    socketAliasRoot: join(f.root, "a"),
+    // a concurrent sandboxed operation replaces downloads after it was checked
+    beforeLaunch: async () => {
+      await rm(join(f.workspace, "downloads"), { recursive: true });
+      await symlink(outside, join(f.workspace, "downloads"));
+    },
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "denied", message: expect.stringMatching(/resolves outside/) },
+  });
+  expect(f.echo.calls).toHaveLength(0);
+});
+
+it("an owner ceiling narrowed while the service runs restarts it at the next ensure", async () => {
+  let allowedDomains = ["a.example.com", "b.example.com"];
+  const f = await macFixture(undefined, () => ({ network: "allowlist", allowedDomains }));
+  const ensure = () =>
+    serveServiceOp(
+      f.supervisor,
+      {
+        op: "service.ensure",
+        spec: spec(),
+        network: { kind: "allowlist", hosts: ["a.example.com", "b.example.com"] },
+      },
+      signal(),
+    );
+  await ensure();
+  expect([...(f.requests[0]?.grant.hosts ?? [])].sort()).toEqual([
+    "a.example.com",
+    "b.example.com",
+  ]);
+  // the same request, nothing changed: kept
+  await ensure();
+  expect(f.requests).toHaveLength(1);
+  // the owner drops b.example.com: the same requested network now means less, so it restarts
+  allowedDomains = ["a.example.com"];
+  expect(await ensure()).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(f.requests).toHaveLength(2);
+  expect(f.requests[1]?.grant.hosts).toEqual(["a.example.com"]);
+  await ensure();
+  expect(f.requests).toHaveLength(2);
 });

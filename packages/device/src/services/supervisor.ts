@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { lstat, mkdir, open, readlink, stat, symlink, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readlink, realpath, stat, symlink, unlink } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
@@ -118,6 +118,11 @@ export interface ServiceProcess {
 /** Starts service processes under the local sandbox (one per platform and device mode). */
 export interface ServiceLauncher {
   launch(req: ServiceLaunch, signal: AbortSignal): Promise<ServiceProcess>;
+  /**
+   * The network a launch with `network` would get now, as a comparable key (after the owner's
+   * ceiling): a running service whose key differs is restarted. Absent: {@link networkKey}.
+   */
+  networkKey?(network: SandboxLimits["network"] | undefined): Promise<string>;
 }
 
 /** A service's request or stream connection could not be served. */
@@ -138,7 +143,7 @@ export class ServiceSpecError extends Error {
 
 interface Running {
   proc: ServiceProcess;
-  /** The network it was started with ({@link networkKey}). */
+  /** The effective network it was started with ({@link ServiceLauncher.networkKey}). */
   network: string;
   startedAt: string;
   socket: string;
@@ -158,6 +163,8 @@ export interface ServiceSupervisorOptions {
   /** The private alias root of the short socket path strategy ({@link servicePaths}). */
   socketAliasRoot?: string;
   readyTimeoutMs?: number;
+  /** A test seam: runs right before the launch, after every directory was made and checked. */
+  beforeLaunch?: () => Promise<void>;
   now?: () => Date;
 }
 
@@ -253,6 +260,19 @@ async function writeNewFile(path: string, content: Uint8Array): Promise<void> {
   }
 }
 
+/**
+ * The resolved `path`, refused unless it lies strictly inside the resolved `parent` (a link swapped
+ * in after the checks would point elsewhere).
+ */
+async function resolvedInside(path: string, parent: string): Promise<string> {
+  const [real, base] = await Promise.all([realpath(path), realpath(parent)]);
+  if (!real.startsWith(`${base}/`))
+    throw new SandboxScopeDeniedError(
+      `${path} resolves outside ${parent}; remove the link and retry`,
+    );
+  return real;
+}
+
 /** A relative path of a spec file: no `..`, not absolute, no empty or `.` segment. */
 export function checkRelativePath(p: string, what: string): string {
   if (
@@ -323,22 +343,22 @@ export class ServiceSupervisor {
     signal.throwIfAborted();
     checkSpec(spec);
     const name = spec.name;
-    const r = this.running.get(name);
-    if (r && !this.starting.has(name) && r.network === networkKey(network))
-      return Promise.resolve(this.status(name));
     const previous = this.starting.get(name);
     const run = (async () => {
       await previous?.catch(() => {});
+      // the effective network now (the owner's ceiling may have narrowed since the start)
+      const launcher = this.o.launcher();
+      const key = launcher?.networkKey ? await launcher.networkKey(network) : networkKey(network);
       const current = this.running.get(name);
       if (current) {
-        if (current.network === networkKey(network)) return this.status(name);
+        if (current.network === key) return this.status(name);
         await current.proc.stop(SERVICE_STOP_GRACE_MS);
         await current.gone;
       } else if (opts.ifRunning) return this.status(name);
       const ctl = new AbortController();
       this.startCtl.set(name, ctl);
       try {
-        return await this.start(spec, network, ctl.signal);
+        return await this.start(spec, network, key, ctl.signal);
       } finally {
         if (this.startCtl.get(name) === ctl) this.startCtl.delete(name);
       }
@@ -475,6 +495,7 @@ export class ServiceSupervisor {
   private async start(
     spec: LocalServiceSpec,
     network: SandboxLimits["network"] | undefined,
+    key: string,
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus> {
     const launcher = this.o.launcher();
@@ -503,6 +524,12 @@ export class ServiceSupervisor {
       [DEVICE_SERVICE_SOCKET_ENV]: paths.socket,
       [DEVICE_SERVICE_STATE_ENV]: stateDir,
     };
+    await this.o.beforeLaunch?.();
+    // the workspace is writable by concurrent sandboxed operations: downloads may have been
+    // swapped for a link since it was checked, so the grant takes the resolved paths, each still
+    // strictly inside its parent (the workspace, the device's service root)
+    const realState = await resolvedInside(stateDir, serviceRoot(this.o.deviceDir));
+    const realDownloads = await resolvedInside(downloads, this.o.workspace);
     const proc = await launcher.launch(
       {
         name: spec.name,
@@ -510,9 +537,9 @@ export class ServiceSupervisor {
         cwd: stateDir,
         env,
         stateDir,
-        writeRoots: [stateDir, downloads],
+        writeRoots: [realState, realDownloads],
         readRoots: [nodeDirectory(), this.o.workspace, ...(paths.alias ? [paths.alias] : [])],
-        unixSockets: [stateDir, ...(paths.alias ? [paths.alias] : [])],
+        unixSockets: [realState, ...(paths.alias ? [paths.alias] : [])],
         tmpDir,
         ...(network && { network }),
       },
@@ -520,7 +547,7 @@ export class ServiceSupervisor {
     );
     const record: Running = {
       proc,
-      network: networkKey(network),
+      network: key,
       startedAt: this.now().toISOString(),
       socket: paths.socket,
       conns: new Set(),
