@@ -1,19 +1,26 @@
 /**
- * 外层页面与嵌入 iframe 之间的 postMessage 消息桥（spec §5.3）。
- * 协议照抄 `packages/plugin-sdk/src/ui.ts`（`EMBED_PROTOCOL` / `EmbedParentMessage` / `EmbedChildMessage` /
- * `parseEmbedChildMessage`）：Web 层只依赖 design，不 import SDK，SDK 改了这里要同步。
+ * The postMessage bridge between the host page and an embed iframe (spec §5.3).
+ * The protocol copies `packages/plugin-sdk/src/ui.ts` (`EMBED_PROTOCOL` / `EmbedParentMessage` /
+ * `EmbedChildMessage` / `parseEmbedChildMessage`): the web depends only on design and never imports
+ * the SDK, so a change there must be mirrored here.
  *
- * 只认这个 iframe 发来的（`event.source` 是它的 window）、协议与字段都对的消息，其余一律忽略：
- * - `resize`：高度夹在 {@link EMBED_MIN_HEIGHT}–{@link EMBED_MAX_HEIGHT} 之间；
- * - `navigate`：只放行站内路径（见 `isInSitePath`；交给站内路由，不经 `location`）；
- * - `toast`：显示一条提示（纯文本）；
- * - `panel-mode`：请求右侧面板进入 / 退出全屏（`full` 必须是布尔值）；只有调用方接了 `onPanelMode`
- *   （即挂在 `conversation.panel` 槽里的嵌入页）才生效，其余槽的嵌入页发来一律忽略。
- * 发给 iframe：第一次加载后 `init`，令牌过期前 60 秒续期并发 `token`，主题切换发 `theme`。
- * 同一个 iframe 再次 `load` 说明嵌入页自己导航走了（可能已不是插件页面）：此后不再给它发任何消息，
- * 调用方在原 `src` 上重新挂载 iframe（插件的多页面应用请用 History API，不要整页跳转）。
- * 续期时间按本地收到令牌的时刻加上 `expiresIn` 计算，不受本机与服务端时钟偏差影响。
- * 沙箱 iframe 是不透明源，`postMessage` 的 targetOrigin 只能是 `*`；令牌只对这个插件有效、几分钟过期。
+ * Only messages from this iframe (`event.source` is its window) with the right protocol and fields
+ * are accepted; everything else is ignored:
+ * - `resize`: the height is clamped to {@link EMBED_MIN_HEIGHT}–{@link EMBED_MAX_HEIGHT};
+ * - `navigate`: only in-site paths pass (see `isInSitePath`; handed to the app router, never `location`);
+ * - `toast`: shows one notice (plain text);
+ * - `panel-mode`: asks the right panel to enter or leave full mode (`full` must be a boolean); it takes
+ *   effect only when the caller passes `onPanelMode` (embeds mounted in the `conversation.panel`
+ *   slot), and is ignored from embeds in every other slot.
+ * Sent to the iframe: `init` after the first load, `token` 60 s before the token expires, `theme` on
+ * a theme change.
+ * A second `load` of the same iframe means the embed navigated away on its own (it may no longer be
+ * the plugin's page): no further messages are sent to it, and the caller remounts the iframe on the
+ * original `src` (multi-page plugin apps use the History API, not full page loads).
+ * Renewal is timed from the local moment the token arrived plus `expiresIn`, so clock skew between
+ * this machine and the server does not matter.
+ * A sandboxed iframe has an opaque origin, so the postMessage targetOrigin can only be `*`; the token
+ * is valid only for this plugin and expires within minutes.
  */
 
 export const EMBED_PROTOCOL = "capybara-embed/1";
