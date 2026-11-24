@@ -369,6 +369,7 @@
       "offline": "这台电脑当前未连接，请在电脑上启动 capybara-device 后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
+      "stream_hop_refused": "实时画面在服务器之间转发失败。请关闭面板后重新打开。",
       "project_name_invalid": "该项目名称不可用：请使用 1-64 个字符，不能是 . 或 ..，不含 / 或控制字符，首尾不留空格。",
       "project_name_taken": "这台设备上已有同名项目，请换一个名称。",
       "project_limit_reached": "这台设备的项目已达 100 个上限，请先移除一个再添加。",

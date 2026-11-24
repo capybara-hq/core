@@ -203,7 +203,9 @@ describe("role modules", () => {
     // the extension routes are served by the api and gateway roles (unchanged)
     expect(routes(a).filter((r) => !r.endsWith(" /plugins/*"))).toEqual([
       "GET /device/connect",
+      "GET /device/stream",
       "GET /healthz",
+      "GET /internal/device-stream/:ticketId",
       "GET /readyz",
       "POST /channels/webhook/:connectionId",
     ]);

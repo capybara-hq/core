@@ -45,6 +45,10 @@ const PUBLIC_ROUTES = new Set([
   "POST /channels/webhook/:connectionId",
   // Gateway role: the device WebSocket checks its machine credential itself (environments §13.4)
   "GET /device/connect",
+  // Gateway role: the browser live view (browser use spec §6.2); the single-use viewer ticket is the
+  // only credential, the replica hop carries an HMAC with issued-at, accepted once per ticket
+  "GET /device/stream",
+  "GET /internal/device-stream/:ticketId",
   // API role: the git gateway, a raw Fastify route outside Nest; the run ticket is checked by the
   // gateway itself (sandbox git credentials spec §5)
   "GET /git/v1/*",
