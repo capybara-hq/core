@@ -6,6 +6,7 @@ import {
   Callout,
   Card,
   Checkbox,
+  ContentSection,
   Field,
   FilePicker,
   Input,
@@ -24,12 +25,12 @@ import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { useCapabilityLabel } from "../../../../../components/ExtensionTabs";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
-import {
-  PlatformUpdatePreviewBody,
-  useLeftDisabledLine,
-} from "../../../../../components/PlatformUpdateDialog";
+import { UpdateImpact, useLeftDisabledLine } from "../../../../../components/PlatformUpdateDialog";
 import { PluginReviewBody } from "../../../../../components/PluginReviewBody";
 import { ScopeFields } from "../../../../../components/PluginScopeDialog";
+import { fromReview } from "../../../../../components/plugin-contents/from-review";
+import { PluginContents } from "../../../../../components/plugin-contents/PluginContents";
+import { withUpdateMarks } from "../../../../../components/plugin-contents/update-marks";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useAdminThemeName } from "../../../../../components/ThemeImpact";
 import { Link, useRouter } from "../../../../../i18n/navigation";
@@ -40,9 +41,11 @@ import {
   displayNameOf,
   importPageHref,
   ownerOrgOf,
+  type PermissionsMismatch,
   type PlatformUpdatePreview,
   type PluginConfirmResult,
   type PluginPrepared,
+  type PluginReview,
   type PluginScope,
   pluginReviewSensitive,
   preparePluginGit,
@@ -66,7 +69,7 @@ import { useAppMutation } from "../../../../../lib/query/mutation";
 import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 
-type Step = 0 | 1 | 2;
+type Step = 0 | 1;
 type Problem = { message: string; extra: string[] };
 /**
  * The staged import named by `?staging=<id>`: none (null), the loaded review, or why it could not
@@ -88,11 +91,12 @@ type Staged = PluginPrepared | null | { problem: Problem };
  * marketplace entry or an approved `import` request): bring a plugin in (super admins,
  * WizardPage), reviewed as a whole in one pass. A plugin the platform already has (a live platform
  * item of the review's name in the catalog) is **updated** instead (maintainer decision
- * 2026-11-13, one wizard): its last step is the platform update preview of the staged version
- * (`GET imports/:stagingId/update-preview`: per-component changes, the extension's move, the orgs
- * and connectors affected, the templates needing config) and its confirm imports the version and
- * updates the platform together (`POST imports/:stagingId/update` with `reviewHash` and
- * `diffHash`). Nothing is written before that confirm, so cancelling at any step changes nothing;
+ * 2026-11-13, one wizard; plugin contents spec: one review page): its review step shows the
+ * package's contents with the update preview's change marks on the rows
+ * (`GET imports/:stagingId/update-preview`), then what the update does beyond them (the
+ * extension's move, the orgs and connectors affected, the templates needing config), and its one
+ * confirm imports the version and updates the platform together (`POST imports/:stagingId/update`
+ * with `reviewHash` and `diffHash`). Nothing is written before that confirm, so cancelling at any step changes nothing;
  * an update failing after the import says plainly that the version was imported and the platform
  * stayed on its version (409 `plugin.imported_not_updated`), and the plugin's page offers the
  * update again. The steps of a new plugin:
@@ -114,10 +118,12 @@ type Staged = PluginPrepared | null | { problem: Problem };
  *    A Claude Code plugin also shows its translation report (five groups with reasons), its
  *    `repository` (display only, from the plugin, not verified); every plugin shows the root
  *    LICENSE text (collapsed) and each skill's SKILL.md (collapsed);
- * 3. confirm (an installed plugin: the update preview instead, no scope): the scope (spec §5; default "Organizations choose", or "Selected organizations" = the requesting org for a staging
- *    prepared by approving an org's `import` request); confirming installs and enables the
- *    extension (an import below the deployed version only joins the catalog, said as a notice);
- *    with sensitive items, "I understand the sensitive items" must be checked too.
+ *    under the review, the confirm (an installed plugin: the update's impact instead, no scope):
+ *    the scope (spec §5; default "Organizations choose", or "Selected organizations" = the
+ *    requesting org for a staging prepared by approving an org's `import` request); confirming
+ *    installs and enables the extension (an import below the deployed version only joins the
+ *    catalog, said as a notice); with sensitive items (an update: only sensitive items or
+ *    migration warnings it adds), the acknowledgement must be checked too.
  * The staged import comes from the query cache (the layout prefetched it on a first load); a
  * refusal (4xx: expired, already confirmed) is the page's own problem with a restart. A prepared
  * import is written into the cache before the address names it; confirming reads the catalog (and
@@ -157,8 +163,8 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
         title: t("title"),
       }}
-      // Install or update is not known until the catalog is read: a neutral placeholder
-      steps={[t("steps.source"), t("steps.review")]}
+      // Install and update have the same two steps
+      steps={[t("steps.source"), t("steps.reviewConfirm")]}
       current={1}
       actionRow={{
         cancel: { label: tw("cancel"), onSelect: () => {} },
@@ -234,7 +240,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
    */
   const [stagedConsumed, setStagedConsumed] = useState(false);
   /**
-   * Install or update, frozen when the last step is entered. The confirm's invalidations refetch
+   * Install or update, frozen when the confirm is pressed. The confirm's invalidations refetch
    * the catalog, which makes a just-installed plugin look installed: without the freeze the wizard
    * would switch to the update panel while it is still leaving.
    */
@@ -369,14 +375,14 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         null);
   const modePending = review !== null && catalogRead.data === undefined && !catalogRead.isError;
   const updating = installedItem !== null;
-  /** What the last step shows: install or update, fixed when that step was entered. */
+  /** What the review step shows: install or update, fixed when its confirm was pressed. */
   const shownUpdating = mode.current ?? updating;
   const installedName = installedItem === null ? "" : displayNameOf(installedItem, locale);
-  // The update preview of the staged version (step 3 of an update)
+  // The update preview of the staged version (the marks and the impact on an update's review)
   const upq = stagedUpdatePreviewQuery(prepared?.stagingId ?? "");
   const updateRead = useQuery({
     ...upq,
-    enabled: shownUpdating && step === 2 && prepared !== null && !stagedConsumed,
+    enabled: shownUpdating && step === 1 && prepared !== null && !stagedConsumed,
     retry: false,
     retryOnMount: retryOnMountOf(upq.queryKey),
   });
@@ -406,6 +412,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
       : { scope: "optional" as const, orgs: [] });
   const scopeInvalid = target.scope === "named" && target.orgs.length === 0;
   const sensitive = review !== null && pluginReviewSensitive(review);
+  const updateSensitive = review !== null && updateAddsSensitive(review);
   const deployable = review?.extension !== undefined && review.extension.action !== "keep";
   // Loaded from the address: there is no source step to go back to
   const fromElsewhere = staged !== null;
@@ -533,50 +540,37 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
                 (sensitive && !ack),
             },
           }
-        : step === 1
-          ? {
-              cancel,
-              ...(!fromElsewhere && { secondary: { label: tw("back"), onSelect: back } }),
-              primary: {
-                label: tw("next"),
-                onSelect: () => {
-                  mode.current = updating;
-                  setStep(2);
-                },
-                loading: modePending,
-                disabled: modePending,
-              },
-            }
-          : {
-              cancel,
+        : {
+            cancel,
+            ...(!fromElsewhere && {
               secondary: {
                 label: tw("back"),
                 onSelect: back,
                 disabled: submitting || importedNotUpdated !== null,
               },
-              primary: {
-                label: t("confirmUpdate"),
-                onSelect: () => void submitUpdate(),
-                loading: submitting,
-                disabled:
-                  submitting ||
-                  updatePreview === null ||
-                  importedNotUpdated !== null ||
-                  (sensitive && !ack),
+            }),
+            primary: {
+              label: tu("confirmTo", { version: versionLabel(review?.version ?? "") }),
+              onSelect: () => {
+                mode.current = true;
+                void submitUpdate();
               },
-            };
+              loading: submitting,
+              disabled:
+                submitting ||
+                updatePreview === null ||
+                importedNotUpdated !== null ||
+                (updateSensitive && !ack),
+            },
+          };
 
   return (
     <WizardPage
       header={{
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
-        title: shownUpdating ? t("titleUpdate", { name: installedName }) : t("title"),
+        title: shownUpdating ? tu("pageTitle", { name: installedName }) : t("title"),
       }}
-      steps={
-        shownUpdating
-          ? [t("steps.source"), t("steps.review"), t("steps.update")]
-          : [t("steps.source"), t("steps.reviewConfirm")]
-      }
+      steps={[t("steps.source"), t("steps.reviewConfirm")]}
       current={step}
       actionRow={actionRow}
     >
@@ -658,7 +652,64 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
             {fetchError !== undefined && <ProminentError problem={fetchError} />}
           </Stack>
         ))}
-      {step === 1 && review !== null && (
+      {step === 1 && review !== null && shownUpdating && (
+        <Stack gap={16}>
+          {updateNotice !== undefined && <Callout tone="warn">{updateNotice}</Callout>}
+          <UpdateContents
+            review={review}
+            installedVersion={installedItem?.latestVersion ?? null}
+            preview={updatePreview}
+            mismatch={prepared?.permissionsMismatch ?? null}
+          />
+          <ContentSection title={tu("after")}>
+            {updatePreview !== null ? (
+              <UpdatePreview preview={updatePreview} />
+            ) : updateRead.error ? (
+              <ProminentError problem={problem(updateRead.error)} />
+            ) : (
+              <Text variant="prose" tone="muted">
+                {tu("loading")}
+              </Text>
+            )}
+          </ContentSection>
+          <Text variant="small" tone="muted">
+            {tu("hint", { version: versionLabel(review.version) })}
+          </Text>
+          {updateSensitive && importedNotUpdated === null && (
+            <Stack gap={8}>
+              <Text variant="prose" tone="warn">
+                {tu("ackHint")}
+              </Text>
+              <Checkbox checked={ack} onChange={setAck} label={tu("ack")} />
+            </Stack>
+          )}
+          {importedNotUpdated !== null && (
+            <Callout tone="warn">
+              <Stack gap={4}>
+                <Text>
+                  {tu("importedNotUpdated", {
+                    version: versionLabel(importedNotUpdated.version),
+                    from:
+                      importedNotUpdated.from === null
+                        ? "—"
+                        : versionLabel(importedNotUpdated.from),
+                    code: importedNotUpdated.code,
+                  })}
+                </Text>
+                {installedItem !== null && (
+                  <Text>
+                    <Link href={`/admin/plugins/${encodeURIComponent(installedItem.id)}`}>
+                      {t("openItem")}
+                    </Link>
+                  </Text>
+                )}
+              </Stack>
+            </Callout>
+          )}
+          {submitError !== undefined && <ProminentError problem={submitError} />}
+        </Stack>
+      )}
+      {step === 1 && review !== null && !shownUpdating && (
         <Stack gap={16}>
           <PluginReviewBody
             review={review}
@@ -667,7 +718,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           />
           {/* An install ends here: the scope, the sensitive ack and the result sit under the
               review */}
-          {!modePending && !shownUpdating && (
+          {!modePending && (
             <Stack gap={16}>
               {review.extension === undefined ? (
                 <Text tone="muted">{t("noExtension")}</Text>
@@ -784,75 +835,78 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           )}
         </Stack>
       )}
-      {step === 2 && review !== null && shownUpdating && (
-        <Stack gap={16}>
-          <Text variant="small" tone="muted">
-            {t("updateHint", { version: versionLabel(review.version) })}
-          </Text>
-          {updateNotice !== undefined && <Callout tone="warn">{updateNotice}</Callout>}
-          {importedNotUpdated !== null && (
-            <Callout tone="warn">
-              <Stack gap={4}>
-                <Text>
-                  {t("importedNotUpdated", {
-                    version: versionLabel(importedNotUpdated.version),
-                    from:
-                      importedNotUpdated.from === null
-                        ? "—"
-                        : versionLabel(importedNotUpdated.from),
-                    code: importedNotUpdated.code,
-                  })}
-                </Text>
-                {installedItem !== null && (
-                  <Text>
-                    <Link href={`/admin/plugins/${encodeURIComponent(installedItem.id)}`}>
-                      {t("openItem")}
-                    </Link>
-                  </Text>
-                )}
-              </Stack>
-            </Callout>
-          )}
-          {updatePreview !== null ? (
-            <UpdatePreview preview={updatePreview} />
-          ) : updateRead.error ? (
-            <ProminentError problem={problem(updateRead.error)} />
-          ) : (
-            <Text variant="prose" tone="muted">
-              {tu("loading")}
-            </Text>
-          )}
-          {sensitive && importedNotUpdated === null && (
-            <Stack gap={8}>
-              <Text variant="prose" tone="warn">
-                {t("ackHint")}
-              </Text>
-              <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
-            </Stack>
-          )}
-          {submitError !== undefined && <ProminentError problem={submitError} />}
-        </Stack>
-      )}
     </WizardPage>
   );
 }
 
 /**
- * The update preview of an installed plugin's staged version (the wizard's last step): the orgs
- * and themes it names are read here, only for an update. The kernel reports `needsApproval` false:
- * this confirm approves the permissions the review showed.
+ * Whether an update's review asks for the acknowledgement (plugin contents spec, ruling R5): only
+ * when it adds something sensitive. A new extension brings all of its permissions and warnings;
+ * an upgraded one only the sensitive permissions it adds and its migration warnings (they run on
+ * this update); a kept one nothing.
  */
-function UpdatePreview({ preview }: { preview: PlatformUpdatePreview }) {
-  const themeName = useAdminThemeName();
-  const oq = adminOrgsQuery();
-  const orgs = useQuery({ ...oq, retryOnMount: retryOnMountOf(oq.queryKey) }).data?.orgs;
+function updateAddsSensitive(review: PluginReview): boolean {
+  const ext = review.extension;
+  if (ext === undefined || ext.olderThanDeployed === true) return false;
+  if (ext.action === "install") return pluginReviewSensitive(review);
+  if (ext.action === "upgrade")
+    return ext.addedItems.some((i) => i.sensitive) || ext.warnings.length > 0;
+  return false;
+}
+
+/**
+ * The staged package's contents on an update's review: the update stage, the head reading
+ * installed → staged, and the preview's change marks on the rows once it is read.
+ */
+function UpdateContents({
+  review,
+  installedVersion,
+  preview,
+  mismatch,
+}: {
+  review: PluginReview;
+  installedVersion: string | null;
+  preview: PlatformUpdatePreview | null;
+  mismatch: PermissionsMismatch;
+}) {
+  const locale = useLocale();
+  const model = fromReview(review, { installedVersion, locale });
   return (
-    <PlatformUpdatePreviewBody
-      preview={preview}
-      orgName={(id) => orgs?.find((o) => o.id === id)?.name}
-      themeName={themeName}
+    <PluginContents
+      model={preview === null ? model : withUpdateMarks(model, preview)}
+      audience="platform"
+      stage="update"
+      mismatch={mismatch}
     />
   );
+}
+
+/**
+ * What an installed plugin's staged version does beyond its rows (the review's last section): the
+ * orgs it names are read here, only for an update, and the themes only when it removes some. The
+ * kernel reports `needsApproval` false: this confirm approves the permissions the review showed.
+ */
+function UpdatePreview({ preview }: { preview: PlatformUpdatePreview }) {
+  const oq = adminOrgsQuery();
+  const orgs = useQuery({ ...oq, retryOnMount: retryOnMountOf(oq.queryKey) }).data?.orgs;
+  const orgName = (id: string) => orgs?.find((o) => o.id === id)?.name;
+  return preview.themes !== undefined && preview.themes.length > 0 ? (
+    <ThemedUpdateImpact preview={preview} orgName={orgName} />
+  ) : (
+    <UpdateImpact preview={preview} orgName={orgName} />
+  );
+}
+
+/** {@link UpdateImpact} naming the platform's themes (an update removing some). */
+function ThemedUpdateImpact({
+  preview,
+  orgName,
+}: {
+  preview: PlatformUpdatePreview;
+  orgName(id: string): string | undefined;
+}) {
+  const themeName = useAdminThemeName();
+  return <UpdateImpact preview={preview} orgName={orgName} themeName={themeName} />;
 }
 
 /**

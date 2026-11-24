@@ -182,7 +182,7 @@ async function importNotes(page: Page, version: string, { latest }: { latest: bo
   await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 }
 
-test("git marketplace: add a repository in the admin console -> refresh -> install notes 1.0.0 -> turn it on in the org -> update to 1.1.0 in one wizard (the review, then the update preview)", async ({
+test("git marketplace: add a repository in the admin console -> refresh -> install notes 1.0.0 -> turn it on in the org -> update to 1.1.0 on one review page (the marked rows, the impact, one confirm)", async ({
   page,
 }) => {
   const gitUrl = process.env.CAPYBARA_E2E_GIT_MARKETPLACE_URL as string;
@@ -218,9 +218,10 @@ test("git marketplace: add a repository in the admin console -> refresh -> insta
   const detail = page.url();
   await expect(page.getByRole("region", { name: "notes v1.0.0", exact: true })).toBeVisible();
 
-  // 3. Update to 1.1.0 from the marketplace in one wizard: the review, then the update preview
-  // listing each component's change, confirmed together (maintainer decision 2026-11-13; ruling
-  // F2: one version for the deployment, the org upgrade is gone)
+  // 3. Update to 1.1.0 from the marketplace on one review page: the package's rows carry each
+  // component's change, the update's impact under them, one confirm (maintainer decision
+  // 2026-11-13; ruling F2: one version for the deployment, the org upgrade is gone; plugin
+  // contents spec)
   await page.goto("/admin/plugins/market");
   await page.getByRole("radio", { name: "Team git" }).click();
   await page
@@ -230,20 +231,23 @@ test("git marketplace: add a repository in the admin console -> refresh -> insta
     .click();
   await expect(page).toHaveURL(/\/admin\/plugins\/import\?staging=/, { timeout: 60_000 });
   await expect(
-    page.getByRole("heading", { name: fill(D.admin.review.titleUpdate, { name: "笔记" }) }),
+    page.getByRole("heading", { name: fill(D.update.pageTitle, { name: "笔记" }) }),
   ).toBeVisible();
-  await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
-  const changes = page.getByRole("table", { name: D.update.components });
+  const skills = page.getByRole("region", { name: D.components.skills });
   await expect(
-    changes.getByRole("row").filter({ hasText: "notes-extra" }).getByText(D.update.change.added),
+    skills
+      .getByRole("listitem")
+      .filter({ has: page.getByText("notes-extra", { exact: true }) })
+      .getByText(D.update.change.added),
   ).toBeVisible();
   await expect(
-    changes
-      .getByRole("row")
-      .filter({ hasText: /^notes(?!-)/ })
+    skills
+      .getByRole("listitem")
+      .filter({ has: page.getByText("notes", { exact: true }) })
       .getByText(D.update.change.upgrade),
   ).toBeVisible();
-  await page.getByRole("button", { name: D.admin.review.confirmUpdate }).click();
+  await expect(page.getByRole("region", { name: D.update.after })).toBeVisible();
+  await page.getByRole("button", { name: fill(D.update.confirmTo, { version: "v1.1.0" }) }).click();
   await expect(
     page.getByText(fill(D.update.done, { name: "笔记", version: "v1.1.0" })),
   ).toBeVisible({ timeout: 60_000 });

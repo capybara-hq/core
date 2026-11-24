@@ -168,30 +168,30 @@ export function PlatformUpdateDialog({
   );
 }
 
-/**
- * The body of an update preview (shared by {@link PlatformUpdateDialog} and an org's upload of a
- * new version of its own plugin, ruling P3-12): the versions, every component with its change and
- * marks, the pinned copies, the components kept for agents, the extension's move and, per org,
- * the connectors updated, those whose credentials are cleared, those the update creates (and how
- * many wait for configuration), those deferred until their connector plugin is on, and the orgs
- * where the scope sync will try to install the plugin (warned with the last failure there).
- * `orgName` names an org id (its id when unknown). An org's own upload (`hideUnknown`, ruling
- * P3-19: an org admin cannot read other orgs) names the orgs the kernel named in `orgNames` or the
- * viewer belongs to, and counts the others ("N 个组织"), never showing an id.
- */
-export function PlatformUpdatePreviewBody({
-  preview,
-  orgName,
-  themeName = (id) => id,
-  hideUnknown = false,
-}: {
+/** How an update preview names orgs (see {@link PlatformUpdatePreviewBody}). */
+interface OrgNaming {
   preview: PlatformUpdatePreview;
   /** The org's name, or undefined when unknown (then its id, or a count with `hideUnknown`). */
   orgName(id: string): string | undefined;
   /** A theme's name by its `platform_themes` id (the 主题 group). */
   themeName?: (id: string) => string;
   hideUnknown?: boolean;
-}) {
+}
+
+/**
+ * The impact groups of an update preview, without its components table: the extension's move
+ * with the orgs using it, per org the connectors updated, those whose credentials are cleared,
+ * those the update creates (and how many wait for configuration), those deferred until their
+ * connector plugin is on and turned off, and the orgs where the scope sync will try to install
+ * the plugin (warned with the last failure there), then the pinned copies, the components kept
+ * for agents and the removed themes still on in some org.
+ */
+function useImpactGroups({
+  preview,
+  orgName,
+  themeName = (id) => id,
+  hideUnknown = false,
+}: OrgNaming): ImpactPreviewGroup[] {
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const sep = locale === "zh" ? "、" : ", ";
@@ -213,39 +213,6 @@ export function PlatformUpdatePreviewBody({
   const themeGroup = useThemeImpactGroup(preview.themes, themeName, (orgs) =>
     names(orgs.map((o) => o.orgId)),
   );
-  const columns: Column<PlatformUpdateComponent>[] = [
-    { key: "name", header: t("columns.name"), cell: (c) => c.name },
-    { key: "kind", header: t("columns.kind"), tone: "muted", cell: (c) => t(`kind.${c.kind}`) },
-    {
-      key: "change",
-      header: t("columns.change"),
-      cell: (c) => (
-        <Badge tone={c.change === "removed" || c.change === "downgrade" ? "warn" : "default"}>
-          {t(`change.${c.change}`)}
-        </Badge>
-      ),
-    },
-    {
-      key: "version",
-      header: t("columns.version"),
-      tone: "muted",
-      cell: (c) => `${optVersion(c.from)} → ${optVersion(c.to)}`,
-    },
-    {
-      key: "marks",
-      header: t("columns.marks"),
-      cell: (c) => (
-        <Stack direction="row" gap={4} align="center">
-          {c.updatedOnOwn && <Badge tone="warn">{t("marks.updatedOnOwn")}</Badge>}
-          {c.ownScope && <Badge>{t("marks.ownScope")}</Badge>}
-          {c.kept !== undefined && c.kept.length > 0 && <Badge>{t("marks.kept")}</Badge>}
-        </Stack>
-      ),
-    },
-  ];
-
-  const changed = preview.components.filter((c) => c.change !== "same");
-  const marked = preview.components.some((c) => c.updatedOnOwn || c.ownScope);
   const pinned = preview.components.filter(
     (c) => c.pinnedOrgs.length > 0 && c.change !== "removed",
   );
@@ -253,7 +220,6 @@ export function PlatformUpdatePreviewBody({
   const ext = preview.extension;
   const extOrgs =
     ext === null ? "" : ext.orgs.length === 0 ? t("extensionNoOrgs") : names(ext.orgs);
-  const componentHint = changed.length === 0 ? t("none") : marked ? t("marksHint") : undefined;
   // per org: the connectors updated, cleared, created and turned off, and a scope sync's install
   const orgNotes = new Map<string, ImpactPreviewNote[]>();
   const notesOf = (orgId: string) => {
@@ -313,24 +279,23 @@ export function PlatformUpdatePreviewBody({
   }));
   const groups: ImpactPreviewGroup[] = [
     {
-      id: "components",
-      title: t("components"),
-      ...(componentHint !== undefined ? { description: componentHint } : {}),
-      ...(preview.components.length > 0
-        ? {
-            content: (
-              <DataTable
-                label={t("components")}
-                columns={columns}
-                rows={preview.components}
-                rowKey={(c) => `${c.kind}:${c.id ?? c.name}`}
-                state="ready"
-                framed={false}
-              />
-            ),
-          }
-        : {}),
+      id: "extension",
+      title: t("groups.extension"),
+      items:
+        ext === null
+          ? []
+          : [
+              {
+                id: "extension",
+                title:
+                  ext.from === null
+                    ? t("extensionInstall", { to: optVersion(ext.to) })
+                    : t("versions", { from: versionLabel(ext.from), to: optVersion(ext.to) }),
+                notes: [{ text: t("extensionOrgs", { orgs: extOrgs }) }],
+              },
+            ],
     },
+    { id: "orgs", title: t("groups.orgs"), items: orgItems },
     {
       id: "pinned",
       title: t("groups.pinned"),
@@ -357,33 +322,92 @@ export function PlatformUpdatePreviewBody({
         ],
       })),
     },
-    {
-      id: "extension",
-      title: t("groups.extension"),
-      items:
-        ext === null
-          ? []
-          : [
-              {
-                id: "extension",
-                title:
-                  ext.from === null
-                    ? t("extensionInstall", { to: optVersion(ext.to) })
-                    : t("versions", { from: versionLabel(ext.from), to: optVersion(ext.to) }),
-                notes: [{ text: t("extensionOrgs", { orgs: extOrgs }) }],
-              },
-            ],
-    },
-    {
-      id: "orgs",
-      title: t("groups.orgs"),
-      items: orgItems,
-    },
     ...(themeGroup === null ? [] : [themeGroup]),
   ];
+  return groups;
+}
+
+/**
+ * What an update does beyond the package's own rows (the "after the update" section of the
+ * platform update's review page, plugin contents spec): the impact groups of
+ * {@link PlatformUpdatePreviewBody} without its components table, whose changes are marked on the
+ * contents rows there. Nothing to say is one line.
+ */
+export function UpdateImpact(props: OrgNaming) {
+  const t = useTranslations("catalog.update");
+  const groups = useImpactGroups(props);
+  return <ImpactPreview groups={groups} empty={t("impactNone")} />;
+}
+
+/**
+ * The body of an update preview (shared by {@link PlatformUpdateDialog} and an org's upload of a
+ * new version of its own plugin, ruling P3-12): the versions, every component with its change and
+ * marks, then the impact groups ({@link UpdateImpact}). `orgName` names an org id (its id when
+ * unknown). An org's own upload (`hideUnknown`, ruling P3-19: an org admin cannot read other
+ * orgs) names the orgs the kernel named in `orgNames` or the viewer belongs to, and counts the
+ * others ("N 个组织"), never showing an id.
+ */
+export function PlatformUpdatePreviewBody(props: OrgNaming) {
+  const { preview } = props;
+  const t = useTranslations("catalog.update");
+  const groups = useImpactGroups(props);
+  const columns: Column<PlatformUpdateComponent>[] = [
+    { key: "name", header: t("columns.name"), cell: (c) => c.name },
+    { key: "kind", header: t("columns.kind"), tone: "muted", cell: (c) => t(`kind.${c.kind}`) },
+    {
+      key: "change",
+      header: t("columns.change"),
+      cell: (c) => (
+        <Badge tone={c.change === "removed" || c.change === "downgrade" ? "warn" : "default"}>
+          {t(`change.${c.change}`)}
+        </Badge>
+      ),
+    },
+    {
+      key: "version",
+      header: t("columns.version"),
+      tone: "muted",
+      cell: (c) => `${optVersion(c.from)} → ${optVersion(c.to)}`,
+    },
+    {
+      key: "marks",
+      header: t("columns.marks"),
+      cell: (c) => (
+        <Stack direction="row" gap={4} align="center">
+          {c.updatedOnOwn && <Badge tone="warn">{t("marks.updatedOnOwn")}</Badge>}
+          {c.ownScope && <Badge>{t("marks.ownScope")}</Badge>}
+          {c.kept !== undefined && c.kept.length > 0 && <Badge>{t("marks.kept")}</Badge>}
+        </Stack>
+      ),
+    },
+  ];
+  const changed = preview.components.filter((c) => c.change !== "same");
+  const marked = preview.components.some((c) => c.updatedOnOwn || c.ownScope);
+  const componentHint = changed.length === 0 ? t("none") : marked ? t("marksHint") : undefined;
+  const components: ImpactPreviewGroup = {
+    id: "components",
+    title: t("components"),
+    ...(componentHint !== undefined ? { description: componentHint } : {}),
+    ...(preview.components.length > 0
+      ? {
+          content: (
+            <DataTable
+              label={t("components")}
+              columns={columns}
+              rows={preview.components}
+              rowKey={(c) => `${c.kind}:${c.id ?? c.name}`}
+              state="ready"
+              framed={false}
+            />
+          ),
+        }
+      : {}),
+  };
   return (
     <>
-      {ext?.needsApproval === true && <Callout tone="warn">{t("needsApproval")}</Callout>}
+      {preview.extension?.needsApproval === true && (
+        <Callout tone="warn">{t("needsApproval")}</Callout>
+      )}
       <Stack direction="row" gap={8} align="center">
         <Text>{preview.name}</Text>
         <Badge>
@@ -393,7 +417,7 @@ export function PlatformUpdatePreviewBody({
           })}
         </Badge>
       </Stack>
-      <ImpactPreview groups={groups} empty={t("none")} />
+      <ImpactPreview groups={[components, ...groups]} empty={t("none")} />
     </>
   );
 }

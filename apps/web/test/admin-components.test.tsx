@@ -999,12 +999,13 @@ describe("admin plugin detail: components and the platform update", () => {
     expect(within(row("summarize")).getByText(U.marks.ownScope)).toBeTruthy();
     expect(within(row("old-helper")).getByText(U.marks.kept)).toBeTruthy();
     expect(within(row("old-helper")).getByText(U.change.removed)).toBeTruthy();
-    // the preview's groups, each a titled region in this order, each a real list of rows
+    // the preview's groups, each a titled region in this order (the components table, then the
+    // impact groups the update's review page shares), each a real list of rows
     expect(
       within(dialog)
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent),
-    ).toEqual([U.components, U.groups.pinned, U.groups.kept, U.groups.extension, U.groups.orgs]);
+    ).toEqual([U.components, U.groups.extension, U.groups.orgs, U.groups.pinned, U.groups.kept]);
     const group = (title: string) => within(dialog).getByRole("list", { name: title });
     expect(within(group(U.groups.pinned)).getByText("web-research")).toBeTruthy();
     expect(

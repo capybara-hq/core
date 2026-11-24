@@ -5098,9 +5098,7 @@
         "title": "安装插件",
         "steps": {
           "source": "选择插件包",
-          "review": "审阅",
-          "reviewConfirm": "审阅并确认",
-          "update": "更新预览"
+          "reviewConfirm": "审阅并确认"
         },
         "sourceLabel": "来源",
         "sourceFile": "上传插件包（.tgz）",
@@ -5266,10 +5264,6 @@
         "agentNeedsDescribed": "{label} · {host}",
         "endpointDetails": "地址详情",
         "orgCanChange": "组织可改",
-        "titleUpdate": "更新插件「{name}」",
-        "confirmUpdate": "确认更新",
-        "updateHint": "确认后把 {version} 加入平台并把插件更新到它，所有组织一起更新。确认前取消不会改动任何东西。",
-        "importedNotUpdated": "{version} 已加入插件的版本列表，但把平台更新到它失败了（{code}）：平台仍在 {from}，扩展和权限保持原样。可在插件页「更新到 {version}」重试。",
         "collapse": "收起",
         "configAfterEnable": "启用后在「扩展」页配置",
         "defaultOff": "默认关闭",
@@ -5691,7 +5685,15 @@
       "scopeInstallNote": "按平台设定的范围，更新后会尝试在此组织安装",
       "deferredNote": "连接器插件在此组织开启后再新建：{names}",
       "scopeInstallFailingNote": "按平台设定的范围，更新后会再次尝试在此组织安装；上次失败：{failure}",
-      "turnedOffNote": "新版本里默认关闭，在此组织关闭（已建的连接器保留）：{ids}"
+      "turnedOffNote": "新版本里默认关闭，在此组织关闭（已建的连接器保留）：{ids}",
+      "pageTitle": "更新插件「{name}」",
+      "hint": "确认后所有组织一起更新到 {version}。",
+      "confirmTo": "更新到 {version}",
+      "after": "更新后",
+      "impactNone": "其他都不变。",
+      "ack": "我已看过新增的敏感权限和警告",
+      "ackHint": "这次更新新增了敏感权限或迁移警告，确认前请看一下。",
+      "importedNotUpdated": "{version} 已加入插件的版本，但平台没能更新到它（{code}）：平台仍在 {from}，扩展和权限没有变。可以在插件页重试「更新到 {version}」。"
     },
     "errorDetail": {
       "host": "主机：{host}",
