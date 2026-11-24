@@ -4019,7 +4019,8 @@
           "evals": "评测",
           "lifecycle": "生命周期通知",
           "pushDeliver": "推送发送",
-          "connectorTools": "连接器工具清单"
+          "connectorTools": "连接器工具清单",
+          "templateConnectors": "连接器模板补建"
         },
         "connections": {
           "channels": "渠道",

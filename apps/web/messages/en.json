@@ -4031,7 +4031,8 @@
           "evals": "Evals",
           "lifecycle": "Lifecycle notices",
           "pushDeliver": "Push delivery",
-          "connectorTools": "Connector tool lists"
+          "connectorTools": "Connector tool lists",
+          "templateConnectors": "Template connectors"
         },
         "connections": {
           "channels": "Channels",

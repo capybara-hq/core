@@ -11,6 +11,7 @@ import { buildKernelApp, closeKernelApp, createKernelApp } from "../../src/app.j
 import { BACKGROUND_PRUNE_JOB, BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
+import { TEMPLATE_CONNECTORS_QUEUE } from "../../src/catalog/template-connector-jobs.js";
 import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
@@ -62,6 +63,7 @@ const KERNEL_QUEUES = [
   LIFECYCLE_QUEUE,
   PUSH_QUEUE,
   CONNECTOR_TOOLS_QUEUE,
+  TEMPLATE_CONNECTORS_QUEUE,
 ];
 
 let pgc: TestContainer;

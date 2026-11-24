@@ -28,6 +28,7 @@ import {
   scopeOrgJobId,
 } from "./scope-jobs.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
+import { TemplateConnectorEnsurer } from "./template-connector-ensure.js";
 
 /**
  * The plugin scope sync (plugin and component management spec §5, phase 1): converges every org
@@ -136,6 +137,11 @@ export class PluginScopeSync {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add" | "addMany">,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
+    @Inject(TemplateConnectorEnsurer)
+    private readonly templateConnectors: Pick<
+      TemplateConnectorEnsurer,
+      "ensureTemplateConnectorsIn"
+    >,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     @Inject(LockService) private readonly locks: LockService,
@@ -370,6 +376,11 @@ export class PluginScopeSync {
         if (live.status === "installed") {
           try {
             await this.installer.addMissingDependencies(orgId, live.id);
+            // a dependency just installed may provide the connector kind of a template the org
+            // never got a connector from (ruling R27)
+            await this.templateConnectors.ensureTemplateConnectorsIn(orgId, undefined, {
+              via: "scope",
+            });
           } catch (e) {
             await this.failed(orgId, itemId, "dependencies", e, attempt);
           }

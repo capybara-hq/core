@@ -362,8 +362,8 @@ export class KernelLifecycle
     }
     // The one-off reconciliation of template connectors (plugin pages spec §7): once the
     // extensions loaded (it plans connectors against their connector extensions) and the bootstrap
-    // step's plugins are in, under `lock:bootstrap`, so one replica runs it and the others find it
-    // done. Never fails the start: what it could not create stays for an org admin to create
+    // step's plugins are in, under `lock:bootstrap` (a replica that does not get it skips the
+    // pass). Never fails the start: what it could not create waits for a later ensure
     await this.reconcileTemplateConnectors();
     this.checkpoint();
     // The extra manifest's defaults (the platform default theme), at every start whether or not

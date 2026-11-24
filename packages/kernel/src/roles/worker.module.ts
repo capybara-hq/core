@@ -5,6 +5,7 @@ import { RetireLegacyTasksJob } from "../background/retire-legacy-tasks.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
+import { TemplateConnectorsWorkersModule } from "../catalog/template-connectors.processor.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
 import { ClientModule } from "../client/client.module.js";
@@ -78,6 +79,9 @@ export class WorkerModule {
         PushWorkersModule,
         // connector tool listings owed after a create or a setup (`cap-connector-tools`)
         ConnectorToolsWorkersModule,
+        // template connectors an org never had, owed by installs and extension switch-ons
+        // (`cap-template-connectors`)
+        TemplateConnectorsWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         RunJobsModule,

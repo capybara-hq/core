@@ -11,6 +11,7 @@ import {
   pluginItemDisabled,
 } from "../catalog/request-rules.js";
 import type { PluginScope } from "../catalog/scope.js";
+import { oweTemplateConnectors } from "../catalog/template-connector-jobs.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -19,6 +20,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { EffectiveConfigs } from "./effective-config.js";
 import { alwaysOnExtensions, enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
@@ -173,6 +175,8 @@ export class OrgExtensionConfigs {
     @Inject(EffectiveConfigs) private readonly effective: EffectiveConfigs,
     /** Why an installed extension is not loaded (`status` / `reason` of the unavailable ones). */
     @Inject(ExtensionAvailability) private readonly availability: ExtensionAvailability,
+    /** Owes the org's template connector ensure when an extension is switched on (ruling R27). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   /** The kernel-schema handle of the current transaction. */
@@ -406,6 +410,12 @@ export class OrgExtensionConfigs {
         }),
       )
       .execute();
+    // Switched on: it may provide the connector kind of a template whose plugin is installed in
+    // the org without its connector; a worker creates the connectors it never had, once the
+    // extension is loaded there (ruling R27)
+    if (input.enabled === true && row?.enabled !== true) {
+      await oweTemplateConnectors(this.outbox, t, orgId);
+    }
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

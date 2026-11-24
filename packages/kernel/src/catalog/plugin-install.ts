@@ -31,6 +31,7 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
@@ -94,6 +95,7 @@ import {
 } from "./request-rules.js";
 import { visibleTo } from "./scope.js";
 import { ScopeNoLongerWanted, ScopeStillWanted, wantedByScope } from "./scope-state.js";
+import { oweTemplateConnectors } from "./template-connector-jobs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
@@ -595,6 +597,8 @@ export class PluginInstaller {
     /** Org connectors: installs create, upgrade and remove them. */
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** Owes the template connector ensure of an install's commit (`markInstalled`). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -1406,6 +1410,10 @@ export class PluginInstaller {
         },
       });
     }
+    // The org's template connectors it never had, after the commit (ruling R27): an extension
+    // this install enabled may provide the connector kind of another plugin's template, and it
+    // loads on the replica only after the commit
+    await oweTemplateConnectors(this.outbox, t, orgId);
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -2412,7 +2420,7 @@ export class PluginInstaller {
           .on("a.org_id", "=", orgId)
           .on("a.status", "=", "installed"),
       )
-      .select(["t.template_id", "t.catalog_item_id", "t.file", "a.id as install_id", "a.version"])
+      .select(["t.template_id", "t.catalog_item_id", "t.file", "a.version"])
       .where("t.id", "=", platformTemplateId)
       .where("t.deleted_at", "is", null)
       .executeTakeFirst();
@@ -2424,19 +2432,44 @@ export class PluginInstaller {
     const ct = { id: row.template_id, file: row.file as ConnectorTemplateFile };
     const ci = this.planConnector(actor, { itemId, version: row.version }, ct, "", undefined);
     const connectorId = await this.connectors.createDeferredIn(orgId, actor, ci, opts);
+    await this.recordTemplateConnectorIn(orgId, itemId, connectorId, ct.id, ["installed"]);
+    return connectorId;
+  }
+
+  /**
+   * Records a connector made from one of the item's connector templates on the org's install of
+   * the item whose status is one of `statuses` (`created`: the plugin made it, so an uninstall and
+   * upgrades see it), in the caller's transaction. True when such an install exists.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async recordTemplateConnectorIn(
+    orgId: string,
+    itemId: string,
+    connectorId: string,
+    templateId: string,
+    statuses: readonly PluginInstallStatus[],
+  ): Promise<boolean> {
+    const install = await this.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("item_id", "=", itemId)
+      .where("status", "in", [...statuses])
+      .executeTakeFirst();
+    if (!install) return false;
     await this.db
       .insertInto("plugin_install_components")
       .values({
-        install_id: row.install_id,
+        install_id: install.id,
         kind: "connector",
         ref: connectorId,
         created: true,
         skill_version: null,
-        template_id: ct.id,
+        template_id: templateId,
       })
       .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
       .execute();
-    return connectorId;
+    return true;
   }
 
   /**
@@ -2451,26 +2484,7 @@ export class PluginInstaller {
     templateId: string,
   ): Promise<void> {
     await this.orgLock.lock(orgId);
-    const install = await this.db
-      .selectFrom("plugin_installs")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("item_id", "=", itemId)
-      .where("status", "=", "installed")
-      .executeTakeFirst();
-    if (!install) return;
-    await this.db
-      .insertInto("plugin_install_components")
-      .values({
-        install_id: install.id,
-        kind: "connector",
-        ref: connectorId,
-        created: true,
-        skill_version: null,
-        template_id: templateId,
-      })
-      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
-      .execute();
+    await this.recordTemplateConnectorIn(orgId, itemId, connectorId, templateId, ["installed"]);
   }
 
   /** The connector kinds an extension provides (the `connector@1` implementations loaded on this replica). */

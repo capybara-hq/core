@@ -386,6 +386,24 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `catalog/template-connector-jobs.ts` TEMPLATE_CONNECTORS_JOB: owed by an install's commit
+  // (`PluginInstaller.markInstalled`) and an org switching an extension on
+  // (`OrgExtensionConfigs.put`), under `templateConnectorsJobId` (ruling R27)
+  "template-connectors-ensure": {
+    queue: "cap-template-connectors",
+    idempotent:
+      "Creates only the template connectors the org never had, each under the org row lock with that rule re-checked, so a second ensure finds them and creates nothing",
+    processedIn: "packages/kernel/src/catalog/template-connectors.processor.ts",
+    // 8 attempts, 5 s doubling (about 10 minutes: a connector extension enabled by the owing
+    // transaction loads on the replica within it); finished and failed jobs removed (each owing
+    // has its own id)
+    opts: {
+      attempts: 8,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `push/jobs.ts` PUSH_FANOUT_JOB: one per trigger event, owed in the event's transaction by
   // `PushOwed` under `pushFanoutJobId` (`push-fanout-<eventId>`, mobile app spec §9.4)
   "push-fanout": {

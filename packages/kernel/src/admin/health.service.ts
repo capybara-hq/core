@@ -4,6 +4,7 @@ import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import { PLUGIN_SCOPE_QUEUE } from "../catalog/scope-sync.js";
+import { TEMPLATE_CONNECTORS_QUEUE } from "../catalog/template-connector-jobs.js";
 import { CHANNEL_QUEUE_NAME } from "../channels/jobs.js";
 import { PROMPT_SUGGESTION_QUEUE } from "../conversations/prompt-suggestions.js";
 import { TITLE_QUEUE } from "../conversations/titles.js";
@@ -35,6 +36,7 @@ export const KERNEL_QUEUE_NAMES = [
   LIFECYCLE_QUEUE,
   PUSH_QUEUE,
   CONNECTOR_TOOLS_QUEUE,
+  TEMPLATE_CONNECTORS_QUEUE,
 ] as const;
 
 /** How long each source's reads may take before the answer marks it unavailable. */
@@ -167,6 +169,7 @@ export class AdminHealthService {
     @Inject(getQueueToken(LIFECYCLE_QUEUE)) lifecycle: Queue,
     @Inject(getQueueToken(PUSH_QUEUE)) push: Queue,
     @Inject(getQueueToken(CONNECTOR_TOOLS_QUEUE)) connectorTools: Queue,
+    @Inject(getQueueToken(TEMPLATE_CONNECTORS_QUEUE)) templateConnectors: Queue,
   ) {
     // the order of KERNEL_QUEUE_NAMES
     this.queues = [
@@ -182,6 +185,7 @@ export class AdminHealthService {
       lifecycle,
       push,
       connectorTools,
+      templateConnectors,
     ];
   }
 

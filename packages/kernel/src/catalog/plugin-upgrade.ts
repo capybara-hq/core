@@ -1103,26 +1103,13 @@ export class PlatformPluginUpdater {
     const connectorId = await this.connectors.createDeferredIn(c.orgId, null, ci, {
       auditDetail: { via: "platform_update" },
     });
-    const install = await this.db
-      .selectFrom("plugin_installs")
-      .select("id")
-      .where("org_id", "=", c.orgId)
-      .where("item_id", "=", itemId)
-      .where("status", "in", [...LIVE_INSTALL_STATUSES])
-      .executeTakeFirst();
-    if (install === undefined) return;
-    await this.db
-      .insertInto("plugin_install_components")
-      .values({
-        install_id: install.id,
-        kind: "connector",
-        ref: connectorId,
-        created: true,
-        skill_version: null,
-        template_id: c.templateId,
-      })
-      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
-      .execute();
+    await this.installer.recordTemplateConnectorIn(
+      c.orgId,
+      itemId,
+      connectorId,
+      c.templateId,
+      LIVE_INSTALL_STATUSES,
+    );
   }
 
   /**

@@ -145,6 +145,7 @@ const QUEUE_NAMES = [
   "cap-kernel-lifecycle",
   "cap-push-deliver",
   "cap-connector-tools",
+  "cap-template-connectors",
 ];
 const HEALTH = {
   kernel: { version: "0.1.0" },

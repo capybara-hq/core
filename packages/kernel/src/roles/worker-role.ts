@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PluginScopeSyncProcessor } from "../catalog/scope-sync-workers.js";
+import { TemplateConnectorsProcessor } from "../catalog/template-connectors.processor.js";
 import { ChannelsProcessor } from "../channels/channels.module.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -30,7 +31,7 @@ import { ConnectorToolsProcessor } from "../tools/connector-tools.processor.js";
  * The worker role's parts, driven by `KernelLifecycle` at fixed points of its start order and stop
  * phases (so they stay ordered after the extension load and before the extension host closes): the
  * queue consumers (runs, sub-agent runs, evals, maintenance, the plugin scope sync, lifecycle
- * hook deliveries, push deliveries, connector tool listings, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
+ * hook deliveries, push deliveries, connector tool listings, template connector ensures, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
  * `WorkerModule`, so a process without the worker role has none of them.
  */
 @Injectable()
@@ -67,6 +68,8 @@ export class WorkerRole {
     @Inject(PushProcessor) private readonly pushProcessor: PushProcessor,
     @Inject(ConnectorToolsProcessor)
     private readonly connectorToolsProcessor: ConnectorToolsProcessor,
+    @Inject(TemplateConnectorsProcessor)
+    private readonly templateConnectorsProcessor: TemplateConnectorsProcessor,
   ) {
     this.config = config.get();
   }
@@ -89,6 +92,7 @@ export class WorkerRole {
     this.lifecycleProcessor.start();
     this.pushProcessor.start();
     this.connectorToolsProcessor.start();
+    this.templateConnectorsProcessor.start();
     this.channelOutbound.startWorker(this.channelsProcessor.worker);
     this.usageReport.startWorker(this.usageProcessor.worker);
     this.titles.startWorker(this.titleProcessor.worker);
@@ -135,6 +139,7 @@ export class WorkerRole {
       this.lifecycleProcessor.close(),
       this.pushProcessor.close(),
       this.connectorToolsProcessor.close(),
+      this.templateConnectorsProcessor.close(),
     ]);
   }
 }

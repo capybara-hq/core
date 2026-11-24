@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { CatalogModule } from "../catalog/catalog.module.js";
+import { TemplateConnectorsQueueModule } from "../catalog/template-connector-jobs.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { PromptSuggestionsModule } from "../conversations/prompt-suggestions.js";
 import { TitlesModule } from "../conversations/titles.js";
@@ -52,8 +53,9 @@ import { AdminUsageService } from "./usage.service.js";
     LifecycleHooksModule,
     // the push queue the overview counts
     PushModule,
-    // the connector tools queue the overview counts
+    // the connector tools and template connectors queues the overview counts
     ConnectorToolsQueueModule,
+    TemplateConnectorsQueueModule,
     // the price table of the usage aggregate
     ModelsModule,
   ],

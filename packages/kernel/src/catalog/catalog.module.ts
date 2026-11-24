@@ -20,6 +20,8 @@ import { PluginInstaller } from "./plugin-install.js";
 import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 import { CatalogRequestsService } from "./requests.service.js";
 import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
+import { TemplateConnectorEnsurer } from "./template-connector-ensure.js";
+import { TemplateConnectorsQueueModule } from "./template-connector-jobs.js";
 import { TemplateConnectorReconciler } from "./template-connector-reconcile.js";
 
 export { CatalogImportModule };
@@ -35,7 +37,8 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
  * staged version (`PlatformImportUpdate`), the admin's scope
  * and disable
  * (`CatalogScopeService`), org admins' plugin uploads (`OrgPluginUploads`) and their own plugins (`OwnedItems`), the startup
- * reconciliation of template connectors (`TemplateConnectorReconciler`), and the producer of the plugin scope sync
+ * reconciliation of template connectors (`TemplateConnectorReconciler`) and the ensure it shares
+ * with the queued job (`TemplateConnectorEnsurer`), and the producer of the plugin scope sync
  * (`PluginScopeSync`; its consumer is the worker role's `PluginScopeWorkersModule`). The catalog's periodic jobs (`CatalogJobs`) are
  * the worker role's (`WorkerModule`).
  */
@@ -56,6 +59,9 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     // the queue of a removed org plugin's owed cleanup job (`OwnedItems`, `CatalogScopeService`;
     // consumed by the worker role's `MaintenanceProcessor`)
     MAINTENANCE_QUEUE_MODULE,
+    // the template connector ensures owed by installs (`markInstalled`); consumed by the worker
+    // role's `TemplateConnectorsWorkersModule`
+    TemplateConnectorsQueueModule,
   ],
   providers: [
     CatalogRequestsService,
@@ -69,10 +75,12 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     OrgPluginUploads,
     OwnedItems,
     PlatformImportUpdate,
+    TemplateConnectorEnsurer,
     TemplateConnectorReconciler,
   ],
   exports: [
     PLUGIN_SCOPE_QUEUE_MODULE,
+    TemplateConnectorsQueueModule,
     MAINTENANCE_QUEUE_MODULE,
     CatalogImportModule,
     CatalogRequestsService,
@@ -86,6 +94,7 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     OrgPluginUploads,
     OwnedItems,
     PlatformImportUpdate,
+    TemplateConnectorEnsurer,
     TemplateConnectorReconciler,
   ],
 })
