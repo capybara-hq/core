@@ -157,11 +157,12 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
         title: t("title"),
       }}
-      steps={[t("steps.source"), t("steps.reviewConfirm")]}
+      // Install or update is not known until the catalog is read: a neutral placeholder
+      steps={[t("steps.source"), t("steps.review")]}
       current={1}
       actionRow={{
         cancel: { label: tw("cancel"), onSelect: () => {} },
-        primary: { label: t("confirm"), onSelect: () => {}, disabled: true },
+        primary: { label: tw("next"), onSelect: () => {}, disabled: true },
       }}
       // The review stack: the plugin line over its facts (package, origin, provenance), then the
       // five component sections (extension, skills, connector templates, agent templates,
@@ -302,6 +303,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   }, [stagedConsumed, prepared, qc]);
 
   const accept = (p: PluginPrepared) => {
+    // A new package decides install or update afresh (the last one's choice does not carry over)
+    mode.current = null;
     setPrepared(p);
     setAck(false);
     setStep(1);
@@ -487,6 +490,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   };
   const back = () => {
     setSubmitError(undefined);
+    if (step <= 1) mode.current = null;
     setStep((s) => (s > 0 ? ((s - 1) as Step) : s));
   };
   const actionRow =
@@ -657,7 +661,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
       {step === 1 && review !== null && (
         <Stack gap={16}>
           <PluginReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
-          {/* An install ends here: the scope, the sensitive ack and the result sit under the review */}
+          {/* An install ends here: the scope, the sensitive ack and the result sit under the
+              review */}
           {!modePending && !shownUpdating && (
             <Stack gap={16}>
               {review.extension === undefined ? (
