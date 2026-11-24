@@ -168,10 +168,6 @@ export interface ExtensionModels {
   describe(req: { orgId: string; purpose: string }): Promise<ExtensionModelTarget | null>;
 }
 
-/**
- * The context passed to a plugin's `setup`. It provides no timers or in-process shared state; kv
- * writes must carry a TTL.
- */
 /** The conversation and the account a {@link DeviceAccessCtx} call from outside a tool call is for. */
 export type DeviceAccessScope = { conversationId: string; accountId: string };
 
@@ -231,6 +227,10 @@ export class DeviceAccessError extends Error {
   }
 }
 
+/**
+ * The context passed to a plugin's `setup`. It provides no timers or in-process shared state; kv
+ * writes must carry a TTL.
+ */
 export interface ExtensionContext {
   kv: {
     get(key: string): Promise<string | null>;

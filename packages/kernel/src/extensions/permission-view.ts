@@ -5,6 +5,7 @@ import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import {
   CLIENT_KEY,
+  DEVICE_ACCESS_KEY_PREFIX,
   DIAL_IN_KEY_PREFIX,
   type PermissionSet,
   permissionKeys,
@@ -49,9 +50,11 @@ export interface PermissionGroup {
     | "ui"
     | "components"
     | "client"
-    | "dialIn";
+    | "dialIn"
+    | "deviceAccess";
   /**
-   * Sensitive category: secrets, public routes, tools, hooks, client components, client code; also
+   * Sensitive category: secrets, public routes, tools, hooks, client components, client code,
+   * device services; also
    * the "provides" group when it holds one of {@link SENSITIVE_EXTENSION_POINTS}, and the "UI" group
    * (views and embeds) when it holds an embedded app (embed: the extension's own page in an iframe).
    */
@@ -64,7 +67,8 @@ export interface PermissionGroup {
 /**
  * Sensitive reason codes (the UI translates them by code): secrets, public routes, embed routes,
  * tools, hooks, embedded apps, client code and client components (client extensions spec §5.4: code that runs with
- * full trust in members' browsers), and sensitive extension points
+ * full trust in members' browsers), device services (`device_access`: long-lived processes in
+ * conversations' devices), and sensitive extension points
  * ({@link SENSITIVE_EXTENSION_POINTS}; the code is the extension point name without `@<major>`, with
  * `-` replaced by `_`).
  */
@@ -84,6 +88,7 @@ export type SensitiveReason =
   | "object_store"
   | "context"
   | "push_provider"
+  | "device_access"
   | "migration_warnings";
 
 /** 权限清单里的一项（分组里的一项，或 `added` 里的一个权限键）。 */
@@ -130,6 +135,7 @@ const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
   "hooks",
   "components",
   "client",
+  "deviceAccess",
 ]);
 
 const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
@@ -140,6 +146,7 @@ const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
   hooks: "hooks",
   components: "ui_component",
   client: "client_code",
+  deviceAccess: "device_access",
 };
 
 /**
@@ -191,6 +198,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     [UI_COMPONENT_KEY_PREFIX, "components", ""],
     ["ui.view:", "ui", "view:"],
     [DIAL_IN_KEY_PREFIX, "dialIn", ""],
+    [DEVICE_ACCESS_KEY_PREFIX, "deviceAccess", ""],
   ];
   for (const [prefix, category, itemPrefix] of table) {
     const rest = after(prefix);
@@ -271,6 +279,8 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     { category: "client", items: p.client === true ? [CLIENT_ITEM] : [] },
     // machines that connect to the deployment for this provider's devices, speaking its protocol
     { category: "dialIn", items: p.dialIn ? [p.dialIn.protocol] : [] },
+    // long-lived services the extension runs in conversations' devices
+    { category: "deviceAccess", items: p.deviceAccess?.services ?? [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)

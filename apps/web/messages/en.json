@@ -3035,7 +3035,8 @@
       "ui": "Interface (views / embeds)",
       "client": "Client code",
       "components": "Interface components",
-      "dialIn": "Machine connections (protocol)"
+      "dialIn": "Machine connections (protocol)",
+      "deviceAccess": "Device services"
     },
     "configTitle": "Organization config",
     "save": "Save config",
@@ -3070,7 +3071,8 @@
         "object_store": "holds every attachment and extension package",
         "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",
-        "push_provider": "delivers push notifications with the platform's credentials"
+        "push_provider": "delivers push notifications with the platform's credentials",
+        "device_access": "runs its own long-lived services in conversations' devices"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",

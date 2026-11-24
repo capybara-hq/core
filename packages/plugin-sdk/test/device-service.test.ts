@@ -51,6 +51,19 @@ describe("device service framing", () => {
     }
   });
 
+  it("decodes one message of exactly DEVICE_SERVICE_MAX_MESSAGE fed in 64 KiB chunks", () => {
+    const body = new Uint8Array(DEVICE_SERVICE_MAX_MESSAGE);
+    for (let i = 0; i < body.byteLength; i += 4093) body[i] = i % 251;
+    const wire = encodeServiceMessage(body);
+    const dec = new ServiceMessageDecoder();
+    const got: Uint8Array[] = [];
+    for (let at = 0; at < wire.byteLength; at += 64 * 1024)
+      got.push(...dec.push(wire.subarray(at, at + 64 * 1024)));
+    expect(got.length).toBe(1);
+    expect(got[0]?.byteLength).toBe(DEVICE_SERVICE_MAX_MESSAGE);
+    expect(Buffer.compare(got[0] as Uint8Array, body)).toBe(0);
+  });
+
   it("decoder throws on a declared length above DEVICE_SERVICE_MAX_MESSAGE", () => {
     const header = new Uint8Array(4);
     new DataView(header.buffer).setUint32(0, DEVICE_SERVICE_MAX_MESSAGE + 1);

@@ -50,28 +50,55 @@ export function encodeServiceMessage(body: Uint8Array): Uint8Array {
  * read; the connection should then be closed (the decoder is not usable afterwards).
  */
 export class ServiceMessageDecoder {
-  private buf = new Uint8Array(0);
+  // unread bytes, oldest first from index `first`; `pending` is their total length
+  private chunks: Uint8Array[] = [];
+  private first = 0;
+  private pending = 0;
+  // the declared length of the message being read, once its header is complete
+  private need: number | null = null;
 
   push(chunk: Uint8Array): Uint8Array[] {
     if (chunk.byteLength > 0) {
-      const next = new Uint8Array(this.buf.byteLength + chunk.byteLength);
-      next.set(this.buf, 0);
-      next.set(chunk, this.buf.byteLength);
-      this.buf = next;
+      this.chunks.push(chunk.slice());
+      this.pending += chunk.byteLength;
     }
     const out: Uint8Array[] = [];
-    let at = 0;
-    while (this.buf.byteLength - at >= HEADER) {
-      const len = new DataView(this.buf.buffer, this.buf.byteOffset + at, HEADER).getUint32(0);
-      if (len > DEVICE_SERVICE_MAX_MESSAGE)
-        throw new RangeError(
-          `service message of ${len} bytes exceeds ${DEVICE_SERVICE_MAX_MESSAGE} bytes`,
-        );
-      if (this.buf.byteLength - at - HEADER < len) break;
-      out.push(this.buf.slice(at + HEADER, at + HEADER + len));
-      at += HEADER + len;
+    for (;;) {
+      if (this.need === null) {
+        if (this.pending < HEADER) break;
+        const header = this.take(HEADER);
+        const len = new DataView(header.buffer, header.byteOffset, HEADER).getUint32(0);
+        if (len > DEVICE_SERVICE_MAX_MESSAGE)
+          throw new RangeError(
+            `service message of ${len} bytes exceeds ${DEVICE_SERVICE_MAX_MESSAGE} bytes`,
+          );
+        this.need = len;
+      }
+      if (this.pending < this.need) break;
+      out.push(this.take(this.need));
+      this.need = null;
     }
-    if (at > 0) this.buf = this.buf.slice(at);
+    return out;
+  }
+
+  /** Removes the first `n` (at most `pending`) bytes into one new array, copying each byte once. */
+  private take(n: number): Uint8Array {
+    const out = new Uint8Array(n);
+    let at = 0;
+    while (at < n) {
+      const head = this.chunks[this.first] as Uint8Array;
+      const k = Math.min(head.byteLength, n - at);
+      out.set(head.subarray(0, k), at);
+      at += k;
+      if (k === head.byteLength) this.first++;
+      else this.chunks[this.first] = head.subarray(k);
+    }
+    // drop consumed chunks in one go (no per-chunk shift)
+    if (this.first > 64 || this.first === this.chunks.length) {
+      this.chunks = this.chunks.slice(this.first);
+      this.first = 0;
+    }
+    this.pending -= n;
     return out;
   }
 }

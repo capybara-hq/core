@@ -17,7 +17,11 @@ import {
   parseCreatedTables,
   permissionKeys,
 } from "../../src/extensions/permission-set.js";
-import { permissionGroups, permissionKeyItems } from "../../src/extensions/permission-view.js";
+import {
+  isSensitivePermissionKey,
+  permissionGroups,
+  permissionKeyItems,
+} from "../../src/extensions/permission-view.js";
 
 let dir: string;
 beforeAll(async () => {
@@ -291,5 +295,70 @@ describe("permissions.dialIn", () => {
     expect(permissionKeyItems(["permissions.dialin:fake-dial-in/1"])).toEqual([
       { value: "permissions.dialin:fake-dial-in/1", sensitive: false },
     ]);
+  });
+});
+
+describe("permissions.deviceAccess", () => {
+  const set = (services?: string[]) =>
+    buildPermissionSet({
+      provides: [],
+      config: { deployment: [], org: [] },
+      tables: [],
+      permissions: services ? { deviceAccess: { services } } : {},
+    });
+
+  it("each declared service is a blocking key; a set without it stays as it was", () => {
+    expect(set(["b", "a", "a"]).permissions.deviceAccess).toEqual({ services: ["a", "b"] });
+    expect(permissionKeys(set(["browser"]))).toContain("permissions.deviceaccess:browser");
+    expect(set().permissions).not.toHaveProperty("deviceAccess");
+    expect(blockingKeys(["permissions.deviceaccess:browser"])).toEqual([
+      "permissions.deviceaccess:browser",
+    ]);
+  });
+
+  it("an upgrade adding deviceAccess or a service adds blocking keys (re-approval)", () => {
+    expect(diffPermissions(set(), set(["browser"]))).toEqual({
+      added: ["permissions.deviceaccess:browser"],
+      removed: [],
+    });
+    const d = diffPermissions(set(["browser"]), set(["browser", "recorder"]));
+    expect(d).toEqual({ added: ["permissions.deviceaccess:recorder"], removed: [] });
+    expect(blockingKeys(d.added)).toEqual(["permissions.deviceaccess:recorder"]);
+  });
+
+  it("the keys are valid marketplace permission keys", () => {
+    const keys = permissionKeys(set(["browser"]));
+    const r = parseMarketplaceManifest({
+      schemaVersion: 1,
+      name: "Enterprise",
+      plugins: [
+        {
+          name: "browser",
+          summary: { en: "Browser" },
+          permissions: { keys, sensitive: keys },
+          source: {
+            npm: {
+              package: "@acme/plugin-browser",
+              version: "1.0.0",
+              integrity: `sha512-${"A".repeat(86)}==`,
+            },
+          },
+        },
+      ],
+    });
+    expect("errors" in r ? r.errors : []).toEqual([]);
+  });
+
+  it("the approval display lists the services in a sensitive group of their own", () => {
+    const groups = permissionGroups(set(["browser"]));
+    expect(groups.find((g) => g.category === "deviceAccess")).toMatchObject({
+      items: ["browser"],
+      sensitive: true,
+      entries: [{ value: "browser", sensitive: true, reason: "device_access" }],
+    });
+    expect(permissionKeyItems(["permissions.deviceaccess:browser"])).toEqual([
+      { value: "permissions.deviceaccess:browser", sensitive: true, reason: "device_access" },
+    ]);
+    expect(isSensitivePermissionKey("permissions.deviceaccess:browser")).toBe(true);
   });
 });

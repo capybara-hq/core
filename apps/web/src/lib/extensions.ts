@@ -22,6 +22,7 @@ export type SensitiveReason =
   | "device_provider"
   | "object_store"
   | "push_provider"
+  | "device_access"
   | "context";
 
 /** 权限清单的一项（内核 `PermissionItem`）：逐项的敏感标记与原因码。 */

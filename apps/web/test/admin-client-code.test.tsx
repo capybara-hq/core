@@ -394,6 +394,12 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     ]);
   });
 
+  it("device services are a sensitive group of their own", () => {
+    expect(declaredPermissions(manifest({ deviceAccess: { services: ["browser"] } }))).toEqual([
+      { category: "deviceAccess", items: ["browser"], sensitive: true },
+    ]);
+  });
+
   it("routes show their access; public and embed routes form their own groups", () => {
     const groups = declaredPermissions(
       manifest({

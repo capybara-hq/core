@@ -3023,7 +3023,8 @@
       "ui": "界面（视图 / 嵌入页面）",
       "client": "客户端代码",
       "components": "界面组件",
-      "dialIn": "机器接入（协议）"
+      "dialIn": "机器接入（协议）",
+      "deviceAccess": "设备服务"
     },
     "configTitle": "组织配置",
     "save": "保存配置",
@@ -3058,7 +3059,8 @@
         "object_store": "保管全部附件与扩展包",
         "context": "在启用它的组织的对话中，向模型上下文加入文本",
         "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准",
-        "push_provider": "用平台的凭据发送推送通知"
+        "push_provider": "用平台的凭据发送推送通知",
+        "device_access": "在会话的设备里运行自己的常驻服务"
       },
       "warnings": "迁移警告",
       "warningsHint": "扩展迁移只能做增量变更：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
