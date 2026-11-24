@@ -807,8 +807,9 @@ it("a network change under a name-only ifRunning ensure restarts the launched sp
   expect(restarted).toMatchObject({ ok: true, result: { state: "running" } });
   expect(f.requests).toHaveLength(2);
   // the same command (entry, args, env) as the reviewed launch, never the request's empty spec
-  expect(f.requests[1]?.args.command).toBe(f.requests[0]?.args.command);
-  expect(f.requests[1]?.args.env?.FOO).toBe("bar");
+  const exec = (r: MacWorkerRequest | undefined) => (r?.kind === "exec" ? r.args : undefined);
+  expect(exec(f.requests[1])?.command).toBe(exec(f.requests[0])?.command);
+  expect(exec(f.requests[1])?.env?.FOO).toBe("bar");
   expect([...(f.requests[1]?.grant.hosts ?? [])].sort()).toEqual([
     "a.example.com",
     "b.example.com",

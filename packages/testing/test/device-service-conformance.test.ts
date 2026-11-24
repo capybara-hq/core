@@ -41,8 +41,7 @@ function memoryProvider(flaw?: Flaw): Services {
   return {
     async ensureService(_h, spec, _signal, opts) {
       if (opts?.ifRunning !== true || flaw === "starts-if-running") {
-        if (flaw === "refuses-name-only" && spec.entry === "")
-          throw new Error("invalid entry");
+        if (flaw === "refuses-name-only" && spec.entry === "") throw new Error("invalid entry");
         if (!running.has(spec.name)) {
           running.set(spec.name, new Date().toISOString());
           const dir = flaw === "entry-elsewhere" ? `/state/${spec.name}` : `/code/${spec.name}`;
@@ -92,9 +91,7 @@ describe("runDeviceServiceConformance", () => {
   });
 
   it("fails a provider that refuses the kernel's name-only ifRunning spec", async () => {
-    await expect(run(memoryProvider("refuses-name-only")).result).rejects.toThrow(
-      /invalid entry/,
-    );
+    await expect(run(memoryProvider("refuses-name-only")).result).rejects.toThrow(/invalid entry/);
   });
 
   it("fails a provider whose service does not run its entry from codeDir ?? stateDir", async () => {
