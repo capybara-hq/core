@@ -313,11 +313,18 @@ export class ServiceSupervisor {
     this.now = o.now ?? (() => new Date());
   }
 
+  /**
+   * The service's status with its state directory (`<device dir>/svc/<name>`), known before its
+   * first start and the same for every start of the name on this device.
+   */
   status(name: string): DeviceServiceStatus {
+    if (!DEVICE_SERVICE_NAME_RE.test(name))
+      throw new ServiceSpecError(`Invalid device service name: ${name}`);
+    const stateDir = join(serviceRoot(this.o.deviceDir), name);
     const r = this.running.get(name);
     return r
-      ? { name, state: "running", startedAt: r.startedAt }
-      : { name, state: "stopped", startedAt: null };
+      ? { name, state: "running", startedAt: r.startedAt, stateDir }
+      : { name, state: "stopped", startedAt: null, stateDir };
   }
 
   /** Resolves once the service's current process is gone (now, when none runs). */

@@ -66,8 +66,8 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
     { op: "service.ensure", spec: spec({ "main.js": "// main", "lib/x.js": "// x" }) },
     signal(),
   );
-  expect(res).toMatchObject({ ok: true, result: { name: "browser", state: "running" } });
   const stateDir = join(deviceDir, "svc", "browser");
+  expect(res).toMatchObject({ ok: true, result: { name: "browser", state: "running", stateDir } });
   expect(await readFile(join(stateDir, "main.js"), "utf8")).toBe("// main");
   expect(await readFile(join(stateDir, "lib", "x.js"), "utf8")).toBe("// x");
   expect(echo.calls).toHaveLength(1);
@@ -113,10 +113,18 @@ it("service.request round-trips via the socket", async () => {
 });
 
 it("service.status and service.stop report and end the service", async () => {
-  const { supervisor, echo } = await fixture();
+  const { deviceDir, supervisor, echo } = await fixture();
   expect(
     await serveServiceOp(supervisor, { op: "service.status", name: "browser" }, signal()),
-  ).toEqual({ ok: true, result: { name: "browser", state: "stopped", startedAt: null } });
+  ).toEqual({
+    ok: true,
+    result: {
+      name: "browser",
+      state: "stopped",
+      startedAt: null,
+      stateDir: join(deviceDir, "svc", "browser"),
+    },
+  });
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   expect(
     await serveServiceOp(supervisor, { op: "service.stop", name: "browser" }, signal()),
@@ -140,7 +148,7 @@ it("service.status and service.stop report and end the service", async () => {
 });
 
 it("a service that exits is reported stopped and is never restarted", async () => {
-  const { supervisor, echo } = await fixture();
+  const { deviceDir, supervisor, echo } = await fixture();
   await supervisor.ensure({ ...spec(), files: { "main.js": bytes("//") } }, undefined, signal());
   echo.exitAll(1);
   await supervisor.exited("browser");
@@ -148,6 +156,7 @@ it("a service that exits is reported stopped and is never restarted", async () =
     name: "browser",
     state: "stopped",
     startedAt: null,
+    stateDir: join(deviceDir, "svc", "browser"),
   });
   expect(echo.calls).toHaveLength(1);
 });
@@ -335,14 +344,22 @@ it("spec files cannot use the socket or temporary names", async () => {
 });
 
 it("ifRunning starts nothing for a stopped service", async () => {
-  const { supervisor, echo } = await fixture();
+  const { deviceDir, supervisor, echo } = await fixture();
   expect(
     await serveServiceOp(
       supervisor,
       { op: "service.ensure", spec: spec(), ifRunning: true },
       signal(),
     ),
-  ).toEqual({ ok: true, result: { name: "browser", state: "stopped", startedAt: null } });
+  ).toEqual({
+    ok: true,
+    result: {
+      name: "browser",
+      state: "stopped",
+      startedAt: null,
+      stateDir: join(deviceDir, "svc", "browser"),
+    },
+  });
   expect(echo.calls).toHaveLength(0);
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   expect(
