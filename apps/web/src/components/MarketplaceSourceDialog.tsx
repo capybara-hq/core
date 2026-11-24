@@ -86,6 +86,9 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
   const [lastSuggested, setLastSuggested] = useState("");
   const [busy, setBusy] = useState<"save" | "token">();
   const [error, setError] = useState<Problem>();
+  // 清除令牌 answered: the dialog stays open on the source as it was before, without a token
+  const [tokenCleared, setTokenCleared] = useState(false);
+  const hasToken = editing && source.hasToken && !tokenCleared;
   const git = form === "git";
   const invalidates = () => [marketplacesQuery().queryKey, ...sourceChangeKeys()];
   const create = useAppMutation({ fn: addMarketplace, invalidates });
@@ -99,20 +102,25 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
   const usernameChanged = git && username.trim() !== (source?.username ?? "");
   const dirty =
     !editing ||
-    name !== source.name ||
-    url !== source.url ||
+    name.trim() !== source.name ||
+    url.trim() !== source.url ||
     token !== "" ||
     refChanged ||
     usernameChanged;
   const valid = name.trim() !== "" && url.trim() !== "";
 
-  const run = async (kind: NonNullable<typeof busy>, op: () => Promise<Marketplace>) => {
+  const run = async (
+    kind: NonNullable<typeof busy>,
+    op: () => Promise<Marketplace>,
+    keepOpen = false,
+  ) => {
     setBusy(kind);
     setError(undefined);
     try {
       const done = await op();
       toast.success(t(editing ? "saved" : "added", { name: done.name }));
-      onClose();
+      if (keepOpen) setBusy(undefined);
+      else onClose();
     } catch (e) {
       setError(problem(e));
       setBusy(undefined);
@@ -123,8 +131,8 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
     run("save", () =>
       editing
         ? update.mutateAsync({
-            ...(name !== source.name && { name: name.trim() }),
-            ...(url !== source.url && { url: url.trim() }),
+            ...(name.trim() !== source.name && { name: name.trim() }),
+            ...(url.trim() !== source.url && { url: url.trim() }),
             ...(refChanged && { ref: ref.trim() === "" ? null : ref.trim() }),
             ...(usernameChanged && { username: username.trim() === "" ? null : username.trim() }),
             ...(token !== "" && { token }),
@@ -154,11 +162,21 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
           <Button variant="ghost" disabled={busy !== undefined} onClick={onClose}>
             {t("cancel")}
           </Button>
-          {editing && source.hasToken && (
+          {hasToken && (
             <Button
               loading={busy === "token"}
               disabled={busy !== undefined}
-              onClick={() => void run("token", () => update.mutateAsync({ token: null }))}
+              onClick={() =>
+                void run(
+                  "token",
+                  async () => {
+                    const next = await update.mutateAsync({ token: null });
+                    setTokenCleared(true);
+                    return next;
+                  },
+                  true,
+                )
+              }
             >
               {t("clearToken")}
             </Button>
@@ -220,11 +238,7 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
             </Field>
           </>
         )}
-        <Field
-          label={t("token")}
-          help={editing && source.hasToken ? t("tokenSet") : t("tokenHelp")}
-          optional
-        >
+        <Field label={t("token")} help={hasToken ? t("tokenSet") : t("tokenHelp")} optional>
           <Input
             type="password"
             autoComplete="off"

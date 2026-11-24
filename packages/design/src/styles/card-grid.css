@@ -151,7 +151,8 @@
 }
 /* The buttons sit in ClassForms' wide copy (a box-less wrapper) on a linked card, directly in
    the foot on a card without a link. */
-.cb-object-card-foot .cb-btn {
+.cb-object-card-foot .cb-btn,
+.cb-object-card-foot .cb-switch {
   position: relative;
   z-index: 1;
   flex: none;
@@ -274,6 +275,7 @@
      one button, the chevron. */
   .cb-object-card-state,
   .cb-object-card-foot .cb-btn,
+  .cb-object-card-foot .cb-switch,
   .cb-object-card-chevron {
     grid-row: 1 / span 2;
   }

@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Button, IconButton, LinkButton } from "../controls/index";
+import { Button, IconButton, LinkButton, Switch } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { ActionSheet, actionSheetItems } from "../overlays/action-sheet";
@@ -92,6 +92,17 @@ export type ObjectCardLoaded = {
    * second button. Without a primary it is still drawn as the card's one button.
    */
   oneButton?: boolean;
+  /**
+   * An on / off switch in the card's action area, before its buttons (a marketplace source's
+   * 启用 / 停用). `label` names it for assistive technology; it waits while `loading` or `busy`.
+   */
+  toggle?: {
+    label: string;
+    checked: boolean;
+    onChange(next: boolean): void;
+    disabled?: boolean;
+    loading?: boolean;
+  };
   /** The `li`'s id: a page anchor (`#connector-<id>`) that scrolls to this card. */
   id?: string;
   loading?: false;
@@ -475,6 +486,7 @@ function LoadedCard({
   primary,
   menu,
   oneButton = false,
+  toggle,
   id,
 }: ObjectCardLoaded) {
   const Link = useDesignLink();
@@ -771,6 +783,16 @@ function LoadedCard({
                     </Fragment>
                   ))}
           </span>
+          {toggle ? (
+            <Switch
+              label={toggle.label}
+              checked={toggle.checked}
+              onChange={toggle.onChange}
+              disabled={toggle.disabled === true || toggle.loading === true || busy}
+              tabIndex={tabIndex}
+              aria-describedby={nameId}
+            />
+          ) : null}
           {/* Interaction differs per class (spec §6.64): buttons from 600, the action sheet below. */}
           <ClassForms
             compact={href === undefined && buttons[0] !== undefined ? button(buttons[0], 0) : null}

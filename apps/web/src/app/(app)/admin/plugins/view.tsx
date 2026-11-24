@@ -46,8 +46,9 @@ import NotFound from "../../not-found";
  * compatible version, else 运行中. A platform plugin whose marketplace has a newer version has one
  * action, 更新到 <version> (maintainer decision 2026-11-13): it stages that version and opens the
  * one wizard (the import review, then the update preview, confirmed together); a refusal is the
- * list's fail callout. The head (shared by the three tabs) holds 上传插件包; the search narrows by name. From the query cache (the layout prefetched the items and
- * the head's counts on a first load); the marketplaces (source labels) and the orgs (named scope)
+ * list's fail callout. The head (shared by the three tabs) holds 上传插件包; the search narrows
+ * by name. From the query cache (the layout prefetched the items and the head's counts on a
+ * first load); the marketplaces (source labels) and the orgs (named scope)
  * are sections.
  */
 export default function AdminPluginsView() {

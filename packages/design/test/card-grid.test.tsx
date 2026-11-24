@@ -85,6 +85,35 @@ describe("ObjectCard", () => {
     expect(name.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("draws a switch before the buttons that calls onChange and waits while loading", async () => {
+    const onChange = vi.fn();
+    withNav(
+      grid([
+        card({
+          toggle: { label: "启用 X", checked: true, onChange },
+          primary: { label: "刷新", onSelect: () => {} },
+        }),
+      ]),
+    );
+    const sw = screen.getByRole("switch", { name: "启用 X" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(
+      sw.compareDocumentPosition(screen.getByRole("button", { name: "刷新" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await userEvent.setup().click(sw);
+    expect(onChange).toHaveBeenCalledWith(false);
+  });
+
+  it("disables the switch while loading", () => {
+    withNav(
+      grid([
+        card({ toggle: { label: "启用 X", checked: false, onChange: () => {}, loading: true } }),
+      ]),
+    );
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("draws no chip box without chips", () => {
     withNav(grid([card({ chips: [] })]));
     expect(document.querySelector(".cb-object-card-chips")).toBeNull();

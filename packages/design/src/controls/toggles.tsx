@@ -103,16 +103,20 @@ export function Switch({
   onChange,
   label,
   disabled,
+  tabIndex,
   ...a11y
 }: ControlA11y & {
   disabled?: boolean;
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
+  /** A card's roving tab stop (CardGrid): left out, the browser's own order. */
+  tabIndex?: number | undefined;
 }) {
   return (
     <button
       {...a11y}
+      {...(tabIndex !== undefined ? { tabIndex } : {})}
       type="button"
       role="switch"
       disabled={disabled}

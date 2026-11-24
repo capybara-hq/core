@@ -1,11 +1,16 @@
 "use client";
 
 import {
+  Button,
   DangerConfirm,
+  Dialog,
+  ErrorDetail,
   formatDateTime,
   ListPage,
   type MenuItem,
   ObjectCard,
+  Stack,
+  Text,
   useTimeZone,
   useToast,
 } from "@capybara-hq/design";
@@ -38,11 +43,11 @@ import NotFound from "../../../not-found";
 type SourceList = { items: Marketplace[]; offline: boolean };
 
 /**
- * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards; 添加市场源 on
- * the 插件 head leads here, its entries are the 插件 tab 市场). One card per source with its kind,
- * address, state and "Refresh now"; 启用 / 停用 (there is no switch slot on a card), 编辑 and 删除
- * are in the ⋯ menu. The official marketplace is read-only (its address is in the deployment
- * config), as is a config-managed one: only enable / disable and refresh. Adding and editing a
+ * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards;
+ * the 插件 market filter row leads here, its entries are the 插件 tab 市场). One card per source
+ * with its kind, address, state, the 启用 / 停用 switch and "Refresh now"; 详情 (the raw error and
+ * the skipped entries), 编辑 and 删除 are in the ⋯ menu. The official marketplace is read-only (its
+ * address is in the deployment config), as is a config-managed one: only the switch and refresh. Adding and editing a
  * custom source is the {@link MarketplaceSourceDialog} (a marketplace.json URL or a git
  * repository). From the query cache (the layout prefetched it on a first load): each change
  * reads the list again and invalidates the entries and the catalog's marks.
@@ -136,9 +141,6 @@ function Sources({ data }: { data: SourceList }) {
   );
 }
 
-/** Most skipped entries listed under a marketplace (the rest are counted). */
-const SKIPPED_SHOWN = 20;
-
 /** `host/path` of an address (a git `owner/repo` shorthand stays as it is). */
 function hostPath(url: string): string {
   try {
@@ -169,6 +171,7 @@ function SourceCard({
   const errorMessage = useErrorMessage();
   const problem = useProblem();
   const [confirm, setConfirm] = useState(false);
+  const [details, setDetails] = useState(false);
   const builtin = source.builtin;
   // Set by the deployment config: only the switch and the refresh work
   const locked = builtin || source.managed === "config";
@@ -215,28 +218,18 @@ function SourceCard({
 
   const skipped = source.skipped ?? [];
   const raw = source.lastStatus === "error" ? (source.lastError ?? "") : "";
+  const errorSentence =
+    source.lastStatus === "error" ? t(`statusValue.errors.${marketplaceErrorKind(raw)}`) : null;
   const note = builtin ? (offline ? t("offline") : t("officialNote")) : null;
-  const description = [
-    note,
-    source.managed === "config" ? t("managed") : null,
-    raw !== "" ? raw : null,
-    ...skipped.slice(0, SKIPPED_SHOWN).map((x) =>
-      t("skipped.line", {
-        name: x.name,
-        reason: t.has(`skipped.reasons.${x.reason}`) ? t(`skipped.reasons.${x.reason}`) : x.reason,
-      }),
-    ),
-    skipped.length > SKIPPED_SHOWN
-      ? t("skipped.more", { n: skipped.length - SKIPPED_SHOWN })
-      : null,
-  ]
+  // The error sentence leads, then the notes; the raw text and the skipped lines are in 详情
+  const description = [errorSentence, note, source.managed === "config" ? t("managed") : null]
     .filter((x): x is string => x !== null)
     .join(" ");
 
   const state = !source.enabled
     ? { label: t("disabled"), tone: "muted" as const }
     : source.lastStatus === "error"
-      ? { label: t(`statusValue.errors.${marketplaceErrorKind(raw)}`), tone: "fail" as const }
+      ? { label: errorSentence ?? "", tone: "fail" as const }
       : source.lastStatus === "never"
         ? { label: t("statusValue.never"), tone: "muted" as const }
         : {
@@ -250,14 +243,9 @@ function SourceCard({
           };
 
   const menu: MenuItem[] = [
-    ...(source.disabledByConfig
-      ? []
-      : [
-          {
-            label: source.enabled ? t("disable") : t("enable"),
-            onSelect: () => void toggle(),
-          },
-        ]),
+    ...(errorSentence !== null || skipped.length > 0
+      ? [{ label: t("details"), onSelect: () => setDetails(true) }]
+      : []),
     ...(locked
       ? []
       : [
@@ -285,6 +273,13 @@ function SourceCard({
         ]}
         state={state}
         busy={busy}
+        toggle={{
+          label: t("enabledLabel", { name: title }),
+          checked: source.enabled,
+          disabled: source.disabledByConfig,
+          loading: update.isPending,
+          onChange: () => void toggle(),
+        }}
         {...(source.enabled
           ? {
               primary: {
@@ -296,6 +291,41 @@ function SourceCard({
           : {})}
         {...(menu.length > 0 ? { menu } : {})}
       />
+      <Dialog
+        open={details}
+        onOpenChange={setDetails}
+        title={t("detailsTitle", { name: title })}
+        size={640}
+        footer={
+          <Button variant="primary" onClick={() => setDetails(false)}>
+            {t("close")}
+          </Button>
+        }
+      >
+        <Stack gap={12}>
+          {errorSentence !== null && (
+            <ErrorDetail summary={errorSentence} {...(raw !== "" ? { detail: raw } : {})} />
+          )}
+          {skipped.length > 0 && (
+            <Stack gap={4}>
+              <Text variant="small" tone="warn">
+                {t("skipped.title", { n: skipped.length })}
+              </Text>
+              {skipped.map((x, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: names may repeat; the list is static
+                <Text key={i} variant="small" tone="muted">
+                  {t("skipped.line", {
+                    name: x.name,
+                    reason: t.has(`skipped.reasons.${x.reason}`)
+                      ? t(`skipped.reasons.${x.reason}`)
+                      : x.reason,
+                  })}
+                </Text>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      </Dialog>
       {!locked && (
         <DangerConfirm
           open={confirm}

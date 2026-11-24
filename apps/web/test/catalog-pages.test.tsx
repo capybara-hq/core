@@ -2459,33 +2459,43 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     },
   );
 
-  it("a failing source shows the error sentence; the raw text is the description", async () => {
+  it("a failing source's description leads with the error sentence; 详情 shows the raw text", async () => {
     stubApi(list([OFFICIAL, ACME]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const acme = card("Acme");
-    expect(within(acme).getByText(s.statusValue.errors.http_status)).toBeTruthy();
-    expect(within(acme).getByText("HTTP 500")).toBeTruthy();
+    const desc = acme.querySelector('[data-part="object-card-description"]') as HTMLElement;
+    expect(desc.textContent?.startsWith(s.statusValue.errors.http_status)).toBe(true);
+    expect(within(acme).queryByText("HTTP 500")).toBeNull();
+    await open("Acme");
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "Raw error" }));
+    expect(within(dialog).getByText("HTTP 500")).toBeTruthy();
   });
 
   it("the official card is read-only: enable and disable only, no edit or delete; offline says so", async () => {
     stubApi(list([OFFICIAL], false));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     expect(within(card(s.official)).getByText(s.officialNote)).toBeTruthy();
-    // A menu of one is no menu: 停用 is drawn as the card's second button
+    // The switch is on the card; there is no menu (no edit, no delete)
     const official = card(s.official);
-    expect(within(official).getByRole("button", { name: s.disable })).toBeTruthy();
+    const sw = within(official).getByRole("switch", {
+      name: fill(s.enabledLabel, { name: s.official }),
+    });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
     expect(within(official).queryByRole("button", { name: RAW_MORE.en })).toBeNull();
-    expect(within(official).queryByRole("button", { name: s.edit })).toBeNull();
-    expect(within(official).queryByRole("button", { name: s.remove })).toBeNull();
     cleanup();
     vi.unstubAllGlobals();
-    // The deployment config turns it off: the offline note, no refresh, no switch
+    // The deployment config turns it off: the offline note, no refresh, a read-only switch
     stubApi(list([{ ...OFFICIAL, enabled: false, disabledByConfig: true }], true));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const offlineCard = card(s.official);
     expect(within(offlineCard).getByText(s.offline)).toBeTruthy();
     expect(within(offlineCard).queryByRole("button", { name: s.refresh })).toBeNull();
     expect(within(offlineCard).queryByRole("button", { name: RAW_MORE.en })).toBeNull();
+    const off = within(offlineCard).getByRole("switch") as HTMLButtonElement;
+    expect(off.disabled).toBe(true);
+    expect(off.getAttribute("aria-checked")).toBe("false");
   });
 
   it("a config-managed source has only its switch and refresh, and says it is managed", async () => {
@@ -2493,20 +2503,42 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     expect(within(card("Managed")).getByText(s.managed)).toBeTruthy();
     const managed = card("Managed");
-    expect(within(managed).getByRole("button", { name: s.disable })).toBeTruthy();
+    const sw = within(managed).getByRole("switch") as HTMLButtonElement;
+    expect(sw.disabled).toBe(false);
     expect(within(managed).queryByRole("button", { name: RAW_MORE.en })).toBeNull();
   });
 
-  it("停用 / 启用 from the menu sends enabled", async () => {
+  it("the card's switch sends enabled", async () => {
     const calls = stubApi({
       ...list([OFFICIAL, ACME]),
       "PATCH /api/v1/admin/marketplaces/s2": () => json(200, { ...ACME, enabled: false }),
     });
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    await open("Acme");
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: s.disable }));
+    await userEvent
+      .setup()
+      .click(
+        within(card("Acme")).getByRole("switch", { name: fill(s.enabledLabel, { name: "Acme" }) }),
+      );
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ enabled: false });
+  });
+
+  it("a failing refresh and a failing toggle show an error toast", async () => {
+    stubApi({
+      ...list([OFFICIAL, ACME]),
+      "POST /api/v1/admin/marketplaces/s2/refresh": () =>
+        json(502, { error: { code: "internal", message: "refresh boom" } }),
+      "PATCH /api/v1/admin/marketplaces/s2": () =>
+        json(500, { error: { code: "internal", message: "toggle boom" } }),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(within(card("Acme")).getByRole("button", { name: s.refresh }));
+    expect(await screen.findAllByRole("alert")).toHaveLength(1);
+    await user.click(
+      within(card("Acme")).getByRole("switch", { name: fill(s.enabledLabel, { name: "Acme" }) }),
+    );
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
   });
 
   it("a git source shows its ref and last commit; skipped entries are counted and listed", async () => {
@@ -2526,27 +2558,27 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     expect(within(c).getByText(new RegExp(fill(s.gitInfo, { ref: "release" })))).toBeTruthy();
     expect(within(c).getByText(new RegExp(fill(s.lastCommit, { commit: "0123456" })))).toBeTruthy();
     expect(within(c).getByText(/2 entries were skipped by the last refresh/)).toBeTruthy();
-    expect(
-      within(c).getByText(
-        new RegExp(
-          fill(s.skipped.line, {
-            name: "npm-thing",
-            reason: s.skipped.reasons.claude_npm_unpinned,
-          }),
-        ),
-      ),
-    ).toBeTruthy();
+    // 详情 lists every skipped entry with its reason
+    await open("Acme git");
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
+    const dialog = await screen.findByRole("dialog");
+    for (const [name, reason] of [
+      ["npm-thing", s.skipped.reasons.claude_npm_unpinned],
+      ["Bad Name", s.skipped.reasons.invalid_name],
+    ] as const) {
+      expect(within(dialog).getByText(fill(s.skipped.line, { name, reason }))).toBeTruthy();
+    }
   });
 
-  it("a long skipped list shows 20 and how many more", async () => {
+  it("a long skipped list is listed in full in 详情", async () => {
     const many = Array.from({ length: 25 }, () => ({ name: "dup", reason: "invalid_entry" }));
     stubApi(list([{ ...GIT, skipped: many }]));
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    const text = card("Acme git").querySelector('[data-part="object-card-description"]')
-      ?.textContent as string;
+    await open("Acme git");
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
+    const dialog = await screen.findByRole("dialog");
     const line = fill(s.skipped.line, { name: "dup", reason: s.skipped.reasons.invalid_entry });
-    expect(text.split(line)).toHaveLength(21);
-    expect(text).toContain(fill(s.skipped.more, { n: 5 }));
+    expect(within(dialog).getAllByText(line)).toHaveLength(25);
   });
 
   it("编辑 opens the dialog prefilled; saving with an empty token keeps it", async () => {
@@ -3827,7 +3859,8 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     await renderRouteWithCache(entriesPath(), lastStubRoutes());
     const list = await screen.findByRole("list", { name: c.title });
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    const meta = (name: string) => row(name).querySelector(".cb-object-card-meta")?.textContent ?? "";
+    const meta = (name: string) =>
+      row(name).querySelector(".cb-object-card-meta")?.textContent ?? "";
     expect(meta("pinned")).toContain(fill(c.gitPinned, { commit: "89abcde" }));
     expect(meta("follows")).toContain(fill(c.gitFollows, { ref: "main" }));
     expect(meta("in-repo")).toContain(fill(c.pathSource, { path: "./plugins/x" }));

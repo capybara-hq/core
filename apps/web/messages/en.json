@@ -4985,7 +4985,7 @@
         "allSources": "All sources"
       },
       "actions": {
-        "addSource": "Add source",
+        "addSource": "Add marketplace source",
         "sources": "Sources",
         "upload": "Upload plugin package"
       },
@@ -5310,21 +5310,19 @@
         "search": "Search sources",
         "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
+        "enabledLabel": "Enable {name}",
+        "details": "Details",
+        "detailsTitle": "{name}: details",
+        "close": "Close",
         "addConfirm": "Add",
         "cancel": "Cancel",
         "edit": "Edit",
         "editTitle": "Edit {name}",
         "officialNote": "Its address is set in the deployment config (marketplaces.official.*) and is read-only here.",
-        "enable": "Enable",
-        "disable": "Disable",
         "disabled": "Disabled",
         "official": "Capybara",
-        "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
         "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
-        "enabledLabel": "Enable {name}",
         "url": "URL",
-        "mirrors": "Mirrors",
-        "status": "Status",
         "statusValue": {
           "ok": "OK ({n} entries, {at})",
           "never": "Not fetched yet",
@@ -5339,9 +5337,7 @@
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
-        "custom": "Custom marketplaces",
         "customHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
-        "customEmpty": "No custom marketplaces yet.",
         "name": "Name",
         "token": "Token",
         "tokenHelp": "Optional; leave empty to keep it unchanged.",
@@ -5375,7 +5371,6 @@
         "skipped": {
           "title": "{n, plural, one {# entry was} other {# entries were}} skipped by the last refresh",
           "line": "{name}: {reason}",
-          "more": "…and {n} more",
           "reasons": {
             "claude_npm_unpinned": "an npm source without integrity, not supported yet",
             "claude_source_unsupported": "this kind of source is not supported",

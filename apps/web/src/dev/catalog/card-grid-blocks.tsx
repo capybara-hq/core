@@ -151,6 +151,27 @@ const FACT_CARDS: ObjectCardProps[] = [
   },
 ];
 
+/** A card with an on / off switch beside its button (a marketplace source). */
+const TOGGLE_CARDS: ObjectCardProps[] = [
+  {
+    avatar: { icon: "store" },
+    title: "Acme",
+    description: "https://catalog.acme.com/index.json",
+    meta: ["marketplace.json"],
+    state: { label: "正常", tone: "ok" },
+    toggle: { label: "启用 Acme", checked: true, onChange: noop },
+    primary: { label: "立即刷新", onSelect: noop },
+    menu: [{ label: "编辑", onSelect: noop }],
+  },
+  {
+    avatar: { icon: "store" },
+    title: "Capybara",
+    meta: ["git"],
+    state: { label: "已停用", tone: "muted" },
+    toggle: { label: "启用 Capybara", checked: false, onChange: noop },
+  },
+];
+
 function grid(label: string, cards: ObjectCardProps[]) {
   return (
     <CardGrid label={label}>
@@ -169,6 +190,9 @@ function cardGridBlocks(): ReactNode {
         {grid("智能体", AGENT_CARDS)}
       </RefBlock>
       {/* A long name keeps one line, a long description two, a long meta one; all with their tooltips. */}
+      <RefBlock id="card-grid-toggle" width={W} pad>
+        {grid("市场源", TOGGLE_CARDS)}
+      </RefBlock>
       <RefBlock id="card-grid-long-text" width={W} pad>
         {grid("智能体", LONG)}
       </RefBlock>
