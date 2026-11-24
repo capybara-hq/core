@@ -192,9 +192,11 @@ export interface DeviceAccessCtx {
   ): Promise<Uint8Array>;
   /**
    * The service saw requests to `hosts` refused by the device's network allowlist during this
-   * call: the kernel raises the network ask in the call's conversation. Only an ask.
+   * call: the kernel raises the network ask in the call's conversation once the handler returns
+   * (and runs the call again once the person approves). Only an ask. `opts.url` is the page the
+   * refusals came from, shown with the ask.
    */
-  reportBlockedHosts(call: ToolCallContext, hosts: string[]): void;
+  reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: { url?: string }): void;
   /**
    * A short-lived, single-use ticket for one viewer stream to the service (the person's panel
    * opens `url` as a WebSocket). The account must be the conversation's owner.

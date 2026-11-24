@@ -656,6 +656,12 @@ export interface DeviceProvider {
   /** Stops the named service; succeeds when it is not running. */
   stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
   /**
+   * The named service's state in the instance, without starting it (optional): the kernel runs
+   * the command review of a launch only when this says `stopped`, and on every
+   * {@link DeviceProvider.ensureService} when the provider lacks it.
+   */
+  serviceStatus?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<DeviceServiceStatus>;
+  /**
    * One `request` connection to the named service's socket: sends `body`, resolves the service's
    * one answer. Throws when the service is not running, on timeout and on abort.
    */

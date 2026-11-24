@@ -964,7 +964,9 @@ export interface DeviceAccessCtx {
         done: boolean;
     }): Promise<void>;
     ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
-    reportBlockedHosts(call: ToolCallContext, hosts: string[]): void;
+    reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: {
+        url?: string;
+    }): void;
     request(call: ToolCallContext, req: {
         service: string;
         body: Uint8Array;
@@ -1076,6 +1078,7 @@ export interface DeviceProvider {
         timeoutMs: number;
         signal: AbortSignal;
     }): Promise<Uint8Array>;
+    serviceStatus?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<DeviceServiceStatus>;
     readonly sessionIsolation?: boolean;
     stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
         size: number;

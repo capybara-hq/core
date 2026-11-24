@@ -235,8 +235,9 @@ export interface ToolCallContext {
    * The key of this logical call for idempotent side effects: 64 lowercase hex characters derived
    * from the conversation, the run and `callId`. The same for every invocation of the call
    * (each `InputRequired` round), different for every other call, including a later call the
-   * model makes to retry it. Optional in the type so older extensions compile; the kernel always
-   * passes it.
+   * model makes to retry it. A re-run of the same call after its network ask was approved
+   * (`ctx.deviceAccess.reportBlockedHosts`) keeps the key too. Optional in the type so older
+   * extensions compile; the kernel always passes it.
    */
   idempotencyKey?: string;
   signal: AbortSignal;
