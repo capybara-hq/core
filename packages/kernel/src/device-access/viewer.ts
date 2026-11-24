@@ -9,9 +9,11 @@ import WebSocket, { type RawData } from "ws";
 import type { Keyring } from "../ctx/secrets.js";
 import { DialInGateway } from "../dial-in/gateway.js";
 import { DialInHandlers } from "../dial-in/handlers.js";
+import { DEVICE_STREAM_MESSAGE_TOO_BIG } from "../dial-in/streams.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { withOrgScope } from "../infra/database/org-scope.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -141,6 +143,7 @@ export class WsEnd implements PipeEnd {
   private missedPongs = 0;
   private ended = false;
   private timer: NodeJS.Timeout | undefined;
+  private overLimit = false;
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly messages: AsyncIterable<Uint8Array>;
 
@@ -151,6 +154,7 @@ export class WsEnd implements PipeEnd {
     ws.on("message", (data: RawData) => {
       const m = toBytes(data);
       if (opts.maxMessageBytes !== undefined && m.byteLength > opts.maxMessageBytes) {
+        this.overLimit = true;
         this.close(1009, "message too big");
         return;
       }
@@ -165,8 +169,11 @@ export class WsEnd implements PipeEnd {
     ws.on("pong", () => {
       this.missedPongs = 0;
     });
-    // an error is followed by close; without a listener it would be thrown
-    ws.on("error", () => {});
+    // an error is followed by close; without a listener it would be thrown. A message over the
+    // socket's own maxPayload is one (ws closes the socket with 1009)
+    ws.on("error", (err: Error & { code?: string }) => {
+      if (err.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH") this.overLimit = true;
+    });
     this.closed = new Promise((resolve) => {
       ws.once("close", (code: number, reason: Buffer) => {
         this.ended = true;
@@ -191,6 +198,11 @@ export class WsEnd implements PipeEnd {
 
   get isOpen(): boolean {
     return this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /** Whether the socket ended because a received message was over its limit. */
+  get tooBig(): boolean {
+    return this.overLimit;
   }
 
   /** Whether the socket's reads are paused (a test seam). */
@@ -276,9 +288,15 @@ async function pump(from: AsyncIterable<Uint8Array>, to: PipeEnd): Promise<{ fai
   }
 }
 
-/** The stream's close when it already happened (one turn of the event loop), else null. */
-const closedNow = (stream: DeviceStream): Promise<{ reason: string } | null> =>
-  Promise.race([stream.closed, new Promise<null>((resolve) => setImmediate(() => resolve(null)))]);
+/**
+ * Whether a refused send was a message too big for the stream's frames: the error carries
+ * {@link DEVICE_STREAM_MESSAGE_TOO_BIG} as its `code` (the dial-in stream's; a provider's stream
+ * may use the same code).
+ */
+const isTooBig = (e: unknown): boolean =>
+  typeof e === "object" &&
+  e !== null &&
+  (e as { code?: unknown }).code === DEVICE_STREAM_MESSAGE_TOO_BIG;
 
 /** Resolves once `s` aborts. */
 const abortedOf = (s: AbortSignal): Promise<void> =>
@@ -452,9 +470,13 @@ export class DeviceStreamViewers {
     return this.locks.lease(`${HOP_SEEN_PREFIX}${ticketId}`, "1", HOP_MAX_AGE_MS * 2);
   }
 
-  /** Serves a browser's viewer socket for the ticket `ticketId` until everything settled. */
-  serve(socket: WebSocket, ticketId: string): Promise<void> {
-    return this.track(socket, (end) => this.serveViewer(end, ticketId));
+  /**
+   * Serves a browser's viewer socket for the ticket `ticketId` until everything settled.
+   * `onTaken` runs once a valid ticket was taken (the route gives the attempt back to its
+   * per-address limit).
+   */
+  serve(socket: WebSocket, ticketId: string, onTaken?: () => Promise<void>): Promise<void> {
+    return this.track(socket, (end) => this.serveViewer(end, ticketId, onTaken));
   }
 
   /** Serves a hop from another gateway replica (its headers were verified and claimed). */
@@ -497,7 +519,11 @@ export class DeviceStreamViewers {
     return entry.done;
   }
 
-  private async serveViewer(end: WsEnd, ticketId: string): Promise<void> {
+  private async serveViewer(
+    end: WsEnd,
+    ticketId: string,
+    onTaken?: () => Promise<void>,
+  ): Promise<void> {
     if (!TICKET_ID_RE.test(ticketId)) {
       end.close(VIEWER_CLOSE.badTicket, "invalid ticket");
       return;
@@ -507,13 +533,20 @@ export class DeviceStreamViewers {
       end.close(VIEWER_CLOSE.badTicket, "invalid ticket");
       return;
     }
+    await onTaken?.().catch((err: unknown) =>
+      this.log.warn("cannot refund a device stream viewer attempt", { error: errMsg(err) }),
+    );
     if (!end.isOpen) return;
-    const serving = await this.handlers.forDevice(record.deviceId);
-    if ("plugin" in serving && !this.gateway.holdsLocally(record.deviceId)) {
-      await this.hop(end, ticketId, record);
-      return;
-    }
-    await this.openLocal(end, record, ticketId);
+    // a long-lived socket outside any request's org guard: the record's org scopes every query
+    // of this viewer (Postgres RLS)
+    await withOrgScope(record.orgId, async () => {
+      const serving = await this.handlers.forDevice(record.deviceId);
+      if ("plugin" in serving && !this.gateway.holdsLocally(record.deviceId)) {
+        await this.hop(end, ticketId, record);
+        return;
+      }
+      await this.openLocal(end, record, ticketId);
+    });
   }
 
   private async serveHopped(end: WsEnd, ticketId: string, at: string): Promise<void> {
@@ -532,7 +565,7 @@ export class DeviceStreamViewers {
       end.close(VIEWER_CLOSE.badTicket, "invalid hop");
       return;
     }
-    await this.openLocal(end, record, null);
+    await withOrgScope(record.orgId, () => this.openLocal(end, record, null));
   }
 
   /** The hop's first message `{ record, mac }` as the record, when its MAC is valid. */
@@ -617,7 +650,9 @@ export class DeviceStreamViewers {
       VIEWER_CLOSE.gone,
       VIEWER_CLOSE.offline,
     ]);
-    if (forwarded.has(settled.code)) end.close(settled.code, settled.reason);
+    // a holder message over this socket's maxPayload (ws closes it 1009, or 1006 when it drops)
+    if (up.tooBig) end.close(VIEWER_CLOSE.tooBig, "message too big");
+    else if (forwarded.has(settled.code)) end.close(settled.code, settled.reason);
     else {
       this.log.warn("device stream hop ended unexpectedly", {
         deviceId: record.deviceId,
@@ -707,18 +742,17 @@ export class DeviceStreamViewers {
         inbound.then((r) => ({ side: "send" as const, failed: r.failed })),
       ]);
       if (settled.side === "send" && settled.failed !== undefined && !life.signal.aborted) {
-        // a send refused while the stream lives (too big for its frames) ends the whole pipe
-        const gone = await closedNow(stream);
-        if (gone === null) {
+        // any refused send ends the whole pipe: a message too big for the stream's frames is
+        // 1009; otherwise the stream's own close decides (closing it again keeps its reason)
+        if (isTooBig(settled.failed)) {
           closeCode = VIEWER_CLOSE.tooBig;
           stream.close("message too big");
           end.close(closeCode, "message too big for the device stream");
         } else {
-          closeCode = gone.reason === "device-offline" ? VIEWER_CLOSE.offline : VIEWER_CLOSE.gone;
-          end.close(
-            closeCode,
-            gone.reason === "device-offline" ? "device-offline" : "stream closed",
-          );
+          stream.close("send failed");
+          const { reason } = await stream.closed;
+          closeCode = reason === "device-offline" ? VIEWER_CLOSE.offline : VIEWER_CLOSE.gone;
+          end.close(closeCode, reason === "device-offline" ? "device-offline" : "stream closed");
         }
       } else if (settled.side === "viewer" || settled.side === "send" || life.signal.aborted) {
         stream.close("viewer closed");

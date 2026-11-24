@@ -15,6 +15,7 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInGateway } from "../../src/dial-in/gateway.js";
 import { deviceHolderAddrKey, deviceLeaseKey } from "../../src/dial-in/keys.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DEVICE_STREAM_MESSAGE_TOO_BIG } from "../../src/dial-in/streams.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -248,6 +249,10 @@ describe("dial-in streams", () => {
   it("message above the connection's maxFrameBytes is refused", async () => {
     const { stream, peer } = await openPair();
     await expect(stream.send(new Uint8Array(MAX_FRAME_BYTES))).rejects.toThrow(/frame capacity/);
+    // identifiable by its code (the viewer endpoint answers it with 1009)
+    await expect(stream.send(new Uint8Array(MAX_FRAME_BYTES))).rejects.toMatchObject({
+      code: DEVICE_STREAM_MESSAGE_TOO_BIG,
+    });
     // the stream stays usable for messages that fit
     await stream.send(bytes(1));
     await peer.receivedCount(1);

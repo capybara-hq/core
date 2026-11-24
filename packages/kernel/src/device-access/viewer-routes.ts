@@ -12,8 +12,11 @@ export const DEVICE_STREAM_HOP_ROUTE = "/internal/device-stream/:ticketId";
 /** What the viewer routes need ({@link DeviceStreamViewers}). */
 export interface DeviceStreamRoutesOptions {
   viewers: Pick<DeviceStreamViewers, "serve" | "serveHop" | "verifyHop" | "claimHop">;
-  /** Counts each viewer upgrade per client address (`device-stream-ip`) before the upgrade. */
-  throttler: Pick<CredentialThrottler, "reserve">;
+  /**
+   * Counts each viewer upgrade per client address (`device-stream-ip`) before the upgrade; a
+   * valid ticket gives the attempt back.
+   */
+  throttler: Pick<CredentialThrottler, "reserve" | "succeeded">;
 }
 
 /** The named throttler of the viewer route. */
@@ -28,8 +31,9 @@ const hopRefused = () =>
  * neither the API's `AuthGuard` nor its CSRF check applies; each route checks its own credential.
  *
  * - `GET /device/stream?ticket=`: the ticket is the only credential (cookies do not reach the
- *   gateway). Each upgrade counts against `device-stream-ip` (120 a minute per client address;
- *   429 `rate_limited` before the upgrade); otherwise the upgrade is accepted and the socket
+ *   gateway). Each upgrade counts against `device-stream-ip` (120 a minute per client address,
+ *   `req.ip` under `http.trustProxy`: the web tier's upgrade proxy sets `X-Forwarded-For` for this
+ *   path; 429 `rate_limited` before the upgrade; a valid ticket refunds it); otherwise the upgrade is accepted and the socket
  *   closed with the viewer close codes (`VIEWER_CLOSE`), since a browser sees no HTTP status of
  *   a refused upgrade.
  * - `GET /internal/device-stream/:ticketId`: another gateway replica's hop. Before the upgrade,
@@ -59,7 +63,9 @@ export async function registerDeviceStreamRoutes(
     },
     (socket: WebSocket, req) => {
       const t = (req.query as Record<string, unknown> | undefined)?.ticket;
-      void opts.viewers.serve(socket, typeof t === "string" ? t : "");
+      void opts.viewers.serve(socket, typeof t === "string" ? t : "", () =>
+        opts.throttler.succeeded(VIEWER_THROTTLER, req),
+      );
     },
   );
   const verified = new WeakSet<object>();

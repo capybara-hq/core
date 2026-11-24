@@ -167,7 +167,28 @@ describe("handleUpgrade", () => {
     expect(res.kind).toBe("upgraded");
     if (res.kind === "upgraded") res.socket.destroy();
     expect(seen[0]?.headers.cookie).toBeUndefined();
-    expect(seen[0]?.headers["x-forwarded-for"]).toBeUndefined();
+    // the client-sent value is replaced by the socket peer's address
+    expect(seen[0]?.headers["x-forwarded-for"]).toBe("127.0.0.1");
+  });
+
+  it("sets X-Forwarded-For on /device/stream from the derived client address only", async () => {
+    const seen: Seen[] = [];
+    const gw = await startGateway(seen);
+    const server = createServer((_req, res) => res.end());
+    const cfg = {
+      ...parseGatewayProxy({ CAPYBARA_WEB_GATEWAY_URL: `http://127.0.0.1:${gw}` }),
+      clientOf: () => "203.0.113.7",
+    };
+    server.on("upgrade", handleUpgrade(cfg));
+    const web = await listen(server);
+    const res = await upgrade(web, "/device/stream?ticket=x", {
+      "x-forwarded-for": "6.6.6.6, 7.7.7.7",
+      forwarded: "for=6.6.6.6",
+    });
+    expect(res.kind).toBe("upgraded");
+    if (res.kind === "upgraded") res.socket.destroy();
+    expect(seen[0]?.headers["x-forwarded-for"]).toBe("203.0.113.7");
+    expect(seen[0]?.headers.forwarded).toBeUndefined();
   });
 
   it("forwards /device/connect with its headers and streams frames both ways", async () => {

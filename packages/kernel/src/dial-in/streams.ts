@@ -7,6 +7,12 @@ import {
   type DialInMachineFrame,
 } from "@capybara-hq/plugin-sdk";
 
+/**
+ * The `code` of the error a stream's `send` rejects with when a message does not fit one frame
+ * once base64-encoded (the viewer endpoint answers it with 1009).
+ */
+export const DEVICE_STREAM_MESSAGE_TOO_BIG = "device.stream_message_too_big";
+
 /** The stream frames a machine sends ({@link DialInStreams.onFrame}). */
 export type DialInMachineStreamFrame = Extract<
   DialInMachineFrame,
@@ -114,8 +120,11 @@ class Stream implements DeviceStream {
     // a message is never split: one that does not fit one frame is refused
     if (Buffer.byteLength(text) > cap)
       return Promise.reject(
-        new Error(
-          `A stream message of ${message.byteLength} bytes does not fit the connection's frame capacity of ${cap} bytes once base64-encoded; send smaller messages`,
+        Object.assign(
+          new Error(
+            `A stream message of ${message.byteLength} bytes does not fit the connection's frame capacity of ${cap} bytes once base64-encoded; send smaller messages`,
+          ),
+          { code: DEVICE_STREAM_MESSAGE_TOO_BIG },
         ),
       );
     return new Promise((resolve, reject) => {

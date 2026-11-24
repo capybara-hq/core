@@ -37,6 +37,7 @@ import {
   proxyObjectStore,
 } from "./src/lib/object-store-proxy.ts";
 import {
+  clientAddress,
   PEER_TOKEN_ENV,
   parseTrustProxy,
   sanitizeIncoming,
@@ -95,7 +96,12 @@ const server = createServer((req, res) => {
 server.on(
   "upgrade",
   handleUpgrade(
-    gateway,
+    // /device/stream carries the client address the same way /api does (the kernel's viewer limit)
+    {
+      ...gateway,
+      clientOf: (req) =>
+        clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], trust),
+    },
     dev ? (req, socket, head) => nextUpgrades.emit("upgrade", req, socket, head) : undefined,
   ),
 );

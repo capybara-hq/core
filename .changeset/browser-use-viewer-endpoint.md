@@ -13,3 +13,5 @@ when taken, and a hold ending for a lifecycle change logs at debug.
 Viewer messages over 256 KiB, or ones the device stream cannot carry, close the viewer (1009);
 sockets are pinged and a socket paused for 30 s closes (1013); viewer upgrades are limited per
 client address (`device-stream-ip`, 120 a minute).
+The web tier's upgrade proxy sends the client address as `X-Forwarded-For` on `/device/stream`
+only, so the per-address viewer limit counts each client; a valid ticket refunds its attempt.

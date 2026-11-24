@@ -11,8 +11,11 @@
  *   X-Capybara-Device-Protocol, the WebSocket handshake) go to the gateway, then any bytes the
  *   client already sent, then both directions stream untouched. The gateway answers the handshake
  *   (101, or 401 / 426 with JSON) itself.
- * - `Host` is the gateway's; forwarding headers, cookies and this server's peer marker are not sent
- *   (the gateway trusts no forwarding header).
+ * - `Host` is the gateway's; forwarding headers, cookies and this server's peer marker are not sent.
+ *   A `/device/stream` upgrade alone gets one `X-Forwarded-For`: the client address this server
+ *   derived ({@link GatewayProxy.clientOf}), replacing whatever the client sent, so the kernel's
+ *   per-address viewer limit (trusted under its `http.trustProxy`, as for `/api`) counts each
+ *   client, not this server. `/device/connect` gets none.
  * - An error on either side destroys both sockets; a gateway that can't be reached gets 502.
  * - The gateway is CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL.
  *
@@ -36,6 +39,12 @@ export const DEVICE_STREAM_PATH = "/device/stream";
 export interface GatewayProxy {
   /** Gateway origin, e.g. http://gateway:8080. */
   upstream: URL;
+  /**
+   * The client address of a `/device/stream` upgrade (server.mjs: the socket peer, walked through
+   * a trusted `x-forwarded-for` chain under CAPYBARA_WEB_TRUST_PROXY, as for `/api`); default the
+   * socket peer. Never a client-sent value as such.
+   */
+  clientOf?: (req: IncomingMessage) => string | undefined;
 }
 
 /** Request headers never forwarded (forwarding, cookies, proxy credentials, our marker, the host). */
@@ -126,6 +135,12 @@ export function proxyDeviceConnect(
     for (let i = 0; i + 1 < raw.length; i += 2) {
       const name = raw[i] as string;
       if (!DROP_REQUEST.has(name.toLowerCase())) lines.push(`${name}: ${raw[i + 1]}`);
+    }
+    if ((req.url ?? "").split("?")[0] === DEVICE_STREAM_PATH) {
+      const client = cfg.clientOf ? cfg.clientOf(req) : req.socket.remoteAddress;
+      // an address only (no header injection through a malformed value)
+      if (client !== undefined && /^[0-9A-Fa-f:.]{2,45}$/.test(client))
+        lines.push(`X-Forwarded-For: ${client}`);
     }
     up.write(`${lines.join("\r\n")}\r\n\r\n`);
     if (head.length > 0) up.write(head);

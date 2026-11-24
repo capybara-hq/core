@@ -90,7 +90,8 @@ beforeAll(async () => {
           FAKE_DEVICE_ACCESS,
         ],
         extensionConfig: { "device-fake": { root: sandboxRoot } },
-        http: { port: 0, publicUrl: "https://capybara.example.com" },
+        // behind the web tier (one trusted hop): its X-Forwarded-For names the client
+        http: { port: 0, publicUrl: "https://capybara.example.com", trustProxy: 1 },
       },
     ),
     { logger: createLogger("debug", { write: (line) => void lines.push(line) }) },
@@ -182,8 +183,8 @@ interface Viewer {
 }
 
 /** A browser's viewer socket on `/device/stream?ticket=`. */
-function viewer(ticket: string): Viewer {
-  const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=${ticket}`);
+function viewer(ticket: string, headers: Record<string, string> = {}): Viewer {
+  const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=${ticket}`, { headers });
   const received: string[] = [];
   const waiting: ((m: string) => void)[] = [];
   ws.on("message", (data: Buffer) => {
@@ -462,10 +463,12 @@ describe("device stream viewer", () => {
   });
 
   // near the end: the per-address limit fills; its counters are cleared after
-  it("viewer upgrades are limited per client address", async () => {
-    const status = () =>
+  it("viewer upgrades are limited per forwarded client address", async () => {
+    const status = (client: string) =>
       new Promise<number>((resolve) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=nope`);
+        const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=nope`, {
+          headers: { "x-forwarded-for": client },
+        });
         ws.on("unexpected-response", (_req, res) => {
           resolve(res.statusCode ?? 0);
           ws.terminate();
@@ -475,8 +478,29 @@ describe("device stream viewer", () => {
       });
     try {
       let limited = false;
-      for (let i = 0; i < 130 && !limited; i++) limited = (await status()) === 429;
+      for (let i = 0; i < 130 && !limited; i++) limited = (await status("198.51.100.1")) === 429;
       expect(limited).toBe(true);
+      // another client behind the same web tier has its own bucket
+      expect(await status("198.51.100.2")).toBe(101);
+    } finally {
+      const keys = await redis.keys("throttler:*device-stream*");
+      if (keys.length > 0) await redis.del(...keys);
+    }
+  });
+
+  it("a valid ticket gives its attempt back; an invalid one keeps it counted", async () => {
+    const counters = async () => {
+      const keys = await redis.keys("throttler:*device-stream*");
+      return Promise.all(keys.map((key) => redis.get(key)));
+    };
+    try {
+      const v = viewer(await mint(), { "x-forwarded-for": "198.51.100.9" });
+      expect(await roundTrip(v, "refund")).toBe("refund");
+      v.ws.close(1000);
+      await v.closed;
+      expect((await counters()).filter((n) => Number(n) > 0)).toEqual([]);
+      expect((await viewer("nope", { "x-forwarded-for": "198.51.100.10" }).closed).code).toBe(4401);
+      expect(await counters()).toEqual(["1"]);
     } finally {
       const keys = await redis.keys("throttler:*device-stream*");
       if (keys.length > 0) await redis.del(...keys);
