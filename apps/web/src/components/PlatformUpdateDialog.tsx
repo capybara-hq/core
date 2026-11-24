@@ -43,8 +43,8 @@ import { useAdminThemeName, useThemeImpactGroup } from "./ThemeImpact";
 const optVersion = (v: string | null) => (v === null ? "—" : versionLabel(v));
 
 /**
- * 更新到 x of a platform plugin (spec §7.1, ruling F2: one version per deployment): the preview
- * lists every component with its change (新增 / 移除 / 升级 / 降级 / 不变) and marks those updated
+ * "Update to x" of a platform plugin (spec §7.1, ruling F2: one version per deployment): the preview
+ * lists every component with its change (added / removed / upgrade / downgrade / same) and marks those updated
  * on their own, those with their own scope and removed ones kept because agents use them; the
  * orgs whose copies are pinned, the extension's move with the orgs using it (and whether the new
  * version waits for a permission confirmation), and per org the connectors updated, those whose
@@ -173,7 +173,7 @@ interface OrgNaming {
   preview: PlatformUpdatePreview;
   /** The org's name, or undefined when unknown (then its id, or a count with `hideUnknown`). */
   orgName(id: string): string | undefined;
-  /** A theme's name by its `platform_themes` id (the 主题 group). */
+  /** A theme's name by its `platform_themes` id (the themes group). */
   themeName?: (id: string) => string;
   hideUnknown?: boolean;
 }
@@ -336,7 +336,26 @@ function useImpactGroups({
 export function UpdateImpact(props: OrgNaming) {
   const t = useTranslations("catalog.update");
   const groups = useImpactGroups(props);
-  return <ImpactPreview groups={groups} empty={t("impactNone")} />;
+  // The components table's notes, which the rows' change marks do not carry: updated on its own
+  // (moves to the plugin's version) and its own scope (kept)
+  const own = props.preview.components.filter((c) => c.updatedOnOwn || c.ownScope);
+  const ownGroup: ImpactPreviewGroup = {
+    id: "own",
+    title: t("groups.own"),
+    description: t("marksHint"),
+    items: own.map((c) => ({
+      id: `${c.kind}:${c.name}`,
+      title: c.name,
+      code: t(`kind.${c.kind}`),
+      marks: (
+        <Stack direction="row" gap={4} align="center">
+          {c.updatedOnOwn && <Badge tone="warn">{t("marks.updatedOnOwn")}</Badge>}
+          {c.ownScope && <Badge>{t("marks.ownScope")}</Badge>}
+        </Stack>
+      ),
+    })),
+  };
+  return <ImpactPreview groups={[...groups, ownGroup]} empty={t("impactNone")} />;
 }
 
 /**
@@ -345,7 +364,7 @@ export function UpdateImpact(props: OrgNaming) {
  * marks, then the impact groups ({@link UpdateImpact}). `orgName` names an org id (its id when
  * unknown). An org's own upload (`hideUnknown`, ruling P3-19: an org admin cannot read other
  * orgs) names the orgs the kernel named in `orgNames` or the viewer belongs to, and counts the
- * others ("N 个组织"), never showing an id.
+ * others ("N organizations"), never showing an id.
  */
 export function PlatformUpdatePreviewBody(props: OrgNaming) {
   const { preview } = props;

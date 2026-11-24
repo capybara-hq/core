@@ -1526,7 +1526,7 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     fill(msgs[locale].catalog.update.confirmTo, { version: "v2.0.0" });
 
   it.each(LOCALES)(
-    "an installed plugin: one review page with the change marks, 更新后 and one confirm sending both hashes (%s)",
+    "an installed plugin: one review page with the change marks, the impact and one confirm sending both hashes (%s)",
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
       const u = msgs[locale].catalog.update;
@@ -1557,7 +1557,10 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
             json(200, {
               ...base,
               components: [
-                ...base.components,
+                // pdf-tools was updated on its own and has its own scope
+                ...base.components.map((c) =>
+                  c.name === "pdf-tools" ? { ...c, updatedOnOwn: true, ownScope: true } : c,
+                ),
                 {
                   kind: "agent_template",
                   id: "a1",
@@ -1590,7 +1593,7 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       ).toBeTruthy();
       // two steps, like an install: choose the package, then review and confirm
       expect(screen.getByText(r.steps.reviewConfirm)).toBeTruthy();
-      // the head reads installed → staged (and so does the extension's move under 更新后)
+      // the head reads installed → staged (and so does the extension's move in the impact section)
       await screen.findByRole("region", { name: u.after });
       expect(
         screen.getAllByText(fill(r.versionChange, { from: "v1.0.0", to: "v2.0.0" })),
@@ -1608,7 +1611,7 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       expect(within(removed).getByText(u.change.removed)).toBeTruthy();
       // no components table: the marks are on the rows
       expect(screen.queryByRole("table")).toBeNull();
-      // 更新后: the extension's move and per org the connectors created, with the pending count
+      // the impact section: the extension's move and per org the connectors created, with the pending count
       const after = screen.getByRole("region", { name: u.after });
       expect(
         within(after).getByText(fill(u.versions, { from: "v1.0.0", to: "v2.0.0" })),
@@ -1618,6 +1621,12 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       expect(
         within(after).getByText(tu("createdNote", { names: "Linear", pending: 1 })),
       ).toBeTruthy();
+      // the components table's notes the row marks do not carry: updated on its own, own scope
+      const own = within(after).getByRole("list", { name: u.groups.own });
+      const ownRow = within(own).getByText("pdf-tools").closest("li") as HTMLElement;
+      expect(within(ownRow).getByText(u.marks.updatedOnOwn)).toBeTruthy();
+      expect(within(ownRow).getByText(u.marks.ownScope)).toBeTruthy();
+      expect(within(after).getByText(u.marksHint)).toBeTruthy();
       expect(screen.getByText(fill(u.hint, { version: "v2.0.0" }))).toBeTruthy();
       // the confirm approves the reviewed permissions: no "waits for approval" notice
       expect(screen.queryByText(u.needsApproval)).toBeNull();

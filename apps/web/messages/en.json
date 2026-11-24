@@ -5675,7 +5675,8 @@
         "pinned": "Copies moving to the new version",
         "kept": "Components kept",
         "extension": "Extension",
-        "orgs": "Organizations affected"
+        "orgs": "Organizations affected",
+        "own": "Components with their own settings"
       },
       "pinnedNote": "Pinned to their own version in {orgs}",
       "keptNote": "Not in the new version, still used by: {agents}",
