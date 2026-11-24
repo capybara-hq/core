@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -456,6 +457,44 @@ export type ReadGitTreeOptions = GitOptions & {
    */
   include?: (path: string, type: "tree" | "blob") => boolean;
 };
+
+/**
+ * The git tree oid of a directory holding exactly `files` (paths relative to it, `/`-separated) as
+ * regular files of mode 100644: git's own blob and tree hashing, so it is the oid
+ * {@link readGitTreeAndOids} gives that directory when none of its files is executable (symlinks and
+ * submodules are refused there). For files known without reading git, e.g. the verified offline
+ * pack of a bootstrap git entry; an executable file in the repository only makes the oids differ.
+ */
+export function gitTreeOidOf(files: ReadonlyMap<string, Uint8Array>): string {
+  type Dir = Map<string, Uint8Array | Dir>;
+  const root: Dir = new Map();
+  for (const [path, data] of files) {
+    const segs = path.split("/");
+    let dir = root;
+    for (const seg of segs.slice(0, -1)) {
+      let sub = dir.get(seg);
+      if (!(sub instanceof Map)) {
+        sub = new Map();
+        dir.set(seg, sub);
+      }
+      dir = sub;
+    }
+    dir.set(segs[segs.length - 1] as string, data);
+  }
+  const hash = (type: "blob" | "tree", body: Uint8Array): Buffer =>
+    createHash("sha1").update(`${type} ${body.byteLength}\0`).update(body).digest();
+  const tree = (dir: Dir): Buffer => {
+    // git orders entries by their bytes, a directory as if its name ended in "/"
+    const entries = [...dir].map(([name, v]) =>
+      v instanceof Map
+        ? { key: Buffer.from(`${name}/`), head: `40000 ${name}\0`, oid: tree(v) }
+        : { key: Buffer.from(name), head: `100644 ${name}\0`, oid: hash("blob", v) },
+    );
+    entries.sort((a, b) => Buffer.compare(a.key, b.key));
+    return hash("tree", Buffer.concat(entries.flatMap((e) => [Buffer.from(e.head), e.oid])));
+  };
+  return tree(root).toString("hex");
+}
 
 /**
  * {@link readGitTree}, plus the git tree oids of directories at the same commit: `trees` gets the

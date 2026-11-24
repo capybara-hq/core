@@ -9,6 +9,7 @@ import {
   GIT_LIMITS,
   GitSourceError,
   gitErrorDetails,
+  gitTreeOidOf,
   readGitTree,
   readGitTreeAndOids,
   resolveGitCommit,
@@ -250,6 +251,28 @@ describe("readGitTree", () => {
     expect(r2.trees.get("b")).toBe(r1.trees.get("b"));
     expect(r2.trees.get("a")).not.toBe(r1.trees.get("a"));
     expect(r2.trees.get(".")).not.toBe(r1.trees.get("."));
+  });
+
+  it("gitTreeOidOf gives the tree oid git gives the same files (nested, git's name order)", async () => {
+    const url = srv.url("local-oids");
+    // "a.b" sorts before the directory "a" in git (trees compare as "a/"), after it by plain name
+    const files = {
+      "plugins/p/a.b": "dot",
+      "plugins/p/a/x.txt": "1",
+      "plugins/p/a-b/y.json": "{}",
+      "plugins/p/README.md": "",
+      "other.txt": "elsewhere",
+    };
+    const commit = await srv.commit("local-oids", files);
+    const r = await readGitTreeAndOids(
+      { url, commit, path: "plugins/p" },
+      { ...opts(), trees: () => ["plugins/p"] },
+    );
+    expect(r.files.size).toBe(4);
+    expect(gitTreeOidOf(r.files)).toBe(r.trees.get("plugins/p"));
+    expect(gitTreeOidOf(new Map([...r.files, ["a/x.txt", enc("2")]]))).not.toBe(
+      r.trees.get("plugins/p"),
+    );
   });
 
   it("refuses symlink and submodule entries", async () => {

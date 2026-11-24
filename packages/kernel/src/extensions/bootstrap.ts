@@ -4,6 +4,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
 import { marketplaceGitSource, repoOwner } from "../catalog/catalog.service.js";
+import { gitTreeOidOf } from "../catalog/git-source.js";
 import { CONFIG_MARKETPLACE_PREFIX } from "../catalog/marketplaces.service.js";
 import { otherNameOwner } from "../catalog/ownership.js";
 import {
@@ -573,7 +574,9 @@ export class BootstrapService {
           path: e.path,
           ...(m.ref !== undefined && { ref: m.ref }),
         },
-        { commit: e.commit, tree: at.tree },
+        // From the offline directory git was not read: the verified pack holds exactly the tree's
+        // files, so their oid is the tree's (a later commit elsewhere is then no content change)
+        { commit: e.commit, tree: at.tree ?? gitTreeOidOf(git.files) },
         false,
       );
       const marketplaceId = managedMarketplaceId(m.name);
