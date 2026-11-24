@@ -1,4 +1,4 @@
-import { Badge, CardGrid, ObjectCard, type ObjectCardProps } from "@capybara-hq/design";
+import { CardGrid, ObjectCard, type ObjectCardProps } from "@capybara-hq/design";
 import type { ReactNode } from "react";
 import { RefBlock } from "./ref-block";
 
@@ -132,7 +132,7 @@ const FACT_CARDS: ObjectCardProps[] = [
     avatar: { icon: "extension" },
     title: "plugin-github",
     mono: true,
-    chips: [<Badge key="scope">内置</Badge>, <Badge key="kind">连接器</Badge>],
+    chips: [{ label: "内置" }, { label: "待配置", tone: "warn" }],
     href: "#github",
     description: "读取仓库、议题和合并请求。",
     meta: ["v1.2.0"],
@@ -143,7 +143,7 @@ const FACT_CARDS: ObjectCardProps[] = [
     avatar: { icon: "extension" },
     title: "plugin-memory",
     mono: true,
-    chips: [<Badge key="kind">扩展</Badge>],
+    chips: [{ label: "扩展" }],
     href: "#memory",
     description: "让智能体记住跨会话的事实。",
     meta: ["v0.4.1"],

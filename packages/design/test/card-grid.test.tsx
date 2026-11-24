@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import { type ReactElement, type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  Badge,
   Card,
   CardGrid,
   DesignProvider,
@@ -75,13 +74,14 @@ function grid(cards: ObjectCardProps[] = NAMES.map((n, i) => card({ title: n, hr
 
 describe("ObjectCard", () => {
   it("renders chips after the title in the title line", () => {
-    withNav(grid([card({ chips: [<Badge key="b">内置</Badge>, <Badge key="c">连接器</Badge>] })]));
+    withNav(grid([card({ chips: [{ label: "内置" }, { label: "待配置", tone: "warn" }] })]));
     const item = screen.getAllByRole("listitem")[0] as HTMLElement;
     const head = item.querySelector(".cb-object-card-head") as HTMLElement;
     expect(within(head).getByText("内置")).toBeTruthy();
-    expect(within(head).getByText("连接器")).toBeTruthy();
+    expect(within(head).getByText("待配置")).toBeTruthy();
     const name = head.querySelector(".cb-object-card-name") as HTMLElement;
     const chips = head.querySelector(".cb-object-card-chips") as HTMLElement;
+    expect(within(head).getByText("待配置").getAttribute("data-tone")).toBe("warn");
     expect(name.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -102,6 +102,34 @@ describe("ObjectCard", () => {
     expect((screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
+  });
+
+  it("busy without a primary puts the spinner on the menu", () => {
+    withNav(
+      grid([
+        {
+          title: "研究助手",
+          href: "/agents/a",
+          menu: [
+            { label: "设置", href: "/s" },
+            { label: "删除", danger: true, onSelect: () => {} },
+          ],
+          busy: true,
+        },
+      ]),
+    );
+    const menu = screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement;
+    expect(menu.getAttribute("aria-busy")).toBe("true");
+    expect(menu.disabled).toBe(true);
+    expect(menu.querySelector(".cb-btn-spin")).not.toBeNull();
+  });
+
+  it("busy shows a link primary as a waiting button", () => {
+    withNav(grid([card({ primary: { label: "查看", href: "/p/1" }, busy: true })]));
+    const b = screen.getByRole("button", { name: "查看" }) as HTMLButtonElement;
+    expect(b.getAttribute("aria-busy")).toBe("true");
+    expect(b.disabled).toBe(true);
+    expect(screen.queryByRole("link", { name: "查看" })).toBeNull();
   });
 
   it("draws a meta part in warn or fail by its tone", () => {

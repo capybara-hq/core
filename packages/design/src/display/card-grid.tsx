@@ -52,13 +52,15 @@ export type ObjectCardLoaded = {
   /** The title in the mono face (package names and ids), as `ObjectRow.mono`. */
   mono?: boolean;
   /**
-   * Badges after the title (scope, kind, attention), the same contract as `ObjectRow.chips`; they
-   * wrap in the title line. The grouped card of a phone leaves them out.
+   * Scope / kind chips and attention chips after the title, the same contract and look as
+   * `ObjectRow.chips`; they wrap in the title line. On a phone's grouped row only the `warn`
+   * chips stay (attention facts); the neutral ones are left out.
    */
-  chips?: readonly ReactNode[];
+  chips?: { label: string; tone?: "neutral" | "warn" }[];
   /**
-   * The object is being changed (an install, an update, an enable): the primary action shows its
-   * loading state, the card's other buttons wait and the card is `aria-busy`.
+   * The object is being changed (an install, an update, an enable), as `ObjectRow.busy`: the
+   * spinner sits on the primary action, else on the ⋯ menu (or its lone item); the card's buttons
+   * wait and the card is `aria-busy`.
    */
   busy?: boolean;
   /**
@@ -507,12 +509,16 @@ function LoadedCard({
   const tabIndex = slot === null ? undefined : slot.holder ? 0 : -1;
   const actions = menuActions(menu ?? []);
   const lone = oneButton && primary !== undefined ? undefined : menuLone(menu ?? []);
-  const waiting = primary?.loading === true || busy;
+  const primaryLoading = primary?.loading === true;
+  const waiting = primaryLoading || busy;
+  // The spinner goes where the running action is: the primary, else the menu (or its lone item).
+  const menuLoading = busy && !primaryLoading && primary === undefined;
   const buttons: ObjectCardAction[] = [];
   if (primary) buttons.push(primary);
   if (lone) {
     buttons.push({
       label: lone.label,
+      ...(menuLoading ? { loading: true } : {}),
       ...(lone.href !== undefined ? { href: lone.href } : {}),
       ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
     });
@@ -597,7 +603,7 @@ function LoadedCard({
   };
   /** A button of the card, keyed by its slot: 0 the primary (else the lone item), 1 the lone item. */
   const button = (a: ObjectCardAction, i: number) =>
-    a.href !== undefined ? (
+    a.href !== undefined && !busy ? (
       <LinkButton
         key={i}
         href={a.href}
@@ -613,7 +619,7 @@ function LoadedCard({
         key={i}
         variant="default"
         density="dense"
-        loading={a.loading === true || (busy && i === 0)}
+        loading={a.loading === true || (busy && i === 0 && primary !== undefined)}
         disabled={waiting}
         tabIndex={tabIndex}
         aria-describedby={nameId}
@@ -636,10 +642,19 @@ function LoadedCard({
           trigger={
             <IconButton
               label={t("shell.moreActions")}
-              icon={<Icon name="more-horizontal" />}
+              icon={
+                menuLoading ? (
+                  <span className="cb-btn-spin" aria-hidden="true">
+                    <Icon name="spinner" size={14} />
+                  </span>
+                ) : (
+                  <Icon name="more-horizontal" />
+                )
+              }
               density="dense"
               variant="default"
               disabled={waiting}
+              aria-busy={menuLoading ? true : undefined}
               tabIndex={tabIndex}
               aria-describedby={nameId}
             />
@@ -697,9 +712,10 @@ function LoadedCard({
           )}
           {chips !== undefined && chips.length > 0 ? (
             <span className="cb-object-card-chips" data-part="object-card-chips">
-              {chips.map((chip, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: the chips are positional
-                <Fragment key={i}>{chip}</Fragment>
+              {chips.map((c) => (
+                <span key={c.label} className="cb-object-chip" data-tone={c.tone ?? "neutral"}>
+                  {c.label}
+                </span>
               ))}
             </span>
           ) : null}

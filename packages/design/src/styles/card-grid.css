@@ -266,12 +266,12 @@
   :is(.cb-object-card-link, .cb-object-card-head > .cb-object-card-name) {
     grid-row: 1 / span 2;
   }
-  /* The trailing parts, in DOM order after the text column: the state, a card without a link's
-     one button, the chevron. */
-  /* The grouped row has no room for badges beside the name. */
-  .cb-object-card-chips {
+  /* The grouped row has no room for neutral chips beside the name; attention chips stay. */
+  .cb-object-card-chips > .cb-object-chip:not([data-tone="warn"]) {
     display: none;
   }
+  /* The trailing parts, in DOM order after the text column: the state, a card without a link's
+     one button, the chevron. */
   .cb-object-card-state,
   .cb-object-card-foot .cb-btn,
   .cb-object-card-chevron {
