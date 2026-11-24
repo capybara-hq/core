@@ -882,32 +882,31 @@ describe("admin plugin detail: components and the platform update", () => {
     ...over,
   });
 
-  it("the components table has a scope column: 跟随插件 or the component's own, linking each component", async () => {
+  it("each row's trailing text is its scope, 跟随插件 or the component's own, linking the component", async () => {
     await open(`/admin/plugins/${ITEM}`, routes());
-    const table = await screen.findByRole("table", {
-      name: en.catalog.admin.detail.tabs.components,
+    const R = en.catalog.components;
+    const skills = await screen.findByRole("list", { name: R.skills });
+    const row = (name: string) => within(skills).getByText(name).closest("li") as HTMLElement;
+    expect(within(row("web-research")).getByRole("link", { name: C.follow })).toBeTruthy();
+    const own = within(row("summarize")).getByRole("link", {
+      name: fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.allOff, { n: 2 }) }),
     });
-    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
-    expect(within(table).getByText(en.catalog.admin.detail.componentColumns.scope)).toBeTruthy();
-    expect(within(row("jina-web")).getByText(C.follow)).toBeTruthy();
-    expect(within(row("web-research")).getByText(C.follow)).toBeTruthy();
-    expect(
-      within(row("summarize")).getByText(
-        fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.allOff, { n: 2 }) }),
-      ),
-    ).toBeTruthy();
-    expect(
-      within(row("summarize")).getByRole("link", { name: "summarize" }).getAttribute("href"),
-    ).toBe("/admin/skills/s3");
-    expect(within(row("gh")).getByRole("link", { name: "gh" }).getAttribute("href")).toBe(
+    expect(own.getAttribute("href")).toBe("/admin/skills/s3");
+    const templates = screen.getByRole("list", { name: R.templates });
+    expect(within(templates).getByRole("link", { name: C.follow }).getAttribute("href")).toBe(
       "/admin/connectors/templates/c1",
     );
+    const agents = screen.getByRole("list", { name: R.agentTemplates });
+    expect(within(agents).getByRole("link", { name: C.follow }).getAttribute("href")).toBe(
+      "/admin/agents/templates/a1",
+    );
+    // the components are not a table, and the license is not a folded section
     expect(
-      within(row("researcher")).getByRole("link", { name: "researcher" }).getAttribute("href"),
-    ).toBe("/admin/agents/templates/a1");
+      screen.queryByRole("table", { name: en.catalog.admin.detail.tabs.components }),
+    ).toBeNull();
   });
 
-  it("the components table lists the extension's client components, its client code and the themes", async () => {
+  it("the extension's client code and client components are lines under it, the themes are rows", async () => {
     const withClient = (v: string) => {
       const m = manifest(v);
       return {
@@ -938,19 +937,14 @@ describe("admin plugin detail: components and the platform update", () => {
           json(200, { item, versions: [withClient("1.3.0"), withClient("1.2.0")], hasIcon: false }),
       }),
     );
-    const table = await screen.findByRole("table", {
-      name: en.catalog.admin.detail.tabs.components,
-    });
-    const kindOf = (name: string) =>
-      (within(table).getByText(name).closest("tr") as HTMLElement).querySelectorAll("td")[1]
-        ?.textContent;
-    const K = en.catalog.admin.detail.kind;
-    expect(kindOf("jina-web")).toBe(K.extension);
-    expect(kindOf("brand")).toBe(K.component);
-    expect(kindOf("hud")).toBe(K.component);
-    expect(kindOf("2 files")).toBe(K.clientCode);
-    expect(kindOf("neon")).toBe(K.theme);
-    expect(within(table).getAllByRole("row")).toHaveLength(1 + 9);
+    const D = en.catalog.admin.detail;
+    const R = en.catalog.components;
+    // client code and the client components are lines under the extension
+    expect(await screen.findByText("Ships client code, 2 files.")).toBeTruthy();
+    expect(screen.getByText(fill(D.uiComponents, { ids: "brand, hud" }))).toBeTruthy();
+    expect(screen.getByText("jina-web")).toBeTruthy();
+    const themes = screen.getByRole("list", { name: R.themes });
+    expect(within(themes).getByText("neon")).toBeTruthy();
   });
 
   it("更新到 x previews each component with its marks, the extension and the orgs' connectors, then confirms with diffHash; a stale hash previews again", async () => {

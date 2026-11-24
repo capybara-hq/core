@@ -3403,12 +3403,8 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    const table = await screen.findByRole("table", {
-      name: en.catalog.admin.detail.tabs.components,
-    });
-    const row = within(table).getByText("reviewer").closest("tr") as HTMLElement;
-    expect(within(row).getByText(en.catalog.admin.detail.kind.agentTemplate)).toBeTruthy();
-    void c;
+    const list = await screen.findByRole("list", { name: c.agentTemplates });
+    expect(within(list).getByText("reviewer")).toBeTruthy();
   });
 
   it("item detail: the components table of the latest version, the permissions count, dependencies with catalog resolution", async () => {
@@ -3455,31 +3451,22 @@ describe("/admin/plugins and marketplace entries", () => {
         }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    // One table of the latest version's components: kind and version
+    // The contents of the version: the extension, skills and connector templates in sections
     const d = en.catalog.admin.detail;
-    const table = await screen.findByRole("table", { name: d.tabs.components });
-    const kindOf = (name: string) =>
-      within(within(table).getByText(name).closest("tr") as HTMLElement);
-    expect(kindOf("crm").getByText(d.kind.extension)).toBeTruthy();
-    expect(kindOf("crm").getByText("v1.0.0")).toBeTruthy();
-    expect(kindOf("crm-notes").getByText(d.kind.skill)).toBeTruthy();
-    expect(kindOf("docs").getByText(d.kind.connectorTemplate)).toBeTruthy();
+    const skills = await screen.findByRole("list", { name: c.skills });
+    expect(within(skills).getByText("crm-notes")).toBeTruthy();
+    const templates = screen.getByRole("list", { name: c.templates });
+    expect(within(templates).getByText("docs")).toBeTruthy();
     // the inspector counts the declared permissions (tools and storage), confirmed
     expect(screen.getByText(fill(d.permissions.confirmed, { n: 2 }))).toBeTruthy();
     const deps = screen.getByRole("region", { name: c.dependencies });
-    const found = await within(deps).findByRole("link", {
-      name: fill(c.dependencyInCatalog, {
-        name: "crm-core",
-        range: "^1.0.0",
-        versions: "1.2.0, 1.0.0",
-      }),
-    });
+    const found = await within(deps).findByRole("link", { name: "crm-core" });
     expect(found.getAttribute("href")).toBe("/admin/plugins/core-id");
     expect(
-      within(deps).getByText(
-        fill(c.dependencyNotInCatalog, { name: "crm-extra", range: "^2.0.0" }),
-      ),
+      within(deps).getByText(fill(d.dependencyVersions, { versions: "1.2.0, 1.0.0" })),
     ).toBeTruthy();
+    expect(within(deps).getByText(d.dependencyMissing)).toBeTruthy();
+    expect(within(deps).getByText("crm-extra")).toBeTruthy();
   });
 
   describe("item detail: 删除 while the plugin's extension is enabled", () => {
@@ -3619,7 +3606,7 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    await screen.findByRole("heading", { name: "gh" });
+    await screen.findByRole("heading", { level: 1, name: "gh" });
     const img = document.querySelector(
       '[data-part="page-header-avatar"] [data-part="object-mark"][data-size="40"] img',
     ) as HTMLImageElement;
@@ -4839,8 +4826,10 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     // the head's Claude Code chip
     expect(screen.getByText(en.catalog.admin.chips.claudeCode)).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: tr.license }));
-    expect(screen.getByText("MIT License")).toBeTruthy();
+    // the license is a fact whose 全文 opens a Dialog with the text
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.licenseText }));
+    expect(within(await screen.findByRole("dialog")).getByText("MIT License")).toBeTruthy();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
     const table = screen.getByRole("table", { name: d.versionColumns.version });
     expect(within(table).getByText(d.versionColumns.format)).toBeTruthy();
@@ -4880,13 +4869,13 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     const del = await screen.findByRole("menuitem", { name: d.delete });
     expect(del.getAttribute("data-danger")).toBe("true");
     await user.keyboard("{Escape}");
-    // The license is a folded section at the end of the page, on every tab
-    const license = screen.getByRole("button", { name: tr.license });
-    const content = document.querySelector('[data-part="content"]') as HTMLElement;
-    const last = content.lastElementChild as HTMLElement;
-    expect(last.contains(license)).toBe(true);
+    // The license is a fact in the KeyValue, on every tab, not a folded section at the end
+    const R = en.catalog.admin.review;
+    expect(facts?.textContent).toContain(R.facts.license);
+    expect(screen.getByRole("button", { name: R.licenseText })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
     await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
-    expect(screen.getByRole("button", { name: tr.license })).toBeTruthy();
+    expect(screen.getByRole("button", { name: R.licenseText })).toBeTruthy();
   });
 
   it("item detail: a version whose LICENSE was too long to store says so (batch-3 m6)", async () => {
@@ -5310,15 +5299,15 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
     const user = userEvent.setup();
-    // the tabs 组件 / 组织 / 版本; the components table lists the extension and the skill
+    // the tabs 组件 / 组织 / 版本; the contents list the extension and the skill
     expect(
       await screen.findByRole("tab", { name: new RegExp(P.detail.tabs.components) }),
     ).toBeTruthy();
     expect(screen.getByRole("tab", { name: new RegExp(P.detail.tabs.orgs) })).toBeTruthy();
     expect(screen.getByRole("tab", { name: new RegExp(P.detail.tabs.versions) })).toBeTruthy();
-    const table = screen.getByRole("table", { name: P.detail.tabs.components });
-    expect(within(table).getByText("jina-web")).toBeTruthy();
-    expect(within(table).getByText("web-research")).toBeTruthy();
+    const skills = screen.getByRole("list", { name: en.catalog.components.skills });
+    expect(within(skills).getByText("web-research")).toBeTruthy();
+    expect(screen.getByText("jina-web")).toBeTruthy();
     // a newer marketplace version: one 更新到 (the import review and the update preview together)
     expect(
       screen.getByRole("button", { name: fill(P.detail.actions.update, { version: "v1.3.0" }) }),

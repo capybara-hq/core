@@ -261,10 +261,11 @@ export function PluginContents({
 }
 
 /**
- * The license fact: the license's name, then a "full text" link opening a Dialog with the text (a long license
- * never stretches the page); a license too large to keep says so; a name alone without a text.
+ * The license fact: the license's name, then a "full text" link opening a Dialog with the text
+ * (a long license never stretches the page); a license too large to keep says so; a name alone
+ * without a text.
  */
-function LicenseFact({ license }: { license: ContentsLicense }) {
+export function LicenseFact({ license }: { license: ContentsLicense }) {
   const t = useTranslations("catalog.admin.review");
   const tt = useTranslations("catalog.admin.review.translation");
   const [open, setOpen] = useState(false);
