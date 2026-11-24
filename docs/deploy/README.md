@@ -778,6 +778,13 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   `web`. Route `/device/stream` (the browser live view, authenticated by a `?ticket=` query) the same
   way, and keep that query out of your access logs. The gateway serves only a real WebSocket upgrade;
   a plain request gets 404.
+- **Per-client viewer limit.** The gateway limits `/device/stream` upgrades per client address
+  (120 a minute) only when its `http.trustProxy` trusts the hop in front of it; otherwise the limit
+  is off (each ticket is single-use and unguessable, so the limit is defence in depth). `web` sends
+  the client address as `X-Forwarded-For` on that path, so set `CAPYBARA_GATEWAY_TRUST_PROXY`
+  (compose) or the gateway's `CAPYBARA_HTTP__TRUST_PROXY` to the web tier's address or CIDR as the
+  gateway sees it; with your own proxy routing `/device/stream`, to that proxy's address. Never a hop
+  count when the gateway is reachable directly.
 - **WebSocket upgrade.** The proxy must pass `Upgrade` and `Connection: upgrade` and not buffer the
   stream (nginx: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`,
   `proxy_set_header Connection "upgrade"`).

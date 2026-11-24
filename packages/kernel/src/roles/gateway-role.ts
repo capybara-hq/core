@@ -4,6 +4,7 @@ import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
 import { ChannelSupervisor } from "../channels/supervisor.js";
 import { ChannelWebhooks } from "../channels/webhook.js";
 import { DeviceStreamViewers } from "../device-access/viewer.js";
+import { viewerThrottleOn } from "../device-access/viewer-routes.js";
 import { DialInGateway } from "../dial-in/gateway.js";
 import { ExtensionHost } from "../extensions/host.js";
 import type { GatewayRoutes } from "../http/gateway-routes.js";
@@ -52,7 +53,11 @@ export class GatewayRole {
       devices: {
         gateway: this.devices,
         maxFrameBytes: config.devices.dialIn.maxFrameBytes,
-        streams: { viewers: this.viewers, throttler: this.throttler },
+        streams: {
+          viewers: this.viewers,
+          // per-client limit only when the client address is known (ruling R23)
+          ...(viewerThrottleOn(config.http.trustProxy) && { throttler: this.throttler }),
+        },
       },
     };
   }

@@ -42,7 +42,10 @@ export const VIEWER_CLOSE = {
   restart: 1012,
   /** A socket paused longer than {@link VIEWER_PAUSED_LIMIT_MS}: the peer took nothing. */
   stalled: 1013,
-  /** No ticket, an unknown or used one, or its record no longer stands (owner, device, extension). */
+  /**
+   * No ticket, an unknown or used one, or its record no longer stands (owner, device,
+   * extension).
+   */
   badTicket: 4401,
   /** The device, its running instance or the service is gone, or the provider cannot stream. */
   gone: 4404,
@@ -56,9 +59,15 @@ export const HOP_HEADER = "x-capybara-hop";
 export const HOP_AT_HEADER = "x-capybara-hop-at";
 /** How old (or how far ahead, clock skew) a hop's issue time may be. */
 export const HOP_MAX_AGE_MS = 60_000;
-/** The keyring purpose the hop key is derived for (HKDF-SHA256, info `capybara:device-stream-hop`). */
+/**
+ * The keyring purpose the hop key is derived for (HKDF-SHA256, info
+ * `capybara:device-stream-hop`).
+ */
 const HOP_KEY_INFO = "device-stream-hop";
-/** A hop accepted once per ticket: `capk:device-stream-hop:<ticketId>` (a captured hop replays nothing). */
+/**
+ * A hop accepted once per ticket: `capk:device-stream-hop:<ticketId>` (a captured hop replays
+ * nothing).
+ */
 const HOP_SEEN_PREFIX = "capk:device-stream-hop:";
 /** How long the holder waits for the hop's first message (the ticket record). */
 export const HOP_FIRST_MESSAGE_MS = 10_000;
@@ -385,7 +394,7 @@ export function parseTicketRecord(raw: unknown): DeviceStreamTicket | null {
   };
 }
 
-/** One open viewer on this replica: its socket, and the promise that settles once it is all done. */
+/** One open viewer on this replica: its socket, and the promise that settles once all is done. */
 interface OpenViewer {
   end: WsEnd;
   done: Promise<void>;
@@ -484,7 +493,7 @@ export class DeviceStreamViewers {
     return this.track(socket, (end) => this.serveHopped(end, ticketId, at));
   }
 
-  /** Closes every open viewer (1001, the panel reconnects elsewhere) and waits for them to settle. */
+  /** Closes every open viewer (1001: the panel reconnects elsewhere) and waits until settled. */
   async stop(): Promise<void> {
     this.stopping = true;
     const all = [...this.open];

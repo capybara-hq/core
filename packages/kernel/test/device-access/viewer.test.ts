@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import Fastify from "fastify";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -23,6 +24,8 @@ import {
   verifyHopHeaders,
   WsEnd,
 } from "../../src/device-access/viewer.js";
+import { viewerThrottleOn } from "../../src/device-access/viewer-routes.js";
+import { registerDeviceConnectRoute } from "../../src/dial-in/routes.js";
 import { redactPath } from "../../src/http/error.filter.js";
 import { createLogger } from "../../src/log.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
@@ -485,6 +488,49 @@ describe("device stream viewer", () => {
     } finally {
       const keys = await redis.keys("throttler:*device-stream*");
       if (keys.length > 0) await redis.del(...keys);
+    }
+  });
+
+  it("the viewer limit applies only when http.trustProxy trusts a hop (ruling R23)", async () => {
+    expect(viewerThrottleOn(false)).toBe(false);
+    expect(viewerThrottleOn(0)).toBe(false);
+    expect(viewerThrottleOn([])).toBe(false);
+    expect(viewerThrottleOn(1)).toBe(true);
+    expect(viewerThrottleOn(["10.0.0.0/8"])).toBe(true);
+    // the routes as the gateway role wires them, on a bare server: no counter without trust
+    for (const trustProxy of [false, 1] as const) {
+      const app = Fastify();
+      const reserve = vi.fn(async () => {});
+      const succeeded = vi.fn(async () => {});
+      const serve = vi.fn(async (socket: WebSocket, _t: string, onTaken?: () => Promise<void>) => {
+        await onTaken?.();
+        socket.close(4401, "invalid ticket");
+      });
+      await registerDeviceConnectRoute(app, {
+        gateway: { admit: async () => null, accept: async () => {} },
+        maxFrameBytes: 1024 * 1024,
+        streams: {
+          viewers: {
+            serve: serve as never,
+            serveHop: async () => {},
+            verifyHop: () => false,
+            claimHop: async () => false,
+          },
+          ...(viewerThrottleOn(trustProxy) && { throttler: { reserve, succeeded } }),
+        },
+      });
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      try {
+        const port = (app.server.address() as { port: number }).port;
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/device/stream?ticket=${"x".repeat(32)}`);
+        ws.on("error", () => {});
+        expect(await new Promise<number>((r) => ws.on("close", (c) => r(c)))).toBe(4401);
+        expect(serve).toHaveBeenCalledTimes(1);
+        expect(reserve).toHaveBeenCalledTimes(trustProxy === false ? 0 : 1);
+        expect(succeeded).toHaveBeenCalledTimes(trustProxy === false ? 0 : 1);
+      } finally {
+        await app.close();
+      }
     }
   });
 

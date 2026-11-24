@@ -14,9 +14,22 @@ export interface DeviceStreamRoutesOptions {
   viewers: Pick<DeviceStreamViewers, "serve" | "serveHop" | "verifyHop" | "claimHop">;
   /**
    * Counts each viewer upgrade per client address (`device-stream-ip`) before the upgrade; a
-   * valid ticket gives the attempt back.
+   * valid ticket gives the attempt back. Absent when the client address is unknown
+   * ({@link viewerThrottleOn}): no limit then.
    */
-  throttler: Pick<CredentialThrottler, "reserve" | "succeeded">;
+  throttler?: Pick<CredentialThrottler, "reserve" | "succeeded">;
+}
+
+/**
+ * Whether the viewer limit applies (ruling R23): only when `http.trustProxy` trusts some hop, so
+ * `req.ip` is the browser's address as the web tier forwards it. With nothing trusted, `req.ip` is
+ * the web tier itself for every browser, and one bucket for all would let one client lock every
+ * viewer out; the limit is defence in depth (a ticket is 192 random bits, used once), so it is
+ * skipped rather than shared.
+ */
+export function viewerThrottleOn(trustProxy: boolean | number | string | string[]): boolean {
+  if (trustProxy === false || trustProxy === 0 || trustProxy === "") return false;
+  return !(Array.isArray(trustProxy) && trustProxy.length === 0);
 }
 
 /** The named throttler of the viewer route. */
@@ -31,9 +44,10 @@ const hopRefused = () =>
  * neither the API's `AuthGuard` nor its CSRF check applies; each route checks its own credential.
  *
  * - `GET /device/stream?ticket=`: the ticket is the only credential (cookies do not reach the
- *   gateway). Each upgrade counts against `device-stream-ip` (120 a minute per client address,
- *   `req.ip` under `http.trustProxy`: the web tier's upgrade proxy sets `X-Forwarded-For` for this
- *   path; 429 `rate_limited` before the upgrade; a valid ticket refunds it); otherwise the upgrade is accepted and the socket
+ *   gateway). With `opts.throttler` (a trusted proxy configured), each upgrade counts against
+ *   `device-stream-ip`: 120 a minute per client address, `req.ip` under `http.trustProxy` (the
+ *   web tier's upgrade proxy sets `X-Forwarded-For` for this path); 429 `rate_limited` before
+ *   the upgrade; a valid ticket refunds it. Otherwise the upgrade is accepted and the socket
  *   closed with the viewer close codes (`VIEWER_CLOSE`), since a browser sees no HTTP status of
  *   a refused upgrade.
  * - `GET /internal/device-stream/:ticketId`: another gateway replica's hop. Before the upgrade,
@@ -52,6 +66,7 @@ export async function registerDeviceStreamRoutes(
     {
       websocket: true,
       preValidation: async (req, reply) => {
+        if (opts.throttler === undefined) return;
         try {
           await opts.throttler.reserve(VIEWER_THROTTLER, req, reply);
         } catch (e) {
@@ -63,8 +78,11 @@ export async function registerDeviceStreamRoutes(
     },
     (socket: WebSocket, req) => {
       const t = (req.query as Record<string, unknown> | undefined)?.ticket;
-      void opts.viewers.serve(socket, typeof t === "string" ? t : "", () =>
-        opts.throttler.succeeded(VIEWER_THROTTLER, req),
+      const throttler = opts.throttler;
+      void opts.viewers.serve(
+        socket,
+        typeof t === "string" ? t : "",
+        throttler ? () => throttler.succeeded(VIEWER_THROTTLER, req) : undefined,
       );
     },
   );

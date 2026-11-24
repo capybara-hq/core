@@ -266,6 +266,11 @@ services:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
       # by default, so it trusts no X-Forwarded-For.
+      # Browser live views (/device/stream) reach it through web, which sends the client address
+      # as X-Forwarded-For on that path. Set CAPYBARA_GATEWAY_TRUST_PROXY to the web tier's
+      # address or CIDR as the gateway sees it (e.g. the devices network's subnet from
+      # `docker network inspect capybara_devices`) to enable the per-client viewer limit; while
+      # it is false that limit is off (the single-use ticket is the credential either way).
       CAPYBARA_HTTP__TRUST_PROXY: ${CAPYBARA_GATEWAY_TRUST_PROXY:-false}
     # Webhook inbound (optional; long connections need no port): not published by default. To
     # receive webhooks, uncomment this, put an HTTPS proxy in front that forwards only
