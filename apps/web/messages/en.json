@@ -302,7 +302,8 @@
       "check_not_found": "This check is not part of the setup guide shown here. Reload the page."
     },
     "directory": {
-      "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
+      "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first.",
+      "unavailable": "Cannot read this extension's state right now, so the directory sync did not start. Try again shortly."
     },
     "ui": {
       "not_found": "This panel is not available. The extension may be disabled or you cannot access this conversation.",

@@ -244,6 +244,8 @@ export const ERROR_CODES = {
    */
   "client.not_found": 404,
   "directory.not_configured": 409,
+  /** A manual directory sync could not read the extension's state for the org (transient). */
+  "directory.unavailable": 503,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,
   "plugin.scope_locked": 409,

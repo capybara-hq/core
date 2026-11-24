@@ -285,10 +285,12 @@ interface IdentitySource {
 ```ts
 interface Directory {
   configured?(config: unknown): boolean;
-  listMembers(args: { config; cursor?; signal }): Promise<{ members: DirectoryMember[]; next?: string }>;
+  listMembers(args: { config; orgId?; cursor?; signal }): Promise<{ members: DirectoryMember[]; next?: string }>;
 }
 ```
 
+- **`config` and `orgId`**: `config` is the extension's effective config for the org (its copy of the overridable fields, or the platform's); `orgId` is the org the call is made for, always set by the kernel (optional in the type, as on `web-search@1` / `web-fetch@1`). A URL that may come from the org's copy is fetched through `configUrlFetch(ctx.net, { url, platform, orgId })` (`plugin-org-url-net`), so it goes out under that org's network allowances; without `orgId`, `ctx.net` reaches public addresses only.
+- **Manual sync errors** (`POST /api/v1/orgs/:orgId/extensions/:extension/directory/sync`, 202 with a job id): no directory 404 `extension.not_found`, not enabled 409 `extension.not_enabled`, effective config invalid 409 `extension.needs_config`, `configured()` false 409 `directory.not_configured`, and 503 `directory.unavailable` when the kernel cannot read whether the extension is enabled or its effective config (a transient failure, e.g. the database; scheduled syncs skip with reason `state_unreadable` and log it).
 - **Pagination**: each call returns one page and the next-page cursor `next`, and the last page has no `next`. The kernel gives each page a 60-second limit and a round at most 10000 pages. Put everything needed to continue in the cursor (the extension is stateless).
 - **`configured(config)`** (Ruling A28): implement it when the same extension also provides channel and other extension points and the directory fields are optional in the effective config. When it returns false, the kernel silently skips the hourly scan, `directory_changed` and the pre-removal re-check, and a manual sync returns 409 `directory.not_configured`. It must be a pure function (no requests, no throwing).
 - **Throw when not configured or the credentials are wrong, and never return an empty list**: an empty list equals "everyone has left".
