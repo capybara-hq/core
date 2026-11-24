@@ -3929,9 +3929,8 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
           }),
       });
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
-      expect(
-        await screen.findByText(`https://github.com/acme/crm@fedcba9 ${r.unverified}`),
-      ).toBeTruthy();
+      const attested = await screen.findByText("https://github.com/acme/crm@fedcba9");
+      expect(attested.parentElement?.textContent).toContain(r.unverified);
       expect(screen.getByText(r.provenanceMismatch)).toBeTruthy();
       const origin = `${fill(o.git, { location: "git.acme.com/acme/marketplace (plugins/crm)", commit: "fedcba9" })} · ${fill(o.followsBranch, { ref: "main" })}`;
       // the source is a fact (one key column), the two warnings one notice
@@ -4446,15 +4445,20 @@ describe("phase B: Claude Code plugins on the import review", () => {
       ],
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    await screen.findByRole("button", { name: tr.license });
-    // the license warns in a line, each skill in a tag (its line is inside the SKILL.md disclosure)
-    expect(screen.getAllByText(tr.bidiWarning)).toHaveLength(1);
-    expect(screen.getAllByText(en.catalog.admin.review.hiddenCharacters)).toHaveLength(2);
+    const r = en.catalog.admin.review;
+    await screen.findByRole("button", { name: r.licenseText });
+    // the license fact and each skill carry a tag; the warning lines are with the texts (the
+    // license Dialog, the SKILL.md disclosure)
+    expect(screen.queryByText(tr.bidiWarning)).toBeNull();
+    expect(screen.getAllByText(r.hiddenCharacters)).toHaveLength(3);
+    await userEvent.setup().click(screen.getByRole("button", { name: r.licenseText }));
+    const dialog = await screen.findByRole("dialog", { name: tr.license });
+    expect(within(dialog).getByText(tr.bidiWarning)).toBeTruthy();
     cleanup();
     vi.unstubAllGlobals();
     stage(CLAUDE_REVIEW);
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    await screen.findByRole("button", { name: tr.license });
+    await screen.findByRole("button", { name: r.licenseText });
     expect(screen.queryByText(tr.bidiWarning)).toBeNull();
     expect(screen.queryByText(en.catalog.admin.review.hiddenCharacters)).toBeNull();
   });
@@ -4534,21 +4538,21 @@ describe("phase B: Claude Code plugins on the import review", () => {
     );
   });
 
-  it("each skill's SKILL.md and the license are collapsed and expandable", async () => {
-    const tr = en.catalog.admin.review.translation;
+  it("each skill's SKILL.md opens inline; the license's 全文 opens a Dialog", async () => {
+    const r = en.catalog.admin.review;
     stage(CLAUDE_REVIEW);
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    const license = await screen.findByRole("button", { name: tr.license });
-    expect(license.getAttribute("aria-expanded")).toBe("false");
+    const license = await screen.findByRole("button", { name: r.licenseText });
     expect(screen.queryByText(/Copyright \(c\) 2025/)).toBeNull();
     await user.click(license);
-    expect(screen.getByText(/Copyright \(c\) 2025/)).toBeTruthy();
-    const body = screen.getByRole("button", {
-      name: fill(tr.skillBody, { name: "brainstorming" }),
-    });
+    const dialog = await screen.findByRole("dialog", { name: r.translation.license });
+    expect(within(dialog).getByText(/Copyright \(c\) 2025/)).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const skill = screen.getByRole("group", { name: "brainstorming" });
     expect(screen.queryByText(/Ask questions first/)).toBeNull();
-    await user.click(body);
+    await user.click(within(skill).getByRole("button", { name: r.skillBody }));
     expect(screen.getByText(/Ask questions first/)).toBeTruthy();
   });
 
@@ -4565,7 +4569,7 @@ describe("phase B: Claude Code plugins on the import review", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     expect(await screen.findByText(tr.licenseTruncated)).toBeTruthy();
     expect(screen.getByText(tr.claudeManifestIgnored)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.catalog.admin.review.licenseText })).toBeNull();
   });
 
   it("a native plugin review shows no translation section", async () => {

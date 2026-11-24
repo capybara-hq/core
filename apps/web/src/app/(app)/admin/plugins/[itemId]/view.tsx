@@ -706,9 +706,6 @@ function ComponentsTab({
       />
       {deps.length > 0 && (
         <ComponentSection title={tc("dependencies")} count={deps.length} empty="">
-          <Text variant="small" tone="muted">
-            {tc("dependenciesHint")}
-          </Text>
           {deps.map((d) => {
             const found = catalog?.find((i) => i.name === d.name);
             return found ? (

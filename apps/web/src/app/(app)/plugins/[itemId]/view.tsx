@@ -282,9 +282,6 @@ function CatalogItemDetail({
           count={detail.dependencies.length}
           empty={tc("dependenciesNone")}
         >
-          <Text variant="small" tone="muted">
-            {tc("dependenciesHint")}
-          </Text>
           <ItemList
             label={tc("dependencies")}
             rows={detail.dependencies.map((d) => ({ id: d.name, title: d.name, meta: d.range }))}
