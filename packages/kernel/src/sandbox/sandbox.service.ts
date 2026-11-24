@@ -1578,6 +1578,84 @@ export class SandboxService {
   }
 
   /**
+   * Applies the device's current limits to its running instance now, as the exclusive step of a
+   * use does ({@link ensure}: the fence moves, then {@link applyLimits}, the provider's `update`
+   * or a recreate on the kept files), without waiting for the next use: a device allowlist written
+   * outside a tool call (the panel's allow, browser use spec §7) reaches the running services. It
+   * never creates, resumes or rebuilds an instance: without a running one (none, suspended, being
+   * created or destroyed, files lost) there is nothing to apply and the next use's resume applies
+   * the limits. Nothing is done when the limits already apply (no lease is taken, so open viewers
+   * stay), or while the device carries a retirement obligation (only a use's gate settles it).
+   *
+   * The exclusive lease is taken with intent and waited for up to `sandbox.lockWaitSeconds`
+   * (`sandbox.busy` after that: a tool call holding the device keeps it, and the next use applies
+   * the limits); taking it ends the device's stream holds (ruling R7), so viewers reconnect to the
+   * service as it runs afterwards. `applied` with the instance now recorded (a new one after a
+   * recreate), `unchanged` when nothing had to be applied, `not_running` without a running
+   * instance.
+   */
+  async applyLimitsIfRunning(
+    use: SandboxUseContext,
+    signal: AbortSignal,
+  ): Promise<"applied" | "unchanged" | "not_running"> {
+    const p = await this.require(use.deviceId, use.orgId);
+    const env = use.deviceId;
+    // a first look without a lease: nothing to apply leaves the device and its viewers alone
+    const before = await this.readRow(use);
+    if (!this.usable(before, p, null)) return "not_running";
+    if (!this.mustApply(before, p, await this.wantedLimits(use))) return "unchanged";
+    if (await this.retirement.hasUnresolved(env)) return "unchanged";
+    const lease = await this.leases.acquireExclusive(
+      env,
+      signal,
+      this.config.get().sandbox.lockWaitSeconds * 1000,
+      { intent: true },
+    );
+    try {
+      const sig = AbortSignal.any([signal, lease.signal]);
+      // under the lease the B1 snapshot writer needs: no limits change on a device carrying the
+      // reconcile marker (B-11)
+      await this.facts.assertCloudReconciled(use.orgId, env);
+      // read again under the lease: another holder may have applied, suspended or replaced it
+      const row = await this.readRow(use);
+      if (!this.usable(row, p, null)) return "not_running";
+      if (await this.retirement.hasUnresolved(env)) return "unchanged";
+      const fence = { gen: row.generation };
+      // every acquisition first does a fenced increment, so a holder whose lease ended unnoticed
+      // fails its next write; the provider calls below carry this holder's token
+      await this.fenced(lease, env, fence, {});
+      const want = await this.wantedLimits(use);
+      const must = this.mustApply(row, p, want);
+      const installed =
+        !must && (await this.installedNetworkWider(env, p, row, row.handle, sig, want));
+      if (installed && sig.aborted) throw abortReason(sig);
+      if (!must && !installed) return "unchanged";
+      const created = await this.applyLimits(
+        use,
+        p,
+        lease,
+        row,
+        row.handle,
+        fence,
+        sig,
+        want,
+        installed,
+      );
+      // B-15: evidence recorded for the old limits or the old instance is read again
+      await this.refreshCloudSupport(
+        use,
+        p,
+        created ?? { handle: row.handle, createdAt: row.created_at.getTime() },
+        sig,
+        false,
+      );
+      return "applied";
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
    * A run start's kernel read of the bound project (permission activation L2, Hook 1): the use
    * a tool call's would be (the instance made or resumed, the read silent for the holder), whose
    * provider stats, reads and lists only, each call a kernel read admitted and claimed on its own

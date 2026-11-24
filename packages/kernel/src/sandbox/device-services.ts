@@ -53,10 +53,13 @@ export class DeviceServices {
   }
 
   /**
-   * Applies the device's current limits to the service again when it runs (an `ifRunning`
-   * ensure; the device's allowlist changed); nothing when the instance or the service is not
-   * running, and it never resumes or starts anything. The status, or null without a running
-   * instance.
+   * Applies the device's current limits to the service when it runs (the device's allowlist
+   * changed outside a tool call): first to the running instance, as a use's exclusive step does
+   * ({@link SandboxService.applyLimitsIfRunning}: the provider's `update`, or a recreate on the
+   * kept files, which ends the services with the old instance), then an `ifRunning` ensure on the
+   * instance as it is recorded now (a provider that restarts a service on a network change does
+   * it there). Nothing when the instance or the service is not running, and it never resumes or
+   * starts anything. The status, or null without a running instance.
    */
   async refresh(
     use: SandboxUseContext,
@@ -64,6 +67,7 @@ export class DeviceServices {
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus | null> {
     assertServiceName(name);
+    await this.sandbox.applyLimitsIfRunning(use, signal);
     const current = await this.sandbox.currentInstance(use.deviceId);
     if (!current) return null;
     const r = await this.sandbox.ifRunning(

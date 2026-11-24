@@ -26,6 +26,7 @@ import {
   fakeServiceStarts,
   fakeServiceStateDir,
   fakeWorkspaceDir,
+  readFakeSandboxLimits,
   readFakeSandboxOps,
 } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -284,6 +285,122 @@ describe("device services", () => {
     expect(seen[0]?.spec).toEqual(nameOnly);
     expect(seen[1]?.spec).toEqual(spec());
     expect(seen[2]?.spec).toEqual(nameOnly);
+  });
+});
+
+/**
+ * The device's allowlist changed outside a tool call (the panel's allow): `refresh` applies the
+ * new limits to the running instance under the exclusive lease, as a use would, before its
+ * `ifRunning` ensure, and never resumes or starts anything.
+ */
+describe("refresh after an allowlist change", () => {
+  const setHosts = (extraHosts: string[]) =>
+    sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts },
+    })}::jsonb WHERE id = ${seed.orgId}`.execute(raw);
+  const updates = async () => (await readFakeSandboxOps(root)).filter((o) => o[0] === "update");
+  const lastLimits = async () => (await readFakeSandboxLimits(root)).at(-1);
+  const hold = () => svc.holdForStream(deviceId, seed.orgId, signal());
+
+  it("applies a widened allowlist to the running instance; the service keeps running and viewers yield", async () => {
+    await setHosts([]);
+    const started = await services.ensure(use(), spec(), signal());
+    const h = await hold();
+    await setHosts(["example.com"]);
+    expect(await services.refresh(use(), "echo", signal())).toEqual(started);
+    expect(await updates()).toHaveLength(1);
+    const applied = await lastLimits();
+    expect(applied?.op).toBe("update");
+    expect(applied?.limits.network.hosts).toContain("example.com");
+    // fenced as a use's update is: it carries the holder's token
+    expect(applied?.fence).toEqual(expect.any(Number));
+    expect(await fakeServiceStarts(root)).toBe(1);
+    // the exclusive lease ended the stream hold (ruling R7): the panel reconnects
+    await aborted(h.signal);
+    await h.release();
+    // applied: the next refresh and the next use change nothing
+    await services.refresh(use(), "echo", signal());
+    await services.request(use(), "echo", text("ping"), 5_000, signal());
+    expect(await updates()).toHaveLength(1);
+  });
+
+  it("limits that already apply take no lease: an open viewer stays", async () => {
+    await setHosts(["example.com"]);
+    await services.ensure(use(), spec(), signal());
+    const h = await hold();
+    await services.refresh(use(), "echo", signal());
+    expect(await updates()).toHaveLength(0);
+    expect(h.signal.aborted).toBe(false);
+    await h.release();
+  });
+
+  it("a suspended instance is not resumed: the next use applies the limits", async () => {
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    const id = await instanceId();
+    expect(await svc.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
+    await setHosts(["example.com"]);
+    expect(await services.refresh(use(), "echo", signal())).toBeNull();
+    expect(await fakeSandboxState(root, id)).toBe("suspended");
+    expect(await updates()).toHaveLength(0);
+    expect((await readFakeSandboxOps(root)).some((o) => o[0] === "resume")).toBe(false);
+    await services.ensure(use(), spec(), signal());
+    expect(await updates()).toHaveLength(1);
+  });
+
+  it("a provider without update recreates the instance on the kept files: the service ends with it", async () => {
+    provider = createFakeSandbox(root);
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    const before = await instanceId();
+    await setHosts(["example.com"]);
+    const status = await services.refresh(use(), "echo", signal());
+    // the ifRunning ensure on the new instance finds the service stopped and starts nothing
+    expect(status?.state).toBe("stopped");
+    const after = await instanceId();
+    expect(after).not.toBe(before);
+    expect(await fakeServiceRunning(root, before, "echo")).toBe(false);
+    expect(await fakeServiceStarts(root)).toBe(1);
+    const applied = await lastLimits();
+    expect(applied?.op).toBe("create");
+    expect(applied?.limits.network.hosts).toContain("example.com");
+    expect((await row())?.status).toBe("running");
+  });
+
+  it("a use holding the device on another replica keeps it: refresh waits for it, then applies", async () => {
+    await setHosts([]);
+    await services.ensure(use(), spec(), signal());
+    await setHosts(["example.com"]);
+    // another replica's holder (its own SandboxService on the same Postgres and Redis)
+    const other = service();
+    const current = await other.currentInstance(deviceId);
+    if (!current) throw new Error("no instance");
+    let letGo = () => {};
+    const gate = new Promise<void>((resolve) => {
+      letGo = resolve;
+    });
+    let entered = () => {};
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = other.ifRunning(deviceId, { createdAt: current.createdAt }, async () => {
+      entered();
+      await gate;
+    });
+    await inside;
+    const refreshed = services.refresh(use(), "echo", signal());
+    // the waiter's intent: new shared leases wait behind it
+    await vi.waitFor(
+      async () => expect(await redis.exists(`capk:sandbox-intent:${deviceId}`)).toBe(1),
+      { timeout: 10_000, interval: 20 },
+    );
+    expect(await updates()).toHaveLength(0);
+    letGo();
+    expect((await held).kind).toBe("ran");
+    expect((await refreshed)?.state).toBe("running");
+    expect(await updates()).toHaveLength(1);
+    expect(await fakeServiceStarts(root)).toBe(1);
   });
 });
 

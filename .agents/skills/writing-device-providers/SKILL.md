@@ -510,7 +510,12 @@ treats a dial-in device like any other (its provider, report and permission supp
   sandbox and network, killed with the instance on suspend and destroy. The kernel reaches them
   only through `DeviceServices` (`sandbox/device-services.ts`: `ensure`, `request`, `status`,
   `refresh`, `stop`; `ensure` and `request` are uses like any tool call, so a suspended instance
-  resumes; `status`, `refresh` and `stop` never resume one). Every status carries `stateDir`, the
+  resumes; `status`, `refresh` and `stop` never resume one). `refresh` (after the allowlist changed
+  outside a tool call: the panel's allow) first applies the device's limits to a running instance
+  as a use's exclusive step does (`SandboxService.applyLimitsIfRunning`: exclusive lease with
+  intent, fence, `applyLimits`; stream holds yield; `sandbox.busy` while a use keeps the device,
+  then the next use applies), then sends the `ifRunning` ensure; a provider without `update` is
+  recreated there, which ends its services. Every status carries `stateDir`, the
   service's absolute state directory, also when stopped. `ensureService(h, spec, signal,
   { ifRunning: true })` reads only `spec.name` (the kernel sends the name-only spec
   `{ name, runtime: "node", entry: "", args: [], files: {} }`, `nameOnlySpec`; never refuse it),
