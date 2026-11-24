@@ -104,6 +104,11 @@ export interface ConnectorSummary {
   endpoint: { url?: string } & Record<string, unknown>;
   auth: ConnectorAuth;
   status: "active" | "disabled";
+  /**
+   * Derived by the kernel on every read: `needs_config` while the org input its auth needs (an
+   * OAuth client or an org credential) is absent; such a connector is never called.
+   */
+  setup: "ready" | "needs_config";
   /** The platform connector template it was made from; null for a custom one (older: absent). */
   platformTemplateId?: string | null;
   /** The icon of the plugin its template came from (an org icon route; null or absent: none). */

@@ -33,6 +33,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UUID_RE } from "../ui/registry.js";
+import { type ConnectorSetup, connectorSetup } from "./connector-setup.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -135,6 +136,12 @@ export interface ConnectorSummary {
   endpoint: unknown;
   auth: ConnectorAuth;
   status: "active" | "disabled";
+  /**
+   * Derived on every read, never stored (plugin pages spec §5.2.1): `needs_config` while the org
+   * input its auth needs (an OAuth client or an org credential) is absent; such a connector is
+   * never called. Independent of `status`.
+   */
+  setup: ConnectorSetup;
   /**
    * The platform connector template it was made from (`connectors.platform_template_id`), null for
    * a custom one: the web offers it for a pending connector of that template (ruling P4-7).
@@ -1224,7 +1231,18 @@ export class ConnectorsService {
     return r;
   }
 
-  private summary(r: Awaited<ReturnType<ConnectorsService["row"]>>): ConnectorSummary {
+  /** The connector's derived setup state (spec §5.2.1), from its org input's key presence. */
+  setupOf(
+    orgId: string,
+    r: Pick<Awaited<ReturnType<ConnectorsService["row"]>>, "id" | "auth">,
+  ): Promise<ConnectorSetup> {
+    return connectorSetup(this.credentials, orgId, r.id, r.auth as unknown as ConnectorAuth);
+  }
+
+  private summary(
+    r: Awaited<ReturnType<ConnectorsService["row"]>>,
+    setup: ConnectorSetup,
+  ): ConnectorSummary {
     return {
       id: r.id,
       slug: r.slug,
@@ -1234,6 +1252,7 @@ export class ConnectorsService {
       endpoint: endpointView(r.endpoint),
       auth: r.auth as unknown as ConnectorAuth,
       status: r.status,
+      setup,
       platformTemplateId: r.platform_template_id ?? null,
       catalogItemId: r.catalog_item_id ?? null,
       git: r.git_hosts !== null && r.git_hosts.length > 0 ? { hosts: r.git_hosts } : null,
@@ -1272,7 +1291,7 @@ export class ConnectorsService {
       .where("connector_id", "=", connectorId)
       .orderBy("name")
       .execute();
-    const s = this.summary(r);
+    const s = this.summary(r, await this.setupOf(orgId, r));
     const auth = s.auth;
     const status = await this.credentials.status(orgId, connectorId, auth, viewerAccountId);
     return {
@@ -1439,7 +1458,7 @@ export class ConnectorsService {
       .orderBy("created_at")
       .orderBy("id")
       .execute();
-    return rows.map((r) => this.summary(r));
+    return Promise.all(rows.map(async (r) => this.summary(r, await this.setupOf(orgId, r))));
   }
 
   /**

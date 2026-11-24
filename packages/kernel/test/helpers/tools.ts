@@ -147,7 +147,7 @@ export interface PipelineTestDeps {
   db: Kysely<any>;
   eventLog: EventLog;
   registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
-  credentials: Pick<Credentials, "injection" | "onUnauthorized">;
+  credentials: Pick<Credentials, "injection" | "onUnauthorized" | "hasOrgInput">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
   approvals: Pick<

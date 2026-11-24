@@ -242,6 +242,10 @@ function pipeline(): ToolPipeline {
         throw new CredentialMissing(connectorId, auth.ownership);
       },
       async onUnauthorized() {},
+      // as `injection`: no org input is ever stored
+      async hasOrgInput() {
+        return false;
+      },
     },
     breaker: breakerFor(redis, config),
     outputs: outputsFor(db, config),

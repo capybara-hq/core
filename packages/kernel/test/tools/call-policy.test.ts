@@ -157,6 +157,9 @@ function pipeline(): ToolPipeline {
         return { headers: {} };
       },
       async onUnauthorized() {},
+      async hasOrgInput() {
+        return true;
+      },
     },
     breaker: breakerFor(redis, config),
     outputs: outputsFor(db, config),

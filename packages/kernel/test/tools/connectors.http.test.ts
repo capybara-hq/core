@@ -26,6 +26,7 @@ import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { OrgNetworkAllowances } from "../../src/orgs/network-allowances.service.js";
+import { Credentials } from "../../src/tools/credentials.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -1073,6 +1074,102 @@ describe("a member's own tool policies (the card's 权限, decision 2026-11-09)"
       url: `/api/v1/orgs/${other}/connectors/${app.id}/tool-policies/me`,
     });
     expect(cross.statusCode).toBe(404);
+  });
+});
+
+describe("the derived setup state (plugin pages spec §5.2.1): needs_config is never called", () => {
+  const NEEDS_CONFIG_TEXT =
+    "This connector needs to be configured by an organization admin before it can be used.";
+  let req: Req;
+  let orgId: string;
+
+  beforeEach(async () => {
+    req = await session("owner");
+    orgId = await createOrgWithProviders(k, req);
+    await enableConnectorExtensions(k, orgId);
+  });
+
+  /** A `fake` connector on the fake MCP server, created (and its tools listed) with an org credential. */
+  async function createDocs(): Promise<string> {
+    const { connector } = await createConnector(req, orgId, {
+      slug: "docs",
+      connector: "fake",
+      endpoint: { url: mcp.url },
+    });
+    return connector.id;
+  }
+
+  const setupOf = async (connectorId: string) => {
+    const one = await req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
+    });
+    const all = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors` });
+    const listed = (all.json() as { connectors: { id: string; setup: string }[] }).connectors.find(
+      (c) => c.id === connectorId,
+    );
+    const detail = (one.json() as { connector: { setup: string } }).connector.setup;
+    // the list and the detail derive it the same way
+    expect(listed?.setup).toBe(detail);
+    return detail;
+  };
+
+  /** Asks the agent to call `mcp__docs__search` and returns the call's tool result. */
+  async function callSearch() {
+    const conv = await createConv(req, orgId, await createAgent(req, orgId));
+    await postMessage(req, orgId, conv, 'tool:mcp__docs__search:{"q":"x"}');
+    await waitForTerminal(db, conv, 1, 20_000);
+    const result = (await eventsOf(db, conv)).find((e) => e.type === "tool_result");
+    return result?.payload as { toolKey: string; content: string; isError: boolean };
+  }
+
+  it("removing the org credential turns setup back to needs_config; saving it again makes it ready", async () => {
+    const id = await createDocs();
+    expect(await setupOf(id)).toBe("ready");
+    await k.app.get(Credentials).clear(orgId, id, { kind: "org" });
+    expect(await setupOf(id)).toBe("needs_config");
+    const put = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/connectors/${id}/credentials/org`,
+      payload: { token: TOKEN },
+    });
+    expect(put.statusCode).toBe(204);
+    expect(await setupOf(id)).toBe("ready");
+  });
+
+  it("a needs_config static org connector (no org credential) is never called", async () => {
+    const id = await createDocs();
+    await k.app.get(Credentials).clear(orgId, id, { kind: "org" });
+    expect(await setupOf(id)).toBe("needs_config");
+    const before = mcp.requests.length;
+    const r = await callSearch();
+    expect(r).toMatchObject({ toolKey: "mcp__docs__search", isError: true });
+    expect(r.content).toBe(NEEDS_CONFIG_TEXT);
+    expect(mcp.requests.length).toBe(before);
+  });
+
+  it("a needs_config connector (no OAuth client) is never called; the model gets the configure text", async () => {
+    const id = await createDocs();
+    // the connector's auth becomes client credentials, with no OAuth client stored
+    await sql`UPDATE capybara.connectors SET auth = ${JSON.stringify({
+      type: "oauth_client",
+      ownership: "org",
+      tokenUrl: "https://auth.example.com/token",
+    })}::jsonb WHERE id = ${id}`.execute(raw);
+    expect(await setupOf(id)).toBe("needs_config");
+    const before = mcp.requests.length;
+    const r = await callSearch();
+    expect(r).toMatchObject({ toolKey: "mcp__docs__search", isError: true });
+    expect(r.content).toBe(NEEDS_CONFIG_TEXT);
+    expect(mcp.requests.length).toBe(before);
+    // storing the client is the input it lacked
+    await k.app.get(Credentials).setOAuthClient(orgId, id, {
+      clientId: "client-1",
+      clientSecret: "client-secret-1",
+      authMethod: "client_secret_basic",
+      tokenEndpoint: "https://auth.example.com/token",
+    });
+    expect(await setupOf(id)).toBe("ready");
   });
 });
 

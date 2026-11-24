@@ -33,6 +33,7 @@ import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import type { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
+import type { SetupNeed } from "../../src/tools/connector-setup.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import type { ToolOutputs } from "../../src/tools/outputs.js";
 import {
@@ -207,6 +208,15 @@ let effective: PipelineTestDeps["effective"];
 /** The org tool switches the pipeline reads (layering spec A §7); undefined = none off. */
 let switches: PipelineTestDeps["switches"];
 
+/** The org inputs the fake credentials report present (`Credentials.hasOrgInput`). */
+let orgInputs = new Set<SetupNeed>();
+/** Every `hasOrgInput` question (orgId, connectorId, need). */
+let asked: [string, string, SetupNeed][] = [];
+/** The connectors whose credential the pipeline read (`Credentials.injection`). */
+let injections: string[] = [];
+const NEEDS_CONFIG_TEXT =
+  "This connector needs to be configured by an organization admin before it can be used.";
+
 function pipeline(): ToolPipeline {
   const deps: PipelineTestDeps = {
     db,
@@ -223,10 +233,15 @@ function pipeline(): ToolPipeline {
     },
     credentials: {
       async injection(_orgId: string, connectorId: string, auth: ConnectorAuth) {
+        injections.push(connectorId);
         if (auth.type === "none") return { headers: {} };
         throw new CredentialMissing(connectorId, auth.ownership);
       },
       async onUnauthorized() {},
+      async hasOrgInput(orgId: string, connectorId: string, need: SetupNeed) {
+        asked.push([orgId, connectorId, need]);
+        return orgInputs.has(need);
+      },
     },
     breaker,
     outputs,
@@ -285,6 +300,9 @@ beforeEach(async () => {
   hidden = [];
   handlerCalls = {};
   toolsChanged = [];
+  orgInputs = new Set();
+  asked = [];
+  injections = [];
   lastOpen = undefined;
   Object.assign(conn, { opened: 0, closed: 0, calls: 0, signals: [], ctxs: [] });
   connCall = async (name) => ({ content: [{ type: "text", text: `called ${name}` }] });
@@ -1374,7 +1392,7 @@ describe("ToolPipeline.runStep", () => {
     expect((await eventsOf(db, midConv)).filter((e) => e.type === "subagent_waiting")).toEqual([]);
   });
 
-  it("组织凭据缺失：不写 connection_required，提示找组织管理员", async () => {
+  it("needs_config (no org credential): never opened, no connection_required, the configure text", async () => {
     const orgApp = await seedConnector(raw, seed.orgId, seed.accountId, {
       slug: "orgc",
       name: "Org Docs",
@@ -1384,9 +1402,46 @@ describe("ToolPipeline.runStep", () => {
     resolved = [appTool("orgc", orgApp, "read")];
     const evs = await runCalls([{ id: "c1", name: "mcp__orgc__read", input: {} }]);
     expect(evs.some((e) => e.type === "connection_required")).toBe(false);
-    expect(resultsOf(evs)[0]?.content).toBe(
-      "Org Docs has no organization credential configured; ask an organization admin to set it up.",
-    );
+    expect(resultsOf(evs)[0]?.content).toBe(NEEDS_CONFIG_TEXT);
+    expect(conn.opened).toBe(0);
+    expect(injections).toEqual([]);
+  });
+
+  it("needs_config (a manual-client OAuth connector without its client): never opened, the configure text, not a connect card", async () => {
+    const oauthApp = await seedConnector(raw, seed.orgId, seed.accountId, {
+      slug: "oauthc",
+      name: "OAuth Docs",
+      auth: {
+        type: "oauth_code",
+        ownership: "personal",
+        discovery: "manual",
+        authorizationUrl: "https://auth.example.com/authorize",
+        tokenUrl: "https://auth.example.com/token",
+        client: "manual",
+      },
+    });
+    await seedAppTool(oauthApp, "read");
+    resolved = [appTool("oauthc", oauthApp, "read")];
+    const evs = await runCalls([{ id: "c1", name: "mcp__oauthc__read", input: {} }]);
+    expect(evs.some((e) => e.type === "connection_required")).toBe(false);
+    expect(resultsOf(evs)[0]).toMatchObject({ content: NEEDS_CONFIG_TEXT, isError: true });
+    expect(conn.opened).toBe(0);
+    expect(injections).toEqual([]);
+  });
+
+  it("an org input that is present lets the call through (the check reads the need the auth has)", async () => {
+    orgInputs = new Set(["credential"]);
+    const orgApp = await seedConnector(raw, seed.orgId, seed.accountId, {
+      slug: "orgc",
+      name: "Org Docs",
+      auth: { type: "bearer", ownership: "org" },
+    });
+    await seedAppTool(orgApp, "read");
+    resolved = [appTool("orgc", orgApp, "read")];
+    await runCalls([{ id: "c1", name: "mcp__orgc__read", input: {} }]);
+    expect(asked).toEqual([[seed.orgId, orgApp, "credential"]]);
+    // past the setup check: the credential itself is read (the fake has none to give)
+    expect(injections).toEqual([orgApp]);
   });
 
   it("超大结果转存：tool_result 只含预览与存档 id", async () => {

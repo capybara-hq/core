@@ -123,6 +123,7 @@ import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { canonicalJson } from "./canonical-json.js";
+import { connectorSetup } from "./connector-setup.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
@@ -323,8 +324,9 @@ const stateTooLargeText = (key: string) =>
   `Tool ${key} returned input state larger than ${MAX_INPUT_STATE_BYTES / 1024} KB.`;
 const personalMissingText = (connectorName: string) =>
   `The user has not connected ${connectorName}. A connect card was shown; ask the user to connect, then retry.`;
-const orgMissingText = (connectorName: string) =>
-  `${connectorName} has no organization credential configured; ask an organization admin to set it up.`;
+/** A connector lacking its org input (`needs_config`, or an org credential gone mid-call). */
+const ORG_MISSING_TEXT =
+  "This connector needs to be configured by an organization admin before it can be used.";
 
 // ---- 策略（判定见 policy.ts） ----
 
@@ -457,7 +459,7 @@ interface PipelineDeps {
   readonly db: KernelSchemaDb;
   readonly eventLog: EventLog;
   readonly registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
-  readonly credentials: Pick<Credentials, "injection" | "onUnauthorized">;
+  readonly credentials: Pick<Credentials, "injection" | "onUnauthorized" | "hasOrgInput">;
   readonly breaker: Pick<Breaker, "check" | "failure" | "success">;
   readonly outputs: Pick<ToolOutputs, "save" | "load">;
   /** 策略为 `ask` 时建审批；续跑时读该调用的审批结果。 A refused network host: a network ask. */
@@ -992,7 +994,10 @@ export class ToolPipeline {
     /** The message tools between agents; absent (tests): their calls are refused. */
     @Inject(SubagentMessages) messages: Pick<SubagentMessages, "toChild" | "toParent"> | undefined,
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
-    @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
+    @Inject(Credentials) credentials: Pick<
+      Credentials,
+      "injection" | "onUnauthorized" | "hasOrgInput"
+    >,
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
     @Inject(ToolOutputs) outputs: Pick<ToolOutputs, "save" | "load">,
     @Inject(ApprovalsService)
@@ -3315,7 +3320,12 @@ export class ToolPipeline {
             connectorSlug: app.slug,
             message: personalMissingText(app.name),
           }
-        : { kind: "error", message: orgMissingText(app.name) };
+        : { kind: "error", message: ORG_MISSING_TEXT };
+    // A connector lacking the org input its auth needs (needs_config, plugin pages spec §5.2.1) is
+    // never called: refused before any credential read or session, whatever its member holds.
+    if ((await connectorSetup(credentials, orgId, connectorId, auth)) === "needs_config") {
+      return { kind: "error", message: ORG_MISSING_TEXT };
+    }
     // 先取一次凭据：缺凭据在打开会话之前就确定，不依赖连接器把 CredentialMissing 原样抛出。
     try {
       await getAuth();

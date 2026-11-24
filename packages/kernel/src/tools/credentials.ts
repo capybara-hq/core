@@ -11,6 +11,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import type { SetupNeed } from "./connector-setup.js";
 import { oauthHttpOptions } from "./oauth/discovery.js";
 import {
   basicClientAuth,
@@ -463,6 +464,18 @@ export class Credentials {
         : auth.ownership === "personal"
           ? userKey(connectorId, accountId)
           : orgKey(connectorId);
+    return (await this.hasKey(orgId, key)) ? "connected" : "missing";
+  }
+
+  /**
+   * Whether the org input a connector needs (`setupNeed`) is stored: its OAuth client for
+   * `client`, its org credential for `credential`. Reads the key's presence only, never decrypts.
+   */
+  async hasOrgInput(orgId: string, connectorId: string, need: SetupNeed): Promise<boolean> {
+    return this.hasKey(orgId, need === "client" ? clientKey(connectorId) : orgKey(connectorId));
+  }
+
+  private async hasKey(orgId: string, key: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("secrets")
       .select("key")
@@ -470,7 +483,7 @@ export class Credentials {
       .where("org_id", "=", orgId)
       .where("key", "=", key)
       .executeTakeFirst();
-    return row ? "connected" : "missing";
+    return row !== undefined;
   }
 
   /** 返回本次请求要注入的头 / 查询参数；缺凭据抛 CredentialMissing。 */

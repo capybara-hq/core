@@ -117,6 +117,9 @@ function pipeline(): ToolPipeline {
         return { headers: {} };
       },
       async onUnauthorized() {},
+      async hasOrgInput() {
+        return true;
+      },
     },
     breaker,
     outputs,

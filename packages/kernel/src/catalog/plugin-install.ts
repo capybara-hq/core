@@ -49,13 +49,14 @@ import {
   type ThemePreview,
   themesPreview,
 } from "../themes/theme-usage.js";
+import { setupNeed } from "../tools/connector-setup.js";
 import type {
   ConnectorDetail,
   CreateConnectorInput,
   ToolIssue,
 } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
-import type { ConnectorAuth } from "../tools/credentials.js";
+import { type ConnectorAuth, isOAuth } from "../tools/credentials.js";
 import {
   type CatalogVersionFiles,
   findConnectorIn,
@@ -547,12 +548,16 @@ export function missingTemplateInput(
   o: { personalCredential?: boolean } = {},
 ): "credential" | "client" | undefined {
   const auth = template.auth as unknown as ConnectorAuth;
-  if (auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual")) {
-    return given?.client === undefined ? "client" : undefined;
+  const need = setupNeed(auth);
+  if (need === "client") return given?.client === undefined ? "client" : undefined;
+  // a personal static template: the installer's own credential lists its tools (until install
+  // without input, spec §5.2.2)
+  const personal =
+    need === undefined && auth.type !== "none" && !isOAuth(auth) && o.personalCredential !== false;
+  if (need === "credential" || personal) {
+    return given?.credential === undefined ? "credential" : undefined;
   }
-  if (auth.type === "none" || auth.type === "oauth_code") return undefined;
-  if (auth.ownership !== "org" && o.personalCredential === false) return undefined;
-  return given?.credential === undefined ? "credential" : undefined;
+  return undefined;
 }
 
 /** `e` with its validation paths under `at` (input errors of a template's connector). */
