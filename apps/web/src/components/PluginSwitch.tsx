@@ -222,7 +222,7 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
 
   const run = async (
     action: { itemId: string; id: PluginAction["id"] },
-    op: () => Promise<string | undefined>,
+    op: () => Promise<string | { msg: string; undo(): void } | undefined>,
   ) => {
     if (busy) return;
     setBusy(true);
@@ -230,7 +230,10 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
     setError(undefined);
     try {
       const done = await op();
-      if (done !== undefined) toast.success(done);
+      if (typeof done === "string") toast.success(done);
+      else if (done !== undefined) {
+        toast.success(done.msg, { actionLabel: t("toast.undo"), onAction: done.undo });
+      }
     } catch (e) {
       setError({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -243,7 +246,20 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
   const enable = (i: OrgCatalogItem) =>
     run({ itemId: i.id, id: "enable" }, async () => {
       await sw.mutateAsync({ itemId: i.id, enabled: true });
-      return t("toast.enabled", { name: nameOf(i) });
+      // Say what arrived; Undo switches it off again without the skills confirmation (the
+      // person has just switched it on)
+      const c = i.componentCounts;
+      const parts = [
+        ...(c.skills > 0 ? [t("toast.part.skills", { n: c.skills })] : []),
+        ...(c.agentTemplates > 0 ? [t("toast.part.agentTemplates", { n: c.agentTemplates })] : []),
+        ...(c.themes > 0 ? [t("toast.part.themes", { n: c.themes })] : []),
+      ];
+      const sep = locale === "zh" ? "、" : ", ";
+      const msg =
+        parts.length === 0
+          ? t("toast.enabled", { name: nameOf(i) })
+          : t("toast.enabledWith", { name: nameOf(i), what: parts.join(sep) });
+      return { msg, undo: () => void disable(i, true) };
     });
   // The first off call answers the preview (or switches off at once when nothing is installed:
   // a plugin whose skills every agent would lose is confirmed here first, skills default-on §10)
@@ -416,10 +432,11 @@ export function usePluginActions({ orgId, admin }: { orgId: string; admin: boole
 
 /**
  * The switch-off confirmation (spec §5 rule 8): what switching the plugin off removes (the
- * components it created and nothing else uses), what it keeps and why, and the agents that use
- * its components (they lose them). A dependency install (`plugin`) is named by its plugin, from the
- * org's installs (its id until they are read). Shared by the 插件 page and the 扩展 page (an
- * extension's switch is its plugin's).
+ * components it created and nothing else uses), what is disabled with it, what it keeps and why,
+ * and the agents that use its components (they lose them); with nothing to lose, one sentence.
+ * A dependency install (`plugin`) is named by its plugin, from the org's installs (its id until
+ * they are read). Shared by the plugins page and the extensions page (an extension's switch is
+ * its plugin's).
  */
 export function SwitchOffDialog({
   orgId,
@@ -456,6 +473,14 @@ export function SwitchOffDialog({
   const removed = preview.components.filter((c) => c.created && c.kind !== "connector");
   const disabled = preview.kept.filter((c) => c.reason === "disabled_with_plugin");
   const kept = preview.kept.filter((c) => c.reason !== "disabled_with_plugin");
+  // Nothing the switch takes away or changes: one sentence instead of empty groups
+  const nothingToLose =
+    skills === 0 &&
+    removed.length === 0 &&
+    disabled.length === 0 &&
+    kept.length === 0 &&
+    preview.agents.length === 0 &&
+    themeGroup === null;
   return (
     <Dialog
       open
@@ -478,76 +503,78 @@ export function SwitchOffDialog({
     >
       <Stack gap={16}>
         {notice !== undefined && <FormError message={notice} />}
-        <Text variant="prose">{t("hint")}</Text>
+        {nothingToLose && <Text variant="prose">{t("plain")}</Text>}
         {skills > 0 && (
           <Text variant="prose" tone="warn">
             {t("skills", { n: skills })}
           </Text>
         )}
-        <ImpactPreview
-          empty={t("none")}
-          groups={[
-            {
-              id: "agents",
-              title: t("agents"),
-              items: preview.agents.map((a) => ({
-                id: a.id,
-                title: a.name,
-                notes: [
-                  {
-                    text: t("uses", {
-                      names: a.uses.map((u) => `${kind(u.kind)} ${refOf(u)}`).join(sep),
-                    }),
-                    tone: "warn" as const,
-                  },
-                ],
-              })),
-            },
-            {
-              id: "removed",
-              title: t("removed"),
-              items: removed.map((c) => ({
-                id: `${c.kind}:${c.ref}`,
-                title: refOf(c),
-                code: kind(c.kind),
-              })),
-              empty: t("none"),
-            },
-            {
-              id: "disabled",
-              title: t("disabled"),
-              items: disabled.map((c) => ({
-                id: `${c.kind}:${c.ref}`,
-                title: refOf(c),
-                code: kind(c.kind),
-                notes: [
-                  {
-                    text: tk.has(`report.reason.${c.reason}`)
-                      ? tk(`report.reason.${c.reason}`)
-                      : c.reason,
-                  },
-                ],
-              })),
-            },
-            {
-              id: "kept",
-              title: t("kept"),
-              items: kept.map((c) => ({
-                id: `${c.kind}:${c.ref}`,
-                title: refOf(c),
-                code: kind(c.kind),
-                notes: [
-                  {
-                    text: tk.has(`report.reason.${c.reason}`)
-                      ? tk(`report.reason.${c.reason}`)
-                      : c.reason,
-                  },
-                ],
-              })),
-            },
-            ...(themeGroup === null ? [] : [themeGroup]),
-          ]}
-        />
+        {!nothingToLose && (
+          <ImpactPreview
+            empty=""
+            groups={[
+              {
+                id: "agents",
+                title: t("agents"),
+                items: preview.agents.map((a) => ({
+                  id: a.id,
+                  title: a.name,
+                  notes: [
+                    {
+                      text: t("uses", {
+                        names: a.uses.map((u) => `${kind(u.kind)} ${refOf(u)}`).join(sep),
+                      }),
+                      tone: "warn" as const,
+                    },
+                  ],
+                })),
+              },
+              {
+                id: "removed",
+                title: t("removed"),
+                items: removed.map((c) => ({
+                  id: `${c.kind}:${c.ref}`,
+                  title: refOf(c),
+                  code: kind(c.kind),
+                })),
+              },
+              {
+                id: "disabled",
+                title: t("disabled"),
+                description: t("disabledNote"),
+                items: disabled.map((c) => ({
+                  id: `${c.kind}:${c.ref}`,
+                  title: refOf(c),
+                  code: kind(c.kind),
+                  notes: [
+                    {
+                      text: tk.has(`report.reason.${c.reason}`)
+                        ? tk(`report.reason.${c.reason}`)
+                        : c.reason,
+                    },
+                  ],
+                })),
+              },
+              {
+                id: "kept",
+                title: t("kept"),
+                items: kept.map((c) => ({
+                  id: `${c.kind}:${c.ref}`,
+                  title: refOf(c),
+                  code: kind(c.kind),
+                  notes: [
+                    {
+                      text: tk.has(`report.reason.${c.reason}`)
+                        ? tk(`report.reason.${c.reason}`)
+                        : c.reason,
+                    },
+                  ],
+                })),
+              },
+              ...(themeGroup === null ? [] : [themeGroup]),
+            ]}
+          />
+        )}
       </Stack>
     </Dialog>
   );

@@ -1,11 +1,18 @@
 // The provenance fact of a plugin review is labelled as an unverified attestation: the kernel
-// does not verify the SLSA signatures (packages/kernel/src/packages/provenance.ts).
+// does not verify the SLSA signatures (packages/kernel/src/packages/provenance.ts). The rest covers
+// the plugin contents view as the review draws it (plugin contents spec).
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
+import enMessages from "../messages/en.json";
 import zhMessages from "../messages/zh.json";
 import { PlatformUpdatePreviewBody } from "../src/components/PlatformUpdateDialog";
 import { PluginReviewBody } from "../src/components/PluginReviewBody";
+import { fromReview } from "../src/components/plugin-contents/from-review";
+import { firstSentence } from "../src/components/plugin-contents/model";
+import { PluginContents } from "../src/components/plugin-contents/PluginContents";
+import { withUpdateMarks } from "../src/components/plugin-contents/update-marks";
 import type { PlatformUpdatePreview, PluginReview } from "../src/lib/catalog";
 import { renderPage } from "./support/render";
 
@@ -33,14 +40,28 @@ const review: PluginReview = {
   reviewHash: "h",
 };
 
+const R = zhMessages.catalog.admin.review;
+const C = zhMessages.catalog.components;
+const fill = (s: string, vars: Record<string, string | number>) =>
+  s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
+/** The translation summary of `claudeSessionDriver`: one imported, five ignored, one warning. */
+const DRIVER_SUMMARY = fill(R.translationSummary, {
+  imported: 1,
+  converted: 0,
+  needsInput: 0,
+  ignored: 5,
+  warnings: 1,
+});
+
 describe("PluginReviewBody provenance", () => {
-  for (const [locale, text] of [
-    ["en", "https://github.com/acme/demo@0123456 (declared, not verified)"],
-    ["zh", "https://github.com/acme/demo@0123456 （声明，未验证）"],
+  for (const [locale, msgs] of [
+    ["en", enMessages],
+    ["zh", zhMessages],
   ] as const) {
     it(`labels the attestation as unverified (${locale})`, () => {
       renderPage(<PluginReviewBody review={review} />, { locale });
-      expect(document.body.textContent).toContain(text);
+      const build = screen.getByText("https://github.com/acme/demo@0123456");
+      expect(build.parentElement?.textContent).toContain(msgs.catalog.admin.review.unverified);
     });
   }
 });
@@ -151,12 +172,22 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText("2 项敏感")).toBeTruthy();
   });
 
-  it("the description keeps its first sentence; the rest is behind 完整说明", async () => {
+  it("the description shows its first sentence and the full-description toggle; opening shows all of it in place", async () => {
     renderPage(<PluginReviewBody review={deviceE2b} />, zh);
     expect(screen.getByText("Runs devices in E2B sandboxes.")).toBeTruthy();
     expect(screen.queryByText(/E2B account/)).toBeNull();
-    await userEvent.setup().click(screen.getByRole("button", { name: "完整说明" }));
-    expect(screen.getByText("It needs an E2B account and an API key.")).toBeTruthy();
+    const more = screen.getByRole("button", { name: R.fullDescription });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.setup().click(more);
+    // the whole description, not the remainder under a guide
+    expect(screen.getByText(deviceE2b.description)).toBeTruthy();
+    expect(screen.getByRole("button", { name: R.collapse })).toBeTruthy();
+  });
+
+  it("a one-sentence description has no full-description toggle", () => {
+    renderPage(<PluginReviewBody review={review} />, zh);
+    expect(screen.getByText("Demo")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: R.fullDescription })).toBeNull();
   });
 
   it("an upgrade shows the version change in the chip", () => {
@@ -177,7 +208,7 @@ describe("PluginReviewBody contents", () => {
     expect(within(screen.getByText("domain")).queryByRole("img")).toBeNull();
     expect(screen.queryByText(/deployment:/)).toBeNull();
     expect(screen.queryByRole("heading", { name: "密钥" })).toBeNull();
-    expect(screen.getByText("安装后在「扩展」页填写")).toBeTruthy();
+    expect(screen.getByText(R.configAfterInstall)).toBeTruthy();
     expect(screen.getByText("device-provider@1")).toBeTruthy();
   });
 
@@ -240,8 +271,8 @@ describe("PluginReviewBody contents", () => {
     } as PluginReview;
     renderPage(<PluginReviewBody review={kept} />, zh);
     // the head chip names the plugin version, the extension's own line its kept version
-    expect(screen.getByText("保持 v0.1.0-rc.28（已满足范围）")).toBeTruthy();
-    expect(screen.getByText("保持 v0.0.9（已满足范围）")).toBeTruthy();
+    expect(screen.getByText(R.action.keep.replace("{version}", "v0.1.0-rc.28"))).toBeTruthy();
+    expect(screen.getByText(R.action.keep.replace("{version}", "v0.0.9"))).toBeTruthy();
   });
 
   it("on an update, a provides or config permission added gets the 新增 mark", () => {
@@ -276,7 +307,8 @@ describe("PluginReviewBody contents", () => {
     expect(screen.getByText("acme")).toBeTruthy();
     expect(screen.getByText("npm")).toBeTruthy();
     expect(screen.getByText("@acme/plugin-demo")).toBeTruthy();
-    expect(screen.getByText(/@0123456 （声明，未验证）/)).toBeTruthy();
+    const build = screen.getByText("https://github.com/acme/demo@0123456");
+    expect(build.parentElement?.textContent).toContain(R.unverified);
   });
 
   it("an org admin sees no source, build or license facts", () => {
@@ -286,8 +318,9 @@ describe("PluginReviewBody contents", () => {
     );
     expect(screen.getByText("acme")).toBeTruthy();
     expect(screen.queryByText("npm")).toBeNull();
-    expect(screen.queryByText(/声明，未验证/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "许可证全文" })).toBeNull();
+    expect(screen.queryByText(R.build)).toBeNull();
+    expect(screen.queryByText(R.facts.license)).toBeNull();
+    expect(screen.queryByRole("button", { name: R.licenseText })).toBeNull();
   });
 
   it("connector templates show a requirement tag per template, no checkbox", async () => {
@@ -297,7 +330,7 @@ describe("PluginReviewBody contents", () => {
     // the full endpoint is folded; the host is on the row and is the toggle (no endpoint details line)
     const hosts = screen.getAllByRole("button", { name: "mcp.atlassian.com" });
     expect(hosts).toHaveLength(3);
-    expect(screen.queryByRole("button", { name: "端点详情" })).toBeNull();
+    expect(screen.queryByRole("button", { name: R.endpointDetails })).toBeNull();
     expect(screen.queryByText("transport")).toBeNull();
     await userEvent.setup().click(hosts[0] as HTMLElement);
     expect(screen.getByText("transport")).toBeTruthy();
@@ -337,7 +370,7 @@ describe("PluginReviewBody contents", () => {
 
   it("the translation report is a one-line summary with warnings shown", () => {
     renderPage(<PluginReviewBody review={claudeSessionDriver} />, zh);
-    expect(screen.getByText("导入 1 · 转换 0 · 需要填写 0 · 忽略 5 · 警告 1")).toBeTruthy();
+    expect(screen.getByText(DRIVER_SUMMARY)).toBeTruthy();
     expect(screen.getByText(/SessionStart/)).toBeTruthy();
     // the ignored group is in the details, closed
     expect(screen.queryByText(/other_harness|其他工具的文件/)).toBeNull();
@@ -375,12 +408,14 @@ describe("PluginReviewBody rows", () => {
     expect(within(reviewer).getByText("工具")).toBeTruthy();
     expect(within(reviewer).getByText("Read")).toBeTruthy();
     expect(within(reviewer).getByText("Grep")).toBeTruthy();
-    expect(within(reviewer).getByText("移除的工具：Bash")).toBeTruthy();
+    expect(within(reviewer).getByText(C.agentToolsRemoved.replace("{tools}", "Bash"))).toBeTruthy();
     expect(within(reviewer).queryByText("Review it carefully.")).toBeNull();
-    await userEvent.setup().click(within(reviewer).getByRole("button", { name: /reviewer/ }));
+    await userEvent
+      .setup()
+      .click(within(reviewer).getByRole("button", { name: C.agentInstructions }));
     expect(within(reviewer).getByText("Review it carefully.")).toBeTruthy();
     const planner = screen.getByRole("group", { name: "planner" });
-    expect(within(planner).getByText("工具：沿用派发它的智能体的工具")).toBeTruthy();
+    expect(within(planner).getByText(C.agentToolsInherit)).toBeTruthy();
     expect(screen.queryByText("需要")).toBeNull();
   });
 
@@ -411,7 +446,11 @@ describe("PluginReviewBody rows", () => {
     expect(within(triager).getByText("Jira")).toBeTruthy();
     expect(within(triager).getByText("Confluence")).toBeTruthy();
     expect(within(triager).getByText("other:wiki")).toBeTruthy();
-    expect(within(triager).getByText("Docs（docs.example.com）")).toBeTruthy();
+    expect(
+      within(triager).getByText(
+        R.agentNeedsDescribed.replace("{label}", "Docs").replace("{host}", "docs.example.com"),
+      ),
+    ).toBeTruthy();
   });
 
   it("skills: name, file count, description and a hidden-characters tag", () => {
@@ -429,6 +468,230 @@ describe("PluginReviewBody rows", () => {
     expect(within(pdf).queryByText("含隐藏字符")).toBeNull();
     const odd = screen.getByRole("group", { name: "odd" });
     expect(within(odd).getByText("含隐藏字符")).toBeTruthy();
+  });
+});
+
+describe("PluginReviewBody license fact", () => {
+  it("the license is a fact with the SPDX name; its full-text link opens a Dialog with the text, one box", async () => {
+    renderPage(
+      <PluginReviewBody review={{ ...review, license: "MIT", licenseText: "MIT License\u202e" }} />,
+      zh,
+    );
+    const row = screen.getByText(R.facts.license).parentElement as HTMLElement;
+    expect(within(row).getByText("MIT")).toBeTruthy();
+    // the text is not on the page until the full-text link opens it
+    expect(screen.queryByText(/MIT License/)).toBeNull();
+    expect(within(row).getByText(R.hiddenCharacters)).toBeTruthy();
+    await userEvent.setup().click(within(row).getByRole("button", { name: R.licenseText }));
+    const dialog = await screen.findByRole("dialog", { name: R.translation.license });
+    expect(within(dialog).getByText(/MIT License/)).toBeTruthy();
+    expect(within(dialog).getByText(R.translation.bidiWarning)).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("without an SPDX name the fact says LICENSE", () => {
+    renderPage(<PluginReviewBody review={{ ...review, licenseText: "Apache License" }} />, zh);
+    const row = screen.getByText(R.facts.license).parentElement as HTMLElement;
+    expect(within(row).getByText("LICENSE")).toBeTruthy();
+    expect(within(row).getByRole("button", { name: R.licenseText })).toBeTruthy();
+  });
+
+  it("a license too large to keep says so, with no full-text link", () => {
+    renderPage(<PluginReviewBody review={{ ...review, licenseTruncated: true }} />, zh);
+    const row = screen.getByText(R.facts.license).parentElement as HTMLElement;
+    expect(within(row).getByText("LICENSE")).toBeTruthy();
+    expect(within(row).getByText(R.translation.licenseTruncated)).toBeTruthy();
+    expect(within(row).queryByRole("button")).toBeNull();
+  });
+
+  it("no license: no license fact", () => {
+    renderPage(<PluginReviewBody review={review} />, zh);
+    expect(screen.queryByText(R.facts.license)).toBeNull();
+  });
+});
+
+describe("PluginReviewBody extension note and inline texts", () => {
+  it("an extension without config has no note line", () => {
+    const noConfig = {
+      ...deviceE2b,
+      extension: {
+        ...deviceE2b.extension,
+        permissions: deviceE2b.extension?.permissions.filter((g) => g.category === "provides"),
+      },
+    } as PluginReview;
+    renderPage(<PluginReviewBody review={noConfig} />, zh);
+    expect(screen.getByText("device-provider@1")).toBeTruthy();
+    expect(screen.queryByText(R.configAfterInstall)).toBeNull();
+  });
+
+  it("a skill's SKILL.md opens inline under its row", async () => {
+    const skills: PluginReview = {
+      ...review,
+      skills: [
+        { name: "pdf", description: "PDF", body: "# PDF body", path: "skills/pdf", files: 1 },
+      ],
+    };
+    renderPage(<PluginReviewBody review={skills} />, zh);
+    const pdf = screen.getByRole("group", { name: "pdf" });
+    expect(within(pdf).queryByText("# PDF body")).toBeNull();
+    await userEvent.setup().click(within(pdf).getByRole("button", { name: R.skillBody }));
+    expect(within(pdf).getByText("# PDF body")).toBeTruthy();
+  });
+
+  it('dependencies read "{name} will use {version}" on the platform', () => {
+    const deps: PluginReview = {
+      ...review,
+      dependencies: [{ name: "crm-core", range: "^1.0.0", resolved: "1.2.0" }],
+    };
+    renderPage(<PluginReviewBody review={deps} />, zh);
+    expect(
+      screen.getByText(
+        C.dependencyResolved.replace("{name}", "crm-core").replace("{version}", "v1.2.0"),
+      ),
+    ).toBeTruthy();
+  });
+});
+
+describe("PluginContents stages, audiences and the row slots", () => {
+  const model = (r: PluginReview) => fromReview(r, { locale: "zh" });
+
+  it("enable: the plain version, the after-enabling note, the installed-with title, no source facts for an org", () => {
+    const deps: PluginReview = {
+      ...deviceE2b,
+      dependencies: [{ name: "crm-core", range: "^1.0.0", resolved: "1.2.0" }],
+    };
+    renderPage(<PluginContents model={model(deps)} audience="org" stage="enable" />, zh);
+    expect(screen.getByText("v0.1.0-rc.28")).toBeTruthy();
+    expect(screen.getByText(R.configAfterEnable)).toBeTruthy();
+    expect(screen.queryByText(R.configAfterInstall)).toBeNull();
+    expect(screen.getByRole("heading", { name: C.dependenciesWith })).toBeTruthy();
+    expect(screen.getByText("crm-core")).toBeTruthy();
+    expect(screen.getByText(R.facts.publisher)).toBeTruthy();
+    expect(screen.queryByText(R.facts.origin)).toBeNull();
+    expect(screen.queryByText(R.build)).toBeNull();
+  });
+
+  it("detail: no head, description or facts (the page has its own) and no note line", () => {
+    renderPage(<PluginContents model={model(deviceE2b)} audience="platform" stage="detail" />, zh);
+    expect(screen.queryByText("v0.1.0-rc.28")).toBeNull();
+    expect(screen.queryByText(firstSentence(deviceE2b.description))).toBeNull();
+    expect(screen.queryByRole("button", { name: R.fullDescription })).toBeNull();
+    expect(screen.queryByText(R.facts.publisher)).toBeNull();
+    expect(screen.queryByText(R.facts.origin)).toBeNull();
+    expect(screen.queryByText(R.configAfterInstall)).toBeNull();
+    expect(screen.queryByText(R.configAfterEnable)).toBeNull();
+  });
+
+  it("an org's own upload of a Claude Code package shows the translation summary", () => {
+    renderPage(<PluginReviewBody review={claudeSessionDriver} audience="org" />, zh);
+    expect(screen.getByRole("region", { name: R.translation.title })).toBeTruthy();
+    expect(screen.getByText(DRIVER_SUMMARY)).toBeTruthy();
+  });
+
+  it("an org's upload of a new version of its own Claude Code plugin keeps the summary", () => {
+    renderPage(
+      <PluginReviewBody review={claudeSessionDriver} audience="org" installedVersion="0.0.1" />,
+      zh,
+    );
+    expect(screen.getByRole("region", { name: R.translation.title })).toBeTruthy();
+    expect(screen.getByText(DRIVER_SUMMARY)).toBeTruthy();
+  });
+
+  it("a model without a translation report (an org's catalog read) draws no summary", () => {
+    const { translation: _, ...withoutReport } = model(claudeSessionDriver);
+    for (const stage of ["enable", "detail"] as const) {
+      renderPage(<PluginContents model={withoutReport} audience="org" stage={stage} />, zh);
+      expect(screen.queryByRole("region", { name: R.translation.title })).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("an update's removed agent template is a bare row with no claim about its tools", () => {
+    const withAgent: PluginReview = {
+      ...review,
+      agentTemplates: [
+        {
+          name: "planner",
+          path: "agents/planner.md",
+          description: "Plans.",
+          instructions: "Plan.",
+          model: "inherit",
+          connectors: [],
+        },
+      ],
+    };
+    const preview = {
+      itemId: "i1",
+      name: "demo",
+      from: "0.9.0",
+      to: "1.0.0",
+      components: [
+        {
+          kind: "agent_template",
+          name: "old",
+          change: "removed",
+          from: "1",
+          to: null,
+          pinnedOrgs: [],
+        },
+      ],
+      extension: null,
+      connectorOrgs: [],
+      scopeInstalls: [],
+      diffHash: "h",
+    } as unknown as PlatformUpdatePreview;
+    renderPage(
+      <PluginContents
+        model={withUpdateMarks(model(withAgent), preview)}
+        audience="platform"
+        stage="update"
+      />,
+      zh,
+    );
+    // the staged package's own template inherits; the removed one has no tool data
+    const planner = screen.getByRole("group", { name: "planner" });
+    expect(within(planner).getByText(C.agentToolsInherit)).toBeTruthy();
+    const old = screen.getByRole("group", { name: "old" });
+    expect(within(old).getByText(zhMessages.catalog.update.change.removed)).toBeTruthy();
+    expect(within(old).queryByText(C.agentToolsInherit)).toBeNull();
+    expect(within(old).queryByText(R.tools)).toBeNull();
+  });
+
+  it("each row draws its change mark and the surface's trailing slot; themes have a section", () => {
+    const m = model({
+      ...atlassian,
+      skills: [{ name: "pdf", description: "", body: "#", path: "p", files: 1 }],
+    });
+    const marked = {
+      ...m,
+      skills: m.skills.map((s) => ({ ...s, mark: "removed" as const })),
+      templates: m.templates.map((c, i) =>
+        i === 0 ? { ...c, mark: "added" as const, trailing: <span>可用</span> } : c,
+      ),
+      themes: [{ kind: "theme" as const, key: "neon", name: "Neon", mark: "upgrade" as const }],
+    };
+    renderPage(<PluginContents model={marked} audience="platform" stage="update" />, zh);
+    const U = zhMessages.catalog.update.change;
+    const pdf = screen.getByRole("group", { name: "pdf" });
+    expect(within(pdf).getByText(U.removed).getAttribute("data-tone")).toBe("warn");
+    const [jira] = within(screen.getByRole("list", { name: C.templates })).getAllByRole("listitem");
+    expect(within(jira as HTMLElement).getByText(U.added)).toBeTruthy();
+    expect(within(jira as HTMLElement).getByText("可用")).toBeTruthy();
+    const themes = screen.getByRole("list", { name: C.themes });
+    expect(within(themes).getByText("Neon")).toBeTruthy();
+    expect(within(themes).getByText(U.upgrade)).toBeTruthy();
+  });
+});
+
+describe("firstSentence", () => {
+  it("cuts at a CJK full stop or a period before a new sentence, not at an abbreviation", () => {
+    expect(firstSentence("运行设备。需要账号。")).toBe("运行设备。");
+    expect(firstSentence("Runs devices. It needs a key.")).toBe("Runs devices.");
+    expect(firstSentence("Tools, e.g. linters, for v1. builds. Then more.")).toBe(
+      "Tools, e.g. linters, for v1. builds.",
+    );
+    expect(firstSentence("One sentence.")).toBe("One sentence.");
+    expect(firstSentence("No stop")).toBe("No stop");
   });
 });
 

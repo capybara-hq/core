@@ -1,16 +1,8 @@
 "use client";
 
-import {
-  Badge,
-  CodeBlock,
-  ContentSection,
-  Disclosure,
-  Stack,
-  Text,
-  versionLabel,
-} from "@capybara-hq/design";
+import { Badge, ContentSection, Disclosure, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import {
   type CatalogItem,
   dependencyOfError,
@@ -48,7 +40,8 @@ export function useOwnerLabel(orgId: string): (owner: Owner | undefined) => stri
 
 /**
  * One kind of a plugin's components (extension, skills, connector templates, dependencies) as a
- * labelled region: the title, then the items, or `empty` when there are none (`count` 0).
+ * labelled region: the title, then the items, or `empty` when there are none (`count` 0; a caller
+ * that draws the section only with items passes none).
  */
 export function ComponentSection({
   title,
@@ -58,12 +51,12 @@ export function ComponentSection({
 }: {
   title: string;
   count: number;
-  empty: string;
+  empty?: string;
   children?: ReactNode;
 }) {
   // The design ContentSection (spec §6.31): the title a heading, the empty line muted and small
   return (
-    <ContentSection title={title} {...(count === 0 ? { empty } : {})}>
+    <ContentSection title={title} {...(count === 0 && empty !== undefined ? { empty } : {})}>
       {children}
     </ContentSection>
   );
@@ -188,35 +181,6 @@ export function HiddenCharactersWarning({ texts }: { texts: (string | null | und
       {t("bidiWarning")}
     </Text>
   );
-}
-
-/**
- * A plugin version's root LICENSE text, collapsed (spec §8.4), with the hidden characters warning;
- * when it was too long to store, a line saying so. Nothing without either.
- */
-export function LicenseView({
-  text,
-  truncated,
-}: {
-  text?: string | null | undefined;
-  truncated?: boolean | undefined;
-}) {
-  const t = useTranslations("catalog.admin.review.translation");
-  if (typeof text === "string" && text !== "") {
-    return (
-      <Stack gap={4}>
-        <HiddenCharactersWarning texts={[text]} />
-        <Disclosure summary={t("license")}>
-          <CodeBlock text={text} />
-        </Disclosure>
-      </Stack>
-    );
-  }
-  return truncated === true ? (
-    <Text variant="small" tone="muted">
-      {t("licenseTruncated")}
-    </Text>
-  ) : null;
 }
 
 /**

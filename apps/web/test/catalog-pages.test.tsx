@@ -58,6 +58,8 @@ const ADMIN_DEFAULTS: Routes = {
   "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
   // The org plugin detail's components in the org (their switches)
   "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
+  // The org plugin detail's connectors section (the connectors made from its templates)
+  "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
   // The plugin `INSTALL` is an install of (its detail page shows the installs)
   "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
     json(200, {
@@ -343,6 +345,85 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
   });
 
+  it("the direct switch toasts what arrived with Undo, which switches off without the skills dialog", async () => {
+    const p = zh.plugins;
+    let on = false;
+    const skills = ["a", "b", "c", "d"].map((n) => ({
+      id: n,
+      scope: "org",
+      agentId: null,
+      name: n,
+      description: "",
+      currentVersion: 1,
+      createdBy: "a1",
+      createdAt: "2026-11-07T00:00:00.000Z",
+      updatedAt: "2026-11-07T00:00:00.000Z",
+      origin: "platform",
+      plugin: "notes",
+    }));
+    const counts = { extension: 0, skills: 4, connectorTemplates: 0, agentTemplates: 0 };
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [orgItem({ state: on ? "on" : "off", name: "notes", componentCounts: counts })],
+        }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: (c) => {
+        on = (bodyOf(c) as { enabled: boolean }).enabled;
+        return json(200, { item: orgItem({ state: on ? "on" : "off", name: "notes" }) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable }));
+    expect(
+      await screen.findByText(
+        fill(p.toast.enabledWith, { name: "notes", what: fill(p.toast.part.skills, { n: 4 }) }),
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: p.toast.undo }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "PUT").map(bodyOf)).toEqual([
+        { enabled: true },
+        { enabled: false },
+      ]),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByText(fill(p.toast.disabled, { name: "notes" }))).toBeTruthy();
+  });
+
+  it("turning off with nothing to lose is one sentence and the two buttons", async () => {
+    const p = en.plugins;
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              name: "crm",
+              state: "on",
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+            }),
+          ],
+        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, {
+          preview: { ...PREVIEW, components: [], kept: [], agents: [] },
+          confirm: "h1",
+        }),
+    });
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "crm")).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(p.switchOff.plain.replace("{name}", "crm"))).toBeTruthy();
+    expect(within(dialog).queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    expect(within(dialog).getByRole("button", { name: p.switchOff.cancel })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: p.switchOff.confirm })).toBeTruthy();
+  });
+
   it.each(LOCALES)(
     "the owner follows the item's owner in the chip and the meta line: 本组织, another org, 平台 (%s)",
     async (locale) => {
@@ -514,6 +595,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     // the connector is kept but switched off with the plugin, with the reason; the skill is removed
     const disabled = within(dialog).getByRole("list", { name: p.switchOff.disabled });
     expect(within(disabled).getByText("docs")).toBeTruthy();
+    expect(within(dialog).getByText(p.switchOff.disabledNote)).toBeTruthy();
     expect(
       within(disabled).getByText(en.catalog.plugins.report.reason.disabled_with_plugin),
     ).toBeTruthy();
@@ -1194,7 +1276,6 @@ describe("/admin/plugins/import (WizardPage)", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     // the steps: choose, then review and confirm (no third step)
     expect(await screen.findByText(r.steps.reviewConfirm)).toBeTruthy();
-    expect(screen.queryByText(r.steps.update)).toBeNull();
     // the scope fields sit under the review body, the sensitive ack with them
     expect(
       screen.getByRole("radiogroup", { name: en.catalog.admin.scopeDialog.scopeLabel }),
@@ -1330,7 +1411,13 @@ describe("/admin/plugins/import (WizardPage)", () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
       "POST /api/v1/admin/catalog/import/file": () =>
-        json(422, { error: { code: "catalog.invalid_manifest", message: "x" } }),
+        json(422, {
+          error: {
+            code: "catalog.invalid_manifest",
+            message: "x",
+            details: ["missing .capybara-plugin/plugin.json"],
+          },
+        }),
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
@@ -1341,6 +1428,9 @@ describe("/admin/plugins/import (WizardPage)", () => {
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
     expect(await screen.findByText(`${en.errors.catalog.invalid_manifest}`)).toBeTruthy();
+    expect(screen.getByText("missing .capybara-plugin/plugin.json")).toBeTruthy();
+    // no detail follows, so the message is a full sentence rather than ending in a colon
+    expect(en.errors.catalog.invalid_manifest.endsWith(".")).toBe(true);
   });
 });
 
@@ -1437,15 +1527,59 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
   const previewReads = (calls: { method: string; url: string }[]) =>
     calls.filter((c) => c.url.endsWith("/update-preview"));
 
+  /** The update's one primary: "Update to v2.0.0". */
+  const updateTo = (locale: "en" | "zh" = "en") =>
+    fill(msgs[locale].catalog.update.confirmTo, { version: "v2.0.0" });
+
   it.each(LOCALES)(
-    "an installed plugin: 更新插件 with the review, then the update preview; the confirm sends both hashes to the one route (%s)",
+    "an installed plugin: one review page with the change marks, the impact and one confirm sending both hashes (%s)",
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
       const u = msgs[locale].catalog.update;
-      const w = msgs[locale].admin.extensions.wizard;
+      const c = msgs[locale].catalog.components;
+      const base = UPDATE_PREVIEW();
       window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
       const calls = stubApi(
         updateRoutes({
+          "GET /api/v1/admin/catalog/imports/st7": () =>
+            json(200, {
+              stagingId: "st7",
+              review: {
+                ...REVIEW2,
+                skills: [
+                  ...REVIEW2.skills,
+                  {
+                    name: "csv-tools",
+                    description: "CSV helpers",
+                    body: "# CSV",
+                    path: "skills/csv-tools",
+                    files: 1,
+                  },
+                ],
+              },
+            }),
+          // a removed agent template too: the package no longer holds it
+          "GET /api/v1/admin/catalog/imports/st7/update-preview": () =>
+            json(200, {
+              ...base,
+              components: [
+                // pdf-tools was updated on its own and has its own scope
+                ...base.components.map((c) =>
+                  c.name === "pdf-tools" ? { ...c, updatedOnOwn: true, ownScope: true } : c,
+                ),
+                {
+                  kind: "agent_template",
+                  id: "a1",
+                  name: "old-reviewer",
+                  change: "removed",
+                  from: "1.0.0",
+                  to: null,
+                  updatedOnOwn: false,
+                  ownScope: false,
+                  pinnedOrgs: [],
+                },
+              ],
+            }),
           "POST /api/v1/admin/catalog/imports/st7/update": () =>
             json(201, {
               item: { ...INSTALLED, latestVersion: "2.0.0" },
@@ -1461,37 +1595,54 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       );
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
       expect(
-        await screen.findByRole("heading", { name: fill(r.titleUpdate, { name: "crm" }) }),
+        await screen.findByRole("heading", { name: fill(u.pageTitle, { name: "crm" }) }),
       ).toBeTruthy();
-      // the steps: the review, then the update preview (no scope: the plugin keeps its own)
-      expect(screen.getByText(r.steps.update)).toBeTruthy();
+      // two steps, like an install: choose the package, then review and confirm
+      expect(screen.getByText(r.steps.reviewConfirm)).toBeTruthy();
+      // the head reads installed → staged (and so does the extension's move in the impact section)
+      await screen.findByRole("region", { name: u.after });
       expect(
-        await screen.findByRole("region", { name: msgs[locale].catalog.components.skills }),
+        screen.getAllByText(fill(r.versionChange, { from: "v1.0.0", to: "v2.0.0" })),
+      ).toHaveLength(2);
+      // the rows carry the update's marks: pdf-tools upgraded, csv-tools added, and the removed
+      // agent template a row of its own
+      const skills = await screen.findByRole("region", { name: c.skills });
+      await waitFor(() => {
+        const row = (name: string) => within(skills).getByText(name).closest("li") as HTMLElement;
+        expect(within(row("pdf-tools")).getByText(u.change.upgrade)).toBeTruthy();
+        expect(within(row("csv-tools")).getByText(u.change.added)).toBeTruthy();
+      });
+      const agents = screen.getByRole("region", { name: c.agentTemplates });
+      const removed = within(agents).getByText("old-reviewer").closest("li") as HTMLElement;
+      expect(within(removed).getByText(u.change.removed)).toBeTruthy();
+      // no components table: the marks are on the rows
+      expect(screen.queryByRole("table")).toBeNull();
+      // the impact section: the extension's move and per org the connectors created, with the pending count
+      const after = screen.getByRole("region", { name: u.after });
+      expect(
+        within(after).getByText(fill(u.versions, { from: "v1.0.0", to: "v2.0.0" })),
       ).toBeTruthy();
-      // the review's version chip reads installed → staged
-      expect(
-        screen.getByText(fill(r.versionChange, { from: "v1.0.0", to: "v2.0.0" })),
-      ).toBeTruthy();
-      await userEvent.setup().click(screen.getByRole("button", { name: w.next }));
-      // the update preview: versions, per-component changes, the extension and the orgs' config
-      // (the plugin's versions line, the extension's and the skill's row)
-      expect(
-        (await screen.findAllByText(fill(u.versions, { from: "v1.0.0", to: "v2.0.0" }))).length,
-      ).toBeGreaterThan(1);
-      expect(screen.getByText("csv-tools")).toBeTruthy();
-      expect(screen.getByText(u.change.added)).toBeTruthy();
+      expect(within(after).getByText("Acme")).toBeTruthy();
       const tu = createTranslator({ locale, messages: msgs[locale], namespace: "catalog.update" });
-      expect(screen.getByText(tu("createdNote", { names: "Linear", pending: 1 }))).toBeTruthy();
-      expect(screen.getByText(fill(r.updateHint, { version: "v2.0.0" }))).toBeTruthy();
+      expect(
+        within(after).getByText(tu("createdNote", { names: "Linear", pending: 1 })),
+      ).toBeTruthy();
+      // the components table's notes the row marks do not carry: updated on its own, own scope
+      const own = within(after).getByRole("list", { name: u.groups.own });
+      const ownRow = within(own).getByText("pdf-tools").closest("li") as HTMLElement;
+      expect(within(ownRow).getByText(u.marks.updatedOnOwn)).toBeTruthy();
+      expect(within(ownRow).getByText(u.marks.ownScope)).toBeTruthy();
+      expect(within(after).getByText(u.marksHint)).toBeTruthy();
+      expect(screen.getByText(fill(u.hint, { version: "v2.0.0" }))).toBeTruthy();
       // the confirm approves the reviewed permissions: no "waits for approval" notice
       expect(screen.queryByText(u.needsApproval)).toBeNull();
       expect(screen.queryByRole("radiogroup")).toBeNull();
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
       const user = userEvent.setup();
-      const confirm = screen.getByRole("button", { name: r.confirmUpdate }) as HTMLButtonElement;
-      // sensitive items: the ack first
+      const confirm = screen.getByRole("button", { name: updateTo(locale) }) as HTMLButtonElement;
+      // the update installs a sensitive extension: the ack first
       expect(confirm.disabled).toBe(true);
-      await user.click(screen.getByRole("checkbox", { name: r.ack }));
+      await user.click(screen.getByRole("checkbox", { name: u.ack }));
       expect(confirm.disabled).toBe(false);
       await user.click(confirm);
       await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
@@ -1505,6 +1656,81 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
       ).toBeTruthy();
     },
   );
+
+  /** A staged 2.0.0 whose extension upgrades the installed one, adding `addedItems`. */
+  const upgradeReview = (over: Record<string, unknown>) => ({
+    ...REVIEW2,
+    sensitive: false,
+    extension: extension({
+      version: "2.0.0",
+      action: "upgrade",
+      deployed: true,
+      currentVersion: "1.0.0",
+      sensitive: true,
+      ...over,
+    }),
+  });
+
+  it("an upgrade adding nothing sensitive asks for no ack: the installed extension's sensitive items were seen before", async () => {
+    const u = en.catalog.update;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    stubApi(
+      updateRoutes({
+        "GET /api/v1/admin/catalog/imports/st7": () =>
+          json(200, {
+            stagingId: "st7",
+            review: upgradeReview({
+              added: ["tables:crm_notes"],
+              addedItems: [{ value: "tables:crm_notes", sensitive: false }],
+            }),
+          }),
+      }),
+    );
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const confirm = (await screen.findByRole("button", { name: updateTo() })) as HTMLButtonElement;
+    await waitFor(() => expect(confirm.disabled).toBe(false));
+    expect(screen.queryByRole("checkbox", { name: u.ack })).toBeNull();
+  });
+
+  it.each([
+    [
+      "a sensitive permission",
+      {
+        added: ["provides:channel@1"],
+        addedItems: [{ value: "provides:channel@1", sensitive: true, reason: "channel" }],
+      },
+    ],
+    [
+      "a migration warning",
+      {
+        warnings: [
+          {
+            kind: "destructive_migration",
+            sensitive: true,
+            file: "0002_drop.sql",
+            line: 1,
+            statement: "DROP TABLE x",
+          },
+        ],
+      },
+    ],
+  ])("an upgrade adding %s asks for the ack", async (_what, over) => {
+    const u = en.catalog.update;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    stubApi(
+      updateRoutes({
+        "GET /api/v1/admin/catalog/imports/st7": () =>
+          json(200, { stagingId: "st7", review: upgradeReview(over) }),
+      }),
+    );
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const confirm = (await screen.findByRole("button", { name: updateTo() })) as HTMLButtonElement;
+    await screen.findByRole("region", { name: u.after });
+    await screen.findByText("csv-tools");
+    expect(confirm.disabled).toBe(true);
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: u.ack }));
+    expect(confirm.disabled).toBe(false);
+  });
 
   /** Chooses an npm package on the source step (the package name box is replaced). */
   const chooseNpm = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
@@ -1539,17 +1765,16 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     const user = userEvent.setup();
     await chooseNpm(user, "@acme/plugin-crm");
     expect(
-      await screen.findByRole("heading", { name: fill(r.titleUpdate, { name: "crm" }) }),
+      await screen.findByRole("heading", {
+        name: fill(en.catalog.update.pageTitle, { name: "crm" }),
+      }),
     ).toBeTruthy();
-    // into the update preview (freezes the update mode), then back to the source step
-    await user.click(await screen.findByRole("button", { name: w.next }));
-    await screen.findByRole("button", { name: r.confirmUpdate });
+    // the update's review, then back to the source step
+    await screen.findByRole("button", { name: updateTo() });
     await user.click(screen.getByRole("button", { name: w.back }));
-    await user.click(await screen.findByRole("button", { name: w.back }));
     await chooseNpm(user, "@acme/plugin-fresh");
     expect(await screen.findByRole("button", { name: r.confirm })).toBeTruthy();
-    expect(screen.queryByText(r.steps.update)).toBeNull();
-    expect(screen.queryByRole("button", { name: r.confirmUpdate })).toBeNull();
+    expect(screen.queryByRole("button", { name: updateTo() })).toBeNull();
   });
 
   it("a failed install, back, then an installed plugin: the update flow, not the frozen install mode", async () => {
@@ -1582,35 +1807,25 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.back }));
     await chooseNpm(user, "@acme/plugin-crm");
     expect(
-      await screen.findByRole("heading", { name: fill(r.titleUpdate, { name: "crm" }) }),
+      await screen.findByRole("heading", {
+        name: fill(en.catalog.update.pageTitle, { name: "crm" }),
+      }),
     ).toBeTruthy();
-    expect(screen.getByText(r.steps.update)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: updateTo() })).toBeTruthy();
   });
 
-  it("cancel on the review step changes nothing: back to the plugin, no write, no preview read", async () => {
+  it("cancel on the update's review changes nothing: back to the plugin, no write", async () => {
     window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
     const calls = stubApi(updateRoutes());
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    await screen.findByRole("region", { name: en.catalog.components.skills });
+    await screen.findByText("csv-tools");
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: en.admin.extensions.wizard.cancel }));
     expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`);
     expect(posts(calls)).toEqual([]);
+    // the preview came with the page (prefetched with the staged review): no browser read
     expect(previewReads(calls)).toEqual([]);
-  });
-
-  it("cancel on the update preview step changes nothing either", async () => {
-    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
-    const calls = stubApi(updateRoutes());
-    await renderRouteWithCache(importPath(), lastStubRoutes());
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
-    await screen.findByText("csv-tools");
-    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.cancel }));
-    expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`);
-    expect(posts(calls)).toEqual([]);
-    expect(previewReads(calls)).toHaveLength(1);
   });
 
   it("a stale preview is read again and confirmed with its new diffHash", async () => {
@@ -1643,12 +1858,11 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     );
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
     await screen.findByText("csv-tools");
-    await user.click(screen.getByRole("checkbox", { name: en.catalog.admin.review.ack }));
-    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirmUpdate }));
+    await user.click(screen.getByRole("checkbox", { name: u.ack }));
+    await user.click(screen.getByRole("button", { name: updateTo() }));
     expect(await screen.findByText(u.stale)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirmUpdate }));
+    await user.click(screen.getByRole("button", { name: updateTo() }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     const sent = calls.filter((c) => c.url.endsWith("/st7/update")).map((c) => bodyOf(c));
     expect(sent).toEqual([
@@ -1681,13 +1895,12 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     );
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
     await screen.findByText("csv-tools");
-    await user.click(screen.getByRole("checkbox", { name: r.ack }));
-    await user.click(screen.getByRole("button", { name: r.confirmUpdate }));
+    await user.click(screen.getByRole("checkbox", { name: en.catalog.update.ack }));
+    await user.click(screen.getByRole("button", { name: updateTo() }));
     expect(
       await screen.findByText(
-        fill(r.importedNotUpdated, {
+        fill(en.catalog.update.importedNotUpdated, {
           version: "v2.0.0",
           from: "v1.0.0",
           code: "plugin.upgrade_failed",
@@ -1697,9 +1910,9 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     expect(screen.getByRole("link", { name: r.openItem }).getAttribute("href")).toBe(
       `/admin/plugins/${ID}`,
     );
-    expect(
-      (screen.getByRole("button", { name: r.confirmUpdate }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: updateTo() }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     expect(router.push).not.toHaveBeenCalled();
   });
 
@@ -1752,7 +1965,6 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
   // that while the navigation was still landing (a red error card flashed). The wizard must stop
   // reading what its confirm consumed.
   it("a confirmed update does not read the consumed staging again: no refetch, no error flash", async () => {
-    const r = en.catalog.admin.review;
     window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
     let previews = 0;
     const calls = stubApi(
@@ -1778,12 +1990,13 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     );
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
     await screen.findByText("csv-tools");
-    await user.click(screen.getByRole("checkbox", { name: r.ack }));
-    await user.click(screen.getByRole("button", { name: r.confirmUpdate }));
+    await user.click(screen.getByRole("checkbox", { name: en.catalog.update.ack }));
+    await user.click(screen.getByRole("button", { name: updateTo() }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
-    await waitFor(() => expect(previewReads(calls)).toHaveLength(1));
+    // read once with the page (on the server), never again in the browser
+    expect(previews).toBe(1);
+    expect(previewReads(calls)).toEqual([]);
     expect(screen.queryByText(`${en.errors.plugin.staging_not_found}`)).toBeNull();
   });
 
@@ -1814,8 +2027,8 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     expect(previewReads(calls)).toEqual([]);
     expect(screen.queryByText(`${en.errors.plugin.staging_not_found}`)).toBeNull();
     // the wizard stays the install wizard while the navigation lands
-    expect(screen.queryByText(r.steps.update)).toBeNull();
-    expect(screen.getByText(r.steps.reviewConfirm)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: updateTo() })).toBeNull();
+    expect(screen.getByRole("button", { name: r.confirm })).toBeTruthy();
   });
 });
 
@@ -1892,6 +2105,7 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
     templates: unknown[],
     over: Record<string, unknown> = {},
     answer: () => Response = () => json(200, { item: orgItem({ name: "github", state: "on" }) }),
+    reads: { extensions?: unknown[]; components?: unknown[] } = {},
   ) =>
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -1905,7 +2119,9 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
           agents: [],
           ...over,
         }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: reads.extensions ?? [] }),
+      [`GET ${ORG}/components?itemId=${ID}`]: () =>
+        json(200, { components: reads.components ?? [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: answer,
     });
 
@@ -1920,50 +2136,80 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         reviewTpl("drive", { auth: { type: "oauth_code", client: "manual" } }),
         reviewTpl("pat", { connected: true }),
         reviewTpl("bigquery", { defaultOff: true, on: false }),
+        reviewTpl("plain"),
       ],
       {
+        item: orgItem({
+          name: "github",
+          description: "GitHub for agents. It reads issues and pull requests.",
+        }),
         dependencies: [{ name: "crm-core", range: "^1.0.0" }],
         extension: "github",
         skills: ["skills/triage"],
         agents: ["agents/reviewer.md"],
       },
+      undefined,
+      {
+        extensions: [
+          { plugin: "github", version: "1.0.0", provides: ["tools@1"], needsConfig: true },
+        ],
+        components: [
+          { kind: "skill", name: "triage", description: "Triage the queue." },
+          { kind: "agent_template", name: "reviewer", description: "Reviews pull requests." },
+        ],
+      },
     );
     await renderInstall();
     const list = await screen.findByRole("list", { name: en.catalog.components.templates });
-    // the package contents, from the org catalog detail (ruling R33): extension, skills, agent
-    // templates and dependencies by name, each as a list
     const c = en.catalog.components;
-    const named = (label: string) =>
-      within(screen.getByRole("list", { name: label }))
-        .getAllByRole("listitem")
-        .map((li) => li.textContent);
-    expect(named(c.extension)).toEqual(["github"]);
-    expect(named(c.skills)).toEqual(["triage"]);
-    expect(named(c.agentTemplates)).toEqual(["reviewer"]);
-    expect(named(c.dependencies)).toEqual(["crm-core^1.0.0"]);
+    // the head: name, version, publisher and the description with its full text
+    expect(screen.getAllByText("github")).toHaveLength(2);
+    expect(screen.getByText("v1.0.0")).toBeTruthy();
+    expect(screen.getByText("Acme")).toBeTruthy();
+    expect(screen.getByRole("button", { name: r.fullDescription })).toBeTruthy();
+    // skills and agent templates with their descriptions, from the org's components
+    const [triage, ...otherSkills] = within(
+      screen.getByRole("list", { name: c.skills }),
+    ).getAllByRole("listitem");
+    expect(otherSkills).toEqual([]);
+    expect(within(triage as HTMLElement).getByText("triage")).toBeTruthy();
+    expect(within(triage as HTMLElement).getByText("Triage the queue.")).toBeTruthy();
+    const [reviewer] = within(screen.getByRole("list", { name: c.agentTemplates })).getAllByRole(
+      "listitem",
+    );
+    expect(within(reviewer as HTMLElement).getByText("reviewer")).toBeTruthy();
+    expect(within(reviewer as HTMLElement).getByText("Reviews pull requests.")).toBeTruthy();
+    // the org has no tool data: the agent template claims nothing about its tools
+    expect(screen.queryByText(c.agentToolsInherit)).toBeNull();
+    // the extension: what it provides and, since it needs config, the note
+    expect(screen.getByText("tools@1")).toBeTruthy();
+    expect(screen.getByText(r.configAfterEnable)).toBeTruthy();
+    // the dependencies are installed with it
+    expect(screen.getByText(c.dependenciesWith)).toBeTruthy();
+    expect(screen.getByText("crm-core")).toBeTruthy();
+    expect(screen.getByText("^1.0.0")).toBeTruthy();
     expect(template("WizardPage")).not.toBeNull();
-    // one step only, and nothing to fill in or pick
+    // one step only (no step bar), nothing to fill in or pick
+    expect(document.querySelector("[data-part='step-count']")).toBeNull();
+    expect(document.querySelector("ol.cb-steps")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
-    // the templates switched on with it: their needs, the kept one, their icons
+    // every template is a row with the state it has once enabled, default-off one included
     const rows = within(list).getAllByRole("listitem");
-    expect(rows).toHaveLength(3);
-    expect(within(list).getByText(r.needsOrgCredential)).toBeTruthy();
-    expect(within(list).getByText(r.needsOAuthClient)).toBeTruthy();
-    expect(within(list).getByText(fill(t.connectorKept, { name: "pat" }))).toBeTruthy();
+    expect(rows).toHaveLength(5);
+    const stateOf = (i: number) => rows[i]?.textContent ?? "";
+    expect(stateOf(0)).toContain(t.state.needs_credential);
+    expect(stateOf(1)).toContain(t.state.needs_client);
+    expect(stateOf(2)).toContain(t.state.kept);
+    expect(stateOf(3)).toContain(t.state.off);
+    expect(stateOf(4)).toContain(t.state.ready);
     expect(rows[0]?.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
-    // connectors that need setup are configured on the connectors page afterwards; a default-off
-    // one is not created
-    expect(screen.getByText(t.summaryNeedsConfig)).toBeTruthy();
-    expect(
-      screen.getByText(
-        "1 connector is off by default and is not created; turn it on later on the Connectors page.",
-      ),
-    ).toBeTruthy();
+    // connectors that need setup are configured on the connectors page afterwards
+    expect(screen.getByText(t.needsConfigNote)).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/extensions#plugin=github"));
     const put = bodyOf(calls.find((c) => c.method === "PUT") as Parameters<typeof bodyOf>[0]);
     expect(put).toEqual({ enabled: true });
   });
@@ -1971,18 +2217,30 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
   it("the review speaks Chinese: 启用, the zh names and the needs", async () => {
     params.current = { itemId: ID };
     const t = zh.catalog.org.install;
-    stubReview([
-      reviewTpl("gh", {
-        auth: { type: "bearer", ownership: "org" },
-        description: "GitHub tools.",
-        descriptionZh: "GitHub 工具。",
-      }),
-    ]);
+    stubReview(
+      [
+        reviewTpl("gh", {
+          auth: { type: "bearer", ownership: "org" },
+          description: "GitHub tools.",
+          descriptionZh: "GitHub 工具。",
+        }),
+      ],
+      {
+        item: orgItem({
+          name: "github",
+          description: "GitHub tools.",
+          descriptionZh: "GitHub 助手",
+        }),
+      },
+    );
     await renderInstall({ locale: "zh" });
     const list = await screen.findByRole("list", { name: zh.catalog.components.templates });
+    expect(screen.getByText("GitHub 助手")).toBeTruthy();
     expect(within(list).getByText("gh-zh")).toBeTruthy();
-    expect(within(list).getByText("GitHub 工具。")).toBeTruthy();
-    expect(within(list).getByText(zh.catalog.admin.review.needsOrgCredential)).toBeTruthy();
+    // the description opens under the row's endpoint line
+    await userEvent.setup().click(within(list).getByText("mcp.example.com"));
+    expect(await within(list).findByText("GitHub 工具。")).toBeTruthy();
+    expect(within(list).getByText(t.state.needs_credential)).toBeTruthy();
     expect(screen.getByRole("button", { name: "启用" })).toBeTruthy();
     expect(t.submit).toBe("启用");
   });
@@ -2032,7 +2290,7 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
         }),
     });
     await renderInstall();
-    expect(screen.getByText(t.summaryDependencies)).toBeTruthy();
+    expect(screen.getByText(en.catalog.components.dependenciesWith)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
     expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
     expect(
@@ -2091,7 +2349,12 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
     expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
     await waitFor(() =>
       expect(new Set(calls.filter((c) => c.method === "GET").map((c) => c.url))).toEqual(
-        new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`, `${ORG}/readiness`]),
+        new Set([
+          `${ORG}/catalog/${ID}`,
+          `${ORG}/components?itemId=${ID}`,
+          `${ORG}/extensions`,
+          `${ORG}/readiness`,
+        ]),
       ),
     );
     expect(switchInputs(calls)).toBeUndefined();
@@ -2235,6 +2498,9 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
             `GET ${ORG}/readiness`,
             // the plugin's components in the org
             `GET ${ORG}/components?itemId=${ID}`,
+            // the contents' extension and the org's connectors from the plugin
+            `GET ${ORG}/extensions`,
+            `GET ${ORG}/connectors`,
           ]),
         ),
       );
@@ -3238,12 +3504,8 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    const table = await screen.findByRole("table", {
-      name: en.catalog.admin.detail.tabs.components,
-    });
-    const row = within(table).getByText("reviewer").closest("tr") as HTMLElement;
-    expect(within(row).getByText(en.catalog.admin.detail.kind.agentTemplate)).toBeTruthy();
-    void c;
+    const list = await screen.findByRole("list", { name: c.agentTemplates });
+    expect(within(list).getByText("reviewer")).toBeTruthy();
   });
 
   it("item detail: the components table of the latest version, the permissions count, dependencies with catalog resolution", async () => {
@@ -3290,31 +3552,22 @@ describe("/admin/plugins and marketplace entries", () => {
         }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    // One table of the latest version's components: kind and version
+    // The contents of the version: the extension, skills and connector templates in sections
     const d = en.catalog.admin.detail;
-    const table = await screen.findByRole("table", { name: d.tabs.components });
-    const kindOf = (name: string) =>
-      within(within(table).getByText(name).closest("tr") as HTMLElement);
-    expect(kindOf("crm").getByText(d.kind.extension)).toBeTruthy();
-    expect(kindOf("crm").getByText("v1.0.0")).toBeTruthy();
-    expect(kindOf("crm-notes").getByText(d.kind.skill)).toBeTruthy();
-    expect(kindOf("docs").getByText(d.kind.connectorTemplate)).toBeTruthy();
+    const skills = await screen.findByRole("list", { name: c.skills });
+    expect(within(skills).getByText("crm-notes")).toBeTruthy();
+    const templates = screen.getByRole("list", { name: c.templates });
+    expect(within(templates).getByText("docs")).toBeTruthy();
     // the inspector counts the declared permissions (tools and storage), confirmed
     expect(screen.getByText(fill(d.permissions.confirmed, { n: 2 }))).toBeTruthy();
     const deps = screen.getByRole("region", { name: c.dependencies });
-    const found = await within(deps).findByRole("link", {
-      name: fill(c.dependencyInCatalog, {
-        name: "crm-core",
-        range: "^1.0.0",
-        versions: "1.2.0, 1.0.0",
-      }),
-    });
+    const found = await within(deps).findByRole("link", { name: "crm-core" });
     expect(found.getAttribute("href")).toBe("/admin/plugins/core-id");
     expect(
-      within(deps).getByText(
-        fill(c.dependencyNotInCatalog, { name: "crm-extra", range: "^2.0.0" }),
-      ),
+      within(deps).getByText(fill(d.dependencyVersions, { versions: "1.2.0, 1.0.0" })),
     ).toBeTruthy();
+    expect(within(deps).getByText(d.dependencyMissing)).toBeTruthy();
+    expect(within(deps).getByText("crm-extra")).toBeTruthy();
   });
 
   describe("item detail: 删除 while the plugin's extension is enabled", () => {
@@ -3854,6 +4107,33 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     expect(screen.getByText(`${en.catalog.errorDetail.gitSuffix}`)).toBeTruthy();
   });
 
+  it("an entry import of an invalid package lists each problem under the message", async () => {
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [gitEntry({})], truncated: false }),
+      "POST /api/v1/admin/marketplaces/g1/entries/x/import": () =>
+        json(422, {
+          error: {
+            code: "catalog.invalid_manifest",
+            message: "Invalid plugin package: no skill this platform can import",
+            details: ["no skill this platform can import", "bad field"],
+          },
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: en.catalog.admin.entries.title });
+    const user = userEvent.setup();
+    await user.click(
+      within(list).getByRole("button", {
+        name: fill(en.catalog.admin.entries.importVersion, { version: "v1.0.0" }),
+      }),
+    );
+    expect(await screen.findByText(en.errors.catalog.invalid_manifest)).toBeTruthy();
+    expect(screen.getByText("no skill this platform can import")).toBeTruthy();
+    expect(screen.getByText("bad field")).toBeTruthy();
+  });
+
   it.each(LOCALES)(
     "the review shows npm provenance and the git source; a build version and a repository mismatch are explained (%s)",
     async (locale) => {
@@ -3893,9 +4173,8 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
           }),
       });
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
-      expect(
-        await screen.findByText(`https://github.com/acme/crm@fedcba9 ${r.unverified}`),
-      ).toBeTruthy();
+      const attested = await screen.findByText("https://github.com/acme/crm@fedcba9");
+      expect(attested.parentElement?.textContent).toContain(r.unverified);
       expect(screen.getByText(r.provenanceMismatch)).toBeTruthy();
       const origin = `${fill(o.git, { location: "git.acme.com/acme/marketplace (plugins/crm)", commit: "fedcba9" })} · ${fill(o.followsBranch, { ref: "main" })}`;
       // the source is a fact (one key column), the two warnings one notice
@@ -4149,6 +4428,25 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
     expect(calls.some((c) => c.url.endsWith("/plugin-installs"))).toBe(false);
   });
 
+  it("plugin page: the description and the publisher are the page's facts, once", async () => {
+    params.current = { itemId: ID };
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          ...DETAIL,
+          item: { ...DETAIL.item, description: "Takes notes. Keeps them tidy." },
+        }),
+    });
+    await renderItem({ me: MEMBER });
+    await screen.findByText(en.catalog.components.skills);
+    expect(screen.getAllByText(en.catalog.org.detail.fields.publisher)).toHaveLength(1);
+    expect(screen.getAllByText("Acme")).toHaveLength(1);
+    expect(screen.getAllByText("Takes notes. Keeps them tidy.")).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: en.catalog.admin.review.fullDescription }),
+    ).toBeNull();
+  });
+
   it("plugin page: the plugin's agent templates are listed", async () => {
     params.current = { itemId: ID };
     stubApi({
@@ -4162,6 +4460,9 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
         .getAllByRole("listitem")
         .map((li) => li.textContent),
     ).toEqual(["reviewer", "tester"]);
+    // the org has no tool data: no claim about the tools of the agent that dispatches it
+    expect(screen.queryByText(en.catalog.components.agentToolsInherit)).toBeNull();
+    expect(screen.queryByText(en.catalog.admin.review.tools)).toBeNull();
   });
 
   it.each(LOCALES)(
@@ -4187,7 +4488,7 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
           }),
       });
       await renderInstall({ locale });
-      await screen.findByText(m.catalog.org.install.summary);
+      await screen.findByRole("button", { name: m.catalog.org.install.submit });
       await userEvent
         .setup()
         .click(screen.getByRole("button", { name: m.catalog.org.install.submit }));
@@ -4410,15 +4711,20 @@ describe("phase B: Claude Code plugins on the import review", () => {
       ],
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    await screen.findByRole("button", { name: tr.license });
-    // the license warns in a line, each skill in a tag (its line is inside the SKILL.md disclosure)
-    expect(screen.getAllByText(tr.bidiWarning)).toHaveLength(1);
-    expect(screen.getAllByText(en.catalog.admin.review.hiddenCharacters)).toHaveLength(2);
+    const r = en.catalog.admin.review;
+    await screen.findByRole("button", { name: r.licenseText });
+    // the license fact and each skill carry a tag; the warning lines are with the texts (the
+    // license Dialog, the SKILL.md disclosure)
+    expect(screen.queryByText(tr.bidiWarning)).toBeNull();
+    expect(screen.getAllByText(r.hiddenCharacters)).toHaveLength(3);
+    await userEvent.setup().click(screen.getByRole("button", { name: r.licenseText }));
+    const dialog = await screen.findByRole("dialog", { name: tr.license });
+    expect(within(dialog).getByText(tr.bidiWarning)).toBeTruthy();
     cleanup();
     vi.unstubAllGlobals();
     stage(CLAUDE_REVIEW);
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    await screen.findByRole("button", { name: tr.license });
+    await screen.findByRole("button", { name: r.licenseText });
     expect(screen.queryByText(tr.bidiWarning)).toBeNull();
     expect(screen.queryByText(en.catalog.admin.review.hiddenCharacters)).toBeNull();
   });
@@ -4498,21 +4804,21 @@ describe("phase B: Claude Code plugins on the import review", () => {
     );
   });
 
-  it("each skill's SKILL.md and the license are collapsed and expandable", async () => {
-    const tr = en.catalog.admin.review.translation;
+  it("each skill's SKILL.md opens inline; the license's 全文 opens a Dialog", async () => {
+    const r = en.catalog.admin.review;
     stage(CLAUDE_REVIEW);
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    const license = await screen.findByRole("button", { name: tr.license });
-    expect(license.getAttribute("aria-expanded")).toBe("false");
+    const license = await screen.findByRole("button", { name: r.licenseText });
     expect(screen.queryByText(/Copyright \(c\) 2025/)).toBeNull();
     await user.click(license);
-    expect(screen.getByText(/Copyright \(c\) 2025/)).toBeTruthy();
-    const body = screen.getByRole("button", {
-      name: fill(tr.skillBody, { name: "brainstorming" }),
-    });
+    const dialog = await screen.findByRole("dialog", { name: r.translation.license });
+    expect(within(dialog).getByText(/Copyright \(c\) 2025/)).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const skill = screen.getByRole("group", { name: "brainstorming" });
     expect(screen.queryByText(/Ask questions first/)).toBeNull();
-    await user.click(body);
+    await user.click(within(skill).getByRole("button", { name: r.skillBody }));
     expect(screen.getByText(/Ask questions first/)).toBeTruthy();
   });
 
@@ -4529,7 +4835,7 @@ describe("phase B: Claude Code plugins on the import review", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     expect(await screen.findByText(tr.licenseTruncated)).toBeTruthy();
     expect(screen.getByText(tr.claudeManifestIgnored)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.catalog.admin.review.licenseText })).toBeNull();
   });
 
   it("a native plugin review shows no translation section", async () => {
@@ -4643,8 +4949,10 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     // the head's Claude Code chip
     expect(screen.getByText(en.catalog.admin.chips.claudeCode)).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: tr.license }));
-    expect(screen.getByText("MIT License")).toBeTruthy();
+    // the license is a fact whose full text opens a Dialog with the text
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.licenseText }));
+    expect(within(await screen.findByRole("dialog")).getByText("MIT License")).toBeTruthy();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
     const table = screen.getByRole("table", { name: d.versionColumns.version });
     expect(within(table).getByText(d.versionColumns.format)).toBeTruthy();
@@ -4684,13 +4992,13 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     const del = await screen.findByRole("menuitem", { name: d.delete });
     expect(del.getAttribute("data-danger")).toBe("true");
     await user.keyboard("{Escape}");
-    // The license is a folded section at the end of the page, on every tab
-    const license = screen.getByRole("button", { name: tr.license });
-    const content = document.querySelector('[data-part="content"]') as HTMLElement;
-    const last = content.lastElementChild as HTMLElement;
-    expect(last.contains(license)).toBe(true);
+    // The license is a fact in the KeyValue, on every tab, not a folded section at the end
+    const R = en.catalog.admin.review;
+    expect(facts?.textContent).toContain(R.facts.license);
+    expect(screen.getByRole("button", { name: R.licenseText })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
     await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
-    expect(screen.getByRole("button", { name: tr.license })).toBeTruthy();
+    expect(screen.getByRole("button", { name: R.licenseText })).toBeTruthy();
   });
 
   it("item detail: a version whose LICENSE was too long to store says so (batch-3 m6)", async () => {
@@ -4721,6 +5029,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
   const routes = {
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
     [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/components?itemId=${ID}`]: () => json(200, { components: [] }),
   };
   const as = (role: "member" | "admin"): Me => ({
     ...ME,
@@ -4764,6 +5073,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
     await renderRouteWithCache(path, {
       [`GET ${ORG}/catalog/${ID}`]: () => json(404, { error: { code: "catalog.not_found" } }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${ORG}/components?itemId=${ID}`]: () => json(200, { components: [] }),
     });
     expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
@@ -4795,6 +5105,7 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
     // org admins also read the extensions, the marketplace entries and the installs
     [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
     [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
     // the plugin's components in the org
@@ -4846,8 +5157,14 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     await renderRouteWithCache(`/plugins/${ID}`, routes, { readiness: NOT_READY });
     expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     expect(
-      within(screen.getByRole("list", { name: en.catalog.components.extension })).getByText("crm"),
+      within(screen.getByRole("region", { name: en.catalog.components.extension })).getByText(
+        "crm",
+      ),
     ).toBeTruthy();
+    // no connector from this plugin: no the org's connectors section
+    expect(
+      screen.queryByRole("region", { name: en.catalog.org.detail.connectors.title }),
+    ).toBeNull();
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
@@ -5112,15 +5429,15 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
     const user = userEvent.setup();
-    // the tabs 组件 / 组织 / 版本; the components table lists the extension and the skill
+    // the tabs Components / Organizations / Versions; the contents list the extension and the skill
     expect(
       await screen.findByRole("tab", { name: new RegExp(P.detail.tabs.components) }),
     ).toBeTruthy();
     expect(screen.getByRole("tab", { name: new RegExp(P.detail.tabs.orgs) })).toBeTruthy();
     expect(screen.getByRole("tab", { name: new RegExp(P.detail.tabs.versions) })).toBeTruthy();
-    const table = screen.getByRole("table", { name: P.detail.tabs.components });
-    expect(within(table).getByText("jina-web")).toBeTruthy();
-    expect(within(table).getByText("web-research")).toBeTruthy();
+    const skills = screen.getByRole("list", { name: en.catalog.components.skills });
+    expect(within(skills).getByText("web-research")).toBeTruthy();
+    expect(screen.getByText("jina-web")).toBeTruthy();
     // a newer marketplace version: one 更新到 (the import review and the update preview together)
     expect(
       screen.getByRole("button", { name: fill(P.detail.actions.update, { version: "v1.3.0" }) }),

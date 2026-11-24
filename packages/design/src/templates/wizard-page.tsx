@@ -16,14 +16,15 @@ import {
 } from "./frame";
 
 /**
- * T9 向导：Centered + 步骤条 + 始终存在的 ActionRow. `loading` draws the frame while the wizard's
- * data is on the way (spec §5.5): the header keeps its rows, the step bar is real (the steps are
- * static), the ActionRow stays with its buttons disabled, and the step's body is one card (a
- * title slot, `fields` field placeholders) in place of `children`; a step whose body is no card
- * (a review stack) passes `content` (`BlockShape[]`) instead, drawn in a gap-16 stack as the loaded
- * step stacks its parts. A step that is its own sections (each `FormSection` saying for itself
- * whether it is loading, so static titles and ready parts render for real) passes `keep`: its
- * `children` render as they are inside the page's one busy region. One busy announcement.
+ * T9 wizard: Centered + a step bar + an ActionRow that is always there (one step draws no step
+ * bar). `loading` draws the frame while the wizard's data is on the way (spec §5.5): the header
+ * keeps its rows, the step bar is real (the steps are static), the ActionRow stays with its buttons
+ * disabled, and the step's body is one card (a title slot, `fields` field placeholders) in place of
+ * `children`; a step whose body is no card (a review stack) passes `content` (`BlockShape[]`)
+ * instead, drawn in a gap-16 stack as the loaded step stacks its parts. A step that is its own
+ * sections (each `FormSection` saying for itself whether it is loading, so static titles and ready
+ * parts render for real) passes `keep`: its `children` render as they are inside the page's one
+ * busy region. One busy announcement.
  */
 export function WizardPage({
   header,
@@ -46,37 +47,41 @@ export function WizardPage({
     <>
       <TemplateHead header={loading ? loadingHeader(header) : header} />
       <Body layout="centered" loose width="content">
-        {/* Compact shows this count in place of the step list (hidden there), so it carries the
-            step's name for assistive technology: "Step 2 of 4: <label>". */}
-        <p className="cb-steps-count" data-part="step-count">
-          <span aria-hidden="true">{`${shown} / ${steps.length}`}</span>
-          <span className="cb-sr-only">
-            {t("shell.stepOf")
-              .replace("{n}", String(shown))
-              .replace("{m}", String(steps.length))
-              .replace("{label}", () => steps[shown - 1] ?? "")}
-          </span>
-        </p>
-        <ol className="cb-steps" aria-label={t("shell.steps")}>
-          {steps.map((label, i) => {
-            const state = i < current ? "done" : i === current ? "current" : "todo";
-            return (
-              <li
-                // biome-ignore lint/suspicious/noArrayIndexKey: 静态步骤列表，标签可能重复，需带序号
-                key={`${i}-${label}`}
-                className="cb-step"
-                data-step={i + 1}
-                data-state={state}
-                {...(state === "current" ? { "aria-current": "step" as const } : {})}
-              >
-                <span className="cb-step-mark">
-                  {state === "done" ? <Icon name="check" size={12} /> : String(i + 1)}
-                </span>
-                <span className="cb-step-label">{label}</span>
-              </li>
-            );
-          })}
-        </ol>
+        {steps.length > 1 ? (
+          <>
+            {/* Compact shows this count in place of the step list (hidden there), so it carries the
+                step's name for assistive technology: "Step 2 of 4: <label>". */}
+            <p className="cb-steps-count" data-part="step-count">
+              <span aria-hidden="true">{`${shown} / ${steps.length}`}</span>
+              <span className="cb-sr-only">
+                {t("shell.stepOf")
+                  .replace("{n}", String(shown))
+                  .replace("{m}", String(steps.length))
+                  .replace("{label}", () => steps[shown - 1] ?? "")}
+              </span>
+            </p>
+            <ol className="cb-steps" aria-label={t("shell.steps")}>
+              {steps.map((label, i) => {
+                const state = i < current ? "done" : i === current ? "current" : "todo";
+                return (
+                  <li
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static steps; labels may repeat
+                    key={`${i}-${label}`}
+                    className="cb-step"
+                    data-step={i + 1}
+                    data-state={state}
+                    {...(state === "current" ? { "aria-current": "step" as const } : {})}
+                  >
+                    <span className="cb-step-mark">
+                      {state === "done" ? <Icon name="check" size={12} /> : String(i + 1)}
+                    </span>
+                    <span className="cb-step-label">{label}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : null}
         {!loading || "keep" in loading ? (
           children
         ) : "content" in loading ? (

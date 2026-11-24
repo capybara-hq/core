@@ -21,14 +21,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useComponentScopeText } from "../../../../../components/AdminComponents";
 import { useApplyAppearance } from "../../../../../components/ApplyAppearance";
-import {
-  ComponentSection,
-  LicenseView,
-  ScopeBadge,
-  TranslationReportView,
-  useOrigin,
-  useSourceLabel,
-} from "../../../../../components/CatalogParts";
+import { ScopeBadge, useOrigin, useSourceLabel } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { PlatformUpdateDialog } from "../../../../../components/PlatformUpdateDialog";
@@ -37,16 +30,24 @@ import {
   PluginScopeDialog,
 } from "../../../../../components/PluginScopeDialog";
 import { useScopeLabel } from "../../../../../components/PluginsHead";
+import {
+  fromManifest,
+  licenseOf,
+  manifestCount,
+  platformVersionOf,
+} from "../../../../../components/plugin-contents/from-manifest";
+import {
+  LicenseFact,
+  PluginContents,
+} from "../../../../../components/plugin-contents/PluginContents";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../lib/api";
 import {
   adminIconUrl,
-  agentTemplateNameOf,
   type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
-  clientFilesOf,
   compareSemver,
   declaredPermissions,
   descriptionOf,
@@ -54,18 +55,11 @@ import {
   importMarketplaceEntry,
   importPageHref,
   ownerOrgOf,
-  type PluginManifest,
   removeCatalogItem,
   setDisabled,
   shareGated,
-  skillNameOf,
-  templateIdOf,
 } from "../../../../../lib/catalog";
-import {
-  COMPONENT_ROUTES,
-  type PlatformComponent,
-  type PlatformComponentKind,
-} from "../../../../../lib/components";
+import { COMPONENT_ROUTES, type PlatformComponent } from "../../../../../lib/components";
 import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
 import { lockWhileRunning } from "../../../../../lib/header-actions";
 import {
@@ -102,15 +96,17 @@ const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation ===
  * row menu moves the platform to any other imported version (更新到 / 回退到, the same dialog). A
  * built-in plugin has neither 设置范围 nor 停用. An org's upload (phase 3) names its owner org, takes no
  * 更新到 or version moves (its org uploads its versions), only narrows when its org does not share
- * it, and takes no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
- * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
- * component's own, linking to the component); its dependencies; the translation report), 组织
- * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
- * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
- * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
- * license folded at the end; 删除 is the head's ⋯ menu item. 应用此插件的外观 (a plugin with a
- * suggested appearance, client extensions spec §6.5) previews the platform changes in a confirm
- * dialog, then applies them. From the query cache (the layout
+ * it, and takes no scope change while its first version waits. Tabs: components (the plugin
+ * contents view of the platform version: its extension, skills, connector templates, agent
+ * templates and themes, each with its scope (follow the plugin or the component's own, linking to
+ * the component); its dependencies; the translation report), orgs (the scope and the orgs it
+ * names, or how many turned it on), versions (each version's source, origin and import time). One centred column (no
+ * inspector): the full description first, the notes and the facts (the icon is the head's 40 px
+ * mark) (package, source, publisher, owner, scope, orgs using it, the permissions with their
+ * state, updated, the license, whose full text opens a Dialog) as a KeyValue, then the tab; Delete
+ * is the head's ⋯ menu item. Apply this plugin's appearance (a plugin with a suggested
+ * appearance, client extensions spec §6.5) previews the platform changes in a confirm dialog,
+ * then applies them. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
  * the catalog and the orgs are sections.
  */
@@ -140,8 +136,7 @@ function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | n
           value: "components",
           onChange: () => {},
         }}
-        // The facts (the description over a KeyValue of nine), then the components table and the
-        // dependencies
+        // The facts (the description over a KeyValue of nine), then the contents' sections
         loading={{
           facts: { rows: 9, keyWidth: "10ch", lead: true },
           content: [{ kind: "list" }, { kind: "list" }],
@@ -241,10 +236,11 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     }
     return errorMessage(e);
   };
-  // The release the platform runs (its license is the page's last section)
+  // The release the platform runs (its license is one of the facts)
   const platformRelease =
     detail.versions.find((v) => v.version === platformVersion) ??
     detail.versions.find((v) => v.version === item.latestVersion);
+  const license = licenseOf(platformRelease);
   // Stages the newer marketplace version: the answer is the staged import the review page reads
   const stage = useAppMutation({
     fn: (v: { sourceId: string; version: string }) =>
@@ -439,6 +435,9 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                         : t("detail.permissions.confirmed", { n: permissionCount }),
                 },
                 { k: t("detail.fields.updated"), v: <DateTime value={item.updatedAt} /> },
+                ...(license !== undefined
+                  ? [{ k: td("admin.review.facts.license"), v: <LicenseFact license={license} /> }]
+                  : []),
               ]}
             />
           </Stack>
@@ -449,7 +448,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
             id: x,
             label: t(`detail.tabs.${x}`),
             ...(x === "components" && latest !== undefined
-              ? { count: componentsOf(latest.manifest).length }
+              ? { count: manifestCount(platformVersionOf(detail)?.manifest ?? latest.manifest) }
               : {}),
           })),
           value: tab,
@@ -466,13 +465,6 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
               versions={detail.versions}
               platformVersion={platformVersion}
               {...(movable ? { onMove: setMoveTo } : {})}
-            />
-          )}
-          {/* 许可证全文: folded, at the end of the page */}
-          {platformRelease !== undefined && (
-            <LicenseView
-              text={platformRelease.licenseText}
-              truncated={platformRelease.licenseTruncated}
             />
           )}
         </Stack>
@@ -538,111 +530,30 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   );
 }
 
-type ComponentRow = {
-  key: string;
-  name: string;
-  kind:
-    | "extension"
-    | "component"
-    | "clientCode"
-    | "skill"
-    | "connectorTemplate"
-    | "agentTemplate"
-    | "theme";
-  version: string;
-  /** The client code row: its file count (the name is drawn from it). */
-  files?: number;
-};
-
-/** The platform component kind of a manifest row (an extension has none). */
-const PLATFORM_KIND: Record<ComponentRow["kind"], PlatformComponentKind | null> = {
-  extension: null,
-  component: null,
-  clientCode: null,
-  skill: "skill",
-  connectorTemplate: "connector_template",
-  agentTemplate: "agent_template",
-  // themes are listed without a link (this page reads no theme list)
-  theme: null,
-};
-
-/** The plugin's platform components of each kind (sections: empty while they load or failed). */
-function usePluginComponents(itemId: string): (row: ComponentRow) => PlatformComponent | undefined {
+/**
+ * The platform's skills, connector templates and agent templates (sections: empty while they load
+ * or failed).
+ */
+function usePluginComponents(): PlatformComponent[] {
   const sq = adminComponentsQuery("skill");
   const cq = adminComponentsQuery("connector_template");
   const aq = adminComponentsQuery("agent_template");
   const skills = useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) }).data;
   const connectors = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data;
   const agents = useQuery({ ...aq, retryOnMount: retryOnMountOf(aq.queryKey) }).data;
-  const byKind: Record<PlatformComponentKind, PlatformComponent[]> = {
-    skill: skills?.components ?? [],
-    connector_template: connectors?.components ?? [],
-    agent_template: agents?.components ?? [],
-    theme: [],
-  };
-  return (row) => {
-    const kind = PLATFORM_KIND[row.kind];
-    return kind === null
-      ? undefined
-      : byKind[kind].find((c) => c.itemId === itemId && c.name === row.name);
-  };
-}
-
-/**
- * The components of a version (its plugin.json): the extension with its client components and
- * client code (client extensions spec §5), skills, templates and themes.
- */
-function componentsOf(m: PluginManifest): ComponentRow[] {
-  const ext = m.extension?.manifest;
-  const client = m.extension?.client;
   return [
-    ...(ext
-      ? [{ key: `e:${ext.name}`, name: ext.name, kind: "extension" as const, version: ext.version }]
-      : []),
-    ...(ext?.permissions.ui?.components ?? []).map((id) => ({
-      key: `u:${id}`,
-      name: id,
-      kind: "component" as const,
-      version: ext?.version ?? m.version,
-    })),
-    ...(client !== undefined
-      ? [
-          {
-            key: "client",
-            name: "",
-            kind: "clientCode" as const,
-            version: ext?.version ?? m.version,
-            files: clientFilesOf(client).length,
-          },
-        ]
-      : []),
-    ...(m.skills ?? []).map((s) => ({
-      key: `s:${s.path}`,
-      name: skillNameOf(s.path),
-      kind: "skill" as const,
-      version: m.version,
-    })),
-    ...(m.connectorTemplates ?? []).map((c) => ({
-      key: `c:${c.path}`,
-      name: templateIdOf(c.path),
-      kind: "connectorTemplate" as const,
-      version: m.version,
-    })),
-    ...(m.agents ?? []).map((a) => ({
-      key: `a:${a.path}`,
-      name: agentTemplateNameOf(a.path),
-      kind: "agentTemplate" as const,
-      version: m.version,
-    })),
-    ...(m.themes ?? []).map((th) => ({
-      key: `t:${th.path}`,
-      name: templateIdOf(th.path),
-      kind: "theme" as const,
-      version: m.version,
-    })),
+    ...(skills?.components ?? []),
+    ...(connectors?.components ?? []),
+    ...(agents?.components ?? []),
   ];
 }
 
+/**
+ * Components: the contents of the version the platform runs (the one plugin contents view): the
+ * extension with its client code and client components under it, skills, connector templates,
+ * agent templates and themes, each with its scope (follow the plugin, or its own, linking to the
+ * component), the dependencies and the translation report. The license is the page's fact.
+ */
 function ComponentsTab({
   detail,
   catalog,
@@ -652,89 +563,51 @@ function ComponentsTab({
   catalog: CatalogItem[] | null;
 }) {
   const t = useTranslations("catalog.admin.detail");
-  const tc = useTranslations("catalog.components");
-  const item = detail.item;
-  const latest =
-    detail.versions.find((v) => v.version === (item.platformVersion ?? item.latestVersion)) ??
-    detail.versions.find((v) => v.version === item.latestVersion);
   const tcs = useTranslations("adminComponents");
-  const componentOf = usePluginComponents(item.id);
+  const locale = useLocale();
+  const components = usePluginComponents();
   const scopeText = useComponentScopeText();
-  const rows = latest === undefined ? [] : componentsOf(latest.manifest);
-  const deps = latest?.manifest.dependencies ?? [];
-  const columns: Column<ComponentRow>[] = [
-    {
-      key: "name",
-      header: t("componentColumns.name"),
-      cell: (row) => {
-        if (row.kind === "clientCode") return t("clientFiles", { files: row.files ?? 0 });
-        const c = componentOf(row);
-        return c === undefined ? (
-          row.name
-        ) : (
-          <Link href={`${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}`}>{row.name}</Link>
-        );
-      },
-    },
-    { key: "kind", header: t("componentColumns.kind"), cell: (c) => t(`kind.${c.kind}`) },
-    {
-      key: "version",
-      header: t("componentColumns.version"),
-      tone: "muted",
-      cell: (c) => versionLabel(c.version),
-    },
-    {
-      key: "scope",
-      header: t("componentColumns.scope"),
-      tone: "muted",
-      // The extension and a component following the plugin: 跟随插件; else its own scope
-      cell: (row) => {
-        const c = componentOf(row);
-        return c === undefined || c.scopeMode === "follow" ? tcs("follow") : scopeText(c);
-      },
-    },
-  ];
-  return (
-    <Stack gap={16}>
-      <DataTable
-        label={t("tabs.components")}
-        columns={columns}
-        rows={rows}
-        rowKey={(c) => c.key}
-        state="ready"
-        empty={{ title: t("componentsEmpty") }}
-      />
-      {deps.length > 0 && (
-        <ComponentSection title={tc("dependencies")} count={deps.length} empty="">
+  const model = fromManifest(detail, components, locale, {
+    catalog,
+    slots: {
+      // The extension and a component following the plugin: "follow the plugin"; else its own scope
+      scope: (_kind, c) =>
+        c === undefined ? (
           <Text variant="small" tone="muted">
-            {tc("dependenciesHint")}
+            {tcs("follow")}
           </Text>
-          {deps.map((d) => {
-            const found = catalog?.find((i) => i.name === d.name);
-            return found ? (
-              <Text key={d.name}>
-                <Link href={`/admin/plugins/${found.id}`}>
-                  {tc("dependencyInCatalog", {
-                    name: d.name,
-                    range: d.version,
-                    versions: found.versions.join(", "),
-                  })}
-                </Link>
-              </Text>
-            ) : catalog !== null ? (
-              <Text key={d.name} tone="warn">
-                {tc("dependencyNotInCatalog", { name: d.name, range: d.version })}
-              </Text>
-            ) : (
-              // The catalog could not be read: only the name and range
-              <Text key={d.name} tone="muted">{`${d.name} ${d.version}`}</Text>
-            );
-          })}
-        </ComponentSection>
-      )}
-      {latest?.translation != null && <TranslationReportView report={latest.translation} />}
-    </Stack>
-  );
+        ) : (
+          <Link href={`${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}`}>
+            {c.scopeMode === "follow" ? tcs("follow") : scopeText(c)}
+          </Link>
+        ),
+      extensionLines: (client, ui) => (
+        <Stack gap={4}>
+          {client !== null && (
+            <Text variant="small" tone="muted">
+              {t("clientFiles", { files: client.files })}
+            </Text>
+          )}
+          {ui.length > 0 && (
+            <Text variant="small" tone="muted">
+              {t("uiComponents", { ids: ui.join(", ") })}
+            </Text>
+          )}
+        </Stack>
+      ),
+      dependency: (found, catalogRead) =>
+        found !== undefined ? (
+          <Text variant="small" tone="muted">
+            {t("dependencyVersions", { versions: found.versions.join(", ") })}
+          </Text>
+        ) : catalogRead ? (
+          <Text variant="small" tone="warn">
+            {t("dependencyMissing")}
+          </Text>
+        ) : null,
+    },
+  });
+  return <PluginContents model={model} audience="platform" stage="detail" />;
 }
 
 /** 组织: who the scope gives the plugin to; the named orgs (or every org for 全部组织启用). */
