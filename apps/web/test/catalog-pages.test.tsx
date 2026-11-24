@@ -343,6 +343,81 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
   });
 
+  it("the direct switch toasts what arrived with 撤销, which switches off without the skills dialog", async () => {
+    const p = zh.plugins;
+    let on = false;
+    const skills = ["a", "b", "c", "d"].map((n) => ({
+      id: n,
+      scope: "org",
+      agentId: null,
+      name: n,
+      description: "",
+      currentVersion: 1,
+      createdBy: "a1",
+      createdAt: "2026-11-07T00:00:00.000Z",
+      updatedAt: "2026-11-07T00:00:00.000Z",
+      origin: "platform",
+      plugin: "notes",
+    }));
+    const counts = { extension: 0, skills: 4, connectorTemplates: 0, agentTemplates: 0 };
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [orgItem({ state: on ? "on" : "off", name: "notes", componentCounts: counts })],
+        }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: (c) => {
+        on = (bodyOf(c) as { enabled: boolean }).enabled;
+        return json(200, { item: orgItem({ state: on ? "on" : "off", name: "notes" }) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable }));
+    expect(await screen.findByText("已启用「notes」，加入了 4 个技能。")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: p.toast.undo }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "PUT").map(bodyOf)).toEqual([
+        { enabled: true },
+        { enabled: false },
+      ]),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByText("已停用「notes」。")).toBeTruthy();
+  });
+
+  it("停用 with nothing to lose is one sentence and the two buttons", async () => {
+    const p = en.plugins;
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              name: "crm",
+              state: "on",
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+            }),
+          ],
+        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, {
+          preview: { ...PREVIEW, components: [], kept: [], agents: [] },
+          confirm: "h1",
+        }),
+    });
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "crm")).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(p.switchOff.plain.replace("{name}", "crm"))).toBeTruthy();
+    expect(within(dialog).queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    expect(within(dialog).getByRole("button", { name: p.switchOff.cancel })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: p.switchOff.confirm })).toBeTruthy();
+  });
+
   it.each(LOCALES)(
     "the owner follows the item's owner in the chip and the meta line: 本组织, another org, 平台 (%s)",
     async (locale) => {
@@ -514,6 +589,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     // the connector is kept but switched off with the plugin, with the reason; the skill is removed
     const disabled = within(dialog).getByRole("list", { name: p.switchOff.disabled });
     expect(within(disabled).getByText("docs")).toBeTruthy();
+    expect(within(dialog).getByText(p.switchOff.disabledNote)).toBeTruthy();
     expect(
       within(disabled).getByText(en.catalog.plugins.report.reason.disabled_with_plugin),
     ).toBeTruthy();

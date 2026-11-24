@@ -5971,6 +5971,13 @@
     },
     "toast": {
       "enabled": "已启用「{name}」。",
+      "enabledWith": "已启用「{name}」，加入了 {what}。",
+      "part": {
+        "skills": "{n} 个技能",
+        "agentTemplates": "{n} 个智能体模板",
+        "themes": "{n} 个主题"
+      },
+      "undo": "撤销",
       "disabled": "已停用「{name}」。",
       "requested": "申请已提交。",
       "withdrawn": "已撤回「{name}」的上传。",
@@ -5979,13 +5986,13 @@
     },
     "switchOff": {
       "title": "停用 {name}",
-      "hint": "停用会移除这个插件为本组织创建、且别处没在用的组件；已有的和仍在使用的会保留。它创建或接手的连接器会一并停用，配置和凭据保留。",
+      "plain": "停用「{name}」？本组织没有东西会因此被移除。",
       "skills": "它的 {n} 个技能将从所有智能体中移除。",
       "agents": "受影响的智能体",
       "removed": "将移除",
       "disabled": "随插件停用",
+      "disabledNote": "配置和凭据保留。",
       "kept": "保留",
-      "none": "没有组件会被移除",
       "confirm": "停用",
       "cancel": "取消",
       "stale": "要移除的内容已变化，请再看一遍后确认。",
