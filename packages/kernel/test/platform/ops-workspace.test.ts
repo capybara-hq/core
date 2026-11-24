@@ -192,6 +192,7 @@ describe("registration", () => {
       "skills.get",
       "skills.get-change",
       "skills.list",
+      "skills.list-files",
       "skills.set-enabled",
       "skills.set-shareable",
     ]);
