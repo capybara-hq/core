@@ -116,8 +116,6 @@ const renderInstall = (opts: RenderOpts = {}) =>
   renderRouteWithCache(`/plugins/${params.current.itemId ?? ""}/enable`, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
-/** The design ErrorDetail's toggle (design i18n `errorDetail.raw`). */
-const RAW_ERROR = { zh: "原始错误", en: "Raw error" } as const;
 /** The design ObjectRow's menu trigger (design i18n `shell.moreActions`). */
 const RAW_MORE = { zh: "更多操作", en: "More actions" } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -2379,59 +2377,11 @@ const SOURCES = {
   ],
 };
 
-describe("/admin/plugins/sources (ListPage)", () => {
-  it.each(LOCALES)(
-    "官方地址只读、离线模式说明；自定义清单可改，显示状态与刷新（%s）",
-    async (locale) => {
-      const s = msgs[locale].catalog.admin.marketplaces;
-      stubApi({
-        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
-        "POST /api/v1/admin/marketplaces/s2/refresh": () =>
-          json(200, { ...SOURCES.items[1], lastStatus: "ok", lastError: null }),
-      });
-      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
-      expect(template("ListPage")).not.toBeNull();
-      // Its own page under 插件 (添加市场源 leads here): the path links back, no tabs
-      expect(screen.getByRole("link", { name: "plugins" }).getAttribute("href")).toBe(
-        "/admin/plugins",
-      );
-      const tabs = msgs[locale].catalog.admin.tabs;
-      expect(screen.queryByRole("link", { name: new RegExp(`^${tabs.installed}`) })).toBeNull();
-      expect(await screen.findByText(s.offline)).toBeTruthy();
-      const official = screen.getByDisplayValue(
-        SOURCES.items[0]?.url as string,
-      ) as HTMLInputElement;
-      expect(official.readOnly).toBe(true);
-      const acme = screen.getByDisplayValue(SOURCES.items[1]?.url as string) as HTMLInputElement;
-      expect(acme.readOnly).toBe(false);
-      // A refresh error is one sentence in the reader's language; the raw text is behind a toggle
-      expect(screen.getByText(s.statusValue.errors.http_status)).toBeTruthy();
-      expect(screen.queryByText("HTTP 500", { exact: false })).toBeNull();
-      const raw = screen.getByRole("button", { name: RAW_ERROR[locale] });
-      await userEvent.setup().click(raw);
-      expect(screen.getByText("HTTP 500")).toBeTruthy();
-      // The status label sits above its value (no 「状态:」 squeezed beside a long line)
-      expect(screen.getAllByText(s.status).length).toBeGreaterThan(0);
-      expect(screen.queryByText(`${s.status}:`)).toBeNull();
-      // Every marketplace's switch is labelled on screen, the official one too
-      const switches = screen.getAllByRole("switch");
-      expect(switches.map((x) => x.getAttribute("aria-label"))).toEqual([
-        fill(s.enabledLabel, { name: s.official }),
-        fill(s.enabledLabel, { name: "Acme" }),
-      ]);
-      expect(screen.getByText(fill(s.enabledLabel, { name: s.official }))).toBeTruthy();
-      const refresh = screen.getAllByRole("button", { name: s.refresh });
-      // 官方清单被配置关闭：不能刷新
-      expect((refresh[0] as HTMLButtonElement).disabled).toBe(true);
-      await userEvent.setup().click(refresh[1] as HTMLElement);
-      expect(await screen.findByText(fill(s.refreshed, { name: "Acme" }))).toBeTruthy();
-    },
-  );
-});
-
-describe("/admin/plugins/sources: git username and config-managed sources", () => {
+describe("/admin/plugins/sources: cards with a dialog", () => {
+  const ACME_BASE = SOURCES.items[1] as (typeof SOURCES.items)[number];
+  const OFFICIAL_BASE = SOURCES.items[0] as (typeof SOURCES.items)[number];
   const MANAGED = {
-    ...SOURCES.items[1],
+    ...ACME_BASE,
     id: "m1",
     name: "Managed",
     url: "https://git.acme.com/market.git",
@@ -2441,91 +2391,309 @@ describe("/admin/plugins/sources: git username and config-managed sources", () =
     managed: "config",
     username: "oauth2",
     hasToken: true,
+    lastStatus: "ok",
+    lastError: null,
   };
+  const GIT = {
+    ...ACME_BASE,
+    id: "g1",
+    name: "Acme git",
+    url: "https://git.acme.com/acme/marketplace.git",
+    form: "git",
+    ref: "release",
+    lastCommit: "0123456789abcdef0123456789abcdef01234567",
+    username: null,
+    hasToken: false,
+    lastStatus: "ok",
+    lastError: null,
+    entryCount: 2,
+  };
+  const ACME = {
+    ...ACME_BASE,
+    form: "http",
+    ref: null,
+    lastCommit: null,
+    username: null,
+    managed: null,
+  };
+  const OFFICIAL = {
+    ...OFFICIAL_BASE,
+    form: "git",
+    ref: null,
+    lastCommit: null,
+    username: null,
+    managed: null,
+    enabled: true,
+    disabledByConfig: false,
+  };
+  const card = (name: string | RegExp) =>
+    within(screen.getByRole("list", { name: en.catalog.admin.marketplaces.title }))
+      .getByText(name)
+      .closest("li") as HTMLElement;
+  const open = (name: string | RegExp) =>
+    userEvent.setup().click(within(card(name)).getByRole("button", { name: RAW_MORE.en }));
+  const list = (items: unknown[], offline = false) => ({
+    "GET /api/v1/admin/marketplaces": () => json(200, { offline, items }),
+  });
+  const s = en.catalog.admin.marketplaces;
 
   it.each(LOCALES)(
-    "the add form pre-fills the username for a known git host (%s)",
+    "each source is a card with its kind, address, state and refresh (%s)",
     async (locale) => {
-      const s = msgs[locale].catalog.admin.marketplaces;
-      stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
+      const m = msgs[locale].catalog.admin.marketplaces;
+      const calls = stubApi({
+        ...list([OFFICIAL, { ...ACME, lastStatus: "ok", lastError: null }]),
+        "POST /api/v1/admin/marketplaces/s2/refresh": () => json(200, ACME),
+      });
       await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
-      const user = userEvent.setup();
-      const add = await screen.findByRole("region", { name: s.add });
-      // An http marketplace has no username field
-      expect(within(add).queryByRole("textbox", { name: startsWith(s.username) })).toBeNull();
-      await user.click(within(add).getByRole("radio", { name: s.formGit }));
-      const username = within(add).getByRole("textbox", {
-        name: startsWith(s.username),
-      }) as HTMLInputElement;
-      expect(username.value).toBe("");
-      const url = within(add).getByRole("textbox", { name: s.url });
-      await user.type(url, "https://bitbucket.org/acme/m.git");
-      expect(username.value).toBe("x-token-auth");
-      // The suggestion follows the host; a host without one empties it again
-      await user.clear(url);
-      await user.type(url, "https://gitlab.com/acme/m.git");
-      expect(username.value).toBe("oauth2");
-      await user.clear(url);
-      await user.type(url, "https://gitee.com/acme/m.git");
-      expect(username.value).toBe("");
+      expect(template("ListPage")).not.toBeNull();
+      const acme = within(screen.getByRole("list", { name: m.title }))
+        .getByText("Acme")
+        .closest("li") as HTMLElement;
+      expect(within(acme).getByText(/catalog\.acme\.com\/index\.json/)).toBeTruthy();
+      expect(within(acme).getByText(m.formHttp, { exact: false })).toBeTruthy();
+      const okPrefix = fill(m.statusValue.ok, { n: 3, at: "@@" }).split("@@")[0] as string;
+      expect(within(acme).getByText((c) => c.startsWith(okPrefix))).toBeTruthy();
+      await userEvent.setup().click(within(acme).getByRole("button", { name: m.refresh }));
+      await waitFor(() => expect(calls.some((c) => c.url.endsWith("/s2/refresh"))).toBe(true));
     },
   );
 
-  it("a typed username is never overwritten by a suggestion", async () => {
-    const s = en.catalog.admin.marketplaces;
-    stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
+  it("a failing source shows the error sentence; the raw text is the description", async () => {
+    stubApi(list([OFFICIAL, ACME]));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const acme = card("Acme");
+    expect(within(acme).getByText(s.statusValue.errors.http_status)).toBeTruthy();
+    expect(within(acme).getByText("HTTP 500")).toBeTruthy();
+  });
+
+  it("the official card is read-only: enable and disable only, no edit or delete; offline says so", async () => {
+    stubApi(list([OFFICIAL], false));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    expect(within(card(s.official)).getByText(s.officialNote)).toBeTruthy();
+    // A menu of one is no menu: 停用 is drawn as the card's second button
+    const official = card(s.official);
+    expect(within(official).getByRole("button", { name: s.disable })).toBeTruthy();
+    expect(within(official).queryByRole("button", { name: RAW_MORE.en })).toBeNull();
+    expect(within(official).queryByRole("button", { name: s.edit })).toBeNull();
+    expect(within(official).queryByRole("button", { name: s.remove })).toBeNull();
+    cleanup();
+    vi.unstubAllGlobals();
+    // The deployment config turns it off: the offline note, no refresh, no switch
+    stubApi(list([{ ...OFFICIAL, enabled: false, disabledByConfig: true }], true));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const offlineCard = card(s.official);
+    expect(within(offlineCard).getByText(s.offline)).toBeTruthy();
+    expect(within(offlineCard).queryByRole("button", { name: s.refresh })).toBeNull();
+    expect(within(offlineCard).queryByRole("button", { name: RAW_MORE.en })).toBeNull();
+  });
+
+  it("a config-managed source has only its switch and refresh, and says it is managed", async () => {
+    stubApi(list([MANAGED]));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    expect(within(card("Managed")).getByText(s.managed)).toBeTruthy();
+    const managed = card("Managed");
+    expect(within(managed).getByRole("button", { name: s.disable })).toBeTruthy();
+    expect(within(managed).queryByRole("button", { name: RAW_MORE.en })).toBeNull();
+  });
+
+  it("停用 / 启用 from the menu sends enabled", async () => {
+    const calls = stubApi({
+      ...list([OFFICIAL, ACME]),
+      "PATCH /api/v1/admin/marketplaces/s2": () => json(200, { ...ACME, enabled: false }),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    await open("Acme");
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: s.disable }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ enabled: false });
+  });
+
+  it("a git source shows its ref and last commit; skipped entries are counted and listed", async () => {
+    stubApi(
+      list([
+        {
+          ...GIT,
+          skipped: [
+            { name: "npm-thing", reason: "claude_npm_unpinned" },
+            { name: "Bad Name", reason: "invalid_name" },
+          ],
+        },
+      ]),
+    );
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const c = card("Acme git");
+    expect(within(c).getByText(new RegExp(fill(s.gitInfo, { ref: "release" })))).toBeTruthy();
+    expect(within(c).getByText(new RegExp(fill(s.lastCommit, { commit: "0123456" })))).toBeTruthy();
+    expect(within(c).getByText(/2 entries were skipped by the last refresh/)).toBeTruthy();
+    expect(
+      within(c).getByText(
+        new RegExp(
+          fill(s.skipped.line, {
+            name: "npm-thing",
+            reason: s.skipped.reasons.claude_npm_unpinned,
+          }),
+        ),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a long skipped list shows 20 and how many more", async () => {
+    const many = Array.from({ length: 25 }, () => ({ name: "dup", reason: "invalid_entry" }));
+    stubApi(list([{ ...GIT, skipped: many }]));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const text = card("Acme git").querySelector('[data-part="object-card-description"]')
+      ?.textContent as string;
+    const line = fill(s.skipped.line, { name: "dup", reason: s.skipped.reasons.invalid_entry });
+    expect(text.split(line)).toHaveLength(21);
+    expect(text).toContain(fill(s.skipped.more, { n: 5 }));
+  });
+
+  it("编辑 opens the dialog prefilled; saving with an empty token keeps it", async () => {
+    const calls = stubApi({
+      ...list([OFFICIAL, ACME]),
+      "PATCH /api/v1/admin/marketplaces/s2": () => json(200, { ...ACME, name: "Acme 2" }),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    await open("Acme");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("menuitem", { name: s.edit }));
+    const dialog = await screen.findByRole("dialog");
+    expect((within(dialog).getByRole("textbox", { name: s.name }) as HTMLInputElement).value).toBe(
+      "Acme",
+    );
+    expect((within(dialog).getByRole("textbox", { name: s.url }) as HTMLInputElement).value).toBe(
+      ACME.url,
+    );
+    // Nothing changed: no save
+    expect(
+      (within(dialog).getByRole("button", { name: s.save }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    const name = within(dialog).getByRole("textbox", { name: s.name });
+    await user.clear(name);
+    await user.type(name, "Acme 2");
+    await user.click(within(dialog).getByRole("button", { name: s.save }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ name: "Acme 2" });
+  });
+
+  it("a typed token is sent; 清除令牌 sends null", async () => {
+    const calls = stubApi({
+      ...list([ACME]),
+      "PATCH /api/v1/admin/marketplaces/s2": () => json(200, ACME),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    await open("Acme");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("menuitem", { name: s.edit }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: s.clearToken }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ token: null });
+  });
+
+  it("删除 asks to type the name, then deletes", async () => {
+    const calls = stubApi({
+      ...list([ACME]),
+      "DELETE /api/v1/admin/marketplaces/s2": () => new Response(null, { status: 204 }),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    await open("Acme");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("menuitem", { name: s.remove }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "Acme");
+    await user.click(within(dialog).getByRole("button", { name: s.removeConfirm.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+  });
+
+  it("添加市场源 opens an empty dialog; a git repository sends form and ref; the username follows the host", async () => {
+    const calls = stubApi({
+      ...list([OFFICIAL]),
+      "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT, id: "g2" }),
+    });
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const user = userEvent.setup();
-    const add = await screen.findByRole("region", { name: s.add });
-    await user.click(within(add).getByRole("radio", { name: s.formGit }));
-    await user.type(within(add).getByRole("textbox", { name: startsWith(s.username) }), "mine");
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.actions.addSource }));
+    const dialog = await screen.findByRole("dialog");
+    expect((within(dialog).getByRole("textbox", { name: s.name }) as HTMLInputElement).value).toBe(
+      "",
+    );
+    // An http marketplace has no username or ref field
+    expect(within(dialog).queryByRole("textbox", { name: startsWith(s.username) })).toBeNull();
+    await user.click(within(dialog).getByRole("radio", { name: s.formGit }));
+    const url = within(dialog).getByRole("textbox", { name: startsWith(s.url) });
+    const username = within(dialog).getByRole("textbox", {
+      name: startsWith(s.username),
+    }) as HTMLInputElement;
+    await user.type(url, "https://bitbucket.org/acme/m.git");
+    expect(username.value).toBe("x-token-auth");
+    await user.clear(url);
+    await user.type(url, "acme/plugins");
+    expect(username.value).toBe("");
+    await user.type(within(dialog).getByRole("textbox", { name: s.name }), "Team");
+    await user.type(within(dialog).getByRole("textbox", { name: startsWith(s.ref) }), "main");
+    await user.click(within(dialog).getByRole("button", { name: s.addConfirm }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      name: "Team",
+      url: "acme/plugins",
+      form: "git",
+      ref: "main",
+    });
+  });
+
+  it("an http marketplace sends no form or ref; a typed username is never overwritten", async () => {
+    const calls = stubApi({
+      ...list([OFFICIAL]),
+      "POST /api/v1/admin/marketplaces": () => json(201, { ...ACME, id: "h2" }),
+    });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.actions.addSource }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: s.name }), "Http");
     await user.type(
-      within(add).getByRole("textbox", { name: s.url }),
+      within(dialog).getByRole("textbox", { name: startsWith(s.url) }),
+      "https://x.com/m.json",
+    );
+    await user.click(within(dialog).getByRole("button", { name: s.addConfirm }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      name: "Http",
+      url: "https://x.com/m.json",
+    });
+  });
+
+  it("a typed git username is never overwritten by a suggestion", async () => {
+    stubApi(list([OFFICIAL]));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.actions.addSource }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: s.formGit }));
+    await user.type(within(dialog).getByRole("textbox", { name: startsWith(s.username) }), "mine");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: startsWith(s.url) }),
       "https://bitbucket.org/acme/m.git",
     );
     expect(
-      (within(add).getByRole("textbox", { name: startsWith(s.username) }) as HTMLInputElement)
+      (within(dialog).getByRole("textbox", { name: startsWith(s.username) }) as HTMLInputElement)
         .value,
     ).toBe("mine");
   });
 
-  it.each(LOCALES)(
-    "a config-managed row is read-only with only its switch (%s)",
-    async (locale) => {
-      const s = msgs[locale].catalog.admin.marketplaces;
-      stubApi({
-        "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [MANAGED] }),
-      });
-      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
-      expect(await screen.findByText(s.managed)).toBeTruthy();
-      for (const v of [MANAGED.url, "main", "oauth2"]) {
-        expect((screen.getByDisplayValue(v) as HTMLInputElement).readOnly).toBe(true);
-      }
-      expect(screen.queryByRole("button", { name: s.remove })).toBeNull();
-      expect(screen.queryByRole("button", { name: s.save })).toBeNull();
-      const sw = screen.getByRole("switch", { name: fill(s.enabledLabel, { name: "Managed" }) });
-      expect((sw as HTMLButtonElement).disabled).toBe(false);
-    },
-  );
-
-  it.each(LOCALES)(
-    "a config-managed row says whether the deployment set its token (%s)",
-    async (locale) => {
-      const s = msgs[locale].catalog.admin.marketplaces;
-      stubApi({
-        "GET /api/v1/admin/marketplaces": () =>
-          json(200, {
-            offline: false,
-            items: [MANAGED, { ...MANAGED, id: "m2", name: "Public", hasToken: false }],
-          }),
-      });
-      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
-      expect(await screen.findByText(s.managedTokenSet)).toBeTruthy();
-      expect(screen.getByText(s.managedTokenUnset)).toBeTruthy();
-      // no clear button: the token lives in the deployment config
-      expect(screen.queryByRole("button", { name: s.clearToken })).toBeNull();
-    },
-  );
+  it("the search filters the sources by name or address", async () => {
+    stubApi(list([OFFICIAL, ACME]));
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: s.search }), "acme.com");
+    expect(screen.queryByText(s.official)).toBeNull();
+    expect(screen.getByText("Acme")).toBeTruthy();
+    await user.clear(screen.getByRole("searchbox", { name: s.search }));
+    await user.type(screen.getByRole("searchbox", { name: s.search }), "nothing-here");
+    expect(screen.getByText(s.noMatch)).toBeTruthy();
+  });
 });
 
 describe("marketplaces: the two tabs share one head", () => {
@@ -2576,19 +2744,6 @@ describe("marketplaces: the two tabs share one head", () => {
       expect(within(entriesHead).getByRole("searchbox", { name: m.entries.search })).toBeTruthy();
     },
   );
-
-  it("the sources search filters the marketplaces by name or address", async () => {
-    const m = en.catalog.admin.marketplaces;
-    stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
-    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    const user = userEvent.setup();
-    await user.type(screen.getByRole("searchbox", { name: m.search }), "acme.com");
-    expect(screen.queryByDisplayValue(SOURCES.items[0]?.url as string)).toBeNull();
-    expect(screen.getByDisplayValue(SOURCES.items[1]?.url as string)).toBeTruthy();
-    await user.clear(screen.getByRole("searchbox", { name: m.search }));
-    await user.type(screen.getByRole("searchbox", { name: m.search }), "nothing-here");
-    expect(screen.getByText(m.noMatch)).toBeTruthy();
-  });
 
   it.each(LOCALES)("the empty entries list points to 添加市场源 (%s)", (locale) => {
     const m = msgs[locale].catalog.admin;
@@ -3618,55 +3773,6 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     entryCount: 2,
   };
 
-  it.each(LOCALES)(
-    "adding a git repository sends form git and the ref; a git marketplace shows its ref and last commit (%s)",
-    async (locale) => {
-      const s = msgs[locale].catalog.admin.marketplaces;
-      const calls = stubApi({
-        "GET /api/v1/admin/marketplaces": () =>
-          json(200, { offline: false, items: [SOURCES.items[0], GIT_SOURCE] }),
-        "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, id: "g2" }),
-      });
-      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
-      expect(await screen.findByText(fill(s.gitInfo, { ref: "release" }))).toBeTruthy();
-      expect(screen.getByText(fill(s.lastCommit, { commit: "0123456" }))).toBeTruthy();
-      const user = userEvent.setup();
-      const add = screen.getByRole("region", { name: s.add });
-      await user.click(within(add).getByRole("radio", { name: s.formGit }));
-      await user.type(within(add).getByRole("textbox", { name: s.name }), "Team");
-      await user.type(within(add).getByRole("textbox", { name: s.url }), "acme/plugins");
-      await user.type(within(add).getByRole("textbox", { name: startsWith(s.ref) }), "main");
-      await user.click(within(add).getByRole("button", { name: s.add }));
-      await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-        name: "Team",
-        url: "acme/plugins",
-        form: "git",
-        ref: "main",
-      });
-    },
-  );
-
-  it("an http marketplace sends no form or ref", async () => {
-    const s = en.catalog.admin.marketplaces;
-    const calls = stubApi({
-      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [] }),
-      "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, form: "http" }),
-    });
-    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    const add = await screen.findByRole("region", { name: s.add });
-    const user = userEvent.setup();
-    expect(within(add).queryByRole("textbox", { name: startsWith(s.ref) })).toBeNull();
-    await user.type(within(add).getByRole("textbox", { name: s.name }), "Http");
-    await user.type(within(add).getByRole("textbox", { name: s.url }), "https://x.com/m.json");
-    await user.click(within(add).getByRole("button", { name: s.add }));
-    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      name: "Http",
-      url: "https://x.com/m.json",
-    });
-  });
-
   const gitEntry = (over: Record<string, unknown>) => ({
     sourceId: "g1",
     sourceName: "Acme git",
@@ -4650,77 +4756,6 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
     expect(await screen.findByText(tr.licenseTruncated)).toBeTruthy();
     expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
-  });
-
-  it.each(LOCALES)(
-    "marketplaces: entries the last refresh skipped are listed with the reason (%s)",
-    async (locale) => {
-      const s = msgs[locale].catalog.admin.marketplaces;
-      const acme = SOURCES.items[1] as (typeof SOURCES.items)[number];
-      stubApi({
-        "GET /api/v1/admin/marketplaces": () =>
-          json(200, {
-            offline: false,
-            items: [
-              {
-                ...acme,
-                lastStatus: "ok",
-                lastError: null,
-                skipped: [
-                  { name: "npm-thing", reason: "claude_npm_unpinned" },
-                  { name: "Bad Name", reason: "invalid_name" },
-                ],
-              },
-            ],
-          }),
-      });
-      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
-      const title = {
-        en: "2 entries were skipped by the last refresh",
-        zh: fill(s.skipped.title, { n: 2 }),
-      };
-      expect(await screen.findByText(title[locale])).toBeTruthy();
-      expect(
-        screen.getByText(
-          fill(s.skipped.line, {
-            name: "npm-thing",
-            reason: s.skipped.reasons.claude_npm_unpinned,
-          }),
-        ),
-      ).toBeTruthy();
-      expect(
-        screen.getByText(
-          fill(s.skipped.line, { name: "Bad Name", reason: s.skipped.reasons.invalid_name }),
-        ),
-      ).toBeTruthy();
-    },
-  );
-  it("marketplaces: one skipped entry reads in the singular; a long list shows 20 and how many more, duplicate names included (batch-3 m2, m3)", async () => {
-    const s = en.catalog.admin.marketplaces;
-    const acme = SOURCES.items[1] as (typeof SOURCES.items)[number];
-    const routes = (skipped: { name: string; reason: string }[]) => ({
-      "GET /api/v1/admin/marketplaces": () =>
-        json(200, {
-          offline: false,
-          items: [{ ...acme, lastStatus: "ok", lastError: null, skipped }],
-        }),
-    });
-    stubApi(routes([{ name: "npm-thing", reason: "claude_npm_unpinned" }]));
-    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    expect(await screen.findByText("1 entry was skipped by the last refresh")).toBeTruthy();
-    cleanup();
-    vi.unstubAllGlobals();
-
-    const many = Array.from({ length: 25 }, () => ({ name: "dup", reason: "invalid_entry" }));
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    stubApi(routes(many));
-    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
-    expect(await screen.findByText("25 entries were skipped by the last refresh")).toBeTruthy();
-    const line = fill(s.skipped.line, { name: "dup", reason: s.skipped.reasons.invalid_entry });
-    expect(screen.getAllByText(line)).toHaveLength(20);
-    expect(screen.getByText(fill(s.skipped.more, { n: 5 }))).toBeTruthy();
-    // no duplicate React keys
-    expect(errors.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
   });
 });
 
