@@ -14,21 +14,40 @@ import { endpointFields, parseValue } from "./CatalogInstallWizard";
 
 /**
  * The connector template a connector was made from, as the org's catalog shows it (its
- * `editableEndpoint`, its endpoint presets): the template component (its item and template id),
- * then the item's detail. Undefined for a custom connector, while reading, or when unreadable.
+ * `editableEndpoint`, its endpoint presets). With a setup guide whose item has exactly one template
+ * on that guide, the item's detail alone; else the template component first (its item and template
+ * id), then the item's detail. `template` is undefined for a custom connector, while reading
+ * (`loading`), or when unreadable.
  */
 export function useConnectorTemplate(
   orgId: string,
-  app: Pick<ConnectorDetail, "platformTemplateId">,
-): OrgCatalogTemplate | undefined {
+  app: Pick<ConnectorDetail, "platformTemplateId" | "setupGuide">,
+): { template: OrgCatalogTemplate | undefined; loading: boolean } {
   const templateId = app.platformTemplateId ?? null;
+  const guide = templateId === null ? null : (app.setupGuide ?? null);
+  const gq = orgCatalogItemQuery(orgId, guide?.itemId ?? "");
+  const guideItem = useQuery({
+    ...gq,
+    enabled: guide !== null,
+    retryOnMount: retryOnMountOf(gq.queryKey),
+  });
+  const onGuide =
+    guide === null
+      ? []
+      : (guideItem.data?.templates ?? []).filter((x) => x.guide?.guideId === guide.guideId);
+  const direct = onGuide.length === 1 ? onGuide[0] : undefined;
+  // the item answered without one template on that guide (or there is no guide): by component
+  const byComponent =
+    templateId !== null && direct === undefined && (guide === null || !guideItem.isPending);
   const cq = orgComponentsQuery(orgId, { kind: "connector_template" });
   const components = useQuery({
     ...cq,
-    enabled: templateId !== null,
+    enabled: byComponent,
     retryOnMount: retryOnMountOf(cq.queryKey),
   });
-  const component = components.data?.components.find((c) => c.id === templateId);
+  const component = byComponent
+    ? components.data?.components.find((c) => c.id === templateId)
+    : undefined;
   const itemId = component?.itemId ?? null;
   const iq = orgCatalogItemQuery(orgId, itemId ?? "");
   const item = useQuery({
@@ -36,9 +55,16 @@ export function useConnectorTemplate(
     enabled: itemId !== null,
     retryOnMount: retryOnMountOf(iq.queryKey),
   });
-  return component === undefined
-    ? undefined
-    : item.data?.templates.find((t) => t.id === component.name);
+  if (templateId === null) return { template: undefined, loading: false };
+  if (direct !== undefined) return { template: direct, loading: false };
+  const template =
+    component === undefined ? undefined : item.data?.templates.find((x) => x.id === component.name);
+  const loading =
+    template === undefined &&
+    ((guide !== null && guideItem.isPending) ||
+      (byComponent && components.isPending) ||
+      (itemId !== null && item.isPending));
+  return { template, loading };
 }
 
 /**
@@ -53,11 +79,14 @@ export function ConnectorEndpointCard({
   template,
   update,
   onSaved,
+  blocked = false,
 }: {
   app: ConnectorDetail;
   template: Pick<OrgCatalogTemplate, "editableEndpoint">;
   update(input: UpdateConnectorInput): Promise<ConnectorDetail>;
   onSaved?(): Promise<void>;
+  /** Saving waits (the configure form: until the guide shown can be recorded). */
+  blocked?: boolean;
 }) {
   const t = useTranslations("connectors.endpointEdit");
   const toast = useToast();
@@ -106,7 +135,7 @@ export function ConnectorEndpointCard({
           <Button
             variant="primary"
             loading={pending}
-            disabled={changed.length === 0}
+            disabled={changed.length === 0 || blocked}
             onClick={() => void save()}
           >
             {t("save")}

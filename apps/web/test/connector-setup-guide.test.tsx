@@ -13,8 +13,9 @@ import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 // Setup guides on the connector template place (setup guides v2 spec §9.3, §11): the admin text
-// above a needs_config template connector's input (configure), the connector's setup guide with the drift notice and ack, the
-// member's 如何连接 sheet (with the admin link for org admins) and the super admin's template page.
+// above a needs_config template connector's input (its configure form), the connector's setup
+// guide tab with the drift notice and ack, the member's "How to connect" sheet (with the admin link
+// for org admins) and the super admin's template page.
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -276,6 +277,71 @@ describe("配置: a needs_config template connector's form shows the admin guide
         hash: "a".repeat(64),
       }),
     );
+  });
+
+  it("an endpoint the kernel refuses (400) shows why and records no guide", async () => {
+    resetNavigation("/connectors/app1");
+    const calls = stubApi({
+      ...routes(
+        {
+          auth: { type: "bearer", ownership: "org" },
+          credential: { ownership: "org", status: "missing" },
+        },
+        { ...TEMPLATE, editableEndpoint: ["url"], auth: { type: "bearer", ownership: "org" } },
+      ),
+      [`PATCH ${ORG}/connectors/app1`]: () =>
+        json(400, {
+          error: {
+            code: "validation_failed",
+            message: "x",
+            details: [{ path: "endpoint.url", message: "bad" }],
+          },
+        }),
+    });
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "en",
+    });
+    await screen.findByText("Create the Slack OAuth app");
+    const url = (await screen.findByRole("textbox", { name: "url" })) as HTMLInputElement;
+    const user = userEvent.setup();
+    await user.clear(url);
+    await user.type(url, "https://bad.test/mcp");
+    await user.click(screen.getByRole("button", { name: en.connectors.endpointEdit.save }));
+    expect(await screen.findByText(en.errors.validation_failed, { exact: false })).toBeTruthy();
+    await settle();
+    expect(calls.some((c) => c.url.endsWith("/guide-ack"))).toBe(false);
+  });
+
+  it("a refused guide ack after a saved client says the guide was not recorded", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({
+      ...routes(),
+      [`POST ${ORG}/connectors/app1/guide-ack`]: () =>
+        json(409, { error: { code: "connector.guide_changed", message: "x" } }),
+    });
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "zh",
+    });
+    await screen.findByText("Create the Slack OAuth app");
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/client id/i), "cid");
+    await user.click(screen.getByRole("button", { name: zh.connectors.credential.saveClient }));
+    expect(
+      await screen.findByText(zh.connectors.setup.guideNotRecorded, { exact: false }),
+    ).toBeTruthy();
+  });
+
+  it("saving waits until the guide shown has been read (its hash is what gets recorded)", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({ ...routes(), [`GET ${GUIDE_URL}`]: () => new Promise<Response>(() => {}) });
+    await renderRouteWithCache("/connectors/app1?tab=credentials", lastStubRoutes(), {
+      locale: "en",
+    });
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/client id/i), "cid");
+    expect(
+      screen.getByRole("button", { name: en.connectors.credential.saveClient }),
+    ).toHaveProperty("disabled", true);
   });
 
   it("a template without a guide shows its input alone", async () => {

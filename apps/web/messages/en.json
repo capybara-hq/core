@@ -2272,7 +2272,8 @@
     "setup": {
       "needsConfig": "Needs setup",
       "needsAdmin": "Waiting for an admin",
-      "configure": "Set up"
+      "configure": "Set up",
+      "guideNotRecorded": "The setup guide was not recorded as confirmed; the next save records it again."
     },
     "auth": {
       "none": "None",

@@ -2260,7 +2260,8 @@
     "setup": {
       "needsConfig": "待配置",
       "needsAdmin": "待管理员配置",
-      "configure": "配置"
+      "configure": "配置",
+      "guideNotRecorded": "接入指南没有记录为已确认，下次保存时会再记录。"
     },
     "auth": {
       "none": "无需认证",

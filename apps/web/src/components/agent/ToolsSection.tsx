@@ -24,7 +24,7 @@ import {
   IMAGE_TOOL_PURPOSE,
   WEB_TOOL_POINTS,
 } from "../../lib/agents";
-import type { ConnectorDetail } from "../../lib/connectors";
+import { type ConnectorDetail, canManageConnectors } from "../../lib/connectors";
 import type { ExtensionToolsOffer } from "../../lib/extensions";
 import { availableExtensionPointsQuery, extensionToolsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -36,6 +36,7 @@ import {
   toolDisplayName,
   toolTooltip,
 } from "../../lib/tool-key";
+import { useSession } from "../shell/session";
 import { BUILTIN_SET, replaceDisabled, sameJson, savedDefinition } from "./definition-parts";
 import {
   SaveFeedback,
@@ -146,6 +147,8 @@ export function ToolsSection() {
 function ToolsEdit({ data }: { data: AgentFormData }) {
   const t = useTranslations("agents");
   const tc = useTranslations("connectors");
+  // an org admin sets up a needs_config connector; everyone else waits for one
+  const manager = canManageConnectors(useSession().me);
   const locale = useLocale();
   const { orgId, agent } = useAgentPage();
   const save = useDefinitionSave();
@@ -364,7 +367,9 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     tag: { label: t(`form.groupKind.${g.kind}`) },
     title: g.name,
     meta: summaryOf(g),
-    ...(g.needsConfig ? { status: { label: tc("setup.needsConfig") } } : {}),
+    ...(g.needsConfig
+      ? { status: { label: tc(manager ? "setup.needsConfig" : "setup.needsAdmin") } }
+      : {}),
     actions: (
       <Button
         density="dense"

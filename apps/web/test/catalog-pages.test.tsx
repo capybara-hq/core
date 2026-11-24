@@ -292,7 +292,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(within(row("asked")).getByText(p.state.requested)).toBeTruthy();
     expect(actionsOf(row("asked"), "asked")).toEqual([]);
     expect(within(row("needs")).getByText(p.state.needs_config)).toBeTruthy();
-    // A plugin with connector templates asks for their input first
+    // A plugin with connector templates goes through its review page first
     expect(
       within(row("needs")).getByRole("link", { name: p.action.enable }).getAttribute("href"),
     ).toBe("/plugins/g/enable");
@@ -1909,7 +1909,8 @@ describe("/plugins/[itemId]/enable (one review page)", () => {
     expect(within(list).getByText(r.needsOAuthClient)).toBeTruthy();
     expect(within(list).getByText(fill(t.connectorKept, { name: "pat" }))).toBeTruthy();
     expect(rows[0]?.querySelector("img")?.getAttribute("src")).toBe(GH_ICON);
-    // input is entered on the connectors page afterwards; a default-off one is not created
+    // connectors that need setup are configured on the connectors page afterwards; a default-off
+    // one is not created
     expect(screen.getByText(t.summaryNeedsConfig)).toBeTruthy();
     expect(
       screen.getByText(

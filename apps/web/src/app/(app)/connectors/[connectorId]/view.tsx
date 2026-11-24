@@ -84,7 +84,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 const TABS = ["tools", "review", "credentials", "settings"] as const;
-/** The tabs, and 接入指南 for org admins on a connector whose template has a setup guide. */
+/** The tabs, and the Setup guide tab for org admins on a connector whose template has a setup guide. */
 type Tab = (typeof TABS)[number] | "guide";
 const isTab = (v: string | undefined): v is Tab =>
   v === "guide" || (TABS as readonly string[]).includes(v ?? "");
@@ -95,8 +95,9 @@ type Update = (input: UpdateConnectorInput) => Promise<ConnectorDetail>;
 
 /**
  * `/connectors/[connectorId]`: a connector's detail (DetailPage, one centred column): the facts
- * (connector, endpoint, auth, credential) first, then the tabs 工具（启停、默认策略）、复核（定义变化的新旧对比）、
- * 凭据（含 OAuth 客户端轮换）、设置（改名、启停、删除）。From the query cache (the layout prefetched it
+ * (connector, endpoint, auth, credential) first, then the tabs: tools (on / off, default policies),
+ * review (old and new definitions side by side), credentials (with OAuth client rotation), settings
+ * (rename, on / off, delete). From the query cache (the layout prefetched it
  * on a first load); a missing connector is the not-found state. A change the kernel answers with
  * the connector replaces the cached one; a credential change reads it again.
  */
@@ -106,8 +107,8 @@ export default function ConnectorView({
 }: {
   connectorId: string;
   /**
-   * `?tab=<id>`: open on that tab (`guide`: 接入指南, the member sheet's link for org admins;
-   * `settings`: the cards' 修改配置).
+   * `?tab=<id>`: open on that tab (`guide`: the Setup guide tab, the member sheet's link for org admins;
+   * `settings`: the cards' Edit config).
    */
   tab?: string | undefined;
 }) {
@@ -198,8 +199,8 @@ function Connector({
     );
   }
   const app = read.data;
-  // 接入指南: the admin text with the drift notice, for those who manage connectors (members read
-  // the member text on their connection's 如何连接 sheet)
+  // the Setup guide tab: the admin text with the drift notice, for those who manage connectors (members read
+  // the member text on their connection's How to connect sheet)
   const guide = manage ? (app.setupGuide ?? null) : null;
   const tabs: Tab[] = guide !== null ? [...TABS, "guide"] : [...TABS];
   const tab: Tab = tabs.includes(requested) ? requested : "tools";
@@ -290,7 +291,7 @@ function usePluginLabel(
 
 /**
  * On the other tabs, the plugin changed the template's setup since the connector was set up: the
- * notice, leading to 接入指南 where 「我已更新应用」 records it.
+ * notice, leading to the Setup guide tab where "I've updated the app" records it.
  */
 function GuideDriftCallout({
   orgId,
@@ -320,9 +321,9 @@ function GuideDriftCallout({
 }
 
 /**
- * 接入指南 (setup guides v2 spec §9.3, §11): the template's guide rendered for this connector, the
+ * the Setup guide tab (setup guides v2 spec §9.3, §11): the template's guide rendered for this connector, the
  * admin text, with the notice when an upgrade changed its code or checks since the connector was
- * set up and 「我已更新应用」 (records the shown guide by its hash).
+ * set up and "I've updated the app" (records the shown guide by its hash).
  */
 function GuideTab({
   orgId,
@@ -416,11 +417,14 @@ function ConnectorFacts({ app }: { app: ConnectorDetail }) {
 const SEARCH_FROM = 9;
 
 /**
- * 工具页签（spec §6.36）：一张卡片，工具按声明分成「只读」与「可能写入」两组（与成员的权限 Sheet 同组），每组一个
- * `ToolPolicyList`（`control: "switch"`）：每行是工具的显示名（声明的标题，否则不带 `mcp__<slug>__` 前缀的名字；
- * 完整的键与说明在悬停提示里）、默认策略和启用开关。待复核等不能启用的工具开关锁定，注释说明原因并链到复核页签。
- * 工具多时上方有一个跨两组的搜索框。成员只读：策略是文字，停用的工具在注释里写明。「刷新工具」在卡片头部，刷新期间
- * 为加载中且不可再点。
+ * The tools tab (spec §6.36): one card, the tools grouped by what they declare into read-only and
+ * may-write (the groups of the member's permissions Sheet), one `ToolPolicyList` (`control:
+ * "switch"`) each: a row is the tool's display name (its declared title, else the name without the
+ * `mcp__<slug>__` prefix; the full key and description in the tooltip), its default policy and its
+ * switch. A tool that cannot be switched on (pending review, …) has its switch locked, with a note
+ * saying why and a link to the review tab. Many tools get one search field over both groups.
+ * Members read: policies as text, disabled tools named in the note. "Refresh tools" sits in the
+ * card's head, pending and not pressable while it runs.
  */
 function ToolsTab({
   app,
@@ -456,7 +460,7 @@ function ToolsTab({
   }
 
   const byName = new Map(app.tools.map((x) => [x.name, x]));
-  /** Why a tool cannot be switched on now, with the way to the 复核 tab when it is resolved there. */
+  /** Why a tool cannot be switched on now, with the way to the review tab when it is resolved there. */
   const noteOf = (x: ConnectorTool): ToolPolicyRow["note"] => {
     const review = reviewable(x)
       ? {
@@ -504,7 +508,7 @@ function ToolsTab({
       : app.tools.filter(
           (x) => toolDisplayName(x).toLowerCase().includes(q) || x.name.toLowerCase().includes(q),
         );
-  // grouped by what a tool declares, as the member's 权限 sheet groups them
+  // grouped by what a tool declares, as the member's permissions sheet groups them
   const groups = (["read", "write"] as const).map((g) => ({
     id: g,
     tools: shown.filter((x) => (x.annotations?.readOnlyHint === true) === (g === "read")),
@@ -590,7 +594,7 @@ function useAckShownGuide(
   app: ConnectorDetail,
   configuring: boolean,
   onSaved: (next: ConnectorDetail) => void,
-): () => Promise<void> {
+): { ack: () => Promise<void>; ready: boolean } {
   const locale = labelLocale(useLocale());
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -610,14 +614,20 @@ function useAckShownGuide(
     invalidates: () => [keys.org(orgId).connectors()],
     onSuccess: (r) => onSaved(r.connector),
   });
-  return async () => {
-    const hash = shown.data?.hash;
-    if (guide === null || hash === undefined) return;
-    try {
-      await ack.mutateAsync(hash);
-    } catch (e) {
-      toast.error(errorMessage(e));
-    }
+  const t = useTranslations("connectors.setup");
+  return {
+    // Saving waits for the guide shown (its hash); a guide that could not be read is not shown
+    ready: guide === null || shown.data !== undefined || shown.isError,
+    ack: async () => {
+      const hash = shown.data?.hash;
+      if (guide === null || hash === undefined) return;
+      try {
+        await ack.mutateAsync(hash);
+      } catch (e) {
+        // the input is saved; the next save records the guide again
+        toast.error(`${t("guideNotRecorded")} ${errorMessage(e)}`);
+      }
+    },
   };
 }
 
@@ -648,9 +658,14 @@ function CredentialsTab({
   const errorMessage = useErrorMessage();
   const needsConfig = app.setup === "needs_config";
   const configuring = manage && needsConfig;
-  const template = useConnectorTemplate(orgId, configuring ? app : { platformTemplateId: null });
-  const ackShown = useAckShownGuide(orgId, app, configuring, onSaved);
+  const { template, loading: templateLoading } = useConnectorTemplate(
+    orgId,
+    configuring ? app : { platformTemplateId: null },
+  );
+  const { ack: ackShown, ready: ackReady } = useAckShownGuide(orgId, app, configuring, onSaved);
   const configured = configuring ? ackShown : undefined;
+  // The form saves only once its guide and its endpoint card are in place
+  const blocked = configuring && (!ackReady || templateLoading);
   const guide = configuring ? (app.setupGuide ?? null) : null;
   const [values, setValues] = useState(EMPTY_CREDENTIAL);
   const [pending, setPending] = useState(false);
@@ -697,7 +712,13 @@ function CredentialsTab({
           </Card>
         )}
         {template !== undefined && (
-          <ConnectorEndpointCard app={app} template={template} update={update} onSaved={ackShown} />
+          <ConnectorEndpointCard
+            app={app}
+            template={template}
+            update={update}
+            onSaved={ackShown}
+            blocked={!ackReady}
+          />
         )}
         {input}
       </Stack>
@@ -738,7 +759,9 @@ function CredentialsTab({
           <Text variant="prose" tone="muted">
             {t("credential.oauthOrgHint")}
           </Text>
-          {manage && <RotateClient orgId={orgId} app={app} onSaved={configured} />}
+          {manage && (
+            <RotateClient orgId={orgId} app={app} onSaved={configured} blocked={blocked} />
+          )}
         </Stack>
       </Card>,
     );
@@ -761,7 +784,7 @@ function CredentialsTab({
                 </Stack>
               )}
               {auth.client === "manual" ? (
-                <RotateClient orgId={orgId} app={app} onSaved={configured} />
+                <RotateClient orgId={orgId} app={app} onSaved={configured} blocked={blocked} />
               ) : (
                 <Text tone="muted">{t("credential.clientDcr")}</Text>
               )}
@@ -803,7 +826,7 @@ function CredentialsTab({
               <Button
                 variant="primary"
                 loading={pending}
-                disabled={credential === undefined}
+                disabled={credential === undefined || blocked}
                 onClick={() => void save()}
               >
                 {t("credential.save")}
@@ -887,8 +910,9 @@ function SettingsTab({
   const [pending, setPending] = useState(false);
   // the template's description stands in while the connector has none of its own
   const fallback = templateDescriptionOf(app, locale);
-  // the endpoint fields its template lets the org edit (a needs-configuration one edits them on its configure form)
-  const template = useConnectorTemplate(
+  // the endpoint fields its template lets the org edit (a needs_config one edits them on its
+  // configure form)
+  const { template } = useConnectorTemplate(
     orgId,
     manage && app.setup !== "needs_config" ? app : { platformTemplateId: null },
   );
@@ -1006,7 +1030,7 @@ function SettingsTab({
           try {
             await remove.mutateAsync(undefined);
           } catch (e) {
-            // 对话框保持打开并显示原因（翻译后的文案）
+            // the dialog stays open and shows why (the translated text)
             throw new Error(errorMessage(e));
           }
           setConfirm(false);
@@ -1096,20 +1120,24 @@ function GitPushCard({
   );
 }
 
-/** 从未复核过、已停用的工具（被拒的新工具）：不能在工具页签启用，只能在复核页签批准。 */
+/**
+ * A tool never reviewed and disabled (a rejected new tool): it cannot be switched on in the tools
+ * tab, only approved in the review tab.
+ */
 const neverReviewedDisabled = (x: ConnectorTool) =>
   x.status === "disabled" && x.reviewedAt === null && x.missing !== true && x.issue === null;
 
 /**
- * 复核页签列出的工具：待复核的、有待复核新定义的（含不合规而停用的，只能拒绝），以及被拒的新工具（仍可批准）。
+ * The tools the review tab lists: pending review, with a new definition to review (including one
+ * disabled as non-compliant, which can only be rejected), and rejected new tools (still approvable).
  */
 const reviewable = (x: ConnectorTool) =>
   x.missing !== true &&
   (x.status === "pending_review" || (x.pending ?? null) !== null || neverReviewedDisabled(x));
 
 /**
- * 页签计数（漂移检测）：待复核的工具，加上带待复核新定义而停用的（如新定义不合规），
- * 后者不能在工具页签启用、只能在复核页签处理，要让管理员注意到。
+ * The tab's count (drift detection): tools pending review, plus those disabled with a new definition
+ * to review (e.g. a non-compliant one), which only the review tab resolves: admins must notice them.
  */
 const reviewCount = (app: ConnectorDetail) =>
   app.tools.filter(
@@ -1119,18 +1147,22 @@ const reviewCount = (app: ConnectorDetail) =>
   ).length;
 
 /**
- * OAuth 客户端轮换（Ruling A18，`PUT credentials/org`）：客户端凭据流在内核先用新客户端取 token 验证；
- * 手填客户端的授权码流不验证，填错会让所有成员重新连接（提示）。
+ * OAuth client rotation (Ruling A18, `PUT credentials/org`): for the client credentials flow the
+ * kernel first gets a token with the new client; a manual client of the code flow is not verified,
+ * and a wrong one makes every member reconnect (the hint says so).
  */
 function RotateClient({
   orgId,
   app,
   onSaved,
+  blocked = false,
 }: {
   orgId: string;
   app: ConnectorDetail;
   /** The configure form (no client yet): the button saves the first client, then this runs. */
   onSaved?: (() => Promise<void>) | undefined;
+  /** Saving waits (the configure form: until the guide shown can be recorded). */
+  blocked?: boolean;
 }) {
   const t = useTranslations("connectors");
   const toast = useToast();
@@ -1169,7 +1201,12 @@ function RotateClient({
       </Text>
       <OAuthClientFields values={values} onChange={setValues} secretRequired={clientFlow} />
       <Stack direction="row">
-        <Button variant="primary" loading={pending} disabled={!ready} onClick={() => void rotate()}>
+        <Button
+          variant="primary"
+          loading={pending}
+          disabled={!ready || blocked}
+          onClick={() => void rotate()}
+        >
           {t(first ? "credential.saveClient" : "credential.rotate")}
         </Button>
       </Stack>
@@ -1179,7 +1216,7 @@ function RotateClient({
 
 const pretty = (v: unknown) => (v === null || v === undefined ? "" : JSON.stringify(v, null, 2));
 
-/** 只读的代码样式文本框（JSON 对比用）。 */
+/** A read-only code text box (for the JSON comparison). */
 function CodeBlock({ label, value }: { label: string; value: string }) {
   return (
     <Field label={label}>
@@ -1193,7 +1230,10 @@ function CodeBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 复核的一项对比：当前（上次复核通过的）定义 vs 新定义；没有旧定义（新工具）时只显示新的一侧。 */
+/**
+ * One comparison of the review: the current (last approved) definition vs the new one; without an
+ * old definition (a new tool) only the new side.
+ */
 function DiffRow({
   label,
   before,
@@ -1225,9 +1265,11 @@ function DiffRow({
 }
 
 /**
- * 复核页签（漂移检测）：待复核的工具逐个列出新旧定义（描述、inputSchema、注解、连接器路由数据），
- * 管理员批准（采用新定义并启用）或拒绝（停用、保留旧定义）；远端已不再提供的工具单独列出。
- * 从未复核过的工具（`reviewedAt` 为 null）没有复核过的旧定义：按「新工具」显示完整定义，不做对比。
+ * The review tab (drift detection): each tool pending review with its old and new definitions
+ * (description, inputSchema, annotations, connector routing data); an admin approves (takes the new
+ * definition and enables it) or rejects (disables it, keeps the old one); tools the remote no longer
+ * offers are listed apart. A tool never reviewed (`reviewedAt` null) has no approved old definition:
+ * it shows its full definition as a new tool, without a comparison.
  */
 function ReviewTab({
   orgId,
@@ -1282,7 +1324,8 @@ function ReviewTab({
         <Callout tone="info">{t("review.hint")}</Callout>
       )}
       {pendingTools.map((tool) => {
-        // 复核过且有新定义 → 对比当前（上次复核通过的）与新定义；从未复核过 → 新工具，只显示完整定义
+        // reviewed with a new definition -> compare the current (last approved) one with it; never
+        // reviewed -> a new tool, its full definition only
         const fresh = tool.reviewedAt === null;
         const next: ToolDefinition = tool.pending ?? tool;
         const before: ToolDefinition | undefined = !fresh && tool.pending ? tool : undefined;
