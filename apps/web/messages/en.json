@@ -5995,6 +5995,8 @@
     },
     "market": {
       "title": "Marketplace",
+      "source": "Source",
+      "allSources": "All sources",
       "empty": "The marketplaces have no entries yet.",
       "adopted": "Installed",
       "unavailable": "Cannot be installed",

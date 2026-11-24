@@ -5983,6 +5983,8 @@
     },
     "market": {
       "title": "市场",
+      "source": "来源",
+      "allSources": "全部来源",
       "empty": "市场里还没有条目。",
       "adopted": "已安装",
       "unavailable": "不能安装",

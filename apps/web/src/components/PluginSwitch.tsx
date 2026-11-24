@@ -23,7 +23,6 @@ import {
   type UninstallPreview,
   withdrawPending,
 } from "../lib/catalog";
-import type { OrgExtension } from "../lib/extensions";
 import { pluginChangeKeys } from "../lib/query/catalog";
 import { retryOnMountOf } from "../lib/query/client";
 import { keys } from "../lib/query/keys";
@@ -77,16 +76,9 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
   };
 }
 
-/** The org's extension a plugin brings (matched by its catalog item), when the list has it. */
-export const ownExtension = (
-  item: Pick<OrgCatalogItem, "id">,
-  extensions: OrgExtension[] | undefined,
-): OrgExtension | undefined => extensions?.find((e) => e.catalogItem?.itemId === item.id);
-
 /**
  * Whether switching a plugin on asks for input first (the wizard at `/plugins/<id>/enable`): its
- * connector templates (the only input the wizard collects; an extension's config is set from its
- * Sheet on the extensions page, see the `configure` action).
+ * connector templates (the only input the wizard collects).
  */
 export function needsInput(item: OrgCatalogItem): boolean {
   return item.componentCounts.connectorTemplates > 0;
@@ -94,13 +86,21 @@ export function needsInput(item: OrgCatalogItem): boolean {
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
 export interface PluginAction {
-  id: "enable" | "configure" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
+  id: "enable" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
   label: string;
   href?: string;
   onSelect?(): void;
   danger?: boolean;
   /** Its call is running: drawn pending (the Button's loading state), not pressable again. */
   loading?: boolean;
+}
+
+/**
+ * A card's actions as ObjectCard wants them: {@link rowActions} with `action` named `primary`.
+ */
+export function cardActions(actions: readonly Omit<PluginAction, "id">[]) {
+  const { action, ...rest } = rowActions(actions);
+  return { ...rest, ...(action !== undefined && { primary: action }) };
 }
 
 /**
@@ -148,16 +148,7 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
  * Nothing while a request is pending, or on a plugin the platform stopped. Each call invalidates
  * what a plugin change touches; failures land in `error`.
  */
-export function usePluginActions({
-  orgId,
-  admin,
-  extensions,
-}: {
-  orgId: string;
-  admin: boolean;
-  /** The org's extensions (org admins), undefined while they load or for members. */
-  extensions: OrgExtension[] | undefined;
-}): {
+export function usePluginActions({ orgId, admin }: { orgId: string; admin: boolean }): {
   actionsOf(item: OrgCatalogItem): PluginAction[];
   /** The switch-off dialog, to render once on the page. */
   dialog: ReactNode;
@@ -319,22 +310,6 @@ export function usePluginActions({
     if (i.awaitingConfirmation === true) return withdrawAction;
     return [...stateActions(i), ...withdrawAction];
   };
-  /**
-   * Configure for an extension whose effective config is not valid: its Sheet on the extensions
-   * page.
-   */
-  const configureWhenNeeded = (i: OrgCatalogItem): PluginAction[] => {
-    const own = ownExtension(i, extensions);
-    return own?.needsConfig === true
-      ? [
-          {
-            id: "configure",
-            label: t("action.configure"),
-            href: `/extensions#plugin=${encodeURIComponent(own.plugin)}`,
-          },
-        ]
-      : [];
-  };
   const stateActions = (i: OrgCatalogItem): PluginAction[] => {
     if (i.request !== null || i.state === "unavailable") return [];
     if (!admin) {
@@ -356,7 +331,6 @@ export function usePluginActions({
     // Installed but a connector template on here misses its connector (P2-10): Complete setup
     if (i.state === "needs_config" && i.installed !== null) {
       return [
-        ...configureWhenNeeded(i),
         {
           id: "connectors",
           label: t("action.connectors"),
@@ -384,22 +358,10 @@ export function usePluginActions({
               href: `/plugins/${encodeURIComponent(i.id)}/enable`,
             }
           : { id: "enable", label: t("action.enable"), onSelect: () => void enable(i) },
-        ...configureWhenNeeded(i),
       ];
     }
-    // On: the extension's org config when it has overridable fields; Disable unless the platform
-    // turned it on
-    const own = ownExtension(i, extensions);
+    // On: Disable unless the platform turned it on
     return [
-      ...(own?.configurable === true
-        ? [
-            {
-              id: "configure" as const,
-              label: t("action.configure"),
-              href: `/extensions#plugin=${encodeURIComponent(own.plugin)}`,
-            },
-          ]
-        : []),
       ...(i.switchable
         ? [
             {

@@ -43,7 +43,6 @@ import {
 import { lockWhileRunning } from "../../../../lib/header-actions";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
-import { orgExtensionsQuery } from "../../../../lib/query/channels";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { orgComponentsQuery } from "../../../../lib/query/components";
 import { keys } from "../../../../lib/query/keys";
@@ -118,10 +117,7 @@ function CatalogItemDetail({
   const stateOf = usePluginState();
   const item = detail.item;
   const admin = canUpdateOrg(me);
-  const eq = orgExtensionsQuery(orgId);
-  const extensions = useQuery({ ...eq, enabled: admin, retryOnMount: retryOnMountOf(eq.queryKey) })
-    .data?.extensions;
-  const { actionsOf, dialog, error, busy } = usePluginActions({ orgId, admin, extensions });
+  const { actionsOf, dialog, error, busy } = usePluginActions({ orgId, admin });
   const actions = actionsOf(item);
   const owned = ownedBy(item, orgId);
   const tcm = useTranslations("common");

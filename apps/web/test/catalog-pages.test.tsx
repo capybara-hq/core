@@ -301,55 +301,6 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     ).toBe("/plugins/g/enable");
   });
 
-  it("a plugin whose extension needs config offers 配置 to its Sheet, off or on, and still enables without the wizard", async () => {
-    const p = en.plugins;
-    const ext = (itemId: string, name: string) => ({
-      plugin: name,
-      version: "1.0.0",
-      enabled: false,
-      configurable: true,
-      permissions: [],
-      provides: [],
-      overrideState: "following",
-      needsConfig: true,
-      catalogItem: { itemId, scope: "optional" },
-      switchable: true,
-    });
-    const items = [
-      orgItem({
-        id: "h",
-        name: "cfg-off",
-        componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
-      }),
-      orgItem({
-        id: "i",
-        name: "cfg-on",
-        state: "on",
-        installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: null },
-        componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
-      }),
-    ];
-    stubApi({
-      [`GET ${ORG}/catalog`]: () => json(200, { items }),
-      [`GET ${ORG}/extensions`]: () =>
-        json(200, { extensions: [ext("h", "cfg-off"), { ...ext("i", "cfg-on"), enabled: true }] }),
-    });
-    await renderPlugins({ locale: "en" });
-    const list = await screen.findByRole("list", { name: p.title });
-    const off = rowOf(list, "cfg-off");
-    // enabling is not routed to the wizard (no extension step); Configure is the lone menu item,
-    // drawn directly
-    expect(actionsOf(off, "cfg-off")).toEqual([p.action.enable, p.action.configure]);
-    expect(within(off).getByRole("link", { name: p.action.configure }).getAttribute("href")).toBe(
-      "/extensions#plugin=cfg-off",
-    );
-    expect(
-      within(rowOf(list, "cfg-on"))
-        .getByRole("link", { name: p.action.configure })
-        .getAttribute("href"),
-    ).toBe("/extensions#plugin=cfg-on");
-  });
-
   it("启用 an optional plugin without input sends the switch { enabled: true }", async () => {
     const p = zh.plugins;
     let on = false;
@@ -386,7 +337,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
       await renderPlugins({ locale });
       const list = await screen.findByRole("list", { name: p.title });
       const meta = (name: string) =>
-        rowOf(list, name).querySelector(".cb-object-meta")?.textContent ?? "";
+        rowOf(list, name).querySelector(".cb-object-card-meta")?.textContent ?? "";
       const scope = c.scope.optional;
       expect(within(rowOf(list, "minutes")).getByText(p.chips.ownUpload)).toBeTruthy();
       expect(meta("minutes")).toContain(fill(p.meta.scope, { owner: c.owner.self, scope }));
@@ -2349,7 +2300,6 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
             `DELETE ${ORG}/plugin-installs/i1`,
             `GET ${ORG}/plugin-installs`,
             `GET ${ORG}/catalog/${ID}`,
-            `GET ${ORG}/extensions`,
             `GET ${ORG}/readiness`,
             // the plugin's components in the org
             `GET ${ORG}/components?itemId=${ID}`,
@@ -5479,5 +5429,99 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     await waitFor(() =>
       expect(router.push).toHaveBeenCalledWith("/admin/plugins/import?staging=st7"),
     );
+  });
+});
+
+describe("/plugins: cards without a configure action, market source filter", () => {
+  it("an on plugin with overridable config shows no 配置 and no 组织配置, a needs-config one keeps 完成设置", async () => {
+    const p = en.plugins;
+    const ext = (itemId: string, name: string) => ({
+      plugin: name,
+      version: "1.0.0",
+      enabled: true,
+      configurable: true,
+      permissions: [],
+      provides: [],
+      overrideState: "following",
+      needsConfig: true,
+      catalogItem: { itemId, scope: "optional" },
+      switchable: true,
+    });
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              id: "i",
+              name: "cfg-on",
+              state: "on",
+              installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: null },
+              componentCounts: {
+                extension: 1,
+                skills: 0,
+                connectorTemplates: 0,
+                agentTemplates: 0,
+              },
+            }),
+            orgItem({
+              id: "g",
+              name: "needs",
+              state: "needs_config",
+              installed: { pluginInstallId: "i3", version: "1.0.0", upgradeAvailable: null },
+              componentCounts: {
+                extension: 1,
+                skills: 0,
+                connectorTemplates: 1,
+                agentTemplates: 0,
+              },
+            }),
+          ],
+        }),
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, { extensions: [ext("i", "cfg-on"), ext("g", "needs")] }),
+    });
+    await renderPlugins({ locale: "en" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const on = rowOf(list, "cfg-on");
+    expect(actionsOf(on, "cfg-on")).toEqual([]);
+    expect(within(on).queryByRole("link", { name: p.action.configure })).toBeNull();
+    expect(actionsOf(rowOf(list, "needs"), "needs")).toEqual([p.action.connectors]);
+  });
+
+  it("the org market filters by source derived from the entries", async () => {
+    const p = en.plugins;
+    const entry = (sourceId: string, sourceName: string, name: string) => ({
+      sourceId,
+      sourceName,
+      name,
+      version: "1.0.0",
+      summary: { en: name },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: `@x/${name}`, version: "1.0.0", integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    });
+    const all = [
+      entry("src-off", "Official", "jina"),
+      entry("src-obra", "Superpowers (obra)", "brainstorm"),
+    ];
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: all }),
+    });
+    await renderPlugins({ locale: "en" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    await screen.findByRole("list", { name: p.market.title });
+    // 全部来源 first, then the sources by name
+    const radios = (await screen.findAllByRole("radio")).map((r) => r.textContent);
+    expect(radios).toEqual([p.market.allSources, "Official", "Superpowers (obra)"]);
+    await user.click(screen.getByRole("radio", { name: "Superpowers (obra)" }));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("sourceId=src-obra"))).toBe(true));
   });
 });
