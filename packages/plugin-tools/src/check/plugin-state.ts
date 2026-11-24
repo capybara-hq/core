@@ -191,10 +191,10 @@ export async function checkPluginState(pluginDirs: string[]): Promise<Finding[]>
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
     const browser = await browserOnlyModules(dir);
-    // The server bundle only decides which embed UI files to skip, so build it only when the
+    // The server bundle only decides which embed UI and device service files to skip, so build it only when the
     // plugin has such a directory.
-    const hasEmbedUi = [...NOT_SERVER_DIRS].some((d) => existsSync(join(dir, d)));
-    const server = hasEmbedUi ? await serverBundleInputs(dir) : undefined;
+    const hasNonServerDir = [...NOT_SERVER_DIRS].some((d) => existsSync(join(dir, d)));
+    const server = hasNonServerDir ? await serverBundleInputs(dir) : undefined;
     for (const { file, isTest } of listSourceFiles(dir)) {
       if (isTest) continue;
       if (
