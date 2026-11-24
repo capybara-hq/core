@@ -483,7 +483,7 @@ describe("packPlugin: other behavior", () => {
     );
   });
 
-  it("refuses a module that still declares config.org (only modules packed before core#720 load with it)", async () => {
+  it("refuses a module that still declares config.org, naming the migration", async () => {
     await expect(packPlugin(fixture("legacy-config-org"), out)).rejects.toThrow(
       /config\.org was removed: move org fields into config\.deployment/,
     );
