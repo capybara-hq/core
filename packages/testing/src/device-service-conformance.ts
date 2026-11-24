@@ -7,10 +7,17 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 
 /**
+ * The request body {@link DEVICE_SERVICE_ECHO_SCRIPT} answers with its own `process.argv[1]`
+ * (the entry path it was started from) instead of the body.
+ */
+export const DEVICE_SERVICE_ARGV_PROBE = "capybara-conformance:argv1";
+
+/**
  * A framed echo device service (the device service socket protocol of the SDK's
- * `device-service.ts`, written out so it runs alone from the service's state directory): it
+ * `device-service.ts`, written out so it runs alone from the service's code directory): it
  * listens on `$CAPYBARA_SERVICE_SOCKET`, answers a `request` connection with its body unchanged
- * and echoes every message of a `stream` connection.
+ * (with its `process.argv[1]` for {@link DEVICE_SERVICE_ARGV_PROBE}) and echoes every message of a
+ * `stream` connection.
  */
 export const DEVICE_SERVICE_ECHO_SCRIPT = `import { createServer } from "node:net";
 const socket = process.env.CAPYBARA_SERVICE_SOCKET;
@@ -37,7 +44,8 @@ createServer((conn) => {
         continue;
       }
       if (kind === "request") {
-        conn.end(frame(msg));
+        const probe = msg.toString("utf8") === ${JSON.stringify(DEVICE_SERVICE_ARGV_PROBE)};
+        conn.end(frame(probe ? Buffer.from(process.argv[1] ?? "", "utf8") : msg));
         return;
       }
       conn.write(frame(msg));
@@ -58,16 +66,29 @@ export interface DeviceServiceFixture {
 
 const SERVICE = "conformance-echo";
 
+/** What the kernel sends with every `ifRunning` ensure: the name, nothing to run. */
+const nameOnly = (name: string): DeviceServiceSpec => ({
+  name,
+  runtime: "node",
+  entry: "",
+  args: [],
+  files: {},
+});
+
 /**
  * The device service contract every `device-provider@1` with services must pass (browser use spec
  * §5). The kernel's launch review relies on it: a launch is reviewed only after an `ifRunning`
  * ensure answered `stopped`, so a provider that started a service there would run it unreviewed.
- * Checks: an `ifRunning` ensure of a stopped service starts nothing and answers `stopped` with an
- * absolute `stateDir`; `stateDir` stays the same for the device and name across calls; a normal
- * ensure starts the service once (a second one finds it running, same `startedAt`); an `ifRunning`
- * ensure keeps a running one; `serviceRequest` round-trips the echo service; `stopService` stops
- * it (requests then fail, `ifRunning` answers `stopped`) and succeeds when it is not running. The
- * fixture's `dispose` always runs.
+ * Every `ifRunning` ensure here uses the name-only spec the kernel sends
+ * (`{ name, runtime: "node", entry: "", args: [], files: {} }`). Checks: an `ifRunning` ensure of a
+ * stopped service starts nothing and answers `stopped` with an absolute `stateDir` (and an
+ * absolute `codeDir` when the provider reports one); both stay the same for the device and name
+ * across calls; a normal ensure starts the service once (a second one finds it running, same
+ * `startedAt`); an `ifRunning` ensure keeps a running one running; the service runs its entry
+ * from `codeDir ?? stateDir` (its `process.argv[1]` is exactly `<codeDir ?? stateDir>/<entry>`,
+ * the path the kernel reviewed); `serviceRequest` round-trips the echo service; `stopService`
+ * stops it (requests then fail, `ifRunning` answers `stopped`) and succeeds when it is not
+ * running. The fixture's `dispose` always runs.
  */
 export async function runDeviceServiceConformance(fixture: DeviceServiceFixture): Promise<void> {
   const { provider, handle } = fixture;
@@ -91,35 +112,56 @@ export async function runDeviceServiceConformance(fixture: DeviceServiceFixture)
       timeoutMs: 5_000,
       signal: signal(),
     });
-  const assertStopped = async (s: DeviceServiceStatus, stateDir: string | null, when: string) => {
+  const ifRunning = () => ensure(handle, nameOnly(SERVICE), signal(), { ifRunning: true });
+  const assertDirs = (s: DeviceServiceStatus, first: DeviceServiceStatus | null, when: string) => {
+    assert(s.stateDir.startsWith("/"), `${when}: stateDir must be absolute, got ${s.stateDir}`);
+    if (s.codeDir !== undefined)
+      assert(s.codeDir.startsWith("/"), `${when}: codeDir must be absolute, got ${s.codeDir}`);
+    if (first !== null) {
+      assert.equal(s.stateDir, first.stateDir, `${when}: stateDir must be stable`);
+      assert.equal(s.codeDir, first.codeDir, `${when}: codeDir must be stable`);
+    }
+  };
+  const assertStopped = async (
+    s: DeviceServiceStatus,
+    first: DeviceServiceStatus | null,
+    when: string,
+  ) => {
     assert.equal(s.name, SERVICE, `${when}: status names the service`);
     assert.equal(s.state, "stopped", `${when}: an ifRunning ensure must not start the service`);
     assert.equal(s.startedAt, null, `${when}: a stopped service has no startedAt`);
-    assert(s.stateDir.startsWith("/"), `${when}: stateDir must be absolute, got ${s.stateDir}`);
-    if (stateDir !== null) assert.equal(s.stateDir, stateDir, `${when}: stateDir must be stable`);
+    assertDirs(s, first, when);
     await assert.rejects(ask("nobody"), `${when}: no service may answer requests`);
   };
   try {
-    const before = await ensure(handle, spec, signal(), { ifRunning: true });
+    const before = await ifRunning();
     await assertStopped(before, null, "before any start");
-    const again = await ensure(handle, spec, signal(), { ifRunning: true });
-    await assertStopped(again, before.stateDir, "a second ifRunning ensure");
+    const again = await ifRunning();
+    await assertStopped(again, before, "a second ifRunning ensure");
 
     const started = await ensure(handle, spec, signal());
     assert.equal(started.state, "running", "a normal ensure starts the service");
     assert.equal(typeof started.startedAt, "string", "a running service has startedAt");
-    assert.equal(started.stateDir, before.stateDir, "stateDir must be stable once started");
+    assertDirs(started, before, "once started");
     const found = await ensure(handle, spec, signal());
     assert.deepEqual(found, started, "a second normal ensure keeps the running service");
-    const kept = await ensure(handle, spec, signal(), { ifRunning: true });
+    const kept = await ifRunning();
     assert.deepEqual(kept, started, "an ifRunning ensure keeps the running service");
 
     const answer = await ask("hello conformance");
     assert.equal(new TextDecoder().decode(answer), "hello conformance", "requests round-trip");
+    // the running service is still the one started, and it runs the reviewed entry path
+    const argv1 = new TextDecoder().decode(await ask(DEVICE_SERVICE_ARGV_PROBE));
+    const dir = (started.codeDir ?? started.stateDir).replace(/\/+$/, "");
+    assert.equal(
+      argv1,
+      `${dir}/${spec.entry}`,
+      "the service's process.argv[1] must be <codeDir ?? stateDir>/<entry>, the reviewed path",
+    );
 
     await stop(handle, SERVICE, signal());
-    const after = await ensure(handle, spec, signal(), { ifRunning: true });
-    await assertStopped(after, before.stateDir, "after stopService");
+    const after = await ifRunning();
+    await assertStopped(after, before, "after stopService");
     await stop(handle, SERVICE, signal());
   } finally {
     try {

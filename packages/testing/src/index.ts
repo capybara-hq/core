@@ -30,6 +30,7 @@ export {
   type TestS3,
 } from "./containers.js";
 export {
+  DEVICE_SERVICE_ARGV_PROBE,
   DEVICE_SERVICE_ECHO_SCRIPT,
   type DeviceServiceFixture,
   runDeviceServiceConformance,
