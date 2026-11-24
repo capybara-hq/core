@@ -2662,7 +2662,7 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     expect(within(c).getByText(new RegExp(fill(s.gitInfo, { ref: "release" })))).toBeTruthy();
     expect(within(c).getByText(new RegExp(fill(s.lastCommit, { commit: "0123456" })))).toBeTruthy();
     expect(within(c).getByText(/2 entries were skipped by the last refresh/)).toBeTruthy();
-    // 详情 lists every skipped entry with its reason
+    // the Details dialog lists every skipped entry with its reason
     await open("Acme git");
     await userEvent.setup().click(screen.getByRole("menuitem", { name: s.details }));
     const dialog = await screen.findByRole("dialog");
@@ -5735,7 +5735,7 @@ describe("/plugins: cards without a configure action, market source filter", () 
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
     await screen.findByRole("list", { name: p.market.title });
-    // 全部来源 first, then the sources by name
+    // the all-sources option first, then the sources by name
     const radios = (await screen.findAllByRole("radio")).map((r) => r.textContent);
     expect(radios).toEqual([p.market.allSources, "Official", "Superpowers (obra)"]);
     await user.click(screen.getByRole("radio", { name: "Superpowers (obra)" }));

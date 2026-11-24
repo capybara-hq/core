@@ -94,7 +94,7 @@ for (const theme of THEMES) {
     }
 
     // 悬停 / 焦点 / 按下等交互态无法静态渲染，裁剪到元素截图。
-    // 12 个选项的范围：宽屏是一个带筛选框的 Select，裁剪到范围条。
+    // A scope with 12 options: on a wide screen it is a Select with a filter box, cropped to the scope bar.
     test("列表：范围选择器", async ({ page }) => {
       await open(page, "templates/list", theme);
       const scope = page.locator('[data-part="list-scope"]');

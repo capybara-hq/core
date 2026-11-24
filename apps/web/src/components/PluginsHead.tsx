@@ -28,9 +28,9 @@ export function usePluginPendingCount(enabled = true): number | undefined {
 }
 
 /**
- * The shared head of the admin 插件 pages (all but `path`, which each page writes itself): the
- * title, the description, the action 上传插件包 (primary), and the tabs 已安装 /
- * 市场 / 待确认 with their counts. The counts are sections: while they load or when they failed
+ * The shared head of the admin plugins pages (all but `path`, which each page writes itself): the
+ * title, the description, the action Upload plugin package (primary), and the tabs Installed /
+ * Marketplace / Pending with their counts. The counts are sections: while they load or when they failed
  * the tabs carry none.
  */
 export function usePluginsHead(active: PluginTab) {

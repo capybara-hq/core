@@ -37,7 +37,7 @@ import {
 } from "./CatalogParts";
 import { PermissionReview } from "./PermissionReview";
 
-/** The first sentence of a description (up to the first `。` or `. `) and the rest after it. */
+/** The first sentence of a description (up to the first CJK full stop or `. `) and the rest after it. */
 export function splitDescription(text: string): { first: string; rest: string } {
   const cuts = [text.indexOf("。"), text.indexOf(". ")].filter((n) => n >= 0);
   if (cuts.length === 0) return { first: text, rest: "" };

@@ -86,7 +86,7 @@ function SourceForm({ onClose, source }: { onClose(): void; source?: Marketplace
   const [lastSuggested, setLastSuggested] = useState("");
   const [busy, setBusy] = useState<"save" | "token">();
   const [error, setError] = useState<Problem>();
-  // 清除令牌 answered: the dialog stays open on the source as it was before, without a token
+  // Clear token answered: the dialog stays open on the source as it was before, without a token
   const [tokenCleared, setTokenCleared] = useState(false);
   const hasToken = editing && source.hasToken && !tokenCleared;
   const git = form === "git";

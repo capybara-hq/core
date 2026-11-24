@@ -43,10 +43,10 @@ import NotFound from "../../../not-found";
 type SourceList = { items: Marketplace[]; offline: boolean };
 
 /**
- * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards; the 插件 market
- * filter row leads here, its entries are the 插件 tab 市场). One card per source with its kind,
- * address, state, the 启用 / 停用 switch and "Refresh now"; 详情 (the raw error, the skipped
- * entries, the official source's mirrors and a managed source's token note), 编辑 and 删除 are in
+ * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage cards; the plugins page
+ * market filter row leads here, its entries are the Marketplace tab). One card per source with its kind,
+ * address, state, the enable / disable switch and "Refresh now"; Details (the raw error, the skipped
+ * entries, the official source's mirrors and a managed source's token note), Edit and Delete are in
  * the ⋯ menu. The official marketplace is read-only (its address is in the deployment config), as
  * is a config-managed one: only the switch and refresh. Adding and editing a custom source is the
  * {@link MarketplaceSourceDialog} (a marketplace.json URL or a git repository). From the query
@@ -154,7 +154,7 @@ function hostPath(url: string): string {
 
 /**
  * One marketplace source (spec §5.5.3). The official source and a config-managed one are
- * read-only (no 编辑 / 删除). The card's switch is 启用 / 停用; 立即刷新 is the primary.
+ * read-only (no Edit / Delete). The card's switch is enable / disable; Refresh now is the primary.
  */
 function SourceCard({
   source,
@@ -221,7 +221,7 @@ function SourceCard({
   const errorSentence =
     source.lastStatus === "error" ? t(`statusValue.errors.${marketplaceErrorKind(raw)}`) : null;
   const note = builtin ? (offline ? t("offline") : t("officialNote")) : null;
-  // The state label carries the error sentence; the raw text and the skipped lines are in 详情
+  // The state label carries the error sentence; the raw text and the skipped lines are in the Details dialog
   const description = [note, source.managed === "config" ? t("managed") : null]
     .filter((x): x is string => x !== null)
     .join(" ");

@@ -73,7 +73,7 @@ function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: strin
   const [uploading, setUploading] = useState(staging !== null && canUpdateOrg(me));
   const list = usePageQuery(orgCatalogQuery(orgId));
   const [source, setSource] = useState("");
-  // Org admins: the entries (the 市场 tab). The unfiltered read gives the count and the source
+  // Org admins: the entries (the Marketplace tab). The unfiltered read gives the count and the source
   // options; the grid reads the chosen source.
   const mq = orgMarketplaceEntriesQuery(orgId, "", "");
   const market = useQuery({

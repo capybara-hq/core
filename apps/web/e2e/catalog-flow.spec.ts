@@ -58,7 +58,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
     page.getByText(fill(D.admin.review.action.install, { version: "v1.0.0" })),
   ).toBeVisible();
   await expect(ext).toBeVisible();
-  // The scope sits under the review; confirming installs the extension; it defaults to 组织自选
+  // The scope sits under the review; confirming installs the extension; it defaults to the org's own choice (the optional scope)
   await expect(page.getByText(D.admin.review.deployOn)).toBeVisible();
   await expect(page.getByRole("radio", { name: new RegExp(D.scope.optional) })).toBeChecked();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();

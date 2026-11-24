@@ -94,7 +94,7 @@ export type ObjectCardLoaded = {
   oneButton?: boolean;
   /**
    * An on / off switch in the card's action area, before its buttons (a marketplace source's
-   * 启用 / 停用). `label` names it for assistive technology; it waits while `loading` or `busy`.
+   * enable / disable). `label` names it for assistive technology; it waits while `loading` or `busy`.
    */
   toggle?: {
     label: string;

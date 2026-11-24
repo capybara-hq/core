@@ -91,7 +91,7 @@ const scope: ListScope = {
   onChange: () => {},
 };
 
-/** A scope of `n` options: "全部来源" (value "all") then s1..s(n-1), "all" chosen. */
+/** A scope of `n` options: the all-sources option (value "all") then s1..s(n-1), "all" chosen. */
 function scopeWith(n: number): ListScope {
   return {
     ...scope,
