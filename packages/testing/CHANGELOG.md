@@ -1,5 +1,39 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.40
+
+### Patch Changes
+
+- fc95455: `runDeviceServiceConformance(fixture)` checks a device provider's services against one running
+  instance, with every `ifRunning` ensure sending the name-only spec the kernel sends
+  (`{ name, runtime: "node", entry: "", args: [], files: {} }`): an `ifRunning` ensure of a stopped
+  service starts nothing and answers `stopped` with an absolute, stable `stateDir` (and `codeDir`
+  when reported); a normal ensure starts once; an `ifRunning` ensure keeps a running one running;
+  the service runs `<codeDir ?? stateDir>/<entry>` (its echo service, `DEVICE_SERVICE_ECHO_SCRIPT`,
+  answers `DEVICE_SERVICE_ARGV_PROBE` with its `process.argv[1]`); requests round-trip; `stopService`
+  stops it. Every provider with services must pass it.
+- 6ab55eb: Dial-in device streams: `ctx.dialIn.openStream` opens a credit-controlled byte stream to a machine
+  straight over its socket on the gateway replica holding it (`stream-open` / `stream-data` /
+  `stream-credit` / `stream-close`, never through Redis or PG); another replica throws
+  `DialInStreamElsewhereError`. The holder records its internal address under
+  `capk:device-holder-addr:<deviceId>` next to its lease (new config `gateway.internalUrl`, default
+  `http://<hostname>:<http.port>`). `FakeDialInMachine.onStream` serves streams in tests.
+- Updated dependencies [bace32a]
+- Updated dependencies [1969e4a]
+- Updated dependencies [612b262]
+- Updated dependencies [a66a83a]
+- Updated dependencies [bac42c3]
+- Updated dependencies [2a552bc]
+- Updated dependencies [cee3e9a]
+- Updated dependencies [b6acad0]
+- Updated dependencies [2fa4887]
+- Updated dependencies [6ab55eb]
+- Updated dependencies [6034178]
+- Updated dependencies [9e2dd23]
+  - @capybara-hq/kernel@0.1.0-rc.86
+  - @capybara-hq/plugin-tools@0.1.0-rc.24
+  - @capybara-hq/plugin-sdk@0.1.0-rc.70
+
 ## 0.1.0-rc.39
 
 ### Patch Changes

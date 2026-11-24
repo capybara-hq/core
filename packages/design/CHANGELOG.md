@@ -1,5 +1,16 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.46
+
+### Patch Changes
+
+- a66a83a: Network asks for extension service calls (browser use spec §7.1): hosts a device service reports
+  refused during a tool call (the call scope) raise a network ask in the call's conversation, offering
+  only "add to this device's list"; approving widens the device allowlist and runs the call again. The
+  ask is recorded under the call's tool key; the web and IM cards name the agent's browser and say
+  that open network mode stops the asks.
+- 6034178: Adds the `globe` icon.
+
 ## 0.2.0-rc.45
 
 ### Patch Changes

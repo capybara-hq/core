@@ -1,5 +1,18 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.110
+
+### Patch Changes
+
+- a66a83a: Network asks for extension service calls (browser use spec §7.1): hosts a device service reports
+  refused during a tool call (the call scope) raise a network ask in the call's conversation, offering
+  only "add to this device's list"; approving widens the device allowlist and runs the call again. The
+  ask is recorded under the call's tool key; the web and IM cards name the agent's browser and say
+  that open network mode stops the asks.
+- Updated dependencies [a66a83a]
+- Updated dependencies [6034178]
+  - @capybara-hq/design@0.2.0-rc.46
+
 ## 0.1.0-rc.109
 
 No changes in this release.
