@@ -1199,10 +1199,24 @@ export class ConnectorsService {
     }
   }
 
+  /**
+   * Whether a connector of `kind` can be created in the org now: the kind is loaded on this
+   * replica and its providing extension (the first loaded one, as {@link kinds}) is enabled in
+   * the org. The create's own check ({@link assertKindAvailable}); the platform update decides its
+   * deferred template connectors with it, so a connector it previews as created is never refused
+   * at the confirm for its kind.
+   */
+  async kindAvailable(orgId: string, kind: string): Promise<boolean> {
+    return (
+      this.registry.findConnector(kind) !== undefined &&
+      (await this.registry.connectorKindAvailable(orgId, kind))
+    );
+  }
+
   /** Refuses a loaded kind whose extension is not enabled in the org (the same notion as {@link kinds}). */
   private async assertKindAvailable(orgId: string, kind: string): Promise<void> {
     if (!this.registry.findConnector(kind)) return; // unknown kinds fail in parseEndpoint
-    if (!(await this.registry.connectorKindAvailable(orgId, kind))) {
+    if (!(await this.kindAvailable(orgId, kind))) {
       throw new ApiError(
         "connector.kind_unavailable",
         `Connector kind "${kind}" is not enabled for this organization; enable its plugin first`,

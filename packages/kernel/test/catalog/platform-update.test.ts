@@ -4,7 +4,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { connectorTemplateState } from "../../src/catalog/component-state.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
-import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
+import {
+  PlatformPluginUpdater,
+  type PlatformUpdatePreview,
+} from "../../src/catalog/plugin-upgrade.js";
 import { TEMPLATE_CONNECTORS_QUEUE } from "../../src/catalog/template-connector-jobs.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
@@ -15,6 +18,7 @@ import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
 import { ToolDrift } from "../../src/tools/drift.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrgWithProviders, enableExtensions, waitFor } from "../helpers/runs.js";
@@ -1524,5 +1528,61 @@ describe("platform plugin update: template connectors (plugin pages spec §5.2.3
     expect(ok.statusCode, ok.body).toBe(200);
     expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
     expect(await templateConnectors(env, { orgId: gamma, itemId: item })).toEqual([]);
+  });
+
+  it("an owner's preview names another org the scope sync will install in, never its failure", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: ["a"], templates: false });
+    await seedPlugin(env, { name: "crm", addTo: item, version: "1.1.0", skills: ["a", "b"] });
+    await installIn(env.orgId, item);
+    // org1's own shareable plugin, scoped to org2 too, whose install there keeps failing
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: env.orgId, shareable: true })
+      .where("id", "=", item)
+      .execute();
+    await setScope(env, item, "named", [env.orgId, org2]);
+    await env.db
+      .insertInto("plugin_scope_sync_failures")
+      .values({
+        item_id: item,
+        org_id: org2,
+        op: "install",
+        code: "internal",
+        message: "secret detail of Beta",
+        failed_at: new Date(),
+      })
+      .execute();
+    const updater = env.k.app.get(PlatformPluginUpdater);
+    const p = await updater.previewForOwner(env.orgId, item, "1.1.0");
+    expect(p.scopeInstalls).toEqual([{ orgId: org2, orgName: "Beta" }]);
+    expect(p.orgNames?.[org2]).toBe("Beta");
+    expect(JSON.stringify(p)).not.toContain("secret detail");
+    // display only: the owner's confirm checks the full diff's hash, which this one is
+    const r = await updater.updateAsOwner(env.orgId, env.bossId, item, "1.1.0", p.diffHash);
+    expect(r.version).toBe("1.1.0");
+  });
+
+  it("a template whose kind the create would refuse in an org is deferred there, not created", async () => {
+    const item = await seedAddingDocs();
+    await installIn(env.orgId, item);
+    await installIn(org2, item);
+    // fake-connector is on in org2's database rows, but the kind check the create runs (another
+    // provider of the kind, say) refuses it there: the preview must say deferred, not created
+    const real = ToolRegistry.prototype.connectorKindAvailable;
+    vi.spyOn(ToolRegistry.prototype, "connectorKindAvailable").mockImplementation(function (
+      this: ToolRegistry,
+      orgId: string,
+      kind: string,
+    ) {
+      return orgId === org2 ? Promise.resolve(false) : real.call(this, orgId, kind);
+    });
+    const p = await previewOk(item, "1.1.0");
+    const byOrg = new Map(p.connectorOrgs.map((o) => [o.orgId, o]));
+    expect(byOrg.get(org2)?.created).toEqual([]);
+    expect(byOrg.get(org2)?.deferred.map((d) => d.templateId)).toEqual(["docs"]);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await templateConnectors(env, { orgId: env.orgId, itemId: item })).length).toBe(1);
+    expect(await templateConnectors(env, { orgId: org2, itemId: item })).toEqual([]);
   });
 });

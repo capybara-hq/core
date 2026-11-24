@@ -11,7 +11,6 @@ import type { KernelSchemaDb, SkillManifest } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
-import { isExtensionEnabled } from "../extensions/enabled.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../extensions/package.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
@@ -183,7 +182,8 @@ export interface PlatformUpdatePreview {
    * §5.2.3): its scope wants it on there and the org has no live install (one that waited for
    * connector input before installs took none). `failing`: the scope sync's last attempt there
    * failed (an open `plugin_scope_sync_failures` row), `lastFailure` its message. Sorted by org
-   * id. Hashed by org id and `failing` only.
+   * id. Hashed by org id and `failing` only. An owner's preview ({@link
+   * PlatformPluginUpdater.previewForOwner}) drops both for orgs other than the owner.
    */
   scopeInstalls: { orgId: string; orgName: string; failing?: true; lastFailure?: string }[];
   /**
@@ -501,7 +501,12 @@ export class PlatformPluginUpdater {
               pickedBy: await pickedByIn(this.db, t.id, new Set([orgId])),
             })),
           );
-    const owned = { ...preview, ...(themes !== undefined && { themes }) };
+    // Other orgs' scope sync failures are theirs: the owner sees only that the scope sync will try
+    // to install there (their names, P3-19), not whether or why it failed. Display only as well
+    const scopeInstalls = preview.scopeInstalls.map((o) =>
+      o.orgId === orgId ? o : { orgId: o.orgId, orgName: o.orgName },
+    );
+    const owned = { ...preview, scopeInstalls, ...(themes !== undefined && { themes }) };
     return { ...owned, orgNames: await this.orgNamesOf(owned) };
   }
 
@@ -1683,13 +1688,14 @@ export class PlatformPluginUpdater {
           const file = toTemplates.find((x) => x.id === id)?.file;
           if (file === undefined) continue;
           const t = file.template;
-          // Decided here, not only at the confirm (ruling R27): a template whose connector
-          // extension is not on in the org (database state), or not loaded on this replica yet
-          // (the bootstrap's first pass runs before the extensions load), waits; the update owes
-          // the org's template connector ensure, which creates it once both hold
+          // Decided here, not only at the confirm (ruling R27), with the checks the confirm runs:
+          // the template's connector extension loaded on this replica (planning; the bootstrap's
+          // first pass runs before the extensions load) and its kind available in the org (the
+          // create's own check, `ConnectorsService.kindAvailable`). Otherwise it waits; the update
+          // owes the org's template connector ensure, which creates it once both hold
           if (
             !deps.findConnector(t.plugin, t.connector) ||
-            !(await isExtensionEnabled(db, orgId, t.plugin))
+            !(await this.connectors.kindAvailable(orgId, t.connector))
           ) {
             deferred.add(orgId);
             entry(orgId).deferred.push({
