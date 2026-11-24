@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { TEMPLATE_CONNECTORS_SWEEP_JOB } from "../../src/catalog/job-ids.js";
+import {
+  TEMPLATE_CONNECTORS_SWEEP_CURSOR_KEY,
+  TEMPLATE_CONNECTORS_SWEEP_JOB,
+} from "../../src/catalog/job-ids.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { TemplateConnectorEnsurer } from "../../src/catalog/template-connector-ensure.js";
 import { TEMPLATE_CONNECTORS_QUEUE } from "../../src/catalog/template-connector-jobs.js";
@@ -14,12 +17,13 @@ import { BOOTSTRAP_LOCK_KEY } from "../../src/extensions/bootstrap.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { drainOutbox } from "../helpers/outbox.js";
-import { waitFor } from "../helpers/runs.js";
+import { createOrgWithProviders, enableConnectorExtensions, waitFor } from "../helpers/runs.js";
 import {
   install,
   type OrgEnv,
   resetOrgCatalog,
   seedPlugin,
+  setBuiltin,
   setScope,
   startOrgEnv,
   syncItemNow,
@@ -69,12 +73,13 @@ async function templateConnectors(
   itemId: string,
   templateId = "gh",
   deleted = false,
+  orgId = env.orgId,
 ): Promise<string[]> {
   let q = env.db
     .selectFrom("connectors as c")
     .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
     .select("c.id")
-    .where("c.org_id", "=", env.orgId)
+    .where("c.org_id", "=", orgId)
     .where("p.catalog_item_id", "=", itemId)
     .where("p.template_id", "=", templateId);
   if (!deleted) q = q.where("c.deleted_at", "is", null);
@@ -82,12 +87,12 @@ async function templateConnectors(
 }
 
 /** An install of the item in the org written directly (the state an earlier install left). */
-async function seedInstalled(itemId: string): Promise<void> {
+async function seedInstalled(itemId: string, orgId = env.orgId): Promise<void> {
   await env.db
     .insertInto("plugin_installs")
     .values({
       id: randomUUID(),
-      org_id: env.orgId,
+      org_id: orgId,
       item_id: itemId,
       version: "1.0.0",
       status: "installed",
@@ -241,6 +246,59 @@ describe("the template connector sweep", () => {
     expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 1, created: 1 });
     expect(await templateConnectors(itemId)).toHaveLength(1);
     expect(await ensurer().sweep({ limit: 50 })).toEqual({ orgs: 0, created: 0 });
+  });
+
+  it("rotates through the candidate orgs: one whose template is off by its scope never starves a later one", async () => {
+    // no cursor yet (the reset clears deployment_settings): the first tick starts at the first org
+    expect(
+      await env.db
+        .selectFrom("deployment_settings")
+        .select("key")
+        .where("key", "=", TEMPLATE_CONNECTORS_SWEEP_CURSOR_KEY)
+        .execute(),
+    ).toEqual([]);
+    const org2 = await createOrgWithProviders(env.k, env.root, `Beta ${randomUUID()}`);
+    await enableConnectorExtensions(env.k, org2);
+    const [first, second] = [env.orgId, org2].sort() as [string, string];
+    // the org sorting first has a template off only by its own scope (named, listing nobody):
+    // its kind is available, so it is a candidate, but the ensure creates nothing there
+    const off = await seedPlugin(env, { name: "crm", skills: [] });
+    await env.db
+      .updateTable("platform_connector_templates")
+      .set({ scope_mode: "own", scope: "named" })
+      .where("catalog_item_id", "=", off)
+      .execute();
+    await seedInstalled(off, first);
+    const on = await seedPlugin(env, { name: "wiki", skills: [] });
+    await seedInstalled(on, second);
+
+    expect(await ensurer().sweep({ limit: 1 })).toEqual({ orgs: 1, created: 0 });
+    expect(await ensurer().sweep({ limit: 1 })).toEqual({ orgs: 1, created: 1 });
+    expect(await templateConnectors(on, "gh", false, second)).toHaveLength(1);
+    // past the last candidate the cursor wraps to the first again
+    expect(await ensurer().sweep({ limit: 1 })).toEqual({ orgs: 1, created: 0 });
+    expect(await templateConnectors(off, "gh", false, first)).toEqual([]);
+  });
+
+  it("creates the connector of an always-on connector extension (it writes no org switch)", async () => {
+    // the connector extension ships in a builtin plugin: on in every org without a row
+    const ext = await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    await setBuiltin(env, ext);
+    await env.db
+      .insertInto("extension_catalog_sources")
+      .values({ plugin: "fake-connector", item_id: ext })
+      .execute();
+    await connectorExtensionOff();
+    const itemId = await seedPlugin(env, { name: "crm", skills: [] });
+    await seedInstalled(itemId);
+
+    expect(await ensurer().sweep({ limit: 50 })).toMatchObject({ created: 1 });
+    expect(await templateConnectors(itemId)).toHaveLength(1);
   });
 
   it("leaves out orgs whose missing template is off there or whose kind is off there", async () => {

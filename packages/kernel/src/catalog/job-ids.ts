@@ -33,6 +33,23 @@ export const TEMPLATE_CONNECTORS_SWEEP_PERIOD_MS = 5 * 60_000;
 export const TEMPLATE_CONNECTORS_SWEEP_BATCH = 50;
 
 /**
+ * The `deployment_settings` key holding the last org a sweep tick ensured: the next tick starts
+ * after it and wraps to the first candidate, so orgs where the ensure keeps creating nothing never
+ * starve the later ones (missing: it starts at the first org).
+ */
+export const TEMPLATE_CONNECTORS_SWEEP_CURSOR_KEY = "templateConnectorsSweepCursor";
+
+/**
+ * The lease key prefix marking a refusal already warned about (`<prefix><orgId>-<templateId>`,
+ * `LockService.lease`): a refusal repeated by later ensures (each sweep tick) is logged at debug,
+ * the first at warn.
+ */
+export const TEMPLATE_CONNECTOR_REFUSAL_WARNED_PREFIX = "cap:kernel:template-connector-warned:";
+
+/** How long a refusal stays warned about: a day, then it is warned about once more. */
+export const TEMPLATE_CONNECTOR_REFUSAL_WARNED_TTL_MS = 86_400_000;
+
+/**
  * The one-off job that takes out the extension of a removed org-owned plugin (spec §14, P3-20,
  * P3-21; `OwnedPluginCleanup.run`), on `cap-kernel-maintenance`.
  */

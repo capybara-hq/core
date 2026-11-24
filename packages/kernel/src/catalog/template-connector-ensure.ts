@@ -6,11 +6,17 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import { connectorTemplatesOn } from "./component-state.js";
+import {
+  TEMPLATE_CONNECTOR_REFUSAL_WARNED_PREFIX,
+  TEMPLATE_CONNECTOR_REFUSAL_WARNED_TTL_MS,
+  TEMPLATE_CONNECTORS_SWEEP_CURSOR_KEY,
+} from "./job-ids.js";
 import { PluginInstaller } from "./plugin-install.js";
 
 /** One connector template of an installed plugin the org never had a connector from. */
@@ -64,6 +70,8 @@ export class TemplateConnectorEnsurer {
     /** The connector kinds each org can create connectors of (the sweep's availability check). */
     @Inject(ConnectorsService) private readonly connectors: Pick<ConnectorsService, "kinds">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** The refusals already warned about (a lease per org and template). */
+    @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -86,8 +94,11 @@ export class TemplateConnectorEnsurer {
    * so it owes no ensure). One query lists the candidates; it already leaves out templates of
    * connector extensions not loaded here and templates plainly off in the org (switched off, or
    * shipped default-off and not switched on). Then one kinds read per candidate org, in org id
-   * order, until `limit` orgs are found. Templates off by their scope are left to the ensure's
-   * exact check.
+   * order starting just after the last org the previous tick ensured (a cursor in
+   * `deployment_settings`, wrapping to
+   * the first), until `limit` orgs are found. Templates off by their scope, and refusals, are left
+   * to the ensure's exact check. The rotation keeps orgs where it keeps creating nothing from
+   * starving the later ones, and a repeated refusal is warned about once a day.
    */
   async sweep(opts: { limit: number; signal?: AbortSignal }): Promise<{
     orgs: number;
@@ -134,8 +145,15 @@ export class TemplateConnectorEnsurer {
         { plugin: t.plugin, connector: t.connector },
       ]);
     }
+    // in org id order from just after the last org the previous tick ensured, wrapping to the
+    // first: orgs where the ensure keeps creating nothing never starve the later ones
+    const cursor = await this.sweepCursor();
+    const ids = [...kindsByOrg.keys()];
+    const at = cursor === undefined ? 0 : ids.findIndex((id) => id > cursor);
+    const rotated = at <= 0 ? ids : [...ids.slice(at), ...ids.slice(0, at)];
     const orgs: string[] = [];
-    for (const [orgId, wanted] of kindsByOrg) {
+    for (const orgId of rotated) {
+      const wanted = kindsByOrg.get(orgId) ?? [];
       if (orgs.length >= opts.limit) break;
       opts.signal?.throwIfAborted();
       const available = await this.connectors.kinds(orgId);
@@ -143,6 +161,15 @@ export class TemplateConnectorEnsurer {
         wanted.some((w) => available.some((k) => k.kind === w.connector && k.plugin === w.plugin))
       )
         orgs.push(orgId);
+    }
+    const last = orgs.at(-1);
+    if (last !== undefined) {
+      const value = JSON.stringify(last);
+      await this.db
+        .insertInto("deployment_settings")
+        .values({ key: TEMPLATE_CONNECTORS_SWEEP_CURSOR_KEY, value })
+        .onConflict((oc) => oc.column("key").doUpdateSet({ value, updated_at: new Date() }))
+        .execute();
     }
     let created = 0;
     for (const orgId of orgs) {
@@ -154,6 +181,16 @@ export class TemplateConnectorEnsurer {
       created += r.created;
     }
     return { orgs: orgs.length, created };
+  }
+
+  /** The last org the previous sweep tick ensured, if any. */
+  private async sweepCursor(): Promise<string | undefined> {
+    const row = await this.db
+      .selectFrom("deployment_settings")
+      .select("value")
+      .where("key", "=", TEMPLATE_CONNECTORS_SWEEP_CURSOR_KEY)
+      .executeTakeFirst();
+    return typeof row?.value === "string" ? row.value : undefined;
   }
 
   /**
@@ -199,13 +236,22 @@ export class TemplateConnectorEnsurer {
         } catch (e) {
           if (!(e instanceof ApiError)) throw e;
           result.skipped += 1;
-          this.log.warn("template connector not created", {
+          const fields = {
             orgId,
             itemId: m.itemId,
             templateId: m.templateId,
             code: e.code,
             error: e.message,
-          });
+          };
+          // warned once (a day) per org and template; the same refusal on every later ensure
+          // (each sweep tick) is logged at debug
+          const first = await this.locks.lease(
+            `${TEMPLATE_CONNECTOR_REFUSAL_WARNED_PREFIX}${orgId}-${m.platformTemplateId}`,
+            "warned",
+            TEMPLATE_CONNECTOR_REFUSAL_WARNED_TTL_MS,
+          );
+          if (first) this.log.warn("template connector not created", fields);
+          else this.log.debug("template connector not created (warned before)", fields);
         }
       }
     }
