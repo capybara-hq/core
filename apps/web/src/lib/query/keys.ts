@@ -148,6 +148,25 @@ export const keys = {
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
       skill: (skillId: string): readonly unknown[] => [...all, "skill", skillId],
+      /**
+       * A version's file list (`null`: the current version), under the skill's key so a change of
+       * the skill reads it again.
+       */
+      skillFiles: (skillId: string, version: number | null): readonly unknown[] => [
+        ...all,
+        "skill",
+        skillId,
+        "files",
+        version ?? "current",
+      ],
+      /** A read of one skill file: `previewers`, `builtin` (its text) or a view previewer's render. */
+      skillFile: (
+        skillId: string,
+        version: number,
+        path: string,
+        read: string,
+        locale = "",
+      ): readonly unknown[] => [...all, "skill", skillId, "file", version, path, read, locale],
       /** Every skill detail read (an invalidation prefix: a linked copy's detail too). */
       skillAll: (): readonly unknown[] => [...all, "skill"],
       /** What deleting the org's skill does (transferred to the platform or removed). */

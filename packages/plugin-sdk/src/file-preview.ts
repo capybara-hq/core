@@ -38,7 +38,10 @@ export interface FilePreviewArgsBase {
   locale: Locale;
   /** Aborted at the kernel's time limit: stop reading and rendering. */
   signal: AbortSignal;
-  /** In the share variant `file.id` is the share id. */
+  /**
+   * In the share variant `file.id` is the share id; in the skill variant it is
+   * `<skillId>@<version>/<path>`.
+   */
   file: { id: string; name: string; contentType: string; size: number };
   /**
    * The read grant: this one file's bytes, valid only during this call (rejects afterwards), and
@@ -73,8 +76,26 @@ export interface FilePreviewShareArgs extends FilePreviewArgsBase {
   shareId: string;
 }
 
+/**
+ * A file of a skill version, previewed on the skill's page: the person who opened it (`accountId`),
+ * the skill, the version and the file's path in it (a path of the version's manifest). There is no
+ * conversation. `file.id` is `<skillId>@<version>/<path>`. A previewer that needs the conversation
+ * declines this variant by throwing, as it does a share.
+ */
+export interface FilePreviewSkillArgs extends FilePreviewArgsBase {
+  source: "skill";
+  orgId: string;
+  accountId: string;
+  skillId: string;
+  version: number;
+  path: string;
+}
+
 /** Arguments of {@link FilePreviewer.render}: narrow on `source`. */
-export type FilePreviewArgs = FilePreviewConversationArgs | FilePreviewShareArgs;
+export type FilePreviewArgs =
+  | FilePreviewConversationArgs
+  | FilePreviewShareArgs
+  | FilePreviewSkillArgs;
 
 const ID_RE = /^[a-z0-9-]{1,40}$/;
 const TITLE_MAX = 100;

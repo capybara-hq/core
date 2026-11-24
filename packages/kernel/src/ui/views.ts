@@ -26,7 +26,7 @@ import { PreviewerRegistry } from "../files/previewers.js";
 import { readUiArrangement } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { OrgRole } from "../orgs/roles.js";
+import { can, type OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import {
   arrange,
@@ -101,6 +101,8 @@ export interface UiEmbedTarget {
   agentId?: string;
   /** Only a `file.preview` embed: the one file the token is for. */
   fileId?: string;
+  /** Only a `file.preview` embed of a skill file: the resolved version and the path. */
+  skillFile?: { skillId: string; version: number; path: string };
 }
 
 interface UiViewsDeps {
@@ -134,6 +136,19 @@ interface UiViewsDeps {
     plugin: string;
     contribution: string;
   }): Promise<boolean>;
+  /**
+   * A `file.preview` embed token for a skill file: the file (resolved version) when that
+   * extension's previewer with `embed: contribution` takes it, else null; a skill or file the org
+   * cannot see throws its 404.
+   */
+  skillPreviewEmbed?(t: {
+    orgId: string;
+    skillId: string;
+    version: number | undefined;
+    path: string;
+    plugin: string;
+    contribution: string;
+  }): Promise<{ skillId: string; version: number; path: string } | null>;
   /**
    * The `card` a `tool_result` of this conversation recorded for `callId` (`ToolResult.card`), or
    * null. An inline card request is served only when it matches (the card is attested by the log).
@@ -182,7 +197,11 @@ export type UiTarget = UiOrgTarget | UiPlatformTarget;
 
 /** {@link UiTarget} without `locale`, per variant (what `embed` takes). */
 export type UiEmbedRequest =
-  | (Omit<UiOrgTarget, "locale"> & { fileId?: string })
+  | (Omit<UiOrgTarget, "locale"> & {
+      fileId?: string;
+      /** A skill file's previewer (no conversation, agent or file id); `version` default current. */
+      skillFile?: { skillId: string; version?: number; path: string };
+    })
   | Omit<UiPlatformTarget, "locale">;
 
 /** The log field naming where a target is: its org, or the platform scope. */
@@ -376,6 +395,7 @@ export class UiViews {
         await conversations.writable(orgId, id, accountId);
       },
       previewEmbedAllowed: (t) => previewers.embedAllowed(t),
+      skillPreviewEmbed: (t) => previewers.skillEmbed(t),
       recordedCard: (conversationId, callId) => recordedCard(db.db, conversationId, callId),
       orgArrangement: async (orgId) => (await readOrgSettings(db.db, orgId)).uiArrangement,
       platformArrangement: () => readUiArrangement(db.db),
@@ -508,7 +528,8 @@ export class UiViews {
     let target: UiTarget;
     if (t.scope === "platform") target = { ...t, locale: "en" };
     else {
-      const { fileId: f, ...org } = t;
+      const { fileId: f, skillFile, ...org } = t;
+      if (skillFile !== undefined) return this.skillFileEmbed({ ...org, skillFile }, f);
       fileId = f;
       target = { ...org, locale: "en" };
     }
@@ -547,6 +568,54 @@ export class UiViews {
       ...(args.agentId !== undefined && { agentId: args.agentId }),
       ...(fileId !== undefined && { fileId }),
     };
+  }
+
+  /**
+   * A `file.preview` embed for a skill file (skill file browser spec): no conversation, agent or
+   * file id with it (400 `validation_failed`); the caller's role may read skills (`skills.read`)
+   * and use the slot, the contribution is a loaded `file.preview` embed of an extension enabled in
+   * the org, and an enabled previewer of that extension with `embed: <this contribution>` takes the
+   * file (the skill and the file are resolved with the visibility of `GET /skills/:id`); anything
+   * else is 404.
+   */
+  private async skillFileEmbed(
+    t: Omit<UiOrgTarget, "locale"> & {
+      skillFile: { skillId: string; version?: number; path: string };
+    },
+    fileId: string | undefined,
+  ): Promise<UiEmbedTarget> {
+    if (t.conversationId !== undefined || t.agentId !== undefined || fileId !== undefined) {
+      throw new ApiError(
+        "validation_failed",
+        "a skill file embed takes no conversationId, agentId or fileId",
+      );
+    }
+    const entry = this.d.host
+      .uiContributions()
+      .find(
+        (c) =>
+          c.plugin === t.plugin &&
+          c.contribution.id === t.id &&
+          c.contribution.kind === "embed" &&
+          c.slot.id === "file.preview",
+      );
+    const path = entry?.contribution.path;
+    if (entry === undefined || path === undefined) throw notFound();
+    if (!canUseSlot(entry.slot, t.role) || !can(t.role, "skills.read")) throw notFound();
+    if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
+    const file =
+      this.d.skillPreviewEmbed === undefined
+        ? null
+        : await this.d.skillPreviewEmbed({
+            orgId: t.orgId,
+            skillId: t.skillFile.skillId,
+            version: t.skillFile.version,
+            path: t.skillFile.path,
+            plugin: t.plugin,
+            contribution: t.id,
+          });
+    if (file === null) throw notFound();
+    return { plugin: t.plugin, contribution: t.id, path, skillFile: file };
   }
 
   /**

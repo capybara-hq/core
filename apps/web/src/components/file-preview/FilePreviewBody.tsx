@@ -15,7 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type JSX, type ReactNode, useEffect, useState } from "react";
-import { ApiClientError } from "../../lib/api";
+import { ApiClientError, toError } from "../../lib/api";
 import { type FileSource, sourceFile, sourceUrls } from "../../lib/file-source";
 import { builtinPreview } from "../../lib/files";
 import { HTML_RENDER_MAX_BYTES, requestHtmlToken } from "../../lib/html";
@@ -23,6 +23,12 @@ import type { FilePreviewerItem } from "../../lib/previewers";
 import { filePreviewersQuery, filePreviewQuery, fileTextQuery } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
 import { shareTextQuery, shareViewQuery } from "../../lib/query/shares";
+import {
+  skillFilePreviewersQuery,
+  skillFilePreviewQuery,
+  skillFileTextQuery,
+} from "../../lib/query/skills";
+import { skillFileSourceOnly } from "../../lib/skills";
 import { type UiView, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useOpenDownload } from "../SessionFilePreview";
@@ -72,7 +78,8 @@ type Load<T> = { kind: "loading" } | { kind: "ready"; data: T } | { kind: "error
  * come first, in the org's order, then the built-in (bitmaps, text and code, Markdown, CSV / TSV);
  * a file nothing takes shows the file card with Download. A failing previewer shows Retry with
  * the Download fallback; on a share page a view previewer that declines the share gives way to the
- * next option instead.
+ * next option instead. A skill file that is HTML or SVG is shown only as its source text: never
+ * rendered, by the web or an extension previewer.
  */
 export function FilePreviewBody({
   source,
@@ -101,6 +108,9 @@ export function FilePreviewBody({
   const urls = sourceUrls(source);
   const conv = source.kind === "conversation" ? source : null;
   const share = source.kind === "share" ? source : null;
+  const skill = source.kind === "skill" ? source : null;
+  // A skill's HTML or SVG file: its source as text, the one option (skill file browser design)
+  const sourceOnly = skill !== null && skillFileSourceOnly(skill.file);
   // For a share the kernel's `render` decides: `download` offers no previewer, `html` the
   // document, and `previewers` never the document (an HTML file over the limit gets its text).
   const offersNone = share?.meta.render === "download";
@@ -109,36 +119,50 @@ export function FilePreviewBody({
     : builtinPreview({
         name: file.name,
         contentType: file.contentType,
-        previewable: conv ? conv.file.previewable : (share?.meta.previewable ?? null),
+        previewable: conv
+          ? conv.file.previewable
+          : skill
+            ? skill.file.previewable
+            : (share?.meta.previewable ?? null),
       });
-  const builtin =
-    share === null || kind !== "html" || share.meta.render === "html"
+  const builtin = sourceOnly
+    ? "text"
+    : share === null || kind !== "html" || share.meta.render === "html"
       ? kind
       : share.meta.previewable === "text"
         ? "text"
         : null;
   const html = builtin === "html";
   const fileId = conv?.file.id ?? "";
-  const orgId = conv?.orgId ?? "";
+  const orgId = conv?.orgId ?? skill?.orgId ?? "";
   const conversationId = conv?.conversationId ?? "";
+  const skillId = skill?.skillId ?? "";
+  const skillVersion = skill?.version ?? 0;
+  const skillPath = skill?.file.path ?? "";
+  // What tells one file from another (a switch resets what belonged to the last one)
+  const fileKey = skill ? `${skillVersion}/${skillPath}` : fileId;
 
-  // The extension previewers that take the file: none for HTML (the built-in wins).
+  // The extension previewers that take the file: none for HTML (the built-in wins), none for a
+  // skill's HTML or SVG file (source only).
   const previewersQ = useQuery({
-    ...filePreviewersQuery(orgId, conversationId, fileId),
-    enabled: conv !== null && !html,
+    ...(skill
+      ? skillFilePreviewersQuery(orgId, skillId, skillVersion, skillPath)
+      : filePreviewersQuery(orgId, conversationId, fileId)),
+    enabled: (conv !== null || (skill !== null && !sourceOnly)) && !html,
     retry: false,
   });
-  const extensions: FilePreviewerItem[] | null = html
-    ? []
-    : share
-      ? offersNone
-        ? []
-        : share.meta.previewers
-      : previewersQ.data !== undefined
-        ? previewersQ.data
-        : previewersQ.error !== null
+  const extensions: FilePreviewerItem[] | null =
+    html || sourceOnly
+      ? []
+      : share
+        ? offersNone
           ? []
-          : null;
+          : share.meta.previewers
+        : previewersQ.data !== undefined
+          ? previewersQ.data
+          : previewersQ.error !== null
+            ? []
+            : null;
 
   // A share page has no previewer switch: a view previewer that declines the share (502
   // `ui.render_failed`, e.g. it needs the conversation) gives way to the next option, in the org's
@@ -153,10 +177,12 @@ export function FilePreviewBody({
         { id: HTML_RENDERED, title: ts("rendered"), p: null },
         { id: HTML_SOURCE, title: ts("source"), p: null },
       ]
-    : [
-        ...(extensions ?? []).map((p) => ({ id: previewerId(p), title: p.title[locale], p })),
-        ...(builtin !== null ? [{ id: BUILTIN, title: t("builtinPreviewer"), p: null }] : []),
-      ];
+    : sourceOnly
+      ? [{ id: BUILTIN, title: ts("source"), p: null }]
+      : [
+          ...(extensions ?? []).map((p) => ({ id: previewerId(p), title: p.title[locale], p })),
+          ...(builtin !== null ? [{ id: BUILTIN, title: t("builtinPreviewer"), p: null }] : []),
+        ];
   const options = allOptions.filter((o) => !skipped.includes(o.id));
   const current = options.find((o) => o.id === previewer) ?? options[0];
   const p = current?.p ?? null;
@@ -171,7 +197,16 @@ export function FilePreviewBody({
 
   const viewOpts = share
     ? shareViewQuery(share.code, viewP ?? { plugin: "", id: "" }, locale)
-    : filePreviewQuery(orgId, conversationId, fileId, viewP ?? { plugin: "", id: "" }, locale);
+    : skill
+      ? skillFilePreviewQuery(
+          orgId,
+          skillId,
+          skillVersion,
+          skillPath,
+          viewP ?? { plugin: "", id: "" },
+          locale,
+        )
+      : filePreviewQuery(orgId, conversationId, fileId, viewP ?? { plugin: "", id: "" }, locale);
   const viewQ = useQuery({
     ...viewOpts,
     enabled: extensions !== null && viewP !== null,
@@ -193,7 +228,9 @@ export function FilePreviewBody({
   }, [declinedId, shareCode]);
   const textOpts = share
     ? shareTextQuery(share.code)
-    : fileTextQuery(orgId, conversationId, fileId);
+    : skill
+      ? skillFileTextQuery(orgId, skillId, skillVersion, skillPath)
+      : fileTextQuery(orgId, conversationId, fileId);
   const textQ = useQuery({ ...textOpts, enabled: extensions !== null && readsText, retry: false });
 
   // A conversation's HTML document loads through a token minted each time the rendered view
@@ -312,7 +349,9 @@ export function FilePreviewBody({
         title: current.title,
         read: async () => {
           const res = await fetch(urls.content, { credentials: "same-origin" });
-          if (!res.ok) throw new ApiClientError(res.status, "http_error", "download failed");
+          // the kernel's error code (a skill file changed since it was listed: 409
+          // `skill.file_changed`) reaches the embed's failure copy
+          if (!res.ok) throw await toError(res);
           return {
             name: file.name,
             contentType: file.contentType,
@@ -330,11 +369,11 @@ export function FilePreviewBody({
   } else if (p?.kind === "view" && data.view) {
     content = <UiViewRenderer view={data.view} onAction={async () => {}} />;
   } else if (builtin === "image") {
-    // a share link needs no session (it opens as is); a conversation's file does
-    const open = (url: string) => openDownload(url, conv ? {} : { public: true });
+    // a share link needs no session (it opens as is); a conversation's or a skill's file does
+    const open = (url: string) => openDownload(url, share ? { public: true } : {});
     content = (
       <PanelImage
-        key={fileId}
+        key={fileKey}
         src={urls.inline}
         name={file.name}
         size={formatBytes(file.size)}

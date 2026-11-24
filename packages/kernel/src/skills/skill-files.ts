@@ -1,0 +1,205 @@
+import type { ObjectStore } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
+import {
+  ARTIFACT_DOWNLOAD_TTL_SECONDS,
+  isInlineArtifactType,
+  isTextArtifactType,
+} from "../conversations/artifacts.js";
+import { type FileOutput, previewKind, trimUtf8 } from "../conversations/files.js";
+import { ApiError } from "../errors.js";
+import { StorageService } from "../storage/storage.service.js";
+import { contentTypeFor } from "../tools/builtins/sandbox/deliver.js";
+import { readSkillFile, SkillIntegrityError } from "../tools/builtins/skill-load.js";
+import { SkillsService } from "./skills.service.js";
+import { skillFileStore } from "./usable.js";
+
+/** One file of a skill version, as `GET /skills/:id/files` lists it. */
+export interface SkillFileEntry {
+  path: string;
+  size: number;
+  /** By the file's extension (the kernel's lookup; unknown: `application/octet-stream`). */
+  contentType: string;
+  /** The built-in preview kind, the rule of the conversation file list. */
+  previewable: FileOutput["previewable"];
+}
+
+/** `GET /skills/:id/files`: the files of one version of the skill. */
+export interface SkillFileList {
+  version: number;
+  files: SkillFileEntry[];
+}
+
+/**
+ * A skill file resolved for a read (kernel-internal: the store and key never reach a client or an
+ * extension). Read it with {@link SkillFiles.read}, which checks size and sha256.
+ */
+export interface ResolvedSkillFile {
+  store: ObjectStore;
+  key: string;
+  path: string;
+  version: number;
+  size: number;
+  sha256: string;
+  contentType: string;
+}
+
+/** The bytes of a skill file, at most the asked limit. */
+export interface SkillFileBytes {
+  file: ResolvedSkillFile;
+  body: Buffer;
+  /** The file is longer than `body`. */
+  truncated: boolean;
+}
+
+/**
+ * The content type a skill file is sent with: its own for an inline raster image, `text/plain`
+ * for text and code, `application/octet-stream` otherwise (never `text/html` or `image/svg+xml`).
+ */
+export function skillFileSentType(contentType: string, inline: boolean): string {
+  if (inline && isInlineArtifactType(contentType)) return contentType;
+  return isTextArtifactType(contentType) ? "text/plain; charset=utf-8" : "application/octet-stream";
+}
+
+/** The last segment of a skill file's path (its download name). */
+export const skillFileName = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
+
+const fileNotFound = () => new ApiError("skill.file_not_found", "Skill file not found");
+
+/** Whether `path` could never be a manifest path (absolute, `.` / `..` / empty segments). */
+const unsafePath = (path: string): boolean =>
+  path.startsWith("/") ||
+  path.includes("\\") ||
+  path.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
+
+/**
+ * Read-only access to a skill version's files (skill file browser spec, "Kernel"). The skill is
+ * the one `GET /skills/:id` shows the org ({@link SkillsService.resolve}: its own skill, or a
+ * platform skill on in the org; otherwise `skill.not_found`). A file is addressed only by a path of
+ * that version's manifest, so no storage key is ever built from input; an unknown version or path
+ * is `skill.file_not_found`. Every read checks the object against the manifest (size, sha256, as
+ * the Skill tool does): missing or different is 409 `skill.file_changed`.
+ */
+@Injectable()
+export class SkillFiles {
+  constructor(
+    @Inject(SkillsService) private readonly skills: SkillsService,
+    @Inject(StorageService) private readonly storage: StorageService,
+  ) {}
+
+  /** The files of version `version` of the skill (default: its current version). */
+  async list(orgId: string, skillId: string, version?: number): Promise<SkillFileList> {
+    const v = await this.version(orgId, skillId, version);
+    return {
+      version: v.version,
+      files: v.manifest.files.map((f) => {
+        const contentType = contentTypeFor(f.path);
+        return { path: f.path, size: f.size, contentType, previewable: previewKind(contentType) };
+      }),
+    };
+  }
+
+  /**
+   * Where file `path` of version `version` (default: current) of the skill lives, with its manifest
+   * size and sha256. Visibility as {@link list}; an unknown version or a path not in the manifest →
+   * `skill.file_not_found` (nothing is read).
+   */
+  async resolve(
+    orgId: string,
+    skillId: string,
+    version: number | undefined,
+    path: string,
+  ): Promise<ResolvedSkillFile> {
+    const v = await this.version(orgId, skillId, version);
+    // only an exact manifest path; the shape check is a second guard, manifests never hold such
+    const entry = unsafePath(path) ? undefined : v.manifest.files.find((f) => f.path === path);
+    if (!entry) throw fileNotFound();
+    const { store, prefix } = skillFileStore(this.storage, orgId, v.object_prefix);
+    return {
+      store,
+      key: `${prefix}${entry.path}`,
+      path: entry.path,
+      version: v.version,
+      size: entry.size,
+      sha256: entry.sha256,
+      contentType: contentTypeFor(entry.path),
+    };
+  }
+
+  /**
+   * The bytes of a skill file, verified against its manifest entry (409 `skill.file_changed` when
+   * the object is missing or differs), cut to `limit` bytes when given (a text file is never cut
+   * inside a UTF-8 character). The whole object is hashed; only `limit` bytes are kept in memory.
+   */
+  async read(
+    orgId: string,
+    skillId: string,
+    version: number | undefined,
+    path: string,
+    limit?: number,
+  ): Promise<SkillFileBytes> {
+    const file = await this.resolve(orgId, skillId, version, path);
+    const bytes = await this.bytes(file, limit !== undefined ? { keepBytes: limit } : {});
+    let body = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const truncated = body.byteLength < file.size;
+    if (truncated && isTextArtifactType(file.contentType)) body = trimUtf8(body);
+    return { file, body, truncated };
+  }
+
+  /**
+   * A short-lived presigned download URL for a skill file (ruling R3: a native shell's Download
+   * hands it to the system browser, as conversation files do). The object is checked against its
+   * manifest first (409 `skill.file_changed`); the URL is for that one object, always an
+   * attachment, with the type {@link skillFileSentType} gives and the last path segment as its
+   * name. It reaches the browser only, never an extension.
+   */
+  async downloadUrl(
+    orgId: string,
+    skillId: string,
+    version: number | undefined,
+    path: string,
+  ): Promise<{ url: string }> {
+    const file = await this.resolve(orgId, skillId, version, path);
+    await this.bytes(file, { keepBytes: 0 });
+    const url = await file.store.presignGet(file.key, {
+      ttlSeconds: ARTIFACT_DOWNLOAD_TTL_SECONDS,
+      downloadName: skillFileName(file.path),
+      disposition: "attachment",
+      responseContentType: skillFileSentType(file.contentType, false),
+    });
+    return { url };
+  }
+
+  /**
+   * The verified bytes of a resolved file (the whole object hashed against the manifest; 409
+   * `skill.file_changed` when it is missing or differs), at most `keepBytes` of them.
+   */
+  async bytes(
+    file: ResolvedSkillFile,
+    opts: { keepBytes?: number; signal?: AbortSignal } = {},
+  ): Promise<Uint8Array> {
+    try {
+      return await readSkillFile(
+        file.store,
+        file.key,
+        { path: file.path, size: file.size, sha256: file.sha256 },
+        opts,
+      );
+    } catch (err) {
+      if (err instanceof SkillIntegrityError) {
+        throw new ApiError(
+          "skill.file_changed",
+          "The stored skill file no longer matches its version; upload the skill again",
+        );
+      }
+      throw err;
+    }
+  }
+
+  private async version(orgId: string, skillId: string, version: number | undefined) {
+    const { summary, versions } = await this.skills.resolve(orgId, skillId);
+    const want = version ?? summary.currentVersion;
+    const v = versions.find((x) => x.version === want);
+    if (!v) throw fileNotFound();
+    return v;
+  }
+}

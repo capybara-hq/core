@@ -103,6 +103,11 @@ describe("file-preview@1", () => {
       // @ts-expect-error accountId exists only on the conversation variant
       void args.accountId;
       if (args.source === "conversation") return args.accountId;
+      if (args.source === "skill") {
+        // @ts-expect-error conversationId exists only on the conversation variant
+        void args.conversationId;
+        return `${args.accountId} ${args.skillId}@${args.version}/${args.path}`;
+      }
       return args.shareId;
     };
     const base = {
@@ -112,5 +117,16 @@ describe("file-preview@1", () => {
       read: async () => new Uint8Array(),
     };
     expect(check({ ...base, source: "share", orgId: "o", shareId: "s1" })).toBe("s1");
+    expect(
+      check({
+        ...base,
+        source: "skill",
+        orgId: "o",
+        accountId: "a",
+        skillId: "k",
+        version: 2,
+        path: "docs/a.html",
+      }),
+    ).toBe("a k@2/docs/a.html");
   });
 });

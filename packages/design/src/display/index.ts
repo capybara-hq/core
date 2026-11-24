@@ -94,6 +94,13 @@ export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { ExpandableProse, type ExpandableProseProps } from "./expandable-prose";
+export {
+  FileBrowser,
+  type FileBrowserProps,
+  FileTree,
+  type FileTreeFile,
+  type FileTreeProps,
+} from "./file-tree";
 export { formatCompact } from "./format";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { type GuideBlock, GuideDocument, type GuideDocumentProps } from "./guide-document";

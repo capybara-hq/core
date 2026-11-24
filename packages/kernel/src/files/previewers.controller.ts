@@ -4,6 +4,12 @@ import { CurrentPrincipal, type Principal, requireUser } from "../identity/princ
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import {
+  SkillFilePreviewersQuery,
+  SkillFilePreviewParams,
+  SkillFilePreviewQuery,
+  SkillIdParams,
+} from "../skills/skills.schemas.js";
 import { type OrgPreviewerItem, type PreviewerItem, PreviewerRegistry } from "./previewers.js";
 import { FilePreviewersOrderBody } from "./previewers.schemas.js";
 
@@ -16,6 +22,22 @@ const PreviewParams = z.object({ plugin: Id, previewerId: Id });
 class FilePreviewQueryDto extends createZodDto(PreviewQuery, "FilePreviewQuery") {}
 class FilePreviewParamsDto extends createZodDto(PreviewParams, "FilePreviewParams") {}
 class FilePreviewersOrderBodyDto extends createZodDto(OrderBody, "FilePreviewersOrderBody") {}
+class SkillFilePreviewersParamsDto extends createZodDto(
+  SkillIdParams,
+  "SkillFilePreviewersParams",
+) {}
+class SkillFilePreviewersQueryDto extends createZodDto(
+  SkillFilePreviewersQuery,
+  "SkillFilePreviewersQuery",
+) {}
+class SkillFilePreviewParamsDto extends createZodDto(
+  SkillFilePreviewParams,
+  "SkillFilePreviewParams",
+) {}
+class SkillFilePreviewQueryDto extends createZodDto(
+  SkillFilePreviewQuery,
+  "SkillFilePreviewQuery",
+) {}
 
 /**
  * `file-preview@1` (UI refresh B Task 11):
@@ -26,6 +48,11 @@ class FilePreviewersOrderBodyDto extends createZodDto(OrderBody, "FilePreviewers
  *   render (10 s → 504 `ui.timeout`, throws → 502 `ui.render_failed`, invalid → 502
  *   `ui.invalid_view`); an embed previewer gets its token from the ui embed-token route with
  *   `{ conversationId, fileId }` and the file over the message bridge;
+ * - `GET /api/v1/orgs/:orgId/skills/:id/files/previewers?version=&path=` and
+ *   `GET .../skills/:id/files/previews/:plugin/:previewerId?version=&path=&locale=` (`skills.read`,
+ *   skill file browser spec): the same for one file of a skill version, visibility as
+ *   `GET /skills/:id` (404 `skill.not_found`, `skill.file_not_found`; a changed object 409
+ *   `skill.file_changed`); an embed previewer's token takes `{ skillId, version, path }`;
  * - `GET / PUT /api/v1/orgs/:orgId/file-previewers` (`org.extensions.manage`) → `{ items }`: the
  *   org's order; PUT lists `{ plugin, id, disabled }` first-to-last, the rest follow.
  */
@@ -65,6 +92,44 @@ export class FilePreviewersController {
       fileId,
       plugin,
       id: previewerId,
+      locale: q.locale,
+    });
+    return { view };
+  }
+
+  @Get("skills/:id/files/previewers")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("skills.read")
+  async forSkillFile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(SkillFilePreviewersParamsDto) params: z.infer<typeof SkillIdParams>,
+    @ZQuery(SkillFilePreviewersQueryDto) q: z.infer<typeof SkillFilePreviewersQuery>,
+  ): Promise<{ previewers: PreviewerItem[] }> {
+    requireUser(principal);
+    return {
+      previewers: await this.previewers.forSkillFile(org.orgId, params.id, q.version, q.path),
+    };
+  }
+
+  @Get("skills/:id/files/previews/:plugin/:previewerId")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("skills.read")
+  async previewSkillFile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(SkillFilePreviewParamsDto) params: z.infer<typeof SkillFilePreviewParams>,
+    @ZQuery(SkillFilePreviewQueryDto) q: z.infer<typeof SkillFilePreviewQuery>,
+  ) {
+    const p = requireUser(principal);
+    const view = await this.previewers.renderSkill({
+      orgId: org.orgId,
+      accountId: p.account.id,
+      skillId: params.id,
+      version: q.version,
+      path: q.path,
+      plugin: params.plugin,
+      id: params.previewerId,
       locale: q.locale,
     });
     return { view };

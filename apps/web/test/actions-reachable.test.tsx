@@ -152,7 +152,7 @@ describe("device cards carry no actions beyond opening the device", () => {
 });
 
 describe("the skill detail tables at 390 draw grouped rows", () => {
-  it("files and versions use their roles; the file count is hidden", async () => {
+  it("versions use their roles, the file count is hidden and View files stays reachable", async () => {
     stubWindowWidth(390);
     resetNavigation("/skills/s1");
     const version = (n: number, files: { path: string; size: number; sha256: string }[]) => ({
@@ -183,12 +183,8 @@ describe("the skill detail tables at 390 draw grouped rows", () => {
     });
     const { container } = await renderRouteWithCache("/skills/s1", lastStubRoutes());
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: en.skills.detail.tabs.files }));
-    await screen.findByText("scripts/run.py");
-    const file = container.querySelector<HTMLElement>("[data-part=compact-row]");
-    expect(file?.querySelector("[data-part=compact-title]")?.textContent).toBe("scripts/run.py");
-    expect(file?.querySelector("[data-part=compact-meta]")?.textContent).toBe("2 KB");
-    await user.click(screen.getByRole("tab", { name: en.skills.detail.tabs.versions }));
+    // The files are a tree now (the Files tab's FileBrowser), not a table: only the versions
+    await user.click(await screen.findByRole("tab", { name: en.skills.detail.tabs.versions }));
     await screen.findByText("Version 2.");
     const row = Array.from(container.querySelectorAll<HTMLElement>("[data-part=compact-row]")).find(
       (r) => r.textContent?.includes("Version 2."),
@@ -199,5 +195,8 @@ describe("the skill detail tables at 390 draw grouped rows", () => {
     expect(row?.querySelector("[data-part=compact-meta]")?.textContent).toMatch(
       /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
     );
+    expect(
+      within(row as HTMLElement).getByRole("button", { name: en.skills.detail.viewFiles }),
+    ).toBeTruthy();
   });
 });

@@ -435,6 +435,54 @@ const detail = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+// The Files tab's routes (skill file browser design): a version's files, their previewers, bytes.
+const FILES = `${BASE}/s1/files`;
+const entry = (
+  path: string,
+  contentType: string,
+  previewable: "image" | "text" | null,
+  size = 100,
+) => ({ path, size, contentType, previewable });
+const V2_FILES = {
+  version: 2,
+  files: [
+    entry("SKILL.md", "text/markdown", "text"),
+    entry("scripts/run.py", "text/x-python", "text"),
+    entry("scripts/x.sh", "application/x-sh", "text"),
+    entry("assets/logo.bin", "application/octet-stream", null),
+    entry("page.html", "text/html", "text"),
+    entry("icon.svg", "image/svg+xml", null),
+    entry("data/big.txt", "text/plain", "text", 10 * 1024 * 1024),
+  ],
+};
+const V1_FILES = { version: 1, files: [entry("SKILL.md", "text/markdown", "text")] };
+const TEXTS: Record<string, string> = {
+  "SKILL.md": "# Skill title\n\nUse it well.",
+  "scripts/x.sh": "echo hi",
+  "page.html": "<h1>never rendered</h1>",
+  "icon.svg": "<svg><script>alert(1)</script></svg>",
+  "data/big.txt": "the first mebibyte",
+};
+const params = (c: { url: string }) => new URL(c.url, "http://localhost").searchParams;
+/** The routes of the Files tab (the detail of `detail()`), with `over` replacing any. */
+const filesRoutes = (over: Parameters<typeof stubApiOnly>[0] = {}) => ({
+  [`GET ${BASE}/s1`]: () => json(200, detail()),
+  [`GET ${FILES}`]: (c: { url: string }) =>
+    json(200, params(c).get("version") === "1" ? V1_FILES : V2_FILES),
+  [`GET ${FILES}/previewers`]: () => json(200, { previewers: [] }),
+  [`GET ${FILES}/content`]: (c: { url: string }) => {
+    const path = params(c).get("path") ?? "";
+    return new Response(TEXTS[path] ?? "", {
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        ...(path === "data/big.txt" ? { "x-content-truncated": "true" } : {}),
+      },
+    });
+  },
+  ...over,
+});
+
 /** 删除 sits in the detail head's ⋯ menu (a destructive item): opens it and picks 删除技能. */
 async function openDelete(user: ReturnType<typeof userEvent.setup>, locale: "zh" | "en") {
   const m = msgs[locale];
@@ -449,7 +497,7 @@ describe("技能详情（DetailPage）", () => {
     "SKILL.md 正文按纯文本显示（不渲染 HTML）；文件与版本两个标签（%s）",
     async (locale) => {
       const m = msgs[locale];
-      stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
+      stubApi({ ...filesRoutes(), [`GET ${BASE}/s1`]: () => json(200, detail()) });
       const { container } = await renderSkill({ locale });
       expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
       const pre = await vi.waitFor(() => {
@@ -461,8 +509,8 @@ describe("技能详情（DetailPage）", () => {
       expect(container.querySelector("b")).toBeNull();
       const user = userEvent.setup();
       await user.click(screen.getByRole("tab", { name: m.skills.detail.tabs.files }));
-      const files = screen.getByRole("table", { name: m.skills.detail.filesLabel });
-      expect(within(files).getByText("scripts/run.py")).toBeTruthy();
+      const files = await screen.findByRole("tree", { name: m.skills.detail.treeLabel });
+      expect(within(files).getByText("run.py")).toBeTruthy();
       await user.click(screen.getByRole("tab", { name: m.skills.detail.tabs.versions }));
       const versions = screen.getByRole("table", { name: m.skills.detail.versionsLabel });
       expect(within(versions).getByText("Old.")).toBeTruthy();
@@ -584,6 +632,254 @@ describe("技能详情（DetailPage）", () => {
       `DELETE ${BASE}/s1`,
     ]);
   });
+});
+
+describe("the skill's Files tab (FileBrowser over the shared preview body)", () => {
+  /** A document load of `/skills/s1<search>`, the address set as the browser has it. */
+  const openAt = async (search: string, opts: RenderOpts = {}) => {
+    window.history.replaceState(null, "", `/skills/s1${search}`);
+    return renderRouteWithCache(`/skills/s1${search}`, lastStubRoutes(), opts);
+  };
+  const tree = () => screen.getByRole("tree", { name: en.skills.detail.treeLabel });
+  const row = (name: string) => within(tree()).getByText(name).closest("[role='treeitem']");
+  const address = () => new URLSearchParams(window.location.search);
+  const contentCalls = (calls: { url: string }[]) =>
+    calls.filter((c) => c.url.startsWith(`${FILES}/content`)).map((c) => params(c));
+
+  beforeEach(() => resetNavigation("/skills/s1"));
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("selects SKILL.md by default and shows it through the Markdown built-in", async () => {
+    const calls = stubApi(filesRoutes());
+    const { calls: server } = await openAt("?tab=files");
+    expect(row("SKILL.md")?.getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByRole("heading", { name: "Skill title" })).toBeTruthy();
+    // The server read the files and SKILL.md's previewers; the browser reads only the text
+    expect(server.map((c) => c.url)).toContain(FILES);
+    expect(server.map((c) => c.url)).toContain(`${FILES}/previewers?version=2&path=SKILL.md`);
+    expect(contentCalls(calls).map((q) => q.toString())).toEqual([
+      "version=2&path=SKILL.md&limit=1048576",
+    ]);
+    expect(
+      screen.getByText(en.skills.detail.filesOfCurrent.replace("{version}", "2")),
+    ).toBeTruthy();
+  });
+
+  it("a nested file opens through the text built-in, written to ?file= by replace", async () => {
+    stubApi(filesRoutes());
+    await openAt("?tab=files");
+    await screen.findByRole("heading", { name: "Skill title" });
+    await userEvent.setup().click(row("x.sh") as HTMLElement);
+    expect(row("x.sh")?.getAttribute("aria-selected")).toBe("true");
+    const text = await vi.waitFor(() => {
+      const el = document.querySelector('[data-part="preview-text"]');
+      if (!el) throw new Error("no text yet");
+      return el;
+    });
+    expect(text.textContent).toBe("echo hi");
+    expect(address().get("file")).toBe("scripts/x.sh");
+    expect(address().get("tab")).toBe("files");
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("an extension previewer that takes the file is listed first and can be switched", async () => {
+    stubApi(
+      filesRoutes({
+        [`GET ${FILES}/previewers`]: () =>
+          json(200, {
+            previewers: [
+              {
+                plugin: "office",
+                id: "md",
+                title: { zh: "Markdown 视图", en: "Markdown view" },
+                kind: "view",
+                maxBytes: 1e6,
+              },
+            ],
+          }),
+        [`GET ${FILES}/previews/office/md`]: (c: { url: string }) => {
+          expect(params(c).get("path")).toBe("SKILL.md");
+          expect(params(c).get("version")).toBe("2");
+          return json(200, { view: { blocks: [{ type: "heading", text: "From the plugin" }] } });
+        },
+      }),
+    );
+    await openAt("?tab=files");
+    expect(await screen.findByText("From the plugin")).toBeTruthy();
+    const user = userEvent.setup();
+    const switcher = screen.getByRole("radiogroup", { name: en.skills.detail.previewersLabel });
+    await user.click(within(switcher).getByRole("radio", { name: en.chat.builtinPreviewer }));
+    expect(await screen.findByRole("heading", { name: "Skill title" })).toBeTruthy();
+  });
+
+  it("a binary file shows the file card with Download and reads no bytes", async () => {
+    const calls = stubApi(filesRoutes());
+    await openAt("?file=assets/logo.bin");
+    expect(await screen.findByText(/No preview available/)).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
+    expect(contentCalls(calls)).toEqual([]);
+  });
+
+  it("a ?file= link opens the Files tab on that file, prefetched on the server", async () => {
+    const calls = stubApi(filesRoutes());
+    const { calls: server } = await openAt("?file=scripts/x.sh");
+    expect(
+      screen.getByRole("tab", { name: en.skills.detail.tabs.files }).getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(row("x.sh")?.getAttribute("aria-selected")).toBe("true");
+    expect(server.map((c) => c.url)).toContain(`${FILES}/previewers?version=2&path=scripts%2Fx.sh`);
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-part="preview-text"]')?.textContent).toBe("echo hi"),
+    );
+    // Only the text is read in the browser: the list and the previewers came from the server
+    expect(calls.every((c) => c.url.startsWith(`${FILES}/content`))).toBe(true);
+  });
+
+  it("a version row's View files opens the Files tab at that version, and back to the current", async () => {
+    const calls = stubApi(filesRoutes());
+    await openAt("");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.skills.detail.tabs.versions }));
+    const versions = screen.getByRole("table", { name: en.skills.detail.versionsLabel });
+    const v1 = within(versions).getByText("v1").closest("tr") as HTMLElement;
+    await user.click(within(v1).getByRole("button", { name: en.skills.detail.viewFiles }));
+    expect(
+      await screen.findByText(en.skills.detail.filesOfVersion.replace("{version}", "1")),
+    ).toBeTruthy();
+    expect(address().get("version")).toBe("1");
+    expect(address().get("tab")).toBe("files");
+    expect(calls.some((c) => c.url === `${FILES}?version=1`)).toBe(true);
+    await vi.waitFor(() =>
+      expect(contentCalls(calls).some((q) => q.get("version") === "1")).toBe(true),
+    );
+    await user.click(screen.getByRole("button", { name: en.skills.detail.showCurrent }));
+    expect(
+      await screen.findByText(en.skills.detail.filesOfCurrent.replace("{version}", "2")),
+    ).toBeTruthy();
+    expect(address().has("version")).toBe(false);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("a chosen file opens the browser (the pushed form at compact); back closes it and drops ?file=", async () => {
+    stubApi(filesRoutes());
+    await openAt("?tab=files");
+    const region = screen.getByRole("region", { name: en.skills.detail.browserLabel });
+    expect(region.getAttribute("data-open")).toBe("false");
+    const user = userEvent.setup();
+    await user.click(row("x.sh") as HTMLElement);
+    expect(region.getAttribute("data-open")).toBe("true");
+    await user.click(within(region).getByRole("button", { name: "Back" }));
+    expect(region.getAttribute("data-open")).toBe("false");
+    expect(address().has("file")).toBe(false);
+  });
+
+  it("SKILL.md leads the tree, before the folders", async () => {
+    stubApi(filesRoutes());
+    await openAt("?tab=files");
+    const paths = within(tree())
+      .getAllByRole("treeitem")
+      .map((r) => r.getAttribute("data-path"));
+    expect(paths[0]).toBe("SKILL.md");
+    expect(paths[1]).toBe("assets");
+  });
+
+  it("a version the skill does not have says so and offers the current version, not Retry", async () => {
+    stubApi(
+      filesRoutes({
+        [`GET ${FILES}`]: (c: { url: string }) =>
+          params(c).get("version") === "99"
+            ? json(404, { error: { code: "skill.file_not_found", message: "x" } })
+            : json(200, V2_FILES),
+      }),
+    );
+    await openAt("?tab=files&version=99");
+    expect(
+      await screen.findByText(en.skills.detail.versionMissing.replace("{version}", "99")),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: en.skills.detail.showCurrent }));
+    expect(
+      await screen.findByText(en.skills.detail.filesOfCurrent.replace("{version}", "2")),
+    ).toBeTruthy();
+    expect(address().has("version")).toBe(false);
+  });
+
+  it("in a shell with openExternal@1 Download asks for the presigned URL and opens it", async () => {
+    const PRESIGNED = "https://store.example/bucket/x.sh?X-Amz-Signature=abc";
+    const open = vi.fn(async () => {});
+    (window as unknown as { capybaraShell?: unknown }).capybaraShell = {
+      version: 1,
+      kind: "mobile",
+      platform: "ios",
+      capabilities: { "openExternal@1": { open } },
+      on: () => () => {},
+    };
+    const popup = vi.spyOn(window, "open");
+    try {
+      const calls = stubApi(
+        filesRoutes({
+          [`GET ${FILES}/content`]: (c: { url: string }) =>
+            params(c).get("as") === "url"
+              ? json(200, { url: PRESIGNED })
+              : new Response(TEXTS[params(c).get("path") ?? ""] ?? "", { status: 200 }),
+        }),
+      );
+      await openAt("?file=scripts/x.sh");
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-part="preview-text"]')?.textContent).toBe("echo hi"),
+      );
+      await userEvent
+        .setup()
+        .click(screen.getAllByRole("button", { name: en.chatPanel.download })[0] as HTMLElement);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledWith(PRESIGNED));
+      const asked = contentCalls(calls).filter((q) => q.get("as") === "url");
+      expect(asked.map((q) => q.toString())).toEqual(["version=2&path=scripts%2Fx.sh&as=url"]);
+      expect(popup).not.toHaveBeenCalled();
+    } finally {
+      delete (window as unknown as { capybaraShell?: unknown }).capybaraShell;
+      popup.mockRestore();
+    }
+  });
+
+  it("a file changed since it was listed (409) shows the failure card with Download", async () => {
+    stubApi(
+      filesRoutes({
+        [`GET ${FILES}/content`]: () =>
+          json(409, { error: { code: "skill.file_changed", message: "changed" } }),
+      }),
+    );
+    await openAt("?file=scripts/x.sh");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en.errors.skill.file_changed);
+    // The file card under the failure: its name and Download (the head's Download beside it)
+    expect(screen.getAllByText("x.sh").length).toBeGreaterThan(1);
+    expect(screen.getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(1);
+  });
+
+  it("a 10 MiB text file shows its first 1 MiB with the truncated note", async () => {
+    const calls = stubApi(filesRoutes());
+    await openAt("?file=data/big.txt");
+    expect(await screen.findByText("the first mebibyte")).toBeTruthy();
+    expect(document.querySelector('[data-part="preview-note"]')).not.toBeNull();
+    expect(contentCalls(calls).map((q) => q.get("limit"))).toEqual(["1048576"]);
+  });
+
+  it.each(["page.html", "icon.svg"])(
+    "%s is shown as its source text: no document, no inline read, no previewers",
+    async (path) => {
+      const calls = stubApi(filesRoutes());
+      const { calls: server } = await openAt(`?file=${path}`);
+      expect(await screen.findByText(TEXTS[path] as string)).toBeTruthy();
+      expect(document.querySelector("iframe")).toBeNull();
+      expect(document.querySelector("svg script")).toBeNull();
+      expect(document.querySelector("h1")?.textContent).not.toBe("never rendered");
+      const reads = [...server, ...calls].map((c) => c.url);
+      expect(reads.some((u) => u.startsWith(`${FILES}/previewers`))).toBe(false);
+      expect(contentCalls(calls).every((q) => !q.has("inline"))).toBe(true);
+    },
+  );
 });
 
 describe("the skills pages render on the server (web-SSR spec §6)", () => {

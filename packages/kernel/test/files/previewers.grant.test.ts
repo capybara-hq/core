@@ -52,6 +52,7 @@ function setup(
     config: {},
     source: "platform",
   }),
+  skillFiles: unknown = {},
 ) {
   const inflight = new InflightTracker("late");
   const provider: FilePreviewProvider = {
@@ -75,6 +76,7 @@ function setup(
       enabledPlugins: async () => new Set(["late"]),
     },
     { file: async () => FILE } as never,
+    skillFiles as never,
     ignoringStore as never,
     { get: effective },
     { warn: () => {} },
@@ -92,7 +94,18 @@ function setup(
       locale: "en",
     });
   const list = (orgId = "o") => reg.forFile(orgId, "c", "a", "f1");
-  return { call, list, inflight };
+  const callSkill = () =>
+    reg.renderSkill({
+      orgId: "o",
+      accountId: "a",
+      skillId: "k",
+      version: undefined,
+      path: "doc/a.docx",
+      plugin: "late",
+      id: "late",
+      locale: "en",
+    });
+  return { call, list, callSkill, inflight };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -177,5 +190,70 @@ describe("file preview and the effective config (layering spec A §6)", () => {
     await expect(call("org-a")).rejects.toMatchObject({ code: "ui.not_found" });
     expect(calls).toBe(0);
     expect((await list("org-b")).map((p) => p.id)).toEqual(["late"]);
+  });
+});
+
+describe("skill file preview time limit", () => {
+  const resolved = {
+    store: {},
+    key: "skills/x/doc/a.docx",
+    path: "doc/a.docx",
+    version: 1,
+    size: 5,
+    sha256: "0".repeat(64),
+    contentType: "application/octet-stream",
+  };
+  /** `SkillFiles` whose verified read takes `ms` (or until its signal aborts, whichever is first). */
+  const slowSkillFiles = (ms: number) => ({
+    resolve: async () => resolved,
+    bytes: (_f: unknown, o: { signal?: AbortSignal }) =>
+      new Promise<Uint8Array>((resolve, reject) => {
+        const t = setTimeout(() => resolve(new TextEncoder().encode("hello")), ms);
+        o.signal?.addEventListener("abort", () => {
+          clearTimeout(t);
+          reject(o.signal?.reason);
+        });
+      }),
+  });
+  const ok = async () => ({ ok: true as const, config: {}, source: "platform" as const });
+
+  it("a read that outlives the limit is 504 ui.timeout and the previewer is not called", async () => {
+    let calls = 0;
+    const { callSkill } = setup(
+      async () => {
+        calls++;
+        return { blocks: [] };
+      },
+      50,
+      ok,
+      slowSkillFiles(5_000),
+    );
+    await expect(callSkill()).rejects.toMatchObject({ code: "ui.timeout" });
+    expect(calls).toBe(0);
+  });
+
+  it("the read and the render share one deadline", async () => {
+    const { callSkill } = setup(
+      async () => {
+        await sleep(60); // ignores the signal; alone it would fit the 100 ms limit
+        return { blocks: [] };
+      },
+      100,
+      ok,
+      slowSkillFiles(60),
+    );
+    await expect(callSkill()).rejects.toMatchObject({ code: "ui.timeout" });
+  });
+
+  it("reads and renders within the limit", async () => {
+    const { callSkill } = setup(
+      async ({ read }) => ({
+        blocks: [{ type: "text", markdown: String((await read()).byteLength) }],
+      }),
+      5_000,
+      ok,
+      slowSkillFiles(1),
+    );
+    await expect(callSkill()).resolves.toEqual({ blocks: [{ type: "text", markdown: "5" }] });
   });
 });

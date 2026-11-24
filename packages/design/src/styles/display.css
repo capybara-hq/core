@@ -1465,6 +1465,74 @@ a.cb-attachment:hover {
   outline-offset: 2px;
 }
 
+/* FileTree (spec §6.68): rows of the row height, indent per depth, size muted at the end */
+.cb-filetree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--cb-space-1) 0;
+}
+.cb-filetree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  box-sizing: border-box;
+  min-height: var(--cb-row-default);
+  padding-inline-end: var(--cb-space-3);
+  color: var(--cb-ink);
+  cursor: pointer;
+  transition: background-color var(--cb-motion-hover);
+}
+.cb-filetree-row:hover {
+  background: var(--cb-hover);
+}
+.cb-filetree-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-filetree-row[aria-selected="true"] {
+  background: var(--cb-selected);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+/* The stack form of a FileBrowser while the tree is the page: no file is shown, none is marked */
+@container cb-ld (max-width: 579px) {
+  .cb-listdetail[data-fit="580"][data-open="false"] .cb-filetree-row[aria-selected="true"] {
+    box-shadow: none;
+  }
+  .cb-listdetail[data-fit="580"][data-open="false"]
+    .cb-filetree-row[aria-selected="true"]:not(:hover) {
+    background: none;
+  }
+}
+/* The preview pane of a FileBrowser fills the detail body (a scroll target of its own) */
+.cb-filebrowser-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-filetree-icon {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 14px;
+  color: var(--cb-faint);
+}
+.cb-filetree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-filetree-size {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
 /* ExpandableProse: the summary and its toggle (a DisclosureLinks look) on one line of prose */
 .cb-expandable-prose {
   margin: 0;

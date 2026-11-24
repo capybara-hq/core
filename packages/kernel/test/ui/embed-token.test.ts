@@ -169,6 +169,61 @@ describe("EmbedTokens", () => {
     expect(() => t.issue({ ...share, accountId: CLAIMS.accountId } as never)).toThrow(/invalid/);
   });
 
+  it("skill file claims round-trip in the org scope and are parsed strictly", () => {
+    const t = tokens(T0);
+    const exp = (T0 + 300_000) / 1000;
+    const skillFile = {
+      skillId: "55555555-5555-4555-8555-555555555555",
+      version: 3,
+      path: "scripts/读我.md",
+    };
+    const issued = t.issue({ ...CLAIMS, contribution: "docx-embed", skillFile });
+    expect(t.verify(issued.token, CLAIMS.plugin)).toEqual({
+      ...CLAIMS,
+      contribution: "docx-embed",
+      skillFile,
+      exp,
+    });
+    // the longest path a manifest allows (512 code points, 4 bytes each) still fits a token
+    const longest = { ...skillFile, path: "😀".repeat(512) };
+    const long = t.issue({ ...CLAIMS, skillFile: longest });
+    expect(t.verify(long.token, CLAIMS.plugin)).toMatchObject({ skillFile: longest });
+    const conv = "33333333-3333-4333-8333-333333333333";
+    const org = { ...CLAIMS, exp };
+    for (const bad of [
+      { ...org, skillFile: { ...skillFile, extra: 1 } },
+      { ...org, skillFile: { skillId: skillFile.skillId, version: 1 } },
+      { ...org, skillFile: { ...skillFile, version: 0 } },
+      { ...org, skillFile: { ...skillFile, version: 1.5 } },
+      { ...org, skillFile: { ...skillFile, version: "3" } },
+      { ...org, skillFile: { ...skillFile, path: "" } },
+      { ...org, skillFile: { ...skillFile, path: "a".repeat(513) } },
+      { ...org, skillFile: { ...skillFile, skillId: "" } },
+      { ...org, skillFile: [skillFile] },
+      { ...org, skillFile: "k@1/a" },
+      // never with a conversation, file or agent
+      { ...org, conversationId: conv, skillFile },
+      { ...org, conversationId: conv, fileId: conv, skillFile },
+      { ...org, agentId: conv, skillFile },
+    ]) {
+      expect(t.verify(signK1(bad), CLAIMS.plugin)).toBeNull();
+    }
+    const { orgId: _po, ...platformBase } = CLAIMS;
+    const platform = { ...platformBase, scope: "platform", role: "superAdmin", exp };
+    expect(t.verify(signK1({ ...platform, skillFile }), CLAIMS.plugin)).toBeNull();
+    const share = {
+      plugin: CLAIMS.plugin,
+      scope: "share",
+      orgId: CLAIMS.orgId,
+      shareId: "44444444-4444-4444-8444-444444444444",
+      generation: 1,
+      contribution: "docx-embed",
+      exp,
+    };
+    expect(t.verify(signK1({ ...share, skillFile }), CLAIMS.plugin)).toBeNull();
+    expect(() => t.issue({ ...CLAIMS, conversationId: conv, skillFile })).toThrow(/invalid/);
+  });
+
   it("superAdmin role only with platform scope", () => {
     const t = tokens(T0);
     const exp = (T0 + 300_000) / 1000;

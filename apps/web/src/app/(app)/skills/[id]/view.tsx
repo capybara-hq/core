@@ -9,7 +9,6 @@ import {
   DataTable,
   DateTime,
   DetailPage,
-  formatBytes,
   ImpactPreview,
   KeyValue,
   Stack,
@@ -36,22 +35,28 @@ import { useWorkspace } from "../../../../lib/query/workspace";
 import type { Me } from "../../../../lib/session";
 import {
   deleteSkill,
+  parseSkillTab,
+  parseSkillVersion,
+  SKILL_TABS,
   type SkillDeletePreview,
   type SkillDetail,
-  type SkillFile,
+  type SkillPageAddress,
+  type SkillTab,
   type SkillVersion,
   setSkillShareable,
 } from "../../../../lib/skills";
+import { useUrlParam, useUrlTab } from "../../../../lib/url-tab";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
+import { type FilesAddress, FilesTab } from "./files-tab";
 
-const TABS = ["content", "files", "versions"] as const;
-type Tab = (typeof TABS)[number];
+type Tab = SkillTab;
 
 /**
  * `/skills/[id]`: an org skill's detail (DetailPage, one centred column): the full description
- * first (line breaks kept), the facts as a KeyValue (with how many agents turn it off), then the tabs: the SKILL.md body (plain text, no HTML or
- * Markdown rendering), the current version's files, the versions. Org admins delete the org's own
+ * first (line breaks kept), the facts as a KeyValue (with how many agents turn it off), then the tabs (`?tab=`): the SKILL.md body (plain text, no HTML or
+ * Markdown rendering), the Files browser (a version's files with the shared preview body, the file
+ * and version in `?file=` / `?version=`), the versions (each opens its files). Org admins delete the org's own
  * skill from the head's ⋯ menu (typing its name; the confirmation says what the delete does: one
  * another org uses is transferred to the platform, ruling P3-19). The org's own skill carries the
  * 可共享 switch under the facts (plugin scope phase 3; members see it disabled). A platform skill on in the org (or
@@ -59,24 +64,63 @@ type Tab = (typeof TABS)[number];
  * org switches it on the 技能 page. From the query cache (the layout prefetched it on a first load);
  * a skill the kernel does not find is the not-found state.
  */
-export default function SkillView({ skillId }: { skillId: string }) {
+export default function SkillView({
+  skillId,
+  initial = { tab: "content", file: null, version: null },
+}: {
+  skillId: string;
+  /** The address as the server read it. */
+  initial?: SkillPageAddress;
+}) {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Skill key={skillId} orgId={ws.orgId} skillId={skillId} />;
+  return <Skill key={skillId} orgId={ws.orgId} skillId={skillId} initial={initial} />;
 }
 
-function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
+const parseFile = (raw: string | null) => raw ?? "";
+const parseVersion = (raw: string | null) => String(parseSkillVersion(raw) ?? "");
+
+function Skill({
+  orgId,
+  skillId,
+  initial,
+}: {
+  orgId: string;
+  skillId: string;
+  initial: SkillPageAddress;
+}) {
   const scope = usePagePath("org");
   const t = useTranslations("skills");
   const { me } = useSession();
-  const [tab, setTab] = useState<Tab>("content");
+  const [tab, setTab] = useUrlTab<Tab>(initial.tab, parseSkillTab, "content");
+  const [file, setFile] = useUrlParam("file", initial.file ?? "", parseFile, "");
+  const [version, setVersion] = useUrlParam(
+    "version",
+    initial.version === null ? "" : String(initial.version),
+    parseVersion,
+    "",
+  );
   const read = usePageQuery(skillQuery(orgId, skillId));
   const tabs = {
     label: t("detail.tabsLabel"),
-    items: TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
+    items: SKILL_TABS.map((x) => ({ id: x, label: t(`detail.tabs.${x}`) })),
     value: tab,
     onChange: (x: string) => setTab(x as Tab),
+  };
+  const files: FilesAddress = {
+    file,
+    version: parseSkillVersion(version),
+    selectFile: (path) => {
+      setTab("files");
+      setFile(path);
+    },
+    back: () => setFile(""),
+    openVersion: (v) => {
+      setFile("");
+      setVersion(v === null ? "" : String(v));
+      setTab("files");
+    },
   };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -93,7 +137,9 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
       />
     );
   }
-  return <SkillDetailView orgId={orgId} skill={read.data} tabs={tabs} tab={tab} me={me} />;
+  return (
+    <SkillDetailView orgId={orgId} skill={read.data} tabs={tabs} tab={tab} files={files} me={me} />
+  );
 }
 
 /**
@@ -106,12 +152,14 @@ function SkillDetailView({
   skill,
   tabs,
   tab,
+  files,
   me,
 }: {
   orgId: string;
   skill: SkillDetail;
   tabs: Parameters<typeof DetailPage>[0]["tabs"];
   tab: Tab;
+  files: FilesAddress;
   me: Me;
 }) {
   const scope = usePagePath("org");
@@ -167,9 +215,13 @@ function SkillDetailView({
           {tab === "content" ? (
             <ContentTab skill={skill} />
           ) : tab === "files" ? (
-            <FilesTab files={skill.versions[0]?.files ?? []} />
+            <FilesTab orgId={orgId} skill={skill} address={files} />
           ) : (
-            <VersionsTab versions={skill.versions} />
+            <VersionsTab
+              versions={skill.versions}
+              current={skill.currentVersion}
+              onOpen={files.openVersion}
+            />
           )}
         </Stack>
       </DetailPage>
@@ -218,7 +270,12 @@ function Facts({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
           },
           ...(skill.plugin ? [{ k: t("plugin"), v: skill.plugin }] : []),
           { k: t("version"), v: tv("version", { version: skill.currentVersion }) },
-          { k: t("files"), v: String(skill.versions[0]?.files.length ?? 0) },
+          {
+            k: t("files"),
+            v: String(
+              skill.versions.find((x) => x.version === skill.currentVersion)?.files.length ?? 0,
+            ),
+          },
           { k: t("updated"), v: <DateTime value={skill.updatedAt} /> },
           // skills default-on spec §10: on for every agent unless one turns it off
           { k: t("agents"), v: t("agentsOff", { n: skill.agentsOff }) },
@@ -378,32 +435,16 @@ function SkillDeleteDialog({
   );
 }
 
-function FilesTab({ files }: { files: SkillFile[] }) {
-  const t = useTranslations("skills.detail");
-  const columns: Column<SkillFile>[] = [
-    { key: "path", header: t("columns.path"), compact: "title", cell: (f) => f.path },
-    {
-      key: "size",
-      header: t("columns.size"),
-      compact: "meta",
-      tone: "muted",
-      width: 120,
-      cell: (f) => formatBytes(f.size),
-    },
-  ];
-  return (
-    <DataTable<SkillFile>
-      label={t("filesLabel")}
-      columns={columns}
-      rows={files}
-      rowKey={(f) => f.path}
-      state="ready"
-      empty={{ title: t("filesLabel") }}
-    />
-  );
-}
-
-function VersionsTab({ versions }: { versions: SkillVersion[] }) {
+/** The versions, newest first; a row's View files opens the Files tab at that version. */
+function VersionsTab({
+  versions,
+  current,
+  onOpen,
+}: {
+  versions: SkillVersion[];
+  current: number;
+  onOpen(version: number | null): void;
+}) {
   const t = useTranslations("skills.detail");
   const tv = useTranslations("skills");
   const columns: Column<SkillVersion>[] = [
@@ -439,6 +480,18 @@ function VersionsTab({ versions }: { versions: SkillVersion[] }) {
       tone: "muted",
       width: 160,
       cell: (v) => <DateTime value={v.createdAt} />,
+    },
+    {
+      key: "actions",
+      header: t("columns.actions"),
+      align: "right",
+      compact: "trailing",
+      width: 120,
+      cell: (v) => (
+        <Button density="dense" onClick={() => onOpen(v.version === current ? null : v.version)}>
+          {t("viewFiles")}
+        </Button>
+      ),
     },
   ];
   return (

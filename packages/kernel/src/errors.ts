@@ -565,6 +565,10 @@ export const ERROR_CODES = {
   /** An org admin may pause, resume and delete another person's task, never edit it. */
   "schedule.forbidden": 403,
   "skill.not_found": 404,
+  /** The skill's file routes: no such version of the skill, or no such path in that version. */
+  "skill.file_not_found": 404,
+  /** A skill file's stored object is missing or no longer matches its manifest (size, sha256). */
+  "skill.file_changed": 409,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,
   /** An agent already has `AGENT_SKILLS_MAX` own skills. */

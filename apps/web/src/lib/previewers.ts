@@ -3,7 +3,8 @@ import type { UiLocale, UiView } from "./ui";
 
 /**
  * `file-preview@1` (kernel `files/previewers.controller.ts`): the extension previewers that take a
- * file of a conversation, a view previewer's render, and the org's previewer order (admins).
+ * file of a conversation or of a skill version, a view previewer's render, and the org's previewer
+ * order (admins).
  * Built-in previewers (image, text, Markdown, CSV / TSV) live in the web (UI refresh B Task 16).
  */
 
@@ -42,6 +43,36 @@ export const renderFilePreview = (
 ) =>
   apiFetch<{ view: UiView }>(
     `${fileBase(orgId, conversationId, fileId)}/previews/${enc(p.plugin)}/${enc(p.id)}?locale=${locale}`,
+  );
+
+/** A file of a skill version (`?version=&path=` of the skill file routes). */
+const skillFileQuery = (version: number, path: string) =>
+  new URLSearchParams({ version: String(version), path }).toString();
+const skillFiles = (orgId: string, skillId: string) =>
+  `/api/v1/orgs/${enc(orgId)}/skills/${enc(skillId)}/files`;
+
+/** The extension previewers that take a skill file (`GET /skills/:id/files/previewers`). */
+export const listSkillFilePreviewers = (
+  orgId: string,
+  skillId: string,
+  version: number,
+  path: string,
+) =>
+  apiFetch<{ previewers: FilePreviewerItem[] }>(
+    `${skillFiles(orgId, skillId)}/previewers?${skillFileQuery(version, path)}`,
+  );
+
+/** A view previewer's render of a skill file (`GET /skills/:id/files/previews/:plugin/:id`). */
+export const renderSkillFilePreview = (
+  orgId: string,
+  skillId: string,
+  version: number,
+  path: string,
+  p: { plugin: string; id: string },
+  locale: UiLocale,
+) =>
+  apiFetch<{ view: UiView }>(
+    `${skillFiles(orgId, skillId)}/previews/${enc(p.plugin)}/${enc(p.id)}?${skillFileQuery(version, path)}&locale=${locale}`,
   );
 
 export const getOrgFilePreviewers = (orgId: string) =>

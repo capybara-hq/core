@@ -29,8 +29,8 @@ const t = (zh: string, en: string) => ({ zh, en });
  *   the count and the first bytes;
  * - `docx-page`: an embed previewer for `.docx` (ui contribution `docx-embed`, slot file.preview);
  * - `hang`: a view previewer for `.hang` that waits until the kernel aborts it;
- * - `decline`: a view previewer for `.decl` that needs the conversation, so it declines a share
- *   (throws on `source: "share"`);
+ * - `decline`: a view previewer for `.decl` that needs the conversation, so it declines a share or
+ *   a skill file (throws unless `source: "conversation"`);
  * - `html` (view) and `html-page` (embed, `docx-embed`) for `.html`: a share of an HTML snapshot
  *   never reaches them (the built-in wins);
  * - routes for the share embed tests: `GET /ui/claims` (`embed`: echoes the resolved caller) and
@@ -112,7 +112,9 @@ export default defineExtension({
           accepts: { extensions: [".decl"] },
           maxBytes: 1024,
           async render(args): Promise<UiView> {
-            if (args.source === "share") throw new Error("this previewer needs the conversation");
+            if (args.source !== "conversation") {
+              throw new Error("this previewer needs the conversation");
+            }
             return { blocks: [{ type: "text", markdown: args.conversationId }] };
           },
         },

@@ -39,6 +39,8 @@ type EmbedWhere =
       conversationId?: string;
       /** An `agent.detail.section` embed: the agent it is shown on. */
       agentId?: string;
+      /** A skill file's previewer (the skill page's Files tab): the token names that file. */
+      skill?: { skillId: string; version: number; path: string };
       share?: undefined;
     }
   | {
@@ -47,6 +49,7 @@ type EmbedWhere =
       orgId?: undefined;
       conversationId?: undefined;
       agentId?: undefined;
+      skill?: undefined;
     };
 
 /**
@@ -64,6 +67,7 @@ export function EmbedTab({
   title,
   conversationId,
   agentId,
+  skill,
   file,
   fill = false,
   failed,
@@ -90,6 +94,11 @@ export function EmbedTab({
   const t = useTranslations();
   const orgId = givenOrgId ?? null;
   const shareCode = share?.code;
+  // The skill file as one dependency: another file (or version) means another token
+  const skillKey =
+    skill === undefined ? undefined : `${skill.skillId}\n${skill.version}\n${skill.path}`;
+  const skillRef = useRef(skill);
+  skillRef.current = skill;
   const errorMessage = useErrorMessage();
   const locale = uiLocale(useLocale());
   const router = useRouter();
@@ -120,6 +129,7 @@ export function EmbedTab({
       conversationId?: string;
       agentId?: string;
       fileId?: string;
+      skill?: { skillId: string; version: number; path: string };
     }) =>
       // A share's token names the share's snapshot itself: no file id, no org.
       v.shareCode !== undefined
@@ -128,6 +138,7 @@ export function EmbedTab({
             ...(v.conversationId !== undefined && { conversationId: v.conversationId }),
             ...(v.agentId !== undefined && { agentId: v.agentId }),
             ...(v.fileId !== undefined && { fileId: v.fileId }),
+            ...(v.skill !== undefined && { skill: v.skill }),
           }),
     invalidates: () => [],
   });
@@ -142,6 +153,7 @@ export function EmbedTab({
     void attempt;
     // fileId: another file means another token (the bridge reads the file through a ref)
     void fileId;
+    void skillKey;
     let src: string | undefined;
     let remounts: number[] = [];
     const b = createEmbedBridge({
@@ -154,7 +166,10 @@ export function EmbedTab({
           ...(shareCode !== undefined && { shareCode }),
           ...(conversationId !== undefined && { conversationId }),
           ...(agentId !== undefined && { agentId }),
-          ...(fileRef.current !== undefined && { fileId: fileRef.current.id }),
+          // A skill file's token names the file itself (no file id beside it)
+          ...(skillRef.current !== undefined
+            ? { skill: skillRef.current }
+            : fileRef.current !== undefined && { fileId: fileRef.current.id }),
         });
         src ??= r.src;
         setRefreshFailed(false);
@@ -225,6 +240,7 @@ export function EmbedTab({
     locale,
     attempt,
     fileId,
+    skillKey,
     hasPanelMode,
   ]);
 

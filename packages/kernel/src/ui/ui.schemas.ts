@@ -1,6 +1,7 @@
 import { UI_LIMITS, UI_SLOT_IDS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
+import { SkillFilePathSchema } from "../skills/skills.schemas.js";
 
 /** The DTO schemas of the org UI routes (`views.controller.ts`). */
 
@@ -68,6 +69,13 @@ export const EmbedTokenBody = z
     agentId: z.uuid().optional(),
     /** Only a `file.preview` embed: the file version it previews. */
     fileId: z.uuid().optional(),
+    /**
+     * Only a `file.preview` embed of a skill file (with `path`, without a conversation): the skill;
+     * `version` defaults to its current one.
+     */
+    skillId: z.string().min(1).max(100).optional(),
+    version: z.number().int().min(1).max(2_147_483_647).optional(),
+    path: SkillFilePathSchema.optional(),
   })
   .default({});
 
