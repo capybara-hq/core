@@ -1,5 +1,72 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.86
+
+### Patch Changes
+
+- bace32a: `permissions.deviceAccess` is reviewed: each declared device service is a sensitive, blocking
+  permission key (`permissions.deviceaccess:<service>`), so an extension declaring it, or an upgrade
+  adding a service, waits for approval; the review lists the services in a "Device services" group.
+  `capybara-plugin check` reports `ctx.deviceAccess` used without `permissions.deviceAccess`
+  (`perm-device-access`).
+- 612b262: `ctx.deviceAccess` works (browser use spec §7): an extension starts its declared device services in
+  the conversation's device (a stopped service is launched only after the command review allowed the
+  command as it runs, `env K=V … node <codeDir ?? stateDir>/<entry> …`: the entry in the service's
+  code directory where the provider keeps code apart, the state directory as the working directory;
+  the verdict is recorded with the tool call and a start is audited `device.service_started`; specs whose files or
+  environment would escape the code directory or change what runs are refused), sends them requests,
+  reports hosts the device's allowlist refused (an always-only network ask in the call's conversation,
+  with the page's URL), mints single-use 60-second viewer tickets, adds hosts to the device allowlist
+  (running services get the new limits) and answers its own tool call's handoff question. Every call
+  is limited to the conversation's owner on their own personal device and to the services the
+  extension declares. A `DeviceAccessError` an extension tool lets through reaches the model with its
+  own message.
+  `addNetworkHosts` takes exact host names only, as an approved network ask grants. A launch reviewed
+  in a tool call round that then asks for input keeps its review record (and the hosts its service
+  reported refused) for the call's result, which the resumed round writes.
+- a66a83a: Network asks for extension service calls (browser use spec §7.1): hosts a device service reports
+  refused during a tool call (the call scope) raise a network ask in the call's conversation, offering
+  only "add to this device's list"; approving widens the device allowlist and runs the call again. The
+  ask is recorded under the call's tool key; the web and IM cards name the agent's browser and say
+  that open network mode stops the asks.
+- cee3e9a: The gateway role serves the device stream viewer `GET /device/stream?ticket=`: it takes the
+  single-use viewer ticket, checks its record again, holds the device for the viewer's life and pipes
+  the device service's stream to the browser (close codes 4401, 4404, 4409, 1001, 1012). A local
+  device's viewer that reaches another gateway replica hops once to the replica holding the machine
+  (`/internal/device-stream/<ticketId>`, authenticated with an HMAC under the master key). Opens and
+  closes are audited (`browser.view`, `browser.view_closed`). Stream holds move the device's last use
+  when taken, and a hold ending for a lifecycle change logs at debug.
+  Viewer messages over 256 KiB, or ones the device stream cannot carry, close the viewer (1009);
+  sockets are pinged and a socket paused for 30 s closes (1013); viewer upgrades are limited per
+  client address (`device-stream-ip`, 120 a minute).
+  The web tier's upgrade proxy sends the client address as `X-Forwarded-For` on `/device/stream`
+  only, so the per-address viewer limit counts each client; a valid ticket refunds its attempt.
+  An open viewer checks its record again every minute and closes when the access lapsed: 4401 (the
+  extension switched off, the service no longer declared, the conversation deleted or its owner
+  changed), 4404 when the device's provider is off in the org.
+- b6acad0: `DEVICE_SERVICE_WORKSPACE_ENV` (`CAPYBARA_SERVICE_WORKSPACE`): providers set it for every device
+  service to the device's workspace root, and services confine the files they take in and let out
+  (uploads, downloads) to it. `DeviceServiceStatus` gains optional `codeDir`, the directory the entry
+  runs from when the provider keeps code apart from state (absent: the state directory); the kernel's
+  launch review shows `node <codeDir ?? stateDir>/<entry>`, still in the state directory.
+- 2fa4887: Device services and stream holds in the kernel's SandboxService: `DeviceServices` starts, requests
+  and stops a device's named service process through its provider, and `holdForStream` keeps a
+  running device from idle suspension while a stream to it is open. The idle sweep is refused the device's lease while a stream hold is live (a viewer that opened
+  after its first look is seen under the lease). Every `ifRunning` ensure sends the provider the
+  name-only spec, and a service spec may not set `OPENSSL_CONF` or `OPENSSL_ENGINES` either.
+- 6ab55eb: Dial-in device streams: `ctx.dialIn.openStream` opens a credit-controlled byte stream to a machine
+  straight over its socket on the gateway replica holding it (`stream-open` / `stream-data` /
+  `stream-credit` / `stream-close`, never through Redis or PG); another replica throws
+  `DialInStreamElsewhereError`. The holder records its internal address under
+  `capk:device-holder-addr:<deviceId>` next to its lease (new config `gateway.internalUrl`, default
+  `http://<hostname>:<http.port>`). `FakeDialInMachine.onStream` serves streams in tests.
+- Updated dependencies [1969e4a]
+- Updated dependencies [bac42c3]
+- Updated dependencies [2a552bc]
+- Updated dependencies [b6acad0]
+- Updated dependencies [6034178]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.70
+
 ## 0.1.0-rc.85
 
 ### Patch Changes

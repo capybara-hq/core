@@ -1,5 +1,30 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- bace32a: `permissions.deviceAccess` is reviewed: each declared device service is a sensitive, blocking
+  permission key (`permissions.deviceaccess:<service>`), so an extension declaring it, or an upgrade
+  adding a service, waits for approval; the review lists the services in a "Device services" group.
+  `capybara-plugin check` reports `ctx.deviceAccess` used without `permissions.deviceAccess`
+  (`perm-device-access`).
+- 9e2dd23: `capybara-plugin check` skips the timer and module-state rules for the plugin-root `daemon/`
+  directory (device service code), unless the server bundle reaches those files.
+- Updated dependencies [bace32a]
+- Updated dependencies [1969e4a]
+- Updated dependencies [612b262]
+- Updated dependencies [a66a83a]
+- Updated dependencies [bac42c3]
+- Updated dependencies [2a552bc]
+- Updated dependencies [cee3e9a]
+- Updated dependencies [b6acad0]
+- Updated dependencies [2fa4887]
+- Updated dependencies [6ab55eb]
+- Updated dependencies [6034178]
+  - @capybara-hq/kernel@0.1.0-rc.86
+  - @capybara-hq/plugin-sdk@0.1.0-rc.70
+
 ## 0.1.0-rc.23
 
 ### Patch Changes

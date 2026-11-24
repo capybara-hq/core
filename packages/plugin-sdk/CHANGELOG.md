@@ -1,5 +1,38 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.70
+
+### Patch Changes
+
+- 1969e4a: Device providers may implement `serviceStatus(h, name, signal)`: a device service's state without
+  starting it. `ensureService` takes `opts.ifRunning`: it reads only the name (the kernel sends a
+  name-only spec), never starts a stopped service, keeps a running one with the device's current
+  limits applied again (a restart runs the spec it was launched with), and answers the stopped status
+  (the kernel reviews a launch only then, race-free). `DeviceServiceStatus` carries `stateDir`, the
+  service's state directory, which the command review sees the launch in. `DeviceServiceSpec`
+  documents the entry, file and env rules the kernel enforces (no `NODE_*`, `PATH`, `SSL_CERT_FILE`,
+  `SSL_CERT_DIR`, `OPENSSL_CONF`, `OPENSSL_ENGINES`, `LD_*`, `DYLD_*`, `CAPYBARA_*` or proxy
+  variables) and that the entry runs from `codeDir ?? stateDir`. `DeviceAccessScope` gains `orgId`;
+  `ctx.deviceAccess.addNetworkHosts` takes exact host names only.
+  `ctx.deviceAccess.reportBlockedHosts` takes an optional `{ url }`, the page the refused requests
+  came from. `ToolCallContext` documents that a call whose device service reported refused hosts runs
+  again after an approved network ask, with the same `idempotencyKey`.
+- bac42c3: `parseEmbedChildMessage` and `EmbedChildMessage` know the `panel-mode` message (`full: boolean`) an
+  embed in the conversation panel sends to maximise or restore the panel.
+- 2a552bc: Device services and streams for browser use: `device-provider@1` gains optional `ensureService`,
+  `stopService`, `serviceRequest` and `openStream` (`DeviceServiceSpec`, `DeviceServiceStatus`,
+  `DeviceStream`); the service socket protocol (`encodeServiceMessage`, `ServiceMessageDecoder`,
+  `DEVICE_SERVICE_*`); dial-in stream frames (`stream-open` / `stream-opened` / `stream-data` /
+  `stream-credit` / `stream-close`, `DIAL_IN_STREAM_INITIAL_CREDIT`), `DialInChannel.openStream` and
+  `DialInStreamElsewhereError`; and `permissions.deviceAccess` with `ctx.deviceAccess`
+  (`DeviceAccessCtx`, `DeviceAccessError`).
+- b6acad0: `DEVICE_SERVICE_WORKSPACE_ENV` (`CAPYBARA_SERVICE_WORKSPACE`): providers set it for every device
+  service to the device's workspace root, and services confine the files they take in and let out
+  (uploads, downloads) to it. `DeviceServiceStatus` gains optional `codeDir`, the directory the entry
+  runs from when the provider keeps code apart from state (absent: the state directory); the kernel's
+  launch review shows `node <codeDir ?? stateDir>/<entry>`, still in the state directory.
+- 6034178: `UI_ICONS` adds `globe` for a contribution's icon.
+
 ## 0.1.0-rc.69
 
 ### Patch Changes
