@@ -1193,7 +1193,7 @@ describe("ToolPipeline.runStep", () => {
     ]);
   });
 
-  it("a handler gets the tree root: its own conversation at the root, the root in a grandchild", async () => {
+  it("a handler gets its own conversation as root at the root, and the run parent's root in a sub-agent", async () => {
     const seen: { conversationId: string; rootConversationId: string }[] = [];
     handlers.plugin__probe__form = async (_input, ctx: ToolCallContext) => {
       seen.push({ conversationId: ctx.conversationId, rootConversationId: ctx.rootConversationId });
@@ -1201,17 +1201,9 @@ describe("ToolPipeline.runStep", () => {
     };
     await insertRun();
     await runCalls([{ id: "c1", name: "plugin__probe__form", input: {} }]);
-    // root → mid → this conversation: the root, never the direct parent
+    // the root comes from the run's parent context (run-worker derives it), never the direct parent
     const rootConv = randomUUID();
     const midConv = randomUUID();
-    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-      VALUES (${rootConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
-    await sql`INSERT INTO capybara.conversations
-        (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_depth)
-      VALUES (${midConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId}, 'subagent',
-        ${rootConv}, 1)`.execute(raw);
-    await sql`UPDATE capybara.conversations SET parent_conversation_id = ${midConv}
-      WHERE id = ${seed.conversationId}`.execute(raw);
     const parent = {
       conversationId: midConv,
       runId: randomUUID(),
