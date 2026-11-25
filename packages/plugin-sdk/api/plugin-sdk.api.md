@@ -1185,6 +1185,14 @@ export const DIAL_IN_PROTOCOL_RE: RegExp;
 export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
 
 // @public
+export class DialInAnswerTimeoutError extends Error {
+    constructor(deadlineMs: number, opts?: {
+        cause?: unknown;
+    });
+    readonly code = "device.answer_timeout";
+}
+
+// @public
 export interface DialInChannel {
     capacity(deviceId: string): Promise<{
         maxFrameBytes: number;
@@ -2301,6 +2309,9 @@ export function isDeviceProjectName(v: unknown): v is string;
 
 // @public
 export function isDeviceRequestNotSent(e: unknown): boolean;
+
+// @public
+export function isDialInAnswerTimeoutError(e: unknown): e is DialInAnswerTimeoutError;
 
 // @public
 export function isDisallowedSkillRef(v: unknown): v is string;
@@ -4707,6 +4718,12 @@ export const THINKING_VALUES: readonly string[];
 export const TOOL_KEY_ARGS_MAX = 3;
 
 // @public
+export const TOOL_TIMEOUT_MAX_MS = 600000;
+
+// @public
+export const TOOL_TIMEOUT_MIN_MS = 1000;
+
+// @public
 export const TOOL_TITLE_MAX = 80;
 
 // @public
@@ -4818,6 +4835,7 @@ export interface ToolSpec {
     keyArgs?: string[];
     name: string;
     sources?: ConversationSource[];
+    timeoutMs?: number;
     title?: string;
 }
 

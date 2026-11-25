@@ -239,6 +239,8 @@ describe("ctx.deviceAccess", () => {
     expect(review.mock.calls[0]?.[0]).toMatchObject({
       toolKey: "Bash",
       input: { command: `node ${first.stateDir}/echo.mjs --title 'a b'` },
+      // reviewed as the declared service launch it is (allow.service), not as a dev command
+      serviceEntry: `${first.stateDir}/echo.mjs`,
       workspace: first.stateDir,
       orgId,
       conversationId: s.conversationId,
@@ -509,12 +511,15 @@ describe("ctx.deviceAccess", () => {
     // the launch's review is recorded with the call's result, as a reviewed Bash call's is
     expect(r?.review).toEqual({ decision: "allow", by: "rule", rule: null, reason: "test" });
     // and directly, once running
-    const answer = await access.request(CALLER, callOf(), {
+    const direct = callOf();
+    const answer = await access.request(CALLER, direct, {
       service: "echo",
       body: new TextEncoder().encode("again"),
       timeoutMs: 10_000,
     });
     expect(new TextDecoder().decode(answer)).toBe("again");
+    // the call reached the service: a later timeout never claims nothing was sent
+    expect(callScopeOf(direct)?.reached).toBe(true);
   });
 
   it("a refusal reaches the model as its own actionable text", async () => {

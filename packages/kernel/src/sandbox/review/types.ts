@@ -100,6 +100,12 @@ export interface ReviewFacts {
    * development command but code the run itself produced (hardening spec R1).
    */
   written?: readonly string[];
+  /**
+   * The absolute entry a device service launch runs (`ctx.deviceAccess.ensureService`): the
+   * kernel's own fact, never the model's. `node <serviceEntry> …` is then the extension's declared
+   * service, allowed by `allow.service` instead of read as a development command.
+   */
+  serviceEntry?: string;
 }
 
 /** One shell redirection of a simple command. */
