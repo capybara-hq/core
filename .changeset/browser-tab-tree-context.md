@@ -14,3 +14,5 @@ service now starts with a kernel-written viewer context message (`DeviceServiceV
 scope conversation's tree. `@capybara-hq/testing`: `FakeDialInMachine.streamOpenGate` holds a
 `stream-open` answer for ordering tests. During a rolling upgrade, viewer tickets minted by an older
 replica are refused (a ticket lives 60 s; reopen the panel).
+The browser plugin's panel Done / Cancel needs the browser release that passes
+`handoffConversationId`; upgrade both together.

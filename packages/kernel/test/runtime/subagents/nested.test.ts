@@ -266,7 +266,8 @@ async function converse(req: Req, agentId: string, text: string) {
 
 describe("nested sub-agents", () => {
   it("root → child → grandchild → great-grandchild dispatch with the default maxDepth", async () => {
-    // the tree probe's tool is on in this test only: the great-grandchild calls it
+    // the tree probe is switched on here and stays on (later tests list its tool); the
+    // great-grandchild calls it
     const on = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/tree-probe`,
