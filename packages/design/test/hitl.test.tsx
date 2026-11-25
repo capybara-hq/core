@@ -397,7 +397,7 @@ describe("QuestionBlock buttons (choices: one mechanism for confirm and one-valu
     expect(container.querySelector('[data-part="question-body"]')?.textContent).toBe(
       "请登录你的账号，完成后交还。",
     );
-    // no switch and no 回答: the choices are the answer
+    // no switch and no Answer button: the choices are the answer
     expect(screen.queryByRole("switch")).toBeNull();
     expect(screen.queryByRole("button", { name: "回答" })).toBeNull();
     const buttons = Array.from(container.querySelectorAll(".cb-hcard-actions button"));

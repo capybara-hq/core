@@ -1252,7 +1252,7 @@ export type QuestionField = {
 /**
  * The field a question answers with buttons (see {@link QuestionField.choices}): the form's only
  * field, required, a single choice, with choices. One mechanism for every button question (a
- * confirm 完成 / 取消, a one-value wait 结束等待).
+ * confirm Done / Cancel, a one-value "End wait").
  */
 export function buttonChoiceField(fields: QuestionField[]): QuestionField | undefined {
   const f = fields.length === 1 ? fields[0] : undefined;
