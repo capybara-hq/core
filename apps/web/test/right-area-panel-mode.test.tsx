@@ -1,6 +1,7 @@
-import { act, cleanup } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Call, json, stubApi } from "./support/api";
+import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
@@ -205,6 +206,64 @@ describe("a plugin tool's question names a panel (InputRequired.open)", () => {
     act(() => stream().emit("event", asked(3, "q1", { plugin: "board", contribution: "live" })));
     await vi.waitFor(() => expect(panelShown()).toBe(true));
     expect(window.location.hash).toBe("#panel=board/live");
+  });
+
+  it("a confirm question: short title, the reason as body, 完成 / 取消 buttons and an action that opens the panel", async () => {
+    const confirm = {
+      step: 0,
+      callId: "call-h",
+      questionId: "qh",
+      form: {
+        title: { zh: "请在浏览器中完成：登录", en: "Finish in the browser: sign in" },
+        body: { zh: "请登录你的账号。", en: "Please sign in to your account." },
+        fields: [
+          {
+            key: "done",
+            label: { zh: "完成", en: "Done" },
+            schema: { type: "boolean" },
+            required: true,
+            choices: [
+              { value: true, label: { zh: "完成", en: "Done" } },
+              { value: false, label: { zh: "取消", en: "Cancel" } },
+            ],
+          },
+        ],
+      },
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      open: { plugin: "board", contribution: "live" },
+    };
+    const calls = api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [userMsg(1, "hi"), runStarted(2), ev(3, "question_asked", confirm)],
+        }),
+      [`POST ${ORG}/questions/qh/answer`]: () => json(200, { question: { id: "qh" } }),
+    });
+    await renderChatRoute();
+    const card = await vi.waitFor(() => {
+      const el = document.querySelector('[data-question-id="qh"]');
+      if (!el) throw new Error("no card yet");
+      return el as HTMLElement;
+    });
+    expect(card.querySelector('[data-part="question-title"]')?.textContent).toBe(
+      "Finish in the browser: sign in",
+    );
+    expect(card.querySelector('[data-part="question-body"]')?.textContent).toBe(
+      "Please sign in to your account.",
+    );
+    expect(card.querySelector('[role="switch"]')).toBeNull();
+    // the question in the log at load opened nothing; its action opens the panel
+    expect(window.location.hash).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Open Live" }));
+    await vi.waitFor(() => expect(window.location.hash).toBe("#panel=board/live"));
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/questions/qh/answer"))).toBe(
+        true,
+      ),
+    );
+    const post = calls.find((c) => c.url.endsWith("/questions/qh/answer"));
+    expect(bodyOf(post)).toEqual({ answer: { done: true } });
   });
 
   it("a question already in the log, another plugin's panel or none opens nothing", async () => {

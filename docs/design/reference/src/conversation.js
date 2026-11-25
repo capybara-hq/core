@@ -489,6 +489,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-qa"><div class="r-tline"><span class="r-tlabel">${esc(Q.question)}</span></div><div class="r-tline">${icon("corner-down-right", 12)}<span class="r-tlabel"><span class="r-em">${esc(H.decided.answered.answer)}</span><span class="r-faint"> · ${personName(F.PERSON_FIXTURE.name)}</span></span></div></div>`;
     if (o.state === "skipped")
       return `<div class="r-qa"><div class="r-tline"><span class="r-tlabel">${esc(Q.question)}</span></div><div class="r-tline">${icon("corner-down-right", 12)}<span class="r-tlabel">已跳过<span class="r-faint"> · ${esc(H.decided.who)}</span></span></div></div>`;
+    if (o.state === "confirm") {
+      const X = H.questionConfirm;
+      return `<div class="r-card" role="group" aria-label="${esc(X.title)}"><div class="r-card-title">${esc(X.title)}</div><figure class="r-reason" data-part="question-body"><blockquote class="r-reason-text">${esc(X.body)}</blockquote></figure><div class="r-card-actions">${btn(X.yes, "primary")}${btn(X.no, "default")}${btn(X.action, "ghost", { icon: "globe" })}</div></div>`;
+    }
     if (o.state === "url") {
       const U = H.questionUrl;
       return `<div class="r-card" role="group" aria-label="${esc(U.question)}"><div class="r-card-title">${esc(U.question)}</div><a class="r-url" href="#">${icon("external-link", 14)}<span>${esc(U.url)}</span></a><div class="r-card-actions">${btn("打开链接", "primary", { icon: "external-link" })}${btn("跳过", "default")}<span class="r-card-note">完成后回到这里继续</span></div></div>`;

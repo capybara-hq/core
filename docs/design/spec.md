@@ -2086,12 +2086,13 @@ States: `org`, `address`
 
 - `AskUserQuestion` and connector elicitation. **Pending**: a floating card (`line` border, not accent), gap `space.3`, `role="group"` named by the question. The question in the prose font (`prose`, 600). Options as rows (`row.default` minimum height, padding `pad.default`, 1px `line` border, radius `sm`; a 12 round radio, `line-strong`, `accent` when checked; the checked row has an `ink` border); multi-select options use checkboxes; with `allowOther` a last row "其他：" / "Other:" holds a free-text input. Actions: "回答" / "Answer" (primary), "跳过" / "Skip" (default).
 - **URL mode** (the form has a `url`): the full address as a link (`small` `ink`, underlined in `line-strong`, breaking anywhere, `external-link` 14 `muted` before it), "打开链接" / "Open link" (primary, with the icon), Skip, and the note "完成后回到这里继续" / "Come back here when you're done".
+- **Buttons** (state `confirm`; the form's `choices`, plugin-sdk `InputForm`): one mechanism for every question answered by pressing a button. When the form's only field is required and a single choice (`boolean`, or `enum` without Other) and carries `choices`, the field draws no control: the actions are one button per choice in their order, the first primary and the rest default, and a press answers at once (no 回答). A confirm form is `{ done: boolean }` with 完成 / 取消; a one-value wait (long waits spec §5.5, 结束等待) is a one-choice `enum`. An optional **body** (`InputForm.body`) sits under the short title as the requester's quote (`hitl` reason style: `line-strong` left rule, prose). An optional **action** (a `ghost` button with its icon after the choices, e.g. 打开浏览器 for a question that names a panel) does not answer.
 - **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`. The other closed states use the same two lines with their word in place of the answer: **skipped** (the run's starter sent a message instead of answering) says "已跳过：直接回复了消息" / "Skipped: replied with a message" with " · <who>"; **cancelled** (the run ended first) says "已取消" / "Cancelled"; **expired** says "已过期" / "Expired". Cancelled and expired name no one.
 
 - **Answerer as a person** (state `person`): the `who` of an answered or skipped question is `string | { name, avatarUrl }` as in §6.16.11: the " · " stays `faint` and the person is a `PersonName` at size 16 after it.
 
 <!-- states: question-block -->
-States: `pending`, `url`, `answered`, `person`, `skipped`, `cancelled`, `expired`
+States: `pending`, `url`, `confirm`, `answered`, `person`, `skipped`, `cancelled`, `expired`
 
 <!-- size-table: question-block -->
 | Part | State | Property | Value |

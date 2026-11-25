@@ -51,7 +51,7 @@ import { HandoffCard } from "../HandoffCard";
 import { InitialPasswordReveal } from "../InitialPasswordReveal";
 import { InvitationLinkReveal } from "../InvitationLinkReveal";
 import { Person } from "../Person";
-import { QuestionCard } from "../QuestionCard";
+import { QuestionCard, type QuestionPanel } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
 import { CompactingRow } from "./CompactingRow";
@@ -119,6 +119,8 @@ export type ThreadProps = {
   filePaths?: ReadonlyMap<string, string>;
   /** Renders an inline card (Task 20's extension slot); rendered after the thread items. */
   renderCard?(e: Extract<TimelineEntry, { kind: "card" }>): ReactNode;
+  /** The panel a question names (`InputRequired.open`) as its card's action. */
+  questionPanel?: QuestionPanel;
   /** The sub-agent open in the right panel. */
   openSubagent?: string;
   /** Opens a sub-agent in the right panel (`#subagent=`): a waiting sub-agent's line. */
@@ -164,6 +166,7 @@ type EntryCallbacks = {
     | "onOpenAgentMap"
     | "onOpenTask"
     | "renderCard"
+    | "questionPanel"
     | "renderTask"]?: ThreadProps[K] | undefined;
 };
 
@@ -224,6 +227,7 @@ export function Thread({
   listedFiles,
   filePaths,
   renderCard,
+  questionPanel,
   openSubagent,
   onOpenSubagent,
   onOpenAgent,
@@ -289,6 +293,7 @@ export function Thread({
     onOpenAgentMap,
     onOpenTask,
     renderCard,
+    questionPanel,
     renderTask,
   };
   const trajectory =
@@ -461,7 +466,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const onOpenTask = c.has.openTask
     ? (taskId: string) => cb.current.onOpenTask?.(taskId)
     : undefined;
-  const { renderCard, renderTask } = cb.current;
+  const { renderCard, renderTask, questionPanel } = cb.current;
 
   const person = usePersonLookup(c.people);
   // who stopped a run: the system, or a person with their avatar (the viewer reads "You")
@@ -931,7 +936,13 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "approval":
         return <ApprovalCard orgId={orgId} item={e.item} info={info.get(e.item.toolKey)} />;
       case "question":
-        return <QuestionCard orgId={orgId} item={e.item} />;
+        return (
+          <QuestionCard
+            orgId={orgId}
+            item={e.item}
+            {...(questionPanel !== undefined ? { panel: questionPanel } : {})}
+          />
+        );
       case "connect":
         return <ConnectCard orgId={orgId} item={e.item} />;
       case "card":

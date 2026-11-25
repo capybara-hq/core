@@ -2081,6 +2081,7 @@
     }
   },
   "question": {
+    "openPanel": "打开{name}",
     "title": "需要你的输入",
     "waiting": "待回答",
     "other": "其他",

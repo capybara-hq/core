@@ -3,6 +3,7 @@
 import {
   Checkbox,
   Field,
+  type IconName,
   Input,
   type PersonLike,
   QuestionBlock,
@@ -229,8 +230,21 @@ export function questionField(f: InputForm["fields"][number], locale: string): Q
     ...(typeof s.minimum === "number" ? { min: s.minimum } : {}),
     ...(typeof s.maximum === "number" ? { max: s.maximum } : {}),
     ...(typeof s.maxLength === "number" ? { maxLength: s.maxLength } : {}),
+    ...(f.choices !== undefined
+      ? { choices: f.choices.map((c) => ({ value: c.value, label: formText(c.label, locale) })) }
+      : {}),
   };
 }
+
+/**
+ * The panel a question names, as the card's action: `null` when the page does not offer that
+ * panel (not listed, another extension's), so the card shows no action.
+ */
+export type QuestionPanel = (open: {
+  plugin: string;
+  contribution: string;
+  item?: string;
+}) => { label: string; icon?: IconName; onOpen(): void } | null;
 
 /**
  * A question in the conversation (`AskUserQuestion`, an extension's tool, MCP elicitation; design
@@ -238,7 +252,16 @@ export function questionField(f: InputForm["fields"][number], locale: string): Q
  * Answered, one question / answer line; skipped (a message sent instead), expired or cancelled,
  * its line.
  */
-export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionItem }) {
+export function QuestionCard({
+  orgId,
+  item,
+  panel,
+}: {
+  orgId: string;
+  item: QuestionItem;
+  /** Resolves the panel the question names (`item.open`) to the card's action. */
+  panel?: QuestionPanel;
+}) {
   const t = useTranslations("question");
   const locale = useLocale();
   const toast = useToast();
@@ -266,14 +289,17 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const pairs = (answer: Record<string, unknown>): [string, string][] =>
     item.form.fields
       .filter((f) => Object.hasOwn(answer, f.key))
-      .map((f) => [
-        formText(f.label, locale),
-        answerText(
-          answer[f.key] as FormAnswer[string],
-          { yes: t("yes"), no: t("no") },
-          t("separator"),
-        ),
-      ]);
+      .map((f) => {
+        const v = answer[f.key] as FormAnswer[string];
+        // a button question reads back the pressed button's label
+        const choice = f.choices?.find((c) => c.value === v);
+        return [
+          formText(f.label, locale),
+          choice !== undefined
+            ? formText(choice.label, locale)
+            : answerText(v, { yes: t("yes"), no: t("no") }, t("separator")),
+        ];
+      });
   // The answerer: the viewer ("you") or a person with their avatar, from the thread's people (else
   // the question read); one who left reads "Former member". Nobody (no id): no line.
   const who = (
@@ -322,11 +348,23 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   }
 
   const link = safeLink(item.form.url);
+  const body = formText(item.form.body, locale);
+  const action = item.open !== undefined ? (panel?.(item.open) ?? null) : null;
   return (
     <div data-role="question" data-question-id={item.questionId}>
       <QuestionBlock
         title={title}
         {...(link !== undefined ? { url: link } : {})}
+        {...(body !== "" ? { body } : {})}
+        {...(action !== null
+          ? {
+              action: {
+                label: t("openPanel", { name: action.label }),
+                icon: action.icon ?? ("panel-right" as const),
+                onClick: action.onOpen,
+              },
+            }
+          : {})}
         fields={fields}
         state={state}
         onAnswer={(a) => void answer(a as FormAnswer)}

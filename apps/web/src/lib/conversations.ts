@@ -44,6 +44,8 @@ export interface InputForm {
   title: FormText;
   /** 需要用户在浏览器里打开的外部页面（MCP URL 模式的 elicitation）。 */
   url?: string;
+  /** Longer text under the title (plugin-sdk `InputForm.body`). */
+  body?: FormText;
   fields: {
     key: string;
     label: FormText;
@@ -52,6 +54,8 @@ export interface InputForm {
     multiSelect?: boolean;
     allowOther?: boolean;
     required?: boolean;
+    /** Buttons in place of the control (plugin-sdk `InputForm` `choices`). */
+    choices?: { value: string | boolean; label: FormText }[];
   }[];
 }
 

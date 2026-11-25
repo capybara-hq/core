@@ -788,6 +788,8 @@ const InputFormSchema = z.object({
   title: FormTextSchema,
   /** 需要用户在浏览器里打开的外部页面（MCP URL 模式的 elicitation）。较早的事件没有。 */
   url: z.string().optional(),
+  /** Longer text under the title (`InputForm.body`). Older events have none. */
+  body: FormTextSchema.optional(),
   fields: z.array(
     z.object({
       key: z.string(),
@@ -797,6 +799,10 @@ const InputFormSchema = z.object({
       multiSelect: z.boolean().optional(),
       allowOther: z.boolean().optional(),
       required: z.boolean().optional(),
+      /** The field's buttons (`InputForm` `choices`). Older events have none. */
+      choices: z
+        .array(z.object({ value: z.union([z.string(), z.boolean()]), label: FormTextSchema }))
+        .optional(),
     }),
   ),
 });

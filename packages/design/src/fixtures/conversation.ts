@@ -630,6 +630,8 @@ export const HITL_FIXTURE: {
   };
   question: { question: string; options: string[]; selected: number; other: string };
   questionUrl: { question: string; url: string };
+  /** A confirm question (buttons from `choices`): a short title, the reason as body, an action. */
+  questionConfirm: { title: string; body: string; yes: string; no: string; action: string };
   connect: { service: string; reason: string; note: string };
   /** A network ask (network ask spec §6.5): one host, several hosts, and the org / address facts. */
   network: {
@@ -702,6 +704,13 @@ export const HITL_FIXTURE: {
   questionUrl: {
     question: "Acme 门户需要你在浏览器里确认授权",
     url: "https://portal.acme.example/oauth/consent?session=7f3a2c",
+  },
+  questionConfirm: {
+    title: "请在浏览器中完成：登录 Acme 门户",
+    body: "Acme 门户的登录页已在浏览器里打开。登录需要你的账号，智能体不会代填密码；登录完成后点「完成」，智能体从这里继续。",
+    yes: "完成",
+    no: "取消",
+    action: "打开浏览器",
   },
   connect: {
     service: "Acme 文档",

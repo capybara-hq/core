@@ -2093,6 +2093,7 @@
     }
   },
   "question": {
+    "openPanel": "Open {name}",
     "title": "Input required",
     "waiting": "Waiting",
     "other": "Other",

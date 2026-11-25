@@ -216,7 +216,10 @@ request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRun
 - Web `QuestionCard`: a question with `watch: true` renders as a wait: the form's title (the
   extension's localized text, e.g. 智能体正在等待：页面出现“支付成功”), the deadline, and the form's
   control: a required single-choice field with one value renders as one button (结束等待), not a
-  radio plus submit. Status `woken` reads 等待已结束 / Wait ended; `expired` on a
+  radio plus submit. (amended 2026-11-25) That is the `InputForm` `choices` mechanism (architecture
+  spec §4, design spec §6.16.12 state `confirm`): the wait form's field is a required one-value
+  `enum` with `choices: [{ value, label: 结束等待 / End wait }]`, so the wait card reuses the button
+  path the confirm form uses, no second rendering path. Status `woken` reads 等待已结束 / Wait ended; `expired` on a
   watched question reads 等待已超时 / Wait timed out. zh + en through i18n. A sub-agent's watched
   wait surfaces in the root as `subagent_waiting`, which gains `watch: true` so the root card renders
   the same wait card.

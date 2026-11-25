@@ -2310,7 +2310,17 @@ export interface InboundSender {
 }
 
 // @public
+export const INPUT_CHOICE_LABEL_MAX = 40;
+
+// @public
+export const INPUT_CHOICES_MAX = 3;
+
+// @public
+export const INPUT_FORM_BODY_MAX = 2000;
+
+// @public
 export interface InputForm {
+    body?: LocalizedText;
     fields: {
         key: string;
         label: LocalizedText;
@@ -2319,6 +2329,10 @@ export interface InputForm {
         multiSelect?: boolean;
         allowOther?: boolean;
         required?: boolean;
+        choices?: {
+            value: string | boolean;
+            label: LocalizedText;
+        }[];
     }[];
     title: LocalizedText;
     url?: string;
