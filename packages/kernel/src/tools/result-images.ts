@@ -22,6 +22,9 @@ export const RESULT_IMAGES_MAX = 10;
  */
 export const RESULT_IMAGE_MAX_PIXELS = 40_000_000;
 
+/** base64 characters decoded to sniff a block's type without decoding it (a 64-byte head). */
+const SNIFF_BASE64_CHARS = 88;
+
 /**
  * Stores one image as a `read` copy of the calling conversation (`AttachmentsService.storeRead`
  * bound to it): the copy, or refused by the per-conversation cap. Throws `storage.unavailable`
@@ -42,6 +45,7 @@ export type NotStoredReason =
   | "count"
   | "cap"
   | "storage"
+  | "stopped"
   | "error";
 
 /** The per-block texts (in image order) and the stored copies of one tool result. */
@@ -89,6 +93,7 @@ const REASON_TEXT: Record<NotStoredReason, string> = {
   count: `a tool result stores at most ${RESULT_IMAGES_MAX} images.`,
   cap: "this conversation reached its limit for stored images.",
   storage: "file storage is not configured in this deployment.",
+  stopped: "the run was stopped while its images were stored.",
   error: "storing it failed.",
 };
 
@@ -172,8 +177,9 @@ const isApiStorageUnavailable = (e: unknown): boolean =>
  * before decoding), its bytes sniff as PNG, JPEG, GIF or WebP, and it decodes as a whole image
  * within {@link RESULT_IMAGE_MAX_PIXELS}; `store` absent or throwing `storage.unavailable` means no
  * object store; any other error is passed to `onError` and the block is not stored (the call's
- * result is still written). `signal` (the run's) is checked before each image: a stopped run stores
- * nothing more. A copy stored before a crash that keeps the result from being written stays bound
+ * result is still written). `signal` (the run's) is checked before each image: once the run is
+ * stopped, nothing more is stored and the remaining images read "not stored" (the tool's own result
+ * is still written). A copy stored before a crash that keeps the result from being written stays bound
  * and unreferenced until the conversation's purge (the same window as `Read`'s copies).
  */
 export async function storeResultImages(
@@ -204,10 +210,16 @@ export async function storeResultImages(
       continue;
     }
     if (noStorage || store === undefined) {
-      notStored("storage");
+      // the head is enough to tell an image from another type, so that reason still wins
+      notStored(
+        sniffImage(decode(b.data.slice(0, SNIFF_BASE64_CHARS))) === null ? "type" : "storage",
+      );
       continue;
     }
-    signal?.throwIfAborted();
+    if (signal?.aborted) {
+      notStored("stopped");
+      continue;
+    }
     const data = decode(b.data);
     const size = data.byteLength;
     const sniffed = sniffImage(data);
@@ -220,7 +232,10 @@ export async function storeResultImages(
       notStored(bad, size);
       continue;
     }
-    signal?.throwIfAborted();
+    if (signal?.aborted) {
+      notStored("stopped", size);
+      continue;
+    }
     const name = resultImageName(toolKey, media.length, sniffed.mediaType);
     try {
       const stored = await store({ name, contentType: sniffed.mediaType, data });
