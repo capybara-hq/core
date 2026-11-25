@@ -749,8 +749,11 @@ CRLF = "\r\n"
 def get(port, header=""):
     return ask(("GET http://NAME:%d/ HTTP/1.1" % port + CRLF + header + CRLF + CRLF).encode())
 print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).encode()),
-      get(18080, auth), get(80, auth))
-`.replaceAll("NAME", NAMES.granted);
+      get(18080, auth), get(80, auth),
+      ask(("CONNECT UNGRANTED:443 HTTP/1.1" + CRLF + auth + CRLF + CRLF).encode()))
+`
+      .replaceAll("UNGRANTED", NAMES.ungranted4)
+      .replaceAll("NAME", NAMES.granted);
     const ask = async (target: HostBackend) => {
       const scope = scopeFor(target.deviceId, {
         profile: "approve-for-me",
@@ -766,7 +769,8 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
       });
     };
     // production rules: no token 407, CONNECT to another port 403, plain request to another port
-    // 403, and the loopback the name resolves to is refused before any connect (403)
+    // 403, the loopback the name resolves to is refused before any connect (403), and so is a
+    // name off the list (403)
     device.run("mkdir -m 700 /home/sandbox/state-private");
     const strict = new HostServer(device);
     servers.push(strict);
@@ -776,10 +780,20 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
       privateProxyTargets: false,
     });
     const refused = await ask(production);
-    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 403");
+    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 403 403");
+    // the result reports the refused hosts with the macOS layers: the granted name resolved to a
+    // closed address (address, which no grant lifts; its port refusal first had no layer), the
+    // name off the list the device layer
+    expect(refused.network?.blocked).toEqual([
+      { host: NAMES.granted, port: 18080, layer: "address" },
+      { host: NAMES.ungranted4, port: 443, layer: "device" },
+    ]);
     // the fixture seam lifts only the address and port rules: the same target is then reached
     const seamed = await ask(backend);
-    expect(seamed.stdout.trim(), seamed.stderr).toBe("407 200 200 200");
+    expect(seamed.stdout.trim(), seamed.stderr).toBe("407 200 200 200 403");
+    expect(seamed.network?.blocked).toEqual([
+      { host: NAMES.ungranted4, port: 443, layer: "device" },
+    ]);
   });
 
   it("a brokered FIFO open waits for its peer without pinning a broker thread", async () => {

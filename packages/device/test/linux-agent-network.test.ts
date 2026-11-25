@@ -3,9 +3,11 @@ import {
   ADDRESS_CLASS_RANGES,
   classifyAddress,
   SANDBOX_FAKE_IP_DNS,
+  sandboxProxyRefusalLayer,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
+import { networkBlocked } from "../src/exec/network-denials.js";
 
 // The Linux forwarder decides every open-network connection with its own Python copy of the SDK's
 // address-class table (approval-only profiles design, "Open network"). These tests keep the copy
@@ -300,4 +302,127 @@ print(json.dumps({"first": first, "order": order, "cached": cached, "expired": e
       );
     },
   );
+});
+
+const PROXY_START = "# ---- per-operation proxy";
+const PROXY_END = "# ---- execution";
+
+describe("Linux forwarder refusals", () => {
+  // The forwarder of one operation, run on its own (any OS with python3): names resolve through a
+  // stand-in system resolver, encrypted DNS always fails. Each refusal answers 403 with the macOS
+  // proxy's reason as its status phrase and is recorded in the macOS violation line format, so
+  // the device reports it with the same layers as on macOS (networkBlocked, the SDK's mapping).
+  it.runIf(python)("answers each refusal with its reason and records it with its layer", () => {
+    const source = [
+      "import base64, errno, hmac, http.client, ipaddress, json, os, re, socket, ssl, struct",
+      "import sys, threading, time, urllib.parse",
+      "CHUNK = 65536",
+      "MAX_PROXY_CONNECTIONS = 8",
+      String.raw`
+NAMES = {"private.test": "10.0.0.7", "loop.test": "127.0.0.1", "fake.test": "198.18.0.7"}
+system = socket.getaddrinfo
+def stand_in(host, port, *rest, **named):
+    if host in NAMES:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (NAMES[host], port))]
+    return system(host, port, *rest, **named)
+socket.getaddrinfo = stand_in`,
+      between(LINUX_DEVICE_AGENT, BLOCK_START, BLOCK_END),
+      between(LINUX_DEVICE_AGENT, RESOLUTION_START, RESOLUTION_END),
+      between(LINUX_DEVICE_AGENT, PROXY_START, PROXY_END),
+      String.raw`
+class FailingDoh:
+    def resolve(self, name):
+        raise FakeIpUnresolved(errno.EACCES, FAKE_IP_REFUSAL)
+def ask(proxy, line):
+    s = socket.create_connection(("127.0.0.1", proxy.port), 5)
+    s.sendall((line + "\r\nProxy-Authorization: " + proxy.authorization + "\r\n\r\n").encode())
+    data = b""
+    while True:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    s.close()
+    return data.split(b"\r\n")[0].decode()
+listed = Forwarder(["example.com", "private.test"], doh=FailingDoh())
+opened = Forwarder([], open_network=True, doh=FailingDoh(), closed=closed_set(["9.9.9.9"]))
+print(json.dumps({
+    "listed": [ask(listed, line) for line in [
+        "CONNECT example.org:443 HTTP/1.1",
+        "CONNECT private.test:443 HTTP/1.1",
+        "GET http://private.test/x HTTP/1.1",
+        "CONNECT example.com:8443 HTTP/1.1",
+        "CONNECT 10.0.0.1:443 HTTP/1.1",
+        "CONNECT :443 HTTP/1.1",
+        "CONNECT bad\x01host:443 HTTP/1.1",
+    ]],
+    "listedRefusals": listed.refusals(),
+    "opened": [ask(opened, line) for line in [
+        "CONNECT [::1]:22 HTTP/1.1",
+        "CONNECT loop.test:8080 HTTP/1.1",
+        "CONNECT fake.test:443 HTTP/1.1",
+        "CONNECT 9.9.9.9:443 HTTP/1.1",
+    ]],
+    "openedRefusals": opened.refusals(),
+}))
+`,
+    ].join("\n");
+    const run = spawnSync("python3", ["-I", "-c", source], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    const out = JSON.parse(run.stdout) as Record<string, string[]>;
+    expect(out.listed).toEqual([
+      "HTTP/1.1 403 host is not on the allow list",
+      "HTTP/1.1 403 resolved to a private address",
+      "HTTP/1.1 403 resolved to a private address",
+      "HTTP/1.1 403 port is not allowed",
+      "HTTP/1.1 403 address is a private address",
+      "HTTP/1.1 403 malformed host",
+      "HTTP/1.1 403 host is not on the allow list",
+    ]);
+    // a refusal without a host, or with one no refusal line may carry, is answered only
+    expect(out.listedRefusals).toEqual([
+      "deny network-outbound example.org:443 (host is not on the allow list)",
+      "deny network-outbound private.test:443 (resolved to a private address)",
+      "deny network-outbound private.test:80 (resolved to a private address)",
+      "deny network-outbound example.com:8443 (port is not allowed)",
+      "deny network-outbound 10.0.0.1:443 (address is a private address)",
+    ]);
+    expect(out.opened).toEqual([
+      "HTTP/1.1 403 address is a loopback address",
+      "HTTP/1.1 403 resolved to a loopback address",
+      `HTTP/1.1 403 resolved by a fake-IP resolver and encrypted DNS did not answer`,
+      "HTTP/1.1 403 address is a listed address",
+    ]);
+    // each status phrase maps to the layer the SDK gives the macOS proxy's reason
+    expect(
+      [...(out.listed ?? []), ...(out.opened ?? [])].map((line) =>
+        sandboxProxyRefusalLayer(line.replace("HTTP/1.1 403 ", "")),
+      ),
+    ).toEqual([
+      "device",
+      "address",
+      "address",
+      "unknown",
+      "address",
+      "address",
+      "device",
+      "address",
+      "address",
+      "unknown",
+      "address",
+    ]);
+    // the exec result's report: the same layers as on macOS
+    expect(networkBlocked(out.listedRefusals ?? [])).toEqual([
+      { host: "example.org", port: 443, layer: "device" },
+      { host: "private.test", port: 443, layer: "address" },
+      { host: "example.com", port: 8443, layer: "unknown" },
+      { host: "10.0.0.1", port: 443, layer: "address" },
+    ]);
+    expect(networkBlocked(out.openedRefusals ?? [])).toEqual([
+      { host: "[::1]", port: 22, layer: "address" },
+      { host: "loop.test", port: 8080, layer: "address" },
+      { host: "fake.test", port: 443, layer: "unknown" },
+      { host: "9.9.9.9", port: 443, layer: "address" },
+    ]);
+  });
 });
