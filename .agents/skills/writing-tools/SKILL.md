@@ -284,6 +284,7 @@ async (input, call) => {
 - `state` must be JSON-serializable and ≤ 16 KB; it is stored in PG and the resume may happen on another replica, so **don't keep anything the resume needs in memory**.
 - The same call may request input at most 3 times in a row; the 4th -> `Tool requested user input too many times.`
 - The builtin `AskUserQuestion` is implemented with this mechanism and can serve as a reference.
+- **`open`** (display only): a plugin tool may add `open: { contribution, item? }` (a `UiOpen`) naming a `conversation.panel` of its own extension, such as the browser panel for a handoff. The pipeline (`openOf`) keeps it only when the contribution is a panel of the tool's extension and `item` is 1–200 characters, and writes `{ plugin, contribution, item? }` to `question_asked` (the plugin is the tool's, never the extension's word); anything else is dropped with a warning and the form is asked as usual. The conversation page opens that panel once, when the question arrives while it is open and unanswered (`useAskedPanels` in `RightArea.tsx`; a question already in the log at load opens nothing). Tests: `pipeline.test.ts` (InputRequired.open), `right-area-panel-mode.test.tsx`.
 - **Skipped by a message** (spec `2026-11-10-reply-while-question-pending-design.md`): a message from the run's starter
   in the conversation closes every pending, not yet due question of that conversation's run as `skipped`
   (`QuestionsService.skipPendingIn`, in the message's transaction, after the conversation row lock). The handler is

@@ -281,7 +281,10 @@ by `actor.runId`). The browser is a long-lived service, so:
 - **Expanded state**: the right area's existing full-screen mode (`RightArea` `full`: the panel
   maximised inside the page) at near 1:1; 接管 asks the host to switch to it through the embed bridge
   (a new bridge message if none exists), 交还智能体 and `Esc` restore. No new overlay. (amended
-  2026-11-23)
+  2026-11-23) The panel's frame stays mounted across the switch (one panel slot laid over the
+  content area), and the host tells the embed the mode it draws (`panel-mode { full }` after `init`
+  and on every change); the panel derives its layout from that message. (amended 2026-11-25,
+  core#818, core#832)
 - Input coordinates are mapped back through the scale. The viewport stays fixed (default 1280×800);
   resizing or closing the panel never changes it. A viewport switch (desktop / tablet / phone via
   `Emulation.setDeviceMetricsOverride`) is phase 2.
@@ -314,7 +317,9 @@ Primary, structure based (every chat model):
 - click / type / select / press key / scroll / hover by ref; upload a workspace file to a ref
 - wait (for text, a ref, navigation, or a time cap)
 - handoff (`message` for the person): phase 1 shows the question card in the conversation and a
-  banner in the panel (opening the panel automatically is phase 2); waits until
+  banner in the panel, and opens the panel (amended 2026-11-25, core#818: the handoff's
+  `InputRequired` carries `open`, a `conversation.panel` of the extension, which the kernel checks
+  and writes to `question_asked`; the page opens it when the question arrives); waits until
   the person hands back or cancels, then returns the new page state. The wait is the existing
   resumable `InputRequired` (a two-choice form: 完成 / 取消, answered in the conversation or by
   交还智能体 in the panel through `ctx.deviceAccess.answerHandoff`), so it survives replica restarts. `wait` with a long cap uses the same

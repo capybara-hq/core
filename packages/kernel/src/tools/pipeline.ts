@@ -515,6 +515,11 @@ interface PipelineDeps {
    */
   inlineViews(plugin: string): ReadonlySet<string>;
   /**
+   * Ids of an extension's `conversation.panel` contributions (read live, no alias): a plugin
+   * tool's `InputRequired.open` must name one of them, otherwise it is dropped with a warning.
+   */
+  panels(plugin: string): ReadonlySet<string>;
+  /**
    * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
    */
@@ -627,6 +632,8 @@ export type ExecOutcome =
       kind: "input_required";
       form: InputForm;
       state: unknown;
+      /** A plugin tool's `InputRequired.open`, unchecked (`openOf` checks it before asking). */
+      open?: unknown;
       blocked?: ServiceBlocked;
       review?: ReviewRecord;
     }
@@ -1207,6 +1214,12 @@ export class ToolPipeline {
         new Set(
           (host?.current(plugin)?.ui ?? [])
             .filter((r) => r.slot.id === "conversation.tool-result.card")
+            .map((r) => r.contribution.id),
+        ),
+      panels: (plugin) =>
+        new Set(
+          (host?.current(plugin)?.ui ?? [])
+            .filter((r) => r.slot.id === "conversation.panel")
             .map((r) => r.contribution.id),
         ),
       onToolsChanged: (orgId, connectorId) => {
@@ -1924,7 +1937,15 @@ export class ToolPipeline {
       }
     }
     if (outcome.kind === "input_required") {
-      const asked = await this.askInput(ctx, call.id, tool.key, attempt, outcome);
+      const open =
+        tool.source.kind === "plugin" && outcome.open !== undefined
+          ? this.openOf(outcome.open, tool.source.plugin, tool.key)
+          : undefined;
+      const { open: _raw, ...asking } = outcome;
+      const asked = await this.askInput(ctx, call.id, tool.key, attempt, {
+        ...asking,
+        ...(open !== undefined && { open }),
+      });
       if (typeof asked !== "string") return asked;
       outcome = {
         kind: "error",
@@ -3322,7 +3343,13 @@ export class ToolPipeline {
     callId: string,
     toolKey: string,
     attempt: number,
-    req: { form: InputForm; state: unknown; blocked?: ServiceBlocked; review?: ReviewRecord },
+    req: {
+      form: InputForm;
+      state: unknown;
+      blocked?: ServiceBlocked;
+      review?: ReviewRecord;
+      open?: { plugin: string; contribution: string; item?: string };
+    },
   ): Promise<WaitingFor | string> {
     if (attempt > MAX_INPUT_ROUNDS) return TOO_MANY_INPUT_REQUESTS_TEXT;
     const problems = validateInputForm(req.form);
@@ -3347,6 +3374,7 @@ export class ToolPipeline {
       toolKey,
       form: req.form,
       state: JSON.parse(stateJson) as unknown,
+      ...(req.open !== undefined && { open: req.open }),
       // kept for the call's result, which a later round writes
       ...((req.review !== undefined || req.blocked !== undefined) && {
         carried: {
@@ -3521,7 +3549,12 @@ export class ToolPipeline {
         return withBlocked({ kind: "error", message: RUN_STOPPED_DURING_TEXT }, scope);
       if (isInputRequired(r.value)) {
         return withBlocked(
-          { kind: "input_required", form: r.value.form, state: r.value.state ?? null },
+          {
+            kind: "input_required",
+            form: r.value.form,
+            state: r.value.state ?? null,
+            ...(r.value.open !== undefined && { open: r.value.open }),
+          },
           scope,
         );
       }
@@ -3824,6 +3857,42 @@ export class ToolPipeline {
       return undefined;
     }
     return { plugin, view: x.view, ...(x.key !== undefined && { key: x.key as string }) };
+  }
+
+  /**
+   * A plugin tool's `InputRequired.open` (display only): `contribution` must be a
+   * `conversation.panel` of the same extension and `item` at most 200 characters; anything else is
+   * dropped with a warning and the form is asked as usual. The plugin is the tool's, never the
+   * extension's word.
+   */
+  private openOf(
+    open: unknown,
+    plugin: string,
+    toolKey: string,
+  ): { plugin: string; contribution: string; item?: string } | undefined {
+    const x = (typeof open === "object" && open !== null ? open : {}) as Record<string, unknown>;
+    const itemOk =
+      x.item === undefined || (typeof x.item === "string" && x.item !== "" && x.item.length <= 200);
+    if (
+      typeof x.contribution !== "string" ||
+      !this.deps.panels(plugin).has(x.contribution) ||
+      !itemOk
+    ) {
+      this.deps.log.warn(
+        "tool asked for input with an open target that is not a panel of its extension; dropped",
+        {
+          toolKey,
+          contribution:
+            typeof x.contribution === "string" ? x.contribution.slice(0, 100) : undefined,
+        },
+      );
+      return undefined;
+    }
+    return {
+      plugin,
+      contribution: x.contribution,
+      ...(x.item !== undefined && { item: x.item as string }),
+    };
   }
 
   /**

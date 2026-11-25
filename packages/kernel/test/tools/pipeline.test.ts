@@ -9,6 +9,7 @@ import {
   type ToolHandler,
   type ToolResult,
   type ToolSpec,
+  type UiOpen,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -239,6 +240,7 @@ function pipeline(): ToolPipeline {
     questions: questionsFor(db, eventLog, config),
     config,
     log: silent,
+    panels: { probe: ["panel"] },
     onToolsChanged: (orgId, connectorId) => {
       toolsChanged.push([orgId, connectorId]);
     },
@@ -1095,6 +1097,50 @@ describe("ToolPipeline.runStep", () => {
     // 仍 pending：继续等，处理函数不再被调用
     expect(await pipeline().runStep(stepCtx())).toEqual(out);
     expect(handlerCalls.form).toHaveLength(1);
+  });
+
+  it("InputRequired.open: a panel of the tool's own extension goes into question_asked; another is dropped", async () => {
+    let open: unknown = { contribution: "panel", item: "tab-1" };
+    handlers.plugin__probe__form = async () => ({
+      kind: "input_required",
+      form: { title: "t", fields: [{ key: "a", label: "A", schema: { type: "string" } }] },
+      // a misbehaving extension's target, too (the kernel checks it at run time)
+      open: open as UiOpen,
+    });
+    await insertRun();
+    await assistant([{ id: "c1", name: "plugin__probe__form", input: {} }]);
+    await pipeline().runStep(stepCtx());
+    const first = (await eventsOf(db, seed.conversationId)).find(
+      (e) => e.type === "question_asked",
+    );
+    // the plugin is the tool's own, never the extension's word
+    expect((first?.payload as { open?: unknown } | undefined)?.open).toEqual({
+      plugin: "probe",
+      contribution: "panel",
+      item: "tab-1",
+    });
+    const bads = [
+      { contribution: "not-a-panel" },
+      { contribution: "panel", item: "" },
+      { contribution: "panel", plugin: "other", item: "x".repeat(201) },
+      "panel",
+    ];
+    for (const [i, bad] of bads.entries()) {
+      open = bad;
+      // a later step of the run asks again
+      const step = i + 2;
+      const callId = `c${step}`;
+      await assistant([{ id: callId, name: "plugin__probe__form", input: {} }], step);
+      await pipeline().runStep(stepCtx({ step }));
+      const asked = (await eventsOf(db, seed.conversationId)).find(
+        (e) => e.type === "question_asked" && (e.payload as { callId: string }).callId === callId,
+      );
+      expect(asked, JSON.stringify(bad)).toBeDefined();
+      expect(
+        (asked?.payload as { open?: unknown } | undefined)?.open,
+        JSON.stringify(bad),
+      ).toBeUndefined();
+    }
   });
 
   it("a resumed call keeps its callId and idempotencyKey; another run's call gets another key (#116)", async () => {
