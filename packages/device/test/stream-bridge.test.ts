@@ -350,8 +350,19 @@ it("the staged session offers binary stream data and uses it once the ready agre
   const texts: (Frame & { transport?: { binaryStreamData?: boolean } })[] = [];
   const binaries: { streamId: string; data: string }[] = [];
   const waiters: (() => void)[] = [];
-  const until = async (pred: () => boolean) => {
-    while (!pred()) await new Promise<void>((r) => waiters.push(r));
+  // each wait names what it waits for and what came, so a stall says where it stopped
+  const until = async (pred: () => boolean, what: string) => {
+    const deadline = Date.now() + 10_000;
+    while (!pred()) {
+      if (Date.now() > deadline)
+        throw new Error(
+          `timed out waiting for ${what}; got ${JSON.stringify({ texts, binaries })}`,
+        );
+      await new Promise<void>((r) => {
+        waiters.push(r);
+        setTimeout(r, 200);
+      });
+    }
   };
   socket.on("message", (raw, isBinary) => {
     if (isBinary) {
@@ -407,21 +418,29 @@ it("the staged session offers binary stream data and uses it once the ready agre
     undefined,
     f.supervisor,
   );
-  await until(() => texts.some((x) => x.type === "hello"));
+  await until(() => texts.some((x) => x.type === "hello"), "hello");
   expect(texts.find((x) => x.type === "hello")?.transport).toMatchObject({
     binaryStreamData: true,
   });
   socket.send(
     JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser" } }),
   );
-  await until(() => texts.some((x) => x.type === "stream-opened"));
+  await until(() => texts.some((x) => x.type === "stream-opened"), "stream-opened");
   socket.send(encodeDialInStreamData("s1", new TextEncoder().encode("hi")));
-  await until(() => binaries.length > 0);
+  await until(() => binaries.length > 0, "the binary echo");
   expect(binaries).toEqual([{ streamId: "s1", data: "hi" }]);
   // credit still travels as JSON
-  await until(() => texts.some((x) => x.type === "stream-credit"));
+  await until(() => texts.some((x) => x.type === "stream-credit"), "stream-credit");
   // a binary message that is not stream-data breaks the protocol: the socket closes
   socket.send(Uint8Array.of(9, 9, 9));
-  const [code] = (await closed) as [number];
+  const [code] = (await Promise.race([
+    closed,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`no close; client readyState ${client.readyState}`)),
+        10_000,
+      ),
+    ),
+  ])) as [number];
   expect(code).toBe(4400);
 });
