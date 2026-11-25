@@ -14,6 +14,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEVICE_SERVICE_FILES_DIGEST_VECTOR,
   DEVICE_SERVICE_INSTALL_ENV,
   DEVICE_SERVICE_INSTALL_SEAL,
   DEVICE_SERVICE_MACH_CHROMIUM,
@@ -1075,4 +1076,20 @@ it("removes what services kept under bare names before ids, keeping every servic
     await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
   ).toMatchObject({ ok: true });
   expect((await lstat(join(deviceDir, "svc/Later_Name"))).isDirectory()).toBe(true);
+});
+
+it("a running service reports the SDK's digest of the files it was sent (the pinned vector)", async () => {
+  const { supervisor } = await fixture();
+  const files = Object.fromEntries(
+    Object.entries(DEVICE_SERVICE_FILES_DIGEST_VECTOR.files).map(([k, v]) => [k, b64(v)]),
+  );
+  const res = await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: { ...spec(), files } },
+    signal(),
+  );
+  expect(res).toMatchObject({
+    ok: true,
+    result: { state: "running", filesDigest: DEVICE_SERVICE_FILES_DIGEST_VECTOR.digest },
+  });
 });

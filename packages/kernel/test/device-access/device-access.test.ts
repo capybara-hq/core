@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DeviceAccessError, type ToolCallContext } from "@capybara-hq/plugin-sdk";
+import {
+  DeviceAccessError,
+  deviceServiceFilesDigest,
+  type ToolCallContext,
+  ToolError,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -27,6 +32,7 @@ import {
   fakeServiceStarts,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  setFakeServiceMode,
 } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -187,6 +193,7 @@ const use = (): SandboxUseContext => ({
 // no service process outlives its test
 afterEach(async () => {
   vi.restoreAllMocks();
+  await setFakeServiceMode(sandboxRoot, {});
   await k.app.get(DeviceServices).stop(use(), ID, AbortSignal.timeout(30_000));
   await k.app.get(DeviceServices).stop(use(), OTHER_ID, AbortSignal.timeout(30_000));
 });
@@ -281,6 +288,9 @@ describe("ctx.deviceAccess", () => {
       argv: ["node", `${first.stateDir}/echo.mjs`, "--title", "a b"],
       decision: "allow",
       rule: null,
+      reason: "start",
+      startedAt: first.startedAt,
+      filesDigest: deviceServiceFilesDigest(spec.files),
     });
     // running: found, not reviewed again
     const second = await access.ensureService(CALLER, callOf(), spec);
@@ -293,32 +303,131 @@ describe("ctx.deviceAccess", () => {
     expect(review).toHaveBeenCalledTimes(2);
   });
 
-  it("a service running other files (an upgraded extension) is reviewed and restarted on the new ones", async () => {
-    const review = allowReview();
-    const v1 = echoServiceSpec();
-    const first = await access.ensureService(CALLER, callOf(), v1);
-    expect(first.state).toBe("running");
-    const reviews = review.mock.calls.length;
-    const starts = await fakeServiceStarts(sandboxRoot);
-    // the same files: kept, no review
-    expect(await access.ensureService(CALLER, callOf(), v1)).toEqual(first);
-    expect(review).toHaveBeenCalledTimes(reviews);
-    // the extension's files changed: a reviewed start, and a new process on the new files
-    const script = new TextDecoder().decode(v1.files["echo.mjs"]);
-    const v2 = { ...v1, files: { "echo.mjs": new TextEncoder().encode(`${script}\n// v2\n`) } };
-    const second = await access.ensureService(CALLER, callOf(), v2);
-    expect(second.state).toBe("running");
-    expect(second.startedAt).not.toBe(first.startedAt);
-    expect(review).toHaveBeenCalledTimes(reviews + 1);
-    expect(await fakeServiceStarts(sandboxRoot)).toBe(starts + 1);
-    // and it answers
-    const body = new TextEncoder().encode("ping");
-    const answer = await access.request(CALLER, callOf(), {
-      service: "echo",
-      body,
-      timeoutMs: 10_000,
+  describe("a service running other files (an upgraded extension)", () => {
+    const v2Of = (v1: ReturnType<typeof echoServiceSpec>) => {
+      const script = new TextDecoder().decode(v1.files["echo.mjs"]);
+      return { ...v1, files: { "echo.mjs": new TextEncoder().encode(`${script}\n// v2\n`) } };
+    };
+    const startAudits = () =>
+      db
+        .selectFrom("audit_events")
+        .select(["detail"])
+        .where("action", "=", "device.service_started")
+        .where("target", "=", s.deviceId)
+        .orderBy("at")
+        .execute();
+
+    it("is reviewed, restarted on the new files and audited as a roll", async () => {
+      const review = allowReview();
+      const v1 = echoServiceSpec();
+      const first = await access.ensureService(CALLER, callOf(), v1);
+      expect(first.state).toBe("running");
+      const reviews = review.mock.calls.length;
+      const starts = await fakeServiceStarts(sandboxRoot);
+      // the same files: kept, no review
+      expect(await access.ensureService(CALLER, callOf(), v1)).toEqual(first);
+      expect(review).toHaveBeenCalledTimes(reviews);
+      const v2 = v2Of(v1);
+      const second = await access.ensureService(CALLER, callOf(), v2);
+      expect(second.state).toBe("running");
+      expect(second.startedAt).not.toBe(first.startedAt);
+      expect(second.filesDigest).toBe(deviceServiceFilesDigest(v2.files));
+      expect(review).toHaveBeenCalledTimes(reviews + 1);
+      expect(await fakeServiceStarts(sandboxRoot)).toBe(starts + 1);
+      // one row per start: a start, then a roll naming what it replaced
+      const rows = await startAudits();
+      expect(rows.map((r) => (r.detail as { reason: string }).reason)).toEqual([
+        "start",
+        "files_changed",
+      ]);
+      expect(rows[0]?.detail).toMatchObject({ filesDigest: deviceServiceFilesDigest(v1.files) });
+      expect(rows[1]?.detail).toMatchObject({
+        filesDigest: deviceServiceFilesDigest(v2.files),
+        replacedStartedAt: first.startedAt,
+        replacedFilesDigest: deviceServiceFilesDigest(v1.files),
+      });
+      // and it answers
+      const answer = await access.request(CALLER, callOf(), {
+        service: "echo",
+        body: new TextEncoder().encode("ping"),
+        timeoutMs: 10_000,
+      });
+      expect(new TextDecoder().decode(answer)).toBe("ping");
     });
-    expect(new TextDecoder().decode(answer)).toBe("ping");
+
+    it("a denied review keeps the running service as it is", async () => {
+      allowReview();
+      const v1 = echoServiceSpec();
+      const first = await access.ensureService(CALLER, callOf(), v1);
+      const starts = await fakeServiceStarts(sandboxRoot);
+      vi.restoreAllMocks();
+      vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+        decision: "deny",
+        by: "rule",
+        reason: "not now",
+        rule: "deny.test",
+      });
+      await expect(access.ensureService(CALLER, callOf(), v2Of(v1))).rejects.toBeInstanceOf(
+        ToolError,
+      );
+      expect(await status()).toMatchObject({ state: "running", startedAt: first.startedAt });
+      expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
+    });
+
+    it("a provider that reports no digest keeps the running service (no review)", async () => {
+      const review = allowReview();
+      await setFakeServiceMode(sandboxRoot, { digest: false });
+      const v1 = echoServiceSpec();
+      const first = await access.ensureService(CALLER, callOf(), v1);
+      const reviews = review.mock.calls.length;
+      const starts = await fakeServiceStarts(sandboxRoot);
+      expect(await access.ensureService(CALLER, callOf(), v2Of(v1))).toMatchObject({
+        state: "running",
+        startedAt: first.startedAt,
+      });
+      expect(review).toHaveBeenCalledTimes(reviews);
+      expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
+    });
+
+    it("a provider that keeps the old files after the start is refused with the cause", async () => {
+      allowReview();
+      const v1 = echoServiceSpec();
+      await access.ensureService(CALLER, callOf(), v1);
+      await setFakeServiceMode(sandboxRoot, { roll: false });
+      const e = await access.ensureService(CALLER, callOf(), v2Of(v1)).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as Error).message).toMatch(/still runs its earlier files/);
+    });
+
+    it("is kept while the service answers the roll check busy, and rolled once it is not", async () => {
+      const review = allowReview();
+      const v1 = echoServiceSpec();
+      const first = await access.ensureService(CALLER, callOf(), v1);
+      const reviews = review.mock.calls.length;
+      await writeFile(join(first.stateDir, "busy"), "takeover");
+      const v2 = v2Of(v1);
+      expect(await access.ensureService(CALLER, callOf(), v2)).toEqual(first);
+      expect(review).toHaveBeenCalledTimes(reviews);
+      await rm(join(first.stateDir, "busy"));
+      const rolled = await access.ensureService(CALLER, callOf(), v2);
+      expect(rolled.startedAt).not.toBe(first.startedAt);
+      expect(rolled.filesDigest).toBe(deviceServiceFilesDigest(v2.files));
+    });
+
+    it("is never rolled to the files of an instance that is not the current one", async () => {
+      const review = allowReview();
+      const v1 = echoServiceSpec();
+      const v2 = v2Of(v1);
+      const running = await access.ensureService(CALLER, callOf(), v2);
+      const reviews = review.mock.calls.length;
+      // a draining instance (its successor is loaded) asks with its older files
+      const draining: DeviceAccessCaller = { ...CALLER, superseded: () => true };
+      expect(await access.ensureService(draining, callOf(), v1)).toEqual(running);
+      // an instance of another package than the one this replica runs now
+      const otherPackage: DeviceAccessCaller = { ...CALLER, sha256: "0".repeat(64) };
+      expect(await access.ensureService(otherPackage, callOf(), v1)).toEqual(running);
+      expect(review).toHaveBeenCalledTimes(reviews);
+    });
   });
 
   it("two extensions declaring the same service name run and reach separate services", async () => {

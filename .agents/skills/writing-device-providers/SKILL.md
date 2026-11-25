@@ -536,7 +536,16 @@ treats a dial-in device like any other (its provider, report and permission supp
   `filesDigest` (`deviceServiceFilesDigest` of the files it was started from) when the provider
   knows it: `ctx.deviceAccess.ensureService` treats a service running other files (an upgraded
   extension) like a stopped one, reviews the start, and the full ensure then stops the old process
-  and starts the new files; without `filesDigest` a running service is kept as before. The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
+  and starts the new files (a roll); without `filesDigest` a running service is kept as before.
+  A roll is held (the service kept, rolled at a later ensure) when the calling extension instance
+  is draining, is not the package this replica runs, or is not the package the deployment enabled
+  (never a roll back to older files), and while the service answers the SDK's roll check
+  (`DEVICE_SERVICE_ROLL_CHECK`, `{"busy":true}`: a person in control, a pending handoff). A
+  provider that reports the old digest after the full ensure is refused with an actionable error
+  (no review loop). The audit row `device.service_started` says `reason: "start" |
+  "files_changed"` with `filesDigest` (and `replacedStartedAt` for a roll), one row per start
+  (a call finding the row of that `startedAt` writes none). Every implementation of the digest is checked against
+  `DEVICE_SERVICE_FILES_DIGEST_VECTOR`; the SDK caches the digest per files object. The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
   file keys relative with plain segments (no absolute path, `..`, `.`, empty segment, backslash,
   NUL), entry one of the files, no `NODE_*` / `PATH` / `SSL_CERT_FILE` / `SSL_CERT_DIR` /
   `OPENSSL_CONF` / `OPENSSL_ENGINES` / `LD_*` / `DYLD_*` / `CAPYBARA_*` / proxy variables in

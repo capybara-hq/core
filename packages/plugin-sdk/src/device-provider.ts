@@ -489,6 +489,38 @@ export interface DeviceServiceStatus {
  * may send it to a machine instead of the files.
  */
 export function deviceServiceFilesDigest(files: Record<string, Uint8Array>): string {
+  const cached = digests.get(files);
+  if (cached !== undefined) return cached;
+  const digest = digestOf(files);
+  digests.set(files, digest);
+  return digest;
+}
+
+/**
+ * Digests already computed, by files object: a plugin passes the same `files` object on every
+ * call (its service files are read once), and a browser's are megabytes. Callers never mutate a
+ * spec's files after building it.
+ */
+const digests = new WeakMap<Record<string, Uint8Array>, string>();
+
+/**
+ * A fixed input and its {@link deviceServiceFilesDigest}, for the tests of every implementation
+ * of the digest (the SDK's, capybara-device's, a provider's own): one that disagrees would restart
+ * every running service at every ensure.
+ */
+export const DEVICE_SERVICE_FILES_DIGEST_VECTOR: {
+  readonly files: Readonly<Record<string, string>>;
+  readonly digest: string;
+} = Object.freeze({
+  files: Object.freeze({
+    "main.js": "console.log(1)\n",
+    "lib/a.js": "export const a = 1;\n",
+    empty: "",
+  }),
+  digest: "sha256:7b3959ff2e10237b9f1a255bbecb5dacebd31422fe734b2867403e42913432a5",
+});
+
+function digestOf(files: Record<string, Uint8Array>): string {
   const h = createHash("sha256");
   for (const path of Object.keys(files).sort()) {
     const data = files[path] as Uint8Array;
