@@ -1,5 +1,20 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.25
+
+### Patch Changes
+
+- cde43c3: `capybara-plugin marketplace --write` accepts `--base <rev>` and rewrites the entries added since the base whose source differs from the tree's pack, the ones `--check --base` flags as `marketplace-integrity`.
+- Updated dependencies [c245a0d]
+- Updated dependencies [dd481a3]
+- Updated dependencies [e2ca2ff]
+- Updated dependencies [c9a563b]
+- Updated dependencies [c9a563b]
+- Updated dependencies [5a8031d]
+- Updated dependencies [7a178bf]
+  - @capybara-hq/kernel@0.1.0-rc.90
+  - @capybara-hq/plugin-sdk@0.1.0-rc.72
+
 ## 0.1.0-rc.24
 
 ### Patch Changes
