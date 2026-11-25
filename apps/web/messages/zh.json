@@ -4302,6 +4302,7 @@
         "identityLinked": "关联了外部身份",
         "identityVerified": "验证了外部身份",
         "identityUnlinked": "解除了外部身份关联",
+        "loginSourcesUpdated": "修改了登录方式",
         "deploymentSettingsUpdated": "修改了部署设置",
         "bootstrapCompleted": "完成了预装插件的初始化",
         "deploymentSetupCompleted": "完成了部署初始化",

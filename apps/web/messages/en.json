@@ -4314,6 +4314,7 @@
         "identityLinked": "Linked an external identity",
         "identityVerified": "Verified an external identity",
         "identityUnlinked": "Unlinked an external identity",
+        "loginSourcesUpdated": "Changed the login methods",
         "deploymentSettingsUpdated": "Changed the deployment settings",
         "bootstrapCompleted": "Set up the bootstrap plugins",
         "deploymentSetupCompleted": "Completed the deployment setup",

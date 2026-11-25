@@ -108,6 +108,8 @@ describe("a platform name is literal text in every message", () => {
           keys: "K",
           files: "F",
           tools: "T",
+          name: "N",
+          tenant: "TN",
         } as never,
       );
       expect(text, key).toContain(NAME);
