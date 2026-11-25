@@ -19,7 +19,7 @@ export interface ExternalIdentity {
 
 /** How an identity source describes its tenants to the admin console. */
 export interface IdentitySourceTenant {
-  /** The field label, e.g. "Slack 工作区 ID" / "Slack workspace ID". */
+  /** The field label in Chinese and English, e.g. the Slack workspace ID. */
   label: { zh: string; en: string };
   /** Where to find the tenant id. */
   help?: { zh: string; en: string };
