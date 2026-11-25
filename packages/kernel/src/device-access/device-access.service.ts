@@ -8,8 +8,10 @@ import {
   deviceServiceFilesDigest,
   deviceServiceId,
   type Logger,
+  type NetworkBlockLayer,
   parseRollCheck,
   parseToolKey,
+  type ServiceBlockedHost,
   type ToolCallContext,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -32,13 +34,19 @@ import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
+import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
 import {
   attachCallScope,
   type CallScope,
   callScopeOf,
+  serviceHostKey,
+  strongerLayer,
   whileDeviceStarting,
 } from "../tools/call-scope.js";
 import { QuestionsService } from "../tools/questions.service.js";
+
+/** The layers a service may report a refused host with (`ServiceBlockedHost.layer`). */
+const BLOCK_LAYERS: readonly NetworkBlockLayer[] = ["device", "org", "address", "unknown"];
 
 /** What every `ctx.deviceAccess` call refuses a run another member triggered with. */
 export const DEVICE_ACCESS_NOT_OWNER_TEXT =
@@ -76,6 +84,14 @@ export interface DeviceAccessCaller {
   superseded?: () => boolean;
 }
 
+/**
+ * The longest a service's busy answer holds a roll onto the same files, counted from the first
+ * busy answer (`capk:device-service-roll-held:<device>:<service>:<digest>`, the first answer's
+ * time, a TTL of twice this).
+ */
+const ROLL_HOLD_CAP_MS = 60 * 60_000;
+const ROLL_HOLD_PREFIX = "capk:device-service-roll-held:";
+
 /** How long the roll check waits for a running service's answer ({@link DEVICE_SERVICE_ROLL_CHECK}). */
 const ROLL_CHECK_TIMEOUT_MS = 5_000;
 
@@ -89,13 +105,17 @@ interface ScopedDevice {
 }
 
 /** Maps the device resolution's API errors to the extension's refusal codes. */
-function refusal(e: unknown): unknown {
-  if (!(e instanceof ApiError)) return e;
-  if (e.code === "device.not_found" || e.code === "sandbox.unavailable")
-    return new DeviceAccessError("no_device", e.message, { cause: e });
-  if (e.code === "device.unavailable")
-    return new DeviceAccessError("provider_unavailable", e.message, { cause: e });
-  return e;
+function refusal(e: unknown, log: Pick<Logger, "warn">): unknown {
+  if (e instanceof ApiError) {
+    if (e.code === "device.not_found" || e.code === "sandbox.unavailable")
+      return new DeviceAccessError("no_device", e.message, { cause: e });
+    if (e.code === "device.unavailable")
+      return new DeviceAccessError("provider_unavailable", e.message, { cause: e });
+  }
+  // every other device or provider failure as the sandbox tools say it (the provider cannot be
+  // reached, the machine is offline or outdated, the outcome is unknown, ...): an actionable
+  // ToolError the extension passes on, never its own guess
+  return mapSandboxError(e, log);
 }
 
 /** How long the refresh of one service after an allowlist change may take. */
@@ -204,7 +224,7 @@ export class DeviceAccessService {
           name,
         );
       } catch (e) {
-        throw refusal(e);
+        throw refusal(e, this.log);
       }
     };
     // race-free: the provider keeps a running service and never starts a stopped one here
@@ -218,17 +238,12 @@ export class DeviceAccessService {
     if (found.state === "running") {
       if (runsSpec(found)) return found;
       // never a roll back to older files, nor one under a person at work: kept, rolled later
-      const held = await this.rollHeld(caller, use, providerSpec.name, call.signal);
-      if (held !== null) {
-        this.log.info("device service roll deferred", {
-          extension: caller.extension,
-          service: name,
-          deviceId: use.deviceId,
-          reason: held,
-        });
+      if (await this.holdRoll(caller, use, providerSpec.name, name, digest, call.signal))
         return found;
-      }
     }
+    // A stopped service is started on the caller's files even when the caller is draining (its
+    // call still needs the service): the next call of the current instance rolls it forward, one
+    // restart more during an upgrade.
     const reviewFacts = await this.devices.reviewFacts(
       call.orgId,
       facts.rootConversationId,
@@ -285,6 +300,13 @@ export class DeviceAccessService {
     // found running now, this call started nothing and audits nothing
     const raced = await ensure(true);
     if (raced.state === "running" && runsSpec(raced)) return raced;
+    // another call started it on other files meanwhile, or the review took long enough for a
+    // person to take over: the same holds as at the first look
+    if (
+      raced.state === "running" &&
+      (await this.holdRoll(caller, use, providerSpec.name, name, digest, call.signal))
+    )
+      return raced;
     const started = await ensure(false);
     // a provider that reports the digest but kept the old files would have every later call
     // reviewed again for nothing: a broken provider, said as such
@@ -314,6 +336,8 @@ export class DeviceAccessService {
       .where("target", "=", use.deviceId)
       .where(sql<string>`detail->>'serviceId'`, "=", providerSpec.name)
       .where(sql<string>`detail->>'startedAt'`, "=", started.startedAt)
+      // the start just happened: the (org_id, at) index keeps the range tiny
+      .where("at", ">=", sql<Date>`now() - interval '10 minutes'`)
       .executeTakeFirst();
     if (seen !== undefined) return started;
     const rolled = raced.state === "running";
@@ -344,17 +368,44 @@ export class DeviceAccessService {
   }
 
   /**
+   * Whether a roll of a running service onto `digest` is held now ({@link rollHeld}), logged
+   * with the reason when it is.
+   */
+  private async holdRoll(
+    caller: DeviceAccessCaller,
+    use: SandboxUseContext,
+    serviceId: string,
+    name: string,
+    digest: string,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const held = await this.rollHeld(caller, use, serviceId, digest, signal);
+    if (held === null) return false;
+    this.log.info("device service roll deferred", {
+      extension: caller.extension,
+      service: name,
+      deviceId: use.deviceId,
+      reason: held,
+    });
+    return true;
+  }
+
+  /**
    * Why a running service on other files is kept for now, or null to roll it:
    * - the calling instance is being replaced or is not the one this replica runs now (it drains),
    *   or not the version the deployment has enabled (a replica that has not reloaded yet): its
    *   files are older, and rolling to them would flip the service back and forth;
-   * - the service answers the roll check busy (a person controls it or a handoff waits).
+   * - the service answers the roll check busy (a person controls it or a handoff waits), for at
+   *   most {@link ROLL_HOLD_CAP_MS} after the first busy answer for these files (a Redis record
+   *   with a TTL: a service that stays busy, a handoff nobody ends, never holds an upgrade for
+   *   good).
    * A failed check (an older service, no answer) lets the roll go ahead.
    */
   private async rollHeld(
     caller: DeviceAccessCaller,
     use: SandboxUseContext,
     serviceId: string,
+    digest: string,
     signal: AbortSignal,
   ): Promise<string | null> {
     if (caller.superseded?.() === true) return "superseded: the calling instance is draining";
@@ -382,7 +433,25 @@ export class DeviceAccessService {
         AbortSignal.any([signal, AbortSignal.timeout(ROLL_CHECK_TIMEOUT_MS)]),
       );
       const check = parseRollCheck(answer);
-      if (check.busy) return `busy: ${check.reason ?? "the service is in use"}`;
+      if (check.busy) {
+        const key = `${ROLL_HOLD_PREFIX}${use.deviceId}:${serviceId}:${digest}`;
+        const now = Date.now();
+        // the first busy answer's time, kept by whichever replica wrote it first (HSETNX)
+        if ((await this.redis.hsetnx(key, "first", String(now))) === 1)
+          await this.redis.pexpire(key, ROLL_HOLD_CAP_MS * 2);
+        const first = Number(await this.redis.hget(key, "first"));
+        if (Number.isFinite(first) && now - first >= ROLL_HOLD_CAP_MS) {
+          this.log.warn("device service roll no longer held by its busy answer", {
+            extension: caller.extension,
+            serviceId,
+            deviceId: use.deviceId,
+            heldMs: now - first,
+            reason: check.reason,
+          });
+          return null;
+        }
+        return `busy: ${check.reason ?? "the service is in use"}`;
+      }
     } catch (e) {
       if (signal.aborted) throw e;
       // an older service, a slow one: the roll goes ahead
@@ -412,26 +481,41 @@ export class DeviceAccessService {
         call.signal,
       );
     } catch (e) {
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
   }
 
   /**
-   * Records refused hosts in the call scope (synchronous: the pipeline reads it once the handler
-   * returns) on the device this call's own `ctx.deviceAccess` calls resolved, if any.
+   * Records refused hosts with their layers in the call scope (synchronous: the pipeline reads it
+   * once the handler returns) on the device this call's own `ctx.deviceAccess` calls resolved, if
+   * any. A malformed entry (not a non-empty host with a known layer) is dropped; a host reported
+   * again keeps its most restrictive layer, so a later report never makes it grantable.
    */
-  reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: { url?: string }): void {
+  reportBlockedHosts(
+    call: ToolCallContext,
+    hosts: ServiceBlockedHost[],
+    opts?: { url?: string },
+  ): void {
     assertCallOwner(call);
     const scope = callScopeOf(call) ?? attachCallScope(call);
-    const valid = hosts.filter((h): h is string => typeof h === "string" && h.length > 0);
+    const valid = (Array.isArray(hosts) ? hosts : []).filter(
+      (h): h is ServiceBlockedHost =>
+        typeof h === "object" &&
+        h !== null &&
+        typeof h.host === "string" &&
+        h.host.length > 0 &&
+        BLOCK_LAYERS.includes(h.layer),
+    );
     if (valid.length === 0) return;
     const url = typeof opts?.url === "string" && opts.url.length > 0 ? opts.url : null;
-    if (scope.blocked === null) {
-      scope.blocked = { deviceId: scope.device, hosts: new Set(valid), url };
-      return;
+    if (scope.blocked === null) scope.blocked = { deviceId: scope.device, hosts: new Map(), url };
+    else if (url !== null) scope.blocked.url = url;
+    const seen = scope.blocked.hosts;
+    for (const h of valid) {
+      const key = serviceHostKey(h.host);
+      const had = seen.get(key);
+      seen.set(key, had === undefined ? h.layer : strongerLayer(had, h.layer));
     }
-    for (const h of valid) scope.blocked.hosts.add(h);
-    if (url !== null) scope.blocked.url = url;
   }
 
   /** A single-use viewer ticket for the service (the person's panel opens `url`). */
@@ -667,7 +751,7 @@ export class DeviceAccessService {
     try {
       deviceId = await this.devices.forTool(call.orgId, rootConversationId);
     } catch (e) {
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
     scope.device = deviceId;
     return {
@@ -722,7 +806,7 @@ export class DeviceAccessService {
       // the device bound to the owner's conversation is not theirs to use: someone else's
       if (e instanceof ApiError && e.code === "device.not_found")
         throw new DeviceAccessError("not_owner", DEVICE_ACCESS_NOT_OWNER_TEXT, { cause: e });
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
     return {
       orgId: conv.org_id,

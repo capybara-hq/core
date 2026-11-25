@@ -14,3 +14,5 @@ deployment enabled, and keeps a service that answers the new roll check (`DEVICE
 refused with the cause instead of every later call being reviewed again. The
 `device.service_started` audit row says `reason` (`start` or `files_changed`), the files digest and
 what a roll replaced, and a call that finds the row of the same start writes none.
+A busy answer holds a roll onto the same files for at most an hour, and the holds apply at the
+re-check after the review too.

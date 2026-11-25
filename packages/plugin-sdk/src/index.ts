@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.75";
+export const SDK_VERSION = "0.1.0-rc.76";
 export * from "./agent-template.js";
 export * from "./avatar-presets.js";
 export * from "./bootstrap.js";

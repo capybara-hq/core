@@ -1,5 +1,23 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.118
+
+### Patch Changes
+
+- 449d337: A device service keeps running after its extension is upgraded no longer: the provider reports the
+  files a running service was started from (`DeviceServiceStatus.filesDigest`, the new
+  `deviceServiceFilesDigest`), and `ctx.deviceAccess.ensureService` treats a service running other
+  files like a stopped one: the start is reviewed, then the provider restarts it on the new files.
+  capybara-device restarts a running service whose ensure names other files (its `filesDigest`, or
+  the digest of the files sent) and reports the digest in its status. Providers that report no digest
+  keep the old behaviour; device-local passes it through from its next release.
+- 58a6a91: Pin the device-local bootstrap plugin to 0.1.0-rc.12 (reports the running service's files digest, so an
+  extension upgrade restarts its device service; core#874) and the plugins marketplace commit with the
+  compose sandbox image build context to a48ecd8.
+- Updated dependencies [449d337]
+- Updated dependencies [58a6a91]
+  - @capybara-hq/kernel@0.1.0-rc.93
+
 ## 0.1.0-rc.117
 
 ### Patch Changes

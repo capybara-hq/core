@@ -99,6 +99,34 @@ export interface SandboxActor {
  */
 export type NetworkBlockLayer = "device" | "org" | "address" | "unknown";
 
+/**
+ * A host a device service saw refused, with the layer that refused it
+ * (`ctx.deviceAccess.reportBlockedHosts`). The service reports host names only (no port).
+ */
+export interface ServiceBlockedHost {
+  host: string;
+  layer: NetworkBlockLayer;
+}
+
+/**
+ * The layer of a refusal by a device's sandbox proxy, read from the reason the proxy gives: the
+ * status phrase of its 403 answer to a CONNECT, or the reason in its violation line
+ * (`deny network-outbound <host>:<port> (<reason>)`).
+ *
+ * - `address`: the destination's address is closed (an IP literal in a closed class, or a name
+ *   resolving to a private or local address: "address is …", "resolved to …"), or the host is
+ *   malformed. No host grant reaches it, only a command run outside the sandbox.
+ * - `device`: the host is not on the operation's allowlist ("host is not on the allow list").
+ * - `unknown`: any other reason (a proxy that names none, a failed fake-IP lookup).
+ */
+export function sandboxProxyRefusalLayer(reason: string): NetworkBlockLayer {
+  const r = reason.trim().toLowerCase();
+  if (r.startsWith("address is ") || r.startsWith("resolved to ") || r === "malformed host")
+    return "address";
+  if (r === "host is not on the allow list") return "device";
+  return "unknown";
+}
+
 /** A host a command was refused, as the provider reports it. */
 export interface NetworkBlockedHost {
   /** The host as the proxy saw it (IPv6 literals bracketed). */

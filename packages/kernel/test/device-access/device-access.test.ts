@@ -24,7 +24,9 @@ import {
 } from "../../src/device-access/device-access.service.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
+import { SandboxProviderUnreachableError } from "../../src/sandbox/unreachable.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
+import { SANDBOX_UNREACHABLE_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { attachCallScope, callScopeOf } from "../../src/tools/call-scope.js";
 import { echoServiceSpec } from "../fixtures/extensions/fake-device-access/index.js";
 import {
@@ -414,6 +416,41 @@ describe("ctx.deviceAccess", () => {
       expect(rolled.filesDigest).toBe(deviceServiceFilesDigest(v2.files));
     });
 
+    it("a busy answer holds a roll for an hour at most", async () => {
+      allowReview();
+      const v1 = echoServiceSpec();
+      const first = await access.ensureService(CALLER, callOf(), v1);
+      await writeFile(join(first.stateDir, "busy"), "a handoff nobody ends");
+      const v2 = v2Of(v1);
+      expect(await access.ensureService(CALLER, callOf(), v2)).toEqual(first);
+      // the first busy answer, as if it came an hour ago
+      const key = `capk:device-service-roll-held:${s.deviceId}:${ID}:${deviceServiceFilesDigest(v2.files)}`;
+      expect(await redis.hget(key, "first")).not.toBeNull();
+      expect(await redis.pttl(key)).toBeGreaterThan(0);
+      await redis.hset(key, "first", String(Date.now() - 60 * 60_000 - 1));
+      const rolled = await access.ensureService(CALLER, callOf(), v2);
+      expect(rolled.startedAt).not.toBe(first.startedAt);
+      expect(rolled.filesDigest).toBe(deviceServiceFilesDigest(v2.files));
+    });
+
+    it("a takeover that begins during the review still holds the roll", async () => {
+      const v1 = echoServiceSpec();
+      allowReview();
+      const first = await access.ensureService(CALLER, callOf(), v1);
+      vi.restoreAllMocks();
+      // the person takes over while the review runs
+      vi.spyOn(k.app.get(CommandReviewService), "review").mockImplementation(async () => {
+        await writeFile(join(first.stateDir, "busy"), "takeover");
+        return { decision: "allow", by: "rule", reason: "test", rule: null };
+      });
+      const starts = await fakeServiceStarts(sandboxRoot);
+      expect(await access.ensureService(CALLER, callOf(), v2Of(v1))).toMatchObject({
+        state: "running",
+        startedAt: first.startedAt,
+      });
+      expect(await fakeServiceStarts(sandboxRoot)).toBe(starts);
+    });
+
     it("is never rolled to the files of an instance that is not the current one", async () => {
       const review = allowReview();
       const v1 = echoServiceSpec();
@@ -428,6 +465,28 @@ describe("ctx.deviceAccess", () => {
       expect(await access.ensureService(otherPackage, callOf(), v1)).toEqual(running);
       expect(review).toHaveBeenCalledTimes(reviews);
     });
+  });
+
+  it("a provider that cannot be reached reaches the extension as the sandbox tools say it", async () => {
+    allowReview();
+    const services = k.app.get(DeviceServices);
+    const down = new SandboxProviderUnreachableError(
+      "connect",
+      new Error("connect ECONNREFUSED 127.0.0.1:2375"),
+    );
+    vi.spyOn(services, "ensure").mockRejectedValue(down);
+    await expect(access.ensureService(CALLER, callOf(), echoServiceSpec())).rejects.toMatchObject({
+      name: "ToolError",
+      message: SANDBOX_UNREACHABLE_TEXT,
+    });
+    vi.spyOn(services, "request").mockRejectedValue(down);
+    await expect(
+      access.request(CALLER, callOf(), {
+        service: "echo",
+        body: new Uint8Array(1),
+        timeoutMs: 1000,
+      }),
+    ).rejects.toMatchObject({ name: "ToolError", message: SANDBOX_UNREACHABLE_TEXT });
   });
 
   it("two extensions declaring the same service name run and reach separate services", async () => {
@@ -588,7 +647,7 @@ describe("ctx.deviceAccess", () => {
       () => access.ensureService(CALLER, call, echoServiceSpec()),
       () =>
         access.request(CALLER, call, { service: "echo", body: new Uint8Array(1), timeoutMs: 1000 }),
-      () => access.reportBlockedHosts(call, ["example.org"]),
+      () => access.reportBlockedHosts(call, [{ host: "example.org", layer: "device" }]),
     ]) {
       expect(await refusal(attempt)).toEqual({
         code: "not_owner",
@@ -726,23 +785,29 @@ describe("ctx.deviceAccess", () => {
 
   it("reportBlockedHosts lands in the call scope", async () => {
     allowReview();
+    const device = (host: string) => ({ host, layer: "device" as const });
     // before any service call of this call: no device named (the pipeline asks about the
     // conversation's)
     const before = callOf();
-    access.reportBlockedHosts(before, ["example.org"], { url: "https://example.org/a" });
+    access.reportBlockedHosts(before, [device("example.org")], { url: "https://example.org/a" });
     expect(callScopeOf(before)?.blocked).toEqual({
       deviceId: null,
-      hosts: new Set(["example.org"]),
+      hosts: new Map([["example.org", "device"]]),
       url: "https://example.org/a",
     });
     // after the call's service calls: the device they resolved; reports accumulate
     const call = callOf();
     await access.ensureService(CALLER, call, echoServiceSpec());
-    access.reportBlockedHosts(call, ["example.org"]);
-    access.reportBlockedHosts(call, ["cdn.example.org"], { url: "https://example.org/b" });
+    access.reportBlockedHosts(call, [device("example.org")]);
+    access.reportBlockedHosts(call, [device("cdn.example.org")], { url: "https://example.org/b" });
     const blocked = callScopeOf(call)?.blocked;
     expect(blocked?.deviceId).toBe(s.deviceId);
-    expect(blocked?.hosts).toEqual(new Set(["example.org", "cdn.example.org"]));
+    expect(blocked?.hosts).toEqual(
+      new Map([
+        ["example.org", "device"],
+        ["cdn.example.org", "device"],
+      ]),
+    );
     expect(blocked?.url).toBe("https://example.org/b");
     // a context the pipeline did not make gets a scope attached
     const bare: ToolCallContext = {
@@ -756,8 +821,30 @@ describe("ctx.deviceAccess", () => {
       signal: AbortSignal.timeout(30_000),
     };
     expect(callScopeOf(bare)).toBeNull();
-    access.reportBlockedHosts(bare, ["example.org"]);
-    expect(callScopeOf(bare)?.blocked?.hosts).toEqual(new Set(["example.org"]));
+    access.reportBlockedHosts(bare, [device("example.org")]);
+    expect(callScopeOf(bare)?.blocked?.hosts).toEqual(new Map([["example.org", "device"]]));
+  });
+
+  it("reportBlockedHosts keeps the most restrictive layer of a host and drops malformed entries", () => {
+    const call = callOf();
+    // a private-resolving name the proxy refused for its address; a later device-layer report of
+    // the same host (another spelling) never makes it grantable again
+    access.reportBlockedHosts(call, [{ host: "intranet.example.org", layer: "address" }]);
+    access.reportBlockedHosts(call, [
+      { host: "Intranet.Example.org.", layer: "device" },
+      { host: "cdn.example.org", layer: "unknown" },
+      { host: "cdn.example.org", layer: "device" },
+      // malformed: dropped
+      "bare.example.org" as never,
+      { host: "", layer: "device" },
+      { host: "odd.example.org", layer: "nope" } as never,
+    ]);
+    expect(callScopeOf(call)?.blocked?.hosts).toEqual(
+      new Map([
+        ["intranet.example.org", "address"],
+        ["cdn.example.org", "device"],
+      ]),
+    );
   });
 
   it("streamTicket refuses a non-owner and mints a single-use 60 s ticket", async () => {

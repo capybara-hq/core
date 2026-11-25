@@ -19,6 +19,7 @@ import {
   searchTimeoutMs,
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
+import { listFilesCommand } from "../../../src/tools/builtins/sandbox/search-command.js";
 import { skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
 import { noRowsDb, onlyBuiltins } from "../../helpers/disabled-tools.js";
@@ -594,7 +595,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       await r.tool("Grep").run({ pattern: "hit", output_mode: "content" }, callCtx()),
     );
     expect(out).toContain("/workspace/a.txt:1:hit");
-    expect(out).toContain("[grep also reported errors: grep: ./secret: Permission denied]");
+    expect(out).toContain("[the search also reported errors: grep: ./secret: Permission denied]");
   });
 
   it("glob shows newlines in file names as \\n", async () => {
@@ -714,9 +715,9 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       },
       exec: async (_h: unknown, a: { command: string; cwd: string }) => {
         execs.push({ command: a.command, cwd: a.cwd });
-        // find (Glob), grep (Grep: no match)
-        const stdout = a.command.startsWith("find") ? "./a.txt\0" : "";
-        const exitCode = a.command.startsWith("grep") ? 1 : 0;
+        // the file listing (Glob), the search (Grep: no match)
+        const stdout = a.command === listFilesCommand() ? "./a.txt\0" : "";
+        const exitCode = a.command.includes("grep -r") ? 1 : 0;
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };

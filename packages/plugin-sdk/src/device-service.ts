@@ -32,7 +32,9 @@
  * upgraded extension, {@link DeviceServiceRollCheck}). A service that answers
  * `{"busy":true,"reason":"…"}` is kept running (a person is using it); the kernel asks again at a
  * later ensure. Any other answer, an error or no answer within a few seconds lets the restart go
- * ahead, so a service that does not know the check is restarted as before.
+ * ahead, so a service that does not know the check is restarted as before. Every service gets
+ * this body on its request connection, so a service must ignore a request body it does not know
+ * (answer an error, act on nothing), never treat an arbitrary body as a command.
  */
 export const DEVICE_SERVICE_ROLL_CHECK = '{"capybara":"roll-check"}';
 

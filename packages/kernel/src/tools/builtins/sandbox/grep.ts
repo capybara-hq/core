@@ -9,21 +9,21 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
-  shellQuote,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
+import { type GrepMode, grepCommand } from "./search-command.js";
 
 /** The most output entries (lines, files or counts) returned in one call, whatever `head_limit` says. */
 const MAX_MATCHES = 500;
 /** `head_limit` when the model gives none. */
 const DEFAULT_HEAD_LIMIT = 250;
-/** 每个匹配行最多显示的字符数。 */
+/** The most characters shown per output line. */
 const MAX_LINE_CHARS = 500;
-/** grep 输出的上限（字节）。 */
+/** The most search output read, in bytes. */
 const MAX_GREP_BYTES = 4 * 1024 * 1024;
 
-const MODES = ["content", "files_with_matches", "count"] as const;
+const MODES = ["content", "files_with_matches", "count"] as const satisfies readonly GrepMode[];
 type OutputMode = (typeof MODES)[number];
 
 const SPEC: ToolSpec = {
@@ -31,9 +31,13 @@ const SPEC: ToolSpec = {
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["pattern", "path"],
   description:
-    "Search file contents in this conversation's sandbox with a regular expression (POSIX " +
-    "extended, as grep -E). Use it to find where something is defined or mentioned. Searches path " +
-    "(a file, or a directory recursively; default: the workspace directory), skipping binary files; glob limits " +
+    "Search file contents in this conversation's sandbox with a regular expression (extended " +
+    'syntax as in grep -E, e.g. "log.*Error" or "def (load|save)"; no backreferences or ' +
+    "look-around). Use it to find where something is defined or mentioned. Searches path (a " +
+    "file, or a directory recursively; default: the workspace directory). A directory search " +
+    "skips binary files, .git and node_modules directories and, where the device supports it, " +
+    "files ignored by .gitignore, .ignore or .rgignore files; to search inside a skipped " +
+    "directory, pass that directory or a file in it as path. glob limits " +
     'the files searched by name, e.g. "*.py". output_mode picks what comes back: ' +
     '"files_with_matches" (default) lists the paths of files that match, "content" returns the ' +
     "matching lines as <path>:<line>:<text> (with -A, -B or -C lines of context around them), " +
@@ -47,7 +51,7 @@ const SPEC: ToolSpec = {
       pattern: {
         type: "string",
         minLength: 1,
-        description: 'Regular expression (POSIX extended), e.g. "def [a-z_]+\\(" or "TODO".',
+        description: 'Regular expression (extended syntax), e.g. "def [a-z_]+\\(" or "TODO".',
       },
       path: {
         type: "string",
@@ -118,7 +122,7 @@ interface GrepInput {
 
 const notFound = (path: string) => `${clip(path, 200)} does not exist; check the path with Glob.`;
 const failed = (stderr: string) =>
-  `grep failed: ${clip(stderr, 300)}. Check the pattern (POSIX extended regular expression) and retry.`;
+  `The search failed: ${clip(stderr, 300)}. Check the pattern (extended regular expression; no backreferences or look-around) and retry.`;
 const GREP_TIMEOUT = "The search did not finish in time; pass a narrower path or a glob and retry.";
 
 /**
@@ -156,7 +160,7 @@ const displayName = (raw: string): string =>
   (raw.startsWith("./") ? raw.slice(2) : raw).replace(/\n/g, "\\n");
 
 /** `grep -l --null` output: the matching files, each followed by NUL. */
-function parseFileList(stdout: string, base: string): string[] {
+export function parseFileList(stdout: string, base: string): string[] {
   const parts = stdout.split("\0");
   // the last part is empty, or an incomplete name when the output was truncated: dropped
   parts.pop();
@@ -167,7 +171,7 @@ function parseFileList(stdout: string, base: string): string[] {
  * `grep -c` output as `<path>:<count>` for the files with at least one matching line. GNU grep
  * with `--null` writes `<file>\0<count>\n`; other implementations write `<file>:<count>`.
  */
-function parseCounts(stdout: string, base: string): string[] {
+export function parseCounts(stdout: string, base: string): string[] {
   const out: string[] = [];
   if (stdout.includes("\0")) {
     for (const l of parseGrepNull(stdout, base, false)) {
@@ -185,7 +189,7 @@ function parseCounts(stdout: string, base: string): string[] {
   return out;
 }
 
-/** 内置工具 `Grep`：按正则搜文件内容（只读）。 */
+/** The builtin tool `Grep`: searches file contents with a regular expression (read-only). */
 export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,
@@ -211,31 +215,16 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
         const cwd = st.isDir ? path : path.slice(0, slash) || "/";
         const target = st.isDir ? "." : path.slice(slash + 1);
         const base = cwd === "/" ? "" : cwd;
-        // GNU grep options (`-l`, `-c`, `-n`, `-A/-B/-C`, `--null`): the sandbox images are Debian
-        const modeFlags =
-          mode === "files_with_matches"
-            ? ["-rlIE", "--null"]
-            : mode === "count"
-              ? ["-rcHIE", "--null"]
-              : [numbered ? "-rnHIE" : "-rHIE", "--null"];
-        const context =
-          mode === "content"
-            ? (["-A", "-B", "-C"] as const).flatMap((f) =>
-                g[f] !== undefined ? [f, String(g[f])] : [],
-              )
-            : [];
-        const command = [
-          // --null：文件名后跟 NUL 而不是 `:`，文件名里有换行或冒号也能解析
-          "grep",
-          ...modeFlags,
-          ...(g["-i"] === true ? ["-i"] : []),
-          ...context,
-          ...(glob !== undefined ? [`--include=${shellQuote(glob)}`] : []),
-          "-e",
-          shellQuote(pattern),
-          "--",
-          shellQuote(target),
-        ].join(" ");
+        const command = grepCommand({
+          mode,
+          pattern,
+          target,
+          directory: st.isDir,
+          numbered,
+          ignoreCase: g["-i"] === true,
+          context: { A: g["-A"], B: g["-B"], C: g["-C"] },
+          ...(glob !== undefined ? { glob } : {}),
+        });
         const r = await p.exec(h, {
           command,
           cwd,
@@ -265,7 +254,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       const shown = page.map((l) =>
         l.length > MAX_LINE_CHARS ? `${l.slice(0, MAX_LINE_CHARS)}…` : l,
       );
-      const note = warning !== null ? `\n[grep also reported errors: ${warning}]` : "";
+      const note = warning !== null ? `\n[the search also reported errors: ${warning}]` : "";
       let text: string;
       if (total === 0) {
         text = `No matches for ${pattern} in ${path}.${note}`;

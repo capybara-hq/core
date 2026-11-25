@@ -16,6 +16,7 @@ import {
   type DrawerNavData,
   NewTitleBar,
   PageHeader,
+  RightPanel,
   SharedFilePage,
   TitleBar,
 } from "../src/index";
@@ -911,5 +912,28 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
         .getAllByRole("menuitem")
         .map((i) => i.textContent),
     ).toEqual(["属性面板", "文件"]);
+  });
+});
+
+describe("the side panel's header", () => {
+  it("drags the window by its empty room only; its buttons stay controls", () => {
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <RightPanel title="浏览器" onClose={noop} onFullscreen={noop}>
+          <p>body</p>
+        </RightPanel>
+      </DesignProvider>,
+    );
+    const head = container.querySelector(".cb-rpanel-head") as HTMLElement;
+    const fills = head.querySelectorAll(":scope > .cb-drag-fill");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]?.childNodes.length).toBe(0);
+    expect(fills[0]?.getAttribute("aria-hidden")).toBe("true");
+    // the header itself is no drag region, and neither is any control in it
+    expect(head.classList.contains("cb-drag-fill")).toBe(false);
+    for (const b of head.querySelectorAll("button")) {
+      expect(b.closest(".cb-drag-fill"), b.outerHTML).toBeNull();
+    }
+    expect(head.querySelectorAll("button").length).toBeGreaterThanOrEqual(2);
   });
 });

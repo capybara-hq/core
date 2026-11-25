@@ -83,6 +83,16 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       send({ event: "output", stream: 1, data: Buffer.from("x").toString("base64") });
       return;
     }
+    if (behaviour === "denials") {
+      send({ event: "exit", exitCode: 7, timedOut: false, cancelled: false, denials: [
+        "deny network-outbound capybara.example.org:443 (resolved to a private address)",
+        "deny network-outbound example.org:443 (host is not on the allow list)",
+        "deny network-outbound 10.0.0.1:443 (host is not on the allow list)",
+        "not a refusal",
+        42,
+      ] });
+      done(0);
+    }
     if (behaviour === "exit") {
       send({ event: "output", stream: 1, data: Buffer.from("hello").toString("base64") });
       send({ event: "output", stream: 2, data: Buffer.from("warn").toString("base64") });
@@ -219,6 +229,34 @@ describe("Linux operation worker", () => {
     expect(sent?.readRoots).toEqual([seen.temp]);
     // removed with what the command left in it once the operation ended
     await expect(stat(seen.temp)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reports the forwarder's refusals as network.blocked, with the SDK's layers", async () => {
+    const fake = await fakeTransport("denials");
+    const handle = await linuxOperationWorker({ ...fake, baseEnv: env, acquireRuntime: gate })(
+      execRequest(false, { grant: { ...grant(false), hosts: ["example.com"] } } as never),
+      new AbortController().signal,
+    );
+    await handle.ready;
+    expect(await handle.completion).toMatchObject({
+      exitCode: 7,
+      network: {
+        blocked: [
+          { host: "capybara.example.org", port: 443, layer: "address" },
+          { host: "example.org", port: 443, layer: "device" },
+          // an IP literal is never grantable, whatever the reason says
+          { host: "10.0.0.1", port: 443, layer: "address" },
+        ],
+      },
+    });
+    // no refusals: no network report at all
+    const quiet = await fakeTransport("exit");
+    const plain = await linuxOperationWorker({ ...quiet, baseEnv: env, acquireRuntime: gate })(
+      execRequest(false),
+      new AbortController().signal,
+    );
+    await plain.ready;
+    expect(await plain.completion).not.toHaveProperty("network");
   });
 
   it("each restricted exec gets a fresh private temp; a dead device process's leftovers go", async () => {

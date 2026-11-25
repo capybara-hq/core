@@ -16,6 +16,7 @@ import {
   SANDBOX_TAG_RE,
   SandboxGoneError,
   type SandboxLimits,
+  sandboxProxyRefusalLayer,
   validateAllowHost,
   validateSandboxPath,
   validateSandboxPathShape,
@@ -289,5 +290,27 @@ describe("device service ids", () => {
     expect(deviceServiceId("browser", "browser")).toBe("browser.browser");
     expect(() => deviceServiceId("browser", "Bad")).toThrow(TypeError);
     expect(() => deviceServiceId("x", "browser")).toThrow(TypeError);
+  });
+});
+
+describe("sandboxProxyRefusalLayer", () => {
+  it("reads a closed address from the proxy's reason as the address layer", () => {
+    expect(sandboxProxyRefusalLayer("resolved to a private address")).toBe("address");
+    expect(sandboxProxyRefusalLayer("resolved to a loopback address / a listed address")).toBe(
+      "address",
+    );
+    expect(sandboxProxyRefusalLayer("address is a deny-listed address")).toBe("address");
+    expect(sandboxProxyRefusalLayer("malformed host")).toBe("address");
+  });
+
+  it("reads an allowlist refusal as the device layer and anything else as unknown", () => {
+    expect(sandboxProxyRefusalLayer("host is not on the allow list")).toBe("device");
+    expect(sandboxProxyRefusalLayer("Forbidden")).toBe("unknown");
+    expect(sandboxProxyRefusalLayer("")).toBe("unknown");
+    expect(
+      sandboxProxyRefusalLayer(
+        "resolved by a fake-IP resolver and the DNS-over-HTTPS lookup failed (timed out)",
+      ),
+    ).toBe("unknown");
   });
 });

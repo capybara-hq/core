@@ -1005,7 +1005,7 @@ export interface DeviceAccessCtx {
         done: boolean;
     }): Promise<void>;
     ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
-    reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: {
+    reportBlockedHosts(call: ToolCallContext, hosts: ServiceBlockedHost[], opts?: {
         url?: string;
     }): void;
     request(call: ToolCallContext, req: {
@@ -3967,6 +3967,9 @@ export interface SandboxPreparationScope {
 }
 
 // @public
+export function sandboxProxyRefusalLayer(reason: string): NetworkBlockLayer;
+
+// @public
 export interface SandboxRoots {
     skills: string;
     tmp: string;
@@ -4038,7 +4041,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.75";
+export const SDK_VERSION = "0.1.0-rc.76";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -4048,6 +4051,12 @@ export const SEMVER_VERSION_RE: RegExp;
 
 // @public
 export const SERVICE_CONNECTION_KINDS: readonly ["request", "stream"];
+
+// @public
+export interface ServiceBlockedHost {
+    host: string;
+    layer: NetworkBlockLayer;
+}
 
 // @public
 export type ServiceConnectionKind = (typeof SERVICE_CONNECTION_KINDS)[number];

@@ -540,7 +540,10 @@ treats a dial-in device like any other (its provider, report and permission supp
   A roll is held (the service kept, rolled at a later ensure) when the calling extension instance
   is draining, is not the package this replica runs, or is not the package the deployment enabled
   (never a roll back to older files), and while the service answers the SDK's roll check
-  (`DEVICE_SERVICE_ROLL_CHECK`, `{"busy":true}`: a person in control, a pending handoff). A
+  (`DEVICE_SERVICE_ROLL_CHECK`, `{"busy":true}`: a person in control, a pending handoff), for at
+  most an hour after the first busy answer for the same files (a Redis record with a TTL); both
+  the first look and the re-check after the review apply these holds. A service must ignore a
+  request body it does not know (the roll check reaches every service). A
   provider that reports the old digest after the full ensure is refused with an actionable error
   (no review loop). The audit row `device.service_started` says `reason: "start" |
   "files_changed"` with `filesDigest` (and `replacedStartedAt` for a roll), one row per start

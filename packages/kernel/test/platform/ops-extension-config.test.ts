@@ -166,7 +166,11 @@ describe("deployment config", () => {
       payload: { values: { master: SEEDED_MASTER } },
     });
     expect(seeded.statusCode, seeded.body).toBe(200);
-    const view = (await run("extensions.platform-config", { name: NAME }, ctxOf(env.rootId))) as {
+    const read = await run("extensions.platform-config", { name: NAME }, ctxOf(env.rootId));
+    // no platform setup guide: an empty list and no next step, though baseUrl is left to the orgs
+    expect(read).toMatchObject({ guides: [], orgMustConfigure: ["baseUrl"] });
+    expect(read).not.toHaveProperty("next");
+    const view = read as {
       fields: Field[];
       schema: unknown;
     };
