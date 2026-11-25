@@ -1,4 +1,5 @@
 import { SANDBOX_FAKE_IP_DNS } from "@capybara-hq/plugin-sdk";
+import { MAX_NETWORK_DENIAL_LINES } from "./network-denials.js";
 
 /**
  * The trusted Linux operation agent of capybara-device, run as `python3 -I -c <source>` (never from
@@ -19,7 +20,10 @@ import { SANDBOX_FAKE_IP_DNS } from "@capybara-hq/plugin-sdk";
  *   only the allowlisted names, or (open) any name and address literal on any port, and dials only
  *   resolved addresses the SDK's address-class table calls public (a copy kept equal by a test),
  *   never this host's own nor one of the request's extra closed addresses (a local-Docker
- *   device's host), re-resolving a fake-IP resolver's answers through encrypted DNS. A command
+ *   device's host), re-resolving a fake-IP resolver's answers through encrypted DNS. A refusal
+ *   answers 403 with the macOS proxy's reason as its status phrase ("host is not on the allow
+ *   list", "address is …", "resolved to …"), and the exec's `exit` event carries the operation's
+ *   refusals as `denials` (the macOS violation line format, which `networkBlocked` reads). A command
  *   connects to nothing else, not even its own loopback listener. Whatever ends the launcher, the agent then reaps its closed session (exact SID plus
  *   start time). Write denies the device resolved for this operation (protected home locations
  *   reached through links) go to the launcher and to native work. The agent opens the device's
@@ -64,6 +68,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import re
 import resource
 import select
 import signal
@@ -579,6 +584,22 @@ def public_address(address, closed=frozenset()):
     return plain.is_global and plain not in closed and not local_address(str(ip))
 
 
+def closed_reason(address, closed=frozenset()):
+    """Why public_address refuses address, in the words of the macOS proxy's refusals: its class
+    ("a private address"), else what else closes it. The SDK maps the reason that carries it
+    ("address is …", "resolved to …") to the address layer (sandboxProxyRefusalLayer)."""
+    ip = ipaddress.ip_address(address.split("%")[0])
+    cls = classify_address(ip)
+    if cls != "public":
+        return ("an %s address" if cls[0] in "aeiou" else "a %s address") % cls
+    plain = ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip
+    if not plain.is_global:
+        return "a non-global address"
+    if plain in closed:
+        return "a listed address"
+    return "an address of this host"
+
+
 # The SDK's SANDBOX_FAKE_IP_DNS (the macOS worker uses the same endpoints and limits).
 FAKE_IP_DNS = json.loads(r"""${JSON.stringify(SANDBOX_FAKE_IP_DNS)}""")
 FAKE_IP_NETWORK = ipaddress.ip_network(FAKE_IP_DNS["fakeIpCidr"])
@@ -744,12 +765,34 @@ def vetted_addresses(host, port, doh, allow_private=False, resolve=socket.getadd
             raise OSError(errno.EHOSTUNREACH, "Encrypted DNS has no address for the name")
     permitted = [e for e in entries if allow_private or public_address(e[4][0], closed)]
     if not permitted:
-        raise PermissionError(errno.EACCES, "No permitted address")
+        error = PermissionError(errno.EACCES, "No permitted address")
+        # what closed the first address, for the refusal's reason ("resolved to a private address")
+        error.closed = closed_reason(entries[0][4][0], closed) if entries else "no address"
+        raise error
     return permitted
 # ---- end of resolution ---------------------------------------------------------------------
 
 
 # ---- per-operation proxy (allowlist or open) ----------------------------------------------
+
+# The most refusals one operation's forwarder records (the device's MAX_NETWORK_DENIAL_LINES).
+MAX_DENIALS = ${MAX_NETWORK_DENIAL_LINES}
+# The status phrase of a fake-IP refusal (its body says more); the SDK gives it no layer.
+FAKE_IP_PHRASE = "resolved by a fake-IP resolver and encrypted DNS did not answer"
+
+
+# A host a refusal line may carry (a name or an address literal, with an IPv6 zone); anything else
+# is answered but not recorded.
+RECORDABLE_HOST = re.compile(r"^[A-Za-z0-9._:%*-]{1,253}$")
+
+
+def address_literal(host):
+    try:
+        ipaddress.ip_address(host.split("%")[0])
+        return True
+    except ValueError:
+        return False
+
 
 def host_allowed(host, hosts):
     host = host.lower().rstrip(".")
@@ -806,6 +849,9 @@ class Forwarder:
         self.slots = threading.BoundedSemaphore(MAX_PROXY_CONNECTIONS)
         self.allow_private = allow_private
         self.open = open_network
+        # this operation's refusals, reported with its exit (refuse)
+        self.denials = []
+        self.denials_lock = threading.Lock()
         # encrypted DNS for a network whose resolver answers with fake IPs (one per operation)
         self.doh = doh or EncryptedDns()
         # Only this operation knows the token: another local process cannot use the proxy.
@@ -886,38 +932,47 @@ class Forwarder:
                 return
             rewritten = None
             any_port = self.open or self.allow_private
+            web_ports = (80, 443)
             if method == "CONNECT":
                 host, port = split_target(target, 443, self.open)
-                # allowlist entries name no port: web ports only (any port when open, or for a
-                # test fixture)
-                if port not in (80, 443) and not any_port:
-                    host = None
             elif target.startswith("http://"):
                 authority, _, path = target[7:].partition("/")
                 host, port = split_target(authority, 80, self.open)
-                if port != 80 and not any_port:
-                    host = None
+                web_ports = (80,)
                 headers = [line for line in lines[1:]
                            if not line.lower().startswith((b"proxy-", b"connection:"))]
                 rewritten = ("%s /%s %s\r\n" % (method, path, version)).encode() + b"\r\n".join(
                     headers + [b"Connection: close"]) + b"\r\n\r\n"
             else:
                 host, port = None, None
-            if host is None or not (self.open or host_allowed(host, self.hosts)):
-                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
-                               b"Connection: close\r\n\r\n")
-                client.close()
+            if host is None:
+                self.refuse(client, None, None, "malformed host")
+                return
+            literal = address_literal(host)
+            if not self.open and not self.allow_private and literal \
+                    and not public_address(host, self.closed):
+                # a closed address literal, as the macOS proxy judges it before its allowlist
+                self.refuse(client, host, port, "address is " + closed_reason(host, self.closed))
+                return
+            if not (self.open or host_allowed(host, self.hosts)):
+                self.refuse(client, host, port, "host is not on the allow list")
+                return
+            if port not in web_ports and not any_port:
+                # allowlist entries name no port: web ports only (any port when open, or for a
+                # test fixture); allowing the host would not help
+                self.refuse(client, host, port, "port is not allowed")
                 return
             try:
                 up = self.connect(host, port)
+            except FakeIpUnresolved:
+                # a fake-IP resolver without an encrypted DNS answer: never dialled, and no layer
+                self.refuse(client, host, port, FAKE_IP_PHRASE, FAKE_IP_REFUSAL)
+                return
             except PermissionError as error:
-                # every address of the name is closed: refused before any connect (a fake-IP
-                # resolver without an encrypted DNS answer says so)
-                reason = FAKE_IP_REFUSAL.encode() if isinstance(error, FakeIpUnresolved) else b""
-                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n"
-                               b"Content-Length: %d\r\nConnection: close\r\n\r\n"
-                               % len(reason) + reason)
-                client.close()
+                # every address is closed: refused before any connect
+                why = getattr(error, "closed", None) or "a closed address"
+                self.refuse(client, host, port,
+                            ("address is " if literal else "resolved to ") + why)
                 return
             except (OSError, ValueError):
                 # a failed lookup or dial; ValueError: a name the resolver cannot encode (IDNA)
@@ -939,6 +994,29 @@ class Forwarder:
                 client.close()
             except OSError:
                 pass
+
+    def refuse(self, client, host, port, reason, body=""):
+        """Answers 403 with reason as its status phrase (the macOS proxy's words, which the SDK's
+        sandboxProxyRefusalLayer reads) and records the refusal for the operation's exec result,
+        as the macOS proxy's violation line: deny network-outbound <host>:<port> (<reason>). At
+        most MAX_DENIALS lines are kept; a refusal without a host (malformed) is not recorded."""
+        if host is not None and RECORDABLE_HOST.match(host):
+            shown = "[%s]" % host if ":" in host else host
+            with self.denials_lock:
+                if len(self.denials) < MAX_DENIALS:
+                    self.denials.append("deny network-outbound %s:%d (%s)" % (shown, port, reason))
+        data = body.encode()
+        try:
+            client.sendall(("HTTP/1.1 403 %s\r\n" % reason).encode("latin-1", "replace")
+                           + b"Content-Type: text/plain\r\nContent-Length: %d\r\n"
+                             b"Connection: close\r\n\r\n" % len(data) + data)
+        finally:
+            client.close()
+
+    def refusals(self):
+        """The refusals recorded so far (see refuse), oldest first."""
+        with self.denials_lock:
+            return list(self.denials)
 
     def connect(self, host, port):
         """Connects to a vetted address of host (never resolved again, so never rebound). Raises
@@ -1198,7 +1276,7 @@ def run_sealed(request, control, runtime):
             # only the launcher holds the lock from here on (and never hands it to the command)
             os.close(lock)
             lock = None
-        return supervise(launcher, report_r, body, request, control)
+        return supervise(launcher, report_r, body, request, control, forwarder)
     finally:
         close_pinned(read + write + read_files_pinned)
         if lock is not None:
@@ -1207,7 +1285,7 @@ def run_sealed(request, control, runtime):
             forwarder.close()
 
 
-def supervise(launcher, report_r, body, request, control):
+def supervise(launcher, report_r, body, request, control, forwarder=None):
     state = {"session": None, "cancelled": False, "exit": None, "refused": None}
     lock = threading.Lock()
 
@@ -1288,6 +1366,9 @@ def supervise(launcher, report_r, body, request, control):
     if isinstance(exit_event.get("fatal"), str):
         # the broker could not undo a refused change and ended the operation
         final["fatal"] = exit_event["fatal"]
+    if forwarder is not None:
+        # the hosts the operation's proxy refused, as refusal lines (Forwarder.refuse)
+        final["denials"] = forwarder.refusals()
     send(final)
 
 

@@ -428,9 +428,9 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
         ? await bound.backend.permissionSupport(bound.handle, AbortSignal.timeout(30_000))
         : UNBOUND_SUPPORT;
       const ownerHome = r.home ?? home;
-      const features: DeviceFeature[] = [];
-      if (mode === "os") features.push("networkReport");
-      features.push("projects");
+      // both modes report refused hosts: the macOS proxy's and the Linux forwarder's refusals
+      // (a local-Docker device runs the Linux agent in its container)
+      const features: DeviceFeature[] = ["networkReport", "projects"];
       return {
         envelope: {
           program: {

@@ -19,6 +19,7 @@ import {
   reapLinuxSession,
 } from "./linux-runtime.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
+import { networkBlocked } from "./network-denials.js";
 import { withCanonicalForms, within } from "./operation-types.js";
 import {
   createCancellationAttempt,
@@ -506,6 +507,9 @@ export function linuxOperationWorker(
         if (result.supervisorLost === true && !cancelled)
           throw new Error("The restricted launcher was lost; its owned session was ended");
         const timedOut = result.timedOut === true;
+        // the hosts the operation's forwarder refused, with the layer of each (as on macOS: the
+        // kernel turns an address refusal into the private-address note, a device one into an ask)
+        const blocked = Array.isArray(result.denials) ? networkBlocked(result.denials) : [];
         return {
           exitCode:
             cancelled || timedOut || result.cancelled === true
@@ -515,6 +519,7 @@ export function linuxOperationWorker(
           stderr: cap?.text("stderr") ?? "",
           truncated: cap?.truncated ?? false,
           timedOut,
+          ...(blocked.length > 0 ? { network: { blocked } } : {}),
         };
       } catch (e) {
         readyReject(e);
