@@ -313,6 +313,7 @@ describe("browse, search, describe, read", () => {
       "extensions",
       "conversations",
       "orgs",
+      "login-sources",
       "accounts",
       "admin",
       "models",

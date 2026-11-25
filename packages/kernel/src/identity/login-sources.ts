@@ -1,6 +1,7 @@
 import {
   IDENTITY_SOURCE_EXTENSION_POINT,
   type IdentitySource,
+  type IdentitySourceTenant,
   type PluginExtensionSection,
   validateTenantId,
 } from "@capybara-hq/plugin-sdk";
@@ -19,6 +20,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { audit } from "./audit.js";
+import { ssoCallbackPath } from "./sso-paths.js";
 
 /** The `deployment_settings` key of the login sources (login extensions spec §1). */
 export const LOGIN_SOURCES_SETTING = "loginSources";
@@ -45,14 +47,42 @@ const LoginSourcesValue = z
  */
 export type LoginSourceSettings = z.infer<typeof LoginSourceSettingsSchema>;
 
-/** The patch {@link LoginSourcesService.update} takes. */
-export type LoginSourcePatch = Partial<Omit<LoginSourceSettings, "plugin">>;
+/** The patch {@link LoginSourcesService.update} takes (an absent or undefined field keeps its value). */
+export type LoginSourcePatch = {
+  [K in Exclude<keyof LoginSourceSettings, "plugin">]?: LoginSourceSettings[K] | undefined;
+};
+
+/**
+ * How a write was made, for its audit row: the personal access token, and extra detail (a
+ * Platform operation's `via: "agent"`).
+ */
+export interface AuditVia {
+  actorTokenId?: string;
+  detail?: Record<string, unknown>;
+}
 
 /** An enabled login source whose extension is loaded and provides the point. */
 export interface EnabledLoginSource {
   plugin: string;
   source: IdentitySource;
   settings: LoginSourceSettings;
+}
+
+/**
+ * One row of the admin overview (`GET /api/v1/admin/login-sources`): the stored settings (the
+ * defaults when none are stored) with what the loaded extension declares and its state.
+ */
+export interface LoginSourceView extends LoginSourceSettings {
+  /** The source's label; the plugin name for an entry whose extension is not loaded. */
+  label: { zh: string; en: string };
+  /** The source's tenant declaration (absent when it declares none or is not loaded). */
+  tenant?: IdentitySourceTenant;
+  /** Loaded and providing `identity-source@1`. */
+  available: boolean;
+  /** Its deployment config is invalid: turning it on is refused (`login_sources.needs_config`). */
+  needsConfig: boolean;
+  /** The redirect URI to register at the identity provider; null while `http.publicUrl` is unset. */
+  callbackUrl: string | null;
 }
 
 /** A new entry: off, unlinked accounts go to the link page, nothing trusted. */
@@ -198,6 +228,7 @@ export class LoginSourcesService {
     plugin: string,
     patch: LoginSourcePatch,
     actorAccountId: string,
+    via: AuditVia = {},
   ): Promise<LoginSourceSettings> {
     const current = await this.lockedList();
     const before = current.find((e) => e.plugin === plugin);
@@ -227,9 +258,10 @@ export class LoginSourcesService {
     await writeLoginSources(this.db.db, list, actorAccountId);
     await audit(this.db.db, {
       actorAccountId,
+      ...(via.actorTokenId !== undefined && { actorTokenId: via.actorTokenId }),
       action: "login_sources.updated",
       target: plugin,
-      detail: { before: before ?? null, after: next },
+      detail: { ...via.detail, before: before ?? null, after: next },
     });
     return next;
   }
@@ -239,7 +271,11 @@ export class LoginSourcesService {
    * (available or not); the disabled entries follow in their stored order.
    */
   @Transactional()
-  async reorder(plugins: string[], actorAccountId: string): Promise<LoginSourceSettings[]> {
+  async reorder(
+    plugins: string[],
+    actorAccountId: string,
+    via: AuditVia = {},
+  ): Promise<LoginSourceSettings[]> {
     const current = await this.lockedList();
     const enabled = current.filter((e) => e.enabled);
     const byPlugin = new Map(enabled.map((e) => [e.plugin, e]));
@@ -266,13 +302,73 @@ export class LoginSourcesService {
     await writeLoginSources(this.db.db, list, actorAccountId);
     await audit(this.db.db, {
       actorAccountId,
+      ...(via.actorTokenId !== undefined && { actorTokenId: via.actorTokenId }),
       action: "login_sources.updated",
       detail: {
+        ...via.detail,
         before: current.map((e) => e.plugin),
         after: list.map((e) => e.plugin),
       },
     });
     return list;
+  }
+
+  /**
+   * The admin overview: every loaded identity source and every stored entry, the enabled ones
+   * first in login page order, then the rest by plugin name.
+   */
+  async overview(): Promise<LoginSourceView[]> {
+    const stored = await this.list();
+    const byPlugin = new Map(stored.map((e) => [e.plugin, e]));
+    const loaded = this.registry
+      .list("identity-source")
+      .filter((e) => e.capability === IDENTITY_SOURCE_EXTENSION_POINT)
+      .map((e) => e.plugin);
+    const rest = [...new Set([...stored.filter((e) => !e.enabled).map((e) => e.plugin), ...loaded])]
+      .filter((p) => byPlugin.get(p)?.enabled !== true)
+      .sort();
+    const plugins = [...stored.filter((e) => e.enabled).map((e) => e.plugin), ...rest];
+    return Promise.all(plugins.map((p) => this.viewOf(p, byPlugin.get(p))));
+  }
+
+  /** One row of {@link overview} (in the caller's transaction when there is one). */
+  async view(plugin: string): Promise<LoginSourceView> {
+    return this.viewOf(plugin, await this.get(plugin));
+  }
+
+  private async viewOf(
+    plugin: string,
+    stored: LoginSourceSettings | undefined,
+  ): Promise<LoginSourceView> {
+    const source = this.loadedSource(plugin);
+    const base = (this.config.get().http.publicUrl ?? "").replace(/\/+$/, "");
+    return {
+      ...(stored ?? defaults(plugin)),
+      label: source ? { zh: source.label.zh, en: source.label.en } : { zh: plugin, en: plugin },
+      ...(source?.tenant ? { tenant: source.tenant } : {}),
+      available: source !== undefined,
+      needsConfig: await this.needsConfig(plugin),
+      callbackUrl: base === "" ? null : `${base}${ssoCallbackPath(plugin)}`,
+    };
+  }
+
+  /**
+   * Whether `plugin` provides `identity-source@1`: loaded as one, or (not loaded) its install
+   * record's package declares it. A config-declared extension that is not loaded reads false
+   * (its manifest is not in PG).
+   */
+  async providesIdentitySource(plugin: string): Promise<boolean> {
+    if (this.loadedSource(plugin)) return true;
+    if (this.registry.current(plugin) || this.registry.declared().has(plugin)) return false;
+    const row = await this.db
+      .selectFrom("extension_installs")
+      .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
+      .select("extension_packages.section")
+      .where("extension_installs.name", "=", plugin)
+      .executeTakeFirst();
+    const provides = (row?.section as PluginExtensionSection | null | undefined)?.manifest
+      ?.provides;
+    return provides?.includes(IDENTITY_SOURCE_EXTENSION_POINT) === true;
   }
 
   /** The stored list with its row locked FOR UPDATE (created as `[]` first): writes serialize. */

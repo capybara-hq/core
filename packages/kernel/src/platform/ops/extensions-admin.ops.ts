@@ -21,6 +21,7 @@ import {
   singleProviderMessage,
 } from "../../extensions/single-provider.js";
 import { unavailableReason } from "../../extensions/unavailable.js";
+import { LoginSourcesService } from "../../identity/login-sources.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import {
@@ -215,6 +216,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "deploymentGuides">,
     @Inject(SetupChecksService)
     private readonly checks: Pick<SetupChecksService, "deploymentStates" | "deploymentRun">,
+    @Inject(LoginSourcesService)
+    private readonly loginSources: Pick<LoginSourcesService, "providesIdentitySource">,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -617,11 +620,18 @@ export class ExtensionsAdminOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
-          const [view, guides] = await Promise.all([
+          const [view, guides, login] = await Promise.all([
             this.deploymentConfigs.view(input.name),
             this.guides.deploymentGuides(input.name, { locale: input.locale }),
+            this.loginSources.providesIdentitySource(input.name),
           ]);
-          return { ...view, ...configGuides(view, guides) };
+          const setup = configGuides(view, guides);
+          // a login extension's sign-in switch is not part of its config (login extensions §3)
+          const loginNext = login
+            ? "Its sign-in is turned on and its trusted tenants set with login-sources.update."
+            : undefined;
+          const next = [setup.next, loginNext].filter((s) => s !== undefined).join(" ");
+          return { ...view, ...setup, ...(next ? { next } : {}) };
         },
       }),
       defineOperation({
