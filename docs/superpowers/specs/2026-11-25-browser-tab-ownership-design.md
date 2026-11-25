@@ -206,7 +206,13 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
 ## 6. Closing a conversation's tabs
 
 - **Parks.** A conversation has a pending park while it waits without a model turn on the browser:
-  a pending handoff, or a parked long wait (plugins#207, long waits as a suspension). The daemon
+  a pending handoff, a parked long wait (plugins#207, long waits as a suspension: the park ends on
+  `watch_end`, on the watch's heartbeat drop and on its eviction at `MAX_WATCHES`), or a held decision
+  dialog on one of its tabs (plugins#208: until it is answered or its tab closes; it pins only that
+  tab: idle close skips it and closes the conversation's other tabs as usual, eviction and adopt skip
+  it). (amended
+  2026-11-25 by `2026-11-25-browser-long-waits-design.md` and
+  `2026-11-25-browser-dialogs-and-touch-design.md`) The daemon
   tracks parks per conversation like handoffs. A pending park keeps the conversation's tabs, counts
   as in use for adopt and for the cap eviction, and keeps an otherwise idle daemon alive under the
   handoff keepalive.

@@ -142,7 +142,7 @@ Anti-goals (a failure even if it works)
   (designer's call)
 - Native dialogs (alert / confirm / prompt, file chooser, HTTP auth, permission prompts) are
   intercepted through CDP and surfaced: to the agent as tool output, in the panel as simple design
-  dialogs.
+  dialogs. (Designed in `2026-11-25-browser-dialogs-and-touch-design.md`, amended 2026-11-25.)
 - Memory: a Chromium with a few tabs takes roughly 300–500 MB inside the device's memory limit (docker
   default 2 GiB). The tab count per browser is capped (builder's call on the number).
 
@@ -311,6 +311,8 @@ by `actor.runId`). The browser is a long-lived service, so:
   resizing or closing the panel never changes it. A viewport switch (desktop / tablet / phone via
   `Emulation.setDeviceMetricsOverride`) is phase 2.
 - Compact: watch only; the panel follows the slot's `compact: "drawer"`. Touch takeover is phase 2.
+  (Both designed in `2026-11-25-browser-dialogs-and-touch-design.md` §7: a person-only phone
+  profile during takeover, restored to desktop on hand back; amended 2026-11-25.)
 - Address bar and tabs come from CDP (navigation events, `Page.navigate`,
   `Page.getNavigationHistory` / `navigateToHistoryEntry`, `Page.reload`, `Target.getTargets` /
   `createTarget` / `activateTarget`). What the person types in the address bar is navigation under
@@ -345,7 +347,8 @@ Primary, structure based (every chat model):
   the person hands back or cancels, then returns the new page state. The wait is the existing
   resumable `InputRequired` (a two-choice form: 完成 / 取消, answered in the conversation or by
   交还智能体 in the panel through `ctx.deviceAccess.answerHandoff`), so it survives replica restarts. `wait` with a long cap uses the same
-  mechanism. (designer's call)
+  mechanism. (designer's call; designed in `2026-11-25-browser-long-waits-design.md` as a watched
+  input wait, amended 2026-11-25)
 
 Vision:
 
@@ -425,7 +428,9 @@ takeover (§9).
    fake provider support for tests.
 3. Providers: docker, e2b, local (+ `packages/device`).
 4. `browser` plugin: daemon, tools, panel (watch + expanded + takeover + handoff).
-5. Phase 2: viewport switch, touch takeover, phone.
+5. Phase 2: viewport switch, touch takeover, phone (`2026-11-25-browser-dialogs-and-touch-design.md`);
+   long waits (`2026-11-25-browser-long-waits-design.md`); both on the per-conversation tab model of
+   `2026-11-25-browser-tab-ownership-design.md`.
 
 ## AGENTS.md rules touched
 
