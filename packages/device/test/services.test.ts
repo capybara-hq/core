@@ -1018,4 +1018,12 @@ it("removes what services kept under bare names before ids, keeping every servic
   await expect(lstat(join(deviceDir, "svc-files/browser"))).rejects.toThrow(/ENOENT/);
   expect((await lstat(join(deviceDir, "svc/other.kept"))).isDirectory()).toBe(true);
   expect((await lstat(join(deviceDir, "svc/browser.browser"))).isDirectory()).toBe(true);
+  // only once: what appears later under a non-id name (a future id rule) is left alone
+  expect((await lstat(join(deviceDir, "svc/.ids-v1"))).isFile()).toBe(true);
+  await supervisor.stop("browser.browser", signal());
+  await mkdir(join(deviceDir, "svc/Later_Name"), { recursive: true });
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({ ok: true });
+  expect((await lstat(join(deviceDir, "svc/Later_Name"))).isDirectory()).toBe(true);
 });
