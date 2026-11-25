@@ -823,6 +823,8 @@ export interface BackgroundTaskView {
   finishedAt: string | null;
   /** A stop is under way (another request is handling it); the task still runs. */
   stopping: boolean;
+  /** With `stopping`: the stop is recorded and waits for the device (offline or not answering). */
+  stopWaiting: boolean;
   /** The start was sent but not confirmed yet: the kernel is reconciling it. */
   starting: boolean;
 }

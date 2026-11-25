@@ -596,6 +596,8 @@ export type BackgroundTaskItem = {
   exitCode?: number | null;
   /** A stop is under way (the kernel view's `stopping`): the row stays running, with no stop. */
   stopping?: boolean;
+  /** With `stopping`: the stop waits for the device (offline or not answering). */
+  stopWaiting?: boolean;
   /** Drawn indented, under the sub-agent that started it. */
   nested?: boolean;
 };
@@ -741,7 +743,11 @@ export function BackgroundTaskRow({
       ) : null}
       {stopping ? (
         <span className="cb-muted" role="status" aria-live="polite">
-          {t("background.stopping")}
+          {t(
+            item.kind === "task" && item.stopWaiting === true
+              ? "background.stopWaiting"
+              : "background.stopping",
+          )}
         </span>
       ) : null}
       {running && !stopping ? (

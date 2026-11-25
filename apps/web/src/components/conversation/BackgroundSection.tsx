@@ -60,6 +60,7 @@ export function taskItem(t: BackgroundTaskView, stopping: ReadonlySet<string>): 
     ...(finishedAt !== undefined ? { finishedAt } : {}),
     exitCode: t.exitCode,
     ...(t.stopping || stopping.has(t.id) ? { stopping: true } : {}),
+    ...(t.stopWaiting ? { stopWaiting: true } : {}),
   };
 }
 
@@ -277,6 +278,7 @@ export function BackgroundTaskPanel({
           elapsed={formatDuration(end - started, locale, { live: status === "running" })}
           {...outputProps(out, lastLines, task)}
           stopping={task.stopping || stopping}
+          {...(task.stopWaiting ? { stopWaiting: true } : {})}
           onStop={onStop}
         />
       ) : null}

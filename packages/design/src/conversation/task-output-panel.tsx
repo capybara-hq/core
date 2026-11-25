@@ -27,6 +27,11 @@ export type TaskOutputPanelProps = {
    * runs, the stop button gives way to "正在停止…" / "Stopping…", announced politely.
    */
   stopping?: boolean;
+  /**
+   * With `stopping`: the stop is recorded but waits for the device (its machine offline or not
+   * answering); it says "等待设备响应后停止" / "Stops when the device answers" instead.
+   */
+  stopWaiting?: boolean;
   onStop(): void;
 };
 
@@ -80,6 +85,7 @@ export function TaskOutputPanel({
   source,
   unavailable,
   stopping,
+  stopWaiting,
   onStop,
 }: TaskOutputPanelProps): JSX.Element {
   const t = useDesignT();
@@ -107,7 +113,7 @@ export function TaskOutputPanel({
             role="status"
             aria-live="polite"
           >
-            {t("background.stopping")}
+            {t(stopWaiting === true ? "background.stopWaiting" : "background.stopping")}
           </span>
         ) : null}
         {status === "running" && stopping !== true ? (

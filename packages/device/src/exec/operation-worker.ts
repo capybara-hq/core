@@ -686,6 +686,47 @@ export async function sweepPrivateTemps(parent: string, pythonPath: string): Pro
   }
 }
 /** A separate process owns each immutable SRT manager; Full never enters that process. */
+/**
+ * The longest a private supervisor may take to end after its `stop` before it is killed. Its
+ * `stop` kills the owned process groups at once; only the sandbox runtime's teardown follows.
+ */
+export const WORKER_STOP_GRACE_MS = 5000;
+
+/**
+ * Sends a private supervisor its `stop` and waits for it to exit; one still alive after `graceMs`
+ * is killed. The sandbox runtime's teardown can wait forever: its proxy server's close waits for a
+ * tunnelled connection whose remote never closes its half (a long poll behind a killed client).
+ * A background task's operation, and with it the machine's answer to its stop, ends only once its
+ * supervisor exited, so an unbounded wait here left a stopped task running in every view.
+ */
+export async function stopWorker(
+  worker: ChildProcess,
+  onDiagnostic?: (text: string) => void,
+  graceMs = WORKER_STOP_GRACE_MS,
+): Promise<void> {
+  const exited = () => worker.exitCode !== null || worker.signalCode !== null;
+  // the worker may exit between the check and the send: never wait for an exit already seen
+  const ended = new Promise<void>((r) => {
+    if (exited()) r();
+    else worker.once("exit", () => r());
+  });
+  if (worker.connected) worker.send({ type: "stop" }, () => {});
+  let timer: NodeJS.Timeout | undefined;
+  const late = await Promise.race([
+    ended.then(() => false),
+    new Promise<boolean>((r) => {
+      timer = setTimeout(() => r(true), graceMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (!late) return;
+  onDiagnostic?.(
+    `The operation's supervisor did not end within ${Math.ceil(graceMs / 1000)} s of its stop; killed`,
+  );
+  if (!exited()) worker.kill("SIGKILL");
+  await ended;
+}
+
 export async function startMacOperationWorker(
   request: MacWorkerRequest,
   signal: AbortSignal,
@@ -1229,13 +1270,7 @@ export async function startMacOperationWorker(
             // a worker that exits before answering has released nothing more to release
             await released.catch(() => undefined);
           }
-          // the worker may exit between the check and the send: never wait for an exit already seen
-          const ended = new Promise<void>((r) => {
-            if (exited()) r();
-            else worker.once("exit", () => r());
-          });
-          if (worker.connected) worker.send({ type: "stop" }, () => {});
-          await ended;
+          await stopWorker(worker, request.onDiagnostic);
         } else if (!exited()) worker.kill("SIGTERM");
       }
       // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed

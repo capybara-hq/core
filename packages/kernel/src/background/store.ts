@@ -557,6 +557,29 @@ export class BackgroundTaskStore {
       .execute();
   }
 
+  /**
+   * Records a running acknowledged task's stop as owed before the device is asked (intent first):
+   * the asker is kept (the first one wins) and the task becomes `cancel-pending`, while the stop's
+   * claim (`stopping_at`) stays. A stop that settles finishes the task; one that cannot settle now
+   * releases the claim ({@link requestCancel}), and the poller delivers the owed stop. A stop
+   * whose replica died leaves the same record: the claim expires and the poller delivers it.
+   */
+  // org-filter: by task id: callers check ownership first (ownedTask: the calling conversation;
+  // TasksService.owned: org and conversation scope) or pass the id of a row they already read
+  async oweCancel(id: string, by: CancelRequester | null): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        cancel_requested_by: sql<CancelRequester | null>`COALESCE(cancel_requested_by, ${by}::text)`,
+        cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'acknowledged' THEN 'cancel-pending' ELSE launch_state END`,
+      })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where("launch_state", "<>", "legacy")
+      .execute();
+  }
+
   /** The running tasks one conversation owns (not those of its sub-agents), oldest first. */
   // org-filter: by conversation id the caller already resolved in its org (the tool call's
   // conversation, TasksService.scope(orgId, ...), or a kernel launch / deletion path)

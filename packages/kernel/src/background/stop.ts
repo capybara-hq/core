@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -16,6 +16,7 @@ import {
   exactRefOf,
   lastLinesByRef,
   MANAGED_STOP_GRACE_MS,
+  ManagedRefError,
   onManagedInstance,
   stopEnd,
   summaryLines,
@@ -26,6 +27,19 @@ import {
   type CancelRequester,
   isManagedTask,
 } from "./store.js";
+
+/**
+ * The most one exact stop attempt of a managed task may take: the wait for the instance's lease,
+ * the device's stop with its five-second grace, and the tail. A device that has not answered by
+ * then (its machine offline or silent, a busy lease) does not hold the person, the tool or the
+ * poll: the stop stays owed (`cancel-pending`) and the poller attempts it again.
+ */
+export const STOP_ATTEMPT_TIMEOUT_MS = 20_000;
+
+/**
+ * Test seam (`KernelOverride`): a shorter {@link STOP_ATTEMPT_TIMEOUT_MS}, read at every attempt.
+ */
+export const BACKGROUND_STOP_ATTEMPT_MS = Symbol("BACKGROUND_STOP_ATTEMPT_MS");
 
 /**
  * Why a task is stopped. `revoked`: the cancellation a revocation owes (its finish may wake the
@@ -82,12 +96,16 @@ export class BackgroundTaskStopper {
       | "claimStop"
       | "releaseStop"
       | "requestCancel"
+      | "oweCancel"
       | "noteCancelAttempt"
     >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Optional()
+    @Inject(BACKGROUND_STOP_ATTEMPT_MS)
+    private readonly attemptMs: () => number = () => STOP_ATTEMPT_TIMEOUT_MS,
   ) {}
 
   /**
@@ -223,9 +241,26 @@ export class BackgroundTaskStopper {
       await this.store.requestCancel(cur.id, asker, true);
       return (await this.store.get(cur.id)) ?? cur;
     };
-    let r: IfRunningResult<{ to: BackgroundFinish | null; lastLines: string }>;
     try {
       exactRefOf(cur);
+    } catch (err) {
+      // a malformed ref is never used, and no stop is owed by it (the poller skips it too)
+      await this.store
+        .releaseStop(cur.id)
+        .catch((e: unknown) =>
+          this.log.warn("cannot release a background task stop", { taskId: cur.id, err: e }),
+        );
+      throw err;
+    }
+    // intent first: from here on the stop is owed whatever happens to this attempt (the device
+    // offline or silent, this replica gone); the claim keeps the poller away while it runs
+    await this.store.oweCancel(cur.id, asker);
+    const attempt = AbortSignal.any([
+      ...(signal ? [signal] : []),
+      AbortSignal.timeout(this.attemptMs()),
+    ]);
+    let r: IfRunningResult<{ to: BackgroundFinish | null; lastLines: string }>;
+    try {
       await this.store.noteCancelAttempt(cur.id);
       r = await onManagedInstance(
         this.sandbox.ifRunning.bind(this.sandbox),
@@ -238,15 +273,20 @@ export class BackgroundTaskStopper {
           const lines = to === null ? "" : summaryLines(await lastLinesByRef(bg, h, ref, sig));
           return { to, lastLines: lines };
         },
-        signal,
+        attempt,
       );
     } catch (err) {
-      await this.store
-        .releaseStop(cur.id)
-        .catch((e: unknown) =>
-          this.log.warn("cannot release a background task stop", { taskId: cur.id, err: e }),
-        );
-      throw err;
+      if (err instanceof ManagedRefError) throw err;
+      // the device could not take the stop now (offline, silent past the attempt's limit, busy,
+      // a provider error) or the caller gave up: the stop stays owed and the claim is released,
+      // so the poller delivers it once the device answers; the task's own time limit still ends
+      // it on the device
+      this.log.warn("a background task stop was not confirmed; it stays owed", {
+        taskId: cur.id,
+        timedOut: attempt.aborted && !signal?.aborted,
+        err,
+      });
+      return pending();
     }
     if (r.kind === "ran") {
       if (r.value.to === null) return pending();

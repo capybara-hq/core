@@ -120,7 +120,8 @@ function text(task: BackgroundTaskRow, body: string): BuiltinResult {
  * conversation's background tasks through `BackgroundTaskStopper` (by its exact ref, with the device's
  * five-second grace, never creating or resuming a sandbox). A task that had already finished is not an
  * error; a reservation still launching, or a task another stop already claimed, is reported as
- * stopping. A stop that failed leaves the task running and is an error the model can retry.
+ * stopping. A stop the device cannot take now (its machine offline or silent) is recorded and
+ * reported as requested: the kernel delivers it when the device answers.
  */
 export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -153,7 +154,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       if (after.status === "running" && after.launchState === "cancel-pending") {
         return text(
           after,
-          `Background task ${after.id} ("${after.description}") stop requested: the device recorded the cancellation but has not applied it yet; it is applied when the device can. Call TaskOutput to see when it has ended.`,
+          `Background task ${after.id} ("${after.description}") stop requested: the device has not confirmed it yet (its machine is offline or not answering, or it is still applying the stop). The stop is recorded and is delivered when the device answers; the task's own time limit still ends it. Do not call TaskStop again; call TaskOutput later to see when it has ended.`,
         );
       }
       if (after.status === "running") {

@@ -5,7 +5,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
-import { BackgroundTaskStopper } from "../../src/background/stop.js";
+import { BACKGROUND_STOP_ATTEMPT_MS, BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -49,6 +49,8 @@ let redis: Redis;
 let accounts: AccountsService;
 let owner: Account;
 let added: { name: string; jobId: string }[] = [];
+/** One exact stop attempt's time limit (`BACKGROUND_STOP_ATTEMPT_MS`, read at every attempt). */
+let stopAttemptMs = 20_000;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -62,7 +64,11 @@ beforeAll(async () => {
       roles: ["api"],
       ...MODEL_PLUGINS_CONFIG,
     }),
-    { env: {}, logger: createLogger("error", { write: () => {} }) },
+    {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+      overrides: [{ provide: BACKGROUND_STOP_ATTEMPT_MS, useValue: () => stopAttemptMs }],
+    },
   );
   raw = createDb(pgc.url, 5);
   redis = new Redis(rd.url);
@@ -76,6 +82,7 @@ afterAll(async () => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  stopAttemptMs = 20_000;
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
@@ -473,6 +480,89 @@ describe("TaskStop and the stopper on managed tasks", () => {
   });
 });
 
+describe("a stop the device cannot take now is durable intent", () => {
+  it("TaskStop on an offline machine returns at once with the stop recorded; the poller delivers it", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new Error("Device is offline: no machine is connected for it");
+    };
+    const r = textOf(await f.taskStop());
+    expect(r).toMatch(/stop requested/);
+    expect(r).toMatch(/has not confirmed/);
+    expect(await f.taskRow()).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_requested_by: "tool",
+      stopping_at: null,
+    });
+    expect(await f.finishedEvents()).toHaveLength(0);
+    // still offline: the owed stop stays owed, nothing finishes
+    expect(await poller().pollOnce()).toBe(0);
+    expect((await f.taskRow()).launch_state).toBe("cancel-pending");
+    // the machine is back: the exact stop is delivered and settles the task once
+    f.provider.state.beforeStop = undefined;
+    expect(await poller().pollOnce()).toBe(1);
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+    expect(await f.finishedEvents()).toHaveLength(1);
+  });
+
+  it("a person's stop on a machine that never answers is recorded before the device is asked and returns within the attempt limit", async () => {
+    const f = await fixture();
+    stopAttemptMs = 200;
+    let during: Record<string, unknown> | undefined;
+    f.provider.state.beforeStop = async (signal) => {
+      during = await f.taskRow();
+      // a connected machine that never answers: only the attempt's limit ends the wait
+      await new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    };
+    const res = await f.req({
+      method: "POST",
+      url: `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks/${f.taskId}/stop`,
+    });
+    expect(res.statusCode).toBe(200);
+    // the intent was durable before the provider call: owed, the asker kept, claimed by this stop
+    expect(during).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_requested_by: "person",
+    });
+    expect(during?.stopping_at).not.toBeNull();
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+      stopWaiting: true,
+    });
+    expect(await f.taskRow()).toMatchObject({ launch_state: "cancel-pending", stopping_at: null });
+    // the device answers again: the person's stop settles without waking the conversation
+    f.provider.state.beforeStop = undefined;
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+    expect(ensureRuns(f.conversationId)).toHaveLength(0);
+  });
+
+  it("an owed stop whose device does not answer never holds the poll past the attempt limit", async () => {
+    const f = await fixture();
+    stopAttemptMs = 200;
+    f.provider.state.beforeStop = async () => {
+      throw new Error("offline");
+    };
+    await f.taskStop();
+    f.provider.state.beforeStop = (signal) =>
+      new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    expect(await poller().pollOnce()).toBe(0);
+    expect(await f.taskRow()).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      stopping_at: null,
+    });
+  });
+});
+
 async function getTask(store: BackgroundTaskStore, id: string) {
   const t = await store.get(id);
   if (!t) throw new Error("no task");
@@ -660,13 +750,20 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
         "starting",
         "status",
         "stopping",
+        // the stop is recorded and waits for the device (offline or not answering)
+        "stopWaiting",
         "subagentId",
         // the person whose run started it, for the web (account profile); no tool returns it
         "trigger",
       ].sort(),
     );
     // an acknowledged managed task is running, not "starting", for the model and the API
-    expect(view).toMatchObject({ status: "running", stopping: false, starting: false });
+    expect(view).toMatchObject({
+      status: "running",
+      stopping: false,
+      stopWaiting: false,
+      starting: false,
+    });
     const listed = textOf(await taskListTool(deps).run({}, await f.ctxFor()));
     expect(listed).toContain("running for");
   });
