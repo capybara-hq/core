@@ -31,6 +31,7 @@ import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
+import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
 import {
   attachCallScope,
   type CallScope,
@@ -86,13 +87,17 @@ interface ScopedDevice {
 }
 
 /** Maps the device resolution's API errors to the extension's refusal codes. */
-function refusal(e: unknown): unknown {
-  if (!(e instanceof ApiError)) return e;
-  if (e.code === "device.not_found" || e.code === "sandbox.unavailable")
-    return new DeviceAccessError("no_device", e.message, { cause: e });
-  if (e.code === "device.unavailable")
-    return new DeviceAccessError("provider_unavailable", e.message, { cause: e });
-  return e;
+function refusal(e: unknown, log: Pick<Logger, "warn">): unknown {
+  if (e instanceof ApiError) {
+    if (e.code === "device.not_found" || e.code === "sandbox.unavailable")
+      return new DeviceAccessError("no_device", e.message, { cause: e });
+    if (e.code === "device.unavailable")
+      return new DeviceAccessError("provider_unavailable", e.message, { cause: e });
+  }
+  // every other device or provider failure as the sandbox tools say it (the provider cannot be
+  // reached, the machine is offline or outdated, the outcome is unknown, ...): an actionable
+  // ToolError the extension passes on, never its own guess
+  return mapSandboxError(e, log);
 }
 
 /** How long the refresh of one service after an allowlist change may take. */
@@ -201,7 +206,7 @@ export class DeviceAccessService {
           name,
         );
       } catch (e) {
-        throw refusal(e);
+        throw refusal(e, this.log);
       }
     };
     // race-free: the provider keeps a running service and never starts a stopped one here
@@ -312,7 +317,7 @@ export class DeviceAccessService {
         call.signal,
       );
     } catch (e) {
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
   }
 
@@ -582,7 +587,7 @@ export class DeviceAccessService {
     try {
       deviceId = await this.devices.forTool(call.orgId, rootConversationId);
     } catch (e) {
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
     scope.device = deviceId;
     return {
@@ -637,7 +642,7 @@ export class DeviceAccessService {
       // the device bound to the owner's conversation is not theirs to use: someone else's
       if (e instanceof ApiError && e.code === "device.not_found")
         throw new DeviceAccessError("not_owner", DEVICE_ACCESS_NOT_OWNER_TEXT, { cause: e });
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
     return {
       orgId: conv.org_id,
