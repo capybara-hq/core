@@ -241,4 +241,18 @@ describe("diffAppliedMigrations (a real git repository)", () => {
       "packages/kernel/src/migrations/0001_b.sql",
     ]);
   });
+  it("checks the working tree too: an uncommitted migration that collides with the base fails", () => {
+    branchOff();
+    const mainHead = mainReleases("0003_main.sql");
+    // untracked, not committed: verify --fast runs before the commit may exist
+    write("packages/kernel/src/migrations/0003_branch_wip.sql", sql);
+    expect(diffNewMigrationNumbers(dir, mainHead).map((f) => [f.file, f.rule])).toEqual([
+      ["packages/kernel/src/migrations/0003_branch_wip.sql", "migration-number-behind-base"],
+    ]);
+    // an applied migration edited but not staged is reported as well
+    write("packages/kernel/src/migrations/0001_init.sql", "-- edited\n");
+    expect(diffAppliedMigrations(dir, mainHead).map((f) => f.file)).toEqual([
+      "packages/kernel/src/migrations/0001_init.sql",
+    ]);
+  });
 });
