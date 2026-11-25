@@ -15,7 +15,8 @@ permission strips, viewport profiles and touch input; the panel draws them. No c
 tools), the panel (plain TS embed page, jsdom tests), vitest.
 
 **Spec:** `docs/superpowers/specs/2026-11-25-browser-dialogs-and-touch-design.md` (core). Read it
-before any task.
+before any task, with `2026-11-25-browser-tab-ownership-design.md` (core#853); these tasks start after
+#853's plugins side is merged (per-conversation queues, `unreported`, viewer routing).
 
 ## Global Constraints
 
@@ -30,8 +31,15 @@ before any task.
   the daemon while control is `agent`, whatever the panel shows.
 - The agent always acts on the 1280×800 desktop viewport: hand back restores it before any queued
   agent request runs.
-- Queue rule: an action whose race ends on a dialog releases its serial-queue slot; `op: "dialog"`
-  runs beside the queue; a serial action on a blocked tab fails with `dialog_open` before queueing.
+- Queue rule: an action whose race ends on a dialog releases its slot in its conversation's queue;
+  `op: "dialog"` runs beside that queue; a queued action on a blocked tab fails with `dialog_open`
+  before queueing.
+- Ownership (#853): dialogs are reported and answerable only for the caller's own tabs; notes go to the
+  page owner's `unreported`; `state.dialogs` and strips go to the owner's tree; a held decision dialog
+  is a park (in use: no idle close, no eviction, no adopt); credentials and permission grants are
+  device-wide by origin; the desktop restore runs ahead of every conversation's queue.
+- The message check compares normalized (CRLF→LF, whitespace collapsed, trimmed), code-point-clipped
+  strings.
 - `browser_dialog` answers only the dialog named by `dialogId` whose 300-character message clip
   matches `message`.
 - Basic credentials go only where a browser would send them (CDP `continueWithAuth`, or a route header
@@ -100,7 +108,7 @@ before any task.
 
 **Files:**
 - Modify: `plugins/browser/daemon/protocol.ts` (`PendingDialogView` with short `id`, `ToolRequest` `op: "dialog" { dialogId, message }`, `ToolErrorCode` `dialog_open`, `ToolReply.dialog`, `ViewerIn` `dialog`, `ViewerOut` `state.dialogs`)
-- Modify: `plugins/browser/daemon/actions.ts` (`onDialog` :600 closes alerts at once with a note and records the other kinds; per-tab pending map; actions race "dialog opened on this tab" and on the dialog release their `serial()` slot (the dangling Playwright promise tracked per tab, late outcome to `unreported`); `op: "dialog"` runs beside the queue like `wait`; serial actions on a blocked tab fail `dialog_open` before queueing; `snapshot` / other ops on a blocked tab; `dialogOp`; late action outcomes to `unreported`; no timer)
+- Modify: `plugins/browser/daemon/actions.ts` (`onDialog` :600 closes alerts at once with a note and records the other kinds; per-tab pending map; a pending decision dialog marks its tab's owner in use (a #853 park); actions race "dialog opened on this tab" and on the dialog release their slot in their conversation's queue (the dangling Playwright promise tracked per tab, late outcome to `unreported`); `op: "dialog"` runs beside the queue like `wait`; serial actions on a blocked tab fail `dialog_open` before queueing; `snapshot` / other ops on a blocked tab; `dialogOp`; late action outcomes to `unreported`; no timer)
 - Modify: `plugins/browser/daemon/main.ts` (`op: "dialog"` gets the takeover refusal like other agent input, but not the serial queue)
 - Modify: `plugins/browser/daemon/viewer.ts` (`state.dialogs`; viewer `dialog` answer only while control is `user`; the old `dialog` message only for `alert` and `file`)
 - Test: `plugins/browser/test/daemon/tools.test.ts`, `plugins/browser/test/daemon/viewer.test.ts`
@@ -122,7 +130,10 @@ before any task.
   - `click that opens a confirm replies with the dialog` (reply ok, `dialog.kind === "confirm"`, within the action timeout).
   - `snapshot on a blocked tab returns the dialog line`; `click on a blocked tab fails with dialog_open before queueing`.
   - `browser_dialog answers while the opening click is still pending`; `an action on another tab runs while a confirm is held` (both with the opening action unsettled).
-  - `a stale dialogId is refused`; `a mismatching message is refused`.
+  - `a stale dialogId is refused`; `a mismatching message is refused`; `a message with newlines, quotes and an emoji at the clip boundary matches when copied from the dialog line`.
+  - `another conversation's dialogId is refused with the adopt text`; `a dialog note reaches only the owner`; `reply.dialog never shows another conversation's dialog`.
+  - `a tab with a held confirm survives idle close and eviction`; `adopt of a tab with a held dialog is refused`.
+  - `state.dialogs reaches only the owner's tree`; `a viewer cannot answer a dialog outside its tree`.
   - `dialog accept with text answers a prompt`; `dismiss answers a confirm`; `beforeunload accept lets the navigation go on`.
   - `an alert is closed at once and noted`.
   - `a pending dialog survives until answered and is named in the next reply` (fake clock advanced an hour; still pending).
@@ -172,7 +183,7 @@ before any task.
   - `a cross-site page's request to the signed-in origin carries no Authorization` (fetch, img and form post from another origin's page; a service-worker request).
   - `a new 401 clears the credentials and asks again`.
   - `auth answer refused without control`.
-  - `notifications request is reported once per origin`; `clipboard grant from the panel takes effect`; `geolocation denial is reported as unavailable`; `permission grant refused without control`; `the wrapper returns the page the same result`;
+  - `a permission note reaches only the page owner`; `a grant from a viewer for an origin outside its tree is refused`; `notifications request is reported once per origin`; `clipboard grant from the panel takes effect`; `geolocation denial is reported as unavailable`; `permission grant refused without control`; `the wrapper returns the page the same result`;
     `a forged origin in the payload is ignored`; `an unknown permission is dropped`; `reports are capped per page`; `wrapped functions keep a native toString`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement (approach per the Task 1 spike).
@@ -188,12 +199,12 @@ before any task.
 - Create: `plugins/browser/daemon/viewport.ts` (apply / restore a profile to a page through CDP; mobile UA derivation; tap and pan translation for the desktop profile)
 - Modify: `plugins/browser/daemon/actions.ts` (profile applied to new tabs; restore on hand back serialized before the request queue)
 - Modify: `plugins/browser/daemon/state.ts` (hand back hook that awaits the restore)
-- Modify: `plugins/browser/daemon/viewer.ts` (`viewport` only while control is `user`; `touch` dispatch; the mouse input clamp (:375-376) and the screencast `maxWidth` / `maxHeight` / scale (:178-179, :270, :302-303) follow the current profile)
+- Modify: `plugins/browser/daemon/viewer.ts` (`viewport` only while control is `user`; `touch` dispatch; the restore on hand back runs ahead of every conversation's queue; the mouse input clamp (:375-376) and the screencast `maxWidth` / `maxHeight` / scale (:178-179, :270, :302-303) follow the current profile)
 - Test: `plugins/browser/test/daemon/viewport.test.ts`
 
 - [ ] **Step 1: Failing tests:**
   - `phone profile sets 390x844 mobile with touch on every tab and new tabs`.
-  - `hand back restores desktop before the next request` (queue a click_at during hand back; it lands at desktop coordinates).
+  - `hand back restores desktop before the next request` (queue a click_at during hand back; it lands at desktop coordinates), for two conversations' queues.
   - `viewport switch refused without control`.
   - `touch tap in phone dispatches touch events` (page `touchstart` listener fires).
   - `touch tap in desktop clicks`; `one-finger pan in desktop scrolls`.

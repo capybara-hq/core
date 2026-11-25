@@ -5,7 +5,10 @@ browser use line, core#816). Repository: capybara-hq/plugins (`browser`: daemon,
 **no core change** (§9). Parent spec: `2026-11-23-browser-use-design.md` (§5 promised dialogs
 "surfaced: to the agent as tool output, in the panel as simple design dialogs"; §8 and §14 left the
 viewport switch and touch takeover to phase 2). The maintainer delegated the design decisions; each is
-recorded as a ruling in §11.
+recorded as a ruling in §11. It is written on the tab ownership model of
+`2026-11-25-browser-tab-ownership-design.md` (core#853, merged): tabs owned per conversation, seen
+per tree, one action queue and one active tab per conversation, notes and viewer events routed to the
+owner and its tree; §3.1 states how dialogs fit it.
 
 ## 1. Why
 
@@ -53,19 +56,21 @@ Non-goals
   settles: the session records one **pending dialog** per tab (JS dialogs are modal per page):
   `PendingDialog = { id, tabId, kind: "confirm" | "prompt" | "beforeunload" | "auth",
   message, defaultValue?, origin?, realm?, since }` (message clipped to `MAX_DIALOG_CHARS`).
-- **The request that opened it replies at once, and leaves the serial queue.** An agent action races
-  its own completion with "a dialog opened on this tab"; on the dialog it replies `ok` with the dialog
-  in `reply.dialog`. Today every op but `wait` runs through `BrowserSession.serial()`, a promise chain
-  (`daemon/actions.ts` `run`), so an action whose Playwright promise still waits for the dialog would
-  hold the queue and deadlock the op that answers it. So: (a) when the race ends on the dialog, the
-  action's queue slot is released (the queue advances); its dangling Playwright promise is tracked per
+- **The request that opened it replies at once, and leaves its conversation's queue.** An agent
+  action races its own completion with "a dialog opened on this tab"; on the dialog it replies `ok`
+  with the dialog in `reply.dialog`. Every op but `wait` runs through its conversation's action queue
+  (#853 §4: one promise chain per conversation, replacing `BrowserSession.serial()`), so an action
+  whose Playwright promise still waits for the dialog would hold that queue and deadlock the op that
+  answers it. So: (a) when the race ends on the dialog, the action's slot in its conversation's queue
+  is released (the queue advances); its dangling Playwright promise is tracked per
   tab and its late outcome goes to the next reply as a note through the existing `unreported` path;
   (b) `op: "dialog"` runs beside the queue, like `wait` (it only answers the tab's pending dialog),
   still refused while the person holds control; (c) a serial action on a blocked tab fails fast with
   `dialog_open` before it waits on the queue.
 - **While a JS dialog (confirm, prompt, beforeunload) is pending on a tab** (an `auth` dialog does
   not block: its page is loaded, so only the first bullet applies to it):
-  - every ok reply carries `reply.dialog` (the active tab's, or the tab the request touched);
+  - every ok reply carries `reply.dialog` for the calling conversation's own tabs only (its active
+    tab's, or the tab the request touched); another conversation's dialog never appears in it;
   - `snapshot` returns the dialog line instead of the tree (the tree read evaluates in the page,
     which a modal dialog blocks): `The page is blocked by a confirm dialog: "…". Answer it with
     browser_dialog (accept or dismiss) to continue.`;
@@ -76,13 +81,39 @@ Non-goals
   the new state; a long wait watching that tab has already ended with reason `dialog`
   (`2026-11-25-browser-long-waits-design.md` §6.2).
 - **No hold timer**: a pending dialog stays until it is answered, its tab closes, or the daemon stops
-  (idle stop, device suspension). A blocked tab harms nothing else (other tabs work), every reply
+  (idle stop, device suspension). **A tab with a pending decision dialog counts as in use** under
+  #853: its owner is not idle-closed after `CONVERSATION_IDLE_MS`, the tab is not evicted at the
+  device cap, and adopt of it is refused ("in use"), so an approval of `browser_dialog` given later
+  still finds it. #853 §6 lists it as the third kind of park (amended in the same PR). The daemon's
+  own idle stop still bounds it. A blocked tab harms nothing else (other tabs work), every reply
   names it, and the next agent run sees it in its first reply. An automatic default after a delay
   would race an agent whose `browser_dialog` call waits for the person's approval, and would decide
   for the person; the phase 1 defaults are gone for decision dialogs.
 - `beforeunload` (the page asks whether to leave): pending like the others. `accept` leaves (the
   navigation the agent or person started goes on), `dismiss` stays. The agent's `browser_tabs close`
   keeps skipping `beforeunload` (Playwright's default), as in phase 1.
+
+### 3.1 Tab ownership (core#853)
+
+- Ownership: a pending dialog belongs to its tab, so to the tab's owner. `reply.dialog`, the
+  `snapshot` dialog line and the `dialog_open` refusal come only from the calling conversation's own
+  tabs. `browser_dialog` with a `dialogId` on a tab the conversation does not own is refused with
+  #853's text (`Tab t3 belongs to another conversation; call browser_tabs with action adopt and tabId
+  t3 first if the user asked you to use it.`); adopt itself is refused while the dialog is pending
+  (in use, §3).
+- Notes: alert notes, the late outcome of a released action, the "signed in" note and permission
+  notes go to the page owner's `unreported` (#853 §4: per conversation), never to whichever reply
+  comes next.
+- Viewers: `state.dialogs`, the alert strip and the permission strip go only to viewers of the owner's
+  tree; a viewer may answer (in control) only dialogs of its tree's tabs; permission grants and auth
+  sign-in from a viewer are accepted only for an origin recorded on a tab of its tree.
+- Queues: a released action frees only its own conversation's queue; `op: "dialog"` runs beside that
+  queue; actions of other conversations were never behind it.
+- Device-wide by design: HTTP credentials and permission grants apply to the origin across every
+  conversation of the device, consistent with #853's one shared profile (logins and site permissions
+  are the profile's, the tabs are the conversations').
+- Viewport: hand back restores the desktop profile ahead of **every** conversation's queue (a request
+  of any conversation waits for the restore).
 
 ## 4. HTTP Basic auth
 
@@ -126,7 +157,11 @@ browser_dialog { dialogId: string, message: string, action: "accept" | "dismiss"
   `message` (the dialog's message as the dialog line quotes it, clipped to 300 characters) are
   required, so the approval card shows exactly what is being confirmed and an approval given hours
   later can never answer a newer dialog. The daemon refuses a `dialogId` that is not the tab's pending
-  dialog, or a `message` that differs from its own 300-character clip: `The dialog changed; call
+  dialog, or a `message` that differs from its own 300-character clip. The comparison: the tool input
+  (a JSON-decoded string) against the daemon's clip of the dialog message (clipped at a code point
+  boundary, so no lone surrogate), both normalized by converting `\r\n` to `\n`, collapsing runs of
+  whitespace to one space and trimming; the dialog line quotes that normalized clip (JSON string), so
+  a model that copies it decoded always matches. Refusal text: `The dialog changed; call
   browser_snapshot to see the current one.` `text` only for a prompt (`accept` with no text accepts the
   default value). Alerts never need it (closed at once). No pending dialog → ToolError `No dialog is
   open on this tab; call browser_snapshot to see the page.`
@@ -182,8 +217,8 @@ browser_dialog { dialogId: string, message: string, action: "accept" | "dismiss"
   `setUserAgentOverride`), to every open tab and to tabs opened while it is on. No reload (responsive
   pages reflow; the person reloads a user-agent-sniffing site).
 - Only the person switches, only while holding control: `{ t: "viewport", profile }` from the panel.
-  **Hand back restores `desktop`** before any agent request runs (the hand back and the restore are
-  serialized ahead of the request queue). So the agent always acts on 1280×800: the tool schemas'
+  **Hand back restores `desktop`** before any agent request of any conversation runs (the restore
+  is serialized ahead of every conversation's queue, §3.1). So the agent always acts on 1280×800: the tool schemas'
   coordinate bounds, the screenshot text and the `VIEWPORT` constant stay as they are, and the anti-goal
   "agent refs or coordinates silently invalidated" holds.
 - Viewers: `state.viewport = { width, height, mobile }`; the panel maps input through it (today it
@@ -262,7 +297,8 @@ browser_dialog { dialogId: string, message: string, action: "accept" | "dismiss"
 - R1 Decision dialogs (confirm, prompt, beforeunload, auth) are held open, one per tab; the opening
   request replies at once. Alerts are closed at once and reported (no decision to make).
 - R2 No hold timer and no automatic default: a pending dialog waits for an answer, its tab's close or
-  the daemon's stop.
+  the daemon's stop; it counts as in use (a park under #853 §6), so idle close, eviction and adopt
+  leave its tab alone (re-review X2).
 - R3 One tool `browser_dialog` (`dialogId`, `message`, `accept` / `dismiss`, `text`),
   `defaultPolicy: "ask"`; the daemon verifies id and message, so an approval covers exactly the dialog
   it shows (review I6).
@@ -284,12 +320,17 @@ browser_dialog { dialogId: string, message: string, action: "accept" | "dismiss"
 - R9 Touch: phone profile dispatches touch events; desktop translates tap → click and pan → wheel.
 - R10 Soft keyboard through an off-screen textarea using the existing `char` key path.
 - R11 No core change; the spec lives in core docs because the parent spec does.
+- R12 Dialogs follow #853 ownership: own tabs only for replies and `browser_dialog`, notes to the page
+  owner, viewer events to the owner's tree; credentials and permission grants stay device-wide by
+  origin like the shared profile (re-review X1).
+- R13 The message check compares normalized, code-point-clipped strings (re-review N4).
 
 ## AGENTS.md rules touched
 
 - **Tools**: new browser tool `browser_dialog` (English description, actionable errors, no dots in
   the key, `defaultPolicy: "ask"`); browser tool results carry pending dialog lines.
-- **Device access**: the viewer stream now carries HTTP credentials the person types; still owner-only,
+- **Device access**: dialogs, strips and answers follow the tab ownership routing of core#853 (owner,
+  owner's tree); the viewer stream now carries HTTP credentials the person types; still owner-only,
   single-use tickets, frames and input never through Redis or PG, the kernel never parses them.
 - **Mobile and shells**: takeover now works at compact with touch; size classes by window width; the
   panel (a plugin embed page, not `apps/web`) applies the mobile control sizes itself.

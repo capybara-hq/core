@@ -4,7 +4,9 @@ Status: draft for maintainer review (2026-11-25). Issue: capybara-hq/plugins#207
 browser use line, core#816, ruling R33). Repositories: capybara-hq/core (SDK, kernel, web),
 capybara-hq/plugins (`browser`; the channel plugins `lark`, `slack`, `telegram` for one card state).
 Parent spec: `2026-11-23-browser-use-design.md` (§9 said "`wait` with a long cap uses the same
-mechanism" as the handoff; this spec designs it). The maintainer delegated the design decisions; each
+mechanism" as the handoff; this spec designs it). Written on the tab ownership model of
+`2026-11-25-browser-tab-ownership-design.md` (core#853, merged): a parked long wait is one of that
+spec's parks (§6.3). The maintainer delegated the design decisions; each
 is recorded as a ruling in §10.
 
 ## 1. Why
@@ -99,8 +101,10 @@ resume?: { state: unknown; answer: FormAnswer | null;
 request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRunning?: boolean })
 ```
 
-- `call.resume` gains `outcome` (every resumed round has one; `cancelled` and `skipped` rounds never
-  resume): `answered` with the person's answer, `woken` and `expired` with `answer: null`. The handler
+- `call.resume` gains `outcome` (every resumed round has one; `skipped` rounds never resume, and a
+  `cancelled` round never does either: it is cancelled only when its run is stopped, which writes the
+  stopped result itself; `processCall` asserts this and writes `INPUT_CANCELLED_TEXT` if it ever met
+  one): `answered` with the person's answer, `woken` and `expired` with `answer: null`. The handler
   still asks its own source of truth first (for the browser: the daemon's latched watch), so a
   condition that held at the very deadline is a success whatever the outcome; `outcome` tells it what
   happened when the condition did not hold (the person ended it, the deadline passed, or the kernel
@@ -141,7 +145,9 @@ request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRun
   `tool_result`, so no `DriftReason`), `isError: false` (ending a wait by writing is not a tool
   failure), display summary 等待因新消息结束 / Wait ended by your message.
 - A cap on parked waits: at most `tools.maxWatchedWaitsPerAccount` (config, default 10) pending watched
-  questions per run trigger account, checked in `askInput`; over it → error text `Too many waits are
+  questions per (org, run trigger account), checked in `askIn` under a transaction advisory lock on
+  (org, account) (`pg_advisory_xact_lock` through the kernel's lock provider), so concurrent asks
+  cannot both pass; over it → error text `Too many waits are
   running for this user; end one, or finish and let a scheduled task check later.`
 - Unattended runs (scheduled tasks, `fail` mode): a watched wait is allowed (it needs nobody); the
   card's end control simply goes unused. Unwatched input requests stay refused there. While such a run
@@ -163,12 +169,16 @@ request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRun
   2. Resolve the tool from the question's `toolKey` on this replica and pass **the pipeline's own
      pre-call gate** (extracted from `ToolPipeline.execute` into one function both use: extension
      enabled in the org and loaded, the org's single-tool switch not off (`isToolOff`), the effective
-     config valid (`needsConfig` otherwise)), and a registered watcher. Any refusal → `wake` now and
-     the watcher is not called (the resumed call then gets the pipeline's own refusal text).
+     config valid (`needsConfig` otherwise)), and a registered watcher. A durable refusal (extension
+     disabled in the org, tool switched off, `needsConfig`, no watcher in a loaded extension) →
+     `wake` now and the watcher is not called (the resumed call then gets the pipeline's own refusal
+     text). An extension enabled in the org but **not loaded on this replica** is transient (a rolling
+     upgrade, reconcile lag): it counts as a failure and the job re-delays; only 3 consecutive
+     failures wake.
   3. Build the `ToolWatchContext` as the pipeline builds a handler's context (trigger account from
      `runs.trigger_account_id`, owner from `conversations.account_id`, role, source, agent, the same
-     `callId` and `idempotencyKey`, the effective org config), plus a call scope marked `watch` with
-     the run facts, so `ctx.deviceAccess` resolves the conversation's device and applies the owner
+     `callId` and `idempotencyKey`, `conversationId` and `rootConversationId` (#853), the effective
+     org config), plus a call scope marked `watch` with the run facts, so `ctx.deviceAccess` resolves the conversation's device and applies the owner
      rule as in a call.
   4. Call the watcher with `AbortSignal.timeout(5 s)`. `settle` → `wake`. `pending` → reset
      `failures`, `job.moveToDelayed(now + 10 s)` + `DelayedError` (the existing pattern of
@@ -305,8 +315,26 @@ request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRun
   10 minutes, an ordinary rolling deploy or a poll backlog does not lose watches, and a longer kernel
   outage ends in `unknown` → the handler's immediate check (honest, never stuck).
 - At most `MAX_WATCHES` (16) watches; a 17th start drops the oldest latched one, else the oldest.
-- Viewers: `state.waiting?: { label: string; until: string }` (the newest pending watch) so the panel's
-  status line reads 智能体：等待页面出现“…”（至 15:30） instead of showing an idle browser.
+- Viewers: `state.waiting?: { label: string; until: string }` (the newest pending watch of the viewer's
+  tree, #853 routing) so the panel's status line reads 智能体：等待页面出现“…”（至 15:30） instead of
+  showing an idle browser.
+
+### 6.3 Tab ownership (core#853)
+
+- Every watch op carries the request's `conversationId` and `rootConversationId` (#853 §3; written by
+  `runRequest` from the call, and by the watcher from its `ToolWatchContext`, which carries both).
+- `watch_start` binds to the calling conversation's active tab (#853 §4: an acting request; a
+  conversation without a tab gets one as for any acting call). A watch on a tab the conversation does
+  not own cannot be armed.
+- A pending watch is that conversation's **park** (#853 §6): it keeps the conversation's tabs past
+  `CONVERSATION_IDLE_MS`, counts as in use for adopt and the cap eviction, and keeps the daemon alive
+  under the handoff keepalive (in place of a separate watch keepalive). The park ends on `watch_end`,
+  on the heartbeat drop (10 min without a poll) and on the watch's eviction at `MAX_WATCHES`, so a
+  dropped watch never pins tabs and a live one is never evicted silently.
+- A held dialog on the watched tab ends the watch only when the tab is the watching conversation's
+  own (it always is: the watch is bound to an own tab).
+- `watch_end`'s reply takes the hand-back note from #853 §5's per-conversation "to tell" set and the
+  conversation's own `unreported` notes; `watch_poll` takes neither.
 
 ## 7. Multi-replica and failure cases
 
@@ -387,6 +415,12 @@ request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRun
 - R20 The daemon gets `remainingMs`, never an absolute deadline (device clocks differ).
 - R21 A parked unattended wait holds back the task's later ticks (`overlap`); documented, not clamped
   (the kernel cannot know a cron task's interval in general, and the person chose the wait).
+- R22 A transient "not loaded on this replica" is a counted failure, not a wake (re-review N1).
+- R23 The per-account cap is exact: checked in `askIn` under an (org, account) advisory transaction
+  lock (re-review N2).
+- R24 A cancelled round never resumes; `processCall` asserts it (re-review N3).
+- R25 A pending watch is a #853 park bound to the conversation's active tab; it ends on `watch_end`,
+  heartbeat drop or eviction; the watcher context carries `rootConversationId` (re-review X3).
 
 ## AGENTS.md rules touched
 
@@ -400,7 +434,7 @@ request(call, req: { service: string; body: Uint8Array; timeoutMs: number; ifRun
   no new `org_id` table.
 - **Runtime and replay**: no new model-visible input outside tool results; `question_answered`
   outcome `woken` is not model-visible, so no `DriftReason`; replay-evals skill notes it.
-- **Device access**: watcher polls go through `ctx.deviceAccess.request` under the owner rule, never
+- **Device access**: watch ops carry the call's conversation and root (core#853); watcher polls go through `ctx.deviceAccess.request` under the owner rule, never
   resume or start anything, and count as device use on a running instance.
 - **Channels**: the question card state gains `woken`.
 - **Config**: new kernel fields `tools.watchConcurrency` and `tools.maxWatchedWaitsPerAccount`

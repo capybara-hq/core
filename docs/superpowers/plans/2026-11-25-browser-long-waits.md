@@ -16,7 +16,9 @@ polls it (the poll doubles as the watch's heartbeat).
 **Tech Stack:** NestJS kernel, BullMQ, Kysely/PG, `@capybara-hq/plugin-sdk`, Next web, the `browser`
 and channel plugins, vitest (kernel integration tests with testcontainers).
 
-**Spec:** `docs/superpowers/specs/2026-11-25-browser-long-waits-design.md`. Read it before any task.
+**Spec:** `docs/superpowers/specs/2026-11-25-browser-long-waits-design.md`. Read it before any task,
+with `2026-11-25-browser-tab-ownership-design.md` (core#853: per-conversation tabs, queues and parks),
+which the plugins tasks build on; plugins Tasks 6–7 start after #853's plugins side is merged.
 
 ## Global Constraints
 
@@ -38,6 +40,9 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   `tools.maxWatchedWaitsPerAccount` (default 10).
 - Daemon heartbeat `WATCH_HEARTBEAT_MS = 600_000`; watch ops never take the hand-back note or the
   unreported notes.
+- A pending watch is the calling conversation's #853 park, bound to its active tab; it ends on
+  `watch_end`, heartbeat drop or `MAX_WATCHES` eviction. Watch ops carry `conversationId` and
+  `rootConversationId` from the call or the watcher context, never from input.
 - Waits ≤ 60 s stay in-call, unchanged and cardless; a longer wait needs a condition.
 - No new model-visible input outside tool results; no `DriftReason`.
 - Applied migrations immutable; the new migration follows `0108_question_skipped.sql`.
@@ -140,7 +145,7 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
     CHECK (status IN ('pending', 'answered', 'skipped', 'expired', 'cancelled', 'woken'));
   ```
 - Create: `packages/kernel/src/tools/tool-watch-queue.ts` (no Nest deps: `TOOL_WATCH_QUEUE = "cap-kernel-tool-watch"`, `TOOL_WATCH_JOB = "tool-watch"`, `toolWatchJobId`, `ToolWatchJobData = { orgId; questionId; failures }`, the three constants)
-- Modify: `packages/kernel/src/tools/questions.service.ts` (`QuestionAskInput.watch?: { deadlineMs }`; `askIn` sets `expires_at` from `least(deadlineMs, hours)`, stores `watch: true` in the spec JSON, adds `watch: true` to `question_asked`, owes the first `tool-watch` job; new `wake(questionId)` / `wakeIn`; outcome and status unions gain `woken`)
+- Modify: `packages/kernel/src/tools/questions.service.ts` (`QuestionAskInput.watch?: { deadlineMs }`; `askIn` takes an (org, account) `pg_advisory_xact_lock` through the kernel lock provider and refuses past `tools.maxWatchedWaitsPerAccount` pending watched questions (error mapped by `askInput` to the spec's text); `askIn` sets `expires_at` from `least(deadlineMs, hours)`, stores `watch: true` in the spec JSON, adds `watch: true` to `question_asked`, owes the first `tool-watch` job; new `wake(questionId)` / `wakeIn`; outcome and status unions gain `woken`)
 - Modify: `packages/kernel/src/infra/queue/queue-names.ts` (`KERNEL_QUEUES` + `cap-kernel-tool-watch`), `packages/kernel/src/admin/health.service.ts` (`KERNEL_QUEUE_NAMES`; `test/infra/queue-names.test.ts` keeps them equal)
 - Modify: `packages/kernel/src/infra/outbox/registry.ts` (`OUTBOX_JOBS` entry `tool-watch`: queue, `processedIn` the Task 3 processor, idempotent: "deterministic job id per question; the job re-reads the question and acts only while it is pending", `removeOnComplete: true`)
 - Modify: `packages/kernel/src/conversations/events.ts` (`question_asked.watch?: true`, `question_answered.outcome` + `woken`)
@@ -159,6 +164,8 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   - `wake settles a pending question and resumes the waiting run` — status `woken`, `question_answered { outcome: "woken", byAccountId: null, answer: null }`, run `queued`, resume job owed; after commit the event log is notified and `question.answered` (outcome `woken`) emitted once.
   - `wake, answer and expire race: one wins` — the three concurrently on a due question; exactly one effective outcome, one `question_answered`.
   - `skipped watched wait is never woken` — `skipPendingIn` then `wake` → `settled`, no event.
+  - `concurrent asks at the cap: exactly one passes` (two asks for the same (org, account) with 9 pending).
+  - `the cap counts per org` (the same account's waits in another org do not count).
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement (`wakeIn` under conversation lock → question `FOR UPDATE`; conditional on `pending` and `expires_at > now()`; `// org-filter: questionId comes from the kernel-written tool-watch job payload`).
 - [ ] **Step 4:** Rerun → PASS; `pnpm check:org-filter`; `pnpm check:kernel-conventions`; `pnpm check:outbox-registry`.
@@ -196,7 +203,8 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   - `three failures wake` — kv `fail`; after the third failed poll the question is `woken`.
   - `missing watcher wakes the call` — extension disabled in the org while parked → woken → the pipeline's unavailable-tool text.
   - `a settle before the suspend resumes through the re-check` — a test seam delays the suspend; one resume.
-  - `watcher gets the call's identity` — `callId`, `idempotencyKey`, `accountId`, `ownerAccountId`, `conversationId` equal the handler's.
+  - `watcher gets the call's identity` — `callId`, `idempotencyKey`, `accountId`, `ownerAccountId`, `conversationId`, `rootConversationId` equal the handler's (root and sub-agent calls).
+  - `extension not loaded on this replica counts as a failure and re-delays`; `disabled in the org wakes at once`.
   - `watched wait in an unattended fail-mode run is allowed` (with Task 4).
   - device-access: `watch scope request on a suspended device rejects not_running and resumes nothing`; `ifRunning request from a handler behaves the same`; `watch scope request on a running device refreshes last use`; `watch scope ensureService is refused`.
   - `a parked wait past maxRunningMinutes ends honestly and resumes nothing` (sweep seam suspends the instance; watcher gets `not_running` → woken; the handler's `ifRunning` request also `not_running`; instance stays suspended).
@@ -215,14 +223,14 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 **Repo:** core
 
 **Files:**
-- Modify: `packages/kernel/src/tools/pipeline.ts` (`isInputRequired` :885 and the `input_required` mapping :3500 carry `watch`; `askInput` :3312: `watch` without a registered watcher → `Tool <key> asked for a watched wait but registers no watcher.`, invalid `deadlineMs` → invalid-form text, pass `watch` to `questions.ask`; the unattended `fail` branch :1902 keeps outcomes with `watch`; `skippedResult` :284 gives `WAIT_SKIPPED_TEXT` (`isError: false`, display summary 等待因新消息结束 / Wait ended by your message) for a question whose spec has `watch`; `processCall` :1332 passes `resume.outcome` from the round's status; `askInput` refuses a watch past `tools.maxWatchedWaitsPerAccount` pending watched questions of the trigger account)
+- Modify: `packages/kernel/src/tools/pipeline.ts` (`isInputRequired` :885 and the `input_required` mapping :3500 carry `watch`; `askInput` :3312: `watch` without a registered watcher → `Tool <key> asked for a watched wait but registers no watcher.`, invalid `deadlineMs` → invalid-form text, pass `watch` to `questions.ask`; the unattended `fail` branch :1902 keeps outcomes with `watch`; `skippedResult` :284 gives `WAIT_SKIPPED_TEXT` (`isError: false`, display summary 等待因新消息结束 / Wait ended by your message) for a question whose spec has `watch`; `processCall` :1332 passes `resume.outcome` from the round's status and asserts a `cancelled` round never resumes (writes `INPUT_CANCELLED_TEXT` and logs an error if it does); `askInput` maps the cap refusal of `askIn` to the spec's text)
 - Modify: `packages/kernel/src/config/schema.ts` (`tools.maxWatchedWaitsPerAccount`, default 10) + `docs/config.md` (`pnpm gen:config-docs`)
 - Test: `packages/kernel/test/tools/pipeline.test.ts`, `packages/kernel/test/tools/questions-skip.test.ts`
 
 - [ ] **Step 1: Failing tests:** `watched wait without watcher is an error result`;
   `invalid deadline is an error result`; `unattended fail mode keeps a watched wait`;
   `unattended fail mode still refuses an unwatched input request`; `skip text of a watched wait` (isError false);
-  `resume carries outcome answered / woken / expired`; `the eleventh pending watched wait of one account is refused`;
+  `resume carries outcome answered / woken / expired`; `a cancelled round is never resumed`; `the eleventh pending watched wait of one account is refused`;
   `deadline clamp shorter than the asked deadline ends the wait at the clamp with outcome expired`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement.
@@ -272,7 +280,7 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   - `wait of 60 s stays in-call` (one `wait` request, no InputRequired).
   - `long wait arms a watch and returns a watched InputRequired` (`watch_start` body, `watch.deadlineMs`, form with `end`).
   - `long wait without a condition is a ToolError`; `two conditions are a ToolError`.
-  - `watch_start sends remainingMs`; `watcher passes ifRunning and maps pending / met / ended / unknown / not_running`; `watcher never calls ensureService`.
+  - `watch_start sends remainingMs`; `the watcher's request carries conversationId and rootConversationId` (from `ToolWatchContext`, never input); `watcher passes ifRunning and maps pending / met / ended / unknown / not_running`; `watcher never calls ensureService`.
   - `resume: met → result with duration and detail`; `ended dialog → dialog line`; `tab_closed → ToolError`;
     `outcome answered → user ended ToolError`; `outcome expired or ended/deadline → timeout text with elapsed`;
     `outcome woken while pending → interrupted ToolError`; `not_running on watch_end → device stopped ToolError, no ensureService`;
@@ -291,7 +299,8 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 **Files:**
 - Modify: `plugins/browser/daemon/protocol.ts` (`WaitCondition`, `watch_start { remainingMs }` / `watch_poll` / `watch_end`, `ToolReply.watch`, `state.waiting`, `MAX_WATCHES = 16`, `WATCH_HEARTBEAT_MS = 600_000`; short `wait` gains `urlContains` / `download`)
 - Modify: `plugins/browser/daemon/actions.ts` (watch registry: arm per tab, evaluate, latch, end on dialog / tab close / deadline; heartbeat drop; download watch hook in `onDownload`; `waitOp` :1235 new conditions)
-- Modify: `plugins/browser/daemon/state.ts` (a polled pending watch keeps the daemon from its idle stop)
+- Modify: `plugins/browser/daemon/state.ts` (a pending watch is the conversation's #853 park: keeps its tabs, counts as in use for adopt and eviction, keeps the daemon alive under the handoff keepalive; the park ends on `watch_end`, heartbeat drop or `MAX_WATCHES` eviction)
+- Modify: `plugins/browser/daemon/actions.ts` (`watch_start` binds to the calling conversation's active tab; `state.waiting` routed to viewers of the owner's tree; `watch_end` takes the conversation's hand-back "to tell" entry and its own `unreported`)
 - Modify: `plugins/browser/daemon/main.ts` (watch ops in their own handler like the handoff ops: bypass the takeover refusal and `dropHandoff`; `watch_start` / `watch_poll` do not call `takeHandbackNote` (:388-391) or splice `unreported`; `watch_end` does)
 - Modify: `plugins/browser/daemon/viewer.ts` (`state.waiting`), `plugins/browser/ui-src/panel/panel.ts` + `i18n.ts` (status line)
 - Test: `plugins/browser/test/daemon/tools.test.ts`, `plugins/browser/test/daemon/state.test.ts`, `plugins/browser/test/panel/panel.test.ts`
@@ -301,6 +310,7 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   - `watch on urlContains`, `watch on navigation`, `watch on download saves and reports the path`.
   - `dialog on the watched tab ends the watch with reason dialog`; `closing the tab ends it with tab_closed`; `deadline (from remainingMs on the device clock) ends it`.
   - `watch_start is idempotent per id`; `watch_poll of an unknown id is unknown`; `watch_end forgets`.
+  - `a parked wait keeps its tabs past CONVERSATION_IDLE_MS`; `a heartbeat drop ends the park` (tabs idle-close afterwards); `a MAX_WATCHES eviction ends the park`; `adopt of a parked conversation's tab is refused`; `watch_start binds to the caller's active tab, not another conversation's`; `state.waiting reaches only the owner's tree`.
   - `a watch without a poll for 10 minutes is dropped` (fake clock); `a hand back during a watch is reported by watch_end's reply, not lost to polls`; `unreported notes survive polls`; `auth dialog or alert does not end a watch`; `a polled watch keeps the daemon from its idle stop`.
   - `watch ops run while taken over and keep the pending handoff`.
   - `a 17th watch drops the oldest latched one`.

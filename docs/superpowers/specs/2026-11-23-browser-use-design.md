@@ -409,7 +409,8 @@ takeover (§9).
 3. Providers: docker, e2b, local (+ `packages/device`).
 4. `browser` plugin: daemon, tools, panel (watch + expanded + takeover + handoff).
 5. Phase 2: viewport switch, touch takeover, phone (`2026-11-25-browser-dialogs-and-touch-design.md`);
-   long waits (`2026-11-25-browser-long-waits-design.md`).
+   long waits (`2026-11-25-browser-long-waits-design.md`); both on the per-conversation tab model of
+   `2026-11-25-browser-tab-ownership-design.md`.
 
 ## AGENTS.md rules touched
 
