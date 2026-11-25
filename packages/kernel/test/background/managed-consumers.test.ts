@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DeviceOfflineError } from "@capybara-hq/plugin-sdk";
+import { DeviceOfflineError, type SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -1072,10 +1072,11 @@ async function owedClones(
   f: Awaited<ReturnType<typeof fixture>>,
   n: number,
   deviceId: string,
+  from = 0,
 ): Promise<string[]> {
   const base = await f.taskRow();
   const ids: string[] = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = from; i < from + n; i++) {
     const id = `bt_cl${"abcdefghijklmnop"[i]}aaa`;
     const operationId = `${"c".repeat(60)}${String(i).padStart(4, "0")}`;
     const ref = {
@@ -1105,6 +1106,117 @@ async function owedClones(
   }
   return ids;
 }
+
+describe("owed stops of different devices are delivered side by side", () => {
+  it("a silent device's stop never delays another device's in the same tick, and gets one attempt", async () => {
+    const f = await fixture();
+    stopAttemptMs = 2000;
+    // a second running device served by the same provider (its handle names the same instance)
+    const other = randomUUID();
+    await f.db
+      .insertInto("devices")
+      .values({
+        id: other,
+        org_id: f.orgId,
+        owner_kind: "personal",
+        owner_account_id: owner.id,
+        provider: "@managed-consumer-test",
+        name: "Other",
+      })
+      .execute();
+    await f.db
+      .insertInto("device_instances")
+      .values({
+        device_id: other,
+        org_id: f.orgId,
+        provider: "@managed-consumer-test",
+        status: "running",
+        handle: JSON.stringify({ id: f.deviceId, roots: { workspace: "/work" } }),
+        created_at: new Date(MANAGED_GENERATION),
+        fs_status: "ready",
+        had_instance: true,
+      })
+      .execute();
+    // owed: one stop on the silent device (before the fixture's own task, also owed there) and
+    // one on the other device, each an execution the provider owns
+    // the silent device's stop comes first in the owed order (older), so a one-by-one delivery
+    // would hold the other device's behind it
+    const [otherId] = await owedClones(f, 1, other, 0);
+    const [silentId] = await owedClones(f, 1, f.deviceId, 1);
+    for (const id of [silentId, otherId]) {
+      const row = await f.db
+        .selectFrom("background_tasks")
+        .select("execution_ref")
+        .where("id", "=", id as string)
+        .executeTakeFirstOrThrow();
+      const ref = (
+        typeof row.execution_ref === "string" ? JSON.parse(row.execution_ref) : row.execution_ref
+      ) as SandboxExecutionRef;
+      f.provider.executions.set(ref.operationId, {
+        ref,
+        output: new Uint8Array(),
+        status: { state: "running" },
+        stopAs: "stopped",
+        retained: "ok",
+      });
+    }
+    const store = k.app.get(BackgroundTaskStore);
+    expect(await store.claimStop(f.taskId)).toBe(true);
+    await store.oweCancel(f.taskId, "tool");
+    await store.requestCancel(f.taskId, "tool", true, null);
+    const opOf = async (id: string) =>
+      (
+        await f.db
+          .selectFrom("background_tasks")
+          .select("operation_id")
+          .where("id", "=", id)
+          .executeTakeFirstOrThrow()
+      ).operation_id;
+    const silentOp = await opOf(silentId as string);
+    const otherOp = await opOf(otherId as string);
+    let otherSettled!: () => void;
+    const otherDone = new Promise<void>((r) => {
+      otherSettled = r;
+    });
+    let sawOtherWhileSilent = false;
+    const attempted: string[] = [];
+    f.provider.state.beforeStop = async (signal, ref) => {
+      attempted.push(ref.operationId);
+      if (ref.operationId === otherOp) {
+        queueMicrotask(otherSettled);
+        return;
+      }
+      // the silent machine: it sees the other device's stop settle while it still holds its own
+      await Promise.race([
+        otherDone.then(() => {
+          // only while this attempt still waits (a late settle after its abort does not count)
+          if (!signal.aborted) sawOtherWhileSilent = true;
+        }),
+        new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true })),
+      ]);
+      await new Promise<never>((_, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    };
+    expect(await poller().pollOnce()).toBe(1);
+    expect(sawOtherWhileSilent).toBe(true);
+    const status = async (id: string) =>
+      await f.db
+        .selectFrom("background_tasks")
+        .select(["status", "cancel_failure"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect(await status(otherId as string)).toMatchObject({ status: "stopped" });
+    expect(await status(silentId as string)).toMatchObject({
+      status: "running",
+      cancel_failure: "unreachable",
+    });
+    // the silent device's other owed stop waits for the next tick: one attempt there per tick
+    expect(attempted.filter((op) => op === silentOp)).toHaveLength(1);
+    expect(await f.taskRow()).toMatchObject({ status: "running", launch_state: "cancel-pending" });
+  });
+});
 
 describe("fix round 2: owed stops are applied fairly", () => {
   it("owed stops on a suspended instance never hold back one on a running instance", async () => {

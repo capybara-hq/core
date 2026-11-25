@@ -767,6 +767,9 @@ export async function startMacOperationWorker(
   let registered: TrustedLaunchIdentity | undefined;
   let execStarted = false;
   let execCompleted = false;
+  // the command's leader was seen to end (its process-exit, its completion, the native helper's
+  // return): its process group may be empty and its pgid free for reuse from then on
+  let commandClosed = false;
   let cancellation: Promise<void> | undefined;
   const files: FileHandle[] = [];
   const controller = new AbortController();
@@ -1103,7 +1106,7 @@ export async function startMacOperationWorker(
         const invocation = transport.nativeHelperInvocation(roots, launch);
         prepared = await wrap([invocation.command, ...invocation.args].map(shellQuote).join(" "));
         recordTransferTiming(request.native.method, "prepare", performance.now() - preparedAt);
-        return await runNativeHelper(
+        const nativeResult = await runNativeHelper(
           {
             ...request.native,
             path: (() => {
@@ -1139,6 +1142,8 @@ export async function startMacOperationWorker(
           },
           controller.signal,
         );
+        commandClosed = true;
+        return nativeResult;
       }
       const args = request.args;
       for (const key of Object.keys(args.env ?? {}))
@@ -1194,6 +1199,7 @@ export async function startMacOperationWorker(
           return;
         }
         if (item.event === "cancelled" || item.event === "process-exit") {
+          if (item.event === "process-exit") commandClosed = true;
           request.onControl?.(item.event);
           return;
         }
@@ -1253,6 +1259,7 @@ export async function startMacOperationWorker(
         await request.onLaunch(registered);
         readyResolve();
         const result = await completed;
+        commandClosed = true;
         await outputPending;
         execCompleted = true;
         if (outputFault || result.outputFailed)
@@ -1286,7 +1293,15 @@ export async function startMacOperationWorker(
             // a worker that exits before answering has released nothing more to release
             await released.catch(() => undefined);
           }
-          await stopWorker(worker, request.onDiagnostic, WORKER_STOP_GRACE_MS, registered?.pid);
+          // the command's group is killed on the late path only while it may still hold
+          // processes: once its leader ended, the supervisor's exit handler signalled the group
+          // and the pgid may already name another process's group
+          await stopWorker(
+            worker,
+            request.onDiagnostic,
+            WORKER_STOP_GRACE_MS,
+            commandClosed ? undefined : registered?.pid,
+          );
         } else if (!exited()) worker.kill("SIGTERM");
       }
       // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed
