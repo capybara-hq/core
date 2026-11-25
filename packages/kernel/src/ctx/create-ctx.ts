@@ -467,6 +467,8 @@ export function createExtensionContext(
   manifest: ExtensionManifest,
   deploymentConfig: unknown,
   extensionPointAccess: ExtensionPointAccess = noProviders(deps),
+  /** The package this instance was loaded from (null: not from an install record). */
+  identity: { sha256: string | null } = { sha256: null },
 ): KernelExtensionContext {
   const name = manifest.name;
   const live =
@@ -483,6 +485,8 @@ export function createExtensionContext(
   const lifecycle = new AbortController();
   /** 撤销时队列 worker 排空的截止时刻（epoch 毫秒）；undefined = 一直等（停机路径）。 */
   let drainDeadline: number | undefined;
+  /** Set once this instance begins to be disposed (an upgrade or unload drains it). */
+  let disposing = false;
   const lock = createLock(deps.locks, name);
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
   let closing: Promise<void> | undefined;
@@ -653,7 +657,13 @@ export function createExtensionContext(
   // approved manifest declares and only for the conversation's owner (DeviceAccessService checks)
   const deviceAccessApi: DeviceAccessCtx | undefined = perms.deviceAccess
     ? (() => {
-        const caller = { extension: name, services: [...(perms.deviceAccess?.services ?? [])] };
+        const caller = {
+          extension: name,
+          services: [...(perms.deviceAccess?.services ?? [])],
+          sha256: identity.sha256,
+          // a draining instance (its successor is loaded) never rolls a service back to its files
+          superseded: () => disposing || lifecycle.signal.aborted,
+        };
         const backend = (): DeviceAccessBackend => {
           const b = deps.deviceAccess?.();
           if (!b)
@@ -1114,6 +1124,7 @@ export function createExtensionContext(
     ledger,
     async beginDispose(deadline) {
       drainDeadline = deadline;
+      disposing = true;
       await queue.pauseWorkers();
     },
     drainQueues: (deadline) => queue.drainWorkers(deadline),
