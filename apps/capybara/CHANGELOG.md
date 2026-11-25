@@ -1,5 +1,35 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.117
+
+### Patch Changes
+
+- de210cf: Browser tabs owned per conversation, core part. `ToolCallContext.rootConversationId` gives every
+  tool handler the root of its conversation tree (set by the kernel). A viewer stream on a device
+  service now starts with a kernel-written viewer context message (`DeviceServiceViewerContext`,
+  `encodeViewerContext`, `parseViewerContext`: the ticket's conversation and its root); a later
+  `{"kind":"viewer"}` from the panel is never context. `ctx.deviceAccess.answerHandoff` takes
+  `handoffConversationId` and answers a sub-agent's handoff from the root's panel, only within the
+  scope conversation's tree. `@capybara-hq/testing`: `FakeDialInMachine.streamOpenGate` holds a
+  `stream-open` answer for ordering tests. During a rolling upgrade, viewer tickets minted by an older
+  replica are refused (a ticket lives 60 s; reopen the panel).
+  The browser plugin's panel Done / Cancel needs the browser release that passes
+  `handoffConversationId`; upgrade both together.
+- 095e00b: Plugin embeds delegate Chrome's local network access permission: after a network change (VPN,
+  hosts file, a proxy) leaves the app's page on a public connection while the embed's own requests
+  reach the same host at a private address, Chrome now asks once instead of blanking the embed.
+- 016a74a: Questions can be answered with buttons. `InputForm` gains `body` (longer text under a short title)
+  and, on its single field, `choices` (labelled values). When that field is required and a single
+  choice (a `boolean`, or a string `enum` without `multiSelect` / `allowOther`), it renders as one
+  button per choice, the first primary, and pressing one answers at once. Examples are a confirm
+  (完成 / 取消) and a one-value wait (结束等待). `validateInputForm` checks the rule, and the
+  kernel keeps `body` and `choices` in `question_asked`. The conversation's question card shows the
+  body. When the plugin tool's `InputRequired` names a panel (`open`), the card also offers an action
+  that opens that panel.
+- Updated dependencies [de210cf]
+- Updated dependencies [016a74a]
+  - @capybara-hq/kernel@0.1.0-rc.92
+
 ## 0.1.0-rc.116
 
 ### Patch Changes
