@@ -619,6 +619,10 @@
     "push": {
       "provider_unavailable": "平台没有可用的推送通道覆盖此应用，暂时无法接收通知。请联系超级管理员。",
       "registration_not_found": "此设备已不再接收通知。"
+    },
+    "sso": {
+      "link_expired": "绑定链接已过期，请重新用第三方账号登录。",
+      "session_mismatch": "登录状态已变化，请重新登录后再试。"
     }
   },
   "agents": {

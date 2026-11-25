@@ -619,6 +619,10 @@
     "push": {
       "provider_unavailable": "This app can't receive notifications from this platform: no enabled push channel covers it. Ask your super admin.",
       "registration_not_found": "This device no longer receives notifications."
+    },
+    "sso": {
+      "link_expired": "The link has expired. Sign in with the external account again.",
+      "session_mismatch": "Your session changed. Sign in again and retry."
     }
   },
   "agents": {
