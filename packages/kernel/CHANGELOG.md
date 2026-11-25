@@ -1,5 +1,28 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.91
+
+### Patch Changes
+
+- 2c09b84: Pin the bootstrap device providers to the releases that take namespaced device service ids (core#840):
+  device-docker 0.1.0-rc.30 (services as their own user, pinned read-only Chromium in the sandbox image)
+  and device-local 0.1.0-rc.11 (sealed service install directory, gone at once after a machine restart),
+  plus the plugins marketplace commit and the compose sandbox image build context at 44fa9a1. The kernel
+  and these providers move together: deploy them in one step, together with device-e2b 0.1.0-rc.30 and
+  browser 0.1.0-rc.5 where installed, and capybara-device 0.1.0-rc.37 on machines.
+- e6a1fb9: A run stopped while a tool's images are being stored keeps the tool's own result: the remaining
+  images are named as not stored because the run was stopped. Without an object store, a block that
+  is not an image still says it is the wrong type.
+- aa535be: Images in tool results reach the agent and the person. The pipeline stores every image block a
+  tool returns (a browser screenshot, an MCP image) as a copy of the conversation and names it in the
+  result (`file_id`); a model with vision sees it after the step's results, a model without vision is
+  told it was not shown and how to read it, and an image that cannot be stored says why. The web
+  shows the images as thumbnails on the call's row (opening the image viewer), and `Deliver` takes a
+  `file_id` to hand such an image (or any attachment or artifact of the conversation) to the person
+  without a device.
+- Updated dependencies [aa535be]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.73
+
 ## 0.1.0-rc.90
 
 ### Patch Changes
