@@ -979,3 +979,43 @@ it("only a regular seal file seals the install directory", async () => {
   expect(echo.calls[1]?.writeRoots).toContain(installDir);
   expect(echo.calls[1]?.readRoots).not.toContain(installDir);
 });
+
+it("an unsealed install directory is emptied at every start, whatever wrote it (an older version)", async () => {
+  const { deviceDir, supervisor, echo } = await fixture();
+  const installDir = join(deviceDir, "svc-install", "browser.browser");
+  const { files: _f, ...noFiles } = spec();
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  expect(await ensure({ spec: spec(), filesDigest: "d1" })).toMatchObject({ ok: true });
+  // a process that never sealed (an older service, a compromised one) left an "install" behind
+  await mkdir(join(installDir, "chromium-1"), { recursive: true });
+  await writeFile(join(installDir, "chromium-1", "INSTALLATION_COMPLETE"), "");
+  await writeFile(join(installDir, "chromium-1", "chrome"), "planted");
+  await supervisor.stop("browser.browser", signal());
+  // the same files again: still unsealed, so emptied
+  expect(await ensure({ spec: noFiles, filesDigest: "d1" })).toMatchObject({ ok: true });
+  await expect(lstat(join(installDir, "chromium-1"))).rejects.toThrow(/ENOENT/);
+  expect(echo.calls[1]?.writeRoots).toContain(installDir);
+  await writeFile(join(installDir, "planted-again"), "x");
+  await supervisor.stop("browser.browser", signal());
+  // an upgrade (new files) over a dirty unsealed directory: emptied too, never sealed as found
+  expect(await ensure({ spec: spec({ "main.js": "// v2" }), filesDigest: "d2" })).toMatchObject({
+    ok: true,
+  });
+  await expect(lstat(join(installDir, "planted-again"))).rejects.toThrow(/ENOENT/);
+  expect(echo.calls[2]?.writeRoots).toContain(installDir);
+});
+
+it("removes what services kept under bare names before ids, keeping every service id", async () => {
+  const { deviceDir, supervisor } = await fixture();
+  for (const dir of ["svc/browser/profile", "svc-files/browser", "svc/other.kept"])
+    await mkdir(join(deviceDir, dir), { recursive: true });
+  await writeFile(join(deviceDir, "svc/browser/profile/Cookies"), "old session");
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({ ok: true });
+  await expect(lstat(join(deviceDir, "svc/browser"))).rejects.toThrow(/ENOENT/);
+  await expect(lstat(join(deviceDir, "svc-files/browser"))).rejects.toThrow(/ENOENT/);
+  expect((await lstat(join(deviceDir, "svc/other.kept"))).isDirectory()).toBe(true);
+  expect((await lstat(join(deviceDir, "svc/browser.browser"))).isDirectory()).toBe(true);
+});

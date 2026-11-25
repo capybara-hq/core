@@ -638,6 +638,7 @@ export class ServiceSupervisor {
       throw new SandboxPermissionUnsupportedError(
         "Device services need a macOS host device in this version of capybara-device",
       );
+    await this.pruneLegacy();
     const paths = servicePaths(this.o.deviceDir, spec.name, this.aliasRoot);
     // every directory and file written here is checked component by component and never through
     // a link: the state directory is the service's own write root, the workspace the agent's
@@ -759,9 +760,11 @@ export class ServiceSupervisor {
   /**
    * The service's install directory (`<device dir>/svc-install/<id>`, made link-free) and whether
    * this launch gets it read only: sealed (the service made the regular file
-   * {@link DEVICE_SERVICE_INSTALL_SEAL} in it) and filled under `digest`. Sealed under another
-   * digest (the service's files changed): emptied and unsealed. `digest` null (a restart on the
-   * stored code) keeps the directory as it is.
+   * {@link DEVICE_SERVICE_INSTALL_SEAL} in it) and filled under `digest`. Anything else is emptied
+   * and the launch gets it writable: an unsealed directory holds nothing trustworthy (an earlier
+   * process, an older version of the service, may have written anything there), so every unsealed
+   * start installs afresh. `digest` null (a restart on the stored code) keeps a sealed directory
+   * and empties an unsealed one.
    */
   private async installDir(
     name: string,
@@ -770,16 +773,33 @@ export class ServiceSupervisor {
     const root = await realDirectory(this.o.deviceDir, ["svc-install"]);
     const dir = await realDirectory(root, [name]);
     const sealed = await isRegularFile(join(dir, DEVICE_SERVICE_INSTALL_SEAL));
-    if (digest === null) return { dir, sealed };
     const record = join(root, `.${name}`);
     const recorded = await readSmallFile(record);
-    if (sealed && recorded === digest) return { dir, sealed: true };
-    if (sealed)
-      // never through a link: rm removes a link itself
-      for (const entry of await readdir(dir))
-        await rm(join(dir, entry), { recursive: true, force: true });
-    if (recorded !== digest) await writeNewFile(record, Buffer.from(digest));
+    if (sealed && (digest === null || recorded === digest)) return { dir, sealed: true };
+    // never through a link: rm removes a link itself
+    for (const entry of await readdir(dir))
+      await rm(join(dir, entry), { recursive: true, force: true });
+    if (digest !== null && recorded !== digest) await writeNewFile(record, Buffer.from(digest));
     return { dir, sealed: false };
+  }
+
+  /**
+   * Removes what services kept under bare names before ids (core#817): an entry of `svc/` or
+   * `svc-files/` whose name is not a service id (an old browser profile with its cookies, old
+   * code). Never through a link (rm removes a link itself); records (`.`-names) are left alone.
+   */
+  private async pruneLegacy(): Promise<void> {
+    for (const root of [serviceRoot(this.o.deviceDir), serviceCodeRoot(this.o.deviceDir)]) {
+      let entries: string[];
+      try {
+        entries = await readdir(root);
+      } catch {
+        continue;
+      }
+      for (const entry of entries)
+        if (!entry.startsWith(".") && !DEVICE_SERVICE_ID_RE.test(entry))
+          await rm(join(root, entry), { recursive: true, force: true });
+    }
   }
 
   /** Refuses a start without files unless the stored files were written under `digest`. */
