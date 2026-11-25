@@ -44,6 +44,7 @@ beforeAll(async () => {
         fixture("idp-tenant"),
         fixture("idp-unconfigured"),
         fixture("idp-org-field"),
+        fixture("dir-mini"),
       ],
       extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
       extensionPermissions: { autoApprove: true },
@@ -153,6 +154,31 @@ describe("LoginSourcesService", () => {
     expect((await svc.get("fake-idp"))?.enabled).toBe(false);
   });
 
+  it("trust follows the current tenant declaration and needs the source loaded", async () => {
+    const host = k.app.get(ExtensionHost);
+    await svc.update("idp-tenant", { trustedTenants: ["T0123"] }, actor);
+    await host.unload("idp-tenant");
+    try {
+      // while it is away only blanks are refused: a never-trusted tenant can be stored
+      await svc.update("idp-tenant", { trustedTenants: ["T0123", "TPUBLIC"] }, actor);
+      expect(await svc.isTrusted("idp-tenant:T0123")).toBe(false);
+    } finally {
+      await host.reload("idp-tenant");
+    }
+    expect(await svc.isTrusted("idp-tenant:T0123")).toBe(true);
+    expect(await svc.isTrusted("idp-tenant:TPUBLIC")).toBe(false);
+  });
+
+  it("enabled() skips a source whose loaded config is incomplete", async () => {
+    await seedLoginSources(db, [{ plugin: "idp-org-field" }, { plugin: "fake-idp" }]);
+    expect((await svc.enabled()).map((e) => e.plugin)).toEqual(["fake-idp"]);
+  });
+
+  it("a loaded extension that is not an identity source is unknown", async () => {
+    const err = await refused(svc.update("dir-mini", { enabled: true }, actor));
+    expect(err.code).toBe("login_sources.unknown_plugin");
+  });
+
   it("keeps an entry of an unloaded extension", async () => {
     await svc.update("fake-idp", { enabled: true, trustedTenants: ["t1"] }, actor);
     const host = k.app.get(ExtensionHost);
@@ -220,5 +246,14 @@ describe("LoginSourcesService", () => {
       .execute();
     expect(await svc.list()).toEqual([]);
     expect(await svc.isTrusted("fake-idp:t1")).toBe(false);
+  });
+
+  it("a stored list naming a plugin twice reads as no entries", async () => {
+    const entry = { plugin: "fake-idp", enabled: true, signUp: "link", trustedTenants: [] };
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: LOGIN_SOURCES_SETTING, value: JSON.stringify([entry, entry]) })
+      .execute();
+    expect(await svc.list()).toEqual([]);
   });
 });

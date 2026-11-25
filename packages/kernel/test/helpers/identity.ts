@@ -14,6 +14,7 @@ import { PermissionTransitions } from "../../src/sandbox/permission-transitions.
  * the same `db` shares one set of database handles, so their transactions see each other.
  */
 
+import { IDENTITY_SOURCE_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Kysely } from "kysely";
 import { SetupService } from "../../src/admin/setup.service.js";
@@ -22,6 +23,7 @@ import type { Keyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { EvalBudget } from "../../src/evals/budget.js";
 import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
+import { InflightTracker } from "../../src/extensions/inflight.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -189,7 +191,7 @@ export function sessionsFor(
 
 /**
  * The external identities over `db`, trust read from the stored login sources (seed them with
- * `seedLoginSources`); no extension is loaded.
+ * `seedLoginSources`); `lark` and `slack` count as loaded identity sources ({@link loginSourcesFor}).
  */
 export function externalFor(db: Kysely<any>): ExternalIdentities {
   const h = handlesFor(db);
@@ -201,13 +203,34 @@ export function externalFor(db: Kysely<any>): ExternalIdentities {
   );
 }
 
-/** The login sources service over `db`, with no extension loaded. */
-export function loginSourcesFor(db: Kysely<any>): LoginSourcesService {
+/**
+ * The login sources service over `db`. The extensions named in `loaded` count as loaded
+ * identity sources declaring no tenant (trust needs a loaded source); nothing else is loaded.
+ */
+export function loginSourcesFor(
+  db: Kysely<any>,
+  loaded: readonly string[] = ["lark", "slack"],
+): LoginSourcesService {
   const h = handlesFor(db);
+  const impl = { label: { zh: "测试", en: "Test" } };
   return new LoginSourcesService(
     h.db,
     h.txHost,
-    { list: () => [], current: () => undefined },
+    {
+      list: (point) =>
+        point === "identity-source"
+          ? loaded.map((plugin) => ({
+              plugin,
+              capability: IDENTITY_SOURCE_EXTENSION_POINT,
+              impl,
+              version: "0.1.0",
+              configHash: "",
+              inflight: new InflightTracker(plugin),
+            }))
+          : [],
+      current: () => undefined,
+      declared: () => new Map(),
+    },
     {
       get: () => {
         throw new Error("no kernel config in this test");

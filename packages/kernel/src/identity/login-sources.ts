@@ -1,6 +1,7 @@
 import {
   IDENTITY_SOURCE_EXTENSION_POINT,
   type IdentitySource,
+  type PluginExtensionSection,
   validateTenantId,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -32,7 +33,11 @@ const LoginSourceSettingsSchema = z.object({
   signUp: z.enum(["link", "create"]),
   trustedTenants: z.array(z.string().min(1).max(TENANT_MAX)).max(MAX_TRUSTED_TENANTS),
 });
-const LoginSourcesValue = z.array(LoginSourceSettingsSchema);
+const LoginSourcesValue = z
+  .array(LoginSourceSettingsSchema)
+  .refine((list) => new Set(list.map((e) => e.plugin)).size === list.length, {
+    message: "each plugin appears once",
+  });
 
 /**
  * One login source: an extension providing `identity-source@1`, whether the login page offers
@@ -131,7 +136,7 @@ export class LoginSourcesService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ExtensionRegistry)
-    private readonly registry: Pick<ExtensionRegistry, "list" | "current">,
+    private readonly registry: Pick<ExtensionRegistry, "list" | "current" | "declared">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
@@ -146,12 +151,16 @@ export class LoginSourcesService {
     return parseLoginSources(row?.value, this.log);
   }
 
-  /** The entries the login page offers: enabled, loaded and providing the point, in order. */
+  /**
+   * The entries the login page offers, in order: enabled, loaded, providing the point and with a
+   * complete deployment config (the page never offers a button that fails).
+   */
   async enabled(): Promise<EnabledLoginSource[]> {
     return (await this.list()).flatMap((settings) => {
       if (!settings.enabled) return [];
       const source = this.loadedSource(settings.plugin);
-      return source ? [{ plugin: settings.plugin, source, settings }] : [];
+      if (!source || this.loadedConfigIncomplete(settings.plugin)) return [];
+      return [{ plugin: settings.plugin, source, settings }];
     });
   }
 
@@ -161,14 +170,19 @@ export class LoginSourcesService {
 
   /**
    * Whether the source key `<plugin>:<tenant>` is trusted: the tenant is in that plugin's
-   * `trustedTenants` (full key match, trust is per tenant, Ruling A19). Independent of `enabled`:
-   * directory sync reads it for `email_verified` whether or not the login page offers the source.
+   * `trustedTenants` (full key match, trust is per tenant, Ruling A19), the plugin is loaded as an
+   * identity source and the tenant passes its current tenant declaration (a tenant stored while
+   * the extension was away, or before an upgrade added `neverTrusted` or tightened `pattern`, is
+   * not trusted). Independent of `enabled`: directory sync reads it for `email_verified` whether
+   * or not the login page offers the source.
    */
   async isTrusted(sourceKey: string): Promise<boolean> {
     const i = sourceKey.indexOf(":");
     if (i <= 0) return false;
     const plugin = sourceKey.slice(0, i);
     const tenant = sourceKey.slice(i + 1);
+    const source = this.loadedSource(plugin);
+    if (!source || validateTenantId(source.tenant, tenant) !== "ok") return false;
     return (await this.get(plugin))?.trustedTenants.includes(tenant) === true;
   }
 
@@ -313,29 +327,67 @@ export class LoginSourcesService {
   }
 
   /**
-   * Whether the extension's deployment config is invalid: loaded, the running config leaves a
-   * required overridable field empty (the host loads with those fields optional, so that is the
-   * only way the full schema can refuse it, as in `EffectiveConfigs.get`); not loaded, a live
-   * replica reports it pending configuration.
+   * Whether the loaded extension's running config leaves a required overridable field empty: the
+   * host loads with those fields optional, so that is the only way the full schema can refuse it
+   * (as in `EffectiveConfigs.get`).
+   */
+  private loadedConfigIncomplete(plugin: string): boolean {
+    const inst = this.registry.current(plugin);
+    const schema = inst?.manifest.config?.deployment as z.ZodTypeAny | undefined;
+    return schema !== undefined && missingOverridable(schema, inst?.config).length > 0;
+  }
+
+  /**
+   * Whether an identity source's deployment config is invalid: loaded as one, see
+   * {@link loadedConfigIncomplete}; loaded but not an identity source, false (the caller answers
+   * unknown_plugin); not loaded, {@link pendingConfigIdentitySource}.
    */
   private async needsConfig(plugin: string): Promise<boolean> {
-    const inst = this.registry.current(plugin);
-    if (inst) {
-      const schema = inst.manifest.config?.deployment as z.ZodTypeAny | undefined;
-      return schema !== undefined && missingOverridable(schema, inst.config).length > 0;
-    }
+    if (this.loadedSource(plugin)) return this.loadedConfigIncomplete(plugin);
+    if (this.registry.current(plugin)) return false;
+    return this.pendingConfigIdentitySource(plugin);
+  }
+
+  /**
+   * Whether a live replica reports `plugin` pending configuration for the version the deployment
+   * wants: an install record's package (its row's sha256 matches the install target, and the
+   * package's static manifest provides `identity-source@1`), or a config-declared extension (the
+   * startup config names it; its manifest is not in PG, so the point is not checked).
+   */
+  private async pendingConfigIdentitySource(plugin: string): Promise<boolean> {
     const staleSeconds =
       STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds;
-    const row = await this.db
+    const pending = this.db
       .selectFrom("extension_replica_status")
-      .select("plugin")
-      .where("plugin", "=", plugin)
-      .where("state", "=", "pending")
-      .where("reason", "=", "config")
-      .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
+      .where("extension_replica_status.plugin", "=", plugin)
+      .where("extension_replica_status.state", "=", "pending")
+      .where("extension_replica_status.reason", "=", "config")
+      .where(
+        "extension_replica_status.heartbeat_at",
+        ">",
+        sql<Date>`now() - make_interval(secs => ${staleSeconds})`,
+      );
+    if (this.registry.declared().has(plugin)) {
+      const row = await pending
+        .select("extension_replica_status.plugin")
+        .where("extension_replica_status.source", "=", "config")
+        .limit(1)
+        .executeTakeFirst();
+      return row !== undefined;
+    }
+    const row = await pending
+      .innerJoin("extension_installs", (j) =>
+        j
+          .onRef("extension_installs.name", "=", "extension_replica_status.plugin")
+          .onRef("extension_installs.sha256", "=", "extension_replica_status.sha256"),
+      )
+      .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
+      .select("extension_packages.section")
       .limit(1)
       .executeTakeFirst();
-    return row !== undefined;
+    const provides = (row?.section as PluginExtensionSection | null | undefined)?.manifest
+      ?.provides;
+    return provides?.includes(IDENTITY_SOURCE_EXTENSION_POINT) === true;
   }
 }
 

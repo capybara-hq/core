@@ -115,6 +115,8 @@ const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts"
 const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** The fixture packer of the test kit (`packFixture`), for the declarative fixture plugins. */
 const testingFixturesModule = join(repoRoot, "packages/testing/src/fixtures.ts");
+/** The test kit's index: `seedLoginSources` and the kernel database helpers it re-exports. */
+const testingModule = join(repoRoot, "packages/testing/src/index.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const deviceFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/device-fake/index.ts");
 /** Kernel test fixture `fake-dial-in`: a dial-in device provider, for the device sign-in case. */
@@ -721,7 +723,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       extensionHost: { dir: join(dir, "plugins") },
       // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
       http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },
-      auth: { cookieSecure: false, loginSources: ["fake-im"] },
+      auth: { cookieSecure: false },
       // 渠道长连接的扫描加快，建连接后很快连上
       channels: { leaseTtlMs: 3000, scanIntervalMs: 500 },
       log: { level: "warn" },
@@ -738,6 +740,25 @@ export default async function globalSetup(): Promise<Cleanup> {
     );
     if ((await exited(migrate)) !== 0) {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
+    }
+
+    // fake-im on the login page (the `loginSources` deployment setting); an unlinked sign-in
+    // creates an account, as before the setting existed
+    {
+      const { createDb, kernelDb, seedLoginSources } = (await import(testingModule)) as {
+        createDb: (url: string, max: number) => { destroy(): Promise<void> };
+        kernelDb: (db: unknown) => unknown;
+        seedLoginSources: (
+          db: unknown,
+          entries: { plugin: string; signUp?: "link" | "create" }[],
+        ) => Promise<void>;
+      };
+      const pool = createDb(pg.getConnectionUri(), 1);
+      try {
+        await seedLoginSources(kernelDb(pool), [{ plugin: "fake-im", signUp: "create" }]);
+      } finally {
+        await pool.destroy();
+      }
     }
 
     // The bootstrap plugins: the pinned npm packages from the public registry (or the mirror in
