@@ -361,7 +361,7 @@ services:
   # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#d03e463a0339d42f42ec591cd44eea7d96436d06:plugins/device-docker/image
+    build: https://github.com/capybara-hq/plugins.git#44fa9a1384c92d8016c54dae17d36fb9d464c9e5:plugins/device-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -369,7 +369,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#d03e463a0339d42f42ec591cd44eea7d96436d06:plugins/device-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#44fa9a1384c92d8016c54dae17d36fb9d464c9e5:plugins/device-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"
