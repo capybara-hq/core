@@ -242,6 +242,7 @@ export {
   ToolMeta,
   ToolRow,
   type ToolRowData,
+  type ToolRowImage,
   type ToolRowProps,
 } from "./tool-row";
 export { WorkingLine, type WorkingLineProps } from "./working-line";

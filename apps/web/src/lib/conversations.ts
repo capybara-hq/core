@@ -150,6 +150,14 @@ export interface CommandAsk {
  */
 export type NetworkBlockedLayer = "device" | "org" | "address" | "unknown";
 
+/** One stored image of a call's result (`tool_result.media`): a `read` attachment of the conversation. */
+export interface ToolResultImage {
+  attachmentId: string;
+  name: string;
+  mediaType: string;
+  size: number;
+}
+
 /** `tool_result.view` (kernel `ToolViewSchema`): display only. */
 export type ToolView =
   | { kind: "command"; description?: string; exitCode: number | null; timedOut: boolean }
@@ -359,6 +367,11 @@ type EventBody =
         card?: { plugin: string; view: string; key?: string };
         /** The command review's decision on the call (auto mode spec §5.4; display only). */
         review?: ReviewRecord;
+        /**
+         * The images stored for the call (Read's copy, or the image blocks of any tool's result):
+         * shown to the agent; the row shows them as thumbnails (tool result images design §4).
+         */
+        media?: ToolResultImage[];
       };
     }
   | {

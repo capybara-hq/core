@@ -329,7 +329,7 @@ describe("主模型与兜底的能力不同", () => {
       { type: "text", text: "look" },
       {
         type: "text",
-        text: `[Attached image "img-look-0.png" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+        text: `[Attached image "img-look-0.png" — this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
   });

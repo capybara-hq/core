@@ -11,6 +11,13 @@ export const MODEL_IMAGE_MAX_EDGE = 2048;
 /** An image at most this large and within {@link MODEL_IMAGE_MAX_EDGE} is sent unchanged. */
 export const MODEL_IMAGE_KEEP_BYTES = 1_048_576;
 
+/**
+ * The most pixels {@link fitImageForModel} decodes; a larger image is sent unchanged (and a
+ * provider that rejects it is handled by `media_excluded`). Above the tool-result and thumbnail
+ * bound (40 megapixels) so a large camera photo a person uploads is still scaled.
+ */
+export const MODEL_IMAGE_MAX_INPUT_PIXELS = 100_000_000;
+
 /** Quality of the re-encoded copy (JPEG, or WebP for an image with transparent pixels). */
 const QUALITY = 85;
 
@@ -28,7 +35,10 @@ const RESIZABLE = new Set(["image/png", "image/jpeg", "image/webp"]);
 export async function fitImageForModel(media: MediaBytes): Promise<MediaBytes> {
   if (!RESIZABLE.has(media.mediaType)) return media;
   try {
-    const image = sharp(media.data, { failOn: "error" });
+    const image = sharp(media.data, {
+      failOn: "error",
+      limitInputPixels: MODEL_IMAGE_MAX_INPUT_PIXELS,
+    });
     const meta = await image.metadata();
     if (
       media.data.byteLength <= MODEL_IMAGE_KEEP_BYTES &&

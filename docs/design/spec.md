@@ -1911,10 +1911,11 @@ widths; the disclosure chevron remains visible.
 - **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, two labelled blocks, each a label column (`micro` 600 `faint`, "IN" / "OUT" in English, "输入" / "输出" in Chinese, `4ch` wide, gap `space.2`) beside its body:
   - **IN**: the command for a shell row as `$ <command>` (the `$` `faint`, the command `ink`); else the inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere). Omitted when there is no input;
   - **OUT**: the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, folded at `layout.tool-output` high and scrolling; for a failure the full error text; then a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全文" / "View full text", which reads the archive (`GET …/outputs/:outputId`). Omitted while there is no output yet.
+  - **Result images** (`detail.images`, part `tool-images`; tool result images design §4): the images a call's result carried, shown to the agent, as thumbnails under the output (and above its footer) in a wrapping row, gap `space.2`; each a `button` of `layout.thumb` × `layout.thumb`, `bg` ground, 1px `line` border, radius `sm`, the image covering it, named by the image's name (accessible name and tooltip); a click opens the image viewer (§6.16.20) on that image, navigable across the group's images. An unsafe source draws the empty thumbnail. Images alone make a row expandable.
   - An edit's expanded form stays its diff (§6.16.10), without labels.
 
 <!-- states: tool-row -->
-States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`, `waiting`, `linked`, `auto-granted`, `auto-approved`, `review-approved`
+States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `expanded-images`, `hook-denied`, `waiting`, `linked`, `auto-granted`, `auto-approved`, `review-approved`
 
 <!-- size-table: tool-row -->
 | Part | State | Property | Value |

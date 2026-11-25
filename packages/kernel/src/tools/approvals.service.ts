@@ -12,6 +12,7 @@ import { normalizeStoredDefinition } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_TEXT_MAX_CHARS,
+  type EventPayload,
   GIT_ASK_MAX_REFS,
   GIT_REF_MAX_CHARS,
   NETWORK_ASK_MAX_HOSTS,
@@ -105,6 +106,8 @@ export interface KeptToolResult {
   contentTypes?: string[];
   display?: ToolDisplay;
   view?: ToolView;
+  /** The stored images of the result (`tool_result.media`), written with it when the ask settles. */
+  media?: NonNullable<EventPayload<"tool_result">["media"]>;
   /** The command review's decision, kept with the result (display only). */
   review?: ReviewRecord;
   /**

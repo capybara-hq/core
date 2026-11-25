@@ -689,11 +689,63 @@ describe("images from Read (vision-read design §1.4)", () => {
       content: [
         { type: "tool_result", callId: "c1", content: "result c1", isError: false },
         { type: "text", text: `Image from Read (file_id ${rid(1)}):` },
-        { type: "text", text: "[This model cannot view images.]" },
+        { type: "text", text: "[Not shown to you: this model cannot view images.]" },
       ],
     });
     expect(meta.media).toEqual([{ attachmentId: rid(1), outcome: "placeholder_unsupported" }]);
     expect(mediaTokens).toBe(0);
+    expect(JSON.stringify(request)).not.toContain(b64);
+  });
+
+  /** One step calling an extension tool whose result carried image `n` (tool result images §3). */
+  function shotStep(log: Log, step: number, n: number): void {
+    const key = "plugin__browser__browser_screenshot";
+    log.assistant([{ type: "tool_call", id: "s1", name: key, input: {} }], "tool_use", step);
+    log.add({
+      type: "tool_result",
+      payload: {
+        step,
+        callId: "s1",
+        toolKey: key,
+        content: "shot",
+        isError: false,
+        media: [readMedia(n)],
+      },
+    });
+  }
+
+  it("an extension tool's image: labelled with the tool's key, shown to a vision model", () => {
+    const log = new Log();
+    log.user("screenshot please");
+    shotStep(log, 1, 1);
+    const { request, meta } = buildRead(log, VISION, [1], 6);
+    expect(request.messages.at(-1)?.content).toEqual([
+      { type: "tool_result", callId: "s1", content: "shot", isError: false },
+      { type: "text", text: `Image from plugin__browser__browser_screenshot (file_id ${rid(1)}):` },
+      {
+        type: "image",
+        mediaType: "image/png",
+        name: "shot-1.png",
+        source: { kind: "base64", data: b64 },
+      },
+    ]);
+    expect(meta.media).toEqual([{ attachmentId: rid(1), outcome: "bytes" }]);
+  });
+
+  it("an extension tool's image on a model without vision: not shown, and how to read it", () => {
+    const log = new Log();
+    log.user("screenshot please");
+    shotStep(log, 1, 1);
+    const { request, meta } = buildRead(log, MODEL, [1], 6);
+    expect(request.messages.at(-1)?.content).toEqual([
+      { type: "tool_result", callId: "s1", content: "shot", isError: false },
+      { type: "text", text: `Image from plugin__browser__browser_screenshot (file_id ${rid(1)}):` },
+      {
+        type: "text",
+        text: `[Not shown to you: this model cannot view images. If Read is available to you, Read with file_id ${rid(1)} sends it to the organization's vision model, if one is set.]`,
+      },
+    ]);
+    expect(meta.media).toEqual([{ attachmentId: rid(1), outcome: "placeholder_unsupported" }]);
     expect(JSON.stringify(request)).not.toContain(b64);
   });
 
@@ -844,13 +896,13 @@ describe("images from Read (vision-read design §1.4)", () => {
     expect(build(named).request.messages[0]?.content).toEqual([
       {
         type: "text",
-        text: `[Attached image "cat.png" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+        text: `[Attached image "cat.png" — this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
     expect(build(log).request.messages[0]?.content).toEqual([
       {
         type: "text",
-        text: `[Attached image "attachment" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+        text: `[Attached image "attachment" — this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
   });

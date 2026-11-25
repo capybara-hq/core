@@ -434,6 +434,8 @@ export function toRow(
     ...(t.output ? { output: t.output } : {}),
     ...(t.outputBytes ? { outputBytes: t.outputBytes, outputShownBytes: 4 * 1024 } : {}),
     ...(diff ? { diff } : {}),
+    // result images: names only; an empty source draws the empty thumbnail (deterministic)
+    ...(t.images ? { images: t.images.map((name) => ({ id: name, name, src: "" })) } : {}),
   };
   return {
     id: t.id,
@@ -564,6 +566,7 @@ function toolRowBlocks(): ReactNode {
       <RowBlock id="tool-row-expanded-connector" row={toRow(pick(T.expanded, 1))} open />
       <RowBlock id="tool-row-expanded-failed" row={toRow(pick(T.expanded, 3))} open />
       <RowBlock id="tool-row-large-output" row={toRow(pick(T.largeOutput, 0))} open />
+      <RowBlock id="tool-row-expanded-images" row={toRow(pick(T.images, 0))} open />
       <RowBlock
         id="tool-row-hook-denied"
         row={toRow(pick(T.hookDenied, 0), { blockedBy: "合规审查" })}

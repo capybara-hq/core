@@ -468,6 +468,10 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const whoStopped = (id: string | null): ReactNode =>
     id === null ? t("system") : <Person person={person(id)} size={16} viewerId={me.account.id} />;
 
+  /** An attachment's image as the thread loads it (a retry after a failed load asks again). */
+  const imageSrc = (id: string) =>
+    `${attachmentDownloadUrl(orgId, id)}${retried.has(id) ? "?retry=1" : ""}`;
+
   const rowWithSize = (r: TimelineTool): ToolRowData => {
     const taskId = r.background?.taskId;
     const row = r.lines
@@ -486,12 +490,27 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               : {}),
           }
         : r.row;
+    // the images the call's result carried (shown to the agent): thumbnails on the row
+    const withImages =
+      r.images !== undefined && r.images.length > 0
+        ? {
+            ...row,
+            detail: {
+              ...row.detail,
+              images: r.images.map((m) => ({
+                id: m.attachmentId,
+                name: m.name,
+                src: imageSrc(m.attachmentId),
+              })),
+            },
+          }
+        : row;
     const total = r.outputId ? sizes.get(r.outputId) : undefined;
-    const out = row.detail?.output;
-    if (total === undefined || out === undefined) return row;
+    const out = withImages.detail?.output;
+    if (total === undefined || out === undefined) return withImages;
     return {
-      ...row,
-      detail: { ...row.detail, outputBytes: total, outputShownBytes: out.length },
+      ...withImages,
+      detail: { ...withImages.detail, outputBytes: total, outputShownBytes: out.length },
     };
   };
 
@@ -657,8 +676,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const entry = (e: TimelineEntry): ReactNode => {
     switch (e.kind) {
       case "user": {
-        const srcOf = (id: string) =>
-          `${attachmentDownloadUrl(orgId, id)}${retried.has(id) ? "?retry=1" : ""}`;
+        const srcOf = imageSrc;
         const atts: BubbleAttachment[] = [
           ...e.files.map(
             (f): BubbleAttachment => ({
@@ -805,25 +823,66 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "thinking":
         if (e.model !== null && reasoningOf(e.model) === false) return null;
         return <ThinkingRow seconds={e.seconds} text={e.text} live={e.live} />;
-      case "tools":
+      case "tools": {
+        // the group's result images, all navigable in one viewer; the one it shows is `zoomId`
+        const pictures = e.rows.flatMap((r) => r.images ?? []);
+        const zoomIndex = pictures.findIndex((m) => m.attachmentId === zoomId);
+        const shown = pictures[zoomIndex];
         return (
-          <ToolGroup
-            rows={e.rows.map(rowWithSize)}
-            onViewAll={(rowId) => {
-              const r = e.rows.find((x) => x.row.id === rowId);
-              if (r) onOpenOutput?.(r.callId);
-            }}
-            onCopy={(rowId) => {
-              const r = e.rows.find((x) => x.row.id === rowId);
-              const text = r?.row.detail?.output;
-              if (text === undefined) return;
-              navigator.clipboard?.writeText(text).then(
-                () => toast.success(t("copied")),
-                () => {},
-              );
-            }}
-          />
+          <>
+            <ToolGroup
+              rows={e.rows.map(rowWithSize)}
+              onViewAll={(rowId) => {
+                const r = e.rows.find((x) => x.row.id === rowId);
+                if (r) onOpenOutput?.(r.callId);
+              }}
+              onCopy={(rowId) => {
+                const r = e.rows.find((x) => x.row.id === rowId);
+                const text = r?.row.detail?.output;
+                if (text === undefined) return;
+                navigator.clipboard?.writeText(text).then(
+                  () => toast.success(t("copied")),
+                  () => {},
+                );
+              }}
+              onOpenImage={(rowId, i) => {
+                const m = e.rows.find((x) => x.row.id === rowId)?.images?.[i];
+                if (m) setZoomId(m.attachmentId);
+              }}
+              onImageError={onImageError}
+            />
+            {pictures.length > 0 ? (
+              <ImageViewer
+                open={zoomIndex >= 0}
+                onOpenChange={(open) => {
+                  if (!open) setZoomId(null);
+                }}
+                images={pictures.map((m) => ({
+                  src: imageSrc(m.attachmentId),
+                  name: m.name,
+                  size: formatBytes(m.size),
+                }))}
+                index={Math.max(zoomIndex, 0)}
+                onIndexChange={(i) => {
+                  const next = pictures[i];
+                  if (next) setZoomId(next.attachmentId);
+                }}
+                onDownload={(i) => {
+                  const p = pictures[i];
+                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                }}
+                onOpenInNewTab={(i) => {
+                  const p = pictures[i];
+                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                }}
+                {...(shown !== undefined && !retried.has(shown.attachmentId)
+                  ? { onRetry: () => onImageError(shown.attachmentId) }
+                  : {})}
+              />
+            ) : null}
+          </>
         );
+      }
       case "subagents":
         return (
           <SubagentGroup

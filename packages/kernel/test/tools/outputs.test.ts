@@ -153,7 +153,9 @@ describe("renderResult", () => {
         { type: "text", text: "bye" },
       ],
     });
-    expect(r.text).toBe("hello\n[image image/png, 10 bytes]\n[resource file:///a.txt]\nbye");
+    expect(r.text).toBe(
+      "hello\n[Image (image/png, 10 B) not stored, so not shown.]\n[resource file:///a.txt]\nbye",
+    );
     expect(r.contentTypes).toEqual(["text", "image", "resource_link"]);
     expect(r.isError).toBe(false);
     expect(renderResult({ content: [{ type: "text", text: "boom" }], isError: true }).isError).toBe(

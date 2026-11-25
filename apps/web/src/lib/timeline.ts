@@ -23,6 +23,7 @@ import type {
   ModelRef,
   ReviewRecord,
   ToolInfo,
+  ToolResultImage,
 } from "./conversations";
 import type { OrgRole } from "./members";
 import type { PersonRef } from "./people";
@@ -217,6 +218,8 @@ export interface TimelineTool {
    * the result named it.
    */
   background?: { taskId: string | null };
+  /** The images stored for the call (`tool_result.media`): the thread shows them on the row. */
+  images?: ToolResultImage[];
 }
 
 export interface ApprovalItem {
@@ -1322,6 +1325,7 @@ export function buildEventTimeline(
           c.tool.lines === undefined
         )
           row.extra = summary;
+        if (p.media !== undefined && p.media.length > 0) c.tool.images = p.media;
         if (failed && row.blockedBy === undefined) row.error = firstLine(p.content);
         row.detail = {
           ...row.detail,

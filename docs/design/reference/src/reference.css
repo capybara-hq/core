@@ -2256,6 +2256,21 @@ textarea {
 .r-qedit textarea {
   width: 100%;
 }
+.r-timages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.r-tthumb {
+  display: block;
+  flex: none;
+  width: var(--cb-layout-thumb);
+  height: var(--cb-layout-thumb);
+  padding: 0;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+}
 .r-thumb {
   display: block;
   width: var(--cb-layout-thumb);

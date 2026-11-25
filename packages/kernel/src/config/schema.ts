@@ -1527,7 +1527,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Most images Read may show the model in one request; older Read images are replaced with a placeholder",
+              "Most stored tool-result images (Read images and images other tools returned) shown to the model in one request; older ones are replaced with a placeholder",
           }),
         ),
       readMaxBytesPerConversation: z
@@ -1540,7 +1540,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Most bytes of Read image copies stored for one conversation; past it a Read image is not stored and does not stay in the history; 0 stores none",
+              "Most bytes of stored tool-result image copies (Read images and images other tools returned) for one conversation; past it an image is not stored and does not stay in the history; 0 stores none",
           }),
         ),
       readPurgeAfterHours: z
@@ -1553,7 +1553,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Hours after a conversation is deleted before its Read image copies are purged (row and object)",
+              "Hours after a conversation is deleted before its stored tool-result image copies are purged (row and object)",
           }),
         ),
     })

@@ -904,3 +904,33 @@ describe("DiffBlock (§6.16.10)", () => {
     expect(container.querySelectorAll('[data-part="diff-line"]')).toHaveLength(5);
   });
 });
+
+describe("a result's images on the row (§6.16.9)", () => {
+  const images = [
+    { id: "a", name: "shot.png", src: "/api/v1/orgs/o/attachments/a/download" },
+    { id: "b", name: "shot-2.png", src: "javascript:alert(1)" },
+  ];
+
+  it("thumbnails under the output open the image by index; an unsafe source is not loaded", async () => {
+    const onOpenImage = vi.fn();
+    const r = row({ id: "r1", detail: { output: "Screenshot.", images } });
+    const { container } = wrap(<ToolGroup rows={[r]} open onOpenImage={onOpenImage} />, "en");
+    const strip = container.querySelector('[data-part="tool-images"]');
+    expect(strip).not.toBeNull();
+    const thumbs = screen.getAllByRole("button", { name: /shot/ });
+    expect(thumbs.map((t) => t.getAttribute("aria-label"))).toEqual(["shot.png", "shot-2.png"]);
+    expect(container.querySelectorAll('[data-part="tool-images"] img')).toHaveLength(1);
+    await userEvent.click(thumbs[1] as HTMLElement);
+    expect(onOpenImage).toHaveBeenCalledWith("r1", 1);
+  });
+
+  it("images alone make the row expandable", () => {
+    wrap(<ToolRow row={builtin("Shot", { detail: { images: [images[0] as never] } })} open />);
+    expect(screen.getByRole("button", { name: "shot.png" })).toBeTruthy();
+  });
+
+  it("thumbnails are sized like the message thumbnails", () => {
+    expect(rule(css, ".cb-tool-thumb")).toContain("width: var(--cb-layout-thumb)");
+    expect(rule(css, ".cb-tool-thumb")).toContain("height: var(--cb-layout-thumb)");
+  });
+});
