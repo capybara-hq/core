@@ -1,7 +1,13 @@
+import {
+  isDeviceOfflineError,
+  isDeviceRequestNotSent,
+  isDialInAnswerTimeoutError,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { isDeviceProgramRestarted } from "../sandbox/request-not-sent.js";
 import {
   type IfRunningResult,
   retirementPending,
@@ -40,17 +46,26 @@ export const STOP_ATTEMPT_TIMEOUT_MS = 20_000;
 const FAILURE_DETAIL_MAX = 300;
 
 /**
- * Errors that say the device's machine did not take or answer the request (not connected, gone
- * away mid-request, restarted, silent past the deadline), matched by name: the classes live in the
- * kernel and in the SDK a provider may bundle its own copy of.
+ * Whether `err` (or an error in its `cause` chain: an unknown outcome wraps the transport's error)
+ * says the device's machine did not take or answer the request: not connected, gone away or
+ * reconnected mid-request, its program restarted, silent past the deadline, or the request never
+ * sent. Recognized by the SDK's recognizers (by name and tag, so a provider's own SDK copy
+ * matches), never by `instanceof`.
  */
-const UNREACHABLE_ERRORS: ReadonlySet<string> = new Set([
-  "DeviceOfflineError",
-  "DialInAnswerTimeoutError",
-  "DialInConnectionChangedError",
-  "DeviceRequestNotSentError",
-  "DeviceProgramRestartedError",
-]);
+export function isUnreachable(err: unknown): boolean {
+  for (let e = err, depth = 0; e instanceof Error && depth < 5; depth++) {
+    if (
+      isDeviceOfflineError(e) ||
+      isDialInAnswerTimeoutError(e) ||
+      isDeviceRequestNotSent(e) ||
+      isDeviceProgramRestarted(e) ||
+      e.name === "DialInConnectionChangedError"
+    )
+      return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
 
 /**
  * Why one stop attempt did not settle, or undefined when the caller gave up (that says nothing
@@ -70,8 +85,7 @@ export function attemptFailure(
       kind: "unreachable",
       detail: "the device did not answer within the stop attempt's time limit",
     };
-  if (err instanceof Error && UNREACHABLE_ERRORS.has(err.name))
-    return { kind: "unreachable", detail };
+  if (isUnreachable(err)) return { kind: "unreachable", detail };
   return { kind: "failed", detail };
 }
 
