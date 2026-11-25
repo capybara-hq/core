@@ -425,7 +425,7 @@ it("the staged session offers binary stream data and uses it once the ready agre
     binaryStreamData: true,
   });
   socket.send(
-    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser" } }),
+    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser.browser" } }),
   );
   await until(() => texts.some((x) => x.type === "stream-opened"), "stream-opened");
   socket.send(encodeDialInStreamData("s1", new TextEncoder().encode("hi")));
