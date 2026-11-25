@@ -115,8 +115,6 @@ const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts"
 const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** The fixture packer of the test kit (`packFixture`), for the declarative fixture plugins. */
 const testingFixturesModule = join(repoRoot, "packages/testing/src/fixtures.ts");
-/** The test kit's index: `seedLoginSources` and the kernel database helpers it re-exports. */
-const testingModule = join(repoRoot, "packages/testing/src/index.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const deviceFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/device-fake/index.ts");
 /** Kernel test fixture `fake-dial-in`: a dial-in device provider, for the device sign-in case. */
@@ -743,21 +741,26 @@ export default async function globalSetup(): Promise<Cleanup> {
     }
 
     // fake-im on the login page (the `loginSources` deployment setting); an unlinked sign-in
-    // creates an account, as before the setting existed
+    // creates an account, as before the setting existed. Plain SQL through psql in the container:
+    // importing the kernel's source here would hit Playwright's transform, which has no
+    // parameter decorators.
     {
-      const { createDb, kernelDb, seedLoginSources } = (await import(testingModule)) as {
-        createDb: (url: string, max: number) => { destroy(): Promise<void> };
-        kernelDb: (db: unknown) => unknown;
-        seedLoginSources: (
-          db: unknown,
-          entries: { plugin: string; signUp?: "link" | "create" }[],
-        ) => Promise<void>;
-      };
-      const pool = createDb(pg.getConnectionUri(), 1);
-      try {
-        await seedLoginSources(kernelDb(pool), [{ plugin: "fake-im", signUp: "create" }]);
-      } finally {
-        await pool.destroy();
+      const value = JSON.stringify([
+        { plugin: "fake-im", enabled: true, signUp: "create", trustedTenants: [] },
+      ]);
+      const seeded = await pg.exec([
+        "psql",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        pg.getUsername(),
+        "-d",
+        pg.getDatabase(),
+        "-c",
+        `INSERT INTO capybara.deployment_settings (key, value) VALUES ('loginSources', '${value}'::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      ]);
+      if (seeded.exitCode !== 0) {
+        throw new Error(`seeding loginSources failed:\n${seeded.output}`);
       }
     }
 
