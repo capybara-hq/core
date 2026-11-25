@@ -965,6 +965,12 @@ export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
 export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
 
 // @public
+export const DEVICE_SERVICE_MACH_CHROMIUM = "chromium";
+
+// @public
+export const DEVICE_SERVICE_MACH_ENV = "CAPYBARA_SERVICE_MACH";
+
+// @public
 export const DEVICE_SERVICE_MAX_MESSAGE: number;
 
 // @public

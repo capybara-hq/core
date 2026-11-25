@@ -187,6 +187,43 @@ export function mandatoryDenyPatterns(root: string): string[] {
   ];
 }
 
+/**
+ * The Mach service names a device service may register and look up besides the base profile's
+ * (core#843): exactly the one kind the full Chromium build (Playwright's Chrome for Testing,
+ * bundle id `com.google.chrome.for.testing`) needs to start,
+ * `com.google.chrome.for.testing.MachPortRendezvousServer.<pid>`: the browser process registers
+ * it, its helper processes (renderer, GPU, network) look it up to receive their task ports. The
+ * pid is only known at run time, hence a prefix ending in the kind's own dot. The server accepts
+ * only children the browser launched itself (it checks the client's audit token), so looking up
+ * another browser's server reaches nothing.
+ *
+ * Deliberately not granted: `com.google.chrome.for.testing.apps.<hash>`, a profile's app-shim /
+ * second-launch listener. The browser starts without it (its check-in failing is not fatal), and
+ * its lookup would let a confined service reach a Chrome for Testing the person runs outside the
+ * device (one that opens URLs on request, outside the device's network rules). Nothing broader
+ * either: no other Chromium or Google name, no `*`, and only for device service launches
+ * (`MacWorkerRequest.service`, built only by the service launcher), never an agent command. A
+ * registration is only a name in the per-user bootstrap namespace; it grants no file or network
+ * reach, so the service's confinement is otherwise the base profile's.
+ */
+export const MAC_SERVICE_CHROMIUM_MACH_NAMES: readonly string[] = Object.freeze([
+  "com.google.chrome.for.testing.MachPortRendezvousServer.*",
+]);
+
+/** The Mach rules a device service launch adds to its network config ({@link MAC_SERVICE_CHROMIUM_MACH_NAMES}). */
+export function macServiceMachRules(network: { allowMachLookup?: unknown }): {
+  allowMachLookup: string[];
+  allowMachRegister: string[];
+} {
+  const lookup = Array.isArray(network.allowMachLookup)
+    ? (network.allowMachLookup as string[])
+    : [];
+  return {
+    allowMachLookup: [...lookup, ...MAC_SERVICE_CHROMIUM_MACH_NAMES],
+    allowMachRegister: [...MAC_SERVICE_CHROMIUM_MACH_NAMES],
+  };
+}
+
 /** The Mach services a restricted macOS command may look up for TLS trust ({@link macNetworkConfig}). */
 const MAC_TLS_TRUST_SERVICES: readonly string[] = Object.freeze(["com.apple.TrustEvaluationAgent"]);
 
@@ -1058,6 +1095,9 @@ export async function startMacOperationWorker(
             ...network.network,
             // a service listens on its own socket, inside its state directory
             ...(request.service && { allowUnixSockets: [...request.service.unixSockets] }),
+            // a service (never an agent command) may register and look up Chromium's own Mach
+            // services, which the full browser needs to start (macServiceMachRules)
+            ...(request.service && macServiceMachRules(network.network)),
           },
           ...(javaAgent ? { javaAgentJarPath: javaAgent } : {}),
         };

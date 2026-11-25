@@ -1,5 +1,5 @@
 diff --git a/dist/sandbox/macos-sandbox-utils.js b/dist/sandbox/macos-sandbox-utils.js
-index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838bbd009da9 100644
+index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..b55d895f34b4324c87b852cb99f899b9ae6b8e5e 100644
 --- a/dist/sandbox/macos-sandbox-utils.js
 +++ b/dist/sandbox/macos-sandbox-utils.js
 @@ -220,6 +220,18 @@ function inBothSpellings(kind, entry) {
@@ -40,7 +40,7 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838b
      rules.push(...renderRule('allow', ['file-read*'], allowFilters, logTag));
      // Denies the allow block would otherwise win over (last-match-wins) land
      // here, after it. Must stay ahead of the file-read-metadata allow below.
-@@ -745,6 +762,10 @@ function generateWriteRules(config, logTag, allowGitConfig, writeRoots) {
+@@ -745,12 +762,16 @@ function generateWriteRules(config, logTag, allowGitConfig, writeRoots) {
          }
      }
      rules.push(...renderRule('deny', ['file-write-unlink', 'file-write-create'], moveFilters, logTag));
@@ -51,7 +51,31 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838b
      return rules;
  }
  /**
-@@ -851,6 +872,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
+  * Generate complete sandbox profile
+  */
+-function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, httpProxyPort, socksProxyPort, needsNetworkRestriction, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, allowMachLookup, allowPty, allowGitConfig = false, enableWeakerNetworkIsolation = false, allowAppleEvents = false, logTag, }) {
++function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, httpProxyPort, socksProxyPort, needsNetworkRestriction, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, allowMachLookup, allowMachRegister, allowPty, allowGitConfig = false, enableWeakerNetworkIsolation = false, allowAppleEvents = false, logTag, }) {
+     const profile = [
+         '(version 1)',
+         `(deny default (with message "${logTag}"))`,
+@@ -813,6 +834,16 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
+                     : `(allow mach-lookup (global-name ${escapePath(name)}))`),
+             ]
+             : []),
++        // capybara patch: Mach names the sandboxed processes may register (a trailing "*" is a
++        // prefix; "*" alone never reaches here, the schema refuses it)
++        ...(allowMachRegister && allowMachRegister.length > 0
++            ? [
++                '; Mach service names the sandboxed processes may register',
++                ...allowMachRegister.map(name => name.endsWith('*')
++                    ? `(allow mach-register (global-name-prefix ${escapePath(name.slice(0, -1))}))`
++                    : `(allow mach-register (global-name ${escapePath(name)}))`),
++            ]
++            : []),
+         '',
+         '; POSIX IPC - shared memory',
+         '(allow ipc-posix-shm)',
+@@ -851,6 +882,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
          '  (sysctl-name "hw.logicalcpu")',
          '  (sysctl-name "hw.logicalcpu_max")',
          '  (sysctl-name "hw.machine")',
@@ -60,6 +84,23 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838b
          '  (sysctl-name "hw.memsize")',
          '  (sysctl-name "hw.ncpu")',
          '  (sysctl-name "hw.nperflevels")',
+@@ -1044,7 +1077,7 @@ function escapePath(pathStr) {
+  * Wrap command with macOS sandbox
+  */
+ export function wrapCommandWithSandboxMacOS(params) {
+-    const { command, commandId, needsNetworkRestriction, httpProxyPort, socksProxyPort, proxyAuthToken, caCertPath, javaAgentJarPath, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, allowMachLookup, readConfig, writeConfig, unsetEnvVars, setEnvVars, maskedFileBinds, degradeToDenyPaths, allowPty, allowGitConfig = false, gitSafeDirectories, enableWeakerNetworkIsolation = false, allowAppleEvents = false, binShell, } = params;
++    const { command, commandId, needsNetworkRestriction, httpProxyPort, socksProxyPort, proxyAuthToken, caCertPath, javaAgentJarPath, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, allowMachLookup, allowMachRegister, readConfig, writeConfig, unsetEnvVars, setEnvVars, maskedFileBinds, degradeToDenyPaths, allowPty, allowGitConfig = false, gitSafeDirectories, enableWeakerNetworkIsolation = false, allowAppleEvents = false, binShell, } = params;
+     // SBPL cannot redirect a read to different bytes, so whole-file masking
+     // degrades to read-deny on macOS: the sandboxed process gets EPERM
+     // instead of the sentinel. The DYLD interposer (a later step) lifts
+@@ -1097,6 +1130,7 @@ export function wrapCommandWithSandboxMacOS(params) {
+         allowAllUnixSockets,
+         allowLocalBinding,
+         allowMachLookup,
++        allowMachRegister,
+         allowPty,
+         allowGitConfig,
+         enableWeakerNetworkIsolation,
 diff --git a/dist/sandbox/resolved-address-guard.js b/dist/sandbox/resolved-address-guard.js
 index 54970f754e71188fb6ab98971b39560b0b8f8724..e222d21be8df9d5bd77f6b1a33601737965fa5f1 100644
 --- a/dist/sandbox/resolved-address-guard.js
@@ -348,7 +389,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..e222d21be8df9d5bd77f6b1a33601737
      };
  }
 diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
-index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..e00370349136adcd79465395efd3ffb051116c71 100644
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..38e6676930e2174d1ba70c42e3d4cfd820cf3aff 100644
 --- a/dist/sandbox/sandbox-config.js
 +++ b/dist/sandbox/sandbox-config.js
 @@ -608,6 +608,23 @@ export const NetworkConfigSchema = z.object({
@@ -375,7 +416,26 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..e00370349136adcd79465395efd3ffb0
      allowUnixSockets: z
          .array(z.string())
          .optional()
-@@ -832,6 +849,22 @@ export const FilesystemConfigSchema = z.object({
+@@ -640,6 +657,18 @@ export const NetworkConfigSchema = z.object({
+     }))
+         .optional()
+         .describe('macOS only: Additional XPC/Mach service names to allow looking up. Supports trailing-wildcard prefix matching (e.g., "2BUA8C4S2C.com.1password.*"). Needed for tools like 1Password CLI, Playwright, or the iOS Simulator that communicate via XPC.'),
++    // capybara patch: Mach service names the sandboxed processes may register (bootstrap_check_in)
++    allowMachRegister: z
++        .array(z.string().refine(val => {
++        const prefix = val.endsWith('*') ? val.slice(0, -1) : val;
++        // at least three dot-separated labels before any wildcard (a vendor, a product, a service),
++        // so a broad prefix such as "com.*" or "com.vendor.*" cannot be granted
++        return !prefix.includes('*') && /^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}\.?$/.test(prefix);
++    }, {
++        message: 'A Mach register name has at least three dotted labels before an optional trailing "*" (never "*" or a broad prefix).',
++    }))
++        .optional()
++        .describe('macOS only: Mach service names the sandboxed processes may register (bootstrap_check_in); a single trailing "*" matches a prefix of at least three dotted labels.'),
+     httpProxyPort: z
+         .number()
+         .int()
+@@ -832,6 +861,22 @@ export const FilesystemConfigSchema = z.object({
          .boolean()
          .optional()
          .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),
@@ -399,7 +459,7 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..e00370349136adcd79465395efd3ffb0
  /**
   * Configuration schema for ignoring specific sandbox violations
 diff --git a/dist/sandbox/sandbox-manager.js b/dist/sandbox/sandbox-manager.js
-index d475e55977bf54a2fe00a0c6aba38313761d55aa..b9a0f9920dbb3fab60c6f48e40956304295478c4 100644
+index d475e55977bf54a2fe00a0c6aba38313761d55aa..704c7c43f016fb16eca52d2fb364ad43da2ad379 100644
 --- a/dist/sandbox/sandbox-manager.js
 +++ b/dist/sandbox/sandbox-manager.js
 @@ -26,6 +26,8 @@ import { canonicalizeHost, isValidHost, redactUrl, resolveParentProxy, } from '.
@@ -445,7 +505,18 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..b9a0f9920dbb3fab60c6f48e40956304
      };
  }
  /**
-@@ -1866,6 +1881,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1658,6 +1673,10 @@ function getAllowLocalBinding() {
+ function getAllowMachLookup() {
+     return config?.network?.allowMachLookup;
+ }
++// capybara patch: Mach register names
++function getAllowMachRegister() {
++    return config?.network?.allowMachRegister;
++}
+ function getIgnoreViolations() {
+     return config?.ignoreViolations;
+ }
+@@ -1866,6 +1885,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
                  config?.filesystem.denyWrite ??
                  []),
              ...literalWriteLists(customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite, customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite),
@@ -454,7 +525,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..b9a0f9920dbb3fab60c6f48e40956304
          };
          // For a caller that never reads checkDependencies(), the CLI among them.
          if (!ownInstallLogged) {
-@@ -1917,6 +1934,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1917,6 +1938,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
              ...(ownAllowWithinDeny.length > 0 && { ownAllowWithinDeny }),
              unlistableDenyDirs: [...unlistableDenyDirs],
              ...literalReadLists(customConfig?.filesystem?.denyRead ?? config?.filesystem.denyRead, customConfig?.filesystem?.allowRead ?? config?.filesystem.allowRead),
@@ -463,3 +534,12 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..b9a0f9920dbb3fab60c6f48e40956304
          };
      }
      // Nothing below walks, and what it waits for is not this thread.
+@@ -1993,6 +2016,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+                 allowAllUnixSockets: getAllowAllUnixSockets(),
+                 allowLocalBinding: getAllowLocalBinding(),
+                 allowMachLookup: getAllowMachLookup(),
++                // capybara patch: Mach register names
++                allowMachRegister: getAllowMachRegister(),
+                 ignoreViolations: getIgnoreViolations(),
+                 allowPty,
+                 allowGitConfig: getAllowGitConfig(),

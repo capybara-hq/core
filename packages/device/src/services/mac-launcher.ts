@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
+  DEVICE_SERVICE_MACH_CHROMIUM,
+  DEVICE_SERVICE_MACH_ENV,
   type ExecResult,
   type SandboxLimits,
   type SandboxOperationScope,
@@ -138,7 +140,8 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
         args: {
           command: req.argv.map(shellQuote).join(" "),
           cwd: req.cwd,
-          env: req.env,
+          // the service learns that this sandbox lets Chromium's full build start (core#843)
+          env: { ...req.env, [DEVICE_SERVICE_MACH_ENV]: DEVICE_SERVICE_MACH_CHROMIUM },
           timeoutMs: SERVICE_TIME_LIMIT_MS,
           maxOutputBytes: 65536,
         },

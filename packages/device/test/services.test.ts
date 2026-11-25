@@ -16,6 +16,8 @@ import { join } from "node:path";
 import {
   DEVICE_SERVICE_INSTALL_ENV,
   DEVICE_SERVICE_INSTALL_SEAL,
+  DEVICE_SERVICE_MACH_CHROMIUM,
+  DEVICE_SERVICE_MACH_ENV,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
   DEVICE_SERVICE_WORKSPACE_ENV,
@@ -913,6 +915,17 @@ it("reconcile stops a service whose owner ceiling changed, and keeps one whose d
   await f.supervisor.reconcile(signal());
   expect(f.supervisor.status("browser.browser").state).toBe("stopped");
   expect(f.requests).toHaveLength(2);
+});
+
+it("the macOS launcher tells the service the full Chromium build can start", async () => {
+  const f = await macFixture();
+  expect(
+    await serveServiceOp(f.supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({ ok: true });
+  const request = f.requests[0];
+  expect(request?.kind === "exec" ? request.args.env : undefined).toMatchObject({
+    [DEVICE_SERVICE_MACH_ENV]: DEVICE_SERVICE_MACH_CHROMIUM,
+  });
 });
 
 it("the install directory is read only once sealed and emptied when the service's files change", async () => {

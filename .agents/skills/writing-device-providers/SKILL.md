@@ -541,7 +541,10 @@ treats a dial-in device like any other (its provider, report and permission supp
   A provider that can keep code apart from state should, and reports that directory as the
   status's `codeDir`: `capybara-device` writes the files into a device-owned `svc-files/<id>`
   directory the service can only read (R30), so a service cannot rewrite the code a later
-  digest-matched start runs; agent operations can neither read nor write `svc` (the profile)
+  digest-matched start runs; a service launch (never an agent operation) may also register and look up
+  Chromium's rendezvous server (`MAC_SERVICE_CHROMIUM_MACH_NAMES`, the patched runtime's `allowMachRegister`;
+  core#843; never its `apps.` listener) so the full Chromium build starts under the macOS sandbox, and the launcher
+  says so with `CAPYBARA_SERVICE_MACH=chromium`; agent operations can neither read nor write `svc` (the profile)
   nor `svc-files`, and an owner ceiling change stops the services (`ServiceSupervisor.reconcile`).
 - **Upgrades.** A plugin upgrade (new service files, a new digest) never restarts a running
   service: the old process keeps running until it stops on its own terms (the instance's idle
