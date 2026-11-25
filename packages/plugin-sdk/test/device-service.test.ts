@@ -4,6 +4,8 @@ import {
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
   encodeServiceMessage,
+  encodeViewerContext,
+  parseViewerContext,
   SERVICE_CONNECTION_KINDS,
   ServiceMessageDecoder,
 } from "../src/index.js";
@@ -74,5 +76,42 @@ describe("device service framing", () => {
     expect(() => encodeServiceMessage(new Uint8Array(DEVICE_SERVICE_MAX_MESSAGE + 1))).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("viewer context", () => {
+  const ctx = { kind: "viewer", conversationId: "c-child", rootConversationId: "c-root" } as const;
+
+  it("round trips through one stream message body", () => {
+    const body = encodeViewerContext(ctx);
+    expect(JSON.parse(text(body))).toEqual(ctx);
+    expect(parseViewerContext(body)).toEqual(ctx);
+    expect(parseViewerContext(text(body))).toEqual(ctx);
+  });
+
+  it("keeps only the three known fields", () => {
+    const extra = JSON.stringify({ ...ctx, tabId: "t1", owner: "me" });
+    expect(parseViewerContext(extra)).toEqual(ctx);
+  });
+
+  it("refuses anything that is not a viewer context", () => {
+    const bad: unknown[] = [
+      "",
+      "not json",
+      "null",
+      "[]",
+      '"viewer"',
+      JSON.stringify({ ...ctx, kind: "stream" }),
+      JSON.stringify({ kind: "viewer", conversationId: "c" }),
+      JSON.stringify({ kind: "viewer", rootConversationId: "r" }),
+      JSON.stringify({ ...ctx, conversationId: "" }),
+      JSON.stringify({ ...ctx, rootConversationId: "" }),
+      JSON.stringify({ ...ctx, conversationId: 7 }),
+      JSON.stringify({ ...ctx, rootConversationId: null }),
+    ];
+    for (const b of bad) expect(parseViewerContext(b as string), String(b)).toBeNull();
+    // bytes that are not UTF-8
+    expect(parseViewerContext(new Uint8Array([0xff, 0xfe, 0x7b]))).toBeNull();
+    expect(parseViewerContext(new Uint8Array())).toBeNull();
   });
 });

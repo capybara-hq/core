@@ -1193,6 +1193,32 @@ describe("ToolPipeline.runStep", () => {
     ]);
   });
 
+  it("a handler gets its own conversation as root at the root, and the run parent's root in a sub-agent", async () => {
+    const seen: { conversationId: string; rootConversationId: string }[] = [];
+    handlers.plugin__probe__form = async (_input, ctx: ToolCallContext) => {
+      seen.push({ conversationId: ctx.conversationId, rootConversationId: ctx.rootConversationId });
+      return { content: [{ type: "text", text: "done" }] };
+    };
+    await insertRun();
+    await runCalls([{ id: "c1", name: "plugin__probe__form", input: {} }]);
+    // the root comes from the run's parent context (run-worker derives it), never the direct parent
+    const rootConv = randomUUID();
+    const midConv = randomUUID();
+    const parent = {
+      conversationId: midConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 1,
+      rootConversationId: rootConv,
+    };
+    await assistant([{ id: "c2", name: "plugin__probe__form", input: {} }], 2);
+    await pipeline().runStep(stepCtx({ step: 2, parent }));
+    expect(seen).toEqual([
+      { conversationId: seed.conversationId, rootConversationId: seed.conversationId },
+      { conversationId: seed.conversationId, rootConversationId: rootConv },
+    ]);
+  });
+
   it("处理函数抛出非 ToolError：只给模型错误类名，不回显内部消息", async () => {
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__throws", input: {} }]);
     const r = resultsOf(evs)[0];

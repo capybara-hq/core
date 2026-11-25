@@ -250,6 +250,7 @@ const toolCtx = (orgId: string, conversationId: string): ToolCallContext => ({
   accountId: randomUUID(),
   agentId: randomUUID(),
   conversationId,
+  rootConversationId: conversationId,
   callId: randomUUID(),
   signal: new AbortController().signal,
 });

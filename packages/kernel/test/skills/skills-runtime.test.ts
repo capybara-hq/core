@@ -546,15 +546,18 @@ describe("Skill handler", () => {
     });
   }
 
-  const ctx = () =>
-    managedCall({
+  const ctx = () => {
+    const conversationId = randomUUID();
+    return managedCall({
       orgId,
       accountId: ownerId,
       agentId: "a",
-      conversationId: randomUUID(),
+      conversationId,
+      rootConversationId: conversationId,
       callId: "call-1",
       signal: new AbortController().signal,
     });
+  };
 
   it("no sandbox provider: returns the body and says scripts are unavailable", async () => {
     const s = await seedSkill({

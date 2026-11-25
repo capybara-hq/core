@@ -202,6 +202,7 @@ async function callContext(callId = "vision-call"): Promise<BuiltinCallContext> 
     accountId: ownerId,
     agentId,
     conversationId,
+    rootConversationId: conversationId,
     conversationKind: "chat",
     callId,
     runId,

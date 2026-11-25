@@ -3,6 +3,7 @@ import {
   DeviceAccessError,
   type DeviceStream,
   deviceServiceId,
+  encodeViewerContext,
   isDeviceOfflineError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -386,6 +387,7 @@ export function parseTicketRecord(raw: unknown): DeviceStreamTicket | null {
     "orgId",
     "accountId",
     "conversationId",
+    "rootConversationId",
     "deviceId",
     "providerName",
     "service",
@@ -396,6 +398,7 @@ export function parseTicketRecord(raw: unknown): DeviceStreamTicket | null {
     orgId: r.orgId as string,
     accountId: r.accountId as string,
     conversationId: r.conversationId as string,
+    rootConversationId: r.rootConversationId as string,
     deviceId: r.deviceId as string,
     providerName: r.providerName as string,
     service: r.service as string,
@@ -413,7 +416,10 @@ interface OpenViewer {
  * The viewer endpoint (browser use spec §6.2, served on the gateway role by `viewer-routes.ts`):
  * `GET /device/stream?ticket=` takes the single-use viewer ticket
  * (`DeviceAccessService.takeTicket`) and pipes the device service's stream to the browser, bytes
- * unchanged both ways. Where the stream opens:
+ * unchanged both ways, after one message of its own: the first stream message the service gets is
+ * the viewer context (`encodeViewerContext`: the record's conversation and its root, from the
+ * ticket record only), written where the stream opens and before any of the browser's messages
+ * (queued by its {@link WsEnd} meanwhile). Where the stream opens:
  *
  * - A device whose provider declares `permissions.dialIn` (a local device) streams only from the
  *   gateway replica holding its machine's socket. Any other replica hops once: a `ws` connection
@@ -795,7 +801,20 @@ export class DeviceStreamViewers {
       });
       viewed = true;
       void pump(stream.messages, end);
-      const inbound = pump(end.messages, stream);
+      // the first stream message is the kernel's viewer context, from the ticket record only; the
+      // panel's messages (queued by `end` meanwhile) follow it
+      const inbound = stream
+        .send(
+          encodeViewerContext({
+            kind: "viewer",
+            conversationId: record.conversationId,
+            rootConversationId: record.rootConversationId,
+          }),
+        )
+        .then(
+          () => pump(end.messages, stream),
+          (failed: unknown) => ({ failed: failed ?? new Error("send failed") }),
+        );
       const settled = await Promise.race([
         end.closed.then(() => ({ side: "viewer" as const })),
         stream.closed.then((c) => ({ side: "stream" as const, reason: c.reason })),

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { DeviceAccessError, type ToolCallContext } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -28,6 +29,7 @@ import {
   readFakeSandboxOps,
 } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -47,6 +49,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { childRunsOf } from "../helpers/subagents.js";
 
 /**
  * `ctx.deviceAccess` (browser use spec §7): an extension's device services in the conversation's
@@ -196,6 +199,7 @@ const callOf = (over: Partial<ToolCallContext> = {}): ToolCallContext => {
     ownerAccountId: s.accountId,
     agentId: s.agentId,
     conversationId: s.conversationId,
+    rootConversationId: s.conversationId,
     callId: `call-${randomUUID().slice(0, 8)}`,
     idempotencyKey: randomUUID().replaceAll("-", "").padEnd(64, "0"),
     signal: AbortSignal.timeout(30_000),
@@ -472,6 +476,7 @@ describe("ctx.deviceAccess", () => {
       ownerAccountId: s.accountId,
       agentId: s.agentId,
       conversationId: s.conversationId,
+      rootConversationId: s.conversationId,
       callId: "group-call",
       signal: AbortSignal.timeout(30_000),
     };
@@ -609,6 +614,7 @@ describe("ctx.deviceAccess", () => {
       ownerAccountId: s.accountId,
       agentId: s.agentId,
       conversationId: s.conversationId,
+      rootConversationId: s.conversationId,
       callId: "bare",
       signal: AbortSignal.timeout(30_000),
     };
@@ -641,6 +647,7 @@ describe("ctx.deviceAccess", () => {
       orgId,
       accountId: s.accountId,
       conversationId: s.conversationId,
+      rootConversationId: s.conversationId,
       deviceId: s.deviceId,
       providerName: "device-fake",
       service: "echo",
@@ -776,6 +783,7 @@ describe("ctx.deviceAccess", () => {
       conversationId: s.conversationId,
       accountId: s.accountId,
       callId: q.call_id,
+      handoffConversationId: s.conversationId,
       done: true,
     });
     // the resumed round starts nothing (the service runs): the hosts refused before the question
@@ -818,7 +826,13 @@ describe("ctx.deviceAccess", () => {
       15_000,
       "a pending question",
     );
-    const scope = { orgId, conversationId: s.conversationId, callId: q.call_id, done: true };
+    const scope = {
+      orgId,
+      conversationId: s.conversationId,
+      callId: q.call_id,
+      handoffConversationId: s.conversationId,
+      done: true,
+    };
     expect(
       await refusal(access.answerHandoff(CALLER, { ...scope, accountId: other.accountId })),
     ).toEqual({ code: "not_owner", message: DEVICE_ACCESS_NOT_OWNER_TEXT });
@@ -851,5 +865,262 @@ describe("ctx.deviceAccess", () => {
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const results = ofType(await eventsOf(db, s.conversationId), "tool_result");
     expect(results.at(-1)?.payload.content).toBe("done: true");
+  });
+});
+
+/**
+ * `answerHandoff` from the root's panel (browser tab ownership spec §5, ruling 11): the question
+ * a sub-agent's tool call raised lives in the sub-agent's conversation, named by
+ * `handoffConversationId`; only the scope conversation and its descendants are answerable.
+ */
+describe("ctx.deviceAccess.answerHandoff across a conversation tree", () => {
+  const HANDOFF_PROMPT = `tool:${HANDOFF_TOOL}:{}`;
+
+  interface Pending {
+    id: string;
+    conversationId: string;
+    callId: string;
+  }
+
+  /** The pending question of conversation `conversationId`, waited for. */
+  const pendingIn = (conversationId: string): Promise<Pending> =>
+    waitFor(
+      async () => {
+        const q = await db
+          .selectFrom("questions")
+          .select(["id", "conversation_id", "call_id"])
+          .where("conversation_id", "=", conversationId)
+          .where("status", "=", "pending")
+          .executeTakeFirst();
+        return q ? { id: q.id, conversationId: q.conversation_id, callId: q.call_id } : null;
+      },
+      20_000,
+      `a pending question in ${conversationId}`,
+    );
+
+  const statusOf = async (id: string) =>
+    (
+      await db
+        .selectFrom("questions")
+        .select("status")
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow()
+    ).status;
+
+  /**
+   * Makes the root conversation (`s`) one of an agent that may dispatch sub-agents, on the same
+   * device, then has it dispatch
+   * `n` identical general-purpose sub-agents in one step, each calling the handoff tool first:
+   * their pending questions (the same prompt gives the same call id in each).
+   */
+  const dispatchHandoffs = async (n: number): Promise<Pending[]> => {
+    const res = await s.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: "Lead the work.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: builtinsOff("Agent"),
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const agentId = (res.json() as { agent: { id: string } }).agent.id;
+    const conversationId = await createConv(s.req, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ device_id: s.deviceId })
+      .where("id", "=", conversationId)
+      .execute();
+    s = { ...s, agentId, conversationId };
+    const call = {
+      name: "Agent",
+      input: { description: "Hand off", prompt: HANDOFF_PROMPT, subagent_type: "general-purpose" },
+    };
+    await postMessage(
+      s.req,
+      orgId,
+      s.conversationId,
+      `tools:${JSON.stringify(Array.from({ length: n }, () => call))}`,
+    );
+    const children = await waitFor(
+      async () => {
+        const c = await childRunsOf(db, s.conversationId);
+        return c.length >= n ? c : null;
+      },
+      20_000,
+      `${n} sub-agent(s) dispatched`,
+    );
+    return Promise.all(children.map((c) => pendingIn(c.conversationId)));
+  };
+
+  const root = () => ({ orgId, conversationId: s.conversationId, accountId: s.accountId });
+
+  /**
+   * Writes a pending question into `conversationId` under `from`'s call id and tool, as if that
+   * conversation's run `runId` had raised it (`attempt` keeps it apart from `from` in one run).
+   */
+  const plantQuestion = async (
+    conversationId: string,
+    from: Pending,
+    runId: string,
+    attempt = 1,
+  ): Promise<string> => {
+    const src = await db
+      .selectFrom("questions")
+      .select(["spec", "expires_at"])
+      .where("id", "=", from.id)
+      .executeTakeFirstOrThrow();
+    const id = randomUUID();
+    await db
+      .insertInto("questions")
+      .values({
+        id,
+        org_id: orgId,
+        conversation_id: conversationId,
+        run_id: runId,
+        call_id: from.callId,
+        spec: JSON.stringify(src.spec),
+        expires_at: src.expires_at,
+        attempt,
+      })
+      .execute();
+    return id;
+  };
+
+  const runOf = async (conversationId: string) =>
+    (
+      await db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", conversationId)
+        .orderBy("created_at", "desc")
+        .executeTakeFirstOrThrow()
+    ).id;
+
+  it("the root answers the named sub-agent's question, never a sibling's with the same call id", async () => {
+    const [a, b] = (await dispatchHandoffs(2)) as [Pending, Pending];
+    expect(a.conversationId).not.toBe(b.conversationId);
+    // callId is unique only within a run: both sub-agents wait under the same one
+    expect(a.callId).toBe(b.callId);
+    // the parent (the root) waits on a question of the same call id and tool too
+    const inRoot = await plantQuestion(s.conversationId, b, await runOf(s.conversationId));
+    // a sub-agent's scope answers only its own descendants: not its sibling, not its parent
+    for (const handoffConversationId of [b.conversationId, s.conversationId]) {
+      await expect(
+        access.answerHandoff(CALLER, {
+          orgId,
+          conversationId: a.conversationId,
+          accountId: s.accountId,
+          callId: b.callId,
+          handoffConversationId,
+          done: true,
+        }),
+      ).rejects.toMatchObject({ code: "question.not_found" });
+    }
+    expect(await statusOf(inRoot)).toBe("pending");
+    // another extension's question in the tree is not this extension's to answer
+    const { spec } = await db
+      .selectFrom("questions")
+      .select("spec")
+      .where("id", "=", b.id)
+      .executeTakeFirstOrThrow();
+    const setKey = (toolKey: unknown) =>
+      db
+        .updateTable("questions")
+        .set({ spec: JSON.stringify({ ...(spec as Record<string, unknown>), toolKey }) })
+        .where("id", "=", b.id)
+        .execute();
+    await setKey("plugin__other-ext__handoff");
+    await expect(
+      access.answerHandoff(CALLER, {
+        ...root(),
+        callId: b.callId,
+        handoffConversationId: b.conversationId,
+        done: true,
+      }),
+    ).rejects.toMatchObject({ code: "question.not_found" });
+    await setKey((spec as Record<string, unknown>).toolKey);
+    expect(await statusOf(b.id)).toBe("pending");
+    await access.answerHandoff(CALLER, {
+      ...root(),
+      callId: b.callId,
+      handoffConversationId: b.conversationId,
+      done: true,
+    });
+    expect(await statusOf(b.id)).toBe("answered");
+    expect(await statusOf(a.id)).toBe("pending");
+    // a sub-agent's own scope answers its own question
+    await access.answerHandoff(CALLER, {
+      orgId,
+      conversationId: a.conversationId,
+      accountId: s.accountId,
+      callId: a.callId,
+      handoffConversationId: a.conversationId,
+      done: true,
+    });
+    expect(await statusOf(a.id)).toBe("answered");
+  });
+
+  it("a conversation outside the scope's tree is not found: another root, another org, deleted", async () => {
+    // another root conversation of the same owner, waiting on its own handoff
+    const otherRoot = await createConv(s.req, orgId, s.agentId);
+    await postMessage(s.req, orgId, otherRoot, HANDOFF_PROMPT);
+    const q = await pendingIn(otherRoot);
+    await expect(
+      access.answerHandoff(CALLER, {
+        ...root(),
+        callId: q.callId,
+        handoffConversationId: otherRoot,
+        done: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "question.not_found",
+      message: `No pending question of tool call ${q.callId} in this conversation`,
+    });
+    expect(await statusOf(q.id)).toBe("pending");
+    // a chain through another org: root <- a conversation of org 2 <- a conversation of this org
+    // waiting on a question of the call id; the walk stops at the other org's link
+    const owner = await session(k, "owner");
+    const org2 = await createOrgWithProviders(k, owner, "Other");
+    const conv2 = await createConv(owner, org2, await createAgent(owner, org2));
+    await db
+      .updateTable("conversations")
+      .set({ kind: "subagent", parent_conversation_id: s.conversationId })
+      .where("id", "=", conv2)
+      .execute();
+    const below = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id)
+      VALUES (${below}, ${orgId}, ${s.agentId}, ${s.accountId}, 'subagent', ${conv2})`.execute(db);
+    const belowQ = await plantQuestion(below, q, await runOf(otherRoot), 2);
+    await expect(
+      access.answerHandoff(CALLER, {
+        ...root(),
+        callId: q.callId,
+        handoffConversationId: below,
+        done: true,
+      }),
+    ).rejects.toMatchObject({ code: "question.not_found" });
+    expect(await statusOf(belowQ)).toBe("pending");
+    // a deleted sub-agent of the tree
+    const [child] = (await dispatchHandoffs(1)) as [Pending];
+    await db
+      .updateTable("conversations")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", child.conversationId)
+      .execute();
+    await expect(
+      access.answerHandoff(CALLER, {
+        ...root(),
+        callId: child.callId,
+        handoffConversationId: child.conversationId,
+        done: true,
+      }),
+    ).rejects.toMatchObject({ code: "question.not_found" });
+    expect(await statusOf(child.id)).toBe("pending");
   });
 });

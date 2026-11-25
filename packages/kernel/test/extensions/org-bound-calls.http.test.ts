@@ -143,6 +143,7 @@ describe("web-search@1 and web-fetch@1 (point resolution)", () => {
     accountId: ownerId,
     agentId: "g",
     conversationId: "c",
+    rootConversationId: "c",
     callId: "call",
     signal: new AbortController().signal,
   });

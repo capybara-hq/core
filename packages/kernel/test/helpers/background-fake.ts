@@ -98,6 +98,7 @@ export async function launchManaged(
       accountId: by.accountId,
       agentId: by.agentId,
       conversationId: by.conversationId,
+      rootConversationId: by.sandboxConversationId ?? by.conversationId,
       ...(by.sandboxConversationId !== undefined && {
         sandboxConversationId: by.sandboxConversationId,
       }),

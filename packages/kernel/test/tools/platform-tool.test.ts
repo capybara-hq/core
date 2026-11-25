@@ -226,6 +226,7 @@ const ctx: BuiltinCallContext = {
   accountId: "acc-1",
   agentId: "agent-1",
   conversationId: "conv-1",
+  rootConversationId: "conv-1",
   callId: "call-1",
   runId: "run-1",
   signal: new AbortController().signal,

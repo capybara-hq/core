@@ -51,6 +51,11 @@ export interface DeviceStreamTicket {
   orgId: string;
   accountId: string;
   conversationId: string;
+  /**
+   * The root of `conversationId`'s tree at mint (itself outside sub-agents): the viewer context
+   * the kernel writes first on the service stream names it.
+   */
+  rootConversationId: string;
   deviceId: string;
   providerName: string;
   service: string;
@@ -348,6 +353,7 @@ export class DeviceAccessService {
       orgId: d.orgId,
       accountId: scope.accountId,
       conversationId: d.conversationId,
+      rootConversationId: d.rootConversationId,
       deviceId: d.deviceId,
       providerName: d.provider,
       service,
@@ -376,7 +382,7 @@ export class DeviceAccessService {
   /**
    * Whether a taken viewer ticket's record still stands when its viewer opens (the checks of
    * {@link mintTicket} again, binding nothing): the conversation live and owned by the record's
-   * account, its device still the record's device on the record's provider and the account's
+   * account, its current tree root the record's root, its device still the record's device on the record's provider and the account's
    * own, the record's extension still enabled in the org and its approved manifest as loaded now
    * (not the record's copy) still declaring the service in `permissions.deviceAccess.services`.
    * False when any of that no longer holds; other failures (the database) are thrown.
@@ -400,7 +406,10 @@ export class DeviceAccessService {
         { extension: t.extension, services: [t.service] },
         { orgId: t.orgId, accountId: t.accountId, conversationId: t.conversationId },
       );
-      return d.orgId === t.orgId && d.deviceId === t.deviceId && d.provider === t.providerName
+      return d.orgId === t.orgId &&
+        d.rootConversationId === t.rootConversationId &&
+        d.deviceId === t.deviceId &&
+        d.provider === t.providerName
         ? "stands"
         : "revoked";
     } catch (e) {
@@ -458,29 +467,35 @@ export class DeviceAccessService {
   }
 
   /**
-   * Answers the pending question of tool call `callId` in the conversation with `{ done }`, under
-   * the questions' own rules (only the run's starter answers, the form validates the answer); only
-   * a question one of this extension's tools raised.
+   * Answers the pending question of tool call `callId` in conversation `handoffConversationId`
+   * with `{ done }`, under the questions' own rules (only the run's starter answers, the form
+   * validates the answer); only a question one of this extension's tools raised, and only in the
+   * scope conversation or one of its sub-agent descendants (the root's panel answers a
+   * sub-agent's handoff; a call id is unique only within a run). Anything else is
+   * `question.not_found`, without telling whether such a question exists elsewhere.
    */
   async answerHandoff(
     caller: DeviceAccessCaller,
-    scope: DeviceAccessScope & { callId: string; done: boolean },
+    scope: DeviceAccessScope & { callId: string; handoffConversationId: string; done: boolean },
   ): Promise<void> {
     const d = await this.scopedDevice(caller, scope);
+    const notFound = () =>
+      new ApiError(
+        "question.not_found",
+        `No pending question of tool call ${scope.callId} in this conversation`,
+      );
+    if (!(await this.isSelfOrDescendant(d.orgId, d.conversationId, scope.handoffConversationId)))
+      throw notFound();
     const q = await this.db
       .selectFrom("questions")
       .select(["id", "spec"])
       .where("org_id", "=", d.orgId)
-      .where("conversation_id", "=", d.conversationId)
+      .where("conversation_id", "=", scope.handoffConversationId)
       .where("call_id", "=", scope.callId)
       .where("status", "=", "pending")
       .orderBy("created_at", "desc")
       .executeTakeFirst();
-    if (q === undefined)
-      throw new ApiError(
-        "question.not_found",
-        `No pending question of tool call ${scope.callId} in this conversation`,
-      );
+    if (q === undefined) throw notFound();
     const key = (q.spec as { toolKey?: unknown } | null)?.toolKey;
     const parsed = typeof key === "string" ? parseToolKey(key) : null;
     if (parsed?.kind !== "extension" || parsed.plugin !== caller.extension)
@@ -489,6 +504,32 @@ export class DeviceAccessService {
         `No pending question of tool call ${scope.callId} of ${caller.extension} in this conversation`,
       );
     await this.questions.answer(q.id, scope.accountId, { done: scope.done }, d.orgId);
+  }
+
+  /**
+   * Whether `id` is `ancestorId` itself or a live conversation below it: walks `id`'s parent links
+   * up, every row in org `orgId` and not deleted, at most 16 levels (far above
+   * `subagents.maxDepth`'s bound of 5, so a corrupt parent chain cannot loop forever).
+   */
+  private async isSelfOrDescendant(
+    orgId: string,
+    ancestorId: string,
+    id: string,
+  ): Promise<boolean> {
+    let current = id;
+    for (let i = 0; i <= 16; i++) {
+      if (current === ancestorId) return true;
+      const row = await this.db
+        .selectFrom("conversations")
+        .select("parent_conversation_id")
+        .where("id", "=", current)
+        .where("org_id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (!row?.parent_conversation_id) return false;
+      current = row.parent_conversation_id;
+    }
+    return false;
   }
 
   /** The use of the call's device (bound now when the conversation has none yet, as tools do). */

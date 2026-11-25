@@ -60,6 +60,7 @@ const ctx = (resume?: ToolCallContext["resume"]): ToolCallContext => ({
   accountId: "a",
   agentId: "g",
   conversationId: "c",
+  rootConversationId: "c",
   callId: "call",
   signal: new AbortController().signal,
   ...(resume !== undefined && { resume }),
