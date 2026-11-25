@@ -50,6 +50,9 @@ export const SERVICE_READY_TIMEOUT_MS = 15_000;
 /** How long a stopped service gets to exit on its own before it is killed. */
 export const SERVICE_STOP_GRACE_MS = 2_000;
 
+/** The record in `svc/` that the bare-name entries from before ids were removed (once). */
+const LEGACY_PRUNED_MARKER = ".ids-v1";
+
 /** The device's service state root: `<device dir>/svc`, outside every workspace and project. */
 export const serviceRoot = (deviceDir: string) => join(deviceDir, "svc");
 
@@ -786,9 +789,14 @@ export class ServiceSupervisor {
   /**
    * Removes what services kept under bare names before ids (core#817): an entry of `svc/` or
    * `svc-files/` whose name is not a service id (an old browser profile with its cookies, old
-   * code). Never through a link (rm removes a link itself); records (`.`-names) are left alone.
+   * code), once per device directory (the `.ids-v1` record). Never through a link (rm removes a
+   * link itself); records (`.`-names) are left alone.
    */
   private async pruneLegacy(): Promise<void> {
+    // once per device directory: a later change of the id rule never wipes what ids keep
+    const svc = await realDirectory(this.o.deviceDir, ["svc"]);
+    const marker = join(svc, LEGACY_PRUNED_MARKER);
+    if (await isRegularFile(marker)) return;
     for (const root of [serviceRoot(this.o.deviceDir), serviceCodeRoot(this.o.deviceDir)]) {
       let entries: string[];
       try {
@@ -800,6 +808,7 @@ export class ServiceSupervisor {
         if (!entry.startsWith(".") && !DEVICE_SERVICE_ID_RE.test(entry))
           await rm(join(root, entry), { recursive: true, force: true });
     }
+    await writeNewFile(marker, Buffer.from("1\n"));
   }
 
   /** Refuses a start without files unless the stored files were written under `digest`. */
