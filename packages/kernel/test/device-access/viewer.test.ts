@@ -20,6 +20,7 @@ import {
 import {
   DeviceStreamViewers,
   hopHeaders,
+  parseTicketRecord,
   RECEIVE_HIGH_WATER_BYTES,
   VIEWER_MAX_MESSAGE_BYTES,
   VIEWER_RECHECK_MS,
@@ -186,7 +187,12 @@ const mint = async (who: Setup = s): Promise<string> =>
 
 interface Viewer {
   ws: WebSocket;
-  /** The messages received, as text. */
+  /**
+   * The first message received, as text: the echo service's echo of the viewer context the kernel
+   * writes first on the stream.
+   */
+  context: Promise<string>;
+  /** The messages received after it, as text. */
   received: string[];
   /** Resolves with the close code and reason. */
   closed: Promise<{ code: number; reason: string }>;
@@ -199,8 +205,17 @@ function viewer(ticket: string, headers: Record<string, string> = {}): Viewer {
   const ws = new WebSocket(`ws://127.0.0.1:${k.port}/device/stream?ticket=${ticket}`, { headers });
   const received: string[] = [];
   const waiting: ((m: string) => void)[] = [];
+  let first: ((m: string) => void) | null = null;
+  const context = new Promise<string>((resolve) => {
+    first = resolve;
+  });
   ws.on("message", (data: Buffer) => {
     const m = data.toString("utf8");
+    if (first !== null) {
+      first(m);
+      first = null;
+      return;
+    }
     received.push(m);
     for (const w of waiting.splice(0)) w(m);
   });
@@ -210,6 +225,7 @@ function viewer(ticket: string, headers: Record<string, string> = {}): Viewer {
   });
   return {
     ws,
+    context,
     received,
     closed,
     next: () => new Promise<string>((resolve) => waiting.push(resolve)),
@@ -268,6 +284,85 @@ describe("device stream viewer", () => {
     expect(closedRows[0]?.detail).toMatchObject({ deviceId: s.deviceId, service: "echo" });
     const detail = closedRows[0]?.detail as { durationMs?: unknown } | undefined;
     expect(typeof detail?.durationMs).toBe("number");
+  });
+
+  it("the service's first stream message is the kernel's viewer context, then the viewer's messages in order", async () => {
+    // a sub-agent conversation of the member's root conversation: the ticket names the child
+    const root = await db
+      .selectFrom("conversations")
+      .select("agent_id")
+      .where("id", "=", s.conversationId)
+      .executeTakeFirstOrThrow();
+    const childId = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id)
+      VALUES (${childId}, ${orgId}, ${root.agent_id}, ${s.accountId}, 'subagent',
+        ${s.conversationId})`.execute(raw);
+    const ticket = (
+      await access.mintTicket(
+        { orgId, accountId: s.accountId, conversationId: childId },
+        "echo",
+        CALLER,
+      )
+    ).id;
+    const stored = JSON.parse(
+      (await redis.get(`${DEVICE_STREAM_TICKET_PREFIX}${ticket}`)) as string,
+    ) as Record<string, unknown>;
+    expect(stored).toMatchObject({ conversationId: childId, rootConversationId: s.conversationId });
+    // the viewer's messages are sent before the provider stream opens: they wait in the viewer's
+    // queue and never overtake the context
+    const sandbox = k.app.get(SandboxService);
+    const original = sandbox.holdForStream.bind(sandbox);
+    let sentEarly!: () => void;
+    const early = new Promise<void>((resolve) => {
+      sentEarly = resolve;
+    });
+    const spy = vi.spyOn(sandbox, "holdForStream").mockImplementation(async (...args) => {
+      await early;
+      return original(...args);
+    });
+    try {
+      const v = viewer(ticket);
+      const many = Array.from({ length: 5 }, (_, i) => `early${i}`);
+      await new Promise<void>((resolve) => v.ws.once("open", () => resolve()));
+      await Promise.all(
+        many.map(
+          (m) =>
+            new Promise<void>((resolve, reject) =>
+              v.ws.send(Buffer.from(m, "utf8"), (err) => (err ? reject(err) : resolve())),
+            ),
+        ),
+      );
+      await waitFor(async () => spy.mock.calls.length > 0, 10_000, "the stream opening");
+      sentEarly();
+      // the echo service answers every stream message it gets, in order: first the context
+      expect(JSON.parse(await v.context)).toEqual({
+        kind: "viewer",
+        conversationId: childId,
+        rootConversationId: s.conversationId,
+      });
+      await waitFor(async () => v.received.length >= many.length, 10_000, "the early echoes");
+      expect(v.received).toEqual(many);
+      expect(await roundTrip(v, "later")).toBe("later");
+      v.ws.close(1000);
+      await v.closed;
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a ticket record without its root conversation is refused", async () => {
+    const t = await mint();
+    const key = `${DEVICE_STREAM_TICKET_PREFIX}${t}`;
+    const rec = JSON.parse((await redis.get(key)) as string) as Record<string, unknown>;
+    expect(rec.rootConversationId).toBe(s.conversationId);
+    expect(parseTicketRecord(rec)).toMatchObject({ rootConversationId: s.conversationId });
+    const { rootConversationId: _dropped, ...without } = rec;
+    expect(parseTicketRecord(without)).toBeNull();
+    expect(parseTicketRecord({ ...rec, rootConversationId: "" })).toBeNull();
+    await redis.set(key, JSON.stringify(without), "EX", 60);
+    expect((await viewer(t).closed).code).toBe(4401);
+    expect(await auditsOf("browser.view", s.deviceId)).toHaveLength(0);
   });
 
   it("ticket is single use", async () => {

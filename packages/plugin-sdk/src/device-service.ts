@@ -14,6 +14,17 @@
  * - `{"kind":"request"}`: the next provider message is the request body; the service answers
  *   with exactly one message and closes the connection.
  * - `{"kind":"stream"}`: both sides keep exchanging messages until either side closes.
+ *
+ * **Viewer streams.** On a stream the kernel opens for a viewer (a person's panel, through a
+ * viewer ticket), the first stream message after `{"kind":"stream"}` is written by the kernel, not
+ * the panel: the viewer context {@link DeviceServiceViewerContext},
+ * `{"kind":"viewer","conversationId":"<id>","rootConversationId":"<id>"}`, naming the ticket's
+ * conversation (checked at mint to be owned by the viewing person) and the root of its
+ * conversation tree (the conversation itself outside sub-agents). The panel's own messages
+ * follow, unchanged and in order. A service reads only that first message as context
+ * ({@link parseViewerContext}); a later message of the same shape comes from the panel and is
+ * never context. Providers and the device program pass the viewer context through like any
+ * stream message.
  */
 
 /** Names the unix socket path the service listens on. */
@@ -135,4 +146,47 @@ export class ServiceMessageDecoder {
     this.pending -= n;
     return out;
   }
+}
+
+/**
+ * The first stream message of a viewer stream, written by the kernel (see the protocol above):
+ * the ticket's conversation and the root of its conversation tree.
+ */
+export interface DeviceServiceViewerContext {
+  kind: "viewer";
+  conversationId: string;
+  rootConversationId: string;
+}
+
+/** The body of the viewer context stream message (UTF-8 JSON; the provider frames it). */
+export function encodeViewerContext(ctx: DeviceServiceViewerContext): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      kind: "viewer",
+      conversationId: ctx.conversationId,
+      rootConversationId: ctx.rootConversationId,
+    }),
+  );
+}
+
+/**
+ * Reads a stream message body as the viewer context: `kind` is `"viewer"` and both ids are
+ * non-empty strings; only those three fields are returned. Null for anything else (not UTF-8,
+ * not JSON, another shape).
+ */
+export function parseViewerContext(body: Uint8Array | string): DeviceServiceViewerContext | null {
+  let msg: unknown;
+  try {
+    const text =
+      typeof body === "string" ? body : new TextDecoder("utf-8", { fatal: true }).decode(body);
+    msg = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof msg !== "object" || msg === null || Array.isArray(msg)) return null;
+  const { kind, conversationId, rootConversationId } = msg as Record<string, unknown>;
+  if (kind !== "viewer") return null;
+  if (typeof conversationId !== "string" || conversationId === "") return null;
+  if (typeof rootConversationId !== "string" || rootConversationId === "") return null;
+  return { kind: "viewer", conversationId, rootConversationId };
 }

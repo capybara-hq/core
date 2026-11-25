@@ -51,6 +51,11 @@ export interface DeviceStreamTicket {
   orgId: string;
   accountId: string;
   conversationId: string;
+  /**
+   * The root of `conversationId`'s tree at mint (itself outside sub-agents): the viewer context
+   * the kernel writes first on the service stream names it.
+   */
+  rootConversationId: string;
   deviceId: string;
   providerName: string;
   service: string;
@@ -348,6 +353,7 @@ export class DeviceAccessService {
       orgId: d.orgId,
       accountId: scope.accountId,
       conversationId: d.conversationId,
+      rootConversationId: d.rootConversationId,
       deviceId: d.deviceId,
       providerName: d.provider,
       service,

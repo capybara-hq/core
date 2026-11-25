@@ -152,9 +152,16 @@ async function heldDevice(opts: { maxFrameBytes?: number } = {}) {
   });
   open.push(machine);
   const opens: unknown[] = [];
+  /** Every stream message the machine got, per stream, as text. */
+  const streams: string[][] = [];
   machine.onStream((o, s) => {
     opens.push(o);
-    s.onMessage((m) => void s.send(m));
+    const got: string[] = [];
+    streams.push(got);
+    s.onMessage((m) => {
+      got.push(Buffer.from(m).toString("utf8"));
+      void s.send(m);
+    });
   });
   await waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
   await sql`INSERT INTO capybara.device_instances
@@ -168,12 +175,20 @@ async function heldDevice(opts: { maxFrameBytes?: number } = {}) {
     VALUES (${agentId}, ${orgId}, ${ownerId}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${ownerId}, ${deviceId})`.execute(raw);
+  // a sub-agent conversation of it: the tickets name the child, the root is the conversation
+  const childId = randomUUID();
+  await sql`INSERT INTO capybara.conversations
+      (id, org_id, agent_id, account_id, kind, parent_conversation_id)
+    VALUES (${childId}, ${orgId}, ${agentId}, ${ownerId}, 'subagent', ${conversationId})`.execute(
+    raw,
+  );
   const ticket = async (): Promise<string> => {
     const id = randomUUID().replaceAll("-", "");
     const record: DeviceStreamTicket = {
       orgId,
       accountId: ownerId,
-      conversationId,
+      conversationId: childId,
+      rootConversationId: conversationId,
       deviceId,
       providerName: PLUGIN,
       service: "echo",
@@ -182,14 +197,28 @@ async function heldDevice(opts: { maxFrameBytes?: number } = {}) {
     await redis.set(`${DEVICE_STREAM_TICKET_PREFIX}${id}`, JSON.stringify(record), "EX", 60);
     return id;
   };
-  return { deviceId, machine, opens, ticket };
+  return { deviceId, machine, opens, streams, ticket, conversationId, childId };
 }
 
+/**
+ * A browser's viewer socket. The first message received (the echo of the viewer context the kernel
+ * writes first on the stream) resolves `context` and is not a round trip's answer.
+ */
 function viewer(url: string) {
   const ws = new WebSocket(url);
   const waiting: ((m: string) => void)[] = [];
+  let first: ((m: string) => void) | null = null;
+  const context = new Promise<string>((resolve) => {
+    first = resolve;
+  });
   ws.on("message", (data: Buffer) => {
-    for (const w of waiting.splice(0)) w(data.toString("utf8"));
+    const m = data.toString("utf8");
+    if (first !== null) {
+      first(m);
+      first = null;
+      return;
+    }
+    for (const w of waiting.splice(0)) w(m);
   });
   const opened = new Promise<void>((resolve) => ws.once("open", () => resolve()));
   const closed = new Promise<{ code: number }>((resolve) => {
@@ -202,7 +231,7 @@ function viewer(url: string) {
     ws.send(Buffer.from(text, "utf8"));
     return answer;
   };
-  return { ws, closed, roundTrip };
+  return { ws, context, closed, roundTrip, opened };
 }
 
 describe("device stream viewer across replicas (dual replica)", () => {
@@ -236,6 +265,36 @@ describe("device stream viewer across replicas (dual replica)", () => {
     expect(await late.roundTrip("x")).toBe("x");
     await d.machine.close();
     expect((await late.closed).code).toBe(4409);
+  });
+
+  it("after a hop the machine's first stream message is the kernel's viewer context", async () => {
+    const d = await heldDevice();
+    const v = viewer(`${wsBase(1)}/device/stream?ticket=${await d.ticket()}`);
+    // sent as soon as the socket opens, before the hop and the stream open
+    await v.opened;
+    for (const m of ["a", "b", "c"]) v.ws.send(Buffer.from(m, "utf8"));
+    const context = {
+      kind: "viewer",
+      conversationId: d.childId,
+      rootConversationId: d.conversationId,
+    };
+    expect(JSON.parse(await v.context)).toEqual(context);
+    v.ws.send(Buffer.from("d", "utf8"));
+    await waitFor(async () => (d.streams[0]?.length ?? 0) >= 5, 10_000, "every message");
+    expect(d.streams).toHaveLength(1);
+    const [got] = d.streams;
+    expect(JSON.parse(got?.[0] ?? "")).toEqual(context);
+    expect(got?.slice(1)).toEqual(["a", "b", "c", "d"]);
+    v.ws.close(1000);
+    await v.closed;
+
+    // likewise on the holder itself (the direct path)
+    const local = viewer(`${wsBase(0)}/device/stream?ticket=${await d.ticket()}`);
+    expect(JSON.parse(await local.context)).toEqual(context);
+    expect(await local.roundTrip("here")).toBe("here");
+    expect(JSON.parse(d.streams[1]?.[0] ?? "")).toEqual(context);
+    local.ws.close(1000);
+    await local.closed;
   });
 
   it("a message the machine's frames cannot carry ends the hopped viewer with 1009", async () => {

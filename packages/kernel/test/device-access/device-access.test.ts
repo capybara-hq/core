@@ -644,6 +644,7 @@ describe("ctx.deviceAccess", () => {
       orgId,
       accountId: s.accountId,
       conversationId: s.conversationId,
+      rootConversationId: s.conversationId,
       deviceId: s.deviceId,
       providerName: "device-fake",
       service: "echo",
