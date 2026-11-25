@@ -90,7 +90,7 @@ export {
   type DisclosureProps,
 } from "./disclosure";
 export { type DurationOptions, formatDuration } from "./duration";
-export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
+export { EMBED_ALLOW, EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { ExpandableProse, type ExpandableProseProps } from "./expandable-prose";
