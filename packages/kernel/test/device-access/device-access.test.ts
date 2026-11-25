@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DeviceAccessError, type ToolCallContext } from "@capybara-hq/plugin-sdk";
+import { DeviceAccessError, type ToolCallContext, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -19,7 +19,9 @@ import {
 } from "../../src/device-access/device-access.service.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
+import { SandboxProviderUnreachableError } from "../../src/sandbox/unreachable.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
+import { SANDBOX_UNREACHABLE_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { attachCallScope, callScopeOf } from "../../src/tools/call-scope.js";
 import { echoServiceSpec } from "../fixtures/extensions/fake-device-access/index.js";
 import {
@@ -319,6 +321,28 @@ describe("ctx.deviceAccess", () => {
       timeoutMs: 10_000,
     });
     expect(new TextDecoder().decode(answer)).toBe("ping");
+  });
+
+  it("a provider that cannot be reached reaches the extension as the sandbox tools say it", async () => {
+    allowReview();
+    const services = k.app.get(DeviceServices);
+    const down = new SandboxProviderUnreachableError(
+      "connect",
+      new Error("connect ECONNREFUSED 127.0.0.1:2375"),
+    );
+    vi.spyOn(services, "ensure").mockRejectedValue(down);
+    await expect(access.ensureService(CALLER, callOf(), echoServiceSpec())).rejects.toMatchObject({
+      name: "ToolError",
+      message: SANDBOX_UNREACHABLE_TEXT,
+    });
+    vi.spyOn(services, "request").mockRejectedValue(down);
+    await expect(
+      access.request(CALLER, callOf(), {
+        service: "echo",
+        body: new Uint8Array(1),
+        timeoutMs: 1000,
+      }),
+    ).rejects.toMatchObject({ name: "ToolError", message: SANDBOX_UNREACHABLE_TEXT });
   });
 
   it("two extensions declaring the same service name run and reach separate services", async () => {
