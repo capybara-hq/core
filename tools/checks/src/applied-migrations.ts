@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import {
+  type BaseMigrationNames,
   checkAppliedMigrations as checkApplied,
-  diffMigrationNumbers,
+  checkMigrationNumbers,
   migrationFileMatcher,
 } from "@capybara-hq/plugin-tools";
 import type { Finding } from "./source.js";
@@ -97,20 +98,58 @@ export const checkAppliedMigrations = (
     isMigrationFile,
   );
 
-/** The applied-migrations check on `<base>...HEAD` in `cwd` (the repository root). */
-export function diffAppliedMigrations(cwd: string, base: string): Finding[] {
-  const out = execFileSync(
-    "git",
-    ["diff", "--name-status", "--no-ext-diff", "--relative", "-M", `${base}...HEAD`],
-    { cwd, encoding: "utf8" },
-  );
-  return checkAppliedMigrations(out);
+const git = (cwd: string, args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+
+/**
+ * `git diff --name-status -M` from the merge base of `base` and HEAD to the working tree: the
+ * branch's commits plus staged, unstaged and untracked files (an untracked file is an `A` line).
+ * In CI the tree is clean, so this equals the committed diff `<base>...HEAD`; locally
+ * (`pnpm verify --fast`) a migration not committed yet is checked too.
+ */
+export function workingTreeNameStatus(cwd: string, base: string): string {
+  const mergeBase = git(cwd, ["merge-base", base, "HEAD"]).trim();
+  const tracked = git(cwd, [
+    "diff",
+    "--name-status",
+    "--no-ext-diff",
+    "--relative",
+    "-M",
+    mergeBase,
+  ]).trimEnd();
+  const untracked = git(cwd, ["ls-files", "--others", "--exclude-standard"])
+    .split("\n")
+    .filter((f) => f !== "")
+    .map((f) => `A\t${f}`);
+  return [tracked, ...untracked].filter((l) => l !== "").join("\n");
 }
 
 /**
- * plugin-tools' `migration-number-behind-base` on `<base>...HEAD` in `cwd`: every migration the
- * diff adds to {@link isMigrationFile}'s directories is numbered above the highest number of its
- * directory at `<base>`.
+ * The applied-migrations check on the merge base of `<base>` and HEAD against the working tree
+ * ({@link workingTreeNameStatus}) in `cwd` (the repository root).
  */
-export const diffNewMigrationNumbers = (cwd: string, base: string): Finding[] =>
-  diffMigrationNumbers(cwd, base, isMigrationFile);
+export function diffAppliedMigrations(cwd: string, base: string): Finding[] {
+  return checkAppliedMigrations(workingTreeNameStatus(cwd, base));
+}
+
+/**
+ * plugin-tools' `migration-number-behind-base` on the same diff as {@link diffAppliedMigrations}:
+ * every migration the branch adds to {@link isMigrationFile}'s directories (committed or not) is
+ * numbered above the highest number of its directory at `<base>` itself (`git ls-tree <base>`, so
+ * a number the base released after the branch started counts). With a local `origin/main` as the
+ * base this catches a number that main took meanwhile before CI's merge commit does.
+ */
+export function diffNewMigrationNumbers(cwd: string, base: string): Finding[] {
+  const listed = new Map<string, string[]>();
+  const baseNames: BaseMigrationNames = (dir) => {
+    let names = listed.get(dir);
+    if (names === undefined) {
+      names = git(cwd, ["ls-tree", "--name-only", base, "--", `${dir || "."}/`])
+        .split("\n")
+        .filter((p) => p !== "")
+        .map((p) => p.slice(p.lastIndexOf("/") + 1));
+      listed.set(dir, names);
+    }
+    return names;
+  };
+  return checkMigrationNumbers(workingTreeNameStatus(cwd, base), isMigrationFile, baseNames);
+}

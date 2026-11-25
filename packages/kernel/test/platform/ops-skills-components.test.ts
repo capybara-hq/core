@@ -139,32 +139,6 @@ const skillComponent = async (name: string): Promise<string> =>
   ).id;
 
 describe("registration", () => {
-  it("registers the skills and component operations", () => {
-    const ids = ops.all().map((o) => o.id);
-    for (const id of [
-      "skills.available",
-      "skills.delete",
-      "skills.delete-preview",
-      "skills.disable-preview",
-      "skills.set-enabled",
-      "skills.set-shareable",
-      "agent-templates.available",
-      "agent-templates.disable-preview",
-      "agent-templates.set-enabled",
-      "connectors.template-disable-preview",
-      "connectors.set-template-enabled",
-      "plugins.components",
-      "plugins.component-scope-preview",
-      "plugins.component-versions",
-      "plugins.set-component-scope",
-      "plugins.set-component-disabled",
-      "plugins.set-component-shown",
-      "plugins.update-agent-template",
-    ]) {
-      expect(ids).toContain(id);
-    }
-  });
-
   it("offers the switches to org admins only and the reads to members", () => {
     expect(availability(op("skills.set-enabled"), facts("member")).ok).toBe(false);
     expect(availability(op("skills.set-enabled"), facts("admin"))).toEqual({ ok: true });

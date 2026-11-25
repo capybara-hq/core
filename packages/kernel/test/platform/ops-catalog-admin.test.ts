@@ -115,49 +115,6 @@ const expectViaAgent = async (action: string, operation: string, ctx: OperationC
 const SUPER = facts("owner", { isSuperAdmin: true });
 
 describe("registration and who may call", () => {
-  it("registers the Task 8 operations", () => {
-    const ids = new Set(ops.all().map((o) => o.id));
-    for (const id of [
-      "plugins.import-npm",
-      "plugins.import-git",
-      "plugins.import-review",
-      "plugins.scope-preview",
-      "plugins.set-scope",
-      "plugins.set-disabled",
-      "plugins.set-shown",
-      "plugins.delete",
-      "plugins.installs",
-      "plugins.uninstall",
-      "plugins.upload-review",
-      "plugins.set-shareable",
-      "plugins.owned-delete-preview",
-      "plugins.owned-delete",
-      "plugins.withdraw-upload",
-      "extensions.platform-list",
-      "extensions.platform-get",
-      "extensions.platform-enable",
-      "extensions.platform-disable",
-      "extensions.uninstall",
-      "extensions.tools",
-      "extensions.tool-disable-preview",
-      "extensions.set-tool-enabled",
-      "extensions.point-defaults",
-      "extensions.point-availability",
-      "extensions.set-point-default",
-      "marketplaces.platform-entries",
-      "marketplaces.update",
-      "marketplaces.remove",
-      "marketplaces.refresh",
-      "marketplaces.import",
-      "models.purposes",
-      "models.set-purpose",
-      "models.set-disabled",
-      "requests.platform-list",
-    ]) {
-      expect(ids.has(id), id).toBe(true);
-    }
-  });
-
   it("platform operations refuse an org admin and a shared agent; org writes refuse a member", () => {
     for (const id of [
       "plugins.set-scope",

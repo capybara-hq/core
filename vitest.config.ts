@@ -72,6 +72,7 @@ export default defineConfig({
             "packages/design/**",
             "packages/plugin-client/**",
             "packages/kernel/test/**",
+            "tools/**",
             ...testingContainerTests,
             ...deviceOsTests,
             "**/node_modules/**",
@@ -79,6 +80,17 @@ export default defineConfig({
           // One PostgreSQL + one Valkey per run, handed to workers via env vars: startTestPostgres()
           // creates a database per file on it. CAPYBARA_TEST_NO_SHARED=1 restores per-file containers.
           globalSetup: ["packages/testing/src/global-setup.ts"],
+        },
+      },
+      // Internal tools' tests (tools/checks, tools/ci, tools/dev, tools/release, tools/worktree):
+      // they read the repository, run git or in-process fake servers, and need no database, so no
+      // globalSetup; `pnpm verify --fast` runs this project.
+      {
+        extends: true,
+        test: {
+          name: "tools",
+          include: ["tools/*/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
         },
       },
       // Device real-OS tests: real processes, so an upper bound sized to the category (like

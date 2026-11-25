@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentsService } from "../../src/agents/agents.service.js";
@@ -141,61 +142,39 @@ async function orgSkill(name: string): Promise<string> {
 const audits = (action: string) =>
   env.db.selectFrom("audit_events").selectAll().where("action", "=", action).execute();
 
+const OPS_DIR = new URL("../../src/platform/ops/", import.meta.url);
+
+/**
+ * The ids the `defineOperation({ id: "…" })` literals in src/platform/ops/*.ops.ts declare, sorted
+ * (the way check:platform-ops reads the operations). A file with a `defineOperation` call this
+ * reading cannot match fails here instead of being skipped silently.
+ */
+function declaredOperationIds(): string[] {
+  const ids: string[] = [];
+  for (const name of readdirSync(OPS_DIR).filter((n) => n.endsWith(".ops.ts"))) {
+    const src = readFileSync(new URL(name, OPS_DIR), "utf8");
+    // `defineOperation({ id: "…"` or `defineOperation<Input>({ id: "…"`
+    const found = [...src.matchAll(/\bdefineOperation(?:<[^(]*>)?\(\{\s*id:\s*"([^"]+)"/g)].map(
+      (m) => m[1] ?? "",
+    );
+    expect(found.length, `${name}: every defineOperation call starts with a literal id`).toBe(
+      src.match(/\bdefineOperation(?=[<(])/g)?.length ?? 0,
+    );
+    ids.push(...found);
+  }
+  return ids.sort();
+}
+
 describe("registration", () => {
-  it("registers every operation of the four domains", () => {
+  it("registers exactly the operations src/platform/ops declares", () => {
+    // Derived from the source, so adding an operation needs no list here: the registry must hold
+    // every `defineOperation({ id: "…" })` of src/platform/ops/*.ops.ts and nothing else.
     expect(
       ops
         .all()
         .map((o) => o.id)
-        .filter((id) => /^(platform|skills|agents|agent-templates)\./.test(id)),
-    ).toEqual([
-      "agent-templates.available",
-      "agent-templates.delete",
-      "agent-templates.delete-preview",
-      "agent-templates.disable-preview",
-      "agent-templates.get",
-      "agent-templates.list",
-      "agent-templates.save",
-      "agent-templates.set-enabled",
-      "agent-templates.set-shareable",
-      "agent-templates.update",
-      "agents.bind-connector",
-      "agents.connector-setup-status",
-      "agents.create",
-      "agents.create-from-template",
-      "agents.delete",
-      "agents.delete-skill",
-      "agents.get",
-      "agents.invocable-skills",
-      "agents.list",
-      "agents.preview-from-template",
-      "agents.readiness",
-      "agents.register-skill",
-      "agents.request-connector-setup",
-      "agents.share-skill",
-      "agents.skills",
-      "agents.update",
-      "agents.update-profile",
-      "agents.upload-skill",
-      "agents.versions",
-      "platform.me",
-      "platform.overview",
-      "platform.preferences",
-      "platform.push-preferences",
-      "platform.set-preferences",
-      "platform.set-push-preferences",
-      "skills.available",
-      "skills.create-from-file",
-      "skills.delete",
-      "skills.delete-preview",
-      "skills.disable-preview",
-      "skills.get",
-      "skills.get-change",
-      "skills.list",
-      "skills.list-files",
-      "skills.set-enabled",
-      "skills.set-shareable",
-    ]);
+        .sort(),
+    ).toEqual(declaredOperationIds());
   });
 });
 

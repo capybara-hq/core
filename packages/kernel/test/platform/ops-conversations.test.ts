@@ -95,36 +95,6 @@ const ctxOf = (accountId: string, agentId: string, conversationId: string = rand
     signal: new AbortController().signal,
   }) satisfies OperationContext;
 
-describe("registration", () => {
-  it("registers the conversation operations", () => {
-    expect(
-      ops
-        .all()
-        .map((o) => o.id)
-        .filter((id) => id.startsWith("conversations.")),
-    ).toEqual([
-      "conversations.abort",
-      "conversations.agent-tree",
-      "conversations.archive",
-      "conversations.background-tasks",
-      "conversations.compact",
-      "conversations.delete",
-      "conversations.device",
-      "conversations.events",
-      "conversations.files",
-      "conversations.get",
-      "conversations.list",
-      "conversations.list-shares",
-      "conversations.rename",
-      "conversations.revoke-share",
-      "conversations.stop-background-task",
-      "conversations.subagents",
-      "conversations.unarchive",
-      "conversations.usage",
-    ]);
-  });
-});
-
 describe("reads", () => {
   it("lists only my conversations as compact rows, and gets one", async () => {
     const agent = await agentOf(env.memId);
