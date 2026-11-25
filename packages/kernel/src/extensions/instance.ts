@@ -400,7 +400,9 @@ export async function setupInstance(
   },
 ): Promise<ExtensionInstance> {
   const live = new LiveConfig(input.config);
-  const ctx = createExtensionContext(deps.kernel, manifest, live, deps.extensionPointAccess);
+  const ctx = createExtensionContext(deps.kernel, manifest, live, deps.extensionPointAccess, {
+    sha256: input.sha256,
+  });
   input.onCtx?.(ctx);
   try {
     await manifest.setup(ctx);

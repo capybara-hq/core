@@ -22,6 +22,7 @@ import {
   DEVICE_SERVICE_STATE_ENV,
   DEVICE_SERVICE_WORKSPACE_ENV,
   type DeviceServiceStatus,
+  deviceServiceFilesDigest,
   encodeServiceMessage,
   type SandboxLimits,
   SandboxPermissionUnsupportedError,
@@ -453,7 +454,7 @@ export class ServiceSupervisor {
       // the code the ensure names (an ifRunning ensure names none: it keeps the launched code)
       const wanted = opts.ifRunning
         ? undefined
-        : (opts.filesDigest ?? (spec.files ? filesDigestOf(spec.files) : undefined));
+        : (opts.filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : undefined));
       if (current?.network === key && (wanted === undefined || wanted === current.filesDigest))
         return this.status(name);
       if (!current && opts.ifRunning) return this.status(name);
@@ -676,7 +677,9 @@ export class ServiceSupervisor {
     // its files change; a restart on stored code keeps it as it is
     const install = await this.installDir(
       spec.name,
-      o.storedCode ? null : (filesDigest ?? (spec.files ? filesDigestOf(spec.files) : null)),
+      o.storedCode
+        ? null
+        : (filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : null)),
     );
     // files are (re)written on start only; the state directory is the service's own and kept (a
     // browser profile)
@@ -751,7 +754,7 @@ export class ServiceSupervisor {
       spec: launched,
       filesDigest: o.storedCode
         ? o.runningDigest
-        : (filesDigest ?? (spec.files ? filesDigestOf(spec.files) : undefined)),
+        : (filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : undefined)),
       startedAt: this.now().toISOString(),
       socket: paths.socket,
       conns: new Set(),
@@ -922,20 +925,6 @@ async function isRegularFile(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/**
- * This program's digest of files sent without the provider's (`sha256:` over each path, NUL, byte
- * length, NUL, bytes, in path order): what an install directory is recorded as filled under.
- */
-function filesDigestOf(files: Record<string, Uint8Array>): string {
-  const h = createHash("sha256");
-  for (const p of Object.keys(files).sort()) {
-    const data = files[p] as Uint8Array;
-    h.update(`${p}\0${data.byteLength}\0`);
-    h.update(data);
-  }
-  return `sha256:${h.digest("hex")}`;
 }
 
 function checkName(name: string): void {

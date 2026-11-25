@@ -956,6 +956,12 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
+export const DEVICE_SERVICE_FILES_DIGEST_VECTOR: {
+    readonly files: Readonly<Record<string, string>>;
+    readonly digest: string;
+};
+
+// @public
 export const DEVICE_SERVICE_ID_RE: RegExp;
 
 // @public
@@ -975,6 +981,9 @@ export const DEVICE_SERVICE_MAX_MESSAGE: number;
 
 // @public
 export const DEVICE_SERVICE_NAME_RE: RegExp;
+
+// @public
+export const DEVICE_SERVICE_ROLL_CHECK = "{\"capybara\":\"roll-check\"}";
 
 // @public
 export const DEVICE_SERVICE_SOCKET_ENV = "CAPYBARA_SERVICE_SOCKET";
@@ -1170,6 +1179,12 @@ export function deviceServiceFilesDigest(files: Record<string, Uint8Array>): str
 
 // @public
 export function deviceServiceId(extension: string, name: string): string;
+
+// @public
+export interface DeviceServiceRollCheck {
+    busy: boolean;
+    reason?: string;
+}
 
 // @public
 export interface DeviceServiceSpec {
@@ -2421,6 +2436,9 @@ export function isPublicHostname(host: string): boolean;
 export function isRetryableKind(kind: ModelErrorKind): boolean;
 
 // @public
+export function isRollCheck(body: Uint8Array | string): boolean;
+
+// @public
 export function isSafePackagePath(p: string): boolean;
 
 // @public
@@ -3180,6 +3198,9 @@ export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseO
 export function parsePluginManifest(json: unknown): PluginManifest | {
     errors: string[];
 };
+
+// @public
+export function parseRollCheck(body: Uint8Array | string): DeviceServiceRollCheck;
 
 // @public
 export function parseSandboxBrowseScope(value: unknown): SandboxBrowseScope;
