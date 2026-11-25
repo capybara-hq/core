@@ -1,4 +1,5 @@
 import { checkParamValue, type ParamSchema } from "./model-params.js";
+import type { UiOpen } from "./ui.js";
 import { isHttpUrl } from "./url.js";
 
 /** Tool annotations (hints aligned with MCP, used to derive the default policy). */
@@ -199,6 +200,13 @@ export interface InputRequired {
   kind: "input_required";
   form: InputForm;
   state?: unknown;
+  /**
+   * Opens a `conversation.panel` of the same extension on the asking person's open conversation
+   * page when the form is asked (e.g. the browser panel for a handoff), as a view's `open` does
+   * on a click. Display only: a target that names no panel of the extension is dropped with a
+   * warning and the form is asked as usual.
+   */
+  open?: UiOpen;
 }
 
 export type FormAnswer = Record<string, string | number | boolean | string[]>;

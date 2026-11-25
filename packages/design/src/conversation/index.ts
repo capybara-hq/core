@@ -165,6 +165,7 @@ export {
   type QuickActionsProps,
 } from "./quick-actions";
 export { registrableDomain } from "./registrable";
+export { useRightFull } from "./right-full";
 export { RunRow, type RunRowProps, type RunRowStatus } from "./run-row";
 export {
   AgentCallBlock,

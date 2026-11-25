@@ -287,10 +287,11 @@
 }
 /* An open side panel takes the window's end edge from the title bar: the panel starts below the
    end controls instead (none on macOS, where the controls sit at the start). */
-:root[data-shell="desktop"] .cb-conv-page:has(> .cb-conv-panel) .cb-title-bar {
+/* A maximised panel lies under the title bar, which keeps the end edge. */
+:root[data-shell="desktop"] .cb-conv-page:has(> .cb-conv-panel:not([data-full])) .cb-title-bar {
   padding-right: calc(var(--cb-space-3) + var(--cb-inset-right));
 }
-:root[data-shell="desktop"] .cb-conv-panel {
+:root[data-shell="desktop"] .cb-conv-panel:not([data-full]) {
   padding-top: var(--cb-shell-row-end);
 }
 :root[data-shell="desktop"] .cb-shared-bar {

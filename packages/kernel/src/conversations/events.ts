@@ -1610,6 +1610,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       questionId: z.string(),
       form: InputFormSchema,
       expiresAt: z.string(),
+      /**
+       * A plugin tool's `InputRequired.open`: a `conversation.panel` of the asking extension the
+       * page opens when the question arrives (display only; the kernel names the plugin itself).
+       */
+      open: z
+        .object({
+          plugin: z.string(),
+          contribution: z.string(),
+          item: z.string().optional(),
+        })
+        .optional(),
     }),
   ),
   /**

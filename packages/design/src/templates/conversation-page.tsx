@@ -8,6 +8,7 @@ import {
   type Ref,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -479,6 +480,36 @@ export function ConversationPage({
   }, [pushed]);
   const inlineArea = open ? right : "none";
   useInlineFocus(root, pushed ? inlineArea : full ? "panel" : sheet ? "sheet" : inlineArea);
+  // The open panel beside the thread, or maximised: one slot element either way, so a full-mode
+  // switch keeps the panel's DOM (an embed's iframe and its document survive; moving an iframe in
+  // the DOM would reload it). Maximised, the slot leaves the flow and lies over the content area
+  // under the title bar, which the empty `panel-full` element holds in the column; its box is
+  // measured onto the slot. A sheet is a dialog in a portal: entering or leaving full mode from
+  // one moves the panel between documents' places, so there the panel mounts again.
+  const slotted = !pushed && right === "panel" && open && (full || !sheet);
+  const slot = useRef<HTMLDivElement | null>(null);
+  const fullArea = useRef<HTMLDivElement | null>(null);
+  const slotFull = slotted && full;
+  useLayoutEffect(() => {
+    const el = slot.current;
+    const area = fullArea.current;
+    const page = root.current;
+    if (!slotFull || !el || !area || !page) return;
+    const write = () => {
+      const a = area.getBoundingClientRect();
+      const p = page.getBoundingClientRect();
+      el.style.setProperty("--cb-conv-full-top", `${a.top - p.top}px`);
+      el.style.setProperty("--cb-conv-full-left", `${a.left - p.left}px`);
+      el.style.setProperty("--cb-conv-full-w", `${a.width}px`);
+      el.style.setProperty("--cb-conv-full-h", `${a.height}px`);
+    };
+    write();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(write);
+    ro.observe(area);
+    ro.observe(page);
+    return () => ro.disconnect();
+  }, [slotFull]);
   useEffect(() => {
     if (!full || !onRightFullChange) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -521,9 +552,8 @@ export function ConversationPage({
           )}
           <div className="cb-conv-cols">
             {full && !pushed ? (
-              <div className="cb-conv-panel-full" data-part="panel-full">
-                <RightFullContext.Provider value={true}>{panelNode}</RightFullContext.Provider>
-              </div>
+              // the content area the maximised panel slot lies over (below)
+              <div ref={fullArea} className="cb-conv-panel-full" data-part="panel-full" />
             ) : (
               center
             )}
@@ -539,33 +569,40 @@ export function ConversationPage({
             announceFirst={(status.right?.length ?? 0) > 0}
           />
         </div>
-        {!full && !sheet && !pushed && right === "panel" && open ? (
+        {slotted ? (
           <div
+            ref={slot}
             className="cb-conv-panel"
             data-part="panel-slot"
+            data-full={full ? "true" : undefined}
             style={{ "--cb-conv-panel-w": `${shown}px` } as CSSProperties}
           >
-            {/* biome-ignore lint/a11y/useSemanticElements: a focusable, adjustable splitter, not an <hr> */}
-            <div
-              className="cb-conv-resize"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t("panel.resize")}
-              aria-valuemin={PANEL_MIN}
-              aria-valuemax={content > 0 ? Math.max(PANEL_MIN, content - CHAT_MIN) : undefined}
-              aria-valuenow={shown}
-              tabIndex={0}
-              data-dragging={dragging ? "true" : undefined}
-              onKeyDown={onKey}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            />
+            {/* Children keep their places in both modes (null while maximised): the panel after
+                them is never mounted again by a full-mode switch. */}
+            {full ? null : (
+              // biome-ignore lint/a11y/useSemanticElements: a focusable, adjustable splitter, not an <hr>
+              <div
+                className="cb-conv-resize"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t("panel.resize")}
+                aria-valuemin={PANEL_MIN}
+                aria-valuemax={content > 0 ? Math.max(PANEL_MIN, content - CHAT_MIN) : undefined}
+                aria-valuenow={shown}
+                tabIndex={0}
+                data-dragging={dragging ? "true" : undefined}
+                onKeyDown={onKey}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+              />
+            )}
             {/* The strip above the panel when end window controls take the top row (none on
-                macOS): a drag filler, as high as that row. */}
-            <DragFill />
-            {panelNode}
+                macOS): a drag filler, as high as that row. Maximised, the panel is under the
+                title bar. */}
+            {full ? null : <DragFill />}
+            <RightFullContext.Provider value={full}>{panelNode}</RightFullContext.Provider>
           </div>
         ) : null}
         {pushed ? (

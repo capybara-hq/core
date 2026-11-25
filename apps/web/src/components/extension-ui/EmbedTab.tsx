@@ -1,6 +1,14 @@
 "use client";
 
-import { Button, EmbedFrame, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  EmbedFrame,
+  Skeleton,
+  Stack,
+  Text,
+  useRightFull,
+  useToast,
+} from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
@@ -116,6 +124,12 @@ export function EmbedTab({
   const panelMode = useRef(onPanelMode);
   panelMode.current = onPanelMode;
   const hasPanelMode = onPanelMode !== undefined;
+  // A panel embed is told the panel's mode as the page draws it (the template's, not the page
+  // state's: a phone's pushed panel is never maximised), after `init` and on every change.
+  const drawnFull = useRightFull();
+  const panelFull = hasPanelMode && drawnFull;
+  const panelFullRef = useRef(panelFull);
+  panelFullRef.current = panelFull;
   // The file is read through a ref: a new `read` function each render must not rebuild the bridge.
   const fileRef = useRef(file);
   fileRef.current = file;
@@ -193,7 +207,10 @@ export function EmbedTab({
         if (shareCode === undefined) latest.current.router.push(path);
       },
       onToast: (text) => latest.current.toast.success(text),
-      ...(hasPanelMode && { onPanelMode: (full: boolean) => panelMode.current?.(full) }),
+      ...(hasPanelMode && {
+        onPanelMode: (full: boolean) => panelMode.current?.(full),
+        panelFull: () => panelFullRef.current,
+      }),
       onTokenError: () => setRefreshFailed(true),
       ...(fileRef.current !== undefined && {
         file: fileRef.current.read,
@@ -244,6 +261,13 @@ export function EmbedTab({
     hasPanelMode,
   ]);
 
+  // The host changed the panel's mode (the embed's ask, the close control, Esc, the size class):
+  // tell the embed; the bridge sends only a change, and nothing before the document's init.
+  useEffect(() => {
+    void panelFull;
+    bridge.current?.panelModeChanged();
+  }, [panelFull]);
+
   // 每个 iframe 元素只在第一次 load 收到 init；再次 load（导航走了）由消息桥通知重新挂载。
   // 换上新元素时让消息桥回到「等第一次 load」；旧元素的 load 不再理会。
   // 开发模式的 StrictMode 会对同一个元素再调一次 ref（先 null 再 el）：每个元素只接一次 load、只 reset 一次
@@ -281,8 +305,10 @@ export function EmbedTab({
       {t("ui.embedRefreshFailed")}
     </Text>
   );
-  if (fill) {
+  if (fill || hasPanelMode) {
     // Direct children of the pane's flex column: the frame takes the height the warning leaves.
+    // A panel embed keeps this shape in both panel modes, so a full-mode switch never mounts the
+    // frame again (its document and connections survive).
     return (
       <>
         {warning}
@@ -290,7 +316,8 @@ export function EmbedTab({
           key={frameKey}
           src={state.src}
           title={title}
-          fill
+          fill={fill}
+          {...(!fill && height !== undefined && { height })}
           onMessage={onMessage}
           frameRef={setFrame}
         />
