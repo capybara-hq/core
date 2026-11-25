@@ -102,7 +102,7 @@ it.runIf(darwin)(
       await supervisor.stop(id, AbortSignal.timeout(30_000));
       // sealed: neither the install nor the seal can be changed by the service any more
       await supervisor.ensure(
-        { ...spec, files: undefined },
+        { name: spec.name, entry: spec.entry, args: spec.args },
         undefined,
         AbortSignal.timeout(60_000),
         {
