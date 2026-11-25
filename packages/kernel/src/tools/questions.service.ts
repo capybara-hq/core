@@ -74,6 +74,8 @@ export interface QuestionAskInput {
   form: InputForm;
   state: unknown;
   carried?: QuestionCarried;
+  /** A checked `InputRequired.open` of a plugin tool: written to `question_asked` only. */
+  open?: { plugin: string; contribution: string; item?: string };
 }
 
 const notFound = () => new ApiError("question.not_found", "Question not found");
@@ -196,6 +198,7 @@ export class QuestionsService {
           questionId: rec.id,
           form: rec.form,
           expiresAt: rec.expiresAt,
+          ...(input.open !== undefined && { open: input.open }),
         },
       },
     ]);

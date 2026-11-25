@@ -1419,7 +1419,8 @@ export type EmbedChildMessage =
 }
 /**
 * Asks the host to maximise (`true`) or restore (`false`) the conversation's right panel; only an
-* embed in the `conversation.panel` slot is honoured.
+* embed in the `conversation.panel` slot is honoured. The host answers with its own
+* `panel-mode` once the mode changed (it may refuse, e.g. on a phone).
 */
 | {
     protocol: typeof EMBED_PROTOCOL;
@@ -1489,6 +1490,18 @@ export type EmbedParentMessage = {
     type: "theme";
     theme: "dark" | "light";
     tokens: Record<string, string>;
+}
+/**
+* Only to an embed in the `conversation.panel` slot: whether the conversation's right panel is
+* maximised (`full`). Sent right after `init` and on every change, whoever made it (the embed's
+* own `panel-mode` ask, the host's close control or Esc, a size-class change, the host refusing
+* full mode): derive the layout from this message, not from what was asked. The panel's frame
+* stays mounted across a change.
+*/
+| {
+    protocol: typeof EMBED_PROTOCOL;
+    type: "panel-mode";
+    full: boolean;
 }
 /**
 * Only to a `file-preview` embed, once, after `init`: the file being previewed. The embed never
@@ -2264,6 +2277,7 @@ export interface InputForm {
 export interface InputRequired {
     form: InputForm;
     kind: "input_required";
+    open?: UiOpen;
     state?: unknown;
 }
 

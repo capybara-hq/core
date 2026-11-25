@@ -141,6 +141,66 @@ export function useRightArea(): {
   return { target, open, back, closeMap, beneath, full, setFull, fromList };
 }
 
+/**
+ * A plugin tool's input request may name a panel of its extension (`InputRequired.open`, e.g. the
+ * browser panel for a handoff): the page opens it once, when the question arrives while the page
+ * is open and is still unanswered. Questions already in the log when the page loaded open nothing
+ * (a reload never takes the right area over), nor does a panel the page does not offer.
+ */
+function useAskedPanels(p: {
+  conversationId: string;
+  events: readonly ConversationEvent[];
+  eventsLoaded: boolean;
+  panels: readonly { plugin: string; id: string }[];
+  panelsPending: boolean;
+  shown: RightTarget | null;
+  open(t: RightTarget): void;
+}): void {
+  /** The questions this page has handled, per conversation (null until the log first loaded). */
+  const seen = useRef<{ conversationId: string; ids: Set<string> } | null>(null);
+  const { conversationId, events, eventsLoaded, panels, panelsPending, shown, open } = p;
+  useEffect(() => {
+    if (!eventsLoaded) return;
+    const asked = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "question_asked" }> =>
+        e.type === "question_asked",
+    );
+    if (seen.current?.conversationId !== conversationId) {
+      seen.current = { conversationId, ids: new Set(asked.map((e) => e.payload.questionId)) };
+      return;
+    }
+    // a new question waits until the panels are known (it is handled once they are)
+    if (panelsPending) return;
+    const ids = seen.current.ids;
+    const fresh = asked.filter((e) => !ids.has(e.payload.questionId));
+    if (fresh.length === 0) return;
+    const answered = new Set(
+      events.flatMap((e) => (e.type === "question_answered" ? [e.payload.questionId] : [])),
+    );
+    let target: RightTarget | null = null;
+    for (const e of fresh) {
+      ids.add(e.payload.questionId);
+      const o = e.payload.open;
+      if (o === undefined || answered.has(e.payload.questionId)) continue;
+      if (!panels.some((c) => c.plugin === o.plugin && c.id === o.contribution)) continue;
+      target = {
+        kind: "panel",
+        plugin: o.plugin,
+        contribution: o.contribution,
+        ...(o.item !== undefined ? { item: o.item } : {}),
+      };
+    }
+    if (target === null) return;
+    const already =
+      shown?.kind === "panel" &&
+      target.kind === "panel" &&
+      shown.plugin === target.plugin &&
+      shown.contribution === target.contribution &&
+      shown.item === target.item;
+    if (!already) open(target);
+  }, [conversationId, events, eventsLoaded, panels, panelsPending, shown, open]);
+}
+
 /** The full archived output of a call (replaces the old Run tab's "View full output"). */
 function OutputPanel({
   orgId,
@@ -334,6 +394,15 @@ export function useRightAreaSlot(p: {
       }),
     [open],
   );
+  useAskedPanels({
+    conversationId: p.conversationId,
+    events: p.events,
+    eventsLoaded: p.eventsLoaded,
+    panels,
+    panelsPending: contributionsPending,
+    shown: target,
+    open,
+  });
   const background = useBackgroundTasks(p.orgId, p.conversationId, p.events);
   /** The finish events' last lines by task (the panel's text when the output is unreadable). */
   const lastLines = useMemo(() => {
